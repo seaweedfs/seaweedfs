@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestWriteParquet(t *testing.T) {
+func TestWriteReadParquet(t *testing.T) {
 	// create a schema_pb.RecordType
 	recordType := NewRecordTypeBuilder().
 		AddLongField("ID").
@@ -19,7 +19,7 @@ func TestWriteParquet(t *testing.T) {
 			AddStringField("zName").
 			AddListField("emails", TypeString)).
 		AddStringField("Company").
-		AddRecordField("zAddress", NewRecordTypeBuilder().
+		AddRecordField("Address", NewRecordTypeBuilder().
 			AddStringField("Street").
 			AddStringField("City")).Build()
 	fmt.Printf("RecordType: %v\n", recordType)
@@ -77,11 +77,15 @@ func testWritingParquetFile(t *testing.T, count int, filename string, parquetSch
 			AddStringValue("Company", fmt.Sprintf("company_%d", i)).Build()
 		AddRecordValue(rowBuilder, recordType, recordValue)
 
-		// fmt.Printf("RecordValue: %v\n", recordValue)
+		if count < 10 {
+			fmt.Printf("RecordValue: %v\n", recordValue)
+		}
 
 		row := rowBuilder.Row()
 
-		// fmt.Printf("Row: %+v\n", row)
+		if count < 10 {
+			fmt.Printf("Row: %+v\n", row)
+		}
 
 		if err != nil {
 			t.Fatalf("rowBuilder.Build failed: %v", err)
