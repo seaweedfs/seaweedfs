@@ -30,11 +30,7 @@ func rowBuilderVisit(rowBuilder *parquet.RowBuilder, fieldType *schema_pb.Type, 
 	return
 }
 
-func AddRecordValue(rowBuilder *parquet.RowBuilder, recordType *schema_pb.RecordType, recordValue *schema_pb.RecordValue) error {
-	parquetLevels, err := ToParquetLevels(recordType)
-	if err != nil {
-		return err
-	}
+func AddRecordValue(rowBuilder *parquet.RowBuilder, recordType *schema_pb.RecordType, parquetLevels *ParquetLevels, recordValue *schema_pb.RecordValue) error {
 	visitor := func(fieldType *schema_pb.Type, levels *ParquetLevels, fieldValue *schema_pb.Value) (err error) {
 		return rowBuilderVisit(rowBuilder, fieldType, levels, fieldValue)
 	}

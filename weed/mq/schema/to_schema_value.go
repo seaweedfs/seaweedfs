@@ -9,11 +9,7 @@ import (
 // ToRecordValue converts a parquet.Row to a schema_pb.RecordValue
 // This does not work or did not test with nested structures.
 // Using this may fail to convert the parquet.Row to schema_pb.RecordValue
-func ToRecordValue(recordType *schema_pb.RecordType, row parquet.Row) (*schema_pb.RecordValue, error) {
-	parquetLevels, err := ToParquetLevels(recordType)
-	if err != nil {
-		return nil, err
-	}
+func ToRecordValue(recordType *schema_pb.RecordType, parquetLevels *ParquetLevels, row parquet.Row) (*schema_pb.RecordValue, error) {
 	values := []parquet.Value(row)
 	recordValue, _, err := toRecordValue(recordType, parquetLevels, values, 0)
 	if err != nil {

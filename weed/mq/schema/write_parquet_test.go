@@ -52,6 +52,11 @@ func TestWriteReadParquet(t *testing.T) {
 }
 
 func testWritingParquetFile(t *testing.T, count int, filename string, parquetSchema *parquet.Schema, recordType *schema_pb.RecordType) {
+	parquetLevels, err := ToParquetLevels(recordType)
+	if err != nil {
+		t.Fatalf("ToParquetLevels failed: %v", err)
+	}
+
 	// create a parquet file
 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0664)
 	if err != nil {
@@ -75,7 +80,7 @@ func testWritingParquetFile(t *testing.T, count int, filename string, parquetSch
 					fmt.Sprintf("john_%d@d.com", i),
 					fmt.Sprintf("john_%d@e.com", i))).
 			AddStringValue("Company", fmt.Sprintf("company_%d", i)).Build()
-		AddRecordValue(rowBuilder, recordType, recordValue)
+		AddRecordValue(rowBuilder, recordType, parquetLevels, recordValue)
 
 		if count < 10 {
 			fmt.Printf("RecordValue: %v\n", recordValue)
@@ -101,6 +106,11 @@ func testWritingParquetFile(t *testing.T, count int, filename string, parquetSch
 }
 
 func testReadingParquetFile(t *testing.T, filename string, parquetSchema *parquet.Schema, recordType *schema_pb.RecordType) (total int) {
+	parquetLevels, err := ToParquetLevels(recordType)
+	if err != nil {
+		t.Fatalf("ToParquetLevels failed: %v", err)
+	}
+
 	// read the parquet file
 	file, err := os.Open(filename)
 	if err != nil {
@@ -120,7 +130,7 @@ func testReadingParquetFile(t *testing.T, filename string, parquetSchema *parque
 		for i := 0; i < rowCount; i++ {
 			row := rows[i]
 			// convert parquet row to schema_pb.RecordValue
-			recordValue, err := ToRecordValue(recordType, row)
+			recordValue, err := ToRecordValue(recordType, parquetLevels, row)
 			if err != nil {
 				t.Fatalf("ToRecordValue failed: %v", err)
 			}
