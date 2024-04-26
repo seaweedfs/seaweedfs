@@ -10,77 +10,80 @@ import (
 // This does not work or did not test with nested structures.
 // Using this may fail to convert the parquet.Row to schema_pb.RecordValue
 func ToRecordValue(recordType *schema_pb.RecordType, row parquet.Row) (*schema_pb.RecordValue, error) {
+	parquetLevels, err := ToParquetLevels(recordType)
+	if err != nil {
+		return nil, err
+	}
 	values := []parquet.Value(row)
-	recordValue, _, _, err := toRecordValue(recordType, values, 0, 0)
+	recordValue, _, err := toRecordValue(recordType, parquetLevels, values, 0)
 	if err != nil {
 		return nil, err
 	}
 	return recordValue.GetRecordValue(), nil
 }
 
-func ToValue(t *schema_pb.Type, values []parquet.Value, valueIndex, columnIndex int) (value *schema_pb.Value, endValueIndex, endColumnIndex int, err error) {
+func ToValue(t *schema_pb.Type, levels *ParquetLevels, values []parquet.Value, valueIndex int) (value *schema_pb.Value, endValueIndex int, err error) {
 	switch t.Kind.(type) {
 	case *schema_pb.Type_ScalarType:
-		value, err = toScalarValue(t.GetScalarType(), values, valueIndex, columnIndex)
-		return value, valueIndex + 1, columnIndex + 1, err
+		return toScalarValue(t.GetScalarType(), levels, values, valueIndex)
 	case *schema_pb.Type_ListType:
-		return toListValue(t.GetListType(), values, valueIndex, columnIndex)
+		return toListValue(t.GetListType(), levels, values, valueIndex)
 	case *schema_pb.Type_RecordType:
-		return toRecordValue(t.GetRecordType(), values, valueIndex, columnIndex)
+		return toRecordValue(t.GetRecordType(), levels, values, valueIndex)
 	}
-	return nil, 0, 0, fmt.Errorf("unsupported type: %v", t)
+	return nil, valueIndex, fmt.Errorf("unsupported type: %v", t)
 }
 
-func toRecordValue(recordType *schema_pb.RecordType, values []parquet.Value, valueIndex, columnIndex int) (*schema_pb.Value, int, int, error) {
+func toRecordValue(recordType *schema_pb.RecordType, levels *ParquetLevels, values []parquet.Value, valueIndex int) (*schema_pb.Value, int, error) {
 	recordValue := schema_pb.RecordValue{Fields: make(map[string]*schema_pb.Value)}
 	for _, field := range recordType.Fields {
-		fieldValue, endValueIndex, endColumnIndex, err := ToValue(field.Type, values, valueIndex, columnIndex)
+		fieldLevels := levels.levels[field.Name]
+		fieldValue, endValueIndex, err := ToValue(field.Type, fieldLevels, values, valueIndex)
 		if err != nil {
-			return nil, 0, 0, err
+			return nil, 0, err
 		}
-		columnIndex = endColumnIndex
 		valueIndex = endValueIndex
 		recordValue.Fields[field.Name] = fieldValue
 	}
-	return &schema_pb.Value{Kind: &schema_pb.Value_RecordValue{RecordValue: &recordValue}}, valueIndex, columnIndex, nil
+	return &schema_pb.Value{Kind: &schema_pb.Value_RecordValue{RecordValue: &recordValue}}, valueIndex, nil
 }
 
-func toListValue(listType *schema_pb.ListType, values []parquet.Value, valueIndex, columnIndex int) (listValue *schema_pb.Value, endValueIndex, endColumnIndex int, err error) {
+func toListValue(listType *schema_pb.ListType, levels *ParquetLevels, values []parquet.Value, valueIndex int) (listValue *schema_pb.Value, endValueIndex int, err error) {
 	listValues := make([]*schema_pb.Value, 0)
 	var value *schema_pb.Value
 	for ;valueIndex < len(values); {
-		if values[valueIndex].Column() != columnIndex {
+		if values[valueIndex].Column() != levels.startColumnIndex {
 			break
 		}
-		value, valueIndex, endColumnIndex, err = ToValue(listType.ElementType, values, valueIndex, columnIndex)
+		value, valueIndex, err = ToValue(listType.ElementType, levels, values, valueIndex)
 		if err != nil {
-			return nil, 0,0, err
+			return nil, valueIndex, err
 		}
 		listValues = append(listValues, value)
 	}
-	return &schema_pb.Value{Kind: &schema_pb.Value_ListValue{ListValue: &schema_pb.ListValue{Values: listValues}}}, valueIndex, endColumnIndex, nil
+	return &schema_pb.Value{Kind: &schema_pb.Value_ListValue{ListValue: &schema_pb.ListValue{Values: listValues}}}, valueIndex, nil
 }
 
-func toScalarValue(scalarType schema_pb.ScalarType, values []parquet.Value, valueIndex, columnIndex int) (*schema_pb.Value, error) {
+func toScalarValue(scalarType schema_pb.ScalarType, levels *ParquetLevels, values []parquet.Value, valueIndex int) (*schema_pb.Value, int, error) {
 	value := values[valueIndex]
-	if value.Column() != columnIndex {
-		return nil, nil
+	if value.Column() != levels.startColumnIndex {
+		return nil, valueIndex, nil
 	}
 	switch scalarType {
 	case schema_pb.ScalarType_BOOLEAN:
-		return &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: value.Boolean()}}, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: value.Boolean()}}, valueIndex+1, nil
 	case schema_pb.ScalarType_INTEGER:
-		return &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: value.Int32()}}, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: value.Int32()}}, valueIndex+1, nil
 	case schema_pb.ScalarType_LONG:
-		return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: value.Int64()}},  nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: value.Int64()}}, valueIndex+1,  nil
 	case schema_pb.ScalarType_FLOAT:
-		return &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: value.Float()}}, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: value.Float()}}, valueIndex+1, nil
 	case schema_pb.ScalarType_DOUBLE:
-		return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: value.Double()}}, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: value.Double()}}, valueIndex+1, nil
 	case schema_pb.ScalarType_BYTES:
-		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: value.ByteArray()}}, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: value.ByteArray()}}, valueIndex+1, nil
 	case schema_pb.ScalarType_STRING:
-		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: string(value.ByteArray())}}, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: string(value.ByteArray())}}, valueIndex+1, nil
 	}
-	return nil, fmt.Errorf("unsupported scalar type: %v", scalarType)
+	return nil, valueIndex, fmt.Errorf("unsupported scalar type: %v", scalarType)
 }
