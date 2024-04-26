@@ -58,7 +58,7 @@ func testWritingParquetFile(t *testing.T, count int, filename string, parquetSch
 		t.Fatalf("os.Open failed: %v", err)
 	}
 	defer file.Close()
-	writer := parquet.NewWriter(file, parquetSchema, parquet.Compression(&zstd.Codec{Level: zstd.SpeedDefault}))
+	writer := parquet.NewWriter(file, parquetSchema, parquet.Compression(&zstd.Codec{Level: zstd.DefaultLevel}))
 	rowBuilder := parquet.NewRowBuilder(parquetSchema)
 	for i := 0; i < count; i++ {
 		rowBuilder.Reset()
