@@ -5,15 +5,16 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"path/filepath"
+	"sync"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	"io"
-	"path/filepath"
-	"sync"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -212,7 +213,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 			hasFoundTarget = true
 
 			// adjust volume count
-			dst.dataNode.DiskInfos[string(toDiskType)].VolumeCount++
+			addVolumeCount(dst.dataNode.DiskInfos[string(toDiskType)], 1)
 
 			destServerAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
 			c.queues[destServerAddress] <- volumeTierMoveJob{sourceVolumeServer, vid}
