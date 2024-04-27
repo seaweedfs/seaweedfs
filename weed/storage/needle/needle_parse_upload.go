@@ -34,7 +34,7 @@ type ParsedUpload struct {
 }
 
 func isMultiPartFormData(contentType string) bool {
-	return strings.Contains(contentType, "form-data")
+	return contentType == "multipart/form-data" || contentType == "multipart/mixed"
 }
 
 func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (pu *ParsedUpload, e error) {
