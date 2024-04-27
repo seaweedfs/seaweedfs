@@ -340,10 +340,9 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 			continue
 		}
 		response.Rules = append(response.Rules, Rule{
-			Status: Enabled, Filter: Filter{
-				Prefix: Prefix{string: prefix, set: true},
-				set:    true,
-			},
+			ID:         prefix,
+			Status:     Enabled,
+			Prefix:     prefix,
 			Expiration: Expiration{Days: days, set: true},
 		})
 	}
@@ -384,23 +383,15 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if rule.Status != Enabled {
 			continue
 		}
-		if rule.Expiration.Days == 0 {
-			continue
-		}
-
 		var rulePrefix string
 		switch {
-		case rule.Filter.set && rule.Filter.Prefix.set:
-			rulePrefix = rule.Filter.Prefix.string
-		case rule.Prefix.set:
-			rulePrefix = rule.Prefix.string
+		case rule.Expiration.Days > 0 && len(rule.Prefix) > 0:
+			rulePrefix = rule.Prefix
 		default:
 			s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 			return
 		}
-		if len(rulePrefix) == 0 {
-			continue
-		}
+
 		locConf := &filer_pb.FilerConf_PathConf{
 			LocationPrefix: fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, rulePrefix),
 			Collection:     collectionName,
