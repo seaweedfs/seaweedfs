@@ -26,7 +26,7 @@ type Rule struct {
 	ID         string     `xml:"ID,omitempty"`
 	Status     ruleStatus `xml:"Status"`
 	Filter     Filter     `xml:"Filter,omitempty"`
-	Prefix     string     `xml:"Prefix,omitempty"`
+	Prefix     Prefix     `xml:"Prefix,omitempty"`
 	Expiration Expiration `xml:"Expiration,omitempty"`
 	Transition Transition `xml:"Transition,omitempty"`
 }
@@ -66,9 +66,9 @@ func (p Prefix) MarshalXML(e *xml.Encoder, startElement xml.StartElement) error 
 }
 
 func (p *Prefix) UnmarshalXML(d *xml.Decoder, startElement xml.StartElement) error {
-	prefix := Prefix{set: true, val: ""}
-	_ = d.DecodeElement(&prefix.val, &startElement)
-	p = &prefix
+	prefix := ""
+	_ = d.DecodeElement(&prefix, &startElement)
+	*p = Prefix{set: true, val: prefix}
 	return nil
 }
 

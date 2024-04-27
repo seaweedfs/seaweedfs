@@ -342,7 +342,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		response.Rules = append(response.Rules, Rule{
 			ID:         prefix,
 			Status:     Enabled,
-			Prefix:     prefix,
+			Prefix:     Prefix{val: prefix, set: true},
 			Expiration: Expiration{Days: days, set: true},
 		})
 	}
@@ -385,11 +385,17 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		}
 		var rulePrefix string
 		switch {
-		case rule.Expiration.Days > 0 && len(rule.Prefix) > 0:
-			rulePrefix = rule.Prefix
-		default:
+		case rule.Filter.Prefix.set:
+			rulePrefix = rule.Filter.Prefix.val
+		case rule.Prefix.set:
+			rulePrefix = rule.Prefix.val
+		case !rule.Expiration.Date.IsZero() || rule.Transition.Days > 0 || !rule.Transition.Date.IsZero():
 			s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 			return
+		}
+
+		if rule.Expiration.Days == 0 {
+			continue
 		}
 
 		locConf := &filer_pb.FilerConf_PathConf{
