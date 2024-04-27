@@ -59,6 +59,15 @@ func (p Prefix) MarshalXML(e *xml.Encoder, startElement xml.StartElement) error 
 	return e.EncodeElement(p.string, startElement)
 }
 
+func (p Prefix) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	if err := d.DecodeElement(&p.string, &start); err == nil {
+		p.set = true
+	} else {
+		p.set = false
+	}
+	return nil
+}
+
 // MarshalXML encodes Filter field into an XML form.
 func (f Filter) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	if err := e.EncodeToken(start); err != nil {

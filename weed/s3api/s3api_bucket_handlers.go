@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
-	"github.com/minio/minio-go/v7/pkg/lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
@@ -328,7 +327,8 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchLifecycleConfiguration)
 		return
 	}
-	response := lifecycle.Configuration{}
+
+	response := Lifecycle{}
 	for locationPrefix, internalTtl := range ttls {
 		ttl, _ := needle.ReadTTL(internalTtl)
 		days := int(ttl.Minutes() / 60 / 24)
@@ -339,14 +339,15 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if !found {
 			continue
 		}
-		response.Rules = append(response.Rules, lifecycle.Rule{
-			ID:         prefix,
-			Status:     "Enabled",
-			Prefix:     prefix,
-			RuleFilter: lifecycle.Filter{Prefix: prefix},
-			Expiration: lifecycle.Expiration{Days: lifecycle.ExpirationDays(days)},
+		response.Rules = append(response.Rules, Rule{
+			Status: Enabled, Filter: Filter{
+				Prefix: Prefix{string: prefix, set: true},
+				set:    true,
+			},
+			Expiration: Expiration{Days: days, set: true},
 		})
 	}
+
 	writeSuccessResponseXML(w, r, response)
 }
 
@@ -362,8 +363,8 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		return
 	}
 
-	lifecycleConfig := &lifecycle.Configuration{}
-	if err := xmlDecoder(r.Body, lifecycleConfig, r.ContentLength); err != nil {
+	lifeCycleConfig := Lifecycle{}
+	if err := xmlDecoder(r.Body, &lifeCycleConfig, r.ContentLength); err != nil {
 		glog.Warningf("PutBucketLifecycleConfigurationHandler xml decode: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
@@ -378,8 +379,8 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	collectionTtls := fc.GetCollectionTtls(bucket)
 	changed := false
 
-	for _, rule := range lifecycleConfig.Rules {
-		if !strings.EqualFold(rule.Status, "Enabled") {
+	for _, rule := range lifeCycleConfig.Rules {
+		if rule.Status != Enabled {
 			continue
 		}
 		if rule.Expiration.Days == 0 {
@@ -388,12 +389,13 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 
 		var rulePrefix string
 		switch {
-		case len(rule.RuleFilter.Prefix) > 0:
-			rulePrefix = rule.RuleFilter.Prefix
-		case len(rule.Prefix) > 0:
-			rulePrefix = rule.Prefix
+		case rule.Filter.set && rule.Filter.Prefix.set:
+			rulePrefix = rule.Filter.Prefix.string
+		case rule.Prefix.set:
+			rulePrefix = rule.Prefix.string
+		case rule.Expiration.set || rule.Transition.set:
+			s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 		}
-
 		if len(rulePrefix) == 0 {
 			continue
 		}
