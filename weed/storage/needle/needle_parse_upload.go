@@ -33,6 +33,10 @@ type ParsedUpload struct {
 	ContentMd5       string
 }
 
+func isMultiPartFormData(contentType string) bool {
+	return strings.Contains(contentType, "form-data")
+}
+
 func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (pu *ParsedUpload, e error) {
 	bytesBuffer.Reset()
 	pu = &ParsedUpload{bytesBuffer: bytesBuffer}
@@ -43,18 +47,19 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 		}
 	}
 
-	if r.Method == "POST" {
+	switch {
+	case r.Method == http.MethodPost:
 		contentType := r.Header.Get("Content-Type")
-
-		// If content-type is explicitly set, upload the file without parsing form-data
-		if contentType != "" && !strings.Contains(contentType, "form-data") {
-			e = parseRawPost(r, sizeLimit, pu)
-		} else {
+		if isMultiPartFormData(contentType) {
 			e = parseMultipart(r, sizeLimit, pu)
+		} else {
+			// If content-type is explicitly set, upload the file without parsing form-data
+			e = parseRawPost(r, sizeLimit, pu)
 		}
-
-	} else {
+	case r.Method == http.MethodPut:
 		e = parsePut(r, sizeLimit, pu)
+	default:
+		e = fmt.Errorf("unsupported method: %s", r.Method)
 	}
 	if e != nil {
 		return
