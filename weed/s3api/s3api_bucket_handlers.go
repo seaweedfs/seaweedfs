@@ -376,7 +376,8 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	collectionTtls := fc.GetCollectionTtls(bucket)
+	collectionName := s3a.getCollectionName(bucket)
+	collectionTtls := fc.GetCollectionTtls(collectionName)
 	changed := false
 
 	for _, rule := range lifeCycleConfig.Rules {
@@ -393,15 +394,16 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			rulePrefix = rule.Filter.Prefix.string
 		case rule.Prefix.set:
 			rulePrefix = rule.Prefix.string
-		case rule.Expiration.set || rule.Transition.set:
+		default:
 			s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+			return
 		}
 		if len(rulePrefix) == 0 {
 			continue
 		}
 		locConf := &filer_pb.FilerConf_PathConf{
 			LocationPrefix: fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, rulePrefix),
-			Collection:     bucket,
+			Collection:     collectionName,
 			Ttl:            fmt.Sprintf("%dd", rule.Expiration.Days),
 		}
 		if ttl, ok := collectionTtls[locConf.LocationPrefix]; ok && ttl == locConf.Ttl {
@@ -451,7 +453,7 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	collectionTtls := fc.GetCollectionTtls(bucket)
+	collectionTtls := fc.GetCollectionTtls(s3a.getCollectionName(bucket))
 	changed := false
 	for prefix, ttl := range collectionTtls {
 		bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)

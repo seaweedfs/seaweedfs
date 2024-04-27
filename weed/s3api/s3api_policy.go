@@ -59,11 +59,10 @@ func (p Prefix) MarshalXML(e *xml.Encoder, startElement xml.StartElement) error 
 	return e.EncodeElement(p.string, startElement)
 }
 
-func (p Prefix) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
-	if err := d.DecodeElement(&p.string, &start); err == nil {
-		p.set = true
-	} else {
-		p.set = false
+func (p *Prefix) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	prefix := ""
+	if err := d.DecodeElement(&prefix, &start); err == nil {
+		p = &Prefix{set: true, string: prefix}
 	}
 	return nil
 }
