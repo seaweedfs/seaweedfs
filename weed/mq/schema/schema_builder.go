@@ -39,28 +39,10 @@ func (rtb *RecordTypeBuilder) SetField(name string, scalarType *schema_pb.Type) 
 	return rtb
 }
 
-func (rtb *RecordTypeBuilder) SetLongField(name string) *RecordTypeBuilder {
-	return rtb.SetField(name, TypeLong)
-}
-func (rtb *RecordTypeBuilder) SetFloatField(name string) *RecordTypeBuilder {
-	return rtb.SetField(name, TypeFloat)
-}
-func (rtb *RecordTypeBuilder) SetStringField(name string) *RecordTypeBuilder {
-	return rtb.SetField(name, TypeString)
-}
-
 func (rtb *RecordTypeBuilder) SetRecordField(name string, recordTypeBuilder *RecordTypeBuilder) *RecordTypeBuilder {
 	rtb.recordType.Fields = append(rtb.recordType.Fields, &schema_pb.Field{
 		Name: name,
 		Type: &schema_pb.Type{Kind: &schema_pb.Type_RecordType{RecordType: recordTypeBuilder.Build()}},
-	})
-	return rtb
-}
-
-func (rtb *RecordTypeBuilder) SetListField(name string, elementType *schema_pb.Type) *RecordTypeBuilder {
-	rtb.recordType.Fields = append(rtb.recordType.Fields, &schema_pb.Field{
-		Name: name,
-		Type: &schema_pb.Type{Kind: &schema_pb.Type_ListType{ListType: &schema_pb.ListType{ElementType: elementType}}},
 	})
 	return rtb
 }
