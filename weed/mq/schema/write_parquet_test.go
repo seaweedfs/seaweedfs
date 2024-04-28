@@ -69,17 +69,17 @@ func testWritingParquetFile(t *testing.T, count int, filename string, parquetSch
 		rowBuilder.Reset()
 		// generate random data
 		recordValue := NewRecordValueBuilder().
-			AddLongValue("ID", 1+int64(i)).
-			AddLongValue("CreatedAt", 2+2*int64(i)).
-			AddRecordValue("Person", NewRecordValueBuilder().
-				AddStringValue("zName", fmt.Sprintf("john_%d", i)).
-				AddStringListValue("emails",
+			SetLongValue("ID", 1+int64(i)).
+			SetLongValue("CreatedAt", 2+2*int64(i)).
+			SetRecordValue("Person", NewRecordValueBuilder().
+				SetStringValue("zName", fmt.Sprintf("john_%d", i)).
+			SetStringListValue("emails",
 					fmt.Sprintf("john_%d@a.com", i),
 					fmt.Sprintf("john_%d@b.com", i),
 					fmt.Sprintf("john_%d@c.com", i),
 					fmt.Sprintf("john_%d@d.com", i),
 					fmt.Sprintf("john_%d@e.com", i))).
-			AddStringValue("Company", fmt.Sprintf("company_%d", i)).Build()
+			SetStringValue("Company", fmt.Sprintf("company_%d", i)).Build()
 		AddRecordValue(rowBuilder, recordType, parquetLevels, recordValue)
 
 		if count < 10 {
