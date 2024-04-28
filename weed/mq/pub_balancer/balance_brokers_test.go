@@ -12,7 +12,6 @@ func TestBalanceTopicPartitionOnBrokers(t *testing.T) {
 	brokers := cmap.New[*BrokerStats]()
 	broker1Stats := &BrokerStats{
 		TopicPartitionCount: 1,
-		ConsumerCount:       1,
 		CpuUsagePercent:     1,
 		TopicPartitionStats: cmap.New[*TopicPartitionStats](),
 	}
@@ -24,7 +23,6 @@ func TestBalanceTopicPartitionOnBrokers(t *testing.T) {
 	})
 	broker2Stats := &BrokerStats{
 		TopicPartitionCount: 2,
-		ConsumerCount:       1,
 		CpuUsagePercent:     1,
 		TopicPartitionStats: cmap.New[*TopicPartitionStats](),
 	}
