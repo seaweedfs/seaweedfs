@@ -44,7 +44,7 @@ func TestStructToSchema(t *testing.T) {
 				}{},
 			},
 			want: NewRecordTypeBuilder().
-				SetField("Field1", List(TypeInteger)).
+				SetField("Field1", ListOf(TypeInteger)).
 				SetField("Field2", TypeString).
 				Build(),
 		},
@@ -97,7 +97,7 @@ func TestStructToSchema(t *testing.T) {
 				SetField("Field1", TypeInteger).
 				SetRecordField("Field2", NewRecordTypeBuilder().
 					SetField("Field3", TypeString).
-					SetField("Field4", List(TypeInteger)).
+					SetField("Field4", ListOf(TypeInteger)).
 					SetRecordField("Field5", NewRecordTypeBuilder().
 						SetField("Field6", TypeString).
 						SetField("Field7", TypeBytes),
