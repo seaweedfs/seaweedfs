@@ -87,7 +87,7 @@ func testWritingParquetFile(t *testing.T, count int, filename string, parquetSch
 						fmt.Sprintf("john_%d@e.com", i)).
 				RecordEnd()).
 			SetString("Company", fmt.Sprintf("company_%d", i)).
-			RecordEnd()
+		RecordEnd()
 		AddRecordValue(rowBuilder, recordType, parquetLevels, recordValue)
 
 		if count < 10 {
