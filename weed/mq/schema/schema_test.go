@@ -34,7 +34,7 @@ func TestField(t *testing.T) {
 	field := &Field{
 		Name:        "field_name",
 		Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INTEGER}},
-		Index:       1,
+		FieldIndex:       1,
 		IsRepeated:  false,
 	}
 	assert.NotNil(t, field)
@@ -46,13 +46,13 @@ func TestRecordType(t *testing.T) {
 			{
 				Name:        "field_1",
 				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INTEGER}},
-				Index:       1,
+				FieldIndex:       1,
 				IsRepeated:  false,
 			},
 			{
 				Name:        "field_2",
 				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_STRING}},
-				Index:       2,
+				FieldIndex:       2,
 				IsRepeated:  false,
 			},
 		},
@@ -62,13 +62,13 @@ func TestRecordType(t *testing.T) {
 			{
 				Name:        "field_key",
 				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INTEGER}},
-				Index:       1,
+				FieldIndex:       1,
 				IsRepeated:  false,
 			},
 			{
 				Name:        "field_record",
 				Type:        &Type{Kind: &Type_RecordType{RecordType: subRecord}},
-				Index:       2,
+				FieldIndex:       2,
 				IsRepeated:  false,
 			},
 		},
