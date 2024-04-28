@@ -14,8 +14,8 @@ message RecordType {
 
 message Field {
     string name = 1;
-    Type type = 2;
-    int32 index = 3;
+    int32 field_index = 2;
+    Type type = 3;
     bool is_repeated = 4;
     bool is_required = 5;
 }
