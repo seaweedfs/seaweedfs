@@ -19,11 +19,11 @@ type RecordTypeBuilder struct {
 	recordType *schema_pb.RecordType
 }
 
-func NewRecordTypeBuilder() *RecordTypeBuilder {
+func RecordTypeBegin() *RecordTypeBuilder {
 	return &RecordTypeBuilder{recordType: &schema_pb.RecordType{}}
 }
 
-func (rtb *RecordTypeBuilder) Build() *schema_pb.RecordType {
+func (rtb *RecordTypeBuilder) RecordTypeEnd() *schema_pb.RecordType {
 	// be consistent with parquet.node.go `func (g Group) Fields() []Field`
 	sort.Slice(rtb.recordType.Fields, func(i, j int) bool {
 		return rtb.recordType.Fields[i].Name < rtb.recordType.Fields[j].Name
@@ -39,10 +39,10 @@ func (rtb *RecordTypeBuilder) SetField(name string, scalarType *schema_pb.Type) 
 	return rtb
 }
 
-func (rtb *RecordTypeBuilder) SetRecordField(name string, recordTypeBuilder *RecordTypeBuilder) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetRecordField(name string, recordType *schema_pb.RecordType) *RecordTypeBuilder {
 	rtb.recordType.Fields = append(rtb.recordType.Fields, &schema_pb.Field{
 		Name: name,
-		Type: &schema_pb.Type{Kind: &schema_pb.Type_RecordType{RecordType: recordTypeBuilder.Build()}},
+		Type: &schema_pb.Type{Kind: &schema_pb.Type_RecordType{RecordType: recordType}},
 	})
 	return rtb
 }

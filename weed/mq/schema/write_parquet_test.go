@@ -12,16 +12,21 @@ import (
 
 func TestWriteReadParquet(t *testing.T) {
 	// create a schema_pb.RecordType
-	recordType := NewRecordTypeBuilder().
+	recordType := RecordTypeBegin().
 		SetField("ID", TypeLong).
 		SetField("CreatedAt", TypeLong).
-		SetRecordField("Person", NewRecordTypeBuilder().
-			SetField("zName", TypeString).
-			SetField("emails", ListOf(TypeString))).
+		SetRecordField("Person",
+			RecordTypeBegin().
+				SetField("zName", TypeString).
+				SetField("emails", ListOf(TypeString)).
+			RecordTypeEnd()).
 		SetField("Company", TypeString).
-		SetRecordField("Address", NewRecordTypeBuilder().
-			SetField("Street", TypeString).
-			SetField("City", TypeString)).Build()
+		SetRecordField("Address",
+			RecordTypeBegin().
+				SetField("Street", TypeString).
+				SetField("City", TypeString).
+			RecordTypeEnd()).
+		RecordTypeEnd()
 	fmt.Printf("RecordType: %v\n", recordType)
 
 	// create a parquet schema

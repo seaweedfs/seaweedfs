@@ -30,10 +30,10 @@ func TestStructToSchema(t *testing.T) {
 					Field2 string
 				}{},
 			},
-			want: NewRecordTypeBuilder().
-				SetField("Field1", TypeInteger).
-				SetField("Field2", TypeString).
-				Build(),
+			want: RecordTypeBegin().
+					SetField("Field1", TypeInteger).
+					SetField("Field2", TypeString).
+				RecordTypeEnd(),
 		},
 		{
 			name: "simple list",
@@ -43,10 +43,10 @@ func TestStructToSchema(t *testing.T) {
 					Field2 string
 				}{},
 			},
-			want: NewRecordTypeBuilder().
-				SetField("Field1", ListOf(TypeInteger)).
-				SetField("Field2", TypeString).
-				Build(),
+			want: RecordTypeBegin().
+					SetField("Field1", ListOf(TypeInteger)).
+					SetField("Field2", TypeString).
+				RecordTypeEnd(),
 		},
 		{
 			name: "simple []byte",
@@ -55,9 +55,9 @@ func TestStructToSchema(t *testing.T) {
 					Field2 []byte
 				}{},
 			},
-			want: NewRecordTypeBuilder().
-				SetField("Field2", TypeBytes).
-				Build(),
+			want: RecordTypeBegin().
+					SetField("Field2", TypeBytes).
+				RecordTypeEnd(),
 		},
 		{
 			name: "nested simpe structs",
@@ -70,13 +70,15 @@ func TestStructToSchema(t *testing.T) {
 					}
 				}{},
 			},
-			want: NewRecordTypeBuilder().
+			want: RecordTypeBegin().
 				SetField("Field1", TypeInteger).
-				SetRecordField("Field2", NewRecordTypeBuilder().
-					SetField("Field3", TypeString).
-					SetField("Field4", TypeInteger),
+				SetRecordField("Field2",
+					RecordTypeBegin().
+						SetField("Field3", TypeString).
+						SetField("Field4", TypeInteger).
+					RecordTypeEnd(),
 				).
-				Build(),
+				RecordTypeEnd(),
 		},
 		{
 			name: "nested struct type",
@@ -93,17 +95,19 @@ func TestStructToSchema(t *testing.T) {
 					}
 				}{},
 			},
-			want: NewRecordTypeBuilder().
+			want: RecordTypeBegin().
 				SetField("Field1", TypeInteger).
-				SetRecordField("Field2", NewRecordTypeBuilder().
+				SetRecordField("Field2", RecordTypeBegin().
 					SetField("Field3", TypeString).
 					SetField("Field4", ListOf(TypeInteger)).
-					SetRecordField("Field5", NewRecordTypeBuilder().
-						SetField("Field6", TypeString).
-						SetField("Field7", TypeBytes),
-					),
+					SetRecordField("Field5",
+						RecordTypeBegin().
+							SetField("Field6", TypeString).
+							SetField("Field7", TypeBytes).
+						RecordTypeEnd(),
+					).RecordTypeEnd(),
 				).
-				Build(),
+				RecordTypeEnd(),
 		},
 	}
 
