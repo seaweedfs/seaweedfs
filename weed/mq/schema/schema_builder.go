@@ -31,7 +31,7 @@ func (rtb *RecordTypeBuilder) Build() *schema_pb.RecordType {
 	return rtb.recordType
 }
 
-func (rtb *RecordTypeBuilder) addField(name string, scalarType *schema_pb.Type) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) setField(name string, scalarType *schema_pb.Type) *RecordTypeBuilder {
 	rtb.recordType.Fields = append(rtb.recordType.Fields, &schema_pb.Field{
 		Name: name,
 		Type: scalarType,
@@ -40,25 +40,25 @@ func (rtb *RecordTypeBuilder) addField(name string, scalarType *schema_pb.Type) 
 }
 
 func (rtb *RecordTypeBuilder) SetBoolField(name string) *RecordTypeBuilder {
-	return rtb.addField(name, TypeBoolean)
+	return rtb.setField(name, TypeBoolean)
 }
 func (rtb *RecordTypeBuilder) SetIntegerField(name string) *RecordTypeBuilder {
-	return rtb.addField(name, TypeInteger)
+	return rtb.setField(name, TypeInteger)
 }
 func (rtb *RecordTypeBuilder) SetLongField(name string) *RecordTypeBuilder {
-	return rtb.addField(name, TypeLong)
+	return rtb.setField(name, TypeLong)
 }
 func (rtb *RecordTypeBuilder) SetFloatField(name string) *RecordTypeBuilder {
-	return rtb.addField(name, TypeFloat)
+	return rtb.setField(name, TypeFloat)
 }
 func (rtb *RecordTypeBuilder) SetDoubleField(name string) *RecordTypeBuilder {
-	return rtb.addField(name, TypeDouble)
+	return rtb.setField(name, TypeDouble)
 }
 func (rtb *RecordTypeBuilder) SetBytesField(name string) *RecordTypeBuilder {
-	return rtb.addField(name, TypeBytes)
+	return rtb.setField(name, TypeBytes)
 }
 func (rtb *RecordTypeBuilder) SetStringField(name string) *RecordTypeBuilder {
-	return rtb.addField(name, TypeString)
+	return rtb.setField(name, TypeString)
 }
 
 func (rtb *RecordTypeBuilder) SetRecordField(name string, recordTypeBuilder *RecordTypeBuilder) *RecordTypeBuilder {
