@@ -7,10 +7,10 @@ import (
 
 func TestSchemaBuilder(t *testing.T) {
 	rtb := NewRecordTypeBuilder()
-	rtb.AddStringField("ID").
-		AddLongField("CreatedAt").
-		AddLongField("ModifiedAt").
-		AddStringField("User")
+	rtb.SetStringField("ID").
+		SetLongField("CreatedAt").
+		SetLongField("ModifiedAt").
+		SetStringField("User")
 	recordType := rtb.Build()
 	fmt.Printf("RecordType: %v\n", recordType)
 

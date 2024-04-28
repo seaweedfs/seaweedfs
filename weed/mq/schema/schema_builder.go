@@ -39,29 +39,29 @@ func (rtb *RecordTypeBuilder) addField(name string, scalarType *schema_pb.Type) 
 	return rtb
 }
 
-func (rtb *RecordTypeBuilder) AddBoolField(name string) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetBoolField(name string) *RecordTypeBuilder {
 	return rtb.addField(name, TypeBoolean)
 }
-func (rtb *RecordTypeBuilder) AddIntegerField(name string) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetIntegerField(name string) *RecordTypeBuilder {
 	return rtb.addField(name, TypeInteger)
 }
-func (rtb *RecordTypeBuilder) AddLongField(name string) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetLongField(name string) *RecordTypeBuilder {
 	return rtb.addField(name, TypeLong)
 }
-func (rtb *RecordTypeBuilder) AddFloatField(name string) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetFloatField(name string) *RecordTypeBuilder {
 	return rtb.addField(name, TypeFloat)
 }
-func (rtb *RecordTypeBuilder) AddDoubleField(name string) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetDoubleField(name string) *RecordTypeBuilder {
 	return rtb.addField(name, TypeDouble)
 }
-func (rtb *RecordTypeBuilder) AddBytesField(name string) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetBytesField(name string) *RecordTypeBuilder {
 	return rtb.addField(name, TypeBytes)
 }
-func (rtb *RecordTypeBuilder) AddStringField(name string) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetStringField(name string) *RecordTypeBuilder {
 	return rtb.addField(name, TypeString)
 }
 
-func (rtb *RecordTypeBuilder) AddRecordField(name string, recordTypeBuilder *RecordTypeBuilder) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetRecordField(name string, recordTypeBuilder *RecordTypeBuilder) *RecordTypeBuilder {
 	rtb.recordType.Fields = append(rtb.recordType.Fields, &schema_pb.Field{
 		Name: name,
 		Type: &schema_pb.Type{Kind: &schema_pb.Type_RecordType{RecordType: recordTypeBuilder.Build()}},
@@ -69,7 +69,7 @@ func (rtb *RecordTypeBuilder) AddRecordField(name string, recordTypeBuilder *Rec
 	return rtb
 }
 
-func (rtb *RecordTypeBuilder) AddListField(name string, elementType *schema_pb.Type) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetListField(name string, elementType *schema_pb.Type) *RecordTypeBuilder {
 	rtb.recordType.Fields = append(rtb.recordType.Fields, &schema_pb.Field{
 		Name: name,
 		Type: &schema_pb.Type{Kind: &schema_pb.Type_ListType{ListType: &schema_pb.ListType{ElementType: elementType}}},
