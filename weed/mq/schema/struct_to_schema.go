@@ -5,20 +5,13 @@ import (
 	"reflect"
 )
 
-func StructToSchema(instance any) *RecordTypeBuilder {
-	rtb := NewRecordTypeBuilder()
+func StructToSchema(instance any) *schema_pb.RecordType {
 	myType := reflect.TypeOf(instance)
-	for i := 0; i < myType.NumField(); i++ {
-		field := myType.Field(i)
-		fieldType := field.Type
-		fieldName := field.Name
-		schemaField := reflectTypeToSchemaType(fieldType)
-		if schemaField == nil {
-			continue
-		}
-		rtb.setField(fieldName, schemaField)
+	if myType.Kind() != reflect.Struct {
+		return nil
 	}
-	return rtb
+	st := reflectTypeToSchemaType(myType)
+	return st.GetRecordType()
 }
 
 func reflectTypeToSchemaType(t reflect.Type) *schema_pb.Type {
@@ -49,6 +42,26 @@ func reflectTypeToSchemaType(t reflect.Type) *schema_pb.Type {
 					},
 				}
 			}
+		}
+	case reflect.Struct:
+		recordType := &schema_pb.RecordType{}
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			fieldType := field.Type
+			fieldName := field.Name
+			schemaField := reflectTypeToSchemaType(fieldType)
+			if schemaField == nil {
+				return nil
+			}
+			recordType.Fields = append(recordType.Fields, &schema_pb.Field{
+				Name: fieldName,
+				Type: schemaField,
+			})
+		}
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_RecordType{
+				RecordType: recordType,
+			},
 		}
 	}
 	return nil

@@ -31,7 +31,7 @@ func (rtb *RecordTypeBuilder) Build() *schema_pb.RecordType {
 	return rtb.recordType
 }
 
-func (rtb *RecordTypeBuilder) setField(name string, scalarType *schema_pb.Type) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) SetField(name string, scalarType *schema_pb.Type) *RecordTypeBuilder {
 	rtb.recordType.Fields = append(rtb.recordType.Fields, &schema_pb.Field{
 		Name: name,
 		Type: scalarType,
@@ -40,25 +40,25 @@ func (rtb *RecordTypeBuilder) setField(name string, scalarType *schema_pb.Type) 
 }
 
 func (rtb *RecordTypeBuilder) SetBoolField(name string) *RecordTypeBuilder {
-	return rtb.setField(name, TypeBoolean)
+	return rtb.SetField(name, TypeBoolean)
 }
 func (rtb *RecordTypeBuilder) SetIntegerField(name string) *RecordTypeBuilder {
-	return rtb.setField(name, TypeInteger)
+	return rtb.SetField(name, TypeInteger)
 }
 func (rtb *RecordTypeBuilder) SetLongField(name string) *RecordTypeBuilder {
-	return rtb.setField(name, TypeLong)
+	return rtb.SetField(name, TypeLong)
 }
 func (rtb *RecordTypeBuilder) SetFloatField(name string) *RecordTypeBuilder {
-	return rtb.setField(name, TypeFloat)
+	return rtb.SetField(name, TypeFloat)
 }
 func (rtb *RecordTypeBuilder) SetDoubleField(name string) *RecordTypeBuilder {
-	return rtb.setField(name, TypeDouble)
+	return rtb.SetField(name, TypeDouble)
 }
 func (rtb *RecordTypeBuilder) SetBytesField(name string) *RecordTypeBuilder {
-	return rtb.setField(name, TypeBytes)
+	return rtb.SetField(name, TypeBytes)
 }
 func (rtb *RecordTypeBuilder) SetStringField(name string) *RecordTypeBuilder {
-	return rtb.setField(name, TypeString)
+	return rtb.SetField(name, TypeString)
 }
 
 func (rtb *RecordTypeBuilder) SetRecordField(name string, recordTypeBuilder *RecordTypeBuilder) *RecordTypeBuilder {
@@ -75,4 +75,8 @@ func (rtb *RecordTypeBuilder) SetListField(name string, elementType *schema_pb.T
 		Type: &schema_pb.Type{Kind: &schema_pb.Type_ListType{ListType: &schema_pb.ListType{ElementType: elementType}}},
 	})
 	return rtb
+}
+
+func List(elementType *schema_pb.Type) *schema_pb.Type {
+	return &schema_pb.Type{Kind: &schema_pb.Type_ListType{ListType: &schema_pb.ListType{ElementType: elementType}}}
 }
