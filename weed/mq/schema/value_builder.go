@@ -7,46 +7,46 @@ type RecordValueBuilder struct {
 	recordValue *schema_pb.RecordValue
 }
 
-// NewRecordValueBuilder creates a new RecordValueBuilder instance
-func NewRecordValueBuilder() *RecordValueBuilder {
+// RecordBegin creates a new RecordValueBuilder instance
+func RecordBegin() *RecordValueBuilder {
 	return &RecordValueBuilder{recordValue: &schema_pb.RecordValue{Fields: make(map[string]*schema_pb.Value)}}
 }
 
-// Build returns the constructed RecordValue message
-func (rvb *RecordValueBuilder) Build() *schema_pb.RecordValue {
+// RecordEnd returns the constructed RecordValue message
+func (rvb *RecordValueBuilder) RecordEnd() *schema_pb.RecordValue {
 	return rvb.recordValue
 }
 
-func (rvb *RecordValueBuilder) SetBoolValue(key string, value bool) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetBool(key string, value bool) *RecordValueBuilder {
 	rvb.recordValue.Fields[key] = &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: value}}
 	return rvb
 }
-func (rvb *RecordValueBuilder) SetIntValue(key string, value int32) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetInt(key string, value int32) *RecordValueBuilder {
 	rvb.recordValue.Fields[key] = &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: value}}
 	return rvb
 }
-func (rvb *RecordValueBuilder) SetLongValue(key string, value int64) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetLong(key string, value int64) *RecordValueBuilder {
 	rvb.recordValue.Fields[key] = &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: value}}
 	return rvb
 }
-func (rvb *RecordValueBuilder) SetFloatValue(key string, value float32) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetFloat(key string, value float32) *RecordValueBuilder {
 	rvb.recordValue.Fields[key] = &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: value}}
 	return rvb
 }
-func (rvb *RecordValueBuilder) SetDoubleValue(key string, value float64) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetDouble(key string, value float64) *RecordValueBuilder {
 	rvb.recordValue.Fields[key] = &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: value}}
 	return rvb
 }
-func (rvb *RecordValueBuilder) SetBytesValue(key string, value []byte) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetBytes(key string, value []byte) *RecordValueBuilder {
 	rvb.recordValue.Fields[key] = &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: value}}
 	return rvb
 }
-func (rvb *RecordValueBuilder) SetStringValue(key string, value string) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetString(key string, value string) *RecordValueBuilder {
 	rvb.recordValue.Fields[key] = &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: value}}
 	return rvb
 }
-func (rvb *RecordValueBuilder) SetRecordValue(key string, value *RecordValueBuilder) *RecordValueBuilder {
-	rvb.recordValue.Fields[key] = &schema_pb.Value{Kind: &schema_pb.Value_RecordValue{RecordValue: value.Build()}}
+func (rvb *RecordValueBuilder) SetRecord(key string, value *schema_pb.RecordValue) *RecordValueBuilder {
+	rvb.recordValue.Fields[key] = &schema_pb.Value{Kind: &schema_pb.Value_RecordValue{RecordValue: value}}
 	return rvb
 }
 
@@ -55,59 +55,59 @@ func (rvb *RecordValueBuilder) addListValue(key string, values []*schema_pb.Valu
 	return rvb
 }
 
-func (rvb *RecordValueBuilder) SetBoolListValue(key string, values ...bool) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetBoolList(key string, values ...bool) *RecordValueBuilder {
 	var listValues []*schema_pb.Value
 	for _, v := range values {
 		listValues = append(listValues, &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: v}})
 	}
 	return rvb.addListValue(key, listValues)
 }
-func (rvb *RecordValueBuilder) SetIntListValue(key string, values ...int32) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetIntList(key string, values ...int32) *RecordValueBuilder {
 	var listValues []*schema_pb.Value
 	for _, v := range values {
 		listValues = append(listValues, &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: v}})
 	}
 	return rvb.addListValue(key, listValues)
 }
-func (rvb *RecordValueBuilder) SetLongListValue(key string, values ...int64) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetLongList(key string, values ...int64) *RecordValueBuilder {
 	var listValues []*schema_pb.Value
 	for _, v := range values {
 		listValues = append(listValues, &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: v}})
 	}
 	return rvb.addListValue(key, listValues)
 }
-func (rvb *RecordValueBuilder) SetFloatListValue(key string, values ...float32) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetFloatList(key string, values ...float32) *RecordValueBuilder {
 	var listValues []*schema_pb.Value
 	for _, v := range values {
 		listValues = append(listValues, &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: v}})
 	}
 	return rvb.addListValue(key, listValues)
 }
-func (rvb *RecordValueBuilder) SetDoubleListValue(key string, values ...float64) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetDoubleList(key string, values ...float64) *RecordValueBuilder {
 	var listValues []*schema_pb.Value
 	for _, v := range values {
 		listValues = append(listValues, &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: v}})
 	}
 	return rvb.addListValue(key, listValues)
 }
-func (rvb *RecordValueBuilder) SetBytesListValue(key string, values ...[]byte) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetBytesList(key string, values ...[]byte) *RecordValueBuilder {
 	var listValues []*schema_pb.Value
 	for _, v := range values {
 		listValues = append(listValues, &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: v}})
 	}
 	return rvb.addListValue(key, listValues)
 }
-func (rvb *RecordValueBuilder) SetStringListValue(key string, values ...string) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetStringList(key string, values ...string) *RecordValueBuilder {
 	var listValues []*schema_pb.Value
 	for _, v := range values {
 		listValues = append(listValues, &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: v}})
 	}
 	return rvb.addListValue(key, listValues)
 }
-func (rvb *RecordValueBuilder) SetRecordListValue(key string, values ...*RecordValueBuilder) *RecordValueBuilder {
+func (rvb *RecordValueBuilder) SetRecordList(key string, values ...*schema_pb.RecordValue) *RecordValueBuilder {
 	var listValues []*schema_pb.Value
 	for _, v := range values {
-		listValues = append(listValues, &schema_pb.Value{Kind: &schema_pb.Value_RecordValue{RecordValue: v.Build()}})
+		listValues = append(listValues, &schema_pb.Value{Kind: &schema_pb.Value_RecordValue{RecordValue: v}})
 	}
 	return rvb.addListValue(key, listValues)
 }

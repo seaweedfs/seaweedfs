@@ -73,18 +73,21 @@ func testWritingParquetFile(t *testing.T, count int, filename string, parquetSch
 	for i := 0; i < count; i++ {
 		rowBuilder.Reset()
 		// generate random data
-		recordValue := NewRecordValueBuilder().
-			SetLongValue("ID", 1+int64(i)).
-			SetLongValue("CreatedAt", 2+2*int64(i)).
-			SetRecordValue("Person", NewRecordValueBuilder().
-				SetStringValue("zName", fmt.Sprintf("john_%d", i)).
-			SetStringListValue("emails",
-					fmt.Sprintf("john_%d@a.com", i),
-					fmt.Sprintf("john_%d@b.com", i),
-					fmt.Sprintf("john_%d@c.com", i),
-					fmt.Sprintf("john_%d@d.com", i),
-					fmt.Sprintf("john_%d@e.com", i))).
-			SetStringValue("Company", fmt.Sprintf("company_%d", i)).Build()
+		recordValue := RecordBegin().
+			SetLong("ID", 1+int64(i)).
+			SetLong("CreatedAt", 2+2*int64(i)).
+			SetRecord("Person",
+				RecordBegin().
+					SetString("zName", fmt.Sprintf("john_%d", i)).
+					SetStringList("emails",
+						fmt.Sprintf("john_%d@a.com", i),
+						fmt.Sprintf("john_%d@b.com", i),
+						fmt.Sprintf("john_%d@c.com", i),
+						fmt.Sprintf("john_%d@d.com", i),
+						fmt.Sprintf("john_%d@e.com", i)).
+				RecordEnd()).
+			SetString("Company", fmt.Sprintf("company_%d", i)).
+			RecordEnd()
 		AddRecordValue(rowBuilder, recordType, parquetLevels, recordValue)
 
 		if count < 10 {
