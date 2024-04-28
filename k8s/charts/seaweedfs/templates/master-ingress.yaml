@@ -11,9 +11,9 @@ kind: Ingress
 metadata:
   name: ingress-{{ template "seaweedfs.name" . }}-master
   namespace: {{ .Release.Namespace }}
-  {{- if .Values.master.ingress.annotations }}
+  {{- with .Values.master.ingress.annotations }}
   annotations:
-    {{ tpl .Values.master.ingress.annotations . | nindent 4 | trim }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}

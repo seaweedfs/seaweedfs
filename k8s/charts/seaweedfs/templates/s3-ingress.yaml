@@ -10,9 +10,9 @@ kind: Ingress
 metadata:
   name: ingress-{{ template "seaweedfs.name" . }}-s3
   namespace: {{ .Release.Namespace }}
-  {{- if .Values.s3.ingress.annotations }}
+  {{- with .Values.s3.ingress.annotations }}
   annotations:
-    {{- tpl .Values.s3.ingress.annotations . | nindent 4 }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
