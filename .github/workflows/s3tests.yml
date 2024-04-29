@@ -194,4 +194,7 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_ranged_request_skip_leading_bytes_response_code \
           s3tests_boto3/functional/test_s3.py::test_ranged_request_return_trailing_bytes_response_code \
           s3tests_boto3/functional/test_s3.py::test_copy_object_ifmatch_good \
-          s3tests_boto3/functional/test_s3.py::test_copy_object_ifnonematch_failed
+          s3tests_boto3/functional/test_s3.py::test_copy_object_ifnonematch_failed \
+          s3tests_boto3/functional/test_s3.py::test_lifecycle_set \
+          s3tests_boto3/functional/test_s3.py::test_lifecycle_get \
+          s3tests_boto3/functional/test_s3.py::test_lifecycle_set_filter

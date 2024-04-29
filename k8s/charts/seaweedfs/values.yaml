@@ -171,7 +171,7 @@ master:
     className: "nginx"
     # host: false for "*" hostname
     host: "master.seaweedfs.local"
-    annotations: |
+    annotations:
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
       nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Master'
@@ -540,7 +540,7 @@ filer:
     className: "nginx"
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
-    annotations: |
+    annotations:
       nginx.ingress.kubernetes.io/backend-protocol: GRPC
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
@@ -746,7 +746,7 @@ s3:
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
     # additional ingress annotations for the s3 endpoint
-    annotations: ""
+    annotations: {}
     tls: []
 
 certificates:

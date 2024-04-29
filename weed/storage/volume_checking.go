@@ -109,6 +109,9 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 			return 0, fmt.Errorf("verifyNeedleIntegrity check %s entry offset %d size %d: %v", datFile.Name(), offset, size, err)
 		}
 		n.AppendAtNs = util.BytesToUint64(bytes)
+		if n.HasTtl() {
+			return n.AppendAtNs, nil
+		}
 		fileTailOffset := offset + needle.GetActualSize(size, v)
 		fileSize, _, err := datFile.GetStat()
 		if err != nil {
