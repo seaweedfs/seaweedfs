@@ -148,7 +148,7 @@ require (
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/rclone/rclone v1.66.0
-	github.com/rdleal/intervalst v1.3.0
+	github.com/rdleal/intervalst v1.4.0
 	github.com/schollz/progressbar/v3 v3.14.2
 	github.com/shirou/gopsutil/v3 v3.24.3
 	github.com/tikv/client-go/v2 v2.0.7
