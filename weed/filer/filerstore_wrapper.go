@@ -32,7 +32,7 @@ type VirtualFilerStore interface {
 
 type FilerStoreWrapper struct {
 	defaultStore   FilerStore
-	pathToStore    ptrie.Trie
+	pathToStore    ptrie.Trie[string]
 	storeIdToStore map[string]FilerStore
 }
 
@@ -42,7 +42,7 @@ func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 	}
 	return &FilerStoreWrapper{
 		defaultStore:   store,
-		pathToStore:    ptrie.New(),
+		pathToStore:    ptrie.New[string](),
 		storeIdToStore: make(map[string]FilerStore),
 	}
 }
@@ -89,8 +89,8 @@ func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerSto
 		return
 	}
 	var storeId string
-	fsw.pathToStore.MatchPrefix([]byte(path), func(key []byte, value interface{}) bool {
-		storeId = value.(string)
+	fsw.pathToStore.MatchPrefix([]byte(path), func(key []byte, value string) bool {
+		storeId = value
 		return false
 	})
 	if storeId != "" {
