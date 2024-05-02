@@ -73,10 +73,10 @@ func (r *MyRecord) ToRecordValue() *schema_pb.RecordValue {
 		SetBytes("key", r.Key).
 		SetBytes("field1", r.Field1).
 		SetString("field2", r.Field2).
-		SetInt("field3", int32(r.Field3)).
-		SetLong("field4", r.Field4).
-		SetFloat("field5", r.Field5).
-		SetDouble("field6", r.Field6).
+		SetInt32("field3", int32(r.Field3)).
+		SetInt64("field4", r.Field4).
+		SetFloat32("field5", r.Field5).
+		SetFloat64("field6", r.Field6).
 		SetBool("field7", r.Field7).
 		RecordEnd()
 }
@@ -88,10 +88,10 @@ func main() {
 		WithField("key", schema.TypeBytes).
 		WithField("field1", schema.TypeBytes).
 		WithField("field2", schema.TypeString).
-		WithField("field3", schema.TypeInteger).
-		WithField("field4", schema.TypeLong).
-		WithField("field5", schema.TypeFloat).
-		WithField("field6", schema.TypeDouble).
+		WithField("field3", schema.TypeInt32).
+		WithField("field4", schema.Type64).
+		WithField("field5", schema.TypeFloat32).
+		WithField("field6", schema.TypeFloat64).
 		WithField("field7", schema.TypeBoolean).
 		RecordTypeEnd()
 

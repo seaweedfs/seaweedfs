@@ -31,7 +31,7 @@ func TestStructToSchema(t *testing.T) {
 				}{},
 			},
 			want: RecordTypeBegin().
-				WithField("Field1", TypeInteger).
+				WithField("Field1", TypeInt32).
 				WithField("Field2", TypeString).
 				RecordTypeEnd(),
 		},
@@ -44,7 +44,7 @@ func TestStructToSchema(t *testing.T) {
 				}{},
 			},
 			want: RecordTypeBegin().
-				WithField("Field1", ListOf(TypeInteger)).
+				WithField("Field1", ListOf(TypeInt32)).
 				WithField("Field2", TypeString).
 				RecordTypeEnd(),
 		},
@@ -71,11 +71,11 @@ func TestStructToSchema(t *testing.T) {
 				}{},
 			},
 			want: RecordTypeBegin().
-				WithField("Field1", TypeInteger).
+				WithField("Field1", TypeInt32).
 				WithRecordField("Field2",
 					RecordTypeBegin().
 						WithField("Field3", TypeString).
-						WithField("Field4", TypeInteger).
+						WithField("Field4", TypeInt32).
 					RecordTypeEnd(),
 				).
 				RecordTypeEnd(),
@@ -96,10 +96,10 @@ func TestStructToSchema(t *testing.T) {
 				}{},
 			},
 			want: RecordTypeBegin().
-				WithField("Field1", TypeInteger).
+				WithField("Field1", TypeInt32).
 				WithRecordField("Field2", RecordTypeBegin().
 					WithField("Field3", TypeString).
-					WithField("Field4", ListOf(TypeInteger)).
+					WithField("Field4", ListOf(TypeInt32)).
 					WithRecordField("Field5",
 						RecordTypeBegin().
 							WithField("Field6", TypeString).

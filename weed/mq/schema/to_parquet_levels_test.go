@@ -19,8 +19,8 @@ func TestToParquetLevels(t *testing.T) {
 			name: "nested type",
 			args: args{
 				RecordTypeBegin().
-					WithField("ID", TypeLong).
-					WithField("CreatedAt", TypeLong).
+					WithField("ID", Type64).
+					WithField("CreatedAt", Type64).
 					WithRecordField("Person",
 						RecordTypeBegin().
 							WithField("zName", TypeString).

@@ -19,13 +19,13 @@ func reflectTypeToSchemaType(t reflect.Type) *schema_pb.Type {
 	case reflect.Bool:
 		return TypeBoolean
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
-		return TypeInteger
+		return TypeInt32
 	case reflect.Int64:
-		return TypeLong
+		return Type64
 	case reflect.Float32:
-		return TypeFloat
+		return TypeFloat32
 	case reflect.Float64:
-		return TypeDouble
+		return TypeFloat64
 	case reflect.String:
 		return TypeString
 	case reflect.Slice:

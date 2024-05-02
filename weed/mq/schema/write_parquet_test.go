@@ -13,8 +13,8 @@ import (
 func TestWriteReadParquet(t *testing.T) {
 	// create a schema_pb.RecordType
 	recordType := RecordTypeBegin().
-		WithField("ID", TypeLong).
-		WithField("CreatedAt", TypeLong).
+		WithField("ID", Type64).
+		WithField("CreatedAt", Type64).
 		WithRecordField("Person",
 			RecordTypeBegin().
 				WithField("zName", TypeString).
@@ -74,8 +74,8 @@ func testWritingParquetFile(t *testing.T, count int, filename string, parquetSch
 		rowBuilder.Reset()
 		// generate random data
 		recordValue := RecordBegin().
-			SetLong("ID", 1+int64(i)).
-			SetLong("CreatedAt", 2+2*int64(i)).
+			SetInt64("ID", 1+int64(i)).
+			SetInt64("CreatedAt", 2+2*int64(i)).
 			SetRecord("Person",
 				RecordBegin().
 					SetString("zName", fmt.Sprintf("john_%d", i)).
