@@ -72,9 +72,9 @@ func toScalarValue(scalarType schema_pb.ScalarType, levels *ParquetLevels, value
 		return &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: value.Int32()}}, valueIndex+1, nil
 	case schema_pb.ScalarType_INT64:
 		return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: value.Int64()}}, valueIndex+1,  nil
-	case schema_pb.ScalarType_FLOAT32:
+	case schema_pb.ScalarType_FLOAT:
 		return &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: value.Float()}}, valueIndex+1, nil
-	case schema_pb.ScalarType_FLOAT64:
+	case schema_pb.ScalarType_DOUBLE:
 		return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: value.Double()}}, valueIndex+1, nil
 	case schema_pb.ScalarType_BYTES:
 		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: value.ByteArray()}}, valueIndex+1, nil

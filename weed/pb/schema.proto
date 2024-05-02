@@ -32,8 +32,8 @@ enum ScalarType {
     BOOL = 0;
     INT32 = 1;
     INT64 = 3;
-    FLOAT32 = 4;
-    FLOAT64 = 5;
+    FLOAT = 4;
+    DOUBLE = 5;
     BYTES = 6;
     STRING = 7;
 }

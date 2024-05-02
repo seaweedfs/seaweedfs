@@ -51,9 +51,9 @@ func toParquetFieldTypeScalar(scalarType schema_pb.ScalarType) (parquet.Node, er
 		return parquet.Leaf(parquet.Int32Type), nil
 	case schema_pb.ScalarType_INT64:
 		return parquet.Leaf(parquet.Int64Type), nil
-	case schema_pb.ScalarType_FLOAT32:
+	case schema_pb.ScalarType_FLOAT:
 		return parquet.Leaf(parquet.FloatType), nil
-	case schema_pb.ScalarType_FLOAT64:
+	case schema_pb.ScalarType_DOUBLE:
 		return parquet.Leaf(parquet.DoubleType), nil
 	case schema_pb.ScalarType_BYTES:
 		return parquet.Leaf(parquet.ByteArrayType), nil

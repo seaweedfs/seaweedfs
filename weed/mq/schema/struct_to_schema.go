@@ -23,9 +23,9 @@ func reflectTypeToSchemaType(t reflect.Type) *schema_pb.Type {
 	case reflect.Int64:
 		return TypeInt64
 	case reflect.Float32:
-		return TypeFloat32
+		return TypeFloat
 	case reflect.Float64:
-		return TypeFloat64
+		return TypeDouble
 	case reflect.String:
 		return TypeString
 	case reflect.Slice:
