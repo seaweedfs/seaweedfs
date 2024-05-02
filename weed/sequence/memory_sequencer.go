@@ -4,7 +4,7 @@ import (
 	"sync"
 )
 
-// just for testing
+// default Sequencer
 type MemorySequencer struct {
 	counter      uint64
 	sequenceLock sync.Mutex

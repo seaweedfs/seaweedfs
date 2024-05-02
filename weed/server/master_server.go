@@ -59,7 +59,7 @@ type MasterServer struct {
 
 	preallocateSize int64
 
-	Topo *topology.Topology
+	Topo                    *topology.Topology
 	vg                      *topology.VolumeGrowth
 	volumeGrowthRequestChan chan *topology.VolumeGrowRequest
 
@@ -347,6 +347,8 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 			glog.Error(err)
 			seq = nil
 		}
+	case "raft":
+		fallthrough
 	default:
 		seq = sequence.NewMemorySequencer()
 	}
