@@ -45,6 +45,7 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 
 func main() {
 	flag.Parse()
+
 	config := &pub_client.PublisherConfiguration{
 		Topic:          topic.NewTopic(*namespace, *t),
 		PartitionCount: int32(*partitionCount),
