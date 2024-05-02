@@ -89,7 +89,7 @@ func main() {
 		WithField("field1", schema.TypeBytes).
 		WithField("field2", schema.TypeString).
 		WithField("field3", schema.TypeInt32).
-		WithField("field4", schema.Type64).
+		WithField("field4", schema.TypeInt64).
 		WithField("field5", schema.TypeFloat32).
 		WithField("field6", schema.TypeFloat64).
 		WithField("field7", schema.TypeBoolean).

@@ -66,15 +66,15 @@ func toScalarValue(scalarType schema_pb.ScalarType, levels *ParquetLevels, value
 		return nil, valueIndex, nil
 	}
 	switch scalarType {
-	case schema_pb.ScalarType_BOOLEAN:
+	case schema_pb.ScalarType_BOOL:
 		return &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: value.Boolean()}}, valueIndex+1, nil
-	case schema_pb.ScalarType_INTEGER:
+	case schema_pb.ScalarType_INT32:
 		return &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: value.Int32()}}, valueIndex+1, nil
-	case schema_pb.ScalarType_LONG:
+	case schema_pb.ScalarType_INT64:
 		return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: value.Int64()}}, valueIndex+1,  nil
-	case schema_pb.ScalarType_FLOAT:
+	case schema_pb.ScalarType_FLOAT32:
 		return &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: value.Float()}}, valueIndex+1, nil
-	case schema_pb.ScalarType_DOUBLE:
+	case schema_pb.ScalarType_FLOAT64:
 		return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: value.Double()}}, valueIndex+1, nil
 	case schema_pb.ScalarType_BYTES:
 		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: value.ByteArray()}}, valueIndex+1, nil

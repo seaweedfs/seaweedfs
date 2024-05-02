@@ -13,8 +13,8 @@ import (
 func TestWriteReadParquet(t *testing.T) {
 	// create a schema_pb.RecordType
 	recordType := RecordTypeBegin().
-		WithField("ID", Type64).
-		WithField("CreatedAt", Type64).
+		WithField("ID", TypeInt64).
+		WithField("CreatedAt", TypeInt64).
 		WithRecordField("Person",
 			RecordTypeBegin().
 				WithField("zName", TypeString).

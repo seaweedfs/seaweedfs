@@ -29,11 +29,11 @@ message Type {
 }
 
 enum ScalarType {
-    BOOLEAN = 0;
-    INTEGER = 1;
-    LONG = 3;
-    FLOAT = 4;
-    DOUBLE = 5;
+    BOOL = 0;
+    INT32 = 1;
+    INT64 = 3;
+    FLOAT32 = 4;
+    FLOAT64 = 5;
     BYTES = 6;
     STRING = 7;
 }

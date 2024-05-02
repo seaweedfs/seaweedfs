@@ -14,7 +14,7 @@ func TestEnumScalarType(t *testing.T) {
 		enum     ScalarType
 		expected int32
 	}{
-		{"Boolean", ScalarType_BOOLEAN, 0},
+		{"Boolean", ScalarType_BOOL, 0},
 		{"Integer", ScalarType_INTEGER, 1},
 		{"Long", ScalarType_LONG, 3},
 		{"Float", ScalarType_FLOAT, 4},

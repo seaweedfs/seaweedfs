@@ -45,15 +45,15 @@ func toParquetFieldTypeList(listType *schema_pb.ListType) (parquet.Node, error) 
 
 func toParquetFieldTypeScalar(scalarType schema_pb.ScalarType) (parquet.Node, error) {
 	switch scalarType {
-	case schema_pb.ScalarType_BOOLEAN:
+	case schema_pb.ScalarType_BOOL:
 		return parquet.Leaf(parquet.BooleanType), nil
-	case schema_pb.ScalarType_INTEGER:
+	case schema_pb.ScalarType_INT32:
 		return parquet.Leaf(parquet.Int32Type), nil
-	case schema_pb.ScalarType_LONG:
+	case schema_pb.ScalarType_INT64:
 		return parquet.Leaf(parquet.Int64Type), nil
-	case schema_pb.ScalarType_FLOAT:
+	case schema_pb.ScalarType_FLOAT32:
 		return parquet.Leaf(parquet.FloatType), nil
-	case schema_pb.ScalarType_DOUBLE:
+	case schema_pb.ScalarType_FLOAT64:
 		return parquet.Leaf(parquet.DoubleType), nil
 	case schema_pb.ScalarType_BYTES:
 		return parquet.Leaf(parquet.ByteArrayType), nil
