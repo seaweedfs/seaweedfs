@@ -31,7 +31,7 @@ func (rtb *RecordTypeBuilder) RecordTypeEnd() *schema_pb.RecordType {
 	return rtb.recordType
 }
 
-func (rtb *RecordTypeBuilder) SetField(name string, scalarType *schema_pb.Type) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) WithField(name string, scalarType *schema_pb.Type) *RecordTypeBuilder {
 	rtb.recordType.Fields = append(rtb.recordType.Fields, &schema_pb.Field{
 		Name: name,
 		Type: scalarType,
@@ -39,7 +39,7 @@ func (rtb *RecordTypeBuilder) SetField(name string, scalarType *schema_pb.Type) 
 	return rtb
 }
 
-func (rtb *RecordTypeBuilder) SetRecordField(name string, recordType *schema_pb.RecordType) *RecordTypeBuilder {
+func (rtb *RecordTypeBuilder) WithRecordField(name string, recordType *schema_pb.RecordType) *RecordTypeBuilder {
 	rtb.recordType.Fields = append(rtb.recordType.Fields, &schema_pb.Field{
 		Name: name,
 		Type: &schema_pb.Type{Kind: &schema_pb.Type_RecordType{RecordType: recordType}},

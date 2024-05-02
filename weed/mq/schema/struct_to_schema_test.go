@@ -31,8 +31,8 @@ func TestStructToSchema(t *testing.T) {
 				}{},
 			},
 			want: RecordTypeBegin().
-					SetField("Field1", TypeInteger).
-					SetField("Field2", TypeString).
+				WithField("Field1", TypeInteger).
+				WithField("Field2", TypeString).
 				RecordTypeEnd(),
 		},
 		{
@@ -44,8 +44,8 @@ func TestStructToSchema(t *testing.T) {
 				}{},
 			},
 			want: RecordTypeBegin().
-					SetField("Field1", ListOf(TypeInteger)).
-					SetField("Field2", TypeString).
+				WithField("Field1", ListOf(TypeInteger)).
+				WithField("Field2", TypeString).
 				RecordTypeEnd(),
 		},
 		{
@@ -56,7 +56,7 @@ func TestStructToSchema(t *testing.T) {
 				}{},
 			},
 			want: RecordTypeBegin().
-					SetField("Field2", TypeBytes).
+				WithField("Field2", TypeBytes).
 				RecordTypeEnd(),
 		},
 		{
@@ -71,11 +71,11 @@ func TestStructToSchema(t *testing.T) {
 				}{},
 			},
 			want: RecordTypeBegin().
-				SetField("Field1", TypeInteger).
-				SetRecordField("Field2",
+				WithField("Field1", TypeInteger).
+				WithRecordField("Field2",
 					RecordTypeBegin().
-						SetField("Field3", TypeString).
-						SetField("Field4", TypeInteger).
+						WithField("Field3", TypeString).
+						WithField("Field4", TypeInteger).
 					RecordTypeEnd(),
 				).
 				RecordTypeEnd(),
@@ -96,14 +96,14 @@ func TestStructToSchema(t *testing.T) {
 				}{},
 			},
 			want: RecordTypeBegin().
-				SetField("Field1", TypeInteger).
-				SetRecordField("Field2", RecordTypeBegin().
-					SetField("Field3", TypeString).
-					SetField("Field4", ListOf(TypeInteger)).
-					SetRecordField("Field5",
+				WithField("Field1", TypeInteger).
+				WithRecordField("Field2", RecordTypeBegin().
+					WithField("Field3", TypeString).
+					WithField("Field4", ListOf(TypeInteger)).
+					WithRecordField("Field5",
 						RecordTypeBegin().
-							SetField("Field6", TypeString).
-							SetField("Field7", TypeBytes).
+							WithField("Field6", TypeString).
+							WithField("Field7", TypeBytes).
 						RecordTypeEnd(),
 					).RecordTypeEnd(),
 				).
