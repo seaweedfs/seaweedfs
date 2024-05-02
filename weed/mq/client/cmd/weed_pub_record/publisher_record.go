@@ -29,7 +29,7 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 	startTime := time.Now()
 	for i := 0; i < *messageCount / *concurrency; i++ {
 		// Simulate publishing a message
-		myRecord := genMyRecord(i)
+		myRecord := genMyRecord(int32(i))
 		if err := publisher.PublishRecord(myRecord.Key, myRecord.ToRecordValue()); err != nil {
 			fmt.Println(err)
 			break
@@ -48,14 +48,14 @@ type MyRecord struct {
 	Key    []byte
 	Field1 []byte
 	Field2 string
-	Field3 int
+	Field3 int32
 	Field4 int64
 	Field5 float32
 	Field6 float64
 	Field7 bool
 }
 
-func genMyRecord(id int) *MyRecord {
+func genMyRecord(id int32) *MyRecord {
 	return &MyRecord{
 		Key:    []byte(fmt.Sprintf("key-%s-%d", *clientName, id)),
 		Field1: []byte(fmt.Sprintf("field1-%s-%d", *clientName, id)),
@@ -73,7 +73,7 @@ func (r *MyRecord) ToRecordValue() *schema_pb.RecordValue {
 		SetBytes("key", r.Key).
 		SetBytes("field1", r.Field1).
 		SetString("field2", r.Field2).
-		SetInt32("field3", int32(r.Field3)).
+		SetInt32("field3", r.Field3).
 		SetInt64("field4", r.Field4).
 		SetFloat32("field5", r.Field5).
 		SetFloat64("field6", r.Field6).
