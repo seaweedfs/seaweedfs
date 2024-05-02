@@ -11,6 +11,13 @@ import (
 )
 
 func (p *TopicPublisher) Publish(key, value []byte) error {
+	if p.config.RecordType != nil {
+		return fmt.Errorf("record type is set, use PublishRecord instead")
+	}
+	return p.doPublish(key, value)
+}
+
+func (p *TopicPublisher) doPublish(key, value []byte) error {
 	hashKey := util.HashToInt32(key) % pub_balancer.MaxPartitionCount
 	if hashKey < 0 {
 		hashKey = -hashKey
@@ -34,7 +41,7 @@ func (p *TopicPublisher) PublishRecord(key []byte, recordValue *schema_pb.Record
 		return fmt.Errorf("failed to marshal record value: %v", err)
 	}
 
-	return p.Publish(key, value)
+	return p.doPublish(key, value)
 }
 
 func (p *TopicPublisher) FinishPublish() error {
