@@ -10,7 +10,7 @@ type Schema struct {
 }
 
 func NewSchema(recordType *schema_pb.RecordType) (*Schema, error) {
-	var fieldMap map[string]*schema_pb.Field
+	fieldMap := make( map[string]*schema_pb.Field)
 	for _, field := range recordType.Fields {
 		fieldMap[field.Name] = field
 	}
