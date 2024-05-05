@@ -15,6 +15,7 @@ import (
 
 var (
 	messageCount   = flag.Int("n", 1000, "message count")
+	messageDelay   = flag.Duration("d", time.Second, "delay between messages")
 	concurrency    = flag.Int("c", 4, "concurrent publishers")
 	partitionCount = flag.Int("p", 6, "partition count")
 
@@ -34,8 +35,10 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 			fmt.Println(err)
 			break
 		}
-		time.Sleep(time.Second)
-		// println("Published", string(key), string(value))
+		if *messageDelay > 0 {
+			time.Sleep(*messageDelay)
+			fmt.Printf("sent %+v\n", myRecord)
+		}
 	}
 	if err := publisher.FinishPublish(); err != nil {
 		fmt.Println(err)
