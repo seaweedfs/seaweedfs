@@ -79,6 +79,10 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress) {
 
 	r.Lock()
 	r.lastUpdateTime = time.Now()
+	// init candidateServers
+	for _, server := range servers {
+		r.candidateServers[server] = struct{}{}
+	}
 	r.Unlock()
 
 	r.addOneSnapshot(servers)
