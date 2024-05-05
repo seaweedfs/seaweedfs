@@ -241,6 +241,7 @@ func (p *TopicPublisher) doConfigureTopic() (err error) {
 				return err
 			})
 		if err == nil {
+			lastErr = nil
 			return nil
 		} else {
 			lastErr = fmt.Errorf("%s: %v", brokerAddress, err)
