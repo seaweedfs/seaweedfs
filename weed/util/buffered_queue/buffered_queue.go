@@ -95,10 +95,16 @@ func (q *BufferedQueue[T]) Dequeue() (T, bool) {
 		return a, false
 	}
 
+	q.maybeAdjustHeadIndex()
+
 	job := q.head.items[q.head.headIndex]
 	q.head.headIndex++
 	q.count--
 
+	return job, true
+}
+
+func (q *BufferedQueue[T]) maybeAdjustHeadIndex() {
 	if q.head.headIndex == q.chunkSize {
 		q.last.next = q.head
 		q.head = q.head.next
@@ -113,8 +119,6 @@ func (q *BufferedQueue[T]) Dequeue() (T, bool) {
 		//	fmt.Printf("Node: %+v\n", p)
 		//}
 	}
-
-	return job, true
 }
 
 func (q *BufferedQueue[T]) PeekHead() (T, bool) {
@@ -125,6 +129,8 @@ func (q *BufferedQueue[T]) PeekHead() (T, bool) {
 		var a T
 		return a, false
 	}
+
+	q.maybeAdjustHeadIndex()
 
 	job := q.head.items[q.head.headIndex]
 	return job, true
