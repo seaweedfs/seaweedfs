@@ -15,8 +15,8 @@ func TestEnumScalarType(t *testing.T) {
 		expected int32
 	}{
 		{"Boolean", ScalarType_BOOL, 0},
-		{"Integer", ScalarType_INTEGER, 1},
-		{"Long", ScalarType_LONG, 3},
+		{"Integer", ScalarType_INT32, 1},
+		{"Long", ScalarType_INT64, 3},
 		{"Float", ScalarType_FLOAT, 4},
 		{"Double", ScalarType_DOUBLE, 5},
 		{"Bytes", ScalarType_BYTES, 6},
@@ -33,7 +33,7 @@ func TestEnumScalarType(t *testing.T) {
 func TestField(t *testing.T) {
 	field := &Field{
 		Name:        "field_name",
-		Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INTEGER}},
+		Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INT32}},
 		FieldIndex:       1,
 		IsRepeated:  false,
 	}
@@ -45,7 +45,7 @@ func TestRecordType(t *testing.T) {
 		Fields: []*Field{
 			{
 				Name:        "field_1",
-				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INTEGER}},
+				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INT32}},
 				FieldIndex:       1,
 				IsRepeated:  false,
 			},
@@ -61,7 +61,7 @@ func TestRecordType(t *testing.T) {
 		Fields: []*Field{
 			{
 				Name:        "field_key",
-				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INTEGER}},
+				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INT32}},
 				FieldIndex:       1,
 				IsRepeated:  false,
 			},
