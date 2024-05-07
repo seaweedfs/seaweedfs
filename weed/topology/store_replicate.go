@@ -23,7 +23,7 @@ import (
 )
 
 func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5 string) (isUnchanged bool, err error) {
-
+	startTime := time.Now()
 	//check JWT
 	jwt := security.GetJwt(r)
 
@@ -37,16 +37,18 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 			return
 		}
 	}
-
+	glog.V(0).Infof("upload-1 %s", (time.Now().Sub(startTime)))
 	// read fsync value
 	fsync := false
 	if r.FormValue("fsync") == "true" {
 		fsync = true
 	}
-
+	glog.V(0).Infof("upload-2 %s", (time.Now().Sub(startTime)))
 	if s.GetVolume(volumeId) != nil {
+		glog.V(0).Infof("upload-3 %s", (time.Now().Sub(startTime)))
 		start := time.Now()
 		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, true, fsync)
+		glog.V(0).Infof("upload-4 %s", (time.Now().Sub(startTime)))
 		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToLocalDisk).Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
@@ -55,7 +57,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 			return
 		}
 	}
-
+	glog.V(0).Infof("upload-5 %s", (time.Now().Sub(startTime)))
 	if len(remoteLocations) > 0 { //send to other replica locations
 		start := time.Now()
 		err = DistributedOperation(remoteLocations, func(location operation.Location) error {
@@ -119,6 +121,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 			return false, err
 		}
 	}
+	glog.V(0).Infof("upload-6 %s", (time.Now().Sub(startTime)))
 	return
 }
 
