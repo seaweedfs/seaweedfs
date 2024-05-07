@@ -133,7 +133,7 @@ func (store *UniversalRedisLuaStore) ListDirectoryPrefixedEntries(ctx context.Co
 	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *UniversalRedisLuaStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+func (store *UniversalRedisLuaStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	return lastFileName, filer.ErrUnsupportedRecursivePrefixed
 }
 

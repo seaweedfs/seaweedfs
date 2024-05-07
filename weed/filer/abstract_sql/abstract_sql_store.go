@@ -332,8 +332,40 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 	return lastFileName, nil
 }
 
-func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
-	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", nil)
+func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	db, bucket, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
+	if err != nil {
+		return lastFileName, fmt.Errorf("findDB %s : %v", dirPath, err)
+	}
+	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), util.HashStringToLong(string(shortPath)), startFileName, string(shortPath), prefix+"%", prefix+"%", limit+1)
+	if err != nil {
+		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var data []byte
+		if err = rows.Scan(&name, &data); err != nil {
+			glog.V(0).Infof("scan %s : %v", dirPath, err)
+			return lastFileName, fmt.Errorf("scan %s: %v", dirPath, err)
+		}
+		lastFileName = name
+
+		entry := &filer.Entry{
+			FullPath: util.NewFullPath(string(dirPath), name),
+		}
+		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
+			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
+			return lastFileName, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
+		}
+
+		if !eachEntryFunc(entry) {
+			break
+		}
+	}
+
+	return lastFileName, nil
 }
 
 func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {

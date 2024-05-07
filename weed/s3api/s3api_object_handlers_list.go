@@ -137,10 +137,49 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 
 	if s3a.option.AllowListRecursive {
 		err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			glog.V(0).Infof("doListFilerRecursiveEntries reqDir: %s, prefix: %s, delimiter: %s, cursor: %+v", reqDir, prefix, delimiter, cursor)
+			nextMarker, doErr = s3a.doListFilerRecursiveEntries(client, reqDir, prefix, cursor, marker, delimiter, false,
+				func(dir string, entry *filer_pb.Entry) {
+					if entry.IsDirectory {
+						if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
+							commonPrefixes = append(commonPrefixes, PrefixEntry{
+								Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+							})
+						}
+						return
+					}
+					storageClass := "STANDARD"
+					if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
+						storageClass = string(v)
+					}
 
+					contents = append(contents, ListEntry{
+						Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
+						LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
+						ETag:         "\"" + filer.ETag(entry) + "\"",
+						Size:         int64(filer.FileSize(entry)),
+						Owner: CanonicalUser{
+							ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
+							DisplayName: entry.Attributes.UserName,
+						},
+						StorageClass: StorageClass(storageClass),
+					})
+					cursor.maxKeys--
+				},
+			)
 			return nil
 		})
-
+		response = ListBucketResult{
+			Name:           bucket,
+			Prefix:         originalPrefix,
+			Marker:         originalMarker,
+			NextMarker:     nextMarker,
+			MaxKeys:        maxKeys,
+			Delimiter:      delimiter,
+			IsTruncated:    cursor.isTruncated,
+			Contents:       contents,
+			CommonPrefixes: commonPrefixes,
+		}
 		return
 	}
 

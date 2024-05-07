@@ -117,11 +117,11 @@ func (t *FilerStorePathTranslator) ListDirectoryEntries(ctx context.Context, dir
 	})
 }
 
-func (t *FilerStorePathTranslator) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
+func (t *FilerStorePathTranslator) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (string, error) {
 
 	newFullPath := t.translatePath(dirPath)
 
-	return t.actualStore.ListRecursivePrefixedEntries(ctx, newFullPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
+	return t.actualStore.ListRecursivePrefixedEntries(ctx, newFullPath, startFileName, includeStartFile, limit, prefix, func(entry *Entry) bool {
 		entry.FullPath = dirPath[:len(t.storeRoot)-1] + entry.FullPath
 		return eachEntryFunc(entry)
 	})

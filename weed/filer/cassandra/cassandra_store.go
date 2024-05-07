@@ -183,7 +183,7 @@ func (store *CassandraStore) ListDirectoryPrefixedEntries(ctx context.Context, d
 	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *CassandraStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+func (store *CassandraStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	return lastFileName, filer.ErrUnsupportedRecursivePrefixed
 }
 
