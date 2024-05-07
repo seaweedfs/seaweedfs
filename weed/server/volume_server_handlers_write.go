@@ -16,6 +16,7 @@ import (
 )
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	if e := r.ParseForm(); e != nil {
 		glog.V(0).Infoln("form parse error:", e)
 		writeJsonError(w, r, http.StatusBadRequest, e)
@@ -46,6 +47,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	ret := operation.UploadResult{}
 	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, contentMd5)
+	glog.V(0).Infof("upload success %s", (time.Now().Sub(start)))
 	if writeError != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, writeError)
 		return
@@ -68,6 +70,8 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	setEtag(w, ret.ETag)
 	w.Header().Set("Content-MD5", contentMd5)
 	writeJsonQuiet(w, r, httpStatus, ret)
+	glog.V(0).Infof("upload finish %s", (time.Now().Sub(start)))
+
 }
 
 func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
