@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy"
@@ -87,12 +86,14 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 		postPolicyForm, err := policy.ParsePostPolicyForm(string(policyBytes))
 		if err != nil {
+			glog.Errorf("parse JSON policy string into typed PostPolicyForm structure error: %v", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrPostPolicyConditionInvalidFormat)
 			return
 		}
 
 		// Make sure formValues adhere to policy restrictions.
 		if err = policy.CheckPostPolicy(formValues, postPolicyForm); err != nil {
+			glog.Errorf("policy check failed: %v", err)
 			w.Header().Set("Location", r.URL.Path)
 			w.WriteHeader(http.StatusTemporaryRedirect)
 			return
