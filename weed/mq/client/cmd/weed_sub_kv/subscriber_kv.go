@@ -25,7 +25,6 @@ func main() {
 	flag.Parse()
 
 	subscriberConfig := &sub_client.SubscriberConfiguration{
-		ClientId:                fmt.Sprintf("client-%d", *clientId),
 		ConsumerGroup:           "test",
 		ConsumerGroupInstanceId: fmt.Sprintf("client-%d", *clientId),
 		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),

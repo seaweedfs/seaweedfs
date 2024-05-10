@@ -11,9 +11,6 @@ type SubscriberConfiguration struct {
 	ClientId                string
 	ConsumerGroup           string
 	ConsumerGroupInstanceId string
-	GroupMinimumPeers       int32
-	GroupMaximumPeers       int32
-	BootstrapServers        []string
 	GrpcDialOption          grpc.DialOption
 }
 
