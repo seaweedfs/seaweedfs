@@ -51,7 +51,7 @@ func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 		}
 		return nil
 	})
-	glog.V(1).Infof("max file key: %v count: %d deleted %d for file: %s", nm.MaxFileKey(), nm.FileCount(), nm.DeletedCount(), file.Name())
+	glog.V(1).Infof("max file key: %v count: %d deleted: %d for file: %s", nm.MaxFileKey(), nm.FileCount(), nm.DeletedCount(), file.Name())
 	return nm, e
 }
 
