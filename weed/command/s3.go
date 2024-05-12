@@ -51,6 +51,7 @@ type S3Options struct {
 	metricsHttpPort           *int
 	allowEmptyFolder          *bool
 	allowDeleteBucketNotEmpty *bool
+	allowListRecursive        *bool
 	auditLogConfig            *string
 	localFilerSocket          *string
 	dataCenter                *string
@@ -77,6 +78,7 @@ func init() {
 	s3StandaloneOptions.metricsHttpPort = cmdS3.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	s3StandaloneOptions.allowListRecursive = cmdS3.Flag.Bool("allowListRecursive", false, "allows recursive listing of directories by prefix on the side of the filer store with SQL")
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
 	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 }
@@ -228,6 +230,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		GrpcDialOption:            grpcDialOption,
 		AllowEmptyFolder:          *s3opt.allowEmptyFolder,
 		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
+		AllowListRecursive:        *s3opt.allowListRecursive,
 		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,
 		FilerGroup:                filerGroup,

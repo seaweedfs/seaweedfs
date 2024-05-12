@@ -20,6 +20,7 @@ type SqlGenerator interface {
 	GetSqlDeleteFolderChildren(tableName string) string
 	GetSqlListExclusive(tableName string) string
 	GetSqlListInclusive(tableName string) string
+	GetSqlListRecursive(tableName string) string
 	GetSqlCreateTable(tableName string) string
 	GetSqlDropTable(tableName string) string
 }
@@ -329,6 +330,10 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 	}
 
 	return lastFileName, nil
+}
+
+func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", nil)
 }
 
 func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {

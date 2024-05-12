@@ -97,6 +97,7 @@ message ListEntriesRequest {
     string startFromFileName = 3;
     bool inclusiveStartFrom = 4;
     uint32 limit = 5;
+    bool recursive = 6;
 }
 
 message ListEntriesResponse {
@@ -110,6 +111,7 @@ message RemoteEntry {
     int64 remote_mtime = 4;
     int64 remote_size = 5;
 }
+
 message Entry {
     string name = 1;
     bool is_directory = 2;
@@ -198,6 +200,7 @@ message UpdateEntryRequest {
     bool is_from_other_cluster = 3;
     repeated int32 signatures = 4;
 }
+
 message UpdateEntryResponse {
 }
 
@@ -206,6 +209,7 @@ message AppendToEntryRequest {
     string entry_name = 2;
     repeated FileChunk chunks = 3;
 }
+
 message AppendToEntryResponse {
 }
 
@@ -242,11 +246,13 @@ message StreamRenameEntryRequest {
     string new_name = 4;
     repeated int32 signatures = 5;
 }
+
 message StreamRenameEntryResponse {
     string directory = 1;
     EventNotification event_notification = 2;
     int64 ts_ns = 3;
 }
+
 message AssignVolumeRequest {
     int32 count = 1;
     string collection = 2;
@@ -283,6 +289,7 @@ message Location {
     uint32 grpc_port = 3;
     string data_center = 4;
 }
+
 message LookupVolumeResponse {
     map<string, Locations> locations_map = 1;
 }
@@ -290,13 +297,16 @@ message LookupVolumeResponse {
 message Collection {
     string name = 1;
 }
+
 message CollectionListRequest {
     bool include_normal_volumes = 1;
     bool include_ec_volumes = 2;
 }
+
 message CollectionListResponse {
     repeated Collection collections = 1;
 }
+
 message DeleteCollectionRequest {
     string collection = 1;
 }
@@ -310,6 +320,7 @@ message StatisticsRequest {
     string ttl = 3;
     string disk_type = 4;
 }
+
 message StatisticsResponse {
     uint64 total_size = 4;
     uint64 used_size = 5;
@@ -320,6 +331,7 @@ message PingRequest {
     string target = 1; // default to ping itself
     string target_type = 2;
 }
+
 message PingResponse {
     int64 start_time_ns = 1;
     int64 remote_time_ns = 2;
@@ -328,6 +340,7 @@ message PingResponse {
 
 message GetFilerConfigurationRequest {
 }
+
 message GetFilerConfigurationResponse {
     repeated string masters = 1;
     string replication = 2;
@@ -354,6 +367,7 @@ message SubscribeMetadataRequest {
     int32 client_epoch = 9;
     repeated string directories = 10;  // exact directory to watch
 }
+
 message SubscribeMetadataResponse {
     string directory = 1;
     EventNotification event_notification = 2;
@@ -372,6 +386,7 @@ message KeepConnectedRequest {
     uint32 grpc_port = 2;
     repeated string resources = 3;
 }
+
 message KeepConnectedResponse {
 }
 
@@ -396,14 +411,17 @@ message LocateBrokerResponse {
 message KvGetRequest {
     bytes key = 1;
 }
+
 message KvGetResponse {
     bytes value = 1;
     string error = 2;
 }
+
 message KvPutRequest {
     bytes key = 1;
     bytes value = 2;
 }
+
 message KvPutResponse {
     string error = 1;
 }
@@ -437,6 +455,7 @@ message CacheRemoteObjectToLocalClusterRequest {
     string directory = 1;
     string name = 2;
 }
+
 message CacheRemoteObjectToLocalClusterResponse {
     Entry entry = 1;
 }
@@ -451,36 +470,44 @@ message LockRequest {
     bool is_moved = 4;
     string owner = 5;
 }
+
 message LockResponse {
     string renew_token = 1;
     string lock_owner = 2;
     string lock_host_moved_to = 3;
     string error = 4;
 }
+
 message UnlockRequest {
     string name = 1;
     string renew_token = 2;
     bool is_moved = 3;
 }
+
 message UnlockResponse {
     string error = 1;
     string moved_to = 2;
 }
+
 message FindLockOwnerRequest {
     string name = 1;
     bool is_moved = 2;
 }
+
 message FindLockOwnerResponse {
     string owner = 1;
 }
+
 message Lock {
     string name = 1;
     string renew_token = 2;
     int64 expired_at_ns = 3;
     string owner = 4;
 }
+
 message TransferLocksRequest {
     repeated Lock locks = 1;
 }
+
 message TransferLocksResponse {
 }

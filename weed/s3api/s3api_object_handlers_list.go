@@ -135,6 +135,15 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
 	}
 
+	if s3a.option.AllowListRecursive {
+		err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+
+			return nil
+		})
+
+		return
+	}
+
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for {
@@ -310,6 +319,38 @@ func toParentAndDescendants(dirAndName string) (dir, name string) {
 		dir, name = dirAndName[0:sepIndex], dirAndName[sepIndex+1:]
 	} else {
 		name = dirAndName
+	}
+	return
+}
+
+func (s3a *S3ApiServer) doListFilerRecursiveEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
+	if prefix == "/" && delimiter == "/" {
+		return
+	}
+	request := &filer_pb.ListEntriesRequest{
+		Directory:          dir,
+		Prefix:             prefix,
+		Limit:              uint32(cursor.maxKeys + 2),
+		StartFromFileName:  marker,
+		InclusiveStartFrom: inclusiveStartFrom,
+		Recursive:          true,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, listErr := client.ListEntries(ctx, request)
+	if listErr != nil {
+		return "", fmt.Errorf("list entires %+v: %v", request, listErr)
+	}
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			if recvErr == io.EOF {
+				break
+			} else {
+				return "", fmt.Errorf("iterating entires %+v: %v", request, recvErr)
+			}
+		}
+		eachEntryFn(dir, resp.Entry)
 	}
 	return
 }
