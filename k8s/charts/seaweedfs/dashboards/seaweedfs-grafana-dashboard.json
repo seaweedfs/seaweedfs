@@ -95,7 +95,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum by (pod) (SeaweedFS_master_is_leader{job=\"seaweedfs-master\"})",
+          "expr": "sum by (pod) (SeaweedFS_master_is_leader{job=\"seaweedfs-master\", namespace=\"$NAMESPACE\"})",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -184,7 +184,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum by (pod) (SeaweedFS_master_leader_changes{job=\"seaweedfs-master\", type=~\".+\"})",
+          "expr": "sum by (pod) (SeaweedFS_master_leader_changes{job=\"seaweedfs-master\", type=~\".+\", namespace=\"$NAMESPACE\"})",
           "format": "time_series",
           "hide": false,
           "instant": false,
@@ -274,7 +274,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum by (type) (increase(SeaweedFS_master_received_heartbeats{job=\"seaweedfs-master\"}[$__rate_interval]))",
+          "expr": "sum by (type) (increase(SeaweedFS_master_received_heartbeats{job=\"seaweedfs-master\", namespace=\"$NAMESPACE\"}[$__rate_interval]))",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -404,7 +404,7 @@
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "sum (SeaweedFS_master_replica_placement_mismatch{job=\"seaweedfs-master\"} > 0) by (pod)",
+          "expr": "sum (SeaweedFS_master_replica_placement_mismatch{job=\"seaweedfs-master\", namespace=\"$NAMESPACE\"} > 0) by (pod)",
           "format": "time_series",
           "hide": false,
           "instant": false,
@@ -539,7 +539,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum (SeaweedFS_master_is_leader{job=\"seaweedfs-master\"})",
+          "expr": "sum (SeaweedFS_master_is_leader{job=\"seaweedfs-master\", namespace=\"$NAMESPACE\"})",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -623,7 +623,7 @@
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "SeaweedFS_master_admin_lock{job=\"seaweedfs-master\"}",
+          "expr": "SeaweedFS_master_admin_lock{job=\"seaweedfs-master\", namespace=\"$NAMESPACE\"}",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -703,7 +703,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_filer_request_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_filer_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -712,7 +712,7 @@
           "step": 60
         },
         {
-          "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_filer_request_seconds_bucket[$__rate_interval])) by (le, type))",
+          "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_filer_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le, type))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -802,7 +802,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_filer_request_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_filer_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -811,7 +811,7 @@
           "step": 60
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_filer_request_seconds_bucket[$__rate_interval])) by (le, type))",
+          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_filer_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le, type))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -907,7 +907,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_filer_request_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_filer_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -916,7 +916,7 @@
           "step": 60
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_filer_request_seconds_bucket[$__rate_interval])) by (le, type))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_filer_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le, type))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1027,7 +1027,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum by (type) (rate(SeaweedFS_filer_request_total[$__rate_interval]))",
+          "expr": "sum by (type) (rate(SeaweedFS_filer_request_total{namespace=\"$NAMESPACE\"}[$__rate_interval]))",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -1136,7 +1136,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_s3_request_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_s3_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1145,7 +1145,7 @@
           "step": 60
         },
         {
-          "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_s3_request_seconds_bucket[$__rate_interval])) by (le, type))",
+          "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_s3_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le, type))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1235,7 +1235,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_s3_request_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_s3_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1244,7 +1244,7 @@
           "step": 60
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_s3_request_seconds_bucket[$__rate_interval])) by (le, type))",
+          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_s3_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le, type))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1334,7 +1334,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1344,7 +1344,7 @@
         },
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket[$__rate_interval])) by (le, type))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le, type))",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -1442,7 +1442,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le))",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -1457,7 +1457,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket[$__rate_interval])) by (le, type, pod))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le, type, pod))",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -1555,7 +1555,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket[$__rate_interval])) by (le, type, bucket))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le, type, bucket))",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -1666,7 +1666,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum (rate(SeaweedFS_s3_request_total[$__rate_interval])) by (type)",
+          "expr": "sum (rate(SeaweedFS_s3_request_total{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (type)",
           "format": "time_series",
           "intervalFactor": 2,
           "legendFormat": "{{type}}",
@@ -1771,7 +1771,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "sum by (type) (SeaweedFS_s3_request_total{type=~'PUT|COPY|POST|LIST'})*0.000005",
+          "expr": "sum by (type) (SeaweedFS_s3_request_total{type=~'PUT|COPY|POST|LIST', namespace=\"$NAMESPACE\"})*0.000005",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1780,7 +1780,7 @@
           "step": 30
         },
         {
-          "expr": "sum (SeaweedFS_s3_request_total{type=~'PUT|COPY|POST|LIST'})*0.000005",
+          "expr": "sum (SeaweedFS_s3_request_total{type=~'PUT|COPY|POST|LIST', namespace=\"$NAMESPACE\"})*0.000005",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1789,7 +1789,7 @@
           "step": 30
         },
         {
-          "expr": "sum (SeaweedFS_s3_request_total{type!~'PUT|COPY|POST|LIST'})*0.0000004",
+          "expr": "sum (SeaweedFS_s3_request_total{type!~'PUT|COPY|POST|LIST', namespace=\"$NAMESPACE\"})*0.0000004",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1797,7 +1797,7 @@
           "refId": "B"
         },
         {
-          "expr": "sum by (type) (SeaweedFS_s3_request_total{type!~'PUT|COPY|POST|LIST'})*0.0000004",
+          "expr": "sum by (type) (SeaweedFS_s3_request_total{type!~'PUT|COPY|POST|LIST', namespace=\"$NAMESPACE\"})*0.0000004",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1906,7 +1906,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_volumeServer_request_seconds_bucket[$__rate_interval])) by (le, exported_instance))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_volumeServer_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le, exported_instance))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1914,7 +1914,7 @@
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_volumeServer_request_seconds_bucket[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_volumeServer_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le))",
           "format": "time_series",
           "intervalFactor": 2,
           "legendFormat": "average",
@@ -2008,7 +2008,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "sum(rate(SeaweedFS_volumeServer_request_total[$__rate_interval])) by (type)",
+          "expr": "sum(rate(SeaweedFS_volumeServer_request_total{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (type)",
           "format": "time_series",
           "intervalFactor": 2,
           "legendFormat": "{{type}}",
@@ -2097,7 +2097,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(SeaweedFS_volumeServer_volumes) by (collection, type)",
+          "expr": "sum(SeaweedFS_volumeServer_volumes{namespace=\"$NAMESPACE\"}) by (collection, type)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -2109,7 +2109,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(SeaweedFS_volumeServer_volumes)",
+          "expr": "sum(SeaweedFS_volumeServer_volumes{namespace=\"$NAMESPACE\"})",
           "format": "time_series",
           "intervalFactor": 2,
           "legendFormat": "Total",
@@ -2194,7 +2194,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "sum(SeaweedFS_volumeServer_total_disk_size) by (collection, type)",
+          "expr": "sum(SeaweedFS_volumeServer_total_disk_size{namespace=\"$NAMESPACE\"}) by (collection, type)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -2202,7 +2202,7 @@
           "refId": "A"
         },
         {
-          "expr": "sum(SeaweedFS_volumeServer_total_disk_size)",
+          "expr": "sum(SeaweedFS_volumeServer_total_disk_size{namespace=\"$NAMESPACE\"})",
           "format": "time_series",
           "intervalFactor": 2,
           "legendFormat": "Total",
@@ -2285,7 +2285,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "sum(SeaweedFS_volumeServer_total_disk_size) by (exported_instance)",
+          "expr": "sum(SeaweedFS_volumeServer_total_disk_size{namespace=\"$NAMESPACE\"}) by (exported_instance)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -2390,7 +2390,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_filerStore_request_seconds_bucket[$__rate_interval])) by (le, type))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_filerStore_request_seconds_bucket{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (le, type))",
           "format": "time_series",
           "intervalFactor": 2,
           "legendFormat": "{{type}}",
@@ -2482,7 +2482,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "sum(rate(SeaweedFS_filerStore_request_total [$__rate_interval])) by (type)",
+          "expr": "sum(rate(SeaweedFS_filerStore_request_total{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (type)",
           "format": "time_series",
           "intervalFactor": 2,
           "legendFormat": "{{type}}",
@@ -2589,7 +2589,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "go_memstats_alloc_bytes{job=\"seaweedfs-filer\"}",
+          "expr": "go_memstats_alloc_bytes{job=\"seaweedfs-filer\", namespace=\"$NAMESPACE\"}",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -2599,7 +2599,7 @@
         },
         {
           "exemplar": true,
-          "expr": "rate(go_memstats_alloc_bytes_total{job=\"seaweedfs-filer\"}[$__rate_interval])",
+          "expr": "rate(go_memstats_alloc_bytes_total{job=\"seaweedfs-filer\", namespace=\"$NAMESPACE\"}[$__rate_interval])",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -2609,7 +2609,7 @@
         },
         {
           "exemplar": true,
-          "expr": "go_memstats_stack_inuse_bytes{job=\"seaweedfs-filer\"}",
+          "expr": "go_memstats_stack_inuse_bytes{job=\"seaweedfs-filer\", namespace=\"$NAMESPACE\"}",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -2619,7 +2619,7 @@
         },
         {
           "exemplar": true,
-          "expr": "go_memstats_heap_inuse_bytes{job=\"seaweedfs-filer\"}",
+          "expr": "go_memstats_heap_inuse_bytes{job=\"seaweedfs-filer\", namespace=\"$NAMESPACE\"}",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -2711,7 +2711,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "go_gc_duration_seconds{job=\"seaweedfs-filer\"}",
+          "expr": "go_gc_duration_seconds{job=\"seaweedfs-filer\", namespace=\"$NAMESPACE\"}",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -2802,7 +2802,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "go_goroutines{job=\"seaweedfs-filer\"}",
+          "expr": "go_goroutines{job=\"seaweedfs-filer\", namespace=\"$NAMESPACE\"}",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -2867,6 +2867,34 @@
         "regex": "",
         "skipUrlSync": false,
         "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "mes",
+          "value": "mes"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(SeaweedFS_master_is_leader,namespace)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Namespace",
+        "multi": false,
+        "name": "NAMESPACE",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(SeaweedFS_master_is_leader,namespace)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 2,
+        "type": "query"
       }
     ]
   },
