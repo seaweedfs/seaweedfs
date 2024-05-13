@@ -102,11 +102,17 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return err
 	}
 	fmt.Printf("ec encode volumes: %v\n", volumeIds)
+	wg := sync.WaitGroup{}
 	for _, vid := range volumeIds {
-		if err = doEcEncode(commandEnv, *collection, vid, *parallelCopy); err != nil {
-			return err
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err = doEcEncode(commandEnv, *collection, vid, *parallelCopy); err != nil {
+				fmt.Errorf("ec encode volume %d error %v", vid, err)
+			}
+		}()
 	}
+	wg.Wait()
 
 	return nil
 }
