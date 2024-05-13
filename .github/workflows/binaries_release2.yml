@@ -3,9 +3,8 @@
 name: "go: build versioned binaries for darwin"
 
 on:
-  push:
-    tags:
-      - '*'
+  release:
+    types: [created]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
