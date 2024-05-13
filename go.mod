@@ -149,7 +149,7 @@ require (
 	github.com/rclone/rclone v1.66.0
 	github.com/rdleal/intervalst v1.4.0
 	github.com/schollz/progressbar/v3 v3.14.2
-	github.com/shirou/gopsutil/v3 v3.24.3
+	github.com/shirou/gopsutil/v3 v3.24.4
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.2.0
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.65.0
