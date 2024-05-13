@@ -12,7 +12,6 @@ func Test_allocateOneBroker(t *testing.T) {
 	brokers := cmap.New[*BrokerStats]()
 	brokers.SetIfAbsent("localhost:17777", &BrokerStats{
 		TopicPartitionCount: 0,
-		ConsumerCount:       0,
 		CpuUsagePercent:     0,
 	})
 

@@ -1,6 +1,7 @@
 package lock_manager
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sort"
@@ -39,9 +40,11 @@ func (r *LockRing) SetTakeSnapshotCallback(onTakeSnapshot func(snapshot []pb.Ser
 // AddServer adds a server to the ring
 // if the previous snapshot passed the snapshot interval, create a new snapshot
 func (r *LockRing) AddServer(server pb.ServerAddress) {
+	glog.V(0).Infof("add server %v", server)
 	r.Lock()
 
 	if _, found := r.candidateServers[server]; found {
+		glog.V(0).Infof("add server: already exists %v", server)
 		r.Unlock()
 		return
 	}
@@ -53,6 +56,8 @@ func (r *LockRing) AddServer(server pb.ServerAddress) {
 }
 
 func (r *LockRing) RemoveServer(server pb.ServerAddress) {
+	glog.V(0).Infof("remove server %v", server)
+
 	r.Lock()
 
 	if _, found := r.candidateServers[server]; !found {
@@ -74,6 +79,10 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress) {
 
 	r.Lock()
 	r.lastUpdateTime = time.Now()
+	// init candidateServers
+	for _, server := range servers {
+		r.candidateServers[server] = struct{}{}
+	}
 	r.Unlock()
 
 	r.addOneSnapshot(servers)

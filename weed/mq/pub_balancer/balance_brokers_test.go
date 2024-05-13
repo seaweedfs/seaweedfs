@@ -12,7 +12,6 @@ func TestBalanceTopicPartitionOnBrokers(t *testing.T) {
 	brokers := cmap.New[*BrokerStats]()
 	broker1Stats := &BrokerStats{
 		TopicPartitionCount: 1,
-		ConsumerCount:       1,
 		CpuUsagePercent:     1,
 		TopicPartitionStats: cmap.New[*TopicPartitionStats](),
 	}
@@ -21,12 +20,9 @@ func TestBalanceTopicPartitionOnBrokers(t *testing.T) {
 			Topic:     topic.Topic{Namespace: "topic1", Name: "topic1"},
 			Partition: topic.Partition{RangeStart: 0, RangeStop: 512, RingSize: 1024},
 		},
-		ConsumerCount: 1,
-		IsLeader:      true,
 	})
 	broker2Stats := &BrokerStats{
 		TopicPartitionCount: 2,
-		ConsumerCount:       1,
 		CpuUsagePercent:     1,
 		TopicPartitionStats: cmap.New[*TopicPartitionStats](),
 	}
@@ -35,16 +31,12 @@ func TestBalanceTopicPartitionOnBrokers(t *testing.T) {
 			Topic:     topic.Topic{Namespace: "topic1", Name: "topic1"},
 			Partition: topic.Partition{RangeStart: 512, RangeStop: 1024, RingSize: 1024},
 		},
-		ConsumerCount: 1,
-		IsLeader:      true,
 	})
 	broker2Stats.TopicPartitionStats.Set("topic2:0", &TopicPartitionStats{
 		TopicPartition: topic.TopicPartition{
 			Topic:     topic.Topic{Namespace: "topic2", Name: "topic2"},
 			Partition: topic.Partition{RangeStart: 0, RangeStop: 1024, RingSize: 1024},
 		},
-		ConsumerCount: 1,
-		IsLeader:      true,
 	})
 	brokers.Set("broker1", broker1Stats)
 	brokers.Set("broker2", broker2Stats)

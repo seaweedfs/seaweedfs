@@ -44,7 +44,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		directoriesWithDeletion := make(map[string]int)
 		lastSeparator := strings.LastIndex(object, "/")
 		if lastSeparator > 0 {
-			parentDirectoryPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
+			parentDirectoryPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object[:lastSeparator])
 			directoriesWithDeletion[parentDirectoryPath]++
 
 			// purge empty folders, only checking folders with deletions
