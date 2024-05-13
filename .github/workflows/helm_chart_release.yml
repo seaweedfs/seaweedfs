@@ -1,8 +1,7 @@
 name: "helm: publish charts"
 on:
-  push:
-    tags:
-      - '*'
+  release:
+    types: [created]
 
 permissions:
   contents: write

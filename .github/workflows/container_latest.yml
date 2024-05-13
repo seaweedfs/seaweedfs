@@ -1,9 +1,8 @@
 name: "docker: build latest container"
 
 on:
-  push:
-    tags:
-      - '*'
+  release:
+    types: [created]
   workflow_dispatch: {}
 
 permissions:

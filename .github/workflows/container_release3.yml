@@ -1,9 +1,8 @@
 name: "docker: build release containers for rocksdb"
 
 on:
-  push:
-    tags:
-      - '*'
+  release:
+    types: [created]
   workflow_dispatch: {}
 
 permissions:
