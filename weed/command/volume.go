@@ -70,6 +70,8 @@ type VolumeServerOptions struct {
 	hasSlowRead               *bool
 	readBufferSizeMB          *int
 	ldbTimeout                *int64
+	username                  *string
+	password                  *string
 }
 
 func init() {
@@ -103,6 +105,8 @@ func init() {
 	v.inflightUploadDataTimeout = cmdVolume.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
 	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
 	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
+	v.username = cmdVolume.Flag.String("username", "", "username for authentication")
+	v.password = cmdVolume.Flag.String("password", "", "password for authentication")
 }
 
 var cmdVolume = &Command{
@@ -253,6 +257,8 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.hasSlowRead,
 		*v.readBufferSizeMB,
 		*v.ldbTimeout,
+		*v.username,
+		*v.password,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)

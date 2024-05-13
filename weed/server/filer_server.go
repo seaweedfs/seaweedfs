@@ -74,6 +74,8 @@ type FilerOption struct {
 	DiskType              string
 	AllowedOrigins        []string
 	ExposeDirectoryData   bool
+	Username              string
+	Password              string
 }
 
 type FilerServer struct {
@@ -153,8 +155,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	})
 	fs.filer.Cipher = option.Cipher
 	// we do not support IP whitelist right now
-	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
-	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
+	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, option.Username, option.Password)
+	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec, option.Username, option.Password)
 
 	fs.checkWithMaster()
 

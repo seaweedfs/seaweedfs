@@ -56,6 +56,8 @@ type MasterOptions struct {
 	electionTimeout    *time.Duration
 	raftHashicorp      *bool
 	raftBootstrap      *bool
+	username           *string
+	password           *string
 }
 
 func init() {
@@ -81,6 +83,8 @@ func init() {
 	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
 	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", false, "use hashicorp raft")
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
+	m.username = cmdMaster.Flag.String("username", "", "username for authentication")
+	m.password = cmdMaster.Flag.String("password", "", "password for authentication")
 }
 
 var cmdMaster = &Command{
@@ -311,5 +315,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		DisableHttp:             *m.disableHttp,
 		MetricsAddress:          *m.metricsAddress,
 		MetricsIntervalSec:      *m.metricsIntervalSec,
+		Username:                *m.username,
+		Password:                *m.password,
 	}
 }

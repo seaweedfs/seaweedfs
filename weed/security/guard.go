@@ -45,29 +45,54 @@ type Guard struct {
 	ExpiresAfterSec     int
 	ReadSigningKey      SigningKey
 	ReadExpiresAfterSec int
+	username            string
+	password            string
 
+	isBasicAuth   bool
 	isWriteActive bool
 }
 
-func NewGuard(whiteList []string, signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int) *Guard {
+func NewGuard(whiteList []string, signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int, username string, password string) *Guard {
 	g := &Guard{
 		whiteList:           whiteList,
 		SigningKey:          SigningKey(signingKey),
 		ExpiresAfterSec:     expiresAfterSec,
 		ReadSigningKey:      SigningKey(readSigningKey),
 		ReadExpiresAfterSec: readExpiresAfterSec,
+		username:            username,
+		password:            password,
 	}
 	g.isWriteActive = len(g.whiteList) != 0 || len(g.SigningKey) != 0
+	g.isBasicAuth = g.username != "" && g.password != ""
 	return g
 }
 
 func (g *Guard) WhiteList(f http.HandlerFunc) http.HandlerFunc {
+	basicAuthFunc := g.BasicAuth(f)
 	if !g.isWriteActive {
 		//if no security needed, just skip all checking
-		return f
+		return basicAuthFunc
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := g.checkWhiteList(w, r); err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		basicAuthFunc(w, r)
+	}
+}
+
+func (g *Guard) BasicAuth(f http.HandlerFunc) http.HandlerFunc {
+	if !g.isBasicAuth {
+		return f
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if username != g.username || password != g.password {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

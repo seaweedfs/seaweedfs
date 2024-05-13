@@ -56,6 +56,8 @@ type S3Options struct {
 	dataCenter                *string
 	localSocket               *string
 	certProvider              certprovider.Provider
+	username                  *string
+	password                  *string
 }
 
 func init() {
@@ -79,6 +81,8 @@ func init() {
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
 	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
+	s3StandaloneOptions.username = cmdS3.Flag.String("username", "", "username for the local filer")
+	s3StandaloneOptions.password = cmdS3.Flag.String("password", "", "password for the local filer")
 }
 
 var cmdS3 = &Command{
@@ -231,6 +235,8 @@ func (s3opt *S3Options) startS3Server() bool {
 		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,
 		FilerGroup:                filerGroup,
+		Username:                  *s3opt.username,
+		Password:                  *s3opt.password,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

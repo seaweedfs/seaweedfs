@@ -35,6 +35,8 @@ type S3ApiServerOption struct {
 	LocalFilerSocket          string
 	DataCenter                string
 	FilerGroup                string
+	Username                  string
+	Password                  string
 }
 
 type S3ApiServer struct {
@@ -70,7 +72,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 		option:         option,
 		iam:            NewIdentityAccessManagement(option),
 		randomClientId: util.RandomInt32(),
-		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
+		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, option.Username, option.Password),
 		cb:             NewCircuitBreaker(option),
 	}
 	if option.Config != "" {
