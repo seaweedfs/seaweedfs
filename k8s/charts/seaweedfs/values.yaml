@@ -25,6 +25,7 @@ global:
     enabled: false
     gatewayHost: null
     gatewayPort: null
+    additionalLabels: {}
   # if enabled will use global.replicationPlacment and override master & filer defaultReplicaPlacement config
   enableReplication: false
   #  replication type is XYZ:
