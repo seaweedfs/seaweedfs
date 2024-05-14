@@ -47,6 +47,7 @@ type MessageQueueBroker struct {
 	lockAsBalancer    *cluster.LiveLock
 	Coordinator       *sub_coordinator.Coordinator
 	accessLock        sync.Mutex
+	fca 			  *sub_coordinator.FilerClientAccessor
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -63,6 +64,13 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		Balancer:          pub_broker_balancer,
 		Coordinator:       coordinator,
 	}
+	fca := &sub_coordinator.FilerClientAccessor{
+		GetFilerFn: mqBroker.GetFiler,
+		GrpcDialOption: grpcDialOption,
+	}
+	mqBroker.fca = fca
+	coordinator.FilerClientAccessor = fca
+
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
 	pub_broker_balancer.OnPartitionChange = mqBroker.Coordinator.OnPartitionChange
 	pub_broker_balancer.OnAddBroker = mqBroker.Coordinator.OnSubAddBroker

@@ -26,7 +26,7 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 	ret := &mq_pb.LookupTopicBrokersResponse{}
 	conf := &mq_pb.ConfigureTopicResponse{}
 	ret.Topic = request.Topic
-	if conf, err = b.readTopicConfFromFiler(t); err != nil {
+	if conf, err = b.fca.ReadTopicConfFromFiler(t); err != nil {
 		glog.V(0).Infof("lookup topic %s conf: %v", request.Topic, err)
 	} else {
 		err = b.ensureTopicActiveAssignments(t, conf)

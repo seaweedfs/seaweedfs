@@ -38,7 +38,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 
 	t := topic.FromPbTopic(request.Topic)
 	var readErr, assignErr error
-	resp, readErr = b.readTopicConfFromFiler(t)
+	resp, readErr = b.fca.ReadTopicConfFromFiler(t)
 	if readErr != nil {
 		glog.V(0).Infof("read topic %s conf: %v", request.Topic, readErr)
 	}
@@ -68,7 +68,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	resp.RecordType = request.RecordType
 
 	// save the topic configuration on filer
-	if err := b.saveTopicConfToFiler(request.Topic, resp); err != nil {
+	if err := b.fca.SaveTopicConfToFiler(request.Topic, resp); err != nil {
 		return nil, fmt.Errorf("configure topic: %v", err)
 	}
 

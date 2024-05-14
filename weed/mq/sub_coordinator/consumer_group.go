@@ -23,14 +23,16 @@ type ConsumerGroup struct {
 	mapping                *PartitionConsumerMapping
 	reBalanceTimer         *time.Timer
 	pubBalancer            *pub_balancer.Balancer
+	filerClientAccessor    *FilerClientAccessor
 }
 
-func NewConsumerGroup(t *mq_pb.Topic, pubBalancer *pub_balancer.Balancer) *ConsumerGroup {
+func NewConsumerGroup(t *mq_pb.Topic, pubBalancer *pub_balancer.Balancer, filerClientAccessor *FilerClientAccessor) *ConsumerGroup {
 	return &ConsumerGroup{
 		topic:                  topic.FromPbTopic(t),
 		ConsumerGroupInstances: cmap.New[*ConsumerGroupInstance](),
 		mapping:                NewPartitionConsumerMapping(pub_balancer.MaxPartitionCount),
 		pubBalancer:            pubBalancer,
+		filerClientAccessor:    filerClientAccessor,
 	}
 }
 

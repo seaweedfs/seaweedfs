@@ -19,6 +19,7 @@ type Coordinator struct {
 	// map topic name to consumer groups
 	TopicSubscribers cmap.ConcurrentMap[string, *TopicConsumerGroups]
 	balancer         *pub_balancer.Balancer
+	FilerClientAccessor *FilerClientAccessor
 }
 
 func NewCoordinator(balancer *pub_balancer.Balancer) *Coordinator {
@@ -55,7 +56,7 @@ func (c *Coordinator) AddSubscriber(initMessage *mq_pb.SubscriberToSubCoordinato
 	tcg := c.GetTopicConsumerGroups(initMessage.Topic, true)
 	cg, _ := tcg.ConsumerGroups.Get(initMessage.ConsumerGroup)
 	if cg == nil {
-		cg = NewConsumerGroup(initMessage.Topic, c.balancer)
+		cg = NewConsumerGroup(initMessage.Topic, c.balancer, c.FilerClientAccessor)
 		if !tcg.ConsumerGroups.SetIfAbsent(initMessage.ConsumerGroup, cg) {
 			cg, _ = tcg.ConsumerGroups.Get(initMessage.ConsumerGroup)
 		}
