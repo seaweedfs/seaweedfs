@@ -84,11 +84,13 @@ spec:
                 secretKeyRef:
                   name: secret-seaweedfs-db
                   key: user
+                  optional: true
             - name: WEED_MYSQL_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: secret-seaweedfs-db
                   key: password
+                  optional: true
             - name: SEAWEEDFS_FULLNAME
               value: "{{ template "seaweedfs.name" . }}"
             {{- if .Values.filer.extraEnvironmentVars }}
