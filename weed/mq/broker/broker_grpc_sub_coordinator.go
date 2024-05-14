@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -37,18 +36,6 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 	ctx := stream.Context()
 
 	go func() {
-		// try to load the partition assignment from filer
-		if conf, err := b.readTopicConfFromFiler(topic.FromPbTopic(initMessage.Topic)); err == nil {
-			// send partition assignment to subscriber
-			cgi.ResponseChan <- &mq_pb.SubscriberToSubCoordinatorResponse{
-				Message: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment_{
-					Assignment: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment{
-						PartitionAssignments: conf.BrokerPartitionAssignments,
-					},
-				},
-			}
-		}
-
 		// process ack messages
 		for {
 			_, err := stream.Recv()

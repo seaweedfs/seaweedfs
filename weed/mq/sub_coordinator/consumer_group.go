@@ -77,10 +77,13 @@ func (cg *ConsumerGroup) BalanceConsumerGroupInstances(knownPartitionSlotToBroke
 	// collect current topic partitions
 	partitionSlotToBrokerList := knownPartitionSlotToBrokerList
 	if partitionSlotToBrokerList == nil {
-		var found bool
-		partitionSlotToBrokerList, found = cg.pubBalancer.TopicToBrokers.Get(cg.topic.String())
-		if !found {
-			glog.V(0).Infof("topic %s not found in balancer", cg.topic.String())
+		if conf, err := cg.filerClientAccessor.ReadTopicConfFromFiler(cg.topic); err == nil {
+			partitionSlotToBrokerList = pub_balancer.NewPartitionSlotToBrokerList(pub_balancer.MaxPartitionCount)
+			for _, assignment := range conf.BrokerPartitionAssignments {
+				partitionSlotToBrokerList.AddBroker(assignment.Partition, assignment.LeaderBroker)
+			}
+		} else {
+			glog.V(0).Infof("fail to read topic conf from filer: %v", err)
 			return
 		}
 	}

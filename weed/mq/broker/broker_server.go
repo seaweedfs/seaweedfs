@@ -65,8 +65,8 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		Coordinator:       coordinator,
 	}
 	fca := &sub_coordinator.FilerClientAccessor{
-		GetFilerFn: mqBroker.GetFiler,
-		GrpcDialOption: grpcDialOption,
+		GetFiler: mqBroker.GetFiler,
+		GetGrpcDialOption: mqBroker.GetGrpcDialOption,
 	}
 	mqBroker.fca = fca
 	coordinator.FilerClientAccessor = fca
@@ -125,6 +125,11 @@ func (b *MessageQueueBroker) OnBrokerUpdate(update *master_pb.ClusterNodeUpdate,
 	}
 
 }
+
+func (b *MessageQueueBroker) GetGrpcDialOption() grpc.DialOption {
+	return b.grpcDialOption
+}
+
 
 func (b *MessageQueueBroker) GetFiler() pb.ServerAddress {
 	return b.currentFiler
