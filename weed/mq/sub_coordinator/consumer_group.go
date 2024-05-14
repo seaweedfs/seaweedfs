@@ -84,12 +84,12 @@ func (cg *ConsumerGroup) BalanceConsumerGroupInstances(knownPartitionSlotToBroke
 	}
 
 	// collect current consumer group instance ids
-	var consumerInstanceIds []string
+	var consumerInstances []*ConsumerGroupInstance
 	for _, consumerGroupInstance := range cg.ConsumerGroupInstances.Items() {
-		consumerInstanceIds = append(consumerInstanceIds, consumerGroupInstance.InstanceId)
+		consumerInstances = append(consumerInstances, consumerGroupInstance)
 	}
 
-	cg.mapping.BalanceToConsumerInstanceIds(partitionSlotToBrokerList, consumerInstanceIds)
+	cg.mapping.BalanceToConsumerInstances(partitionSlotToBrokerList, consumerInstances)
 
 	// convert cg.mapping currentMapping to map of consumer group instance id to partition slots
 	consumerInstanceToPartitionSlots := make(map[string][]*PartitionSlotToConsumerInstance)
