@@ -294,9 +294,9 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool) (fo
 		return
 	}
 
-	l.volumesLock.Lock()
+	//l.volumesLock.Lock()
 	delete(l.volumes, vid)
-	defer l.volumesLock.Unlock()
+	//defer l.volumesLock.Unlock()
 
 	e = v.Destroy(onlyEmpty)
 	if e != nil {
