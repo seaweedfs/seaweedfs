@@ -605,7 +605,7 @@ filer:
     timeoutSeconds: 10
 
   # secret env variables
-  secretExtraEnvironmentVars: []
+  secretExtraEnvironmentVars: {}
       # WEED_POSTGRES_USERNAME:
       #   secretKeyRef:
       #     name: postgres-credentials
