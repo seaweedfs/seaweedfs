@@ -14,6 +14,7 @@ type ConsumerGroupInstance struct {
 	// the consumer group instance may not have an active partition
 	Partitions   []*topic.Partition
 	ResponseChan chan *mq_pb.SubscriberToSubCoordinatorResponse
+	MaxPartitionCount int32
 }
 type ConsumerGroup struct {
 	topic topic.Topic

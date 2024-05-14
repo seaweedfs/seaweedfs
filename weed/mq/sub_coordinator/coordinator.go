@@ -67,6 +67,7 @@ func (c *Coordinator) AddSubscriber(initMessage *mq_pb.SubscriberToSubCoordinato
 			cgi, _ = cg.ConsumerGroupInstances.Get(initMessage.ConsumerGroupInstanceId)
 		}
 	}
+	cgi.MaxPartitionCount = initMessage.MaxPartitionCount
 	cg.OnAddConsumerGroupInstance(initMessage.ConsumerGroupInstanceId, initMessage.Topic)
 	return cgi
 }

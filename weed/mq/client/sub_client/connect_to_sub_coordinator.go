@@ -51,6 +51,7 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 							ConsumerGroup:           sub.SubscriberConfig.ConsumerGroup,
 							ConsumerGroupInstanceId: sub.SubscriberConfig.ConsumerGroupInstanceId,
 							Topic:                   sub.ContentConfig.Topic.ToPbTopic(),
+							MaxPartitionCount: 	 	 sub.ProcessorConfig.ConcurrentPartitionLimit,
 						},
 					},
 				}); err != nil {

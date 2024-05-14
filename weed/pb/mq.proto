@@ -163,6 +163,7 @@ message SubscriberToSubCoordinatorRequest {
         string consumer_group = 1;
         string consumer_group_instance_id = 2;
         Topic topic = 3;
+        int32 max_partition_count = 4;
     }
     message AckMessage {
         Partition partition = 1;
