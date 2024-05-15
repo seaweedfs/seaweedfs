@@ -293,16 +293,19 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool) (fo
 	if !ok {
 		return
 	}
-	l.volumesLock.Lock()
-	delete(l.volumes, vid)
-	defer l.volumesLock.Unlock()
+	l.deleteByMap(vid)
 	e = v.Destroy(onlyEmpty)
 	if e != nil {
 		return
 	}
 	found = true
-
 	return
+}
+
+func (l *DiskLocation) deleteByMap(vid needle.VolumeId) {
+	l.volumesLock.Lock()
+	defer l.volumesLock.Unlock()
+	delete(l.volumes, vid)
 }
 
 func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapKind) bool {
