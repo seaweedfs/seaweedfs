@@ -24,18 +24,20 @@ func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, 
 
 	copiedShardIds := []uint32{uint32(shardId)}
 
+	unmountShardIds := []uint32{uint32(shardId)}
+
 	if applyBalancing {
 
 		existingServerAddress := pb.NewServerAddressFromDataNode(existingLocation.info)
 
 		// ask destination node to copy shard and the ecx file from source node, and mount it
-		copiedShardIds, err = oneServerCopyAndMountEcShardsFromSource(commandEnv.option.GrpcDialOption, destinationEcNode, []uint32{uint32(shardId)}, vid, collection, existingServerAddress, true)
+		copiedShardIds, unmountShardIds, err = oneServerCopyAndMountEcShardsFromSource(commandEnv.option.GrpcDialOption, destinationEcNode, []uint32{uint32(shardId)}, vid, collection, existingServerAddress, true)
 		if err != nil {
 			return err
 		}
 
 		// unmount the to be deleted shards
-		err = unmountEcShards(commandEnv.option.GrpcDialOption, vid, existingServerAddress, copiedShardIds)
+		err = unmountEcShards(commandEnv.option.GrpcDialOption, vid, existingServerAddress, unmountShardIds)
 		if err != nil {
 			return err
 		}
@@ -59,7 +61,7 @@ func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, 
 
 func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	targetServer *EcNode, shardIdsToCopy []uint32,
-	volumeId needle.VolumeId, collection string, existingLocation pb.ServerAddress, isDifferentDiskType bool) (copiedShardIds []uint32, err error) {
+	volumeId needle.VolumeId, collection string, existingLocation pb.ServerAddress, isDifferentDiskType bool) (copiedShardIds []uint32, unmountShardIds []uint32, err error) {
 
 	fmt.Printf("allocate %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 
@@ -96,6 +98,9 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 		if targetAddress != existingLocation || isDifferentDiskType {
 			copiedShardIds = shardIdsToCopy
 			glog.V(0).Infof("%s ec volume %d deletes shards %+v", existingLocation, volumeId, copiedShardIds)
+			if targetServer.info.Id != existingLocation.ToHttpAddress() {
+				unmountShardIds = shardIdsToCopy
+			}
 		}
 
 		return nil

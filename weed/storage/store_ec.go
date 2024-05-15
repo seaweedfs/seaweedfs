@@ -50,6 +50,9 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 
 func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) error {
 	for _, location := range s.Locations {
+		if string(location.DiskType) == ("hdd") || string(location.DiskType) == ("") {
+			continue
+		}
 		if err := location.LoadEcShard(collection, vid, shardId); err == nil {
 			glog.V(0).Infof("MountEcShards %d.%d", vid, shardId)
 
@@ -88,9 +91,6 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 	}
 
 	for _, location := range s.Locations {
-		if string(location.DiskType) == ("hdd") || string(location.DiskType) == ("") {
-			continue
-		}
 		if deleted := location.UnloadEcShard(vid, shardId); deleted {
 			glog.V(0).Infof("UnmountEcShards %d.%d", vid, shardId)
 			s.DeletedEcShardsChan <- message
