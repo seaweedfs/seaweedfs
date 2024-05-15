@@ -7,7 +7,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"io"
-	"sync"
 	"time"
 )
 
@@ -69,8 +68,10 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 					assignment := resp.GetAssignment()
 					if assignment != nil {
 						glog.V(0).Infof("subscriber %s receive assignment: %v", sub.ContentConfig.Topic, assignment)
+						for _, assignedPartition := range assignment.PartitionAssignments {
+							sub.brokerPartitionAssignmentChan <- assignedPartition
+						}
 					}
-					sub.onEachAssignment(assignment)
 				}
 
 				return nil
@@ -82,31 +83,6 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 		}
 		time.Sleep(waitTime)
 	}
-}
-
-func (sub *TopicSubscriber) onEachAssignment(assignment *mq_pb.SubscriberToSubCoordinatorResponse_Assignment) {
-	if assignment == nil {
-		return
-	}
-	// process each partition, with a concurrency limit
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, sub.ProcessorConfig.ConcurrentPartitionLimit)
-
-	for _, assigned := range assignment.PartitionAssignments {
-		wg.Add(1)
-		semaphore <- struct{}{}
-		go func(assigned *mq_pb.BrokerPartitionAssignment) {
-			defer wg.Done()
-			defer func() { <-semaphore }()
-			glog.V(0).Infof("subscriber %s/%s assigned partition %+v at %v", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, assigned.Partition, assigned.LeaderBroker)
-			err := sub.onEachPartition(assigned)
-			if err != nil {
-				glog.V(0).Infof("subscriber %s/%s partition %+v at %v: %v", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, assigned.Partition, assigned.LeaderBroker, err)
-			}
-		}(assigned)
-	}
-
-	wg.Wait()
 }
 
 func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssignment) error {
