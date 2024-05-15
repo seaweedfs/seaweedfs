@@ -93,7 +93,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 			return fmt.Errorf("mount %d.%v on %s : %v\n", volumeId, shardIdsToCopy, targetServer.info.Id, mountErr)
 		}
 
-		if targetAddress != existingLocation || isDifferentDiskType && (existingLocation.ToHttpAddress() != targetServer.info.Id) {
+		if targetAddress != existingLocation || isDifferentDiskType {
 			copiedShardIds = shardIdsToCopy
 			glog.V(0).Infof("%s ec volume %d deletes shards %+v", existingLocation, volumeId, copiedShardIds)
 		}
