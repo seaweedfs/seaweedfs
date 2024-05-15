@@ -52,6 +52,14 @@ func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request)
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
+func (ms *MasterServer) volumeListOfWritableHandler(w http.ResponseWriter, r *http.Request) {
+	collection := r.FormValue("collection")
+	m := make(map[string]interface{})
+	m["Version"] = util.Version()
+	m["Topology"] = ms.Topo.ToVolumeListOfWritable(collection)
+	writeJsonQuiet(w, r, http.StatusOK, m)
+}
+
 func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Request) {
 	gcString := r.FormValue("garbageThreshold")
 	gcThreshold := ms.option.GarbageThreshold

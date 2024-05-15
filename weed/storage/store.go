@@ -321,7 +321,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 		if len(deleteVids) > 0 {
 			// delete expired volumes.
-			location.volumesLock.Lock()
+			//location.volumesLock.Lock()
 			for _, vid := range deleteVids {
 				found, err := location.deleteVolumeById(vid, false)
 				if err == nil {
@@ -332,7 +332,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 					glog.Warningf("delete volume %d: %v", vid, err)
 				}
 			}
-			location.volumesLock.Unlock()
+			//location.volumesLock.Unlock()
 		}
 	}
 

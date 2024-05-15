@@ -42,6 +42,24 @@ func (t *Topology) ToInfo() (info TopologyInfo) {
 	return
 }
 
+func (t *Topology) ToVolumeListOfWritable(collection string) (info TopologyInfo) {
+	var layouts []VolumeLayoutInfo
+	for _, col := range t.collectionMap.Items() {
+		c := col.(*Collection)
+		if collection == "" || c.Name == collection {
+			for _, layout := range c.storageType2VolumeLayout.Items() {
+				if layout != nil {
+					tmp := layout.(*VolumeLayout).ToInfo()
+					tmp.Collection = c.Name
+					layouts = append(layouts, tmp)
+				}
+			}
+		}
+	}
+	info.Layouts = layouts
+	return
+}
+
 func (t *Topology) ToVolumeMap() interface{} {
 	m := make(map[string]interface{})
 	m["Max"] = t.diskUsages.GetMaxVolumeCount()
