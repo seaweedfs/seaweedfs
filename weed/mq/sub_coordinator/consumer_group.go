@@ -128,7 +128,6 @@ func (cg *ConsumerGroup) BalanceConsumerGroupInstances(knownPartitionSlotToBroke
 				},
 			},
 		}
-		println("sending response to", consumerGroupInstance.InstanceId, "...")
 		consumerGroupInstance.ResponseChan <- response
 	}
 
