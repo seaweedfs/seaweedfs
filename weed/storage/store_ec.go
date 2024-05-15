@@ -88,6 +88,9 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 	}
 
 	for _, location := range s.Locations {
+		if string(location.DiskType) == ("hdd") || string(location.DiskType) == ("") {
+			continue
+		}
 		if deleted := location.UnloadEcShard(vid, shardId); deleted {
 			glog.V(0).Infof("UnmountEcShards %d.%d", vid, shardId)
 			s.DeletedEcShardsChan <- message
