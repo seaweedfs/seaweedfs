@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
 	"math/rand"
 	"sync"
@@ -64,6 +65,8 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
 	parallelCopy := encodeCommand.Bool("parallelCopy", true, "copy shards in parallel")
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
+	toDiskType := types.ToDiskType(*encodeCommand.String("toDiskType", "", "after ec the diskType move to"))
+	parallelExec := encodeCommand.Int("parallelExec", 10, "the parallel exec num")
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -93,7 +96,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// volumeId is provided
 	if vid != 0 {
-		return doEcEncode(commandEnv, *collection, vid, *parallelCopy)
+		return doEcEncode(commandEnv, *collection, vid, *parallelCopy, toDiskType)
 	}
 
 	// apply to all volumes in the collection
@@ -103,13 +106,16 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 	fmt.Printf("ec encode volumes: %v\n", volumeIds)
 	wg := sync.WaitGroup{}
+	ch := make(chan struct{}, *parallelExec)
 	for _, vid := range volumeIds {
+		ch <- struct{}{}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err = doEcEncode(commandEnv, *collection, vid, *parallelCopy); err != nil {
+			if err = doEcEncode(commandEnv, *collection, vid, *parallelCopy, toDiskType); err != nil {
 				fmt.Errorf("ec encode volume %d error %v", vid, err)
 			}
+			<-ch
 		}()
 	}
 	wg.Wait()
@@ -117,7 +123,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	return nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, parallelCopy bool) (err error) {
+func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, parallelCopy bool, toDiskType types.DiskType) (err error) {
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
@@ -135,15 +141,15 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
-
+	var sourceDiskType types.DiskType
 	// generate ec shards
-	err = generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].ServerAddress())
+	sourceDiskType, err = generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].ServerAddress())
 	if err != nil {
 		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, locations[0].Url, err)
 	}
 
 	// balance the ec shards to current cluster
-	err = spreadEcShards(commandEnv, vid, collection, locations, parallelCopy)
+	err = spreadEcShards(commandEnv, vid, collection, locations, parallelCopy, sourceDiskType != toDiskType, toDiskType)
 	if err != nil {
 		return fmt.Errorf("spread ec shards for volume %d from %s: %v", vid, locations[0].Url, err)
 	}
@@ -151,25 +157,26 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	return nil
 }
 
-func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {
+func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) (types.DiskType, error) {
 
 	fmt.Printf("generateEcShards %s %d on %s ...\n", collection, volumeId, sourceVolumeServer)
-
+	var resp *volume_server_pb.VolumeEcShardsGenerateResponse
 	err := operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		_, genErr := volumeServerClient.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
+		var genErr error
+		resp, genErr = volumeServerClient.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
 		})
 		return genErr
 	})
 
-	return err
+	return types.ToDiskType(resp.SourceDiskType), err
 
 }
 
-func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location, parallelCopy bool) (err error) {
+func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location, parallelCopy bool, isDifferentDiskType bool, toDiskType types.DiskType) (err error) {
 
-	allEcNodes, totalFreeEcSlots, err := collectEcNodes(commandEnv, "")
+	allEcNodes, totalFreeEcSlots, err := collectEcNodes(commandEnv, "", toDiskType)
 	if err != nil {
 		return err
 	}
@@ -186,7 +193,7 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 	allocatedEcIds := balancedEcDistribution(allocatedDataNodes)
 
 	// ask the data nodes to copy from the source volume server
-	copiedShardIds, err := parallelCopyEcShardsFromSource(commandEnv.option.GrpcDialOption, allocatedDataNodes, allocatedEcIds, volumeId, collection, existingLocations[0], parallelCopy)
+	copiedShardIds, err := parallelCopyEcShardsFromSource(commandEnv.option.GrpcDialOption, allocatedDataNodes, allocatedEcIds, volumeId, collection, existingLocations[0], parallelCopy, isDifferentDiskType)
 	if err != nil {
 		return err
 	}
@@ -216,7 +223,7 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 
 }
 
-func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServers []*EcNode, allocatedEcIds [][]uint32, volumeId needle.VolumeId, collection string, existingLocation wdclient.Location, parallelCopy bool) (actuallyCopied []uint32, err error) {
+func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServers []*EcNode, allocatedEcIds [][]uint32, volumeId needle.VolumeId, collection string, existingLocation wdclient.Location, parallelCopy bool, isDifferentDiskType bool) (actuallyCopied []uint32, err error) {
 
 	fmt.Printf("parallelCopyEcShardsFromSource %d %s\n", volumeId, existingLocation.Url)
 
@@ -225,7 +232,7 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 	copyFunc := func(server *EcNode, allocatedEcShardIds []uint32) {
 		defer wg.Done()
 		copiedShardIds, copyErr := oneServerCopyAndMountEcShardsFromSource(grpcDialOption, server,
-			allocatedEcShardIds, volumeId, collection, existingLocation.ServerAddress())
+			allocatedEcShardIds, volumeId, collection, existingLocation.ServerAddress(), isDifferentDiskType)
 		if copyErr != nil {
 			err = copyErr
 		} else {

@@ -77,7 +77,9 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 
 	shouldCleanup = false
 
-	return &volume_server_pb.VolumeEcShardsGenerateResponse{}, nil
+	return &volume_server_pb.VolumeEcShardsGenerateResponse{
+		SourceDiskType: v.DiskType().String(),
+	}, nil
 }
 
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files

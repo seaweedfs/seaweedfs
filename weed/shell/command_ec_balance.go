@@ -114,7 +114,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	}
 
 	// collect all ec nodes
-	allEcNodes, totalFreeEcSlots, err := collectEcNodes(commandEnv, *dc)
+	allEcNodes, totalFreeEcSlots, err := collectEcNodes(commandEnv, *dc, types.HardDriveType)
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -70,7 +71,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	}
 
 	// collect all ec nodes
-	allEcNodes, _, err := collectEcNodes(commandEnv, "")
+	allEcNodes, _, err := collectEcNodes(commandEnv, "", types.HardDriveType)
 	if err != nil {
 		return err
 	}

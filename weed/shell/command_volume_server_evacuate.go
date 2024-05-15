@@ -149,7 +149,7 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 
 func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, volumeServer string, skipNonMoveable, applyChange bool, writer io.Writer) error {
 	// find this ec volume server
-	ecNodes, _ := collectEcVolumeServersByDc(c.topologyInfo, "")
+	ecNodes, _ := collectEcVolumeServersByDc(c.topologyInfo, "", types.HardDriveType)
 	thisNodes, otherNodes := c.ecNodesOtherThan(ecNodes, volumeServer)
 	if len(thisNodes) == 0 {
 		return fmt.Errorf("%s is not found in this cluster\n", volumeServer)

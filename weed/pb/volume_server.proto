@@ -354,6 +354,7 @@ message VolumeEcShardsGenerateRequest {
     string collection = 2;
 }
 message VolumeEcShardsGenerateResponse {
+    string source_disk_type = 1;
 }
 
 message VolumeEcShardsRebuildRequest {

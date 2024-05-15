@@ -29,7 +29,7 @@ func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, 
 		existingServerAddress := pb.NewServerAddressFromDataNode(existingLocation.info)
 
 		// ask destination node to copy shard and the ecx file from source node, and mount it
-		copiedShardIds, err = oneServerCopyAndMountEcShardsFromSource(commandEnv.option.GrpcDialOption, destinationEcNode, []uint32{uint32(shardId)}, vid, collection, existingServerAddress)
+		copiedShardIds, err = oneServerCopyAndMountEcShardsFromSource(commandEnv.option.GrpcDialOption, destinationEcNode, []uint32{uint32(shardId)}, vid, collection, existingServerAddress, true)
 		if err != nil {
 			return err
 		}
@@ -59,14 +59,14 @@ func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, 
 
 func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	targetServer *EcNode, shardIdsToCopy []uint32,
-	volumeId needle.VolumeId, collection string, existingLocation pb.ServerAddress) (copiedShardIds []uint32, err error) {
+	volumeId needle.VolumeId, collection string, existingLocation pb.ServerAddress, isDifferentDiskType bool) (copiedShardIds []uint32, err error) {
 
 	fmt.Printf("allocate %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 
 	targetAddress := pb.NewServerAddressFromDataNode(targetServer.info)
 	err = operation.WithVolumeServerClient(false, targetAddress, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
-		if targetAddress != existingLocation {
+		if targetAddress != existingLocation || isDifferentDiskType {
 
 			fmt.Printf("copy %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 			_, copyErr := volumeServerClient.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
@@ -93,7 +93,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 			return fmt.Errorf("mount %d.%v on %s : %v\n", volumeId, shardIdsToCopy, targetServer.info.Id, mountErr)
 		}
 
-		if targetAddress != existingLocation {
+		if targetAddress != existingLocation || isDifferentDiskType {
 			copiedShardIds = shardIdsToCopy
 			glog.V(0).Infof("%s ec volume %d deletes shards %+v", existingLocation, volumeId, copiedShardIds)
 		}
@@ -205,7 +205,7 @@ type EcRack struct {
 	freeEcSlot int
 }
 
-func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
+func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string, toDiskType types.DiskType) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
 
 	// list all possible locations
 	// collect topology information
@@ -215,20 +215,20 @@ func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes 
 	}
 
 	// find out all volume servers with one slot left.
-	ecNodes, totalFreeEcSlots = collectEcVolumeServersByDc(topologyInfo, selectedDataCenter)
+	ecNodes, totalFreeEcSlots = collectEcVolumeServersByDc(topologyInfo, selectedDataCenter, toDiskType)
 
 	sortEcNodesByFreeslotsDescending(ecNodes)
 
 	return
 }
 
-func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int) {
+func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter string, toDiskType types.DiskType) (ecNodes []*EcNode, totalFreeEcSlots int) {
 	eachDataNode(topo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		if selectedDataCenter != "" && selectedDataCenter != dc {
 			return
 		}
 
-		freeEcSlots := countFreeShardSlots(dn, types.HardDriveType)
+		freeEcSlots := countFreeShardSlots(dn, toDiskType)
 		ecNodes = append(ecNodes, &EcNode{
 			info:       dn,
 			dc:         dc,
