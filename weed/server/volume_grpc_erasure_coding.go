@@ -472,9 +472,10 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 			}
 		}
 		if fileName == "" {
-			fmt.Errorf("CopyFile not found ec volume id %d %d", req.VolumeId, shardId)
+			fmt.Printf("CopyFile not found ec volume id %d %d", req.VolumeId, shardId)
 			continue
 		}
+		fmt.Printf("move ec data %s -> %s", fileName, dataBaseFileName+erasure_coding.ToExt(int(shardId)))
 		os.Rename(fileName, dataBaseFileName+erasure_coding.ToExt(int(shardId)))
 		fileName = ""
 	}
@@ -493,16 +494,17 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 			}
 		}
 		if fileName == "" {
-			fmt.Errorf("CopyFile ecx not found ec volume id %d %d", req.VolumeId)
+			fmt.Printf("CopyFile ecx not found ec volume id %d %d", req.VolumeId)
 		} else {
 			input, err := os.ReadFile(fileName)
 			if err != nil {
-				fmt.Errorf("read ecx file %d %v", req.VolumeId, err)
+				fmt.Printf("read ecx file %d %v", req.VolumeId, err)
 			}
 			err = os.WriteFile(indexBaseFileName+".ecx", input, 0644)
 			if err != nil {
-				fmt.Errorf("write ecx file %d %v", req.VolumeId, err)
+				fmt.Printf("write ecx file %d %v", req.VolumeId, err)
 			}
+			fmt.Printf("move ecx %s -> %s", fileName, indexBaseFileName+".ecx")
 		}
 	}
 	fileName = ""
@@ -519,16 +521,17 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 			}
 		}
 		if fileName == "" {
-			fmt.Errorf("CopyFile ecj not found ec volume id %d %d", req.VolumeId)
+			fmt.Printf("CopyFile ecj not found ec volume id %d %d", req.VolumeId)
 		} else {
 			input, err := os.ReadFile(fileName)
 			if err != nil {
-				fmt.Errorf("read ecj file %d %v", req.VolumeId, err)
+				fmt.Printf("read ecj file %d %v", req.VolumeId, err)
 			}
 			err = os.WriteFile(indexBaseFileName+".ecj", input, 0644)
 			if err != nil {
-				fmt.Errorf("write ecj file %d %v", req.VolumeId, err)
+				fmt.Printf("write ecj file %d %v", req.VolumeId, err)
 			}
+			fmt.Printf("move ecj %s -> %s", fileName, indexBaseFileName+".ecj")
 		}
 	}
 	fileName = ""
@@ -545,16 +548,17 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 			}
 		}
 		if fileName == "" {
-			fmt.Errorf("CopyFile vif not found ec volume id %d %d", req.VolumeId)
+			fmt.Printf("CopyFile vif not found ec volume id %d %d", req.VolumeId)
 		} else {
 			input, err := os.ReadFile(fileName)
 			if err != nil {
-				fmt.Errorf("read vif file %d %v", req.VolumeId, err)
+				fmt.Printf("read vif file %d %v", req.VolumeId, err)
 			}
 			err = os.WriteFile(dataBaseFileName+".vif", input, 0644)
 			if err != nil {
-				fmt.Errorf("write vif file %d %v", req.VolumeId, err)
+				fmt.Printf("write vif file %d %v", req.VolumeId, err)
 			}
+			fmt.Printf("move ecj %s -> %s", fileName, dataBaseFileName+".vif")
 		}
 	}
 
