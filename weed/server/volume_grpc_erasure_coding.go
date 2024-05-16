@@ -476,7 +476,9 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 			continue
 		}
 		glog.V(3).Infof("move ec data %s -> %s", fileName, dataBaseFileName+erasure_coding.ToExt(int(shardId)))
-		os.Rename(fileName, dataBaseFileName+erasure_coding.ToExt(int(shardId)))
+		if err := moveFile(fileName, dataBaseFileName+erasure_coding.ToExt(int(shardId))); err != nil {
+			glog.V(3).Infof("CopyFile not found ec volume id %v", err)
+		}
 		fileName = ""
 	}
 
@@ -496,15 +498,9 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 		if fileName == "" {
 			glog.V(3).Infof("CopyFile ecx not found ec volume id %d %d", req.VolumeId)
 		} else {
-			input, err := os.ReadFile(fileName)
-			if err != nil {
-				glog.V(3).Infof("read ecx file %d %v", req.VolumeId, err)
+			if err := copyFile(fileName, indexBaseFileName+".ecx"); err != nil {
+				glog.V(3).Infof("copy ecx %s -> %s", fileName, indexBaseFileName+".ecx")
 			}
-			err = os.WriteFile(indexBaseFileName+".ecx", input, 0644)
-			if err != nil {
-				glog.V(3).Infof("write ecx file %d %v", req.VolumeId, err)
-			}
-			glog.V(3).Infof("move ecx %s -> %s", fileName, indexBaseFileName+".ecx")
 		}
 	}
 	fileName = ""
@@ -523,15 +519,9 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 		if fileName == "" {
 			glog.V(3).Infof("CopyFile ecj not found ec volume id %d %d", req.VolumeId)
 		} else {
-			input, err := os.ReadFile(fileName)
-			if err != nil {
-				glog.V(3).Infof("read ecj file %d %v", req.VolumeId, err)
+			if err := copyFile(fileName, indexBaseFileName+".ecj"); err != nil {
+				glog.V(3).Infof("move ecj %s -> %s", fileName, indexBaseFileName+".ecj")
 			}
-			err = os.WriteFile(indexBaseFileName+".ecj", input, 0644)
-			if err != nil {
-				glog.V(3).Infof("write ecj file %d %v", req.VolumeId, err)
-			}
-			glog.V(3).Infof("move ecj %s -> %s", fileName, indexBaseFileName+".ecj")
 		}
 	}
 	fileName = ""
@@ -550,17 +540,54 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 		if fileName == "" {
 			glog.V(3).Infof("CopyFile vif not found ec volume id %d %d", req.VolumeId)
 		} else {
-			input, err := os.ReadFile(fileName)
-			if err != nil {
-				glog.V(3).Infof("read vif file %d %v", req.VolumeId, err)
+			if err := copyFile(fileName, dataBaseFileName+".vif"); err != nil {
+				glog.V(3).Infof("move vif %s -> %s", fileName, indexBaseFileName+".ecj")
 			}
-			err = os.WriteFile(dataBaseFileName+".vif", input, 0644)
-			if err != nil {
-				glog.V(3).Infof("write vif file %d %v", req.VolumeId, err)
-			}
-			glog.V(3).Infof("move ecj %s -> %s", fileName, dataBaseFileName+".vif")
 		}
 	}
 
 	return &volume_server_pb.VolumeEcShardsMoveResponse{}, nil
+}
+
+func moveFile(sourcePath, destPath string) error {
+	inputFile, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("Couldn't open source file: %s", err)
+	}
+	outputFile, err := os.Create(destPath)
+	if err != nil {
+		inputFile.Close()
+		return fmt.Errorf("Couldn't open dest file: %s", err)
+	}
+	defer outputFile.Close()
+	_, err = io.Copy(outputFile, inputFile)
+	inputFile.Close()
+	if err != nil {
+		return fmt.Errorf("Writing to output file failed: %s", err)
+	}
+	// The copy was successful, so now delete the original file
+	err = os.Remove(sourcePath)
+	if err != nil {
+		return fmt.Errorf("Failed removing original file: %s", err)
+	}
+	return nil
+}
+
+func copyFile(sourcePath, destPath string) error {
+	inputFile, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("Couldn't open source file: %s", err)
+	}
+	outputFile, err := os.Create(destPath)
+	if err != nil {
+		inputFile.Close()
+		return fmt.Errorf("Couldn't open dest file: %s", err)
+	}
+	defer outputFile.Close()
+	_, err = io.Copy(outputFile, inputFile)
+	inputFile.Close()
+	if err != nil {
+		return fmt.Errorf("Writing to output file failed: %s", err)
+	}
+	return err
 }
