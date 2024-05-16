@@ -170,6 +170,9 @@ func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, 
 		return genErr
 	})
 
+	if err != nil {
+		return "", err
+	}
 	return types.ToDiskType(resp.SourceDiskType), err
 
 }

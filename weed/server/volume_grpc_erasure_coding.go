@@ -545,15 +545,15 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 			}
 		}
 		if fileName == "" {
-			fmt.Errorf("CopyFile ecx not found ec volume id %d %d", req.VolumeId)
+			fmt.Errorf("CopyFile vif not found ec volume id %d %d", req.VolumeId)
 		} else {
 			input, err := os.ReadFile(fileName)
 			if err != nil {
-				fmt.Errorf("read ecx file %d %v", req.VolumeId, err)
+				fmt.Errorf("read vif file %d %v", req.VolumeId, err)
 			}
 			err = os.WriteFile(dataBaseFileName+".vif", input, 0644)
 			if err != nil {
-				fmt.Errorf("write ecx file %d %v", req.VolumeId, err)
+				fmt.Errorf("write vif file %d %v", req.VolumeId, err)
 			}
 		}
 	}
