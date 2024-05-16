@@ -231,7 +231,7 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 	shardIdChan := make(chan []uint32, len(targetServers))
 	copyFunc := func(server *EcNode, allocatedEcShardIds []uint32) {
 		defer wg.Done()
-		copiedShardIds, _, copyErr := oneServerCopyAndMountEcShardsFromSource(grpcDialOption, server,
+		copiedShardIds, copyErr := oneServerCopyAndMountEcShardsFromSource(grpcDialOption, server,
 			allocatedEcShardIds, volumeId, collection, existingLocation.ServerAddress(), isDifferentDiskType)
 		if copyErr != nil {
 			err = copyErr

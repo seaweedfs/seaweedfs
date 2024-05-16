@@ -299,6 +299,7 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool) (fo
 		return
 	}
 	found = true
+
 	return
 }
 
