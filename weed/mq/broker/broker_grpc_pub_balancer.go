@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
@@ -14,7 +15,7 @@ func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessagin
 	}
 	req, err := stream.Recv()
 	if err != nil {
-		return err
+		return fmt.Errorf("receive init message: %v", err)
 	}
 
 	// process init message
@@ -33,7 +34,7 @@ func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessagin
 	for {
 		req, err := stream.Recv()
 		if err != nil {
-			return err
+			return fmt.Errorf("receive stats message from %s: %v", initMessage.Broker, err)
 		}
 		if !b.isLockOwner() {
 			return status.Errorf(codes.Unavailable, "not current broker balancer")
