@@ -83,6 +83,18 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 			}
 		}
 
+		if targetAddress == existingLocation && isDifferentDiskType {
+			volumeServerClient.VolumeEcShardsMove(context.Background(), &volume_server_pb.VolumeEcShardsMoveRequest{
+				VolumeId:    uint32(volumeId),
+				Collection:  collection,
+				ShardIds:    shardIdsToCopy,
+				ToDiskType:  types.HardDriveType.String(),
+				CopyEcxFile: true,
+				CopyEcjFile: true,
+				CopyVifFile: true,
+			})
+		}
+
 		fmt.Printf("mount %d.%v on %s\n", volumeId, shardIdsToCopy, targetServer.info.Id)
 		_, mountErr := volumeServerClient.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
 			VolumeId:   uint32(volumeId),
@@ -93,7 +105,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 			return fmt.Errorf("mount %d.%v on %s : %v\n", volumeId, shardIdsToCopy, targetServer.info.Id, mountErr)
 		}
 
-		if targetAddress != existingLocation || isDifferentDiskType {
+		if targetAddress != existingLocation {
 			copiedShardIds = shardIdsToCopy
 			glog.V(0).Infof("%s ec volume %d deletes shards %+v", existingLocation, volumeId, copiedShardIds)
 		}

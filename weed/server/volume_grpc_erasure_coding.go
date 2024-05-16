@@ -446,3 +446,117 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 
 	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil
 }
+
+func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_server_pb.VolumeEcShardsMoveRequest) (*volume_server_pb.VolumeEcShardsMoveResponse, error) {
+	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
+
+	location := vs.store.FindFreeLocation(types.HardDriveType)
+	if location == nil {
+		return nil, fmt.Errorf("no space left")
+	}
+
+	dataBaseFileName := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+	indexBaseFileName := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+
+	var fileName string
+	for _, shardId := range req.ShardIds {
+		baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId)) + erasure_coding.ToExt(int(shardId))
+		for _, location := range vs.store.Locations {
+			tName := util.Join(location.Directory, baseFileName)
+			if util.FileExists(tName) {
+				fileName = tName
+			}
+			tName = util.Join(location.IdxDirectory, baseFileName)
+			if util.FileExists(tName) {
+				fileName = tName
+			}
+		}
+		if fileName == "" {
+			fmt.Errorf("CopyFile not found ec volume id %d %d", req.VolumeId, shardId)
+			continue
+		}
+		os.Rename(fileName, dataBaseFileName+erasure_coding.ToExt(int(shardId)))
+		fileName = ""
+	}
+
+	fileName = ""
+	if req.CopyEcxFile {
+		baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId)) + ".ecx"
+		for _, location := range vs.store.Locations {
+			tName := util.Join(location.Directory, baseFileName)
+			if util.FileExists(tName) {
+				fileName = tName
+			}
+			tName = util.Join(location.IdxDirectory, baseFileName)
+			if util.FileExists(tName) {
+				fileName = tName
+			}
+		}
+		if fileName == "" {
+			fmt.Errorf("CopyFile ecx not found ec volume id %d %d", req.VolumeId)
+		} else {
+			input, err := os.ReadFile(fileName)
+			if err != nil {
+				fmt.Errorf("read ecx file %d %v", req.VolumeId, err)
+			}
+			err = os.WriteFile(indexBaseFileName+".ecx", input, 0644)
+			if err != nil {
+				fmt.Errorf("write ecx file %d %v", req.VolumeId, err)
+			}
+		}
+	}
+	fileName = ""
+	if req.CopyEcjFile {
+		baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId)) + ".ecj"
+		for _, location := range vs.store.Locations {
+			tName := util.Join(location.Directory, baseFileName)
+			if util.FileExists(tName) {
+				fileName = tName
+			}
+			tName = util.Join(location.IdxDirectory, baseFileName)
+			if util.FileExists(tName) {
+				fileName = tName
+			}
+		}
+		if fileName == "" {
+			fmt.Errorf("CopyFile ecj not found ec volume id %d %d", req.VolumeId)
+		} else {
+			input, err := os.ReadFile(fileName)
+			if err != nil {
+				fmt.Errorf("read ecj file %d %v", req.VolumeId, err)
+			}
+			err = os.WriteFile(indexBaseFileName+".ecj", input, 0644)
+			if err != nil {
+				fmt.Errorf("write ecj file %d %v", req.VolumeId, err)
+			}
+		}
+	}
+	fileName = ""
+	if req.CopyVifFile {
+		baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId)) + ".vif"
+		for _, location := range vs.store.Locations {
+			tName := util.Join(location.Directory, baseFileName)
+			if util.FileExists(tName) {
+				fileName = tName
+			}
+			tName = util.Join(location.IdxDirectory, baseFileName)
+			if util.FileExists(tName) {
+				fileName = tName
+			}
+		}
+		if fileName == "" {
+			fmt.Errorf("CopyFile ecx not found ec volume id %d %d", req.VolumeId)
+		} else {
+			input, err := os.ReadFile(fileName)
+			if err != nil {
+				fmt.Errorf("read ecx file %d %v", req.VolumeId, err)
+			}
+			err = os.WriteFile(dataBaseFileName+".vif", input, 0644)
+			if err != nil {
+				fmt.Errorf("write ecx file %d %v", req.VolumeId, err)
+			}
+		}
+	}
+
+	return &volume_server_pb.VolumeEcShardsMoveResponse{}, nil
+}

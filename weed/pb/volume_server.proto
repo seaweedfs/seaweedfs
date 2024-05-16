@@ -113,6 +113,10 @@ service VolumeServer {
     rpc Ping (PingRequest) returns (PingResponse) {
     }
 
+    rpc VolumeEcShardsMove(VolumeEcShardsMoveRequest) returns (VolumeEcShardsMoveResponse) {
+
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -375,6 +379,19 @@ message VolumeEcShardsCopyRequest {
     bool copy_vif_file = 7;
 }
 message VolumeEcShardsCopyResponse {
+}
+
+message VolumeEcShardsMoveRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    repeated uint32 shard_ids = 3;
+    string to_disk_type = 4;
+    bool copy_ecx_file = 5;
+    bool copy_ecj_file = 6;
+    bool copy_vif_file = 7;
+}
+
+message VolumeEcShardsMoveResponse {
 }
 
 message VolumeEcShardsDeleteRequest {

@@ -61,6 +61,7 @@ const (
 	VolumeServer_Query_FullMethodName                       = "/volume_server_pb.VolumeServer/Query"
 	VolumeServer_VolumeNeedleStatus_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeNeedleStatus"
 	VolumeServer_Ping_FullMethodName                        = "/volume_server_pb.VolumeServer/Ping"
+	VolumeServer_VolumeEcShardsMove_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeEcShardsMove"
 )
 
 // VolumeServerClient is the client API for VolumeServer service.
@@ -115,6 +116,7 @@ type VolumeServerClient interface {
 	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (VolumeServer_QueryClient, error)
 	VolumeNeedleStatus(ctx context.Context, in *VolumeNeedleStatusRequest, opts ...grpc.CallOption) (*VolumeNeedleStatusResponse, error)
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	VolumeEcShardsMove(ctx context.Context, in *VolumeEcShardsMoveRequest, opts ...grpc.CallOption) (*VolumeEcShardsMoveResponse, error)
 }
 
 type volumeServerClient struct {
@@ -733,6 +735,15 @@ func (c *volumeServerClient) Ping(ctx context.Context, in *PingRequest, opts ...
 	return out, nil
 }
 
+func (c *volumeServerClient) VolumeEcShardsMove(ctx context.Context, in *VolumeEcShardsMoveRequest, opts ...grpc.CallOption) (*VolumeEcShardsMoveResponse, error) {
+	out := new(VolumeEcShardsMoveResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcShardsMove_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VolumeServerServer is the server API for VolumeServer service.
 // All implementations must embed UnimplementedVolumeServerServer
 // for forward compatibility
@@ -785,6 +796,7 @@ type VolumeServerServer interface {
 	Query(*QueryRequest, VolumeServer_QueryServer) error
 	VolumeNeedleStatus(context.Context, *VolumeNeedleStatusRequest) (*VolumeNeedleStatusResponse, error)
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	VolumeEcShardsMove(context.Context, *VolumeEcShardsMoveRequest) (*VolumeEcShardsMoveResponse, error)
 	mustEmbedUnimplementedVolumeServerServer()
 }
 
@@ -917,6 +929,9 @@ func (UnimplementedVolumeServerServer) VolumeNeedleStatus(context.Context, *Volu
 }
 func (UnimplementedVolumeServerServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedVolumeServerServer) VolumeEcShardsMove(context.Context, *VolumeEcShardsMoveRequest) (*VolumeEcShardsMoveResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method VolumeEcShardsMove not implemented")
 }
 func (UnimplementedVolumeServerServer) mustEmbedUnimplementedVolumeServerServer() {}
 
@@ -1717,6 +1732,24 @@ func _VolumeServer_Ping_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_VolumeEcShardsMove_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeEcShardsMoveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeEcShardsMove(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_VolumeEcShardsMove_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeEcShardsMove(ctx, req.(*VolumeEcShardsMoveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VolumeServer_ServiceDesc is the grpc.ServiceDesc for VolumeServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1851,6 +1884,10 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _VolumeServer_Ping_Handler,
+		},
+		{
+			MethodName: "VolumeEcShardsMove",
+			Handler:    _VolumeServer_VolumeEcShardsMove_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
