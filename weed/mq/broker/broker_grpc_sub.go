@@ -8,19 +8,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
+	"io"
 	"time"
 )
 
-func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest, stream mq_pb.SeaweedMessaging_SubscribeMessageServer) (err error) {
+func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_SubscribeMessageServer) error {
 
-	ctx := stream.Context()
-	clientName := fmt.Sprintf("%s/%s-%s", req.GetInit().ConsumerGroup, req.GetInit().ConsumerId, req.GetInit().ClientId)
-
-	initMessage := req.GetInit()
-	if initMessage == nil {
+	req, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	if req.GetInit() == nil {
 		glog.Errorf("missing init message")
 		return fmt.Errorf("missing init message")
 	}
+
+	ctx := stream.Context()
+	clientName := fmt.Sprintf("%s/%s-%s", req.GetInit().ConsumerGroup, req.GetInit().ConsumerId, req.GetInit().ClientId)
 
 	t := topic.FromPbTopic(req.GetInit().Topic)
 	partition := topic.FromPbPartition(req.GetInit().GetPartitionOffset().GetPartition())
@@ -51,6 +55,20 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 	if req.GetInit() != nil && req.GetInit().GetPartitionOffset() != nil {
 		startPosition = getRequestPosition(req.GetInit().GetPartitionOffset())
 	}
+
+	go func() {
+		for {
+			ack, err := stream.Recv()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				glog.V(0).Infof("topic %v partition %v subscriber %s error: %v", t, partition, clientName, err)
+				break
+			}
+			println(clientName, "ack =>", ack.GetAck().Sequence)
+		}
+	}()
 
 	return localTopicPartition.Subscribe(clientName, startPosition, func() bool {
 		if !isConnected {

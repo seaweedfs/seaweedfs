@@ -73,15 +73,20 @@ func (sub *TopicSubscriber) waitUntilNoOverlappingPartitionInFlight(topicPartiti
 	for foundOverlapping {
 		sub.activeProcessorsLock.Lock()
 		foundOverlapping = false
+		var overlappedPartition topic.Partition
 		for partition, _ := range sub.activeProcessors {
 			if partition.Overlaps(topicPartition) {
+				if partition.Equals(topicPartition) {
+					continue
+				}
 				foundOverlapping = true
+				overlappedPartition = partition
 				break
 			}
 		}
 		sub.activeProcessorsLock.Unlock()
 		if foundOverlapping {
-			glog.V(0).Infof("subscriber %s/%s waiting for partition %+v to complete", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, topicPartition)
+			glog.V(0).Infof("subscriber %s new partition %v waiting for partition %+v to complete", sub.ContentConfig.Topic, topicPartition, overlappedPartition)
 			time.Sleep(1 * time.Second)
 		}
 	}

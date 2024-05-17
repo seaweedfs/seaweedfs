@@ -49,8 +49,7 @@ func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, partition *mq_pb.Par
 			localPartition.NotifyLogFlushed(logBuffer.LastFlushTsNs)
 		}
 
-		println("flushing at", logBuffer.LastFlushTsNs, "to", targetFile, "size", len(buf))
-
+		glog.V(0).Infof("flushing at %s to %s size %d", logBuffer.LastFlushTsNs, targetFile, len(buf))
 	}
 }
 
