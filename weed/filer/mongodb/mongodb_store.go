@@ -48,11 +48,12 @@ func (store *MongodbStore) Initialize(configuration util.Configuration, prefix s
 	sslKeyFile := configuration.GetString(prefix + "ssl_key_file")
 	username := configuration.GetString(prefix + "username")
 	password := configuration.GetString(prefix + "password")
+	insecure_skip_verify := configuration.GetBool(prefix + "insecure_skip_verify")
 
-	return store.connection(uri, uint64(poolSize), ssl, sslCAFile, sslCertFile, sslKeyFile, username, password)
+	return store.connection(uri, uint64(poolSize), ssl, sslCAFile, sslCertFile, sslKeyFile, username, password, insecure_skip_verify)
 }
 
-func (store *MongodbStore) connection(uri string, poolSize uint64, ssl bool, sslCAFile, sslCertFile, sslKeyFile string, username, password string) (err error) {
+func (store *MongodbStore) connection(uri string, poolSize uint64, ssl bool, sslCAFile, sslCertFile, sslKeyFile string, username, password string, insecure bool) (err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -63,7 +64,7 @@ func (store *MongodbStore) connection(uri string, poolSize uint64, ssl bool, ssl
 	}
 
 	if ssl {
-		tlsConfig, err := configureTLS(sslCAFile, sslCertFile, sslKeyFile)
+		tlsConfig, err := configureTLS(sslCAFile, sslCertFile, sslKeyFile, insecure)
 		if err != nil {
 			return err
 		}
@@ -90,7 +91,7 @@ func (store *MongodbStore) connection(uri string, poolSize uint64, ssl bool, ssl
 	return err
 }
 
-func configureTLS(caFile, certFile, keyFile string) (*tls.Config, error) {
+func configureTLS(caFile, certFile, keyFile string, insecure bool) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("could not load client key pair: %s", err)
@@ -109,7 +110,7 @@ func configureTLS(caFile, certFile, keyFile string) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
 		RootCAs:            caCertPool,
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: insecure,
 	}
 
 	return tlsConfig, nil
