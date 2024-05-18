@@ -45,10 +45,12 @@ service SeaweedMessaging {
     // data plane for each topic partition
     rpc PublishMessage (stream PublishMessageRequest) returns (stream PublishMessageResponse) {
     }
-    rpc SubscribeMessage (SubscribeMessageRequest) returns (stream SubscribeMessageResponse) {
+    rpc SubscribeMessage (stream SubscribeMessageRequest) returns (stream SubscribeMessageResponse) {
     }
     // The lead broker asks a follower broker to follow itself
     rpc PublishFollowMe (stream PublishFollowMeRequest) returns (stream PublishFollowMeResponse) {
+    }
+    rpc SubscribeFollowMe (stream SubscribeFollowMeRequest) returns (SubscribeFollowMeResponse) {
     }
 }
 
@@ -261,6 +263,25 @@ message SubscribeMessageResponse {
         SubscribeCtrlMessage ctrl = 1;
         DataMessage data = 2;
     }
+}
+message SubscribeFollowMeRequest {
+    message InitMessage {
+        Topic topic = 1;
+        Partition partition = 2;
+    }
+    message AckMessage {
+        int64 ts_ns = 1;
+    }
+    message CloseMessage {
+    }
+    oneof message {
+        InitMessage init = 1;
+        AckMessage ack = 2;
+        CloseMessage close = 3;
+    }
+}
+message SubscribeFollowMeResponse {
+    int64 ack_ts_ns = 1;
 }
 message ClosePublishersRequest {
     Topic topic = 1;
