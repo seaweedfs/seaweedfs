@@ -44,10 +44,10 @@ func main() {
 	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig, processorConfig)
 
 	counter := 0
-	subscriber.SetEachMessageFunc(func(key, value []byte) (bool, error) {
+	subscriber.SetEachMessageFunc(func(key, value []byte) (error) {
 		counter++
 		println(string(key), "=>", string(value), counter)
-		return true, nil
+		return nil
 	})
 
 	subscriber.SetCompletionFunc(func() {
