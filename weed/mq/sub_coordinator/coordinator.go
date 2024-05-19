@@ -69,7 +69,7 @@ func (c *Coordinator) AddSubscriber(initMessage *mq_pb.SubscriberToSubCoordinato
 		}
 	}
 	cgi.MaxPartitionCount = initMessage.MaxPartitionCount
-	cg.OnAddConsumerGroupInstance(initMessage.ConsumerGroupInstanceId, initMessage.Topic)
+	cg.OnAddConsumerGroupInstance(initMessage.ConsumerGroupInstanceId, initMessage.Topic, initMessage.MaxPartitionCount, initMessage.RebalanceSeconds)
 	return cgi
 }
 
@@ -83,7 +83,7 @@ func (c *Coordinator) RemoveSubscriber(initMessage *mq_pb.SubscriberToSubCoordin
 		return
 	}
 	cg.ConsumerGroupInstances.Remove(initMessage.ConsumerGroupInstanceId)
-	cg.OnRemoveConsumerGroupInstance(initMessage.ConsumerGroupInstanceId, initMessage.Topic)
+	cg.OnRemoveConsumerGroupInstance(initMessage.ConsumerGroupInstanceId, initMessage.Topic, initMessage.MaxPartitionCount, initMessage.RebalanceSeconds)
 	if cg.ConsumerGroupInstances.Count() == 0 {
 		tcg.ConsumerGroups.Remove(initMessage.ConsumerGroup)
 	}

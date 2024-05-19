@@ -25,7 +25,7 @@ type ProcessorConfiguration struct {
 	ConcurrentPartitionLimit int32 // how many partitions to process concurrently
 }
 
-type OnEachMessageFunc func(key, value []byte) (shouldContinue bool, err error)
+type OnEachMessageFunc func(key, value []byte) (err error)
 type OnCompletionFunc func()
 
 type TopicSubscriber struct {

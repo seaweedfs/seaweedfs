@@ -166,7 +166,16 @@ message SubscriberToSubCoordinatorRequest {
         string consumer_group = 1;
         string consumer_group_instance_id = 2;
         Topic topic = 3;
+        // The consumer group instance will be assigned at most max_partition_count partitions.
+        // If the number of partitions is less than the sum of max_partition_count,
+        // the consumer group instance may be assigned partitions less than max_partition_count.
+        // Default is 1.
         int32 max_partition_count = 4;
+        // If consumer group instance changes, wait for rebalance_seconds before reassigning partitions
+        // Exception: if adding a new consumer group instance and sum of max_partition_count equals the number of partitions,
+        // the rebalance will happen immediately.
+        // Default is 10 seconds.
+        int32 rebalance_seconds = 5;
     }
     message AckMessage {
         Partition partition = 1;
