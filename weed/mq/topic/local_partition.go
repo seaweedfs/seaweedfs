@@ -30,7 +30,7 @@ type LocalPartition struct {
 
 	publishFolloweMeStream mq_pb.SeaweedMessaging_PublishFollowMeClient
 	followerGrpcConnection *grpc.ClientConn
-	follower               string
+	Follower               string
 }
 
 var TIME_FORMAT = "2006-01-02-15-04-05"
@@ -62,7 +62,7 @@ func (p *LocalPartition) Publish(message *mq_pb.DataMessage) error {
 				Data: message,
 			},
 		}); followErr != nil {
-			return fmt.Errorf("send to follower %s: %v", p.follower, followErr)
+			return fmt.Errorf("send to follower %s: %v", p.Follower, followErr)
 		}
 	} else {
 		atomic.StoreInt64(&p.AckTsNs, message.TsNs)
@@ -137,15 +137,15 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 	if p.publishFolloweMeStream != nil {
 		return nil
 	}
-	if len(initMessage.FollowerBrokers) == 0 {
+	if initMessage.FollowerBroker == "" {
 		return nil
 	}
 
-	p.follower = initMessage.FollowerBrokers[0]
+	p.Follower = initMessage.FollowerBroker
 	ctx := context.Background()
-	p.followerGrpcConnection, err = pb.GrpcDial(ctx, p.follower, true, grpcDialOption)
+	p.followerGrpcConnection, err = pb.GrpcDial(ctx, p.Follower, true, grpcDialOption)
 	if err != nil {
-		return fmt.Errorf("fail to dial %s: %v", p.follower, err)
+		return fmt.Errorf("fail to dial %s: %v", p.Follower, err)
 	}
 	followerClient := mq_pb.NewSeaweedMessagingClient(p.followerGrpcConnection)
 	p.publishFolloweMeStream, err = followerClient.PublishFollowMe(ctx)
@@ -174,10 +174,10 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 			if err != nil {
 				e, _ := status.FromError(err)
 				if e.Code() == codes.Canceled {
-					glog.V(0).Infof("local partition %v follower %v stopped", p.Partition, p.follower)
+					glog.V(0).Infof("local partition %v follower %v stopped", p.Partition, p.Follower)
 					return
 				}
-				glog.Errorf("Receiving local partition %v  follower %s ack: %v", p.Partition, p.follower, err)
+				glog.Errorf("Receiving local partition %v  follower %s ack: %v", p.Partition, p.Follower, err)
 				return
 			}
 			atomic.StoreInt64(&p.AckTsNs, ack.AckTsNs)
@@ -206,13 +206,13 @@ func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
 			glog.V(4).Infof("closing grpcConnection to follower")
 			p.followerGrpcConnection.Close()
 			p.publishFolloweMeStream = nil
-			p.follower = ""
+			p.Follower = ""
 		}
 
 		hasShutdown = true
 	}
 
-	glog.V(0).Infof("local partition %v Publisher:%d Subscriber:%d follower:%s shutdown %v", p.Partition, p.Publishers.Size(), p.Subscribers.Size(), p.follower, hasShutdown)
+	glog.V(0).Infof("local partition %v Publisher:%d Subscriber:%d follower:%s shutdown %v", p.Partition, p.Publishers.Size(), p.Subscribers.Size(), p.Follower, hasShutdown)
 	return
 }
 
@@ -232,8 +232,8 @@ func (p *LocalPartition) NotifyLogFlushed(flushTsNs int64) {
 				},
 			},
 		}); followErr != nil {
-			glog.Errorf("send follower %s flush message: %v", p.follower, followErr)
+			glog.Errorf("send follower %s flush message: %v", p.Follower, followErr)
 		}
-		// println("notifying", p.follower, "flushed at", flushTsNs)
+		// println("notifying", p.Follower, "flushed at", flushTsNs)
 	}
 }

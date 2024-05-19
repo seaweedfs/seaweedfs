@@ -37,7 +37,6 @@ type TopicSubscriber struct {
 	OnCompletionFunc           OnCompletionFunc
 	bootstrapBrokers           []string
 	waitForMoreMessage         bool
-	alreadyProcessedTsNs       int64
 	activeProcessors           map[topic.Partition]*ProcessorState
 	activeProcessorsLock       sync.Mutex
 }
@@ -50,7 +49,6 @@ func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfigu
 		brokerPartitionAssignmentChan: make(chan *mq_pb.BrokerPartitionAssignment, 1024),
 		bootstrapBrokers:              bootstrapBrokers,
 		waitForMoreMessage:            true,
-		alreadyProcessedTsNs:          content.StartTime.UnixNano(),
 		activeProcessors:              make(map[topic.Partition]*ProcessorState),
 	}
 }

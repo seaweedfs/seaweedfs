@@ -66,7 +66,7 @@ func (cg *ConsumerGroup) OnPartitionListChange(assignments []*mq_pb.BrokerPartit
 	}
 	partitionSlotToBrokerList := pub_balancer.NewPartitionSlotToBrokerList(pub_balancer.MaxPartitionCount)
 	for _, assignment := range assignments {
-		partitionSlotToBrokerList.AddBroker(assignment.Partition, assignment.LeaderBroker)
+		partitionSlotToBrokerList.AddBroker(assignment.Partition, assignment.LeaderBroker, assignment.FollowerBroker)
 	}
 	cg.BalanceConsumerGroupInstances(partitionSlotToBrokerList, "partition list change")
 }
@@ -80,7 +80,7 @@ func (cg *ConsumerGroup) BalanceConsumerGroupInstances(knownPartitionSlotToBroke
 		if conf, err := cg.filerClientAccessor.ReadTopicConfFromFiler(cg.topic); err == nil {
 			partitionSlotToBrokerList = pub_balancer.NewPartitionSlotToBrokerList(pub_balancer.MaxPartitionCount)
 			for _, assignment := range conf.BrokerPartitionAssignments {
-				partitionSlotToBrokerList.AddBroker(assignment.Partition, assignment.LeaderBroker)
+				partitionSlotToBrokerList.AddBroker(assignment.Partition, assignment.LeaderBroker, assignment.FollowerBroker)
 			}
 		} else {
 			glog.V(0).Infof("fail to read topic conf from filer: %v", err)
@@ -118,7 +118,8 @@ func (cg *ConsumerGroup) BalanceConsumerGroupInstances(knownPartitionSlotToBroke
 					RingSize:   partitionSlotToBrokerList.RingSize,
 					UnixTimeNs: partitionSlot.UnixTimeNs,
 				},
-				LeaderBroker: partitionSlot.Broker,
+				LeaderBroker:   partitionSlot.Broker,
+				FollowerBroker: partitionSlot.FollowerBroker,
 			}
 		}
 		response := &mq_pb.SubscriberToSubCoordinatorResponse{

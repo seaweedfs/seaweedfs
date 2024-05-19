@@ -145,7 +145,7 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 				Topic:           p.config.Topic.ToPbTopic(),
 				Partition:       job.Partition,
 				AckInterval:     128,
-				FollowerBrokers: job.FollowerBrokers,
+				FollowerBroker:  job.FollowerBroker,
 				PublisherName:   p.config.PublisherName,
 			},
 		},

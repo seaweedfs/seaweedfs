@@ -99,6 +99,7 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 				Partition:       localPartition.Partition.ToPbPartition(),
 				PublisherCount:  int32(localPartition.Publishers.Size()),
 				SubscriberCount: int32(localPartition.Subscribers.Size()),
+				Follower:        localPartition.Follower,
 			}
 			// fmt.Printf("collect topic %+v partition %+v\n", topicPartition, localPartition.Partition)
 		}

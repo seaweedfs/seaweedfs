@@ -102,11 +102,10 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 					Topic:         sub.ContentConfig.Topic.ToPbTopic(),
 					PartitionOffset: &mq_pb.PartitionOffset{
 						Partition: assigned.Partition,
-						StartTsNs: sub.alreadyProcessedTsNs,
 						StartType: mq_pb.PartitionOffsetStartType_EARLIEST_IN_MEMORY,
 					},
 					Filter: sub.ContentConfig.Filter,
-					FollowerBrokers: assigned.FollowerBrokers,
+					FollowerBroker: assigned.FollowerBroker,
 				},
 			},
 		});err != nil {
@@ -154,7 +153,6 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 				if processErr != nil {
 					return fmt.Errorf("process error: %v", processErr)
 				}
-				sub.alreadyProcessedTsNs = m.Data.TsNs
 				partitionOffsetChan <- m.Data.TsNs
 				if !shouldContinue {
 					return nil

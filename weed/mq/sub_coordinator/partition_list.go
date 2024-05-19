@@ -8,6 +8,7 @@ type PartitionSlotToConsumerInstance struct {
 	UnixTimeNs         int64
 	Broker             string
 	AssignedInstanceId string
+	FollowerBroker     string
 }
 
 type PartitionSlotToConsumerInstanceList struct {

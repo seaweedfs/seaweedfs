@@ -92,7 +92,7 @@ func (balancer *Balancer) OnBrokerStatsUpdated(broker string, brokerStats *Broke
 				partitionSlotToBrokerList, _ = balancer.TopicToBrokers.Get(topicKey)
 			}
 		}
-		partitionSlotToBrokerList.AddBroker(partition, broker)
+		partitionSlotToBrokerList.AddBroker(partition, broker, topicPartitionStats.Follower)
 	}
 }
 

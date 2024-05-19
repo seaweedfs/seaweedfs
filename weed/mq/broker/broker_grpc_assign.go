@@ -36,7 +36,7 @@ func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *m
 	// if is leader, notify the followers to drain existing topic partition subscriptions
 	if request.IsLeader {
 		for _, brokerPartition := range request.BrokerPartitionAssignments {
-			for _, follower := range brokerPartition.FollowerBrokers {
+			if follower := brokerPartition.FollowerBroker; follower != "" {
 				err := pb.WithBrokerGrpcClient(false, follower, b.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 					_, err := client.AssignTopicPartitions(context.Background(), request)
 					return err

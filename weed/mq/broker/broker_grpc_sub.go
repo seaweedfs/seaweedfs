@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
@@ -51,12 +52,42 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		}
 	}()
 
-	var startPosition log_buffer.MessagePosition
-	if req.GetInit() != nil && req.GetInit().GetPartitionOffset() != nil {
-		startPosition = getRequestPosition(req.GetInit().GetPartitionOffset())
+	startPosition := b.getRequestPosition(req.GetInit())
+
+	// connect to the follower
+	var subscribeFollowMeStream mq_pb.SeaweedMessaging_SubscribeFollowMeClient
+	glog.V(0).Infof("follower broker: %v", req.GetInit().FollowerBroker)
+	if req.GetInit().FollowerBroker != "" {
+		follower := req.GetInit().FollowerBroker
+		if followerGrpcConnection, err := pb.GrpcDial(ctx, follower, true, b.grpcDialOption); err != nil {
+			return fmt.Errorf("fail to dial %s: %v", follower, err)
+		} else {
+			defer func() {
+				println("closing SubscribeFollowMe connection", follower)
+				followerGrpcConnection.Close()
+			}()
+			followerClient := mq_pb.NewSeaweedMessagingClient(followerGrpcConnection)
+			if subscribeFollowMeStream, err = followerClient.SubscribeFollowMe(ctx); err != nil {
+				return fmt.Errorf("fail to subscribe to %s: %v", follower, err)
+			} else {
+				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
+					Message: &mq_pb.SubscribeFollowMeRequest_Init{
+						Init: &mq_pb.SubscribeFollowMeRequest_InitMessage{
+							Topic:      req.GetInit().Topic,
+							Partition:  req.GetInit().GetPartitionOffset().Partition,
+							ConsumerGroup: req.GetInit().ConsumerGroup,
+						},
+					},
+				}); err != nil {
+					return fmt.Errorf("fail to send init to %s: %v", follower, err)
+				}
+			}
+		}
+		glog.V(0).Infof("follower %s connected", follower)
 	}
 
 	go func() {
+		var lastOffset int64
 		for {
 			ack, err := stream.Recv()
 			if err != nil {
@@ -66,7 +97,34 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 				glog.V(0).Infof("topic %v partition %v subscriber %s error: %v", t, partition, clientName, err)
 				break
 			}
-			println(clientName, "ack =>", ack.GetAck().Sequence)
+			lastOffset = ack.GetAck().Sequence
+			if subscribeFollowMeStream != nil {
+				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
+					Message: &mq_pb.SubscribeFollowMeRequest_Ack{
+						Ack: &mq_pb.SubscribeFollowMeRequest_AckMessage{
+							TsNs: lastOffset,
+						},
+					},
+				}); err != nil {
+					glog.Errorf("Error sending ack to follower: %v", err)
+					break
+				}
+				println("forwarding ack", lastOffset)
+			}
+		}
+		if lastOffset > 0 {
+			if err := b.saveConsumerGroupOffset(t, partition, req.GetInit().ConsumerGroup, lastOffset); err != nil {
+				glog.Errorf("saveConsumerGroupOffset: %v", err)
+			}
+			if subscribeFollowMeStream != nil {
+				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
+					Message: &mq_pb.SubscribeFollowMeRequest_Close{
+						Close: &mq_pb.SubscribeFollowMeRequest_CloseMessage{},
+					},
+				}); err != nil {
+					glog.Errorf("Error sending close to follower: %v", err)
+				}
+			}
 		}
 	}()
 
@@ -115,10 +173,20 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	})
 }
 
-func getRequestPosition(offset *mq_pb.PartitionOffset) (startPosition log_buffer.MessagePosition) {
+func (b *MessageQueueBroker) getRequestPosition(initMessage *mq_pb.SubscribeMessageRequest_InitMessage) (startPosition log_buffer.MessagePosition) {
+	if initMessage == nil {
+		return
+	}
+	offset := initMessage.GetPartitionOffset()
 	if offset.StartTsNs != 0 {
 		startPosition = log_buffer.NewMessagePosition(offset.StartTsNs, -2)
+		return
 	}
+	if storedOffset, err := b.readConsumerGroupOffset(initMessage); err == nil{
+		startPosition = log_buffer.NewMessagePosition(storedOffset, -2)
+		return
+	}
+
 	if offset.StartType == mq_pb.PartitionOffsetStartType_EARLIEST {
 		startPosition = log_buffer.NewMessagePosition(1, -3)
 	} else if offset.StartType == mq_pb.PartitionOffsetStartType_LATEST {
