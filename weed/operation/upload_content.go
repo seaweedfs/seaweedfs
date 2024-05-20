@@ -31,9 +31,18 @@ type UploadOption struct {
 	MimeType          string
 	PairMap           map[string]string
 	Jwt               security.EncodedJwt
+	AuthHeader        string
 	RetryForever      bool
 	Md5               string
 	BytesBuffer       *bytes.Buffer
+}
+
+// FillRemoteAuthHeader 在http请求转发时，将调用方的Authorization头继续透传给upload_content
+func (u *UploadOption) FillRemoteAuthHeader(r *http.Request) {
+	auth := r.Header.Get("Authorization")
+	if auth != "" {
+		u.AuthHeader = auth
+	}
 }
 
 type UploadResult struct {
@@ -241,6 +250,7 @@ func doUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult
 			MimeType:          "",
 			PairMap:           nil,
 			Jwt:               option.Jwt,
+			AuthHeader:        option.AuthHeader,
 		})
 		if uploadResult == nil {
 			return
@@ -262,6 +272,7 @@ func doUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult
 			MimeType:          option.MimeType,
 			PairMap:           option.PairMap,
 			Jwt:               option.Jwt,
+			AuthHeader:        option.AuthHeader,
 			Md5:               option.Md5,
 			BytesBuffer:       option.BytesBuffer,
 		})
@@ -334,8 +345,14 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	for k, v := range option.PairMap {
 		req.Header.Set(k, v)
 	}
+	var auth string
 	if option.Jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+string(option.Jwt))
+		auth = "BEARER " + string(option.Jwt)
+	} else {
+		auth = option.AuthHeader
+	}
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
 	}
 	// print("+")
 	resp, post_err := HttpClient.Do(req)

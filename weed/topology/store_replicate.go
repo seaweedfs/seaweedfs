@@ -100,6 +100,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 				Md5:               contentMd5,
 				BytesBuffer:       bytesBuffer,
 			}
+			uploadOption.FillRemoteAuthHeader(r)
 
 			_, err := operation.UploadData(n.Data, uploadOption)
 			if err != nil {
