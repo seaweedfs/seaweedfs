@@ -70,7 +70,7 @@ func doVisitValue(fieldType *schema_pb.Type, levels *ParquetLevels, fieldValue *
 	return
 }
 
-func toParquetValue(value *schema_pb.Value) (parquet.Value,  error) {
+func toParquetValue(value *schema_pb.Value) (parquet.Value, error) {
 	switch value.Kind.(type) {
 	case *schema_pb.Value_BoolValue:
 		return parquet.BooleanValue(value.GetBoolValue()), nil

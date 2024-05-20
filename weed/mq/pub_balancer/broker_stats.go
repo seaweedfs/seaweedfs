@@ -17,7 +17,7 @@ type BrokerStats struct {
 }
 type TopicPartitionStats struct {
 	topic.TopicPartition
-	PublisherCount int32
+	PublisherCount  int32
 	SubscriberCount int32
 }
 
@@ -48,7 +48,7 @@ func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
 					UnixTimeNs: topicPartitionStats.Partition.UnixTimeNs,
 				},
 			},
-			PublisherCount: topicPartitionStats.PublisherCount,
+			PublisherCount:  topicPartitionStats.PublisherCount,
 			SubscriberCount: topicPartitionStats.SubscriberCount,
 		}
 		publisherCount += topicPartitionStats.PublisherCount
@@ -76,7 +76,7 @@ func (bs *BrokerStats) RegisterAssignment(t *mq_pb.Topic, partition *mq_pb.Parti
 				UnixTimeNs: partition.UnixTimeNs,
 			},
 		},
-		PublisherCount: 0,
+		PublisherCount:  0,
 		SubscriberCount: 0,
 	}
 	key := tps.TopicPartition.String()
