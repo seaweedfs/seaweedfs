@@ -51,7 +51,7 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 							ConsumerGroup:           sub.SubscriberConfig.ConsumerGroup,
 							ConsumerGroupInstanceId: sub.SubscriberConfig.ConsumerGroupInstanceId,
 							Topic:                   sub.ContentConfig.Topic.ToPbTopic(),
-							MaxPartitionCount: 	 	 sub.ProcessorConfig.ConcurrentPartitionLimit,
+							MaxPartitionCount: 	 	 sub.ProcessorConfig.MaxPartitionCount,
 						},
 					},
 				}); err != nil {
@@ -107,6 +107,7 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 					},
 					Filter: sub.ContentConfig.Filter,
 					FollowerBroker: assigned.FollowerBroker,
+					Concurrency: sub.ProcessorConfig.PerPartitionConcurrency,
 				},
 			},
 		});err != nil {
@@ -124,7 +125,7 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 			close(partitionOffsetChan)
 		}()
 
-		concurrentPartitionLimit := int(sub.ProcessorConfig.ConcurrentPartitionLimit)
+		concurrentPartitionLimit := int(sub.ProcessorConfig.MaxPartitionCount)
 		if concurrentPartitionLimit <= 0 {
 			concurrentPartitionLimit = 1
 		}

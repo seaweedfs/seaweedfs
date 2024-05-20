@@ -61,6 +61,10 @@ func (imt *InflightMessageTracker) AcknowledgeMessage(key []byte, tsNs int64) bo
 	return true
 }
 
+func (imt *InflightMessageTracker) GetOldest() int64 {
+	return imt.timestamps.Oldest()
+}
+
 // RingBuffer represents a circular buffer to hold timestamps.
 type RingBuffer struct {
 	buffer []int64

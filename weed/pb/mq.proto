@@ -254,9 +254,11 @@ message SubscribeMessageRequest {
         PartitionOffset partition_offset = 5;
         string filter = 6;
         string follower_broker = 7;
+        int32 concurrency = 8;
     }
     message AckMessage {
         int64 sequence = 1;
+        bytes key = 2;
     }
     oneof message {
         InitMessage init = 1;

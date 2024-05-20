@@ -29,7 +29,7 @@ func (sub *TopicSubscriber) startProcessors() {
 	// listen to the messages from the sub coordinator
 	// start one processor per partition
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, sub.ProcessorConfig.ConcurrentPartitionLimit)
+	semaphore := make(chan struct{}, sub.ProcessorConfig.MaxPartitionCount)
 
 	for assigned := range sub.brokerPartitionAssignmentChan {
 		wg.Add(1)

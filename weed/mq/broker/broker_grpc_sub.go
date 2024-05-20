@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -53,6 +54,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	}()
 
 	startPosition := b.getRequestPosition(req.GetInit())
+	imt := sub_coordinator.NewInflightMessageTracker(int(req.GetInit().Concurrency))
 
 	// connect to the follower
 	var subscribeFollowMeStream mq_pb.SeaweedMessaging_SubscribeFollowMeClient
@@ -97,8 +99,9 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 				glog.V(0).Infof("topic %v partition %v subscriber %s error: %v", t, partition, clientName, err)
 				break
 			}
-			lastOffset = ack.GetAck().Sequence
-			if subscribeFollowMeStream != nil {
+			imt.AcknowledgeMessage(ack.GetAck().Key, ack.GetAck().Sequence)
+			currentLastOffset := imt.GetOldest()
+			if subscribeFollowMeStream != nil && currentLastOffset > lastOffset {
 				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
 					Message: &mq_pb.SubscribeFollowMeRequest_Ack{
 						Ack: &mq_pb.SubscribeFollowMeRequest_AckMessage{
@@ -110,6 +113,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 					break
 				}
 				println("forwarding ack", lastOffset)
+				lastOffset = currentLastOffset
 			}
 		}
 		if lastOffset > 0 {

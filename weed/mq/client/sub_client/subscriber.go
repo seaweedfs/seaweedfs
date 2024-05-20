@@ -22,7 +22,8 @@ type ContentConfiguration struct {
 }
 
 type ProcessorConfiguration struct {
-	ConcurrentPartitionLimit int32 // how many partitions to process concurrently
+	MaxPartitionCount int32 // how many partitions to process concurrently
+	PerPartitionConcurrency int32 // how many messages to process concurrently per partition
 }
 
 type OnEachMessageFunc func(key, value []byte) (err error)

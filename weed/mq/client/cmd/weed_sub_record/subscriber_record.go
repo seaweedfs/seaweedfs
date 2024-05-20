@@ -63,7 +63,8 @@ func main() {
 	}
 
 	processorConfig := sub_client.ProcessorConfiguration{
-		ConcurrentPartitionLimit: 3,
+		MaxPartitionCount: 3,
+		PerPartitionConcurrency: 1,
 	}
 
 	brokers := strings.Split(*seedBrokers, ",")
