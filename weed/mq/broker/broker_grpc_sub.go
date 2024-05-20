@@ -112,8 +112,8 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 					glog.Errorf("Error sending ack to follower: %v", err)
 					break
 				}
-				println("forwarding ack", lastOffset)
 				lastOffset = currentLastOffset
+				fmt.Printf("%+v forwarding ack %d\n", partition, lastOffset)
 			}
 		}
 		if lastOffset > 0 {
