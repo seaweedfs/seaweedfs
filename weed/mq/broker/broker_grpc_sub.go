@@ -162,6 +162,10 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		// reset the sleep interval count
 		sleepIntervalCount = 0
 
+		for imt.IsInflight(logEntry.Key) {
+			time.Sleep(137 * time.Millisecond)
+		}
+
 		imt.InflightMessage(logEntry.Key, logEntry.TsNs)
 
 		if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{

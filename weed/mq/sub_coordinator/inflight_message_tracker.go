@@ -67,6 +67,14 @@ func (imt *InflightMessageTracker) GetOldest() int64 {
 	return imt.timestamps.Oldest()
 }
 
+// IsInflight returns true if the message with the key is inflight.
+func (imt *InflightMessageTracker) IsInflight(key []byte) bool {
+	imt.mu.Lock()
+	defer imt.mu.Unlock()
+	_, found := imt.messages[string(key)]
+	return found
+}
+
 // RingBuffer represents a circular buffer to hold timestamps.
 type RingBuffer struct {
 	buffer []int64
