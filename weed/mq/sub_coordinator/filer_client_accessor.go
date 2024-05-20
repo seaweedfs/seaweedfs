@@ -14,8 +14,8 @@ import (
 )
 
 type FilerClientAccessor struct {
-	GetFiler func() pb.ServerAddress
-	GetGrpcDialOption func()grpc.DialOption
+	GetFiler          func() pb.ServerAddress
+	GetGrpcDialOption func() grpc.DialOption
 }
 
 func (fca *FilerClientAccessor) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {

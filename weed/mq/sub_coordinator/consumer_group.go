@@ -12,8 +12,8 @@ import (
 type ConsumerGroupInstance struct {
 	InstanceId string
 	// the consumer group instance may not have an active partition
-	Partitions   []*topic.Partition
-	ResponseChan chan *mq_pb.SubscriberToSubCoordinatorResponse
+	Partitions        []*topic.Partition
+	ResponseChan      chan *mq_pb.SubscriberToSubCoordinatorResponse
 	MaxPartitionCount int32
 }
 type ConsumerGroup struct {
@@ -43,10 +43,10 @@ func NewConsumerGroupInstance(instanceId string) *ConsumerGroupInstance {
 	}
 }
 func (cg *ConsumerGroup) OnAddConsumerGroupInstance(consumerGroupInstance string, topic *mq_pb.Topic, maxPartitionCount, rebalanceSeconds int32) {
-	cg.onConsumerGroupInstanceChange(true, "add consumer instance " + consumerGroupInstance, maxPartitionCount, rebalanceSeconds)
+	cg.onConsumerGroupInstanceChange(true, "add consumer instance "+consumerGroupInstance, maxPartitionCount, rebalanceSeconds)
 }
 func (cg *ConsumerGroup) OnRemoveConsumerGroupInstance(consumerGroupInstance string, topic *mq_pb.Topic, maxPartitionCount, rebalanceSeconds int32) {
-	cg.onConsumerGroupInstanceChange(false, "remove consumer instance " + consumerGroupInstance, maxPartitionCount, rebalanceSeconds)
+	cg.onConsumerGroupInstanceChange(false, "remove consumer instance "+consumerGroupInstance, maxPartitionCount, rebalanceSeconds)
 }
 
 func (cg *ConsumerGroup) onConsumerGroupInstanceChange(isAdd bool, reason string, maxPartitionCount, rebalanceSeconds int32) {

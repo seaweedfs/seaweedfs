@@ -51,7 +51,7 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 							ConsumerGroup:           sub.SubscriberConfig.ConsumerGroup,
 							ConsumerGroupInstanceId: sub.SubscriberConfig.ConsumerGroupInstanceId,
 							Topic:                   sub.ContentConfig.Topic.ToPbTopic(),
-							MaxPartitionCount: 	 	 sub.ProcessorConfig.MaxPartitionCount,
+							MaxPartitionCount:       sub.ProcessorConfig.MaxPartitionCount,
 						},
 					},
 				}); err != nil {
@@ -105,12 +105,12 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 						Partition: assigned.Partition,
 						StartType: mq_pb.PartitionOffsetStartType_EARLIEST_IN_MEMORY,
 					},
-					Filter: sub.ContentConfig.Filter,
+					Filter:         sub.ContentConfig.Filter,
 					FollowerBroker: assigned.FollowerBroker,
-					Concurrency: sub.ProcessorConfig.PerPartitionConcurrency,
+					Concurrency:    sub.ProcessorConfig.PerPartitionConcurrency,
 				},
 			},
-		});err != nil {
+		}); err != nil {
 			glog.V(0).Infof("subscriber %s connected to partition %+v at %v: %v", sub.ContentConfig.Topic, assigned.Partition, assigned.LeaderBroker, err)
 		}
 
@@ -120,16 +120,16 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 			defer sub.OnCompletionFunc()
 		}
 
-		partitionOffsetChan:= make(chan int64, 1024)
+		partitionOffsetChan := make(chan int64, 1024)
 		defer func() {
 			close(partitionOffsetChan)
 		}()
 
-		concurrentPartitionLimit := int(sub.ProcessorConfig.MaxPartitionCount)
-		if concurrentPartitionLimit <= 0 {
-			concurrentPartitionLimit = 1
+		perPartitionConcurrency := int(sub.ProcessorConfig.PerPartitionConcurrency)
+		if perPartitionConcurrency <= 0 {
+			perPartitionConcurrency = 1
 		}
-		executors := util.NewLimitedConcurrentExecutor(concurrentPartitionLimit)
+		executors := util.NewLimitedConcurrentExecutor(perPartitionConcurrency)
 
 		go func() {
 			for ack := range partitionOffsetChan {
@@ -162,7 +162,7 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 					processErr := sub.OnEachMessageFunc(m.Data.Key, m.Data.Value)
 					if processErr == nil {
 						partitionOffsetChan <- m.Data.TsNs
-					}else{
+					} else {
 						lastErr = processErr
 					}
 				})

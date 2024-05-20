@@ -63,7 +63,7 @@ func main() {
 	}
 
 	processorConfig := sub_client.ProcessorConfiguration{
-		MaxPartitionCount: 3,
+		MaxPartitionCount:       3,
 		PerPartitionConcurrency: 1,
 	}
 
@@ -71,7 +71,7 @@ func main() {
 	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig, processorConfig)
 
 	counter := 0
-	subscriber.SetEachMessageFunc(func(key, value []byte) (error) {
+	subscriber.SetEachMessageFunc(func(key, value []byte) error {
 		counter++
 		record := &schema_pb.RecordValue{}
 		proto.Unmarshal(value, record)

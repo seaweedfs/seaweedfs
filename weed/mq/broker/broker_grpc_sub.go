@@ -75,8 +75,8 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
 					Message: &mq_pb.SubscribeFollowMeRequest_Init{
 						Init: &mq_pb.SubscribeFollowMeRequest_InitMessage{
-							Topic:      req.GetInit().Topic,
-							Partition:  req.GetInit().GetPartitionOffset().Partition,
+							Topic:         req.GetInit().Topic,
+							Partition:     req.GetInit().GetPartitionOffset().Partition,
 							ConsumerGroup: req.GetInit().ConsumerGroup,
 						},
 					},
@@ -186,7 +186,7 @@ func (b *MessageQueueBroker) getRequestPosition(initMessage *mq_pb.SubscribeMess
 		startPosition = log_buffer.NewMessagePosition(offset.StartTsNs, -2)
 		return
 	}
-	if storedOffset, err := b.readConsumerGroupOffset(initMessage); err == nil{
+	if storedOffset, err := b.readConsumerGroupOffset(initMessage); err == nil {
 		startPosition = log_buffer.NewMessagePosition(storedOffset, -2)
 		return
 	}

@@ -6,15 +6,15 @@ import (
 )
 
 type InflightMessageTracker struct {
-	messages      map[string]int64
-	mu            sync.Mutex
-	timestamps    *RingBuffer
+	messages   map[string]int64
+	mu         sync.Mutex
+	timestamps *RingBuffer
 }
 
 func NewInflightMessageTracker(capacity int) *InflightMessageTracker {
 	return &InflightMessageTracker{
-		messages:    make(map[string]int64),
-		timestamps:  NewRingBuffer(capacity),
+		messages:   make(map[string]int64),
+		timestamps: NewRingBuffer(capacity),
 	}
 }
 
@@ -26,6 +26,7 @@ func (imt *InflightMessageTracker) InflightMessage(key []byte, tsNs int64) {
 	imt.messages[string(key)] = tsNs
 	imt.timestamps.Add(tsNs)
 }
+
 // IsMessageAcknowledged returns true if the message has been acknowledged.
 // If the message is older than the oldest inflight messages, returns false.
 // returns false if the message is inflight.
@@ -47,6 +48,7 @@ func (imt *InflightMessageTracker) IsMessageAcknowledged(key []byte, tsNs int64)
 
 	return true
 }
+
 // AcknowledgeMessage acknowledges the message with the key and timestamp.
 func (imt *InflightMessageTracker) AcknowledgeMessage(key []byte, tsNs int64) bool {
 	imt.mu.Lock()
@@ -71,12 +73,14 @@ type RingBuffer struct {
 	head   int
 	size   int
 }
+
 // NewRingBuffer creates a new RingBuffer of the given capacity.
 func NewRingBuffer(capacity int) *RingBuffer {
 	return &RingBuffer{
 		buffer: make([]int64, capacity),
 	}
 }
+
 // Add adds a new timestamp to the ring buffer.
 func (rb *RingBuffer) Add(timestamp int64) {
 	rb.buffer[rb.head] = timestamp
@@ -85,6 +89,7 @@ func (rb *RingBuffer) Add(timestamp int64) {
 		rb.size++
 	}
 }
+
 // Remove removes the specified timestamp from the ring buffer.
 func (rb *RingBuffer) Remove(timestamp int64) {
 	// Perform binary search

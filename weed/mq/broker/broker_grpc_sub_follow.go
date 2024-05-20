@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-
 func (b *MessageQueueBroker) SubscribeFollowMe(stream mq_pb.SeaweedMessaging_SubscribeFollowMeServer) (err error) {
 	var req *mq_pb.SubscribeFollowMeRequest
 	req, err = stream.Recv()
@@ -72,7 +71,7 @@ func (b *MessageQueueBroker) readConsumerGroupOffset(initMessage *mq_pb.Subscrib
 	err = b.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := filer.ReadInsideFiler(client, partitionDir, offsetFileName)
 		if err != nil {
-				return err
+			return err
 		}
 		if len(data) != 8 {
 			return fmt.Errorf("no offset found")

@@ -32,7 +32,7 @@ func Test_doBalanceSticky(t *testing.T) {
 						MaxPartitionCount: 1,
 					},
 				},
-				prevMapping:         nil,
+				prevMapping: nil,
 			},
 			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
@@ -61,7 +61,7 @@ func Test_doBalanceSticky(t *testing.T) {
 						MaxPartitionCount: 1,
 					},
 				},
-				prevMapping:         nil,
+				prevMapping: nil,
 			},
 			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
@@ -90,7 +90,7 @@ func Test_doBalanceSticky(t *testing.T) {
 						MaxPartitionCount: 1,
 					},
 				},
-				prevMapping:         nil,
+				prevMapping: nil,
 			},
 			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
@@ -128,7 +128,7 @@ func Test_doBalanceSticky(t *testing.T) {
 						MaxPartitionCount: 1,
 					},
 				},
-				prevMapping:         nil,
+				prevMapping: nil,
 			},
 			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{

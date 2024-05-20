@@ -9,7 +9,6 @@ import (
 )
 
 type ProcessorState struct {
-
 }
 
 // Subscribe subscribes to a topic's specified partitions.

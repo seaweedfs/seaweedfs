@@ -22,7 +22,7 @@ type ContentConfiguration struct {
 }
 
 type ProcessorConfiguration struct {
-	MaxPartitionCount int32 // how many partitions to process concurrently
+	MaxPartitionCount       int32 // how many partitions to process concurrently
 	PerPartitionConcurrency int32 // how many messages to process concurrently per partition
 }
 
@@ -30,16 +30,16 @@ type OnEachMessageFunc func(key, value []byte) (err error)
 type OnCompletionFunc func()
 
 type TopicSubscriber struct {
-	SubscriberConfig           *SubscriberConfiguration
-	ContentConfig              *ContentConfiguration
+	SubscriberConfig              *SubscriberConfiguration
+	ContentConfig                 *ContentConfiguration
 	ProcessorConfig               *ProcessorConfiguration
 	brokerPartitionAssignmentChan chan *mq_pb.BrokerPartitionAssignment
 	OnEachMessageFunc             OnEachMessageFunc
-	OnCompletionFunc           OnCompletionFunc
-	bootstrapBrokers           []string
-	waitForMoreMessage         bool
-	activeProcessors           map[topic.Partition]*ProcessorState
-	activeProcessorsLock       sync.Mutex
+	OnCompletionFunc              OnCompletionFunc
+	bootstrapBrokers              []string
+	waitForMoreMessage            bool
+	activeProcessors              map[topic.Partition]*ProcessorState
+	activeProcessorsLock          sync.Mutex
 }
 
 func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration, processor ProcessorConfiguration) *TopicSubscriber {
