@@ -51,7 +51,7 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 							ConsumerGroup:           sub.SubscriberConfig.ConsumerGroup,
 							ConsumerGroupInstanceId: sub.SubscriberConfig.ConsumerGroupInstanceId,
 							Topic:                   sub.ContentConfig.Topic.ToPbTopic(),
-							MaxPartitionCount:       sub.ProcessorConfig.MaxPartitionCount,
+							MaxPartitionCount:       sub.SubscriberConfig.MaxPartitionCount,
 						},
 					},
 				}); err != nil {
@@ -95,7 +95,7 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 			return fmt.Errorf("create subscribe client: %v", err)
 		}
 
-		perPartitionConcurrency := sub.ProcessorConfig.PerPartitionConcurrency
+		perPartitionConcurrency := sub.SubscriberConfig.PerPartitionConcurrency
 		if perPartitionConcurrency <= 0 {
 			perPartitionConcurrency = 1
 		}

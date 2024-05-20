@@ -17,6 +17,8 @@ var (
 	namespace   = flag.String("ns", "test", "namespace")
 	t           = flag.String("topic", "test", "topic")
 	seedBrokers = flag.String("brokers", "localhost:17777", "seed brokers")
+	maxPartitionCount = flag.Int("maxPartitionCount", 3, "max partition count")
+	perPartitionConcurrency = flag.Int("perPartitionConcurrency", 1, "per partition concurrency")
 
 	clientId = flag.Uint("client_id", uint(util.RandomInt32()), "client id")
 )
@@ -28,6 +30,8 @@ func main() {
 		ConsumerGroup:           "test",
 		ConsumerGroupInstanceId: fmt.Sprintf("client-%d", *clientId),
 		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),
+		MaxPartitionCount:       int32(*maxPartitionCount),
+		PerPartitionConcurrency: int32(*perPartitionConcurrency),
 	}
 
 	contentConfig := &sub_client.ContentConfiguration{
@@ -36,12 +40,8 @@ func main() {
 		StartTime: time.Unix(1, 1),
 	}
 
-	processorConfig := sub_client.ProcessorConfiguration{
-		MaxPartitionCount: 3,
-	}
-
 	brokers := strings.Split(*seedBrokers, ",")
-	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig, processorConfig)
+	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig)
 
 	counter := 0
 	subscriber.SetEachMessageFunc(func(key, value []byte) error {
