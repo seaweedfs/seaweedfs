@@ -1,10 +1,11 @@
 package s3api
 
 import (
-	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/stretchr/testify/assert"
 	"reflect"
 	"testing"
+
+	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -79,6 +80,7 @@ func TestCanDo(t *testing.T) {
 	}
 	// object specific
 	assert.Equal(t, true, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident1.canDo(ACTION_DELETE_BUCKET, "bucket1", ""))
 	assert.Equal(t, false, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/other/some"), "action without *")
 
 	// bucket specific
@@ -141,6 +143,15 @@ func TestCanDo(t *testing.T) {
 		},
 	}
 	assert.Equal(t, true, ident6.canDo(ACTION_READ, "anything_bucket", "/a/b/c/d.txt"))
+
+	//test deleteBucket operation
+	ident7 := &Identity{
+		Name: "anything",
+		Actions: []Action{
+			"DeleteBucket:bucket1",
+		},
+	}
+	assert.Equal(t, true, ident7.canDo(ACTION_DELETE_BUCKET, "bucket1", ""))
 }
 
 type LoadS3ApiConfigurationTestCase struct {
