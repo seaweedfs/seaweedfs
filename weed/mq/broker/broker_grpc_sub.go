@@ -101,6 +101,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 			}
 			imt.AcknowledgeMessage(ack.GetAck().Key, ack.GetAck().Sequence)
 			currentLastOffset := imt.GetOldest()
+			fmt.Printf("%+v recv (%s,%d), oldest %d\n", partition, string(ack.GetAck().Key), ack.GetAck().Sequence, currentLastOffset)
 			if subscribeFollowMeStream != nil && currentLastOffset > lastOffset {
 				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
 					Message: &mq_pb.SubscribeFollowMeRequest_Ack{
@@ -160,6 +161,8 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	}, func(logEntry *filer_pb.LogEntry) (bool, error) {
 		// reset the sleep interval count
 		sleepIntervalCount = 0
+
+		imt.InflightMessage(logEntry.Key, logEntry.TsNs)
 
 		if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
 			Data: &mq_pb.DataMessage{
