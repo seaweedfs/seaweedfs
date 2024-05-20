@@ -487,19 +487,21 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 	if err != nil {
 		return err
 	}
-	dstDatSize, _, err := dstDatBackend.GetStat()
-	if err != nil {
-		return err
-	}
-	if v.nm.ContentSize() > v.nm.DeletedSize() {
-		expectedContentSize := v.nm.ContentSize() - v.nm.DeletedSize()
-		if expectedContentSize > uint64(dstDatSize) {
-			return fmt.Errorf("volume %s unexpected new data size: %d does not match size of content minus deleted: %d",
-				v.Id.String(), dstDatSize, expectedContentSize)
+	if v.Ttl.String() == "" {
+		dstDatSize, _, err := dstDatBackend.GetStat()
+		if err != nil {
+			return err
 		}
-	} else {
-		glog.Warningf("volume %s content size: %d less deleted size: %d, new size: %d",
-			v.Id.String(), v.nm.ContentSize(), v.nm.DeletedSize(), dstDatSize)
+		if v.nm.ContentSize() > v.nm.DeletedSize() {
+			expectedContentSize := v.nm.ContentSize() - v.nm.DeletedSize()
+			if expectedContentSize > uint64(dstDatSize) {
+				return fmt.Errorf("volume %s unexpected new data size: %d does not match size of content minus deleted: %d",
+					v.Id.String(), dstDatSize, expectedContentSize)
+			}
+		} else {
+			glog.Warningf("volume %s content size: %d less deleted size: %d, new size: %d",
+				v.Id.String(), v.nm.ContentSize(), v.nm.DeletedSize(), dstDatSize)
+		}
 	}
 	err = newNm.SaveToIdx(datIdxName)
 	if err != nil {

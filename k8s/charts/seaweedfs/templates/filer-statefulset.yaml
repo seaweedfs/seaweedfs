@@ -62,6 +62,9 @@ spec:
       initContainers:
         {{ tpl .Values.filer.initContainers . | nindent 8 | trim }}
       {{- end }}
+      {{- if .Values.filer.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.filer.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
       containers:
         - name: seaweedfs
           image: {{ template "filer.image" . }}
@@ -84,11 +87,13 @@ spec:
                 secretKeyRef:
                   name: secret-seaweedfs-db
                   key: user
+                  optional: true
             - name: WEED_MYSQL_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: secret-seaweedfs-db
                   key: password
+                  optional: true
             - name: SEAWEEDFS_FULLNAME
               value: "{{ template "seaweedfs.name" . }}"
             {{- if .Values.filer.extraEnvironmentVars }}
@@ -261,6 +266,9 @@ spec:
           {{- if .Values.filer.resources }}
           resources:
             {{ tpl .Values.filer.resources . | nindent 12 | trim }}
+          {{- end }}
+          {{- if .Values.filer.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
         {{- if .Values.filer.sidecars }}
         {{- include "common.tplvalues.render" (dict "value" .Values.filer.sidecars "context" $) | nindent 8 }}
