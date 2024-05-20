@@ -69,7 +69,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		return stream.Send(response)
 	}
 
-	var receivedSequence, acknowledgedSequence  int64
+	var receivedSequence, acknowledgedSequence int64
 	var isClosed bool
 
 	// start sending ack to publisher
@@ -85,7 +85,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		lastAckTime := time.Now()
 		for !isClosed {
 			receivedSequence = atomic.LoadInt64(&localTopicPartition.AckTsNs)
-			if acknowledgedSequence < receivedSequence && (receivedSequence - acknowledgedSequence >= ackInterval || time.Since(lastAckTime) > 1*time.Second){
+			if acknowledgedSequence < receivedSequence && (receivedSequence-acknowledgedSequence >= ackInterval || time.Since(lastAckTime) > 1*time.Second) {
 				acknowledgedSequence = receivedSequence
 				response := &mq_pb.PublishMessageResponse{
 					AckSequence: acknowledgedSequence,
@@ -100,7 +100,6 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			}
 		}
 	}()
-
 
 	// process each published messages
 	clientName := fmt.Sprintf("%v-%4d/%s/%v", findClientAddress(stream.Context()), rand.Intn(10000), initMessage.Topic, initMessage.Partition)

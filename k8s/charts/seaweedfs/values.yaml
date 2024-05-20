@@ -25,6 +25,7 @@ global:
     enabled: false
     gatewayHost: null
     gatewayPort: null
+    additionalLabels: {}
   # if enabled will use global.replicationPlacment and override master & filer defaultReplicaPlacement config
   enableReplication: false
   #  replication type is XYZ:
@@ -165,6 +166,25 @@ master:
   # used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
+
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  podSecurityContext: {}
+
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  containerSecurityContext: {}
 
   ingress:
     enabled: false
@@ -377,6 +397,25 @@ volume:
 
   extraEnvironmentVars:
 
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  podSecurityContext: {}
+
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  containerSecurityContext: {}
+
   # used to configure livenessProbe on volume-server containers
   #
   livenessProbe:
@@ -535,6 +574,25 @@ filer:
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
 
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  podSecurityContext: {}
+
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  containerSecurityContext: {}
+
   ingress:
     enabled: false
     className: "nginx"
@@ -605,7 +663,7 @@ filer:
     timeoutSeconds: 10
 
   # secret env variables
-  secretExtraEnvironmentVars: []
+  secretExtraEnvironmentVars: {}
       # WEED_POSTGRES_USERNAME:
       #   secretKeyRef:
       #     name: postgres-credentials
@@ -705,6 +763,25 @@ s3:
   # used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
+
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  podSecurityContext: {}
+
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  containerSecurityContext: {}
 
   logs:
     type: "hostPath"

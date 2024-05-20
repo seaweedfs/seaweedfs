@@ -47,7 +47,7 @@ func toRecordValue(recordType *schema_pb.RecordType, levels *ParquetLevels, valu
 func toListValue(listType *schema_pb.ListType, levels *ParquetLevels, values []parquet.Value, valueIndex int) (listValue *schema_pb.Value, endValueIndex int, err error) {
 	listValues := make([]*schema_pb.Value, 0)
 	var value *schema_pb.Value
-	for ;valueIndex < len(values); {
+	for valueIndex < len(values) {
 		if values[valueIndex].Column() != levels.startColumnIndex {
 			break
 		}
@@ -67,19 +67,19 @@ func toScalarValue(scalarType schema_pb.ScalarType, levels *ParquetLevels, value
 	}
 	switch scalarType {
 	case schema_pb.ScalarType_BOOL:
-		return &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: value.Boolean()}}, valueIndex+1, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: value.Boolean()}}, valueIndex + 1, nil
 	case schema_pb.ScalarType_INT32:
-		return &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: value.Int32()}}, valueIndex+1, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: value.Int32()}}, valueIndex + 1, nil
 	case schema_pb.ScalarType_INT64:
-		return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: value.Int64()}}, valueIndex+1,  nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: value.Int64()}}, valueIndex + 1, nil
 	case schema_pb.ScalarType_FLOAT:
-		return &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: value.Float()}}, valueIndex+1, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: value.Float()}}, valueIndex + 1, nil
 	case schema_pb.ScalarType_DOUBLE:
-		return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: value.Double()}}, valueIndex+1, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: value.Double()}}, valueIndex + 1, nil
 	case schema_pb.ScalarType_BYTES:
-		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: value.ByteArray()}}, valueIndex+1, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: value.ByteArray()}}, valueIndex + 1, nil
 	case schema_pb.ScalarType_STRING:
-		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: string(value.ByteArray())}}, valueIndex+1, nil
+		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: string(value.ByteArray())}}, valueIndex + 1, nil
 	}
 	return nil, valueIndex, fmt.Errorf("unsupported scalar type: %v", scalarType)
 }

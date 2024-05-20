@@ -109,9 +109,6 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 			return 0, fmt.Errorf("verifyNeedleIntegrity check %s entry offset %d size %d: %v", datFile.Name(), offset, size, err)
 		}
 		n.AppendAtNs = util.BytesToUint64(bytes)
-		if n.HasTtl() {
-			return n.AppendAtNs, nil
-		}
 		fileTailOffset := offset + needle.GetActualSize(size, v)
 		fileSize, _, err := datFile.GetStat()
 		if err != nil {
@@ -130,7 +127,7 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", offset, offset+int64(size), err)
 	}
 	if n.Id != key {
-		return n.AppendAtNs, fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
+		return n.AppendAtNs, fmt.Errorf("index key %v does not match needle's Id %v", key, n.Id)
 	}
 	return n.AppendAtNs, err
 }
@@ -147,7 +144,7 @@ func verifyDeletedNeedleIntegrity(datFile backend.BackendStorageFile, v needle.V
 		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", fileSize-size, size, err)
 	}
 	if n.Id != key {
-		return n.AppendAtNs, fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
+		return n.AppendAtNs, fmt.Errorf("index key %v does not match needle's Id %v", key, n.Id)
 	}
 	return n.AppendAtNs, err
 }

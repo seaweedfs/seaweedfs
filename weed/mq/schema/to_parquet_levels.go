@@ -7,9 +7,9 @@ import (
 
 type ParquetLevels struct {
 	startColumnIndex int
-	endColumnIndex int
-	definitionDepth int
-	levels map[string]*ParquetLevels
+	endColumnIndex   int
+	definitionDepth  int
+	levels           map[string]*ParquetLevels
 }
 
 func ToParquetLevels(recordType *schema_pb.RecordType) (*ParquetLevels, error) {
@@ -19,7 +19,7 @@ func ToParquetLevels(recordType *schema_pb.RecordType) (*ParquetLevels, error) {
 func toFieldTypeLevels(fieldType *schema_pb.Type, startColumnIndex, definitionDepth int) (*ParquetLevels, error) {
 	switch fieldType.Kind.(type) {
 	case *schema_pb.Type_ScalarType:
-		return toFieldTypeScalarLevels(fieldType.GetScalarType(),  startColumnIndex, definitionDepth)
+		return toFieldTypeScalarLevels(fieldType.GetScalarType(), startColumnIndex, definitionDepth)
 	case *schema_pb.Type_RecordType:
 		return toRecordTypeLevels(fieldType.GetRecordType(), startColumnIndex, definitionDepth)
 	case *schema_pb.Type_ListType:
@@ -35,15 +35,15 @@ func toFieldTypeListLevels(listType *schema_pb.ListType, startColumnIndex, defin
 func toFieldTypeScalarLevels(scalarType schema_pb.ScalarType, startColumnIndex, definitionDepth int) (*ParquetLevels, error) {
 	return &ParquetLevels{
 		startColumnIndex: startColumnIndex,
-		endColumnIndex: startColumnIndex + 1,
-		definitionDepth: definitionDepth,
+		endColumnIndex:   startColumnIndex + 1,
+		definitionDepth:  definitionDepth,
 	}, nil
 }
 func toRecordTypeLevels(recordType *schema_pb.RecordType, startColumnIndex, definitionDepth int) (*ParquetLevels, error) {
 	recordTypeLevels := &ParquetLevels{
 		startColumnIndex: startColumnIndex,
-		definitionDepth: definitionDepth,
-		levels: make(map[string]*ParquetLevels),
+		definitionDepth:  definitionDepth,
+		levels:           make(map[string]*ParquetLevels),
 	}
 	for _, field := range recordType.Fields {
 		fieldTypeLevels, err := toFieldTypeLevels(field.Type, startColumnIndex, definitionDepth+1)

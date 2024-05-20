@@ -6,13 +6,14 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -218,6 +219,10 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 		return s3err.ErrNoSuchBucket
 	}
 
+	//if iam is enabled, the access was already checked before
+	if s3a.iam.isEnabled() {
+		return s3err.ErrNone
+	}
 	if !s3a.hasAccess(r, entry) {
 		return s3err.ErrAccessDenied
 	}
@@ -236,6 +241,7 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 	identityId := r.Header.Get(s3_constants.AmzIdentityId)
 	if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
 		if identityId != string(id) {
+			glog.V(3).Infof("hasAccess: %s != %s (entry.Extended = %v)", identityId, id, entry.Extended)
 			return false
 		}
 	}

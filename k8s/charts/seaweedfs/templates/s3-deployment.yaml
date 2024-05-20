@@ -50,6 +50,9 @@ spec:
       initContainers:
         {{ tpl .Values.s3.initContainers . | nindent 8 | trim }}
       {{- end }}
+      {{- if .Values.s3.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.s3.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
       containers:
         - name: seaweedfs
           image: {{ template "s3.image" . }}
@@ -198,6 +201,9 @@ spec:
           {{- if .Values.s3.resources }}
           resources:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}
+          {{- end }}
+          {{- if .Values.s3.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.s3.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if .Values.s3.sidecars }}
       {{- include "common.tplvalues.render" (dict "value" .Values.s3.sidecars "context" $) | nindent 8 }}

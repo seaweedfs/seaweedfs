@@ -72,6 +72,9 @@ spec:
         {{ tpl .Values.volume.initContainers . | nindent 8 | trim }}
         {{- end }}
       {{- end }}
+      {{- if .Values.volume.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.volume.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
       containers:
         - name: seaweedfs
           image: {{ template "volume.image" . }}
@@ -236,6 +239,9 @@ spec:
           {{- if .Values.volume.resources }}
           resources:
             {{ tpl .Values.volume.resources . | nindent 12 | trim }}
+          {{- end }}
+          {{- if .Values.volume.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if .Values.volume.sidecars }}
       {{- include "common.tplvalues.render" (dict "value" .Values.volume.sidecars "context" $) | nindent 8 }}
