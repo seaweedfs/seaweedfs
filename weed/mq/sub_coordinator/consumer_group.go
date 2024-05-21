@@ -22,11 +22,11 @@ type ConsumerGroup struct {
 	ConsumerGroupInstances cmap.ConcurrentMap[string, *ConsumerGroupInstance]
 	mapping                *PartitionConsumerMapping
 	reBalanceTimer         *time.Timer
-	pubBalancer            *pub_balancer.Balancer
+	pubBalancer            *pub_balancer.PubBalancer
 	filerClientAccessor    *FilerClientAccessor
 }
 
-func NewConsumerGroup(t *mq_pb.Topic, pubBalancer *pub_balancer.Balancer, filerClientAccessor *FilerClientAccessor) *ConsumerGroup {
+func NewConsumerGroup(t *mq_pb.Topic, pubBalancer *pub_balancer.PubBalancer, filerClientAccessor *FilerClientAccessor) *ConsumerGroup {
 	return &ConsumerGroup{
 		topic:                  topic.FromPbTopic(t),
 		ConsumerGroupInstances: cmap.New[*ConsumerGroupInstance](),

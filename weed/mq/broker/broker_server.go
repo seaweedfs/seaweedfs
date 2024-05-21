@@ -43,7 +43,7 @@ type MessageQueueBroker struct {
 	filers            map[pb.ServerAddress]struct{}
 	currentFiler      pb.ServerAddress
 	localTopicManager *topic.LocalTopicManager
-	Balancer          *pub_balancer.Balancer
+	Balancer          *pub_balancer.PubBalancer
 	lockAsBalancer    *cluster.LiveLock
 	Coordinator       *sub_coordinator.Coordinator
 	accessLock        sync.Mutex

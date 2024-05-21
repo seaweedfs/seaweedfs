@@ -8,7 +8,7 @@ import (
 	"sort"
 )
 
-func (balancer *Balancer) RepairTopics() []BalanceAction {
+func (balancer *PubBalancer) RepairTopics() []BalanceAction {
 	action := BalanceTopicPartitionOnBrokers(balancer.Brokers)
 	return []BalanceAction{action}
 }

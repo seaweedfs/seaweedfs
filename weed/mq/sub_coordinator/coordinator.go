@@ -18,11 +18,11 @@ type TopicConsumerGroups struct {
 type Coordinator struct {
 	// map topic name to consumer groups
 	TopicSubscribers    cmap.ConcurrentMap[string, *TopicConsumerGroups]
-	balancer            *pub_balancer.Balancer
+	balancer            *pub_balancer.PubBalancer
 	FilerClientAccessor *FilerClientAccessor
 }
 
-func NewCoordinator(balancer *pub_balancer.Balancer) *Coordinator {
+func NewCoordinator(balancer *pub_balancer.PubBalancer) *Coordinator {
 	return &Coordinator{
 		TopicSubscribers: cmap.New[*TopicConsumerGroups](),
 		balancer:         balancer,

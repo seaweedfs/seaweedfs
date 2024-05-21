@@ -9,7 +9,7 @@ var (
 	ErrNoBroker = errors.New("no broker")
 )
 
-func (balancer *Balancer) LookupTopicPartitions(topic *mq_pb.Topic) (assignments []*mq_pb.BrokerPartitionAssignment) {
+func (balancer *PubBalancer) LookupTopicPartitions(topic *mq_pb.Topic) (assignments []*mq_pb.BrokerPartitionAssignment) {
 	// find existing topic partition assignments
 	for brokerStatsItem := range balancer.Brokers.IterBuffered() {
 		broker, brokerStats := brokerStatsItem.Key, brokerStatsItem.Val

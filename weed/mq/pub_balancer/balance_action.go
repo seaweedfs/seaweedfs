@@ -8,10 +8,10 @@ import (
 	"google.golang.org/grpc"
 )
 
-// Balancer <= PublisherToPubBalancer() <= Broker <=> Publish()
-// ExecuteBalanceActionMove from Balancer => AssignTopicPartitions() => Broker => Publish()
+// PubBalancer <= PublisherToPubBalancer() <= Broker <=> Publish()
+// ExecuteBalanceActionMove from PubBalancer => AssignTopicPartitions() => Broker => Publish()
 
-func (balancer *Balancer) ExecuteBalanceActionMove(move *BalanceActionMove, grpcDialOption grpc.DialOption) error {
+func (balancer *PubBalancer) ExecuteBalanceActionMove(move *BalanceActionMove, grpcDialOption grpc.DialOption) error {
 	if _, found := balancer.Brokers.Get(move.SourceBroker); !found {
 		return fmt.Errorf("source broker %s not found", move.SourceBroker)
 	}
