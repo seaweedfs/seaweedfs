@@ -45,7 +45,7 @@ type MessageQueueBroker struct {
 	localTopicManager *topic.LocalTopicManager
 	Balancer          *pub_balancer.PubBalancer
 	lockAsBalancer    *cluster.LiveLock
-	Coordinator       *sub_coordinator.Coordinator
+	Coordinator       *sub_coordinator.SubCoordinator
 	accessLock        sync.Mutex
 	fca               *sub_coordinator.FilerClientAccessor
 }
