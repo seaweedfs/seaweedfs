@@ -10,7 +10,7 @@ import (
 	"io"
 )
 
-func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssignment) error {
+func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssignment, stopCh chan struct{}) error {
 	// connect to the partition broker
 	return pb.WithBrokerGrpcClient(true, assigned.LeaderBroker, sub.SubscriberConfig.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 
@@ -61,15 +61,20 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 		executors := util.NewLimitedConcurrentExecutor(int(perPartitionConcurrency))
 
 		go func() {
-			for ack := range partitionOffsetChan {
-				subscribeClient.SendMsg(&mq_pb.SubscribeMessageRequest{
-					Message: &mq_pb.SubscribeMessageRequest_Ack{
-						Ack: &mq_pb.SubscribeMessageRequest_AckMessage{
-							Key:      ack.Key,
-							Sequence: ack.Offset,
+			for {
+				select {
+				case <-stopCh:
+					break
+				case ack := <- partitionOffsetChan:
+					subscribeClient.SendMsg(&mq_pb.SubscribeMessageRequest{
+						Message: &mq_pb.SubscribeMessageRequest_Ack{
+							Ack: &mq_pb.SubscribeMessageRequest_AckMessage{
+								Key:      ack.Key,
+								Sequence: ack.Offset,
+							},
 						},
-					},
-				})
+					})
+				}
 			}
 			subscribeClient.CloseSend()
 		}()
