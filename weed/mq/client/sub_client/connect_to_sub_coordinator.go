@@ -63,13 +63,8 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 						glog.V(0).Infof("subscriber %s receive: %v", sub.ContentConfig.Topic, err)
 						return err
 					}
-					assignment := resp.GetAssignment()
-					if assignment != nil {
-						glog.V(0).Infof("subscriber %s receive assignment: %v", sub.ContentConfig.Topic, assignment)
-						for _, assignedPartition := range assignment.PartitionAssignments {
-							sub.brokerPartitionAssignmentChan <- assignedPartition
-						}
-					}
+					sub.brokerPartitionAssignmentChan <- resp
+					glog.V(0).Infof("Received assignment: %+v", resp)
 				}
 
 				return nil
