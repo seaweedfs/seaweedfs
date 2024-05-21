@@ -50,7 +50,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 
 	ret := &mq_pb.ListTopicsResponse{}
 	knownTopics := make(map[string]struct{})
-	for brokerStatsItem := range b.Balancer.Brokers.IterBuffered() {
+	for brokerStatsItem := range b.PubBalancer.Brokers.IterBuffered() {
 		_, brokerStats := brokerStatsItem.Key, brokerStatsItem.Val
 		for topicPartitionStatsItem := range brokerStats.TopicPartitionStats.IterBuffered() {
 			topicPartitionStat := topicPartitionStatsItem.Val

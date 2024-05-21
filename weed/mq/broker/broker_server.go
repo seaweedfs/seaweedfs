@@ -43,17 +43,17 @@ type MessageQueueBroker struct {
 	filers            map[pb.ServerAddress]struct{}
 	currentFiler      pb.ServerAddress
 	localTopicManager *topic.LocalTopicManager
-	Balancer          *pub_balancer.PubBalancer
-	lockAsBalancer    *cluster.LiveLock
-	Coordinator       *sub_coordinator.SubCoordinator
-	accessLock        sync.Mutex
+	PubBalancer       *pub_balancer.PubBalancer
+	lockAsBalancer *cluster.LiveLock
+	SubCoordinator *sub_coordinator.SubCoordinator
+	accessLock     sync.Mutex
 	fca               *sub_coordinator.FilerClientAccessor
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
 
-	pub_broker_balancer := pub_balancer.NewBalancer()
-	coordinator := sub_coordinator.NewCoordinator(pub_broker_balancer)
+	pubBalancer := pub_balancer.NewPubBalancer()
+	subCoordinator := sub_coordinator.NewSubCoordinator(pubBalancer)
 
 	mqBroker = &MessageQueueBroker{
 		option:            option,
@@ -61,20 +61,20 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		MasterClient:      wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, option.BrokerAddress(), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
 		filers:            make(map[pb.ServerAddress]struct{}),
 		localTopicManager: topic.NewLocalTopicManager(),
-		Balancer:          pub_broker_balancer,
-		Coordinator:       coordinator,
+		PubBalancer:       pubBalancer,
+		SubCoordinator:    subCoordinator,
 	}
 	fca := &sub_coordinator.FilerClientAccessor{
 		GetFiler:          mqBroker.GetFiler,
 		GetGrpcDialOption: mqBroker.GetGrpcDialOption,
 	}
 	mqBroker.fca = fca
-	coordinator.FilerClientAccessor = fca
+	subCoordinator.FilerClientAccessor = fca
 
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
-	pub_broker_balancer.OnPartitionChange = mqBroker.Coordinator.OnPartitionChange
-	pub_broker_balancer.OnAddBroker = mqBroker.Coordinator.OnSubAddBroker
-	pub_broker_balancer.OnRemoveBroker = mqBroker.Coordinator.OnSubRemoveBroker
+	pubBalancer.OnPartitionChange = mqBroker.SubCoordinator.OnPartitionChange
+	pubBalancer.OnAddBroker = mqBroker.SubCoordinator.OnSubAddBroker
+	pubBalancer.OnRemoveBroker = mqBroker.SubCoordinator.OnSubRemoveBroker
 
 	go mqBroker.MasterClient.KeepConnectedToMaster()
 

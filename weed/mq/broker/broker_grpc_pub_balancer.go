@@ -22,12 +22,12 @@ func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessagin
 	initMessage := req.GetInit()
 	var brokerStats *pub_balancer.BrokerStats
 	if initMessage != nil {
-		brokerStats = b.Balancer.AddBroker(initMessage.Broker)
+		brokerStats = b.PubBalancer.AddBroker(initMessage.Broker)
 	} else {
 		return status.Errorf(codes.InvalidArgument, "balancer init message is empty")
 	}
 	defer func() {
-		b.Balancer.RemoveBroker(initMessage.Broker, brokerStats)
+		b.PubBalancer.RemoveBroker(initMessage.Broker, brokerStats)
 	}()
 
 	// process stats message
@@ -40,7 +40,7 @@ func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessagin
 			return status.Errorf(codes.Unavailable, "not current broker balancer")
 		}
 		if receivedStats := req.GetStats(); receivedStats != nil {
-			b.Balancer.OnBrokerStatsUpdated(initMessage.Broker, brokerStats, receivedStats)
+			b.PubBalancer.OnBrokerStatsUpdated(initMessage.Broker, brokerStats, receivedStats)
 			// glog.V(4).Infof("received from %v: %+v", initMessage.Broker, receivedStats)
 		}
 	}

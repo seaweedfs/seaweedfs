@@ -37,7 +37,7 @@ type PubBalancer struct {
 	OnRemoveBroker    func(broker string, brokerStats *BrokerStats)
 }
 
-func NewBalancer() *PubBalancer {
+func NewPubBalancer() *PubBalancer {
 	return &PubBalancer{
 		Brokers:        cmap.New[*BrokerStats](),
 		TopicToBrokers: cmap.New[*PartitionSlotToBrokerList](),

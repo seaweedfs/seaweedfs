@@ -22,7 +22,7 @@ type SubCoordinator struct {
 	FilerClientAccessor *FilerClientAccessor
 }
 
-func NewCoordinator(balancer *pub_balancer.PubBalancer) *SubCoordinator {
+func NewSubCoordinator(balancer *pub_balancer.PubBalancer) *SubCoordinator {
 	return &SubCoordinator{
 		TopicSubscribers: cmap.New[*TopicConsumerGroups](),
 		balancer:         balancer,
