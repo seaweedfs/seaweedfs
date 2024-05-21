@@ -131,27 +131,24 @@ func (cg *ConsumerGroup) BalanceConsumerGroupInstances(knownPartitionSlotToBroke
 			partitionSlots = make([]*PartitionSlotToConsumerInstance, 0)
 		}
 		consumerGroupInstance.Partitions = ToPartitions(partitionSlotToBrokerList.RingSize, partitionSlots)
-		assignedPartitions := make([]*mq_pb.BrokerPartitionAssignment, len(partitionSlots))
-		for i, partitionSlot := range partitionSlots {
-			assignedPartitions[i] = &mq_pb.BrokerPartitionAssignment{
-				Partition: &mq_pb.Partition{
-					RangeStop:  partitionSlot.RangeStop,
-					RangeStart: partitionSlot.RangeStart,
-					RingSize:   partitionSlotToBrokerList.RingSize,
-					UnixTimeNs: partitionSlot.UnixTimeNs,
+		for _, partitionSlot := range partitionSlots {
+			consumerGroupInstance.ResponseChan <- &mq_pb.SubscriberToSubCoordinatorResponse{
+				Message: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment_{
+					Assignment: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment{
+						PartitionAssignment: &mq_pb.BrokerPartitionAssignment{
+							Partition: &mq_pb.Partition{
+								RangeStop:  partitionSlot.RangeStop,
+								RangeStart: partitionSlot.RangeStart,
+								RingSize:   partitionSlotToBrokerList.RingSize,
+								UnixTimeNs: partitionSlot.UnixTimeNs,
+							},
+							LeaderBroker:   partitionSlot.Broker,
+							FollowerBroker: partitionSlot.FollowerBroker,
+						},
+					},
 				},
-				LeaderBroker:   partitionSlot.Broker,
-				FollowerBroker: partitionSlot.FollowerBroker,
 			}
 		}
-		response := &mq_pb.SubscriberToSubCoordinatorResponse{
-			Message: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment_{
-				Assignment: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment{
-					PartitionAssignments: assignedPartitions,
-				},
-			},
-		}
-		consumerGroupInstance.ResponseChan <- response
 	}
 
 }

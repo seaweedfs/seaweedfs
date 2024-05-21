@@ -183,11 +183,14 @@ message SubscriberToSubCoordinatorRequest {
 }
 message SubscriberToSubCoordinatorResponse {
     message Assignment {
-        int64 generation = 1;
-        repeated BrokerPartitionAssignment partition_assignments = 2;
+        BrokerPartitionAssignment partition_assignment = 1;
+    }
+    message UnAssignment {
+        Partition partition = 1;
     }
     oneof message {
         Assignment assignment = 1;
+        UnAssignment un_assignment = 2;
     }
 }
 

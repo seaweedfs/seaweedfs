@@ -29,7 +29,7 @@ type OnCompletionFunc func()
 type TopicSubscriber struct {
 	SubscriberConfig              *SubscriberConfiguration
 	ContentConfig                 *ContentConfiguration
-	brokerPartitionAssignmentChan chan *mq_pb.BrokerPartitionAssignment
+	brokerPartitionAssignmentChan chan *mq_pb.SubscriberToSubCoordinatorResponse
 	OnEachMessageFunc             OnEachMessageFunc
 	OnCompletionFunc              OnCompletionFunc
 	bootstrapBrokers              []string
@@ -42,7 +42,7 @@ func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfigu
 	return &TopicSubscriber{
 		SubscriberConfig:              subscriber,
 		ContentConfig:                 content,
-		brokerPartitionAssignmentChan: make(chan *mq_pb.BrokerPartitionAssignment, 1024),
+		brokerPartitionAssignmentChan: make(chan *mq_pb.SubscriberToSubCoordinatorResponse, 1024),
 		bootstrapBrokers:              bootstrapBrokers,
 		waitForMoreMessage:            true,
 		activeProcessors:              make(map[topic.Partition]*ProcessorState),
