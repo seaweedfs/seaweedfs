@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -148,6 +149,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		maxKeys:               maxKeys,
 		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
 	}
+
 	// Todo remove force disable
 	if s3a.option.AllowListRecursive && prefix == "force_disable" {
 		err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -274,6 +276,9 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			CommonPrefixes: commonPrefixes,
 		}
 		if encodingTypeUrl {
+			sort.Slice(response.CommonPrefixes, func(i, j int) bool {
+				return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix
+			})
 			response.EncodingType = s3.EncodingTypeUrl
 		}
 		return nil
