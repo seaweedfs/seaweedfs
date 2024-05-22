@@ -202,6 +202,7 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_lifecycle_set \
           s3tests_boto3/functional/test_s3.py::test_lifecycle_get \
           s3tests_boto3/functional/test_s3.py::test_lifecycle_set_filter
+          kill -9 $(pgrep weed) || true
 
       - name: Run Ceph S3 tests with SQL store
         timeout-minutes: 15
