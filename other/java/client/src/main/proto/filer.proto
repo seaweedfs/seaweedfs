@@ -102,6 +102,7 @@ message ListEntriesRequest {
 
 message ListEntriesResponse {
     Entry entry = 1;
+    string dir = 2;
 }
 
 message RemoteEntry {

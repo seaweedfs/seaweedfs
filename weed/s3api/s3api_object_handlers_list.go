@@ -151,22 +151,33 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	}
 
 	// Todo remove force disable
-	if s3a.option.AllowListRecursive && prefix == "force_disable" {
+	if s3a.option.AllowListRecursive && prefix != "" && (delimiter == "" || delimiter == "/") {
 		err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			glog.V(0).Infof("doListFilerRecursiveEntries reqDir: %s, prefix: %s, delimiter: %s, cursor: %+v", reqDir, prefix, delimiter, cursor)
 			nextMarker, doErr = s3a.doListFilerRecursiveEntries(client, reqDir, prefix, cursor, marker, delimiter, false,
 				func(dir string, entry *filer_pb.Entry) {
+					glog.V(5).Infof("doListFilerRecursiveEntries dir %s, shortDir %s, entry: %+v, cursor: %+v", dir, dir[len(bucketPrefix):], entry, cursor)
+					if cursor.isTruncated {
+						return
+					}
 					dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
-					if entry.IsDirectory {
-						if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
+					isCommonDir := strings.Index(dir[len(bucketPrefix):], "/") != -1
+					if cursor.prefixEndsOnDelimiter && !isCommonDir && entry.Name == prefix {
+						return
+					}
+					if delimiter == "/" {
+						if entry.IsDirectory {
 							commonPrefixes = append(commonPrefixes, PrefixEntry{
 								Prefix: fmt.Sprintf("%s/%s/", dirName, prefixName)[len(bucketPrefix):],
 							})
+							cursor.Decrease()
+							return
+						} else if isCommonDir {
+							return
 						}
-						return
 					}
 					contents = append(contents, newListEntry(entry, dirName, entryName, bucketPrefix, fetchOwner, entry.IsDirectoryKeyObject()))
-					cursor.maxKeys--
+					cursor.Decrease()
 				},
 			)
 			return nil
@@ -293,6 +304,13 @@ type ListingCursor struct {
 	prefixEndsOnDelimiter bool
 }
 
+func (l *ListingCursor) Decrease() {
+	l.maxKeys--
+	if l.maxKeys == 0 {
+		l.isTruncated = true
+	}
+}
+
 // the prefix and marker may be in different directories
 // normalizePrefixMarker ensures the prefix and marker both starts from the same directory
 func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, alignedMarker string) {
@@ -358,10 +376,13 @@ func (s3a *S3ApiServer) doListFilerRecursiveEntries(client filer_pb.SeaweedFiler
 	request := &filer_pb.ListEntriesRequest{
 		Directory:          dir,
 		Prefix:             prefix,
-		Limit:              uint32(cursor.maxKeys + 2),
+		Limit:              uint32(cursor.maxKeys),
 		StartFromFileName:  marker,
 		InclusiveStartFrom: inclusiveStartFrom,
 		Recursive:          true,
+	}
+	if cursor.prefixEndsOnDelimiter {
+		request.Limit += 1
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -378,7 +399,7 @@ func (s3a *S3ApiServer) doListFilerRecursiveEntries(client filer_pb.SeaweedFiler
 				return "", fmt.Errorf("iterating entires %+v: %v", request, recvErr)
 			}
 		}
-		eachEntryFn(dir, resp.Entry)
+		eachEntryFn(resp.Dir, resp.Entry)
 	}
 	return
 }

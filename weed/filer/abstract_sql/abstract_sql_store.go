@@ -354,10 +354,10 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 		}
 		glog.V(0).Infof("scan dir %s name %v", dir, name)
 
+		lastFileName = fmt.Sprintf("%s/%s", dir, name)
 		entry := &filer.Entry{
-			FullPath: util.NewFullPath(dir, name),
+			FullPath: util.NewFullPath(string(dirPath), lastFileName),
 		}
-		lastFileName = string(entry.FullPath)
 
 		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
