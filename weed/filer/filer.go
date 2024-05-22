@@ -354,8 +354,8 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 
 }
 
-func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (expiredCount int64, lastFileName string, err error) {
-	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) bool {
+func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, recursive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (expiredCount int64, lastFileName string, err error) {
+	listFn := func(entry *Entry) bool {
 		select {
 		case <-ctx.Done():
 			return false
@@ -369,7 +369,13 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			}
 			return eachEntryFunc(entry)
 		}
-	})
+	}
+	glog.V(5).Infof("doListDirectoryEntries recursive %v  path: %+v, prefix %s", recursive, p, prefix)
+	if recursive {
+		lastFileName, err = f.Store.ListRecursivePrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, listFn)
+	} else {
+		lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, listFn)
+	}
 	if err != nil {
 		return expiredCount, lastFileName, err
 	}

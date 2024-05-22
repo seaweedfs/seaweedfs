@@ -289,6 +289,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 }
 
 func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	glog.V(5).Infof("ListDirectoryPrefixedEntries dirPath %v, includeStartFile %v", dirPath, includeStartFile)
 
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
 	if err != nil {
@@ -337,24 +338,27 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 	if err != nil {
 		return lastFileName, fmt.Errorf("findDB %s : %v", dirPath, err)
 	}
-	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), util.HashStringToLong(string(shortPath)), startFileName, string(shortPath), prefix+"%", prefix+"%", limit+1)
+	glog.V(5).Infof("ListRecursivePrefixedEntries lastFileName %s shortPath %v, prefix %v, sql %s", lastFileName, string(shortPath), prefix, store.GetSqlListRecursive(bucket))
+	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), startFileName, util.HashStringToLong(string(shortPath)), prefix+"%", string(shortPath)+prefix+"%", limit+1)
 	if err != nil {
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var name string
+		var dir, name string
 		var data []byte
-		if err = rows.Scan(&name, &data); err != nil {
+		if err = rows.Scan(&dir, &name, &data); err != nil {
 			glog.V(0).Infof("scan %s : %v", dirPath, err)
 			return lastFileName, fmt.Errorf("scan %s: %v", dirPath, err)
 		}
-		lastFileName = name
+		glog.V(0).Infof("scan dir %s name %v", dir, name)
 
 		entry := &filer.Entry{
-			FullPath: util.NewFullPath(string(dirPath), name),
+			FullPath: util.NewFullPath(dir, name),
 		}
+		lastFileName = string(entry.FullPath)
+
 		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
 			return lastFileName, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)

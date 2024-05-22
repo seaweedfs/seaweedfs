@@ -54,6 +54,8 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_list_distinct \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_many \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_many \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_basic \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_encoding_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix_ends_with_delimiter \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_alt \
@@ -76,6 +78,7 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_prefix_delimiter_not_exist \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_prefix_delimiter_not_exist \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_notempty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_defaultempty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_alt \
@@ -94,6 +97,7 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_maxkeys_zero \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_none \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_empty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_continuationtoken_empty \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_continuationtoken \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_both_continuationtoken_startafter \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_unreadable \
