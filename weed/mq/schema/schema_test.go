@@ -32,10 +32,10 @@ func TestEnumScalarType(t *testing.T) {
 
 func TestField(t *testing.T) {
 	field := &Field{
-		Name:        "field_name",
-		Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INT32}},
-		FieldIndex:       1,
-		IsRepeated:  false,
+		Name:       "field_name",
+		Type:       &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INT32}},
+		FieldIndex: 1,
+		IsRepeated: false,
 	}
 	assert.NotNil(t, field)
 }
@@ -44,32 +44,32 @@ func TestRecordType(t *testing.T) {
 	subRecord := &RecordType{
 		Fields: []*Field{
 			{
-				Name:        "field_1",
-				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INT32}},
-				FieldIndex:       1,
-				IsRepeated:  false,
+				Name:       "field_1",
+				Type:       &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INT32}},
+				FieldIndex: 1,
+				IsRepeated: false,
 			},
 			{
-				Name:        "field_2",
-				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_STRING}},
-				FieldIndex:       2,
-				IsRepeated:  false,
+				Name:       "field_2",
+				Type:       &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_STRING}},
+				FieldIndex: 2,
+				IsRepeated: false,
 			},
 		},
 	}
 	record := &RecordType{
 		Fields: []*Field{
 			{
-				Name:        "field_key",
-				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INT32}},
-				FieldIndex:       1,
-				IsRepeated:  false,
+				Name:       "field_key",
+				Type:       &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INT32}},
+				FieldIndex: 1,
+				IsRepeated: false,
 			},
 			{
-				Name:        "field_record",
-				Type:        &Type{Kind: &Type_RecordType{RecordType: subRecord}},
-				FieldIndex:       2,
-				IsRepeated:  false,
+				Name:       "field_record",
+				Type:       &Type{Kind: &Type_RecordType{RecordType: subRecord}},
+				FieldIndex: 2,
+				IsRepeated: false,
 			},
 		},
 	}

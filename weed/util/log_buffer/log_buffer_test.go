@@ -19,7 +19,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	}, nil, func() {
 	})
 
-	startTime := MessagePosition{Time:time.Now()}
+	startTime := MessagePosition{Time: time.Now()}
 
 	messageSize := 1024
 	messageCount := 5000
@@ -38,7 +38,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 				println("processed all messages")
 				return true, io.EOF
 			}
-			return false,nil
+			return false, nil
 		})
 
 		fmt.Printf("before flush: sent %d received %d\n", messageCount, receivedMessageCount)

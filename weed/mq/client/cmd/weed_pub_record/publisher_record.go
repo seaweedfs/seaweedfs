@@ -19,7 +19,7 @@ var (
 	concurrency    = flag.Int("c", 4, "concurrent publishers")
 	partitionCount = flag.Int("p", 6, "partition count")
 
-	clientName   = flag.String("client", "c1", "client name")
+	clientName = flag.String("client", "c1", "client name")
 
 	namespace   = flag.String("ns", "test", "namespace")
 	t           = flag.String("t", "test", "t")
