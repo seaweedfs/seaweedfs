@@ -14,10 +14,10 @@ import (
 )
 
 var (
-	namespace   = flag.String("ns", "test", "namespace")
-	t           = flag.String("topic", "test", "topic")
-	seedBrokers = flag.String("brokers", "localhost:17777", "seed brokers")
-	maxPartitionCount = flag.Int("maxPartitionCount", 3, "max partition count")
+	namespace               = flag.String("ns", "test", "namespace")
+	t                       = flag.String("topic", "test", "topic")
+	seedBrokers             = flag.String("brokers", "localhost:17777", "seed brokers")
+	maxPartitionCount       = flag.Int("maxPartitionCount", 3, "max partition count")
 	perPartitionConcurrency = flag.Int("perPartitionConcurrency", 1, "per partition concurrency")
 
 	clientId = flag.Uint("client_id", uint(util.RandomInt32()), "client id")

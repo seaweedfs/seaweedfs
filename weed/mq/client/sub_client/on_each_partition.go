@@ -65,7 +65,7 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 				select {
 				case <-stopCh:
 					break
-				case ack := <- partitionOffsetChan:
+				case ack := <-partitionOffsetChan:
 					subscribeClient.SendMsg(&mq_pb.SubscribeMessageRequest{
 						Message: &mq_pb.SubscribeMessageRequest_Ack{
 							Ack: &mq_pb.SubscribeMessageRequest_AckMessage{

@@ -27,16 +27,16 @@ type OnEachMessageFunc func(key, value []byte) (err error)
 type OnCompletionFunc func()
 
 type TopicSubscriber struct {
-	SubscriberConfig                   *SubscriberConfiguration
-	ContentConfig                      *ContentConfiguration
+	SubscriberConfig                 *SubscriberConfiguration
+	ContentConfig                    *ContentConfiguration
 	brokerPartitionAssignmentChan    chan *mq_pb.SubscriberToSubCoordinatorResponse
 	brokerPartitionAssignmentAckChan chan *mq_pb.SubscriberToSubCoordinatorRequest
 	OnEachMessageFunc                OnEachMessageFunc
-	OnCompletionFunc                   OnCompletionFunc
-	bootstrapBrokers                   []string
-	waitForMoreMessage                 bool
-	activeProcessors                   map[topic.Partition]*ProcessorState
-	activeProcessorsLock               sync.Mutex
+	OnCompletionFunc                 OnCompletionFunc
+	bootstrapBrokers                 []string
+	waitForMoreMessage               bool
+	activeProcessors                 map[topic.Partition]*ProcessorState
+	activeProcessorsLock             sync.Mutex
 }
 
 func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration) *TopicSubscriber {
