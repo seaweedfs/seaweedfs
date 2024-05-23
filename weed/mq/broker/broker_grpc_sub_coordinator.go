@@ -38,9 +38,14 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 	go func() {
 		// process ack messages
 		for {
-			_, err := stream.Recv()
+			req, err := stream.Recv()
 			if err != nil {
 				glog.V(0).Infof("subscriber %s/%s/%s receive: %v", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic, err)
+			}
+
+			if ackUnAssignment := req.GetAckUnAssignment(); ackUnAssignment != nil {
+				glog.V(0).Infof("subscriber %s/%s/%s ack close of %v", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic, ackUnAssignment)
+				cgi.AckUnAssignment(ackUnAssignment)
 			}
 
 			select {

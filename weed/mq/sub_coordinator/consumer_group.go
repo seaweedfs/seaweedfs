@@ -1,6 +1,7 @@
 package sub_coordinator
 
 import (
+	"fmt"
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
@@ -16,6 +17,11 @@ type ConsumerGroupInstance struct {
 	ResponseChan      chan *mq_pb.SubscriberToSubCoordinatorResponse
 	MaxPartitionCount int32
 }
+
+func (i ConsumerGroupInstance) AckUnAssignment(assignment *mq_pb.SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage) {
+	fmt.Printf("ack unassignment %v\n", assignment)
+}
+
 type ConsumerGroup struct {
 	topic topic.Topic
 	// map a consumer group instance id to a consumer group instance

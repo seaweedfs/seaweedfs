@@ -56,6 +56,15 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 					return err
 				}
 
+				go func() {
+					for reply := range sub.brokerPartitionAssignmentAckChan {
+						if err := stream.Send(reply); err != nil {
+							glog.V(0).Infof("subscriber %s reply: %v", sub.ContentConfig.Topic, err)
+							return
+						}
+					}
+				}()
+
 				// keep receiving messages from the sub coordinator
 				for {
 					resp, err := stream.Recv()

@@ -177,8 +177,12 @@ message SubscriberToSubCoordinatorRequest {
         // Default is 10 seconds.
         int32 rebalance_seconds = 5;
     }
+    message AckUnAssignmentMessage {
+        Partition partition = 1;
+    }
     oneof message {
         InitMessage init = 1;
+        AckUnAssignmentMessage ack_un_assignment = 2;
     }
 }
 message SubscriberToSubCoordinatorResponse {

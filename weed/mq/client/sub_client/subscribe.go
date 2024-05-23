@@ -65,6 +65,13 @@ func (sub *TopicSubscriber) startProcessors() {
 				} else {
 					glog.V(0).Infof("subscriber %s/%s partition %+v at %v completed", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, assigned.Partition, assigned.LeaderBroker)
 				}
+				sub.brokerPartitionAssignmentAckChan <- &mq_pb.SubscriberToSubCoordinatorRequest{
+					Message: &mq_pb.SubscriberToSubCoordinatorRequest_AckUnAssignment{
+						AckUnAssignment: &mq_pb.SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage{
+							Partition: assigned.Partition,
+						},
+					},
+				}
 			}(assigned.PartitionAssignment, topicPartition)
 		}
 		if unAssignment := message.GetUnAssignment(); unAssignment != nil {

@@ -27,25 +27,27 @@ type OnEachMessageFunc func(key, value []byte) (err error)
 type OnCompletionFunc func()
 
 type TopicSubscriber struct {
-	SubscriberConfig              *SubscriberConfiguration
-	ContentConfig                 *ContentConfiguration
-	brokerPartitionAssignmentChan chan *mq_pb.SubscriberToSubCoordinatorResponse
-	OnEachMessageFunc             OnEachMessageFunc
-	OnCompletionFunc              OnCompletionFunc
-	bootstrapBrokers              []string
-	waitForMoreMessage            bool
-	activeProcessors              map[topic.Partition]*ProcessorState
-	activeProcessorsLock          sync.Mutex
+	SubscriberConfig                   *SubscriberConfiguration
+	ContentConfig                      *ContentConfiguration
+	brokerPartitionAssignmentChan    chan *mq_pb.SubscriberToSubCoordinatorResponse
+	brokerPartitionAssignmentAckChan chan *mq_pb.SubscriberToSubCoordinatorRequest
+	OnEachMessageFunc                OnEachMessageFunc
+	OnCompletionFunc                   OnCompletionFunc
+	bootstrapBrokers                   []string
+	waitForMoreMessage                 bool
+	activeProcessors                   map[topic.Partition]*ProcessorState
+	activeProcessorsLock               sync.Mutex
 }
 
 func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration) *TopicSubscriber {
 	return &TopicSubscriber{
-		SubscriberConfig:              subscriber,
-		ContentConfig:                 content,
-		brokerPartitionAssignmentChan: make(chan *mq_pb.SubscriberToSubCoordinatorResponse, 1024),
-		bootstrapBrokers:              bootstrapBrokers,
-		waitForMoreMessage:            true,
-		activeProcessors:              make(map[topic.Partition]*ProcessorState),
+		SubscriberConfig:                 subscriber,
+		ContentConfig:                    content,
+		brokerPartitionAssignmentChan:    make(chan *mq_pb.SubscriberToSubCoordinatorResponse, 1024),
+		brokerPartitionAssignmentAckChan: make(chan *mq_pb.SubscriberToSubCoordinatorRequest, 1024),
+		bootstrapBrokers:                 bootstrapBrokers,
+		waitForMoreMessage:               true,
+		activeProcessors:                 make(map[topic.Partition]*ProcessorState),
 	}
 }
 
