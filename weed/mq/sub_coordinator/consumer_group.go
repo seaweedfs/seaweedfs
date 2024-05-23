@@ -1,7 +1,6 @@
 package sub_coordinator
 
 import (
-	"fmt"
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
@@ -9,18 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"time"
 )
-
-type ConsumerGroupInstance struct {
-	InstanceId string
-	// the consumer group instance may not have an active partition
-	Partitions        []*topic.Partition
-	ResponseChan      chan *mq_pb.SubscriberToSubCoordinatorResponse
-	MaxPartitionCount int32
-}
-
-func (i ConsumerGroupInstance) AckUnAssignment(assignment *mq_pb.SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage) {
-	fmt.Printf("ack unassignment %v\n", assignment)
-}
 
 type ConsumerGroup struct {
 	topic topic.Topic
@@ -42,12 +29,6 @@ func NewConsumerGroup(t *mq_pb.Topic, pubBalancer *pub_balancer.PubBalancer, fil
 	}
 }
 
-func NewConsumerGroupInstance(instanceId string) *ConsumerGroupInstance {
-	return &ConsumerGroupInstance{
-		InstanceId:   instanceId,
-		ResponseChan: make(chan *mq_pb.SubscriberToSubCoordinatorResponse, 1),
-	}
-}
 func (cg *ConsumerGroup) OnAddConsumerGroupInstance(consumerGroupInstance string, topic *mq_pb.Topic, maxPartitionCount, rebalanceSeconds int32) {
 	cg.onConsumerGroupInstanceChange(true, "add consumer instance "+consumerGroupInstance, maxPartitionCount, rebalanceSeconds)
 }
