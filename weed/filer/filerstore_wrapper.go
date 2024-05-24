@@ -274,7 +274,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 	return lastFileName, err
 }
 
-func (fsw *FilerStoreWrapper) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
+func (fsw *FilerStoreWrapper) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
 	actualStore := fsw.getActualStore(dirPath + "/")
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "prefixRecursiveList").Inc()
 	start := time.Now()
@@ -290,7 +290,7 @@ func (fsw *FilerStoreWrapper) ListRecursivePrefixedEntries(ctx context.Context, 
 		filer_pb.AfterEntryDeserialization(entry.GetChunks())
 		return eachEntryFunc(entry)
 	}
-	lastFileName, err = actualStore.ListRecursivePrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, adjustedEntryFunc)
+	lastFileName, err = actualStore.ListRecursivePrefixedEntries(ctx, dirPath, startFileName, includeStartFile, delimiter, limit, prefix, adjustedEntryFunc)
 	if err == ErrUnsupportedListDirectoryPrefixed {
 		lastFileName, err = fsw.prefixFilterEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, adjustedEntryFunc)
 	}

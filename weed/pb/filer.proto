@@ -98,11 +98,12 @@ message ListEntriesRequest {
     bool inclusiveStartFrom = 4;
     uint32 limit = 5;
     bool recursive = 6;
+    bool delimiter = 7;
 }
 
 message ListEntriesResponse {
     Entry entry = 1;
-    string dir = 2;
+    string path = 2;
 }
 
 message RemoteEntry {

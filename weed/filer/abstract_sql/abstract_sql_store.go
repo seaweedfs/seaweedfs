@@ -333,37 +333,58 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 	return lastFileName, nil
 }
 
-func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
+	bucketDir := fmt.Sprintf("/buckets/%s", bucket)
 	if err != nil {
 		return lastFileName, fmt.Errorf("findDB %s : %v", dirPath, err)
 	}
-	glog.V(5).Infof("ListRecursivePrefixedEntries lastFileName %s shortPath %v, prefix %v, sql %s", lastFileName, string(shortPath), prefix, store.GetSqlListRecursive(bucket))
-	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), startFileName, util.HashStringToLong(string(shortPath)), prefix+"%", string(shortPath)+prefix+"%", limit+1)
+	shortDir := string(shortPath)
+	var dirPrefix string
+	if shortDir == "/" {
+		dirPrefix = fmt.Sprintf("/%s%%", prefix)
+	} else {
+		dirPrefix = fmt.Sprintf("%s/%s%%", shortDir, prefix)
+	}
+	glog.V(0).Infof("ListRecursivePrefixedEntries %s lastFileName %s shortPath %v, prefix %v, startFileName %s, limit %d, delimiter %v, dirPrefix %s", string(dirPath), lastFileName, string(shortPath), prefix, startFileName, limit, delimiter, dirPrefix)
+	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), startFileName, util.HashStringToLong(shortDir), prefix+"%", dirPrefix, limit+1)
 	if err != nil {
+		glog.Errorf("list %s : %v", dirPath, err)
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var dir, name string
+		var dir, name, fileName string
 		var data []byte
 		if err = rows.Scan(&dir, &name, &data); err != nil {
 			glog.V(0).Infof("scan %s : %v", dirPath, err)
 			return lastFileName, fmt.Errorf("scan %s: %v", dirPath, err)
 		}
-		glog.V(0).Infof("scan dir %s name %v", dir, name)
-
+		if len(dir) != 1 {
+			fileName = fmt.Sprintf("%s/%s", dir, name)
+		} else {
+			fileName = dir + name
+		}
 		lastFileName = fmt.Sprintf("%s/%s", dir, name)
 		entry := &filer.Entry{
-			FullPath: util.NewFullPath(string(dirPath), lastFileName),
+			FullPath: util.NewFullPath(bucketDir, fileName),
 		}
+		glog.V(0).Infof("scan shortDir %s dir %s name %v, lastFileName %s, FullPath %s", shortDir, dir, name, lastFileName, string(entry.FullPath))
 
 		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
 			return lastFileName, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}
-
+		//if !delimiter && shortDir != dir && entry.IsDirectory() {
+		if !delimiter && entry.IsDirectory() {
+			glog.V(0).Infof("scan isDir %v skip %v", entry.IsDirectory(), entry.FullPath)
+			continue
+		}
+		if delimiter && shortDir != dir && !entry.IsDirectory() {
+			glog.V(0).Infof("scan isDir %v skip %v", entry.IsDirectory(), entry.FullPath)
+			continue
+		}
 		if !eachEntryFunc(entry) {
 			break
 		}

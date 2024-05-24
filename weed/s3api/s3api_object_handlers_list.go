@@ -33,7 +33,7 @@ type ListBucketResultV2 struct {
 	XMLName               xml.Name       `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
 	Name                  string         `xml:"Name"`
 	Prefix                string         `xml:"Prefix"`
-	MaxKeys               int            `xml:"MaxKeys"`
+	MaxKeys               uint16         `xml:"MaxKeys"`
 	Delimiter             string         `xml:"Delimiter,omitempty"`
 	IsTruncated           bool           `xml:"IsTruncated"`
 	Contents              []ListEntry    `xml:"Contents,omitempty"`
@@ -51,7 +51,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
+	glog.V(0).Infof("ListObjectsV2Handler %s query %+v", bucket, r.URL.Query())
 
 	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys := getListObjectsV2Args(r.URL.Query())
 
@@ -106,7 +106,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
+	glog.V(0).Infof("ListObjectsV1Handler %s query %+v", bucket, r.URL.Query())
 
 	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys := getListObjectsV1Args(r.URL.Query())
 
@@ -114,8 +114,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
 		return
 	}
-
-	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, true)
+	response, err := s3a.listFilerEntries(bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -132,7 +131,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	writeSuccessResponseXML(w, r, response)
 }
 
-func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys int, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
+func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
 	// convert full path prefix into directory name and prefix for entry name
 	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, originalMarker)
 	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
@@ -150,52 +149,78 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
 	}
 
-	// Todo remove force disable
-	if s3a.option.AllowListRecursive && prefix != "" && (delimiter == "" || delimiter == "/") {
-		err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			glog.V(0).Infof("doListFilerRecursiveEntries reqDir: %s, prefix: %s, delimiter: %s, cursor: %+v", reqDir, prefix, delimiter, cursor)
-			nextMarker, doErr = s3a.doListFilerRecursiveEntries(client, reqDir, prefix, cursor, marker, delimiter, false,
-				func(dir string, entry *filer_pb.Entry) {
-					glog.V(5).Infof("doListFilerRecursiveEntries dir %s, shortDir %s, entry: %+v, cursor: %+v", dir, dir[len(bucketPrefix):], entry, cursor)
-					if cursor.isTruncated {
-						return
-					}
-					dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
-					isCommonDir := strings.Index(dir[len(bucketPrefix):], "/") != -1
-					if cursor.prefixEndsOnDelimiter && !isCommonDir && entry.Name == prefix {
-						return
-					}
-					if delimiter == "/" {
-						if entry.IsDirectory {
-							commonPrefixes = append(commonPrefixes, PrefixEntry{
-								Prefix: fmt.Sprintf("%s/%s/", dirName, prefixName)[len(bucketPrefix):],
-							})
-							cursor.Decrease()
-							return
-						} else if isCommonDir {
-							return
-						}
-					}
-					contents = append(contents, newListEntry(entry, dirName, entryName, bucketPrefix, fetchOwner, entry.IsDirectoryKeyObject()))
-					cursor.Decrease()
-				},
-			)
-			return nil
-		})
+	if s3a.option.AllowListRecursive && (delimiter == "" || delimiter == "/") {
+		reqDir = bucketPrefix
+		if idx := strings.LastIndex(originalPrefix, "/"); idx > 0 {
+			reqDir += originalPrefix[:idx]
+			prefix = originalPrefix[idx+1:]
+		}
+		// This is necessary for SQL request with WHERE `directory` || '/'  || `name` > originalMarker
+		if len(originalMarker) > 0 && originalMarker[0:1] != "/" {
+			if reqDir == bucketPrefix {
+				marker = "//" + originalMarker
+			} else {
+				marker = "/" + originalMarker
+			}
+		} else {
+			marker = originalMarker
+		}
 		response = ListBucketResult{
-			Name:           bucket,
-			Prefix:         originalPrefix,
-			Marker:         originalMarker,
-			NextMarker:     nextMarker,
-			MaxKeys:        maxKeys,
-			Delimiter:      delimiter,
-			IsTruncated:    cursor.isTruncated,
-			Contents:       contents,
-			CommonPrefixes: commonPrefixes,
+			Name:      bucket,
+			Prefix:    originalPrefix,
+			Marker:    originalMarker,
+			MaxKeys:   maxKeys,
+			Delimiter: delimiter,
 		}
 		if encodingTypeUrl {
 			response.EncodingType = s3.EncodingTypeUrl
 		}
+		if maxKeys == 0 {
+			return
+		}
+		glog.V(0).Infof("listFilerEntries reqDir: %s, prefix: %s[%s], delimiter: %v, cursor: %+v, mmarker: %s[%s]", reqDir, prefix, originalPrefix, delimiter, cursor, marker, originalMarker)
+		err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			doErr = s3a.doListFilerRecursiveEntries(client, reqDir, prefix, cursor, marker, delimiter, false,
+				func(path string, entry *filer_pb.Entry) {
+					isCommonDir := strings.Index(path[len(reqDir)+1:], "/") != -1
+					key := path[len(bucketPrefix):]
+					glog.V(0).Infof("doListFilerRecursiveEntries path %s, shortDir %s, key: %+v, cursor: %+v, marker: %s[%s], nextMarker: %s, isCommonDir %v", path, path[len(reqDir):], key, cursor, marker, originalMarker, cursor.nextMarker, isCommonDir)
+					if cursor.isTruncated {
+						nextMarker = cursor.nextMarker
+						return
+					}
+					defer func() {
+						if cursor.maxKeys == 0 {
+							cursor.isTruncated = true
+							if strings.Index(key, "/") == -1 {
+								cursor.nextMarker = "//" + key
+							} else {
+								cursor.nextMarker = "/" + key
+							}
+						}
+					}()
+					if delimiter == "/" {
+						if entry.IsDirectory {
+							commonPrefixes = append(commonPrefixes, PrefixEntry{
+								Prefix: path[len(bucketPrefix):] + "/",
+							})
+							cursor.maxKeys--
+							return
+							// Todo use sql group by dir
+						} else if isCommonDir {
+							return
+						}
+					}
+					contents = append(contents, newListEntry(entry, key, "", "", bucketPrefix, fetchOwner, entry.IsDirectoryKeyObject()))
+					cursor.maxKeys--
+				},
+			)
+			return nil
+		})
+		response.NextMarker = nextMarker
+		response.IsTruncated = len(nextMarker) != 0
+		response.Contents = contents
+		response.CommonPrefixes = commonPrefixes
 		return
 	}
 
@@ -205,11 +230,11 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			empty := true
 			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
 				empty = false
-				glog.V(5).Infof("doListFilerEntries dir: %s entry: %+v", dir, entry)
+				glog.V(0).Infof("doListFilerEntries dir: %s entry: %+v", dir, entry)
 				dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
 					if entry.IsDirectoryKeyObject() {
-						contents = append(contents, newListEntry(entry, dirName, entryName, bucketPrefix, fetchOwner, true))
+						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true))
 						cursor.maxKeys--
 						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 					} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
@@ -252,7 +277,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						}
 					}
 					if !delimiterFound {
-						contents = append(contents, newListEntry(entry, dirName, entryName, bucketPrefix, fetchOwner, false))
+						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false))
 						cursor.maxKeys--
 					}
 				}
@@ -299,9 +324,10 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 }
 
 type ListingCursor struct {
-	maxKeys               int
+	maxKeys               uint16
 	isTruncated           bool
 	prefixEndsOnDelimiter bool
+	nextMarker            string
 }
 
 func (l *ListingCursor) Decrease() {
@@ -369,26 +395,24 @@ func toParentAndDescendants(dirAndName string) (dir, name string) {
 	return
 }
 
-func (s3a *S3ApiServer) doListFilerRecursiveEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
+func (s3a *S3ApiServer) doListFilerRecursiveEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, eachEntryFn func(dir string, entry *filer_pb.Entry)) (err error) {
 	if prefix == "/" && delimiter == "/" {
 		return
 	}
 	request := &filer_pb.ListEntriesRequest{
 		Directory:          dir,
 		Prefix:             prefix,
-		Limit:              uint32(cursor.maxKeys),
+		Limit:              uint32(cursor.maxKeys) + 1,
 		StartFromFileName:  marker,
 		InclusiveStartFrom: inclusiveStartFrom,
 		Recursive:          true,
-	}
-	if cursor.prefixEndsOnDelimiter {
-		request.Limit += 1
+		Delimiter:          delimiter == "/",
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream, listErr := client.ListEntries(ctx, request)
 	if listErr != nil {
-		return "", fmt.Errorf("list entires %+v: %v", request, listErr)
+		return fmt.Errorf("list entires %+v: %v", request, listErr)
 	}
 	for {
 		resp, recvErr := stream.Recv()
@@ -396,10 +420,10 @@ func (s3a *S3ApiServer) doListFilerRecursiveEntries(client filer_pb.SeaweedFiler
 			if recvErr == io.EOF {
 				break
 			} else {
-				return "", fmt.Errorf("iterating entires %+v: %v", request, recvErr)
+				return fmt.Errorf("iterating entires %+v: %v", request, recvErr)
 			}
 		}
-		eachEntryFn(resp.Dir, resp.Entry)
+		eachEntryFn(resp.Path, resp.Entry)
 	}
 	return
 }
@@ -408,7 +432,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
-	// glog.V(4).Infof("doListFilerEntries dir: %s, prefix: %s, marker %s, maxKeys: %d, prefixEndsOnDelimiter: %+v", dir, prefix, marker, cursor.maxKeys, cursor.prefixEndsOnDelimiter)
+	glog.V(0).Infof("doListFilerEntries dir: %s, prefix: %s, marker %s, maxKeys: %d, prefixEndsOnDelimiter: %+v", dir, prefix, marker, cursor.maxKeys, cursor.prefixEndsOnDelimiter)
 	if prefix == "/" && delimiter == "/" {
 		return
 	}
@@ -524,14 +548,16 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	return
 }
 
-func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys int) {
+func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys uint16) {
 	prefix = values.Get("prefix")
 	token = OptionalString{set: values.Has("continuation-token"), string: values.Get("continuation-token")}
 	startAfter = values.Get("start-after")
 	delimiter = values.Get("delimiter")
 	encodingTypeUrl = values.Get("encoding-type") == s3.EncodingTypeUrl
 	if values.Get("max-keys") != "" {
-		maxkeys, _ = strconv.Atoi(values.Get("max-keys"))
+		if maxKeys, err := strconv.ParseUint(values.Get("max-keys"), 10, 16); err == nil {
+			maxkeys = uint16(maxKeys)
+		}
 	} else {
 		maxkeys = maxObjectListSizeLimit
 	}
@@ -539,13 +565,15 @@ func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter stri
 	return
 }
 
-func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int) {
+func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int16) {
 	prefix = values.Get("prefix")
 	marker = values.Get("marker")
 	delimiter = values.Get("delimiter")
 	encodingTypeUrl = values.Get("encoding-type") == "url"
 	if values.Get("max-keys") != "" {
-		maxkeys, _ = strconv.Atoi(values.Get("max-keys"))
+		if maxKeys, err := strconv.ParseInt(values.Get("max-keys"), 10, 16); err == nil {
+			maxkeys = int16(maxKeys)
+		}
 	} else {
 		maxkeys = maxObjectListSizeLimit
 	}

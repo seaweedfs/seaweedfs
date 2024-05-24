@@ -28,7 +28,7 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 		limit = math.MaxInt32 - 1
 	}
 
-	_, err = f.StreamListDirectoryEntries(ctx, p, startFileName, inclusive, false, limit+1, prefix, namePattern, namePatternExclude, func(entry *Entry) bool {
+	_, err = f.StreamListDirectoryEntries(ctx, p, startFileName, inclusive, false, false, limit+1, prefix, namePattern, namePatternExclude, func(entry *Entry) bool {
 		entries = append(entries, entry)
 		return true
 	})
@@ -42,7 +42,7 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 }
 
 // For now, prefix and namePattern are mutually exclusive
-func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, recursive bool, limit int64, prefix string, namePattern string, namePatternExclude string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
+func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, recursive bool, delimiter bool, limit int64, prefix string, namePattern string, namePatternExclude string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
 	glog.V(5).Infof("StreamListDirectoryEntries p %v startFileName %s prefix %s namePattern %v, recursive %v", p, startFileName, prefix, namePattern, recursive)
 
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
@@ -55,24 +55,24 @@ func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath,
 	}
 	var missedCount int64
 
-	missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, startFileName, inclusive, recursive, limit, prefix, restNamePattern, namePatternExclude, eachEntryFunc)
+	missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, startFileName, inclusive, recursive, delimiter, limit, prefix, restNamePattern, namePatternExclude, eachEntryFunc)
 
 	for missedCount > 0 && err == nil {
-		missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, lastFileName, false, recursive, missedCount, prefix, restNamePattern, namePatternExclude, eachEntryFunc)
+		missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, lastFileName, false, recursive, delimiter, missedCount, prefix, restNamePattern, namePatternExclude, eachEntryFunc)
 	}
 
 	return
 }
 
-func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, recursive bool, limit int64, prefix, restNamePattern string, namePatternExclude string, eachEntryFunc ListEachEntryFunc) (missedCount int64, lastFileName string, err error) {
+func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, recursive bool, delimiter bool, limit int64, prefix, restNamePattern string, namePatternExclude string, eachEntryFunc ListEachEntryFunc) (missedCount int64, lastFileName string, err error) {
 	glog.V(5).Infof("doListPatternMatchedEntries startFileName %v, recursive %v", startFileName, recursive)
 
 	if len(restNamePattern) == 0 && len(namePatternExclude) == 0 {
-		lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, recursive, limit, prefix, eachEntryFunc)
+		lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, recursive, delimiter, limit, prefix, eachEntryFunc)
 		return 0, lastFileName, err
 	}
 
-	lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, recursive, limit, prefix, func(entry *Entry) bool {
+	lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, recursive, delimiter, limit, prefix, func(entry *Entry) bool {
 		nameToTest := entry.Name()
 		if len(namePatternExclude) > 0 {
 			if matched, matchErr := filepath.Match(namePatternExclude, nameToTest); matchErr == nil && matched {
@@ -97,13 +97,13 @@ func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath
 	return
 }
 
-func (f *Filer) doListValidEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, recursive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
+func (f *Filer) doListValidEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, recursive bool, delimiter bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
 	glog.V(5).Infof("doListValidEntries p %v startFileName %v, recursive %v", p, startFileName, recursive)
 
 	var expiredCount int64
-	expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, startFileName, inclusive, recursive, limit, prefix, eachEntryFunc)
+	expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, startFileName, inclusive, recursive, delimiter, limit, prefix, eachEntryFunc)
 	for expiredCount > 0 && err == nil {
-		expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, lastFileName, false, recursive, expiredCount, prefix, eachEntryFunc)
+		expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, lastFileName, false, recursive, delimiter, expiredCount, prefix, eachEntryFunc)
 	}
 	return
 }

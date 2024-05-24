@@ -593,7 +593,7 @@ type ListBucketResult struct {
 	Prefix         string          `xml:"Prefix"`
 	Marker         string          `xml:"Marker"`
 	NextMarker     string          `xml:"NextMarker,omitempty"`
-	MaxKeys        int             `xml:"MaxKeys"`
+	MaxKeys        uint16          `xml:"MaxKeys"`
 	Delimiter      string          `xml:"Delimiter,omitempty"`
 	EncodingType   string          `xml:"EncodingType,omitempty"`
 	IsTruncated    bool            `xml:"IsTruncated"`
