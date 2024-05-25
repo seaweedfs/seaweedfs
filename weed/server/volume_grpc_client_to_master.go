@@ -159,7 +159,9 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 	}
 
 	volumeTickChan := time.NewTicker(sleepInterval)
+	defer volumeTickChan.Stop()
 	ecShardTickChan := time.NewTicker(17 * sleepInterval)
+	defer ecShardTickChan.Stop()
 	dataCenter := vs.store.GetDataCenter()
 	rack := vs.store.GetRack()
 	ip := vs.store.Ip
