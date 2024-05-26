@@ -6,17 +6,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
+type ConsumerGroupInstanceId string
+
 type ConsumerGroupInstance struct {
-	InstanceId string
-	// the consumer group instance may not have an active partition
-	Partitions        []*topic.Partition
-	ResponseChan      chan *mq_pb.SubscriberToSubCoordinatorResponse
-	MaxPartitionCount int32
+	InstanceId         ConsumerGroupInstanceId
+	AssignedPartitions []topic.Partition
+	ResponseChan       chan *mq_pb.SubscriberToSubCoordinatorResponse
+	MaxPartitionCount  int32
 }
 
 func NewConsumerGroupInstance(instanceId string) *ConsumerGroupInstance {
 	return &ConsumerGroupInstance{
-		InstanceId:   instanceId,
+		InstanceId:   ConsumerGroupInstanceId(instanceId),
 		ResponseChan: make(chan *mq_pb.SubscriberToSubCoordinatorResponse, 1),
 	}
 }

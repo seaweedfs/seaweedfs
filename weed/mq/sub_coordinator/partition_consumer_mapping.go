@@ -47,7 +47,7 @@ func (pcm *PartitionConsumerMapping) BalanceToConsumerInstances(partitionSlotToB
 
 func doBalanceSticky(partitions []*pub_balancer.PartitionSlotToBroker, consumerInstances []*ConsumerGroupInstance, prevMapping *PartitionSlotToConsumerInstanceList) (partitionSlots []*PartitionSlotToConsumerInstance) {
 	// collect previous consumer instance ids
-	prevConsumerInstanceIds := make(map[string]struct{})
+	prevConsumerInstanceIds := make(map[ConsumerGroupInstanceId]struct{})
 	if prevMapping != nil {
 		for _, prevPartitionSlot := range prevMapping.PartitionSlots {
 			if prevPartitionSlot.AssignedInstanceId != "" {
@@ -56,13 +56,13 @@ func doBalanceSticky(partitions []*pub_balancer.PartitionSlotToBroker, consumerI
 		}
 	}
 	// collect current consumer instance ids
-	currConsumerInstanceIds := make(map[string]struct{})
+	currConsumerInstanceIds := make(map[ConsumerGroupInstanceId]struct{})
 	for _, consumerInstance := range consumerInstances {
 		currConsumerInstanceIds[consumerInstance.InstanceId] = struct{}{}
 	}
 
 	// check deleted consumer instances
-	deletedConsumerInstanceIds := make(map[string]struct{})
+	deletedConsumerInstanceIds := make(map[ConsumerGroupInstanceId]struct{})
 	for consumerInstanceId := range prevConsumerInstanceIds {
 		if _, ok := currConsumerInstanceIds[consumerInstanceId]; !ok {
 			deletedConsumerInstanceIds[consumerInstanceId] = struct{}{}
@@ -100,7 +100,7 @@ func doBalanceSticky(partitions []*pub_balancer.PartitionSlotToBroker, consumerI
 
 	// for all consumer instances, count the average number of partitions
 	// that are assigned to them
-	consumerInstancePartitionCount := make(map[string]int)
+	consumerInstancePartitionCount := make(map[ConsumerGroupInstanceId]int)
 	for _, newPartitionSlot := range newPartitionSlots {
 		if newPartitionSlot.AssignedInstanceId != "" {
 			consumerInstancePartitionCount[newPartitionSlot.AssignedInstanceId]++

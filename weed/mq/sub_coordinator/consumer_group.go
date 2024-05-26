@@ -106,7 +106,7 @@ func (cg *ConsumerGroup) BalanceConsumerGroupInstances(knownPartitionSlotToBroke
 	cg.mapping.BalanceToConsumerInstances(partitionSlotToBrokerList, consumerInstances)
 
 	// convert cg.mapping currentMapping to map of consumer group instance id to partition slots
-	consumerInstanceToPartitionSlots := make(map[string][]*PartitionSlotToConsumerInstance)
+	consumerInstanceToPartitionSlots := make(map[ConsumerGroupInstanceId][]*PartitionSlotToConsumerInstance)
 	for _, partitionSlot := range cg.mapping.currentMapping.PartitionSlots {
 		consumerInstanceToPartitionSlots[partitionSlot.AssignedInstanceId] = append(consumerInstanceToPartitionSlots[partitionSlot.AssignedInstanceId], partitionSlot)
 	}
@@ -117,7 +117,6 @@ func (cg *ConsumerGroup) BalanceConsumerGroupInstances(knownPartitionSlotToBroke
 		if !found {
 			partitionSlots = make([]*PartitionSlotToConsumerInstance, 0)
 		}
-		consumerGroupInstance.Partitions = ToPartitions(partitionSlotToBrokerList.RingSize, partitionSlots)
 		for _, partitionSlot := range partitionSlots {
 			consumerGroupInstance.ResponseChan <- &mq_pb.SubscriberToSubCoordinatorResponse{
 				Message: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment_{
