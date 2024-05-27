@@ -199,17 +199,12 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 							}
 						}
 					}()
-					if delimiter == "/" {
-						if entry.IsDirectory {
-							commonPrefixes = append(commonPrefixes, PrefixEntry{
-								Prefix: path[len(bucketPrefix):] + "/",
-							})
-							cursor.maxKeys--
-							return
-							// Todo use sql group by dir
-						} else if isCommonDir {
-							return
-						}
+					if delimiter == "/" && entry.IsDirectory {
+						commonPrefixes = append(commonPrefixes, PrefixEntry{
+							Prefix: path[len(bucketPrefix):] + "/",
+						})
+						cursor.maxKeys--
+						return
 					}
 					contents = append(contents, newListEntry(entry, key, "", "", bucketPrefix, fetchOwner, entry.IsDirectoryKeyObject()))
 					cursor.maxKeys--
