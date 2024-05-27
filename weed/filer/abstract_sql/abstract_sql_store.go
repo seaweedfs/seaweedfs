@@ -373,10 +373,10 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 		glog.V(0).Infof("scan shortDir %s dir %s name %v, lastFileName %s, FullPath %s", shortDir, dir, name, lastFileName, string(entry.FullPath))
 
 		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
-			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
+			glog.Errorf("scan decode %s : %v", entry.FullPath, err)
 			return lastFileName, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}
-		//if !delimiter && shortDir != dir && entry.IsDirectory() {
+
 		if !delimiter && entry.IsDirectory() {
 			glog.V(0).Infof("scan isDir %v skip %v", entry.IsDirectory(), entry.FullPath)
 			continue

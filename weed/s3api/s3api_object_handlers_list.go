@@ -151,17 +151,16 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 
 	if s3a.option.AllowListRecursive && (delimiter == "" || delimiter == "/") {
 		reqDir = bucketPrefix
+		if cursor.prefixEndsOnDelimiter && delimiter == "/" {
+			originalPrefix = originalPrefix[0 : len(originalPrefix)-1]
+		}
 		if idx := strings.LastIndex(originalPrefix, "/"); idx > 0 {
 			reqDir += originalPrefix[:idx]
 			prefix = originalPrefix[idx+1:]
 		}
 		// This is necessary for SQL request with WHERE `directory` || `name` > originalMarker
 		if len(originalMarker) > 0 && originalMarker[0:1] != "/" {
-			if idx := strings.LastIndex(originalMarker, "/"); idx == -1 {
-				marker = "/" + originalMarker
-			} else {
-				marker = fmt.Sprintf("/%s%s", originalMarker[0:idx], originalMarker[idx+1:len(originalMarker)])
-			}
+			marker = getStartFileFromKey(originalMarker)
 		} else {
 			marker = originalMarker
 		}
@@ -182,9 +181,8 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			doErr = s3a.doListFilerRecursiveEntries(client, reqDir, prefix, cursor, marker, delimiter, false,
 				func(path string, entry *filer_pb.Entry) {
-					isCommonDir := strings.Index(path[len(reqDir)+1:], "/") != -1
 					key := path[len(bucketPrefix):]
-					glog.V(0).Infof("doListFilerRecursiveEntries path %s, shortDir %s, key: %+v, cursor: %+v, marker: %s[%s], nextMarker: %s, isCommonDir %v", path, path[len(reqDir):], key, cursor, marker, originalMarker, cursor.nextMarker, isCommonDir)
+					glog.V(0).Infof("doListFilerRecursiveEntries path %s, shortDir %s, key: %+v, cursor: %+v, marker: %s[%s], nextMarker: %s, IsDirectoryKeyObject %v", path, path[len(reqDir):], key, cursor, marker, originalMarker, cursor.nextMarker, entry.IsDirectoryKeyObject())
 					if cursor.isTruncated {
 						nextMarker = cursor.nextMarker
 						return
@@ -192,16 +190,19 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					defer func() {
 						if cursor.maxKeys == 0 {
 							cursor.isTruncated = true
-							if idx := strings.Index(key, "/"); idx == -1 {
-								cursor.nextMarker = "/" + key
-							} else {
-								cursor.nextMarker = fmt.Sprintf("/%s%s", key[0:idx], key[idx+1:len(key)])
-							}
+							cursor.nextMarker = getStartFileFromKey(key)
 						}
 					}()
+					if cursor.prefixEndsOnDelimiter && originalPrefix == key && entry.IsDirectoryKeyObject() {
+						contents = append(contents, newListEntry(entry, key+"/", "", "", bucketPrefix, fetchOwner, true))
+						cursor.maxKeys--
+						cursor.prefixEndsOnDelimiter = false
+						return
+					}
 					if delimiter == "/" && entry.IsDirectory {
+						glog.V(0).Infof("append commonPrefixes %s", path[len(bucketPrefix):]+"/")
 						commonPrefixes = append(commonPrefixes, PrefixEntry{
-							Prefix: path[len(bucketPrefix):] + "/",
+							Prefix: key + "/",
 						})
 						cursor.maxKeys--
 						return
@@ -330,6 +331,15 @@ func (l *ListingCursor) Decrease() {
 	if l.maxKeys == 0 {
 		l.isTruncated = true
 	}
+}
+
+func getStartFileFromKey(key string) string {
+	idx := strings.LastIndex(key, "/")
+	if idx == -1 {
+		return "/" + key
+	}
+
+	return fmt.Sprintf("/%s%s", key[0:idx], key[idx+1:len(key)])
 }
 
 // the prefix and marker may be in different directories
