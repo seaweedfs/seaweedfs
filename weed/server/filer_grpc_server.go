@@ -39,7 +39,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) (err error) {
 
-	glog.V(4).Infof("ListEntries %v", req)
+	glog.V(0).Infof("ListEntries %v", req)
 
 	limit := int(req.Limit)
 	if limit == 0 {
@@ -47,7 +47,8 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	}
 
 	paginationLimit := filer.PaginationSize
-	if paginationLimit > limit && !req.Delimiter {
+	// Todo test_bucket_listv2_delimiter_prefix move start from prefix to SQL because in extreme cases, where there are more keys that need to be skipped than the limit
+	if paginationLimit > limit && !(req.Recursive && req.Delimiter && len(req.StartFromFileName) > 0) {
 		paginationLimit = limit
 		if req.Recursive {
 			paginationLimit *= 2

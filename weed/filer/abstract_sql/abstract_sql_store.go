@@ -381,7 +381,8 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 			glog.V(0).Infof("scan isDir %v skip %v", entry.IsDirectory(), entry.FullPath)
 			continue
 		}
-		if delimiter && shortDir != dir && !entry.IsDirectory() {
+		// Todo test_bucket_listv2_delimiter_prefix move start from prefix to SQL because in extreme cases, where there are more keys that need to be skipped than the limit
+		if delimiter && shortDir != dir && (!entry.IsDirectory() || (len(startFileName) > 0 && strings.HasPrefix(dir, startFileName))) {
 			glog.V(0).Infof("scan isDir %v skip %v", entry.IsDirectory(), entry.FullPath)
 			continue
 		}
