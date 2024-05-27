@@ -366,7 +366,7 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 		} else {
 			fileName = dir + name
 		}
-		lastFileName = fmt.Sprintf("%s/%s", dir, name)
+		lastFileName = fmt.Sprintf("%s%s", dir, name)
 		entry := &filer.Entry{
 			FullPath: util.NewFullPath(bucketDir, fileName),
 		}

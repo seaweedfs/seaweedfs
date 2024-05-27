@@ -155,12 +155,12 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			reqDir += originalPrefix[:idx]
 			prefix = originalPrefix[idx+1:]
 		}
-		// This is necessary for SQL request with WHERE `directory` || '/'  || `name` > originalMarker
+		// This is necessary for SQL request with WHERE `directory` || `name` > originalMarker
 		if len(originalMarker) > 0 && originalMarker[0:1] != "/" {
-			if reqDir == bucketPrefix {
-				marker = "//" + originalMarker
-			} else {
+			if idx := strings.LastIndex(originalMarker, "/"); idx == -1 {
 				marker = "/" + originalMarker
+			} else {
+				marker = fmt.Sprintf("/%s%s", originalMarker[0:idx], originalMarker[idx+1:len(originalMarker)])
 			}
 		} else {
 			marker = originalMarker
@@ -192,10 +192,10 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					defer func() {
 						if cursor.maxKeys == 0 {
 							cursor.isTruncated = true
-							if strings.Index(key, "/") == -1 {
-								cursor.nextMarker = "//" + key
-							} else {
+							if idx := strings.Index(key, "/"); idx == -1 {
 								cursor.nextMarker = "/" + key
+							} else {
+								cursor.nextMarker = fmt.Sprintf("/%s%s", key[0:idx], key[idx+1:len(key)])
 							}
 						}
 					}()
