@@ -341,13 +341,13 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 	}
 	shortDir := string(shortPath)
 	var dirPrefix string
-	if shortDir == "/" {
-		dirPrefix = fmt.Sprintf("/%s%%", prefix)
+	if shortDir == "/" || prefix == "" {
+		dirPrefix = fmt.Sprintf("%s%s%%", shortDir, prefix)
 	} else {
 		dirPrefix = fmt.Sprintf("%s/%s%%", shortDir, prefix)
 	}
 	glog.V(0).Infof("ListRecursivePrefixedEntries %s lastFileName %s shortPath %v, prefix %v, startFileName %s, limit %d, delimiter %v, dirPrefix %s", string(dirPath), lastFileName, string(shortPath), prefix, startFileName, limit, delimiter, dirPrefix)
-	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), startFileName, util.HashStringToLong(shortDir), prefix+"%", dirPrefix, limit+1)
+	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), startFileName, util.HashStringToLong(shortDir), prefix+"%", dirPrefix, limit+2)
 	if err != nil {
 		glog.Errorf("list %s : %v", dirPath, err)
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
@@ -382,9 +382,15 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 			continue
 		}
 		// Todo test_bucket_listv2_delimiter_prefix move start from prefix to SQL because in extreme cases, where there are more keys that need to be skipped than the limit
-		if delimiter && shortDir != dir && (!entry.IsDirectory() || (len(startFileName) > 0 && strings.HasPrefix(dir, startFileName))) {
-			glog.V(0).Infof("scan isDir %v skip %v", entry.IsDirectory(), entry.FullPath)
-			continue
+		if delimiter {
+			if shortDir == fileName && !(entry.IsDirectory() && entry.Attr.Mime != "") {
+				// glog.V(0).Infof("scan is not DirKey %v skip %v", entry.IsDirectory(), entry.FullPath)
+				continue
+			}
+			if shortDir != dir && (!entry.IsDirectory() || (len(startFileName) > 0 && strings.HasPrefix(dir, startFileName))) {
+				// glog.V(0).Infof("scan isDir %v skip %v", entry.IsDirectory(), entry.FullPath)
+				continue
+			}
 		}
 		if !eachEntryFunc(entry) {
 			break

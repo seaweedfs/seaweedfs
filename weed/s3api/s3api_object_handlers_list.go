@@ -151,9 +151,6 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 
 	if s3a.option.AllowListRecursive && (delimiter == "" || delimiter == "/") {
 		reqDir = bucketPrefix
-		if cursor.prefixEndsOnDelimiter && delimiter == "/" {
-			originalPrefix = originalPrefix[0 : len(originalPrefix)-1]
-		}
 		if idx := strings.LastIndex(originalPrefix, "/"); idx > 0 {
 			reqDir += originalPrefix[:idx]
 			prefix = originalPrefix[idx+1:]
@@ -193,21 +190,23 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 							cursor.nextMarker = getStartFileFromKey(key)
 						}
 					}()
-					if cursor.prefixEndsOnDelimiter && originalPrefix == key && entry.IsDirectoryKeyObject() {
-						contents = append(contents, newListEntry(entry, key+"/", "", "", bucketPrefix, fetchOwner, true))
-						cursor.maxKeys--
-						cursor.prefixEndsOnDelimiter = false
-						return
+					if delimiter == "/" {
+						if entry.IsDirectoryKeyObject() {
+							// glog.V(0).Infof("append IsDirectoryKeyObject %s", key+"/")
+							contents = append(contents, newListEntry(entry, key+"/", "", "", bucketPrefix, fetchOwner, false))
+							cursor.maxKeys--
+							return
+						}
+						if entry.IsDirectory {
+							// glog.V(0).Infof("append commonPrefixes %s", key+"/")
+							commonPrefixes = append(commonPrefixes, PrefixEntry{
+								Prefix: key + "/",
+							})
+							cursor.maxKeys--
+							return
+						}
 					}
-					if delimiter == "/" && entry.IsDirectory {
-						glog.V(0).Infof("append commonPrefixes %s", path[len(bucketPrefix):]+"/")
-						commonPrefixes = append(commonPrefixes, PrefixEntry{
-							Prefix: key + "/",
-						})
-						cursor.maxKeys--
-						return
-					}
-					contents = append(contents, newListEntry(entry, key, "", "", bucketPrefix, fetchOwner, entry.IsDirectoryKeyObject()))
+					contents = append(contents, newListEntry(entry, key, "", "", bucketPrefix, fetchOwner, false))
 					cursor.maxKeys--
 				},
 			)

@@ -50,7 +50,7 @@ func (gen *SqlGenMysql) GetSqlListInclusive(tableName string) string {
 }
 
 func (gen *SqlGenMysql) GetSqlListRecursive(tableName string) string {
-	return fmt.Sprintf("SELECT `directory`, `name`, `meta` FROM `%s` WHERE `directory` || `name` > ? AND ((`dirhash` == ? AND `name` like ?) OR `directory` like ?) ORDER BY `directory` || `name` ASC LIMIT ?", tableName)
+	return fmt.Sprintf("SELECT `directory`, `name`, `meta` FROM `%s` WHERE `directory` || `name` > ? AND ((`dirhash` == ? AND `name` like ?) OR `directory` || `name` like ?) ORDER BY `directory` || `name` ASC LIMIT ?", tableName)
 }
 
 func (gen *SqlGenMysql) GetSqlCreateTable(tableName string) string {
