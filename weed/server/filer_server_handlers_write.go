@@ -35,7 +35,7 @@ type FilerPostResult struct {
 
 func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
-	stats.FilerRequestCounter.WithLabelValues(stats.ChunkAssign).Inc()
+	stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssign).Inc()
 	start := time.Now()
 	defer func() {
 		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkAssign).Observe(time.Since(start).Seconds())
@@ -99,6 +99,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		return
 	}
 
+	if util.FullPath(r.URL.Path).IsLongerFileName(so.MaxFileNameLength) {
+		glog.V(1).Infoln("post", r.RequestURI, ": ", "entry name too long")
+		w.WriteHeader(http.StatusRequestURITooLong)
+		return
+	}
+
 	// When DiskType is empty,use filer's -disk
 	if so.DiskType == "" {
 		so.DiskType = fs.option.DiskType
@@ -142,6 +148,11 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 
 	srcPath := util.FullPath(src)
 	dstPath := util.FullPath(dst)
+	if dstPath.IsLongerFileName(so.MaxFileNameLength) {
+		err = fmt.Errorf("dst name to long")
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
 	srcEntry, err := fs.filer.FindEntry(ctx, srcPath)
 	if err != nil {
 		err = fmt.Errorf("failed to get src entry '%s', err: %s", src, err)
@@ -202,14 +213,12 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil)
 	if err != nil {
-		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
-		httpStatus := http.StatusInternalServerError
 		if err == filer_pb.ErrNotFound {
-			httpStatus = http.StatusNoContent
-			writeJsonQuiet(w, r, httpStatus, nil)
+			writeJsonQuiet(w, r, http.StatusNoContent, nil)
 			return
 		}
-		writeJsonError(w, r, httpStatus, err)
+		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
+		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -222,6 +231,10 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 
 	if rule.ReadOnly {
 		return nil, ErrReadOnly
+	}
+
+	if rule.MaxFileNameLength == 0 {
+		rule.MaxFileNameLength = fs.filer.MaxFilenameLength
 	}
 
 	// required by buckets folder
@@ -248,6 +261,7 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 		DiskType:          util.Nvl(diskType, rule.DiskType),
 		Fsync:             rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
+		MaxFileNameLength: rule.MaxFileNameLength,
 	}, nil
 }
 

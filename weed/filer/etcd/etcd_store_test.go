@@ -10,7 +10,7 @@ func TestStore(t *testing.T) {
 	// to set up local env
 	if false {
 		store := &EtcdStore{}
-		store.initialize("localhost:2379", "", "", "3s")
+		store.initialize("localhost:2379", "", "", 3, nil)
 		store_test.TestFilerStore(t, store)
 	}
 }

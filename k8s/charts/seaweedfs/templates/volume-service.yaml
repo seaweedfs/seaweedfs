@@ -1,3 +1,4 @@
+{{- if .Values.volume.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -10,6 +11,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
   clusterIP: None
+  internalTrafficPolicy: {{ .Values.volume.internalTrafficPolicy | default "Cluster" }}
   ports:
   - name: "swfs-volume"
     port: {{ .Values.volume.port }}
@@ -28,3 +30,4 @@ spec:
   selector:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     app.kubernetes.io/component: volume
+{{- end }}

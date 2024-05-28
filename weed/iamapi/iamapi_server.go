@@ -52,7 +52,10 @@ func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer 
 		option:       option,
 		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters)),
 	}
-	s3Option := s3api.S3ApiServerOption{Filer: option.Filer}
+	s3Option := s3api.S3ApiServerOption{
+		Filer:          option.Filer,
+		GrpcDialOption: option.GrpcDialOption,
+	}
 	iamApiServer = &IamApiServer{
 		s3ApiConfig: s3ApiConfigure,
 		iam:         s3api.NewIdentityAccessManagement(&s3Option),

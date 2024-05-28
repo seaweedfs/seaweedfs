@@ -1,3 +1,6 @@
+//go:build rclone
+// +build rclone
+
 package rclone_backend
 
 import (
@@ -147,7 +150,7 @@ func uploadViaRclone(rfs fs.Fs, filename string, key string, fn func(progressed 
 
 	info := object.NewStaticObjectInfo(key, stat.ModTime(), stat.Size(), true, nil, rfs)
 
-	tr := accounting.NewStats(ctx).NewTransfer(info)
+	tr := accounting.NewStats(ctx).NewTransfer(info, rfs)
 	defer tr.Done(ctx, err)
 	acc := tr.Account(ctx, file)
 	pr := ProgressReader{acc: acc, tr: tr, fn: fn}
@@ -199,7 +202,7 @@ func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed
 		}
 	}(file)
 
-	tr := accounting.NewStats(ctx).NewTransfer(obj)
+	tr := accounting.NewStats(ctx).NewTransfer(obj, fs)
 	defer tr.Done(ctx, err)
 	acc := tr.Account(ctx, rc)
 	pr := ProgressReader{acc: acc, tr: tr, fn: fn}

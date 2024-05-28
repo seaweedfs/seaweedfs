@@ -99,7 +99,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		if m.OldEntry != nil && m.NewEntry == nil {
 			glog.V(1).Infof("delete: %s", key)
 		} else if m.OldEntry == nil && m.NewEntry != nil {
-			glog.V(1).Infof("   add: %s", key)
+			glog.V(1).Infof("add: %s", key)
 		} else {
 			glog.V(1).Infof("modify: %s", key)
 		}

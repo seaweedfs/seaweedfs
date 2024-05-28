@@ -12,7 +12,7 @@ metadata:
     app.kubernetes.io/component: filer
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-filer
-  podManagementPolicy: Parallel
+  podManagementPolicy: {{ .Values.filer.podManagementPolicy }}
   replicas: {{ .Values.filer.replicas }}
   {{- if (gt (int .Values.filer.updatePartition) 0) }}
   updateStrategy:
@@ -23,7 +23,6 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
-      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: filer
   template:
@@ -33,6 +32,13 @@ spec:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: filer
+      {{ with .Values.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      annotations:
+      {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.filer.restartPolicy }}
       {{- if .Values.filer.affinity }}
@@ -45,16 +51,13 @@ spec:
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
       {{- if .Values.global.createClusterRole }}
-      serviceAccountName: seaweedfs-rw-sa #hack for delete pod master after migration
+      serviceAccountName: {{ .Values.filer.serviceAccountName | default .Values.global.serviceAccountName | quote }} # for deleting statefulset pods after migration
       {{- end }}
       terminationGracePeriodSeconds: 60
       {{- if .Values.filer.priorityClassName }}
       priorityClassName: {{ .Values.filer.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- if .Values.filer.serviceAccountName }}
-      serviceAccountName: {{ .Values.filer.serviceAccountName | quote }}
-      {{- end }}
       {{- if .Values.filer.initContainers }}
       initContainers:
         {{ tpl .Values.filer.initContainers . | nindent 8 | trim }}
@@ -102,7 +105,12 @@ spec:
             {{- if .Values.global.extraEnvironmentVars }}
             {{- range $key, $value := .Values.global.extraEnvironmentVars }}
             - name: {{ $key }}
+            {{- if kindIs "string" $value }}
               value: {{ $value | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- end -}}
             {{- end }}
             {{- end }}
             {{- if .Values.filer.secretExtraEnvironmentVars }}
@@ -110,11 +118,11 @@ spec:
             - name: {{ $key }}
               valueFrom: {{ toYaml $value | nindent 16 }}
             {{- end }}
-            {{- end }}             
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
-            - | 
+            - |
               exec /usr/bin/weed \
               {{- if eq .Values.filer.logs.type "hostPath" }}
               -logdir=/logs \
@@ -182,15 +190,17 @@ spec:
               -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
               {{- end }}
               {{- end }}
-              -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+              -master={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
           volumeMounts:
             {{- if eq .Values.filer.logs.type "hostPath" }}
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
             {{- end }}
-            - mountPath: /etc/sw
-              name: config-users
+            {{- if .Values.filer.s3.enableAuth }}
+            - name: config-users
+              mountPath: /etc/sw
               readOnly: true
+            {{- end }}
             {{- if (or .Values.filer.enablePVC (or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.data.type "persistentVolumeClaim"))) }}
             - name: data-filer
               mountPath: /data
@@ -252,6 +262,9 @@ spec:
           resources:
             {{ tpl .Values.filer.resources . | nindent 12 | trim }}
           {{- end }}
+        {{- if .Values.filer.sidecars }}
+        {{- include "common.tplvalues.render" (dict "value" .Values.filer.sidecars "context" $) | nindent 8 }}
+        {{- end }}
       volumes:
         {{- if eq .Values.filer.logs.type "hostPath" }}
         - name: seaweedfs-filer-log-volume
@@ -259,19 +272,35 @@ spec:
             path: {{ .Values.filer.logs.hostPathPrefix }}/logs/seaweedfs/filer
             type: DirectoryOrCreate
         {{- end }}
+        {{- if eq .Values.filer.logs.type "existingClaim" }}
+        - name: seaweedfs-filer-log-volume
+          persistentVolumeClaim:
+            claimName: {{ .Values.filer.logs.claimName }}
+        {{- end }}
         {{- if eq .Values.filer.data.type "hostPath" }}
         - name: data-filer
           hostPath:
             path: {{ .Values.filer.data.hostPathPrefix }}/filer_store
             type: DirectoryOrCreate
         {{- end }}
+        {{- if eq .Values.filer.data.type "existingClaim" }}
+        - name: data-filer
+          persistentVolumeClaim:
+            claimName: {{ .Values.filer.data.claimName }}
+        {{- end }}
         - name: db-schema-config-volume
           configMap:
             name: seaweedfs-db-init-config
+        {{- if and .Values.filer.s3.enabled .Values.filer.s3.enableAuth }}
         - name: config-users
           secret:
             defaultMode: 420
+            {{- if .Values.filer.s3.existingConfigSecret }}
+            secretName: {{ .Values.filer.s3.existingConfigSecret }}
+            {{- else }}
             secretName: seaweedfs-s3-secret
+            {{- end }}
+        {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
@@ -297,7 +326,7 @@ spec:
       nodeSelector:
         {{ tpl .Values.filer.nodeSelector . | indent 8 | trim }}
       {{- end }}
-  {{- if .Values.filer.enablePVC }}
+  {{- if and (.Values.filer.enablePVC) (eq .Values.filer.data.type "persistentVolumeClaim") }}
   # DEPRECATION: Deprecate in favor of filer.data section below
   volumeClaimTemplates:
   - metadata:
@@ -315,9 +344,13 @@ spec:
   {{- $pvc_exists := include "filer.pvc_exists" . -}}
   {{- if $pvc_exists }}
   volumeClaimTemplates:
-    {{- if eq .Values.filer.data.type "persistentVolumeClaim"}}
+    {{- if eq .Values.filer.data.type "persistentVolumeClaim" }}
     - metadata:
         name: data-filer
+        {{- with .Values.filer.data.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.filer.data.storageClass }}
@@ -325,9 +358,13 @@ spec:
           requests:
             storage: {{ .Values.filer.data.size }}
     {{- end }}
-    {{- if eq .Values.filer.logs.type "persistentVolumeClaim"}}
+    {{- if eq .Values.filer.logs.type "persistentVolumeClaim" }}
     - metadata:
         name: seaweedfs-filer-log-volume
+        {{- with .Values.filer.logs.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.filer.logs.storageClass }}

@@ -201,7 +201,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			ioSizeMB *= 2
 		}
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "daemon_timeout=600")
-		fuseMountOptions.Options = append(fuseMountOptions.Options, "noapplexattr")
+		if runtime.GOARCH == "amd64" {
+			fuseMountOptions.Options = append(fuseMountOptions.Options, "noapplexattr")
+		}
 		// fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache") // need to test effectiveness
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "slow_statfs")
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+serverFriendlyName)

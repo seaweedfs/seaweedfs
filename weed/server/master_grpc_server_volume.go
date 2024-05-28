@@ -22,7 +22,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 	go func() {
 		filter := sync.Map{}
 		for {
-			req, ok := <-ms.vgCh
+			req, ok := <-ms.volumeGrowthRequestChan
 			if !ok {
 				break
 			}
@@ -61,16 +61,13 @@ func (ms *MasterServer) ProcessGrowRequest() {
 					}
 					vl.DoneGrowRequest()
 
-					if req.ErrCh != nil {
-						req.ErrCh <- err
-						close(req.ErrCh)
-					}
-
 					filter.Delete(req)
 				}()
 
 			} else {
 				glog.V(4).Infoln("discard volume grow request")
+				time.Sleep(time.Millisecond * 211)
+				vl.DoneGrowRequest()
 			}
 		}
 	}()

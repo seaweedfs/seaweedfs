@@ -228,65 +228,32 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 			return err
 		}
 		defer iter.Close()
-		i := int64(0)
-		first := true
-		for iter.Valid() {
-			if first {
-				first = false
-				if !includeStartFile {
-					if iter.Valid() {
-						// Check first item is lastFileStart
-						if bytes.Equal(iter.Key(), lastFileStart) {
-							// Is lastFileStart and not include start file, just
-							// ignore it.
-							err = iter.Next()
-							if err != nil {
-								return err
-							}
-							continue
-						}
-					}
-				}
-			}
-			// Check for limitation
-			if limit > 0 {
-				i++
-				if i > limit {
-					break
-				}
-			}
-			// Validate key prefix
+		for i := int64(0); i < limit && iter.Valid(); i++ {
 			key := iter.Key()
 			if !bytes.HasPrefix(key, directoryPrefix) {
 				break
 			}
-			value := iter.Value()
-
-			// Start process
 			fileName := getNameFromKey(key)
-			if fileName != "" {
-				// Got file name, then generate the Entry
-				entry := &filer.Entry{
-					FullPath: util.NewFullPath(string(dirPath), fileName),
-				}
-				// Update lastFileName
-				lastFileName = fileName
-				// Check for decode value.
-				if decodeErr := entry.DecodeAttributesAndChunks(value); decodeErr != nil {
-					// Got error just return the error
-					glog.V(0).Infof("list %s : %v", entry.FullPath, err)
-					return err
-				}
-				// Run for each callback if return false just break the iteration
-				if !eachEntryFunc(entry) {
+			if fileName == "" || fileName == startFileName && !includeStartFile {
+				if err := iter.Next(); err != nil {
 					break
+				} else {
+					continue
 				}
 			}
-			// End process
+			lastFileName = fileName
+			entry := &filer.Entry{
+				FullPath: util.NewFullPath(string(dirPath), fileName),
+			}
 
-			err = iter.Next()
-			if err != nil {
-				return err
+			// println("list", entry.FullPath, "chunks", len(entry.GetChunks()))
+			if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(iter.Value())); decodeErr != nil {
+				err = decodeErr
+				glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+				break
+			}
+			if err := iter.Next(); !eachEntryFunc(entry) || err != nil {
+				break
 			}
 		}
 		return nil

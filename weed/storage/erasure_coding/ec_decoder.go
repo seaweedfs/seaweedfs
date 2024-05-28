@@ -150,7 +150,7 @@ func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId
 
 }
 
-// WriteDatFile generates .dat from from .ec00 ~ .ec09 files
+// WriteDatFile generates .dat from .ec00 ~ .ec09 files
 func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []string) error {
 
 	datFile, openErr := os.OpenFile(baseFileName+".dat", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)

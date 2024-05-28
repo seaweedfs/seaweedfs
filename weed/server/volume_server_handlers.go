@@ -31,18 +31,21 @@ security settings:
 */
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
+	statusRecorder := stats.NewStatusResponseWriter(w)
+	w = statusRecorder
 	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
-	stats.VolumeServerRequestCounter.WithLabelValues(r.Method).Inc()
 	start := time.Now()
-	defer func(start time.Time) {
-		stats.VolumeServerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
-	}(start)
+	requestMethod := r.Method
+	defer func(start time.Time, method *string, statusRecorder *stats.StatusRecorder) {
+		stats.VolumeServerRequestCounter.WithLabelValues(*method, strconv.Itoa(statusRecorder.Status)).Inc()
+		stats.VolumeServerRequestHistogram.WithLabelValues(*method).Observe(time.Since(start).Seconds())
+	}(start, &requestMethod, statusRecorder)
 	switch r.Method {
-	case "GET", "HEAD":
+	case http.MethodGet, http.MethodHead:
 		stats.ReadRequest()
 		vs.inFlightDownloadDataLimitCond.L.Lock()
 		inFlightDownloadSize := atomic.LoadInt64(&vs.inFlightDownloadDataSize)
@@ -50,7 +53,7 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 			select {
 			case <-r.Context().Done():
 				glog.V(4).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
-				w.WriteHeader(http.StatusInternalServerError)
+				w.WriteHeader(util.HttpStatusCancelled)
 				vs.inFlightDownloadDataLimitCond.L.Unlock()
 				return
 			default:
@@ -61,10 +64,10 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		}
 		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)
-	case "DELETE":
+	case http.MethodDelete:
 		stats.DeleteRequest()
 		vs.guard.WhiteList(vs.DeleteHandler)(w, r)
-	case "PUT", "POST":
+	case http.MethodPut, http.MethodPost:
 		contentLength := getContentLength(r)
 		// exclude the replication from the concurrentUploadLimitMB
 		if r.URL.Query().Get("type") != "replicate" && vs.concurrentUploadLimit != 0 {
@@ -94,14 +97,17 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 			}
 		}()
 
-		// processs uploads
+		// processes uploads
 		stats.WriteRequest()
 		vs.guard.WhiteList(vs.PostHandler)(w, r)
 
-	case "OPTIONS":
+	case http.MethodOptions:
 		stats.ReadRequest()
 		w.Header().Add("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
 		w.Header().Add("Access-Control-Allow-Headers", "*")
+	default:
+		requestMethod = "INVALID"
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("unsupported method %s", r.Method))
 	}
 }
 
@@ -118,13 +124,23 @@ func getContentLength(r *http.Request) int64 {
 }
 
 func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
+	statusRecorder := stats.NewStatusResponseWriter(w)
+	w = statusRecorder
 	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
+
+	start := time.Now()
+	requestMethod := r.Method
+	defer func(start time.Time, method *string, statusRecorder *stats.StatusRecorder) {
+		stats.VolumeServerRequestCounter.WithLabelValues(*method, strconv.Itoa(statusRecorder.Status)).Inc()
+		stats.VolumeServerRequestHistogram.WithLabelValues(*method).Observe(time.Since(start).Seconds())
+	}(start, &requestMethod, statusRecorder)
+
 	switch r.Method {
-	case "GET", "HEAD":
+	case http.MethodGet, http.MethodHead:
 		stats.ReadRequest()
 		vs.inFlightDownloadDataLimitCond.L.Lock()
 		inFlightDownloadSize := atomic.LoadInt64(&vs.inFlightDownloadDataSize)
@@ -135,7 +151,7 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 		}
 		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)
-	case "OPTIONS":
+	case http.MethodOptions:
 		stats.ReadRequest()
 		w.Header().Add("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Add("Access-Control-Allow-Headers", "*")

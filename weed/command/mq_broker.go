@@ -78,6 +78,9 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 		Ip:                 *mqBrokerOpt.ip,
 		Port:               *mqBrokerOpt.port,
 	}, grpcDialOption)
+	if err != nil {
+		glog.Fatalf("failed to create new message broker for queue server: %v", err)
+	}
 
 	// start grpc listener
 	grpcL, _, err := util.NewIpAndLocalListeners("", *mqBrokerOpt.port, 0)

@@ -70,6 +70,14 @@ var (
 			Help:      "replica placement mismatch",
 		}, []string{"collection", "id"})
 
+	MasterVolumeLayout = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "volume_layout_total",
+			Help:      "Number of volumes in volume layouts",
+		}, []string{"collection", "replica", "type"})
+
 	MasterLeaderChangeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -84,6 +92,14 @@ var (
 			Subsystem: "filer",
 			Name:      "request_total",
 			Help:      "Counter of filer requests.",
+		}, []string{"type", "code"})
+
+	FilerHandlerCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "handler_total",
+			Help:      "Counter of filer handlers.",
 		}, []string{"type"})
 
 	FilerRequestHistogram = prometheus.NewHistogramVec(
@@ -134,6 +150,14 @@ var (
 			Subsystem: "volumeServer",
 			Name:      "request_total",
 			Help:      "Counter of volume server requests.",
+		}, []string{"type", "code"})
+
+	VolumeServerHandlerCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "handler_total",
+			Help:      "Counter of volume server handlers.",
 		}, []string{"type"})
 
 	VolumeServerVacuumingCompactCounter = prometheus.NewCounterVec(
@@ -170,7 +194,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
 
-	VolumeServerVolumeCounter = prometheus.NewGaugeVec(
+	VolumeServerVolumeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
 			Subsystem: "volumeServer",
@@ -217,7 +241,13 @@ var (
 			Name:      "request_total",
 			Help:      "Counter of s3 requests.",
 		}, []string{"type", "code", "bucket"})
-
+	S3HandlerCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "handler_total",
+			Help:      "Counter of s3 server handlers.",
+		}, []string{"type"})
 	S3RequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
@@ -234,7 +264,6 @@ var (
 			Help:      "Bucketed histogram of s3 time to first byte request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 27),
 		}, []string{"type", "bucket"})
-
 )
 
 func init() {
@@ -244,8 +273,10 @@ func init() {
 	Gather.MustRegister(MasterReceivedHeartbeatCounter)
 	Gather.MustRegister(MasterLeaderChangeCounter)
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
+	Gather.MustRegister(MasterVolumeLayout)
 
 	Gather.MustRegister(FilerRequestCounter)
+	Gather.MustRegister(FilerHandlerCounter)
 	Gather.MustRegister(FilerRequestHistogram)
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
@@ -255,17 +286,19 @@ func init() {
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	Gather.MustRegister(VolumeServerRequestCounter)
+	Gather.MustRegister(VolumeServerHandlerCounter)
 	Gather.MustRegister(VolumeServerRequestHistogram)
 	Gather.MustRegister(VolumeServerVacuumingCompactCounter)
 	Gather.MustRegister(VolumeServerVacuumingCommitCounter)
 	Gather.MustRegister(VolumeServerVacuumingHistogram)
-	Gather.MustRegister(VolumeServerVolumeCounter)
+	Gather.MustRegister(VolumeServerVolumeGauge)
 	Gather.MustRegister(VolumeServerMaxVolumeCounter)
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
 	Gather.MustRegister(VolumeServerResourceGauge)
 
 	Gather.MustRegister(S3RequestCounter)
+	Gather.MustRegister(S3HandlerCounter)
 	Gather.MustRegister(S3RequestHistogram)
 	Gather.MustRegister(S3TimeToFirstByteHistogram)
 }
@@ -321,5 +354,5 @@ func DeleteCollectionMetrics(collection string) {
 	for _, volume_type := range readOnlyVolumeTypes {
 		VolumeServerReadOnlyVolumeGauge.DeleteLabelValues(collection, volume_type)
 	}
-	VolumeServerVolumeCounter.DeleteLabelValues(collection, "volume")
+	VolumeServerVolumeGauge.DeleteLabelValues(collection, "volume")
 }

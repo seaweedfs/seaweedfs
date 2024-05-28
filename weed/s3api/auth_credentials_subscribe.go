@@ -33,11 +33,10 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		return nil
 	}
 
-	var clientEpoch int32
 	metadataFollowOption := &pb.MetadataFollowOption{
 		ClientName:             clientName,
 		ClientId:               s3a.randomClientId,
-		ClientEpoch:            clientEpoch,
+		ClientEpoch:            1,
 		SelfSignature:          0,
 		PathPrefix:             prefix,
 		AdditionalPathPrefixes: nil,
@@ -46,8 +45,8 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		StopTsNs:               0,
 		EventErrorType:         pb.FatalOnError,
 	}
-	util.RetryForever("followIamChanges", func() error {
-		clientEpoch++
+	util.RetryUntil("followIamChanges", func() error {
+		metadataFollowOption.ClientEpoch++
 		return pb.WithFilerClientFollowMetadata(s3a, metadataFollowOption, processEventFn)
 	}, func(err error) bool {
 		glog.V(0).Infof("iam follow metadata changes: %v", err)

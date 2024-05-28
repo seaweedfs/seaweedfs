@@ -71,17 +71,6 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
-	if !vl.HasGrowRequest() && vl.ShouldGrowVolumes(option) {
-		if ms.Topo.AvailableSpaceFor(option) <= 0 {
-			return nil, fmt.Errorf("no free volumes left for " + option.String())
-		}
-		vl.AddGrowRequest()
-		ms.vgCh <- &topology.VolumeGrowRequest{
-			Option: option,
-			Count:  int(req.WritableVolumeCount),
-		}
-	}
-
 	var (
 		lastErr    error
 		maxTimeout = time.Second * 10
@@ -89,34 +78,49 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	)
 
 	for time.Now().Sub(startTime) < maxTimeout {
-		fid, count, dnList, err := ms.Topo.PickForWrite(req.Count, option)
-		if err == nil {
-			dn := dnList.Head()
-			var replicas []*master_pb.Location
-			for _, r := range dnList.Rest() {
-				replicas = append(replicas, &master_pb.Location{
-					Url:        r.Url(),
-					PublicUrl:  r.PublicUrl,
-					GrpcPort:   uint32(r.GrpcPort),
-					DataCenter: r.GetDataCenterId(),
-				})
+		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(req.Count, option, vl)
+		if shouldGrow && !vl.HasGrowRequest() {
+			// if picked volume is almost full, trigger a volume-grow request
+			if ms.Topo.AvailableSpaceFor(option) <= 0 {
+				return nil, fmt.Errorf("no free volumes left for " + option.String())
 			}
-			return &master_pb.AssignResponse{
-				Fid: fid,
-				Location: &master_pb.Location{
-					Url:        dn.Url(),
-					PublicUrl:  dn.PublicUrl,
-					GrpcPort:   uint32(dn.GrpcPort),
-					DataCenter: dn.GetDataCenterId(),
-				},
-				Count:    count,
-				Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
-				Replicas: replicas,
-			}, nil
+			vl.AddGrowRequest()
+			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
+				Option: option,
+				Count:  int(req.WritableVolumeCount),
+			}
 		}
-		//glog.V(4).Infoln("waiting for volume growing...")
-		lastErr = err
-		time.Sleep(200 * time.Millisecond)
+		if err != nil {
+			// glog.Warningf("PickForWrite %+v: %v", req, err)
+			lastErr = err
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		dn := dnList.Head()
+		if dn == nil {
+			continue
+		}
+		var replicas []*master_pb.Location
+		for _, r := range dnList.Rest() {
+			replicas = append(replicas, &master_pb.Location{
+				Url:        r.Url(),
+				PublicUrl:  r.PublicUrl,
+				GrpcPort:   uint32(r.GrpcPort),
+				DataCenter: r.GetDataCenterId(),
+			})
+		}
+		return &master_pb.AssignResponse{
+			Fid: fid,
+			Location: &master_pb.Location{
+				Url:        dn.Url(),
+				PublicUrl:  dn.PublicUrl,
+				GrpcPort:   uint32(dn.GrpcPort),
+				DataCenter: dn.GetDataCenterId(),
+			},
+			Count:    count,
+			Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
+			Replicas: replicas,
+		}, nil
 	}
 	return nil, lastErr
 }

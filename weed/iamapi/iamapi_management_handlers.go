@@ -3,6 +3,7 @@ package iamapi
 import (
 	"crypto/sha1"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -21,14 +23,16 @@ import (
 )
 
 const (
-	charsetUpper           = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	charset                = charsetUpper + "abcdefghijklmnopqrstuvwxyz/"
-	policyDocumentVersion  = "2012-10-17"
-	StatementActionAdmin   = "*"
-	StatementActionWrite   = "Put*"
-	StatementActionRead    = "Get*"
-	StatementActionList    = "List*"
-	StatementActionTagging = "Tagging*"
+	charsetUpper            = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	charset                 = charsetUpper + "abcdefghijklmnopqrstuvwxyz/"
+	policyDocumentVersion   = "2012-10-17"
+	StatementActionAdmin    = "*"
+	StatementActionWrite    = "Put*"
+	StatementActionWriteAcp = "PutBucketAcl"
+	StatementActionRead     = "Get*"
+	StatementActionReadAcp  = "GetBucketAcl"
+	StatementActionList     = "List*"
+	StatementActionTagging  = "Tagging*"
 )
 
 var (
@@ -44,8 +48,12 @@ func MapToStatementAction(action string) string {
 		return s3_constants.ACTION_ADMIN
 	case StatementActionWrite:
 		return s3_constants.ACTION_WRITE
+	case StatementActionWriteAcp:
+		return s3_constants.ACTION_WRITE_ACP
 	case StatementActionRead:
 		return s3_constants.ACTION_READ
+	case StatementActionReadAcp:
+		return s3_constants.ACTION_READ_ACP
 	case StatementActionList:
 		return s3_constants.ACTION_LIST
 	case StatementActionTagging:
@@ -61,8 +69,12 @@ func MapToIdentitiesAction(action string) string {
 		return StatementActionAdmin
 	case s3_constants.ACTION_WRITE:
 		return StatementActionWrite
+	case s3_constants.ACTION_WRITE_ACP:
+		return StatementActionWriteAcp
 	case s3_constants.ACTION_READ:
 		return StatementActionRead
+	case s3_constants.ACTION_READ_ACP:
+		return StatementActionReadAcp
 	case s3_constants.ACTION_LIST:
 		return StatementActionList
 	case s3_constants.ACTION_TAGGING:
@@ -414,7 +426,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	}
 	values := r.PostForm
 	s3cfg := &iam_pb.S3ApiConfiguration{}
-	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil {
+	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}

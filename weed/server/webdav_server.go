@@ -38,6 +38,7 @@ type WebDavOption struct {
 	Cipher         bool
 	CacheDir       string
 	CacheSizeMB    int64
+	MaxMB          int
 }
 
 type WebDavServer struct {
@@ -62,6 +63,10 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 	// Fix no set filer.path , accessing "/" returns "//"
 	if option.FilerRootPath == "/" {
 		option.FilerRootPath = ""
+	}
+	// filer.path non "/" option means we are accessing filer's sub-folders
+	if option.FilerRootPath != "" {
+		fs = NewWrappedFs(fs, path.Clean(option.FilerRootPath))
 	}
 
 	ws = &WebDavServer{
@@ -92,6 +97,7 @@ type FileInfo struct {
 	size         int64
 	mode         os.FileMode
 	modifiedTime time.Time
+	etag         string
 	isDirectory  bool
 }
 
@@ -101,6 +107,10 @@ func (fi *FileInfo) Mode() os.FileMode  { return fi.mode }
 func (fi *FileInfo) ModTime() time.Time { return fi.modifiedTime }
 func (fi *FileInfo) IsDir() bool        { return fi.isDirectory }
 func (fi *FileInfo) Sys() interface{}   { return nil }
+
+func (fi *FileInfo) ETag(ctx context.Context) (string, error) {
+	return fi.etag, nil
+}
 
 type WebDavFile struct {
 	fs               *WebDavFileSystem
@@ -204,8 +214,6 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 }
 
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
-	// Add filer.path
-	fullFilePath = fs.option.FilerRootPath + fullFilePath
 	glog.V(2).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
 
 	var err error
@@ -234,7 +242,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 					Name:        name,
 					IsDirectory: perm&os.ModeDir > 0,
 					Attributes: &filer_pb.FuseAttributes{
-						Mtime:    time.Now().Unix(),
+						Mtime:    0,
 						Crtime:   time.Now().Unix(),
 						FileMode: uint32(perm),
 						Uid:      fs.option.Uid,
@@ -255,7 +263,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 			fs:          fs,
 			name:        fullFilePath,
 			isDirectory: false,
-			bufWriter:   buffered_writer.NewBufferedWriteCloser(4 * 1024 * 1024),
+			bufWriter:   buffered_writer.NewBufferedWriteCloser(fs.option.MaxMB * 1024 * 1024),
 		}, nil
 	}
 
@@ -271,7 +279,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		fs:          fs,
 		name:        fullFilePath,
 		isDirectory: false,
-		bufWriter:   buffered_writer.NewBufferedWriteCloser(4 * 1024 * 1024),
+		bufWriter:   buffered_writer.NewBufferedWriteCloser(fs.option.MaxMB * 1024 * 1024),
 	}, nil
 
 }
@@ -367,6 +375,7 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 	fi.name = string(fullpath)
 	fi.mode = os.FileMode(entry.Attributes.FileMode)
 	fi.modifiedTime = time.Unix(entry.Attributes.Mtime, 0)
+	fi.etag = filer.ETag(entry)
 	fi.isDirectory = entry.IsDirectory
 
 	if fi.name == "/" {
@@ -377,8 +386,6 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 }
 
 func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-	// Add filer.path
-	name = fs.option.FilerRootPath + name
 	glog.V(2).Infof("WebDavFileSystem.Stat %v", name)
 
 	return fs.stat(ctx, name)
@@ -423,12 +430,13 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	glog.V(2).Infof("WebDavFileSystem.Write %v", f.name)
 
-	dir, _ := util.FullPath(f.name).DirAndName()
+	fullPath := util.FullPath(f.name)
+	dir, _ := fullPath.DirAndName()
 
 	var getErr error
 	ctx := context.Background()
 	if f.entry == nil {
-		f.entry, getErr = filer_pb.GetEntry(f.fs, util.FullPath(f.name))
+		f.entry, getErr = filer_pb.GetEntry(f.fs, fullPath)
 	}
 
 	if f.entry == nil {
@@ -445,6 +453,11 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 			chunk, flushErr = f.saveDataAsChunk(util.NewBytesReader(data), f.name, offset, time.Now().UnixNano())
 
 			if flushErr != nil {
+				if f.entry.Attributes.Mtime == 0 {
+					if err := f.fs.removeAll(ctx, f.name); err != nil {
+						glog.Errorf("bufWriter.Flush remove file error: %+v", f.name)
+					}
+				}
 				return fmt.Errorf("%s upload result: %v", f.name, flushErr)
 			}
 
@@ -568,6 +581,9 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 		ret = append(ret, &fi)
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	old := f.off
 	if old >= int64(len(ret)) {

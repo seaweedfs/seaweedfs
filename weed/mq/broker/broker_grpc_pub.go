@@ -5,130 +5,121 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"google.golang.org/grpc/peer"
+	"io"
+	"math/rand"
+	"net"
 	"sync/atomic"
 	"time"
 )
 
-// For a new or re-configured topic, or one of the broker went offline,
-//   the pub clients ask one broker what are the brokers for all the topic partitions.
-// The broker will lock the topic on write.
-//   1. if the topic is not found, create the topic, and allocate the topic partitions to the brokers
-//   2. if the topic is found, return the brokers for the topic partitions
-// For a topic to read from, the sub clients ask one broker what are the brokers for all the topic partitions.
-// The broker will lock the topic on read.
-//   1. if the topic is not found, return error
-//   2. if the topic is found, return the brokers for the topic partitions
-//
-// If the topic needs to be re-balanced, the admin client will lock the topic,
-// 1. collect throughput information for all the brokers
-// 2. adjust the topic partitions to the brokers
-// 3. notify the brokers to add/remove partitions to host
-//    3.1 When locking the topic, the partitions and brokers should be remembered in the lock.
-// 4. the brokers will stop process incoming messages if not the right partition
-//    4.1 the pub clients will need to re-partition the messages and publish to the right brokers for the partition3
-//    4.2 the sub clients will need to change the brokers to read from
-//
-// The following is from each individual component's perspective:
-// For a pub client
-//   For current topic/partition, ask one broker for the brokers for the topic partitions
-//     1. connect to the brokers and keep sending, until the broker returns error, or the broker leader is moved.
-// For a sub client
-//   For current topic/partition, ask one broker for the brokers for the topic partitions
-//     1. connect to the brokers and keep reading, until the broker returns error, or the broker leader is moved.
-// For a broker
-//   Upon a pub client lookup:
-//     1. lock the topic
-//       2. if already has topic partition assignment, check all brokers are healthy
-//       3. if not, create topic partition assignment
-//     2. return the brokers for the topic partitions
-//     3. unlock the topic
-//   Upon a sub client lookup:
-//     1. lock the topic
-//       2. if already has topic partition assignment, check all brokers are healthy
-//       3. if not, return error
-//     2. return the brokers for the topic partitions
-//     3. unlock the topic
-// For an admin tool
-//   0. collect stats from all the brokers, and find the topic worth moving
-//   1. lock the topic
-//   2. collect throughput information for all the brokers
-//   3. adjust the topic partitions to the brokers
-//   4. notify the brokers to add/remove partitions to host
-//   5. the brokers will stop process incoming messages if not the right partition
-//   6. unlock the topic
+// PUB
+// 1. gRPC API to configure a topic
+//    1.1 create a topic with existing partition count
+//    1.2 assign partitions to brokers
+// 2. gRPC API to lookup topic partitions
+// 3. gRPC API to publish by topic partitions
 
-/*
-The messages are buffered in memory, and saved to filer under
-	/topics/<topic>/<date>/<hour>/<segment>/*.msg
-	/topics/<topic>/<date>/<hour>/segment
-	/topics/<topic>/info/segment_<id>.meta
+// SUB
+// 1. gRPC API to lookup a topic partitions
 
+// Re-balance topic partitions for publishing
+//   1. collect stats from all the brokers
+//   2. Rebalance and configure new generation of partitions on brokers
+//   3. Tell brokers to close current gneration of publishing.
+// Publishers needs to lookup again and publish to the new generation of partitions.
 
+// Re-balance topic partitions for subscribing
+//   1. collect stats from all the brokers
+// Subscribers needs to listen for new partitions and connect to the brokers.
+// Each subscription may not get data. It can act as a backup.
 
-*/
-
-func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishServer) error {
+func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_PublishMessageServer) error {
 	// 1. write to the volume server
 	// 2. find the topic metadata owning filer
 	// 3. write to the filer
 
-	var localTopicPartition *topic.LocalPartition
 	req, err := stream.Recv()
 	if err != nil {
 		return err
 	}
-	response := &mq_pb.PublishResponse{}
+	response := &mq_pb.PublishMessageResponse{}
 	// TODO check whether current broker should be the leader for the topic partition
-	ackInterval := 1
 	initMessage := req.GetInit()
-	if initMessage != nil {
-		t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
-		localTopicPartition = broker.localTopicManager.GetTopicPartition(t, p)
-		if localTopicPartition == nil {
-			localTopicPartition = topic.NewLocalPartition(t, p, true, nil)
-			broker.localTopicManager.AddTopicPartition(t, localTopicPartition)
-		}
-		ackInterval = int(initMessage.AckInterval)
-		stream.Send(response)
-	} else {
-		response.Error = fmt.Sprintf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
-		glog.Errorf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
+	if initMessage == nil {
+		response.Error = fmt.Sprintf("missing init message")
+		glog.Errorf("missing init message")
 		return stream.Send(response)
 	}
 
-	ackCounter := 0
-	var ackSequence int64
-	var isStopping int32
-	respChan := make(chan *mq_pb.PublishResponse, 128)
-	defer func() {
-		atomic.StoreInt32(&isStopping, 1)
-		close(respChan)
-	}()
+	// get or generate a local partition
+	t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
+	localTopicPartition, getOrGenErr := b.GetOrGenerateLocalPartition(t, p)
+	if getOrGenErr != nil {
+		response.Error = fmt.Sprintf("topic %v not found: %v", t, getOrGenErr)
+		glog.Errorf("topic %v not found: %v", t, getOrGenErr)
+		return stream.Send(response)
+	}
+
+	// connect to follower brokers
+	if followerErr := localTopicPartition.MaybeConnectToFollowers(initMessage, b.grpcDialOption); followerErr != nil {
+		response.Error = followerErr.Error()
+		glog.Errorf("MaybeConnectToFollowers: %v", followerErr)
+		return stream.Send(response)
+	}
+
+	var receivedSequence, acknowledgedSequence  int64
+	var isClosed bool
+
+	// start sending ack to publisher
+	ackInterval := int64(1)
+	if initMessage.AckInterval > 0 {
+		ackInterval = int64(initMessage.AckInterval)
+	}
 	go func() {
-		ticker := time.NewTicker(1 * time.Second)
-		for {
-			select {
-			case resp := <-respChan:
-				if resp != nil {
-					if err := stream.Send(resp); err != nil {
-						glog.Errorf("Error sending response %v: %v", resp, err)
-					}
-				} else {
-					return
+		defer func() {
+			// println("stop sending ack to publisher", initMessage.PublisherName)
+		}()
+
+		lastAckTime := time.Now()
+		for !isClosed {
+			receivedSequence = atomic.LoadInt64(&localTopicPartition.AckTsNs)
+			if acknowledgedSequence < receivedSequence && (receivedSequence - acknowledgedSequence >= ackInterval || time.Since(lastAckTime) > 1*time.Second){
+				acknowledgedSequence = receivedSequence
+				response := &mq_pb.PublishMessageResponse{
+					AckSequence: acknowledgedSequence,
 				}
-			case <-ticker.C:
-				if atomic.LoadInt32(&isStopping) == 0 {
-					response := &mq_pb.PublishResponse{
-						AckSequence: ackSequence,
-					}
-					respChan <- response
-				} else {
-					return
+				if err := stream.Send(response); err != nil {
+					glog.Errorf("Error sending response %v: %v", response, err)
 				}
+				// println("sent ack", acknowledgedSequence, "=>", initMessage.PublisherName)
+				lastAckTime = time.Now()
+			} else {
+				time.Sleep(1 * time.Second)
 			}
 		}
+	}()
+
+
+	// process each published messages
+	clientName := fmt.Sprintf("%v-%4d/%s/%v", findClientAddress(stream.Context()), rand.Intn(10000), initMessage.Topic, initMessage.Partition)
+	localTopicPartition.Publishers.AddPublisher(clientName, topic.NewLocalPublisher())
+
+	defer func() {
+		// remove the publisher
+		localTopicPartition.Publishers.RemovePublisher(clientName)
+		if localTopicPartition.MaybeShutdownLocalPartition() {
+			b.localTopicManager.RemoveLocalPartition(t, p)
+			glog.V(0).Infof("Removed local topic %v partition %v", initMessage.Topic, initMessage.Partition)
+		}
+	}()
+
+	// send a hello message
+	stream.Send(&mq_pb.PublishMessageResponse{})
+
+	defer func() {
+		isClosed = true
 	}()
 
 	// process each published messages
@@ -136,53 +127,44 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 		// receive a message
 		req, err := stream.Recv()
 		if err != nil {
-			return err
+			if err == io.EOF {
+				break
+			}
+			glog.V(0).Infof("topic %v partition %v publish stream from %s error: %v", initMessage.Topic, initMessage.Partition, initMessage.PublisherName, err)
+			break
 		}
 
 		// Process the received message
-		if dataMessage := req.GetData(); dataMessage != nil {
-			localTopicPartition.Publish(dataMessage)
+		dataMessage := req.GetData()
+		if dataMessage == nil {
+			continue
 		}
 
-		ackCounter++
-		ackSequence++
-		if ackCounter >= ackInterval {
-			ackCounter = 0
-			// send back the ack
-			response := &mq_pb.PublishResponse{
-				AckSequence: ackSequence,
-			}
-			respChan <- response
+		// The control message should still be sent to the follower
+		// to avoid timing issue when ack messages.
+
+		// send to the local partition
+		if err = localTopicPartition.Publish(dataMessage); err != nil {
+			return fmt.Errorf("topic %v partition %v publish error: %v", initMessage.Topic, initMessage.Partition, err)
 		}
 	}
 
-	glog.Infof("publish stream closed")
+	glog.V(0).Infof("topic %v partition %v publish stream from %s closed.", initMessage.Topic, initMessage.Partition, initMessage.PublisherName)
 
 	return nil
 }
 
-// AssignTopicPartitions Runs on the assigned broker, to execute the topic partition assignment
-func (broker *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *mq_pb.AssignTopicPartitionsRequest) (*mq_pb.AssignTopicPartitionsResponse, error) {
-	ret := &mq_pb.AssignTopicPartitionsResponse{}
-	self := pb.ServerAddress(fmt.Sprintf("%s:%d", broker.option.Ip, broker.option.Port))
-
-	for _, brokerPartition := range request.BrokerPartitionAssignments {
-		localPartiton := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
-		broker.localTopicManager.AddTopicPartition(
-			topic.FromPbTopic(request.Topic),
-			localPartiton)
-		if request.IsLeader {
-			for _, follower := range localPartiton.FollowerBrokers {
-				err := pb.WithBrokerGrpcClient(false, follower.String(), broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
-					_, err := client.AssignTopicPartitions(context.Background(), request)
-					return err
-				})
-				if err != nil {
-					return ret, err
-				}
-			}
-		}
+// duplicated from master_grpc_server.go
+func findClientAddress(ctx context.Context) string {
+	// fmt.Printf("FromContext %+v\n", ctx)
+	pr, ok := peer.FromContext(ctx)
+	if !ok {
+		glog.Error("failed to get peer from ctx")
+		return ""
 	}
-
-	return ret, nil
+	if pr.Addr == net.Addr(nil) {
+		glog.Error("failed to get peer address")
+		return ""
+	}
+	return pr.Addr.String()
 }

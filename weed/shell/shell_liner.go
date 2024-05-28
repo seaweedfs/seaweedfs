@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
@@ -26,8 +25,8 @@ var (
 )
 
 func RunShell(options ShellOptions) {
-	slices.SortFunc(Commands, func(a, b command) bool {
-		return strings.Compare(a.Name(), b.Name()) < 0
+	slices.SortFunc(Commands, func(a, b command) int {
+		return strings.Compare(a.Name(), b.Name())
 	})
 	line = liner.NewLiner()
 	defer line.Close()
@@ -72,24 +71,6 @@ func RunShell(options ShellOptions) {
 			commandEnv.option.FilerAddress = filers[rand.Intn(len(filers))]
 		}
 		fmt.Println()
-	}
-
-	if commandEnv.option.FilerAddress != "" {
-		commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
-			resp, err := filerClient.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-			if err != nil {
-				return err
-			}
-			if resp.ClusterId != "" {
-				fmt.Printf(`
----
-Free Monitoring Data URL:
-https://cloud.seaweedfs.com/ui/%s
----
-`, resp.ClusterId)
-			}
-			return nil
-		})
 	}
 
 	for {
@@ -170,7 +151,7 @@ func printHelp(cmds []string) {
 		cmd := strings.ToLower(args[0])
 
 		for _, c := range Commands {
-			if c.Name() == cmd {
+			if strings.ToLower(c.Name()) == cmd {
 				fmt.Printf("  %s\t# %s\n", c.Name(), c.Help())
 			}
 		}

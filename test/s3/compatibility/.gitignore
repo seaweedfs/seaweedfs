@@ -1,2 +1,8 @@
+# Test run scratch data
 /s3-tests
 /tmp
+
+# Test run outputs
+weed.log
+compat.raw.txt
+compat.summary.txt

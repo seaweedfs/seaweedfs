@@ -16,36 +16,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
+        uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633
         with:
           fetch-depth: 0
 
       - name: Set up Helm
-        uses: azure/setup-helm@v3
+        uses: azure/setup-helm@v4
         with:
           version: v3.10.0
 
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
           check-latest: true
 
       - name: Set up chart-testing
-        uses: helm/chart-testing-action@v2.4.0
+        uses: helm/chart-testing-action@v2.6.1
 
       - name: Run chart-testing (list-changed)
         id: list-changed
         run: |
-          changed=$(ct list-changed --chart-dirs k8s/charts)
+          changed=$(ct list-changed --target-branch ${{ github.event.repository.default_branch }} --chart-dirs k8s/charts)
           if [[ -n "$changed" ]]; then
             echo "::set-output name=changed::true"
           fi
 
       - name: Run chart-testing (lint)
-        run: ct lint --all --validate-maintainers=false --chart-dirs k8s/charts
+        run: ct lint --target-branch ${{ github.event.repository.default_branch }} --all --validate-maintainers=false --chart-dirs k8s/charts
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.8.0
+        uses: helm/kind-action@v1.10.0
 
       - name: Run chart-testing (install)
-        run: ct install --all --chart-dirs k8s/charts
+        run: ct install --target-branch ${{ github.event.repository.default_branch }} --all --chart-dirs k8s/charts

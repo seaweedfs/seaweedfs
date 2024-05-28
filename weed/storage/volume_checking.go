@@ -60,6 +60,9 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 		}
 	} else {
 		if lastAppendAtNs, err = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToActualOffset(), key, size); err != nil {
+			if err == ErrorSizeMismatch {
+				return verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToActualOffset()+int64(MaxPossibleVolumeSize), key, size)
+			}
 			return lastAppendAtNs, err
 		}
 	}
@@ -106,6 +109,9 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 			return 0, fmt.Errorf("verifyNeedleIntegrity check %s entry offset %d size %d: %v", datFile.Name(), offset, size, err)
 		}
 		n.AppendAtNs = util.BytesToUint64(bytes)
+		if n.HasTtl() {
+			return n.AppendAtNs, nil
+		}
 		fileTailOffset := offset + needle.GetActualSize(size, v)
 		fileSize, _, err := datFile.GetStat()
 		if err != nil {
@@ -115,12 +121,8 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 			return n.AppendAtNs, nil
 		}
 		if fileSize > fileTailOffset {
-			glog.Warningf("Truncate %s from %d bytes to %d bytes!", datFile.Name(), fileSize, fileTailOffset)
-			err = datFile.Truncate(fileTailOffset)
-			if err == nil {
-				return n.AppendAtNs, nil
-			}
-			return n.AppendAtNs, fmt.Errorf("truncate file %s: %v", datFile.Name(), err)
+			glog.Warningf("data file %s actual %d bytes expected %d bytes!", datFile.Name(), fileSize, fileTailOffset)
+			return n.AppendAtNs, fmt.Errorf("data file %s actual %d bytes expected %d bytes", datFile.Name(), fileSize, fileTailOffset)
 		}
 		glog.Warningf("data file %s has %d bytes, less than expected %d bytes!", datFile.Name(), fileSize, fileTailOffset)
 	}

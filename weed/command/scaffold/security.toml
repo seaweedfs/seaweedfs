@@ -4,6 +4,11 @@
 #    /etc/seaweedfs/security.toml
 # this file is read by master, volume server, and filer
 
+# comma separated origins allowed to make requests to the filer and s3 gateway. 
+# enter in this format: https://domain.com, or http://localhost:port
+[cors.allowed_origins]
+values = "*"
+
 # this jwt signing key is read by master and volume server, and it is used for write operations:
 # - the Master server generates the JWT, which can be used to write a certain file on a volume server
 # - the Volume server validates the JWT on writing
@@ -18,6 +23,13 @@ expires_after_seconds = 10           # seconds
 # pose a security risk.
 [access]
 ui = false
+
+# by default the filer UI is enabled. This can be a security risk if the filer is exposed to the public
+# and the JWT for reads is not set. If you don't want the public to have access to the objects in your
+# storage, and you haven't set the JWT for reads it is wise to disable access to directory metadata.
+# This disables access to the Filer UI, and will no longer return directory metadata in GET requests.
+[filer.expose_directory_metadata]
+enabled = true
 
 # this jwt signing key is read by master and volume server, and it is used for read operations:
 # - the Master server generates the JWT, which can be used to read a certain file on a volume server

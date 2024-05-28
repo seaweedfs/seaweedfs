@@ -19,24 +19,23 @@ func NewLocalTopicManager() *LocalTopicManager {
 	}
 }
 
-// AddTopic adds a topic to the local topic manager
-func (manager *LocalTopicManager) AddTopicPartition(topic Topic, localPartition *LocalPartition) {
+// AddLocalPartition adds a topic to the local topic manager
+func (manager *LocalTopicManager) AddLocalPartition(topic Topic, localPartition *LocalPartition) {
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
-		localTopic = &LocalTopic{
-			Topic:      topic,
-			Partitions: make([]*LocalPartition, 0),
-		}
+		localTopic = NewLocalTopic(topic)
 	}
-	manager.topics.SetIfAbsent(topic.String(), localTopic)
+	if !manager.topics.SetIfAbsent(topic.String(), localTopic) {
+		localTopic, _ = manager.topics.Get(topic.String())
+	}
 	if localTopic.findPartition(localPartition.Partition) != nil {
 		return
 	}
 	localTopic.Partitions = append(localTopic.Partitions, localPartition)
 }
 
-// GetTopic gets a topic from the local topic manager
-func (manager *LocalTopicManager) GetTopicPartition(topic Topic, partition Partition) *LocalPartition {
+// GetLocalPartition gets a topic from the local topic manager
+func (manager *LocalTopicManager) GetLocalPartition(topic Topic, partition Partition) *LocalPartition {
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
 		return nil
@@ -49,7 +48,7 @@ func (manager *LocalTopicManager) RemoveTopic(topic Topic) {
 	manager.topics.Remove(topic.String())
 }
 
-func (manager *LocalTopicManager) RemoveTopicPartition(topic Topic, partition Partition) (removed bool) {
+func (manager *LocalTopicManager) RemoveLocalPartition(topic Topic, partition Partition) (removed bool) {
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
 		return false
@@ -57,33 +56,62 @@ func (manager *LocalTopicManager) RemoveTopicPartition(topic Topic, partition Pa
 	return localTopic.removePartition(partition)
 }
 
+func (manager *LocalTopicManager) ClosePublishers(topic Topic, unixTsNs int64) (removed bool) {
+	localTopic, ok := manager.topics.Get(topic.String())
+	if !ok {
+		return false
+	}
+	return localTopic.closePartitionPublishers(unixTsNs)
+}
+
+func (manager *LocalTopicManager) CloseSubscribers(topic Topic, unixTsNs int64) (removed bool) {
+	localTopic, ok := manager.topics.Get(topic.String())
+	if !ok {
+		return false
+	}
+	return localTopic.closePartitionSubscribers(unixTsNs)
+}
+
 func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.BrokerStats {
 	stats := &mq_pb.BrokerStats{
 		Stats: make(map[string]*mq_pb.TopicPartitionStats),
 	}
-	manager.topics.IterCb(func(topic string, localTopic *LocalTopic) {
-		for _, localPartition := range localTopic.Partitions {
-			stats.Stats[topic] = &mq_pb.TopicPartitionStats{
-				Topic: &mq_pb.Topic{
-					Namespace: string(localTopic.Namespace),
-					Name:      localTopic.Name,
-				},
-				Partition: &mq_pb.Partition{
-					RingSize:   localPartition.RingSize,
-					RangeStart: localPartition.RangeStart,
-					RangeStop:  localPartition.RangeStop,
-				},
-				ConsumerCount: localPartition.ConsumerCount,
-			}
-		}
-	})
 
 	// collect current broker's cpu usage
+	// this needs to be in front, so the following stats can be more accurate
 	usages, err := cpu.Percent(duration, false)
 	if err == nil && len(usages) > 0 {
 		stats.CpuUsagePercent = int32(usages[0])
 	}
 
+	// collect current broker's topics and partitions
+	manager.topics.IterCb(func(topic string, localTopic *LocalTopic) {
+		for _, localPartition := range localTopic.Partitions {
+			topicPartition := &TopicPartition{
+				Topic:     Topic{Namespace: localTopic.Namespace, Name: localTopic.Name},
+				Partition: localPartition.Partition,
+			}
+			stats.Stats[topicPartition.String()] = &mq_pb.TopicPartitionStats{
+				Topic: &mq_pb.Topic{
+					Namespace: string(localTopic.Namespace),
+					Name:      localTopic.Name,
+				},
+				Partition:       localPartition.Partition.ToPbPartition(),
+				PublisherCount:  int32(localPartition.Publishers.Size()),
+				SubscriberCount: int32(localPartition.Subscribers.Size()),
+			}
+			// fmt.Printf("collect topic %+v partition %+v\n", topicPartition, localPartition.Partition)
+		}
+	})
+
 	return stats
 
+}
+
+func (manager *LocalTopicManager) WaitUntilNoPublishers(topic Topic) {
+	localTopic, ok := manager.topics.Get(topic.String())
+	if !ok {
+		return
+	}
+	localTopic.WaitUntilNoPublishers()
 }

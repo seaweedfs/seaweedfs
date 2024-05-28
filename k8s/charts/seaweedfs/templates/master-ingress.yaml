@@ -1,3 +1,4 @@
+{{- if .Values.master.enabled }}
 {{- if .Values.master.ingress.enabled }}
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
 apiVersion: networking.k8s.io/v1
@@ -10,9 +11,9 @@ kind: Ingress
 metadata:
   name: ingress-{{ template "seaweedfs.name" . }}-master
   namespace: {{ .Release.Namespace }}
-  {{- if .Values.master.ingress.annotations }}
+  {{- with .Values.master.ingress.annotations }}
   annotations:
-    {{ tpl .Values.master.ingress.annotations . | nindent 4 | trim }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -22,6 +23,8 @@ metadata:
     app.kubernetes.io/component: master
 spec:
   ingressClassName: {{ .Values.master.ingress.className | quote }}
+  tls:
+    {{ .Values.master.ingress.tls | default list | toYaml | nindent 6 }}
   rules:
     - http:
         paths:
@@ -40,5 +43,6 @@ spec:
 {{- end }}
 {{- if .Values.filer.ingress.host }}
       host: {{ .Values.master.ingress.host }}
+{{- end }}
 {{- end }}
 {{- end }}

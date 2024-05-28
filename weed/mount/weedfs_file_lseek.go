@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -35,8 +36,8 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 	}
 
 	// lock the file until the proper offset was calculated
-	fh.RLock()
-	defer fh.RUnlock()
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("Lseek", fh.fh, util.SharedLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 	fh.entryLock.RLock()
 	defer fh.entryLock.RUnlock()
 

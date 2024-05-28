@@ -42,8 +42,8 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 	s3err.WriteErrorResponse(w, r, http.StatusNoContent)
 }
 
-// PutBucketAclHandler Put bucket ACL
-// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html
-func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Request) {
+// PutBucketVersioningHandler Put bucket Versionin
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html
+func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *http.Request) {
 	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 }

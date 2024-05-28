@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,13 +13,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// listDirectoryHandler lists directories and folers under a directory
+// listDirectoryHandler lists directories and folders under a directory
 // files are sorted by name and paginated via "lastFileName" and "limit".
 // sub directories are listed on the first page, when "lastFileName"
 // is empty.
 func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
 
-	stats.FilerRequestCounter.WithLabelValues(stats.DirList).Inc()
+	if fs.option.ExposeDirectoryData == false {
+		writeJsonError(w, r, http.StatusForbidden, errors.New("ui is disabled"))
+		return
+	}
+
+	stats.FilerHandlerCounter.WithLabelValues(stats.DirList).Inc()
 
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") && len(path) > 1 {
@@ -95,4 +101,5 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		glog.V(0).Infof("Template Execute Error: %v", err)
 	}
+
 }

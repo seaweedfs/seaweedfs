@@ -1,0 +1,96 @@
+{{- if .Values.master.enabled }}
+{{- if .Values.filer.s3.enabled }}
+{{- if .Values.filer.s3.createBuckets }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ $.Release.Name }}-bucket-hook"
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    metadata:
+      name: "{{ .Release.Name }}"
+      labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: post-install-job
+        image: {{ template "master.image" . }}
+        env:
+          - name: WEED_CLUSTER_DEFAULT
+            value: "sw"
+          - name: WEED_CLUSTER_SW_MASTER
+            value: "{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}:9333"
+          - name: WEED_CLUSTER_SW_FILER
+            value: "{{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:8888"
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: SEAWEEDFS_FULLNAME
+            value: "{{ template "seaweedfs.name" . }}"
+        command:
+          - "/bin/sh"
+          - "-ec"
+          - |
+          {{- range $reg, $props := $.Values.filer.s3.createBuckets }}
+            exec /bin/echo \
+            "s3.bucket.create --name {{ $props.name }}" |\
+            /usr/bin/weed shell
+          {{- end }}
+          {{- range $reg, $props := $.Values.filer.s3.createBuckets }}
+          {{- if $props.anonymousRead }}
+            exec /bin/echo \
+            "s3.configure --user anonymous \
+                --buckets {{ $props.name }} \
+                --actions Read \
+                --apply true" |\
+                /usr/bin/weed shell
+          {{- end }}  
+          {{- end }}
+        {{- if .Values.filer.s3.enableAuth }}
+        volumeMounts:
+          - name: config-users
+            mountPath: /etc/sw
+            readOnly: true
+        {{- end }}
+        ports:
+          - containerPort: {{ .Values.master.port }}
+            name: swfs-master
+          {{- if and .Values.global.monitoring.enabled .Values.master.metricsPort }}
+          - containerPort: {{ .Values.master.metricsPort }}
+            name: metrics
+          {{- end }}
+          - containerPort: {{ .Values.master.grpcPort }}
+            #name: swfs-master-grpc
+    {{- if .Values.filer.s3.enableAuth }}
+      volumes:
+        - name: config-users
+          secret:
+            defaultMode: 420
+            {{- if not (empty .Values.filer.s3.existingConfigSecret) }}
+            secretName: {{ .Values.filer.s3.existingConfigSecret }}
+            {{- else }}
+            secretName: seaweedfs-s3-secret
+            {{- end }}
+    {{- end }}{{/** if .Values.filer.s3.enableAuth **/}}
+{{- end }}{{/** if .Values.master.enabled **/}}
+{{- end }}{{/** if .Values.filer.s3.enabled **/}}
+{{- end }}{{/** if .Values.filer.s3.createBuckets **/}}

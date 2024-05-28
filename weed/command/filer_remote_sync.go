@@ -90,7 +90,7 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 
 	if dir != "" {
 		fmt.Printf("synchronize %s to remote storage...\n", dir)
-		util.RetryForever("filer.remote.sync "+dir, func() error {
+		util.RetryUntil("filer.remote.sync "+dir, func() error {
 			return followUpdatesAndUploadToRemote(&remoteSyncOptions, filerSource, dir)
 		}, func(err error) bool {
 			if err != nil {

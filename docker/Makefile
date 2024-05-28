@@ -8,7 +8,11 @@ cgo ?= 0
 binary:
 	export SWCOMMIT=$(shell git rev-parse --short HEAD)
 	export SWLDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
-	cd ../weed && CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)" && mv weed ../docker/
+	cd ../weed && CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-s -w -extldflags -static $(SWLDFLAGS)" && mv weed ../docker/
+	cd ../weed/mq/client/cmd/weed_pub_kv && CGO_ENABLED=$(cgo) GOOS=linux go build && mv weed_pub_kv ../../../../../docker/
+	cd ../weed/mq/client/cmd/weed_pub_record && CGO_ENABLED=$(cgo) GOOS=linux go build && mv weed_pub_record ../../../../../docker/
+	cd ../weed/mq/client/cmd/weed_sub_kv && CGO_ENABLED=$(cgo) GOOS=linux go build && mv weed_sub_kv ../../../../../docker/
+	cd ../weed/mq/client/cmd/weed_sub_record && CGO_ENABLED=$(cgo) GOOS=linux go build && mv weed_sub_record ../../../../../docker/
 
 binary_race: options = -race
 binary_race: cgo = 1
@@ -81,11 +85,17 @@ cluster: build
 2mount: build
 	docker compose -f compose/local-sync-mount-compose.yml -p seaweedfs up
 
+filer_backup: build
+	docker compose -f compose/local-filer-backup-compose.yml -p seaweedfs up
+
 hashicorp_raft: build
 	docker compose -f compose/local-hashicorp-raft-compose.yml -p seaweedfs up
 
 s3tests: build s3tests_build
 	docker compose -f compose/local-s3tests-compose.yml -p seaweedfs up
+
+brokers: build
+	docker compose -f compose/local-brokers-compose.yml -p seaweedfs up
 
 filer_etcd: build
 	docker stack deploy -c compose/swarm-etcd.yml fs
@@ -102,12 +112,12 @@ clean:
 	rm ./weed
 
 certstrap:
-	go get github.com/square/certstrap
-	certstrap --depot-path compose/tls init --passphrase "" --common-name "SeaweedFS CA" || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name volume01.dev || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name master01.dev || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name filer01.dev || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name client01.dev || true
+	go install -v github.com/square/certstrap@latest
+	certstrap --depot-path compose/tls init --curve P-256 --passphrase "" --common-name "SeaweedFS CA" || true
+	certstrap --depot-path compose/tls request-cert --ou "SeaweedFS" --curve P-256 --passphrase "" --domain localhost --common-name volume01.dev || true
+	certstrap --depot-path compose/tls request-cert --ou "SeaweedFS" --curve P-256 --passphrase "" --common-name master01.dev || true
+	certstrap --depot-path compose/tls request-cert --ou "SeaweedFS" --curve P-256 --passphrase "" --common-name filer01.dev || true
+	certstrap --depot-path compose/tls request-cert --ou "SeaweedFS" --curve P-256 --passphrase "" --common-name client01.dev || true
 	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" volume01.dev || true
 	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" master01.dev || true
 	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" filer01.dev || true

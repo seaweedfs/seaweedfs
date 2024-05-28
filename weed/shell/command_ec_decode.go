@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
@@ -39,14 +38,12 @@ func (c *commandEcDecode) Help() string {
 }
 
 func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
-	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	volumeId := encodeCommand.Int("volumeId", 0, "the volume id")
-	collection := encodeCommand.String("collection", "", "the collection name")
-	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
-	if err = encodeCommand.Parse(args); err != nil {
+	decodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	volumeId := decodeCommand.Int("volumeId", 0, "the volume id")
+	collection := decodeCommand.String("collection", "", "the collection name")
+	if err = decodeCommand.Parse(args); err != nil {
 		return nil
 	}
-	infoAboutSimulationMode(writer, *forceChanges, "-force")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
@@ -58,17 +55,6 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
-	}
-
-	if !*forceChanges {
-		var nodeCount int
-		eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-			nodeCount++
-		})
-		if nodeCount < erasure_coding.ParityShardsCount {
-			glog.V(0).Infof("skip erasure coding with %d nodes, less than recommended %d nodes", nodeCount, erasure_coding.ParityShardsCount)
-			return nil
-		}
 	}
 
 	// volumeId is provided
@@ -209,6 +195,16 @@ func collectEcShards(commandEnv *CommandEnv, nodeToEcIndexBits map[pb.ServerAddr
 			})
 			if copyErr != nil {
 				return fmt.Errorf("copy %d.%v %s => %s : %v\n", vid, needToCopyEcIndexBits.ShardIds(), loc, targetNodeLocation, copyErr)
+			}
+
+			fmt.Printf("mount %d.%v on %s\n", vid, needToCopyEcIndexBits.ShardIds(), targetNodeLocation)
+			_, mountErr := volumeServerClient.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
+				VolumeId:   uint32(vid),
+				Collection: collection,
+				ShardIds:   needToCopyEcIndexBits.ToUint32Slice(),
+			})
+			if mountErr != nil {
+				return fmt.Errorf("mount %d.%v on %s : %v\n", vid, needToCopyEcIndexBits.ShardIds(), targetNodeLocation, mountErr)
 			}
 
 			return nil

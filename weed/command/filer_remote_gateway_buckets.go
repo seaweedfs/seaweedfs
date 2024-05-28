@@ -30,13 +30,23 @@ func (option *RemoteGatewayOptions) followBucketUpdatesAndUploadToRemote(filerSo
 		return err
 	}
 
-	processEventFnWithOffset := pb.AddOffsetFunc(eachEntryFunc, 3*time.Second, func(counter int64, lastTsNs int64) error {
-		lastTime := time.Unix(0, lastTsNs)
-		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, lastTime, float64(counter)/float64(3))
-		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), option.bucketsDir, lastTsNs)
-	})
-
 	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), option.bucketsDir, *option.timeAgo)
+	processor := NewMetadataProcessor(eachEntryFunc, 128, lastOffsetTs.UnixNano())
+
+	var lastLogTsNs = time.Now().UnixNano()
+	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		processor.AddSyncJob(resp)
+		return nil
+	}, 3*time.Second, func(counter int64, lastTsNs int64) error {
+		offsetTsNs := processor.processedTsWatermark.Load()
+		if offsetTsNs == 0 {
+			return nil
+		}
+		now := time.Now().UnixNano()
+		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		lastLogTsNs = now
+		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), option.bucketsDir, offsetTsNs)
+	})
 
 	option.clientEpoch++
 
@@ -224,7 +234,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			if writeErr != nil {
 				return writeErr
 			}
-			return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
+			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if filer_pb.IsDelete(resp) {
 			if resp.Directory == option.bucketsDir {
@@ -261,6 +271,9 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 					}
 				}
 			}
+			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
+				return nil
+			}
 			oldBucket, oldRemoteStorageMountLocation, oldRemoteStorage, oldOk := option.detectBucketInfo(resp.Directory)
 			newBucket, newRemoteStorageMountLocation, newRemoteStorage, newOk := option.detectBucketInfo(message.NewParentPath)
 			if oldOk && newOk {
@@ -288,7 +301,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 						if writeErr != nil {
 							return writeErr
 						}
-						return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
+						return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 					}
 				}
 			}
@@ -325,7 +338,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				if writeErr != nil {
 					return writeErr
 				}
-				return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
+				return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 			}
 		}
 

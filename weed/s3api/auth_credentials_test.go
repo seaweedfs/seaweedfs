@@ -2,14 +2,12 @@ package s3api
 
 import (
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/stretchr/testify/assert"
 	"reflect"
 	"testing"
 
-	jsonpb "google.golang.org/protobuf/encoding/protojson"
-
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	jsonpb "google.golang.org/protobuf/encoding/protojson"
 )
 
 func TestIdentityListFileFormat(t *testing.T) {
@@ -89,10 +87,13 @@ func TestCanDo(t *testing.T) {
 		Actions: []Action{
 			"Read:bucket1",
 			"Write:bucket1/*",
+			"WriteAcp:bucket1",
 		},
 	}
 	assert.Equal(t, true, ident2.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
 	assert.Equal(t, true, ident2.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident2.canDo(ACTION_WRITE_ACP, "bucket1", ""))
+	assert.Equal(t, false, ident2.canDo(ACTION_READ_ACP, "bucket1", ""))
 	assert.Equal(t, false, ident2.canDo(ACTION_LIST, "bucket1", "/a/b/c/d.txt"))
 
 	// across buckets
@@ -106,15 +107,18 @@ func TestCanDo(t *testing.T) {
 	assert.Equal(t, true, ident3.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
 	assert.Equal(t, true, ident3.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
 	assert.Equal(t, false, ident3.canDo(ACTION_LIST, "bucket1", "/a/b/other/some"))
+	assert.Equal(t, false, ident3.canDo(ACTION_WRITE_ACP, "bucket1", ""))
 
 	// partial buckets
 	ident4 := &Identity{
 		Name: "anything",
 		Actions: []Action{
 			"Read:special_*",
+			"ReadAcp:special_*",
 		},
 	}
 	assert.Equal(t, true, ident4.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident4.canDo(ACTION_READ_ACP, "special_bucket", ""))
 	assert.Equal(t, false, ident4.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
 
 	// admin buckets
@@ -125,15 +129,37 @@ func TestCanDo(t *testing.T) {
 		},
 	}
 	assert.Equal(t, true, ident5.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident5.canDo(ACTION_READ_ACP, "special_bucket", ""))
 	assert.Equal(t, true, ident5.canDo(ACTION_WRITE, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident5.canDo(ACTION_WRITE_ACP, "special_bucket", ""))
+
+	// anonymous buckets
+	ident6 := &Identity{
+		Name: "anonymous",
+		Actions: []Action{
+			"Read",
+		},
+	}
+	assert.Equal(t, true, ident6.canDo(ACTION_READ, "anything_bucket", "/a/b/c/d.txt"))
 }
 
 type LoadS3ApiConfigurationTestCase struct {
+	pbAccount   *iam_pb.Account
 	pbIdent     *iam_pb.Identity
 	expectIdent *Identity
 }
 
 func TestLoadS3ApiConfiguration(t *testing.T) {
+	specifiedAccount := Account{
+		Id:           "specifiedAccountID",
+		DisplayName:  "specifiedAccountName",
+		EmailAddress: "specifiedAccounEmail@example.com",
+	}
+	pbSpecifiedAccount := iam_pb.Account{
+		Id:           "specifiedAccountID",
+		DisplayName:  "specifiedAccountName",
+		EmailAddress: "specifiedAccounEmail@example.com",
+	}
 	testCases := map[string]*LoadS3ApiConfigurationTestCase{
 		"notSpecifyAccountId": {
 			pbIdent: &iam_pb.Identity{
@@ -150,8 +176,8 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 				},
 			},
 			expectIdent: &Identity{
-				Name:      "notSpecifyAccountId",
-				AccountId: s3account.AccountAdmin.Id,
+				Name:    "notSpecifyAccountId",
+				Account: &AccountAdmin,
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -165,17 +191,18 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			},
 		},
 		"specifiedAccountID": {
+			pbAccount: &pbSpecifiedAccount,
 			pbIdent: &iam_pb.Identity{
-				Name:      "specifiedAccountID",
-				AccountId: "specifiedAccountID",
+				Name:    "specifiedAccountID",
+				Account: &pbSpecifiedAccount,
 				Actions: []string{
 					"Read",
 					"Write",
 				},
 			},
 			expectIdent: &Identity{
-				Name:      "specifiedAccountID",
-				AccountId: "specifiedAccountID",
+				Name:    "specifiedAccountID",
+				Account: &specifiedAccount,
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -191,8 +218,8 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 				},
 			},
 			expectIdent: &Identity{
-				Name:      "anonymous",
-				AccountId: "anonymous",
+				Name:    "anonymous",
+				Account: &AccountAnonymous,
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -206,6 +233,9 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 	}
 	for _, v := range testCases {
 		config.Identities = append(config.Identities, v.pbIdent)
+		if v.pbAccount != nil {
+			config.Accounts = append(config.Accounts, v.pbAccount)
+		}
 	}
 
 	iam := IdentityAccessManagement{}
@@ -217,7 +247,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 	for _, ident := range iam.identities {
 		tc := testCases[ident.Name]
 		if !reflect.DeepEqual(ident, tc.expectIdent) {
-			t.Error("not expect")
+			t.Errorf("not expect for ident name %s", ident.Name)
 		}
 	}
 }

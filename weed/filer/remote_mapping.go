@@ -15,9 +15,11 @@ func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAdd
 		oldContent, readErr = ReadInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
 		return readErr
 	}); readErr != nil {
-		return nil, readErr
+		if readErr != filer_pb.ErrNotFound {
+			return nil, fmt.Errorf("read existing mapping: %v", readErr)
+		}
+		oldContent = nil
 	}
-
 	mappings, readErr = UnmarshalRemoteStorageMappings(oldContent)
 	if readErr != nil {
 		return nil, fmt.Errorf("unmarshal mappings: %v", readErr)
