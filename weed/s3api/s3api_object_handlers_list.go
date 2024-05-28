@@ -105,7 +105,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(0).Infof("ListObjectsV1Handler %s", bucket)
+	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
 
 	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys := getListObjectsV1Args(r.URL.Query())
 
@@ -177,7 +177,6 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			doErr = s3a.doListFilerRecursiveEntries(client, reqDir, prefix, cursor, marker, delimiter, false,
 				func(path string, entry *filer_pb.Entry) {
 					key := path[len(bucketPrefix):]
-					glog.V(0).Infof("doListFilerRecursiveEntries path %s, shortDir %s, key: %+v, cursor: %+v, marker: %s[%s], nextMarker: %s, IsDirectoryKeyObject %v", path, path[len(reqDir):], key, cursor, marker, originalMarker, cursor.nextMarker, entry.IsDirectoryKeyObject())
 					if cursor.isTruncated {
 						nextMarker = cursor.nextMarker
 						return
@@ -190,13 +189,11 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					}()
 					if delimiter == "/" {
 						if entry.IsDirectoryKeyObject() {
-							// glog.V(0).Infof("append IsDirectoryKeyObject %s", key+"/")
 							contents = append(contents, newListEntry(entry, key+"/", "", "", bucketPrefix, fetchOwner, false, encodingTypeUrl))
 							cursor.maxKeys--
 							return
 						}
 						if entry.IsDirectory {
-							// glog.V(0).Infof("append commonPrefixes %s", key+"/")
 							var prefixKey string
 							if encodingTypeUrl {
 								prefixKey = urlPathEscape(key + "/")
@@ -325,13 +322,6 @@ type ListingCursor struct {
 	isTruncated           bool
 	prefixEndsOnDelimiter bool
 	nextMarker            string
-}
-
-func (l *ListingCursor) Decrease() {
-	l.maxKeys--
-	if l.maxKeys == 0 {
-		l.isTruncated = true
-	}
 }
 
 func getStartFileFromKey(key string) string {

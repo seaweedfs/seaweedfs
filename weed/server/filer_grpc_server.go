@@ -47,10 +47,10 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	}
 
 	paginationLimit := filer.PaginationSize
-	// Todo test_bucket_listv2_delimiter_prefix move start from prefix to SQL because in extreme cases, where there are more keys that need to be skipped than the limit
-	if paginationLimit > limit && !(req.Recursive && req.Delimiter && len(req.StartFromFileName) > 0) {
+	if paginationLimit > limit {
 		paginationLimit = limit
-		if req.Recursive {
+		// for skipping parent folders
+		if req.Recursive && !req.Delimiter {
 			paginationLimit *= 2
 		}
 	}
