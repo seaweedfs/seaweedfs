@@ -72,7 +72,7 @@ func removeDuplicateSlashes(object string) string {
 	return result.String()
 }
 
-func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool) (listEntry ListEntry) {
+func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool, encodingTypeUrl bool) (listEntry ListEntry) {
 	storageClass := "STANDARD"
 	if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
 		storageClass = string(v)
@@ -83,6 +83,9 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 	}
 	if key == "" {
 		key = fmt.Sprintf(keyFormat, dir, name)[len(bucketPrefix):]
+	}
+	if encodingTypeUrl {
+		key = urlPathEscape(key)
 	}
 	listEntry = ListEntry{
 		Key:          key,

@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -193,20 +192,26 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					if delimiter == "/" {
 						if entry.IsDirectoryKeyObject() {
 							// glog.V(0).Infof("append IsDirectoryKeyObject %s", key+"/")
-							contents = append(contents, newListEntry(entry, key+"/", "", "", bucketPrefix, fetchOwner, false))
+							contents = append(contents, newListEntry(entry, key+"/", "", "", bucketPrefix, fetchOwner, false, encodingTypeUrl))
 							cursor.maxKeys--
 							return
 						}
 						if entry.IsDirectory {
 							// glog.V(0).Infof("append commonPrefixes %s", key+"/")
+							var prefixKey string
+							if encodingTypeUrl {
+								prefixKey = urlPathEscape(key + "/")
+							} else {
+								prefixKey = key + "/"
+							}
 							commonPrefixes = append(commonPrefixes, PrefixEntry{
-								Prefix: key + "/",
+								Prefix: prefixKey,
 							})
 							cursor.maxKeys--
 							return
 						}
 					}
-					contents = append(contents, newListEntry(entry, key, "", "", bucketPrefix, fetchOwner, false))
+					contents = append(contents, newListEntry(entry, key, "", "", bucketPrefix, fetchOwner, false, encodingTypeUrl))
 					cursor.maxKeys--
 				},
 			)
@@ -229,7 +234,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
 					if entry.IsDirectoryKeyObject() {
-						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true))
+						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false))
 						cursor.maxKeys--
 						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 					} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
@@ -272,7 +277,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						}
 					}
 					if !delimiterFound {
-						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false))
+						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
 						cursor.maxKeys--
 					}
 				}
@@ -307,9 +312,8 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			CommonPrefixes: commonPrefixes,
 		}
 		if encodingTypeUrl {
-			sort.Slice(response.CommonPrefixes, func(i, j int) bool {
-				return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix
-			})
+			// Todo used for pass test_bucket_listv2_encoding_basic
+			// sort.Slice(response.CommonPrefixes, func(i, j int) bool { return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix })
 			response.EncodingType = s3.EncodingTypeUrl
 		}
 		return nil

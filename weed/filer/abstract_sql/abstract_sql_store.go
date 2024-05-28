@@ -341,10 +341,12 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 	}
 	shortDir := string(shortPath)
 	var dirPrefix string
-	if shortDir == "/" || prefix == "" {
-		dirPrefix = fmt.Sprintf("%s%s%%", shortDir, prefix)
-	} else {
-		dirPrefix = fmt.Sprintf("%s/%s%%", shortDir, prefix)
+	if !delimiter {
+		if shortDir == "/" || prefix == "" {
+			dirPrefix = fmt.Sprintf("%s%s%%", shortDir, prefix)
+		} else {
+			dirPrefix = fmt.Sprintf("%s/%s%%", shortDir, prefix)
+		}
 	}
 	glog.V(0).Infof("ListRecursivePrefixedEntries %s lastFileName %s shortPath %v, prefix %v, startFileName %s, limit %d, delimiter %v, dirPrefix %s", string(dirPath), lastFileName, string(shortPath), prefix, startFileName, limit, delimiter, dirPrefix)
 	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), startFileName, util.HashStringToLong(shortDir), prefix+"%", dirPrefix, limit+2)
@@ -376,21 +378,10 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 			glog.Errorf("scan decode %s : %v", entry.FullPath, err)
 			return lastFileName, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}
-
-		if !delimiter && entry.IsDirectory() {
-			glog.V(0).Infof("scan isDir %v skip %v", entry.IsDirectory(), entry.FullPath)
+		isDirectory := entry.IsDirectory() && entry.Attr.Mime == "" && entry.Attr.FileSize == 0
+		if !delimiter && isDirectory {
+			glog.V(0).Infof("scan is filer dir %v skip %v as object key", isDirectory, entry.FullPath)
 			continue
-		}
-		// Todo test_bucket_listv2_delimiter_prefix move start from prefix to SQL because in extreme cases, where there are more keys that need to be skipped than the limit
-		if delimiter {
-			if shortDir == fileName && !(entry.IsDirectory() && entry.Attr.Mime != "") {
-				// glog.V(0).Infof("scan is not DirKey %v skip %v", entry.IsDirectory(), entry.FullPath)
-				continue
-			}
-			if shortDir != dir && (!entry.IsDirectory() || (len(startFileName) > 0 && strings.HasPrefix(dir, startFileName))) {
-				// glog.V(0).Infof("scan isDir %v skip %v", entry.IsDirectory(), entry.FullPath)
-				continue
-			}
 		}
 		if !eachEntryFunc(entry) {
 			break
