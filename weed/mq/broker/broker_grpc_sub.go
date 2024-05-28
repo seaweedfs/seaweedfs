@@ -94,6 +94,11 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 			ack, err := stream.Recv()
 			if err != nil {
 				if err == io.EOF {
+					stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Ctrl{
+						Ctrl: &mq_pb.SubscribeMessageResponse_SubscribeCtrlMessage{
+							IsEndOfStream: true,
+						},
+					}})
 					break
 				}
 				glog.V(0).Infof("topic %v partition %v subscriber %s error: %v", t, partition, clientName, err)

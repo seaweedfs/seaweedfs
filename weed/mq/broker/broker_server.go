@@ -53,7 +53,7 @@ type MessageQueueBroker struct {
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
 
 	pubBalancer := pub_balancer.NewPubBalancer()
-	subCoordinator := sub_coordinator.NewSubCoordinator(pubBalancer)
+	subCoordinator := sub_coordinator.NewSubCoordinator()
 
 	mqBroker = &MessageQueueBroker{
 		option:            option,
@@ -73,8 +73,6 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
 	pubBalancer.OnPartitionChange = mqBroker.SubCoordinator.OnPartitionChange
-	pubBalancer.OnAddBroker = mqBroker.SubCoordinator.OnSubAddBroker
-	pubBalancer.OnRemoveBroker = mqBroker.SubCoordinator.OnSubRemoveBroker
 
 	go mqBroker.MasterClient.KeepConnectedToMaster()
 

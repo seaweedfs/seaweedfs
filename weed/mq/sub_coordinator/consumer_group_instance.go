@@ -1,7 +1,6 @@
 package sub_coordinator
 
 import (
-	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
@@ -15,13 +14,10 @@ type ConsumerGroupInstance struct {
 	MaxPartitionCount  int32
 }
 
-func NewConsumerGroupInstance(instanceId string) *ConsumerGroupInstance {
+func NewConsumerGroupInstance(instanceId string, maxPartitionCount int32) *ConsumerGroupInstance {
 	return &ConsumerGroupInstance{
 		InstanceId:   ConsumerGroupInstanceId(instanceId),
 		ResponseChan: make(chan *mq_pb.SubscriberToSubCoordinatorResponse, 1),
+		MaxPartitionCount: maxPartitionCount,
 	}
-}
-
-func (i ConsumerGroupInstance) AckUnAssignment(assignment *mq_pb.SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage) {
-	fmt.Printf("ack unassignment %v\n", assignment)
 }

@@ -20,10 +20,14 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 	}
 
 	var cgi *sub_coordinator.ConsumerGroupInstance
+	var cg *sub_coordinator.ConsumerGroup
 	// process init message
 	initMessage := req.GetInit()
 	if initMessage != nil {
-		cgi = b.SubCoordinator.AddSubscriber(initMessage)
+		cg, cgi, err = b.SubCoordinator.AddSubscriber(initMessage)
+		if err != nil {
+			return status.Errorf(codes.InvalidArgument, err.Error())
+		}
 		glog.V(0).Infof("subscriber %s/%s/%s connected", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic)
 	} else {
 		return status.Errorf(codes.InvalidArgument, "subscriber init message is empty")
@@ -45,7 +49,11 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 
 			if ackUnAssignment := req.GetAckUnAssignment(); ackUnAssignment != nil {
 				glog.V(0).Infof("subscriber %s/%s/%s ack close of %v", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic, ackUnAssignment)
-				cgi.AckUnAssignment(ackUnAssignment)
+				cg.AckUnAssignment(cgi, ackUnAssignment)
+			}
+			if ackAssignment := req.GetAckAssignment(); ackAssignment != nil {
+				glog.V(0).Infof("subscriber %s/%s/%s ack assignment %v", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic, ackAssignment)
+				cg.AckAssignment(cgi, ackAssignment)
 			}
 
 			select {

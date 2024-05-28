@@ -64,7 +64,8 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 			for {
 				select {
 				case <-stopCh:
-					break
+					subscribeClient.CloseSend()
+					return
 				case ack := <-partitionOffsetChan:
 					subscribeClient.SendMsg(&mq_pb.SubscribeMessageRequest{
 						Message: &mq_pb.SubscribeMessageRequest_Ack{
@@ -76,7 +77,6 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 					})
 				}
 			}
-			subscribeClient.CloseSend()
 		}()
 
 		var lastErr error

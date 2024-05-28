@@ -158,6 +158,7 @@ func (m *Market) assignPartitionToConsumer(partition *PartitionSlot) {
 	}
 
 	if bestConsumer != nil {
+		// change consumer assigned partitions later when the adjustment is confirmed
 		adjustment := &Adjustment{
 			isAssign:  true,
 			partition: partition.Partition,
@@ -187,6 +188,8 @@ func (m *Market) loopBalanceLoad() {
 				m.inflightAdjustments = inflightAdjustments
 
 				m.doBalanceLoad()
+				println("Balance load completed.")
+				m.Status()
 			}
 		case <-m.balanceRequestChan:
 			m.hasBalanceRequest = true
@@ -288,6 +291,8 @@ func (m *Market) ConfirmAdjustment(adjustment *Adjustment) {
 	} else {
 		m.unassignPartitionSlot(adjustment.partition)
 	}
+	glog.V(0).Infof("ConfirmAdjustment %+v", adjustment)
+	m.Status()
 }
 
 func (m *Market) unassignPartitionSlot(partition topic.Partition) {
@@ -343,4 +348,21 @@ func (m *Market) confirmAssignPartition(partition topic.Partition, consumerInsta
 	partitionSlot.AssignedTo = consumerInstance
 	consumerInstance.AssignedPartitions = append(consumerInstance.AssignedPartitions, partition)
 
+}
+
+func (m *Market) Status() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	glog.V(0).Infof("Market has %d partitions and %d consumer instances", len(m.partitions), len(m.consumerInstances))
+	for partition, slot := range m.partitions {
+		if slot.AssignedTo == nil {
+			glog.V(0).Infof("Partition %+v is not assigned to any consumer", partition)
+		} else {
+			glog.V(0).Infof("Partition %+v is assigned to consumer %+v", partition, slot.AssignedTo.InstanceId)
+		}
+	}
+	for _, consumer := range m.consumerInstances {
+		glog.V(0).Infof("Consumer %+v has %d partitions", consumer.InstanceId, len(consumer.AssignedPartitions))
+	}
 }

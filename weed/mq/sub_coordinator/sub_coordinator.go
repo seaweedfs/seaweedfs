@@ -1,8 +1,8 @@
 package sub_coordinator
 
 import (
+	"fmt"
 	cmap "github.com/orcaman/concurrent-map/v2"
-	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
@@ -18,14 +18,12 @@ type TopicConsumerGroups struct {
 type SubCoordinator struct {
 	// map topic name to consumer groups
 	TopicSubscribers    cmap.ConcurrentMap[string, *TopicConsumerGroups]
-	balancer            *pub_balancer.PubBalancer
 	FilerClientAccessor *FilerClientAccessor
 }
 
-func NewSubCoordinator(balancer *pub_balancer.PubBalancer) *SubCoordinator {
+func NewSubCoordinator() *SubCoordinator {
 	return &SubCoordinator{
 		TopicSubscribers: cmap.New[*TopicConsumerGroups](),
-		balancer:         balancer,
 	}
 }
 
@@ -52,25 +50,29 @@ func toTopicName(topic *mq_pb.Topic) string {
 	return topicName
 }
 
-func (c *SubCoordinator) AddSubscriber(initMessage *mq_pb.SubscriberToSubCoordinatorRequest_InitMessage) *ConsumerGroupInstance {
+func (c *SubCoordinator) AddSubscriber(initMessage *mq_pb.SubscriberToSubCoordinatorRequest_InitMessage) (*ConsumerGroup, *ConsumerGroupInstance, error) {
 	tcg := c.GetTopicConsumerGroups(initMessage.Topic, true)
 	cg, _ := tcg.ConsumerGroups.Get(initMessage.ConsumerGroup)
 	if cg == nil {
-		cg = NewConsumerGroup(initMessage.Topic, c.balancer, c.FilerClientAccessor)
-		if !tcg.ConsumerGroups.SetIfAbsent(initMessage.ConsumerGroup, cg) {
-			cg, _ = tcg.ConsumerGroups.Get(initMessage.ConsumerGroup)
+		cg = NewConsumerGroup(initMessage.Topic, initMessage.RebalanceSeconds, c.FilerClientAccessor)
+		if cg != nil {
+			tcg.ConsumerGroups.SetIfAbsent(initMessage.ConsumerGroup, cg)
 		}
+		cg, _ = tcg.ConsumerGroups.Get(initMessage.ConsumerGroup)
+	}
+	if cg == nil {
+		return nil, nil, fmt.Errorf("fail to create consumer group %s: topic %s not found", initMessage.ConsumerGroup, initMessage.Topic)
 	}
 	cgi, _ := cg.ConsumerGroupInstances.Get(initMessage.ConsumerGroupInstanceId)
 	if cgi == nil {
-		cgi = NewConsumerGroupInstance(initMessage.ConsumerGroupInstanceId)
+		cgi = NewConsumerGroupInstance(initMessage.ConsumerGroupInstanceId, initMessage.MaxPartitionCount)
 		if !cg.ConsumerGroupInstances.SetIfAbsent(initMessage.ConsumerGroupInstanceId, cgi) {
 			cgi, _ = cg.ConsumerGroupInstances.Get(initMessage.ConsumerGroupInstanceId)
 		}
 	}
 	cgi.MaxPartitionCount = initMessage.MaxPartitionCount
-	cg.OnAddConsumerGroupInstance(initMessage.ConsumerGroupInstanceId, initMessage.Topic, initMessage.MaxPartitionCount, initMessage.RebalanceSeconds)
-	return cgi
+	cg.Market.AddConsumerInstance(cgi)
+	return cg, cgi, nil
 }
 
 func (c *SubCoordinator) RemoveSubscriber(initMessage *mq_pb.SubscriberToSubCoordinatorRequest_InitMessage) {
@@ -83,9 +85,10 @@ func (c *SubCoordinator) RemoveSubscriber(initMessage *mq_pb.SubscriberToSubCoor
 		return
 	}
 	cg.ConsumerGroupInstances.Remove(initMessage.ConsumerGroupInstanceId)
-	cg.OnRemoveConsumerGroupInstance(initMessage.ConsumerGroupInstanceId, initMessage.Topic, initMessage.MaxPartitionCount, initMessage.RebalanceSeconds)
+	cg.Market.RemoveConsumerInstance(ConsumerGroupInstanceId(initMessage.ConsumerGroupInstanceId))
 	if cg.ConsumerGroupInstances.Count() == 0 {
 		tcg.ConsumerGroups.Remove(initMessage.ConsumerGroup)
+		cg.Shutdown()
 	}
 	if tcg.ConsumerGroups.Count() == 0 {
 		c.RemoveTopic(initMessage.Topic)
@@ -100,14 +103,4 @@ func (c *SubCoordinator) OnPartitionChange(topic *mq_pb.Topic, assignments []*mq
 	for _, cg := range tcg.ConsumerGroups.Items() {
 		cg.OnPartitionListChange(assignments)
 	}
-}
-
-// OnSubAddBroker is called when a broker is added to the balancer
-func (c *SubCoordinator) OnSubAddBroker(broker string, brokerStats *pub_balancer.BrokerStats) {
-
-}
-
-// OnSubRemoveBroker is called when a broker is removed from the balancer
-func (c *SubCoordinator) OnSubRemoveBroker(broker string, brokerStats *pub_balancer.BrokerStats) {
-
 }

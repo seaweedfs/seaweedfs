@@ -59,6 +59,13 @@ func (sub *TopicSubscriber) startProcessors() {
 					wg.Done()
 				}()
 				glog.V(0).Infof("subscriber %s/%s assigned partition %+v at %v", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, assigned.Partition, assigned.LeaderBroker)
+				sub.brokerPartitionAssignmentAckChan <- &mq_pb.SubscriberToSubCoordinatorRequest{
+					Message: &mq_pb.SubscriberToSubCoordinatorRequest_AckAssignment{
+						AckAssignment: &mq_pb.SubscriberToSubCoordinatorRequest_AckAssignmentMessage{
+							Partition: assigned.Partition,
+						},
+					},
+				}
 				err := sub.onEachPartition(assigned, stopChan)
 				if err != nil {
 					glog.V(0).Infof("subscriber %s/%s partition %+v at %v: %v", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, assigned.Partition, assigned.LeaderBroker, err)

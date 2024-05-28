@@ -33,8 +33,6 @@ type PubBalancer struct {
 	// Collected from all brokers when they connect to the broker leader
 	TopicToBrokers    cmap.ConcurrentMap[string, *PartitionSlotToBrokerList] // key: topic name
 	OnPartitionChange func(topic *mq_pb.Topic, assignments []*mq_pb.BrokerPartitionAssignment)
-	OnAddBroker       func(broker string, brokerStats *BrokerStats)
-	OnRemoveBroker    func(broker string, brokerStats *BrokerStats)
 }
 
 func NewPubBalancer() *PubBalancer {
@@ -54,7 +52,6 @@ func (balancer *PubBalancer) AddBroker(broker string) (brokerStats *BrokerStats)
 		}
 	}
 	balancer.onPubAddBroker(broker, brokerStats)
-	balancer.OnAddBroker(broker, brokerStats)
 	return brokerStats
 }
 
@@ -75,7 +72,6 @@ func (balancer *PubBalancer) RemoveBroker(broker string, stats *BrokerStats) {
 		}
 	}
 	balancer.onPubRemoveBroker(broker, stats)
-	balancer.OnRemoveBroker(broker, stats)
 }
 
 func (balancer *PubBalancer) OnBrokerStatsUpdated(broker string, brokerStats *BrokerStats, receivedStats *mq_pb.BrokerStats) {

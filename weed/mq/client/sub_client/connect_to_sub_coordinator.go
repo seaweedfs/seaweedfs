@@ -58,6 +58,7 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 
 				go func() {
 					for reply := range sub.brokerPartitionAssignmentAckChan {
+						glog.V(0).Infof("subscriber instance %s ack %+v", sub.SubscriberConfig.ConsumerGroupInstanceId, reply)
 						if err := stream.Send(reply); err != nil {
 							glog.V(0).Infof("subscriber %s reply: %v", sub.ContentConfig.Topic, err)
 							return

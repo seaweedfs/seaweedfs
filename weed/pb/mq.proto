@@ -180,9 +180,13 @@ message SubscriberToSubCoordinatorRequest {
     message AckUnAssignmentMessage {
         Partition partition = 1;
     }
+    message AckAssignmentMessage {
+        Partition partition = 1;
+    }
     oneof message {
         InitMessage init = 1;
-        AckUnAssignmentMessage ack_un_assignment = 2;
+        AckAssignmentMessage ack_assignment = 2;
+        AckUnAssignmentMessage ack_un_assignment = 3;
     }
 }
 message SubscriberToSubCoordinatorResponse {
