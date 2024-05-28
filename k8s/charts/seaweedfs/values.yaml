@@ -93,11 +93,18 @@ master:
   #  data:
   #    type: "existingClaim"
   #    claimName: "my-pvc"
+  #
+  # You can also use emptyDir storage:
+  #  data:
+  #    type: "emptyDir"
   data:
     type: "hostPath"
     storageClass: ""
     hostPathPrefix: /ssd
 
+  # You can also use emptyDir storage:
+  #  logs:
+  #    type: "emptyDir"
   logs:
     type: "hostPath"
     size: ""
@@ -275,9 +282,14 @@ volume:
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
   #
   # You may also spacify an existing claim:
-  #    - name: data
-  #      type: "existingClaim"
-  #      claimName: "my-pvc"
+  #   - name: data
+  #     type: "existingClaim"
+  #     claimName: "my-pvc"
+  #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
+  #
+  # You can also use emptyDir storage:
+  #   - name: data
+  #     type: "emptyDir"
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
 
   dataDirs:
@@ -310,6 +322,11 @@ volume:
   # idx:
   #   type: "existingClaim"
   #   claimName: "myClaim"
+  #
+  # or
+  #
+  # idx:
+  #  type: "emptyDir"
 
   # same applies to "logs"
 
@@ -499,12 +516,19 @@ filer:
   #  data:
   #    type: "existingClaim"
   #    claimName: "my-pvc"
+  #
+  # You can also use emptyDir storage:
+  #  data:
+  #    type: "emptyDir"
   data:
     type: "hostPath"
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
 
+  # You can also use emptyDir storage:
+  #  logs:
+  #    type: "emptyDir"
   logs:
     type: "hostPath"
     size: ""
@@ -741,7 +765,7 @@ s3:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: {}
+  resources: null
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
@@ -783,6 +807,9 @@ s3:
   #   allowPrivilegeEscalation: false
   containerSecurityContext: {}
 
+  # You can also use emptyDir storage:
+  #  logs:
+  #    type: "emptyDir"
   logs:
     type: "hostPath"
     size: ""

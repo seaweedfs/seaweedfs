@@ -261,6 +261,10 @@ spec:
           persistentVolumeClaim:
             claimName: {{ $dir.claimName }}
       {{- end }}
+      {{- if eq $dir.type "emptyDir" }}
+        - name: {{ $dir.name }}
+          emptyDir: {}
+      {{- end }}
 
      {{- end }}
 
@@ -276,6 +280,10 @@ spec:
           persistentVolumeClaim:
             claimName: {{ .Values.volume.idx.claimName }}
        {{- end }}
+       {{- if eq .Values.volume.idx.type "emptyDir" }}
+        - name: idx
+          emptyDir: {}
+       {{- end }}
      {{- end }}
 
      {{- if .Values.volume.logs }}
@@ -289,6 +297,10 @@ spec:
         - name: logs
           persistentVolumeClaim:
             claimName: {{ .Values.volume.logs.claimName }}
+       {{- end }}
+       {{- if eq .Values.volume.logs.type "emptyDir" }}
+        - name: logs
+          emptyDir: {}
        {{- end }}
      {{- end }}
      {{- if .Values.global.enableSecurity }}

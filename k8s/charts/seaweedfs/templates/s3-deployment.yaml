@@ -99,7 +99,7 @@ spec:
             - "-ec"
             - |
               exec /usr/bin/weed \
-               {{- if eq .Values.s3.logs.type "hostPath" }}
+              {{- if or (eq .Values.s3.logs.type "hostPath") (eq .Values.s3.logs.type "emptyDir") }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
@@ -136,7 +136,7 @@ spec:
               {{- end }}
               -filer={{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}
           volumeMounts:
-            {{- if eq .Values.s3.logs.type "hostPath" }}
+            {{- if or (eq .Values.s3.logs.type "hostPath") (eq .Values.s3.logs.type "emptyDir") }}
             - name: logs
               mountPath: "/logs/"
             {{- end }}
@@ -224,6 +224,10 @@ spec:
           hostPath:
             path: {{ .Values.s3.logs.hostPathPrefix }}/logs/seaweedfs/s3
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.s3.logs.type "emptyDir" }}
+        - name: logs
+          emptyDir: {}
         {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config

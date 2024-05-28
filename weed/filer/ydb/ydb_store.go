@@ -79,7 +79,7 @@ func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix
 	}
 	opts := []ydb.Option{
 		ydb.WithDialTimeout(time.Duration(dialTimeOut) * time.Second),
-		environ.WithEnvironCredentials(ctx),
+		environ.WithEnvironCredentials(),
 	}
 	if poolSizeLimit > 0 {
 		opts = append(opts, ydb.WithSessionPoolSizeLimit(poolSizeLimit))

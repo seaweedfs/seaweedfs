@@ -129,7 +129,7 @@ spec:
             - "-ec"
             - |
               exec /usr/bin/weed \
-              {{- if eq .Values.filer.logs.type "hostPath" }}
+              {{- if or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "emptyDir") }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
@@ -197,7 +197,7 @@ spec:
               {{- end }}
               -master={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
           volumeMounts:
-            {{- if eq .Values.filer.logs.type "hostPath" }}
+            {{- if or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "emptyDir") }}
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
             {{- end }}
@@ -206,7 +206,7 @@ spec:
               mountPath: /etc/sw
               readOnly: true
             {{- end }}
-            {{- if (or .Values.filer.enablePVC (or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.data.type "persistentVolumeClaim"))) }}
+            {{- if (or .Values.filer.enablePVC (or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.data.type "persistentVolumeClaim") (eq .Values.filer.data.type "emptyDir"))) }}
             - name: data-filer
               mountPath: /data
             {{- end }}
@@ -285,6 +285,10 @@ spec:
           persistentVolumeClaim:
             claimName: {{ .Values.filer.logs.claimName }}
         {{- end }}
+        {{- if eq .Values.filer.logs.type "emptyDir" }}
+        - name: seaweedfs-filer-log-volume
+          emptyDir: {}
+        {{- end }}
         {{- if eq .Values.filer.data.type "hostPath" }}
         - name: data-filer
           hostPath:
@@ -295,6 +299,10 @@ spec:
         - name: data-filer
           persistentVolumeClaim:
             claimName: {{ .Values.filer.data.claimName }}
+        {{- end }}
+        {{- if eq .Values.filer.data.type "emptyDir" }}
+        - name: data-filer
+          emptyDir: {}
         {{- end }}
         - name: db-schema-config-volume
           configMap:
