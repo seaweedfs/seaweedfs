@@ -289,8 +289,6 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 }
 
 func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
-	glog.V(5).Infof("ListDirectoryPrefixedEntries dirPath %v, includeStartFile %v", dirPath, includeStartFile)
-
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
 	if err != nil {
 		return lastFileName, fmt.Errorf("findDB %s : %v", dirPath, err)

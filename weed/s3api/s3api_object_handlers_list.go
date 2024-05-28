@@ -50,7 +50,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(0).Infof("ListObjectsV2Handler %s query %+v", bucket, r.URL.Query())
+	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
 
 	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys := getListObjectsV2Args(r.URL.Query())
 
@@ -105,7 +105,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(0).Infof("ListObjectsV1Handler %s query %+v", bucket, r.URL.Query())
+	glog.V(0).Infof("ListObjectsV1Handler %s", bucket)
 
 	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys := getListObjectsV1Args(r.URL.Query())
 
@@ -173,7 +173,6 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		if maxKeys == 0 {
 			return
 		}
-		glog.V(0).Infof("listFilerEntries reqDir: %s, prefix: %s[%s], delimiter: %v, cursor: %+v, mmarker: %s[%s]", reqDir, prefix, originalPrefix, delimiter, cursor, marker, originalMarker)
 		err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			doErr = s3a.doListFilerRecursiveEntries(client, reqDir, prefix, cursor, marker, delimiter, false,
 				func(path string, entry *filer_pb.Entry) {
@@ -230,7 +229,6 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			empty := true
 			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
 				empty = false
-				glog.V(0).Infof("doListFilerEntries dir: %s entry: %+v", dir, entry)
 				dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
 					if entry.IsDirectoryKeyObject() {
@@ -440,7 +438,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
-	glog.V(0).Infof("doListFilerEntries dir: %s, prefix: %s, marker %s, maxKeys: %d, prefixEndsOnDelimiter: %+v", dir, prefix, marker, cursor.maxKeys, cursor.prefixEndsOnDelimiter)
+	// glog.V(4).Infof("doListFilerEntries dir: %s, prefix: %s, marker %s, maxKeys: %d, prefixEndsOnDelimiter: %+v", dir, prefix, marker, cursor.maxKeys, cursor.prefixEndsOnDelimiter)
 	if prefix == "/" && delimiter == "/" {
 		return
 	}
