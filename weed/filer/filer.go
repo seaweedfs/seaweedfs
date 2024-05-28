@@ -304,7 +304,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 
 	} else if !dirEntry.IsDirectory() {
 		glog.Errorf("CreateEntry %s: dir entry %+v should be a directory", entry.FullPath, dirEntry)
-		//return fmt.Errorf("%s is a file", dirPath)
+		return fmt.Errorf("%s is a file", dirPath)
 	}
 
 	return nil
