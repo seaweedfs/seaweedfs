@@ -2,7 +2,6 @@ package filer
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"path/filepath"
@@ -43,7 +42,6 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 
 // For now, prefix and namePattern are mutually exclusive
 func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, recursive bool, delimiter bool, limit int64, prefix string, namePattern string, namePatternExclude string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
-	glog.V(5).Infof("StreamListDirectoryEntries p %v startFileName %s prefix %s namePattern %v, recursive %v", p, startFileName, prefix, namePattern, recursive)
 
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
 		p = p[0 : len(p)-1]
@@ -65,7 +63,6 @@ func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath,
 }
 
 func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, recursive bool, delimiter bool, limit int64, prefix, restNamePattern string, namePatternExclude string, eachEntryFunc ListEachEntryFunc) (missedCount int64, lastFileName string, err error) {
-	glog.V(5).Infof("doListPatternMatchedEntries startFileName %v, recursive %v", startFileName, recursive)
 
 	if len(restNamePattern) == 0 && len(namePatternExclude) == 0 {
 		lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, recursive, delimiter, limit, prefix, eachEntryFunc)
@@ -98,7 +95,6 @@ func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath
 }
 
 func (f *Filer) doListValidEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, recursive bool, delimiter bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
-	glog.V(5).Infof("doListValidEntries p %v startFileName %v, recursive %v", p, startFileName, recursive)
 
 	var expiredCount int64
 	expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, startFileName, inclusive, recursive, delimiter, limit, prefix, eachEntryFunc)

@@ -284,7 +284,6 @@ func (fsw *FilerStoreWrapper) ListRecursivePrefixedEntries(ctx context.Context, 
 	if limit > math.MaxInt32-1 {
 		limit = math.MaxInt32 - 1
 	}
-	glog.V(5).Infof("ListRecursivePrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
 	adjustedEntryFunc := func(entry *Entry) bool {
 		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.GetChunks())

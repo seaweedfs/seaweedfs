@@ -2,7 +2,6 @@ package filer
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"strings"
@@ -119,8 +118,6 @@ func (t *FilerStorePathTranslator) ListDirectoryEntries(ctx context.Context, dir
 }
 
 func (t *FilerStorePathTranslator) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (string, error) {
-	glog.V(5).Infof("ListRecursivePrefixedEntries dirPath %v", dirPath)
-
 	newFullPath := t.translatePath(dirPath)
 
 	return t.actualStore.ListRecursivePrefixedEntries(ctx, newFullPath, startFileName, includeStartFile, delimiter, limit, prefix, func(entry *Entry) bool {

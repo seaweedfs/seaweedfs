@@ -341,15 +341,19 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 	}
 	shortDir := string(shortPath)
 	var dirPrefix string
-	if !delimiter {
-		if shortDir == "/" || prefix == "" {
+	if delimiter {
+		if prefix == "" && len(startFileName) == 0 {
+			dirPrefix = shortDir
+			limit += 1
+		}
+	} else {
+		if shortDir == "/" {
 			dirPrefix = fmt.Sprintf("%s%s%%", shortDir, prefix)
 		} else {
 			dirPrefix = fmt.Sprintf("%s/%s%%", shortDir, prefix)
 		}
 	}
-	glog.V(0).Infof("ListRecursivePrefixedEntries %s lastFileName %s shortPath %v, prefix %v, startFileName %s, limit %d, delimiter %v, dirPrefix %s", string(dirPath), lastFileName, string(shortPath), prefix, startFileName, limit, delimiter, dirPrefix)
-	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), startFileName, util.HashStringToLong(shortDir), prefix+"%", dirPrefix, limit+2)
+	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), startFileName, util.HashStringToLong(shortDir), prefix+"%", dirPrefix, limit+1)
 	if err != nil {
 		glog.Errorf("list %s : %v", dirPath, err)
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
@@ -372,7 +376,6 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 		entry := &filer.Entry{
 			FullPath: util.NewFullPath(bucketDir, fileName),
 		}
-		glog.V(0).Infof("scan shortDir %s dir %s name %v, lastFileName %s, FullPath %s", shortDir, dir, name, lastFileName, string(entry.FullPath))
 
 		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 			glog.Errorf("scan decode %s : %v", entry.FullPath, err)
@@ -380,7 +383,9 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 		}
 		isDirectory := entry.IsDirectory() && entry.Attr.Mime == "" && entry.Attr.FileSize == 0
 		if !delimiter && isDirectory {
-			glog.V(0).Infof("scan is filer dir %v skip %v as object key", isDirectory, entry.FullPath)
+			continue
+		}
+		if delimiter && shortDir == lastFileName && isDirectory {
 			continue
 		}
 		if !eachEntryFunc(entry) {

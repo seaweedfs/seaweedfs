@@ -77,7 +77,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 	for _, v := range existingVolumes {
 		vid := v.Id
 		if _, ok := actualVolumeMap[vid]; !ok {
-			glog.V(1).Infoln("Deleting volume id:", vid)
+			glog.V(0).Infoln("Deleting volume id:", vid)
 			disk := dn.getOrCreateDisk(v.DiskType)
 			delete(disk.volumes, vid)
 			deletedVolumes = append(deletedVolumes, v)

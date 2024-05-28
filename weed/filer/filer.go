@@ -370,7 +370,6 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			return eachEntryFunc(entry)
 		}
 	}
-	glog.V(5).Infof("doListDirectoryEntries recursive %v  path: %+v, prefix %s", recursive, p, prefix)
 	if recursive {
 		lastFileName, err = f.Store.ListRecursivePrefixedEntries(ctx, p, startFileName, inclusive, delimiter, limit, prefix, listFn)
 	} else {

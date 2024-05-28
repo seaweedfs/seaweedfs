@@ -39,7 +39,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) (err error) {
 
-	glog.V(0).Infof("ListEntries %v", req)
+	glog.V(4).Infof("ListEntries %v", req)
 
 	limit := int(req.Limit)
 	if limit == 0 {
@@ -60,7 +60,6 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	var listErr error
 	for limit > 0 {
 		var hasEntries bool
-		//glog.V(0).Infof("StreamListDirectoryEntries req %+v", req)
 		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, req.Recursive, req.Delimiter, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) bool {
 			hasEntries = true
 			if err = stream.Send(&filer_pb.ListEntriesResponse{
