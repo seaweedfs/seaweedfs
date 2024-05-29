@@ -73,6 +73,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				DataCenter: dn.GetDataCenterId(),
 				Url:        dn.Url(),
 				PublicUrl:  dn.PublicUrl,
+				GrpcPort:   uint32(dn.GrpcPort),
 			}
 			for _, v := range dn.GetVolumes() {
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
@@ -166,6 +167,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			Url:        dn.Url(),
 			PublicUrl:  dn.PublicUrl,
 			DataCenter: dn.GetDataCenterId(),
+			GrpcPort:   uint32(dn.GrpcPort),
 		}
 		if len(heartbeat.NewVolumes) > 0 {
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("newVolumes").Inc()
