@@ -268,7 +268,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength)
 	// In test_bucket_listv2_delimiter_basic, the valid object key is the parent folder
-	if dbErr != nil && strings.HasSuffix(dbErr.Error(), " is a file") && r.Header.Get(s3_constants.AmzIdentityId) != "" {
+	if dbErr != nil && strings.HasSuffix(dbErr.Error(), " is a file") && (r.Header.Get(s3_constants.AmzAuthType) != "" || r.Header.Get("X-Amz-Date") != "") {
 		dbErr = fs.filer.CreateEntry(ctx, entry, false, false, nil, true, so.MaxFileNameLength)
 	}
 	if dbErr != nil {

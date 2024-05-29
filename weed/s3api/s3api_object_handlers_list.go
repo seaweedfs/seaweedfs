@@ -324,7 +324,7 @@ type ListingCursor struct {
 	nextMarker            string
 }
 
-func getStartFileFromKey(key string) string {
+func (s3a *S3ApiServer) getStartFileFromKey(key string) string {
 	idx := strings.LastIndex(key, "/")
 	if idx == -1 {
 		return "/" + key

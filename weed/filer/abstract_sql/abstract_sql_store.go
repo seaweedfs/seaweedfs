@@ -333,25 +333,31 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 
 func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
-	bucketDir := fmt.Sprintf("/buckets/%s", bucket)
 	if err != nil {
 		return lastFileName, fmt.Errorf("findDB %s : %v", dirPath, err)
 	}
+	bucketDir := ""
+	if bucket != DEFAULT_TABLE {
+		bucketDir = fmt.Sprintf("/buckets/%s", bucket)
+	}
 	shortDir := string(shortPath)
+	namePrefix := prefix + "%"
 	var dirPrefix string
+	isPrefixEndsWithDelimiter := false
 	if delimiter {
 		if prefix == "" && len(startFileName) == 0 {
 			dirPrefix = shortDir
 			limit += 1
+			isPrefixEndsWithDelimiter = true
 		}
 	} else {
-		if shortDir == "/" {
+		if strings.HasSuffix(shortDir, "/") {
 			dirPrefix = fmt.Sprintf("%s%s%%", shortDir, prefix)
 		} else {
 			dirPrefix = fmt.Sprintf("%s/%s%%", shortDir, prefix)
 		}
 	}
-	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), startFileName, util.HashStringToLong(shortDir), prefix+"%", dirPrefix, limit+1)
+	rows, err := db.QueryContext(ctx, store.GetSqlListRecursive(bucket), startFileName, util.HashStringToLong(shortDir), namePrefix, dirPrefix, limit+1)
 	if err != nil {
 		glog.Errorf("list %s : %v", dirPath, err)
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
@@ -365,10 +371,10 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 			glog.V(0).Infof("scan %s : %v", dirPath, err)
 			return lastFileName, fmt.Errorf("scan %s: %v", dirPath, err)
 		}
-		if len(dir) != 1 {
-			fileName = fmt.Sprintf("%s/%s", dir, name)
-		} else {
+		if strings.HasSuffix(dir, "/") {
 			fileName = dir + name
+		} else {
+			fileName = fmt.Sprintf("%s/%s", dir, name)
 		}
 		lastFileName = fmt.Sprintf("%s%s", dir, name)
 		entry := &filer.Entry{
@@ -383,7 +389,8 @@ func (store *AbstractSqlStore) ListRecursivePrefixedEntries(ctx context.Context,
 		if !delimiter && isDirectory {
 			continue
 		}
-		if delimiter && shortDir == lastFileName && isDirectory {
+		glog.V(0).Infof("ListRecursivePrefixedEntries bucket %s, shortDir: %s, bucketDir: %s, lastFileName %s, fileName %s", bucket, shortDir, bucketDir, lastFileName, fileName)
+		if isPrefixEndsWithDelimiter && shortDir == lastFileName && isDirectory {
 			continue
 		}
 		if !eachEntryFunc(entry) {
