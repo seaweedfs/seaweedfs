@@ -142,9 +142,9 @@ func (rb *RingBuffer) AckTimestamp(timestamp int64) {
 	// Remove all the continuously acknowledged timestamps from the buffer
 	startPos := (rb.head + len(rb.buffer) - rb.size) % len(rb.buffer)
 	for i := 0; i < len(rb.buffer) && rb.buffer[(startPos+i)%len(rb.buffer)].Acked; i++ {
-		rb.size--
 		t := rb.buffer[(startPos+i)%len(rb.buffer)]
 		if rb.maxAllAckedTs < t.Timestamp {
+			rb.size--
 			rb.maxAllAckedTs = t.Timestamp
 		}
 	}

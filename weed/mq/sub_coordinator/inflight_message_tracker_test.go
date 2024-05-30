@@ -117,3 +117,17 @@ func TestInflightMessageTracker3(t *testing.T) {
 	assert.Equal(t, int64(7), tracker.GetOldestAckedTimestamp())
 
 }
+
+func TestInflightMessageTracker4(t *testing.T) {
+	// Initialize an InflightMessageTracker with initial capacity 1
+	tracker := NewInflightMessageTracker(1)
+
+	tracker.EnflightMessage([]byte("1"), int64(1))
+	tracker.EnflightMessage([]byte("2"), int64(2))
+	assert.True(t, tracker.AcknowledgeMessage([]byte("1"), int64(1)))
+	assert.True(t, tracker.AcknowledgeMessage([]byte("2"), int64(2)))
+	tracker.EnflightMessage([]byte("3"), int64(3))
+	assert.True(t, tracker.AcknowledgeMessage([]byte("3"), int64(3)))
+	assert.Equal(t, int64(3), tracker.GetOldestAckedTimestamp())
+
+}
