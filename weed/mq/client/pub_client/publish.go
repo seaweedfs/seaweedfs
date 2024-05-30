@@ -51,6 +51,7 @@ func (p *TopicPublisher) FinishPublish() error {
 				TsNs: time.Now().UnixNano(),
 				Ctrl: &mq_pb.ControlMessage{
 					IsClose: true,
+					PublisherName: p.config.PublisherName,
 				},
 			})
 		}

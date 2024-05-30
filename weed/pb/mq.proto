@@ -205,6 +205,7 @@ message SubscriberToSubCoordinatorResponse {
 //////////////////////////////////////////////////
 message ControlMessage {
     bool is_close = 1;
+    string publisher_name = 2;
 }
 message DataMessage {
     bytes key = 1;
@@ -224,7 +225,6 @@ message PublishMessageRequest {
         InitMessage init = 1;
         DataMessage data = 2;
     }
-    int64 sequence = 3;
 }
 message PublishMessageResponse {
     int64 ack_sequence = 1;
