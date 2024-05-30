@@ -66,7 +66,6 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 				case <-stopCh:
 					subscribeClient.CloseSend()
 					return
-				case ack := <-partitionOffsetChan:
 				case ack, ok := <-partitionOffsetChan:
 					if !ok {
 						subscribeClient.CloseSend()
