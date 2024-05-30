@@ -115,7 +115,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
 					Message: &mq_pb.SubscribeFollowMeRequest_Ack{
 						Ack: &mq_pb.SubscribeFollowMeRequest_AckMessage{
-							TsNs: lastOffset,
+							TsNs: currentLastOffset,
 						},
 					},
 				}); err != nil {
