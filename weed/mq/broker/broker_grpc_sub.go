@@ -112,7 +112,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 			}
 			imt.AcknowledgeMessage(ack.GetAck().Key, ack.GetAck().Sequence)
 			currentLastOffset := imt.GetOldestAckedTimestamp()
-			fmt.Printf("%+v recv (%s,%d), oldest %d\n", partition, string(ack.GetAck().Key), ack.GetAck().Sequence, currentLastOffset)
+			// fmt.Printf("%+v recv (%s,%d), oldest %d\n", partition, string(ack.GetAck().Key), ack.GetAck().Sequence, currentLastOffset)
 			if subscribeFollowMeStream != nil && currentLastOffset > lastOffset {
 				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
 					Message: &mq_pb.SubscribeFollowMeRequest_Ack{
@@ -125,7 +125,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 					break
 				}
 				lastOffset = currentLastOffset
-				fmt.Printf("%+v forwarding ack %d\n", partition, lastOffset)
+				// fmt.Printf("%+v forwarding ack %d\n", partition, lastOffset)
 			}
 		}
 		if lastOffset > 0 {
