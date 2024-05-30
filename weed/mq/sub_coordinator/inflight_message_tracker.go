@@ -88,8 +88,8 @@ type RingBuffer struct {
 	buffer       []*TimestampStatus
 	head         int
 	size         int
-	maxTimestamp int64
-	minAckedTs   int64
+	maxTimestamp  int64
+	maxAllAckedTs int64
 }
 
 // NewRingBuffer creates a new RingBuffer of the given capacity.
@@ -139,17 +139,20 @@ func (rb *RingBuffer) AckTimestamp(timestamp int64) {
 
 	rb.buffer[actualIndex].Acked = true
 
-	// Remove all the acknowledged timestamps from the buffer
+	// Remove all the continuously acknowledged timestamps from the buffer
 	startPos := (rb.head + len(rb.buffer) - rb.size) % len(rb.buffer)
 	for i := 0; i < len(rb.buffer) && rb.buffer[(startPos+i)%len(rb.buffer)].Acked; i++ {
 		rb.size--
-		rb.minAckedTs = rb.buffer[(startPos+i)%len(rb.buffer)].Timestamp
+		t := rb.buffer[(startPos+i)%len(rb.buffer)]
+		if rb.maxAllAckedTs < t.Timestamp {
+			rb.maxAllAckedTs = t.Timestamp
+		}
 	}
 }
 
 // OldestAckedTimestamp returns the oldest that is already acked timestamp in the ring buffer.
 func (rb *RingBuffer) OldestAckedTimestamp() int64 {
-	return rb.minAckedTs
+	return rb.maxAllAckedTs
 }
 
 // Latest returns the most recently known timestamp in the ring buffer.
