@@ -101,11 +101,15 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 					}})
 					break
 				}
-				glog.V(0).Infof("topic %v partition %v subscriber %s error: %v", t, partition, clientName, err)
+				glog.V(0).Infof("topic %v partition %v subscriber %s lastOffset %d error: %v", t, partition, clientName, lastOffset, err)
 				break
 			}
+			if ack.GetAck().Key == nil {
+				// skip ack for control messages
+				continue
+			}
 			imt.AcknowledgeMessage(ack.GetAck().Key, ack.GetAck().Sequence)
-			currentLastOffset := imt.GetOldest()
+			currentLastOffset := imt.GetOldestAckedTimestamp()
 			fmt.Printf("%+v recv (%s,%d), oldest %d\n", partition, string(ack.GetAck().Key), ack.GetAck().Sequence, currentLastOffset)
 			if subscribeFollowMeStream != nil && currentLastOffset > lastOffset {
 				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
@@ -124,16 +128,16 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		}
 		if lastOffset > 0 {
 			if err := b.saveConsumerGroupOffset(t, partition, req.GetInit().ConsumerGroup, lastOffset); err != nil {
-				glog.Errorf("saveConsumerGroupOffset: %v", err)
+				glog.Errorf("saveConsumerGroupOffset partition %v lastOffset %d: %v", partition, lastOffset, err)
 			}
-			if subscribeFollowMeStream != nil {
-				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
-					Message: &mq_pb.SubscribeFollowMeRequest_Close{
-						Close: &mq_pb.SubscribeFollowMeRequest_CloseMessage{},
-					},
-				}); err != nil {
-					glog.Errorf("Error sending close to follower: %v", err)
-				}
+		}
+		if subscribeFollowMeStream != nil {
+			if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
+				Message: &mq_pb.SubscribeFollowMeRequest_Close{
+					Close: &mq_pb.SubscribeFollowMeRequest_CloseMessage{},
+				},
+			}); err != nil {
+				glog.Errorf("Error sending close to follower: %v", err)
 			}
 		}
 	}()
@@ -170,8 +174,9 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		for imt.IsInflight(logEntry.Key) {
 			time.Sleep(137 * time.Millisecond)
 		}
-
-		imt.InflightMessage(logEntry.Key, logEntry.TsNs)
+		if logEntry.Key != nil {
+			imt.EnflightMessage(logEntry.Key, logEntry.TsNs)
+		}
 
 		if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
 			Data: &mq_pb.DataMessage{

@@ -1,9 +1,8 @@
 package sub_coordinator
 
 import (
-	"sort"
+	"github.com/stretchr/testify/assert"
 	"testing"
-	"time"
 )
 
 func TestRingBuffer(t *testing.T) {
@@ -13,7 +12,7 @@ func TestRingBuffer(t *testing.T) {
 	// Add timestamps to the buffer
 	timestamps := []int64{100, 200, 300, 400, 500}
 	for _, ts := range timestamps {
-		rb.Add(ts)
+		rb.EnflightTimestamp(ts)
 	}
 
 	// Test Add method and buffer size
@@ -22,38 +21,25 @@ func TestRingBuffer(t *testing.T) {
 		t.Errorf("Expected buffer size %d, got %d", expectedSize, rb.size)
 	}
 
-	// Test Oldest and Latest methods
-	expectedOldest := int64(100)
-	if oldest := rb.Oldest(); oldest != expectedOldest {
-		t.Errorf("Expected oldest timestamp %d, got %d", expectedOldest, oldest)
-	}
-	expectedLatest := int64(500)
-	if latest := rb.Latest(); latest != expectedLatest {
-		t.Errorf("Expected latest timestamp %d, got %d", expectedLatest, latest)
-	}
+	assert.Equal(t, int64(0), rb.OldestAckedTimestamp())
+	assert.Equal(t, int64(500), rb.Latest())
 
-	// Test Remove method
-	rb.Remove(200)
-	expectedSize--
-	if rb.size != expectedSize {
-		t.Errorf("Expected buffer size %d after removal, got %d", expectedSize, rb.size)
-	}
+	rb.AckTimestamp(200)
+	assert.Equal(t, int64(0), rb.OldestAckedTimestamp())
+	rb.AckTimestamp(100)
+	assert.Equal(t, int64(200), rb.OldestAckedTimestamp())
 
-	// Test removal of non-existent element
-	rb.Remove(600)
-	if rb.size != expectedSize {
-		t.Errorf("Expected buffer size %d after attempting removal of non-existent element, got %d", expectedSize, rb.size)
-	}
+	rb.EnflightTimestamp(int64(600))
+	rb.EnflightTimestamp(int64(700))
 
-	// Test binary search correctness
-	target := int64(300)
-	index := sort.Search(rb.size, func(i int) bool {
-		return rb.buffer[(rb.head+len(rb.buffer)-rb.size+i)%len(rb.buffer)] >= target
-	})
-	actualIndex := (rb.head + len(rb.buffer) - rb.size + index) % len(rb.buffer)
-	if rb.buffer[actualIndex] != target {
-		t.Errorf("Binary search failed to find the correct index for timestamp %d", target)
-	}
+	rb.AckTimestamp(500)
+	assert.Equal(t, int64(200), rb.OldestAckedTimestamp())
+	rb.AckTimestamp(400)
+	assert.Equal(t, int64(200), rb.OldestAckedTimestamp())
+	rb.AckTimestamp(300)
+	assert.Equal(t, int64(500), rb.OldestAckedTimestamp())
+
+	assert.Equal(t, int64(700), rb.Latest())
 }
 
 func TestInflightMessageTracker(t *testing.T) {
@@ -61,9 +47,9 @@ func TestInflightMessageTracker(t *testing.T) {
 	tracker := NewInflightMessageTracker(5)
 
 	// Add inflight messages
-	key := []byte("exampleKey")
-	timestamp := time.Now().UnixNano()
-	tracker.InflightMessage(key, timestamp)
+	key := []byte("1")
+	timestamp := int64(1)
+	tracker.EnflightMessage(key, timestamp)
 
 	// Test IsMessageAcknowledged method
 	isOld := tracker.IsMessageAcknowledged(key, timestamp-10)
@@ -82,4 +68,29 @@ func TestInflightMessageTracker(t *testing.T) {
 	if tracker.timestamps.size != 0 {
 		t.Error("Expected buffer size to be 0 after ack")
 	}
+	assert.Equal(t, timestamp, tracker.GetOldestAckedTimestamp())
+}
+
+func TestInflightMessageTracker2(t *testing.T) {
+	// Initialize an InflightMessageTracker with initial capacity 1
+	tracker := NewInflightMessageTracker(1)
+
+	tracker.EnflightMessage([]byte("1"), int64(1))
+	tracker.EnflightMessage([]byte("2"), int64(2))
+	tracker.EnflightMessage([]byte("3"), int64(3))
+	tracker.EnflightMessage([]byte("4"), int64(4))
+	tracker.EnflightMessage([]byte("5"), int64(5))
+	assert.True(t, tracker.AcknowledgeMessage([]byte("1"), int64(1)))
+	assert.Equal(t, int64(1), tracker.GetOldestAckedTimestamp())
+
+	// Test IsMessageAcknowledged method
+	isAcked := tracker.IsMessageAcknowledged([]byte("2"), int64(2))
+	if isAcked {
+		t.Error("Expected message to be not acked")
+	}
+
+	// Test AcknowledgeMessage method
+	assert.True(t, tracker.AcknowledgeMessage([]byte("2"), int64(2)))
+	assert.Equal(t, int64(2), tracker.GetOldestAckedTimestamp())
+
 }
