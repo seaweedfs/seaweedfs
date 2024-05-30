@@ -42,7 +42,7 @@ func (b *MessageQueueBroker) SubscribeFollowMe(stream mq_pb.SeaweedMessaging_Sub
 		// Process the received message
 		if ackMessage := req.GetAck(); ackMessage != nil {
 			lastOffset = ackMessage.TsNs
-			// println("offset", lastOffset)
+			println("sub follower got offset", lastOffset)
 		} else if closeMessage := req.GetClose(); closeMessage != nil {
 			glog.V(0).Infof("topic %v partition %v subscribe stream closed: %v", initMessage.Topic, initMessage.Partition, closeMessage)
 			return nil

@@ -66,7 +66,8 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		} else {
 			defer func() {
 				println("closing SubscribeFollowMe connection", follower)
-				followerGrpcConnection.Close()
+				subscribeFollowMeStream.CloseSend()
+				// followerGrpcConnection.Close()
 			}()
 			followerClient := mq_pb.NewSeaweedMessagingClient(followerGrpcConnection)
 			if subscribeFollowMeStream, err = followerClient.SubscribeFollowMe(ctx); err != nil {
@@ -94,6 +95,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 			ack, err := stream.Recv()
 			if err != nil {
 				if err == io.EOF {
+					// the client has called CloseSend(). This is to ack the close.
 					stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Ctrl{
 						Ctrl: &mq_pb.SubscribeMessageResponse_SubscribeCtrlMessage{
 							IsEndOfStream: true,
@@ -127,6 +129,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 			}
 		}
 		if lastOffset > 0 {
+			glog.V(0).Infof("saveConsumerGroupOffset %v %v %v %v", t, partition, req.GetInit().ConsumerGroup, lastOffset)
 			if err := b.saveConsumerGroupOffset(t, partition, req.GetInit().ConsumerGroup, lastOffset); err != nil {
 				glog.Errorf("saveConsumerGroupOffset partition %v lastOffset %d: %v", partition, lastOffset, err)
 			}
@@ -204,6 +207,7 @@ func (b *MessageQueueBroker) getRequestPosition(initMessage *mq_pb.SubscribeMess
 		return
 	}
 	if storedOffset, err := b.readConsumerGroupOffset(initMessage); err == nil {
+		glog.V(0).Infof("resume from saved offset %v %v %v: %v", initMessage.Topic, initMessage.PartitionOffset.Partition, initMessage.ConsumerGroup, storedOffset)
 		startPosition = log_buffer.NewMessagePosition(storedOffset, -2)
 		return
 	}
