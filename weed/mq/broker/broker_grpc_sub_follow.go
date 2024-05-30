@@ -53,9 +53,11 @@ func (b *MessageQueueBroker) SubscribeFollowMe(stream mq_pb.SeaweedMessaging_Sub
 
 	t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
 
-	err = b.saveConsumerGroupOffset(t, p, initMessage.ConsumerGroup, lastOffset)
+	if lastOffset > 0 {
+		err = b.saveConsumerGroupOffset(t, p, initMessage.ConsumerGroup, lastOffset)
+	}
 
-	glog.V(0).Infof("shut down follower for %v", initMessage)
+	glog.V(0).Infof("shut down follower for %v offset %d", initMessage, lastOffset)
 
 	return err
 }
