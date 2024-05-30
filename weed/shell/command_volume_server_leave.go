@@ -25,7 +25,7 @@ func (c *commandVolumeServerLeave) Name() string {
 func (c *commandVolumeServerLeave) Help() string {
 	return `stop a volume server from sending heartbeats to the master
 
-	volume.unmount -node <volume server host:port> -force
+	volumeServer.leave -node <volume server host:port> -force
 
 	This command enables gracefully shutting down the volume server.
 	The volume server will stop sending heartbeats to the master.
