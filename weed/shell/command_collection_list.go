@@ -63,7 +63,7 @@ func (c *commandCollectionList) Do(args []string, commandEnv *CommandEnv, writer
 
 func ListCollectionNames(commandEnv *CommandEnv, includeNormalVolumes, includeEcVolumes bool) (collections []string, err error) {
 	var resp *master_pb.CollectionListResponse
-	err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err = client.CollectionList(context.Background(), &master_pb.CollectionListRequest{
 			IncludeNormalVolumes: includeNormalVolumes,
 			IncludeEcVolumes:     includeEcVolumes,

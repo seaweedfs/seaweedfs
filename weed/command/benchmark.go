@@ -2,6 +2,7 @@ package command
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
@@ -13,7 +14,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-	"context"
 
 	"google.golang.org/grpc"
 

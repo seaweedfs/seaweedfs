@@ -388,7 +388,7 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 			defer cancel()
 			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
 				glog.V(0).Infof("master %s didn't respond to pings. remove raft server", peerName)
-				if err := ms.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
+				if err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 					_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
 						Id:    peerName,
 						Force: false,

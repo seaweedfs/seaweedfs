@@ -1,13 +1,13 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 	"time"
-	"context"
 
 	hashicorpRaft "github.com/hashicorp/raft"
 
