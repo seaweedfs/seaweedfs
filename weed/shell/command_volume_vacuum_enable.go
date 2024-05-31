@@ -32,7 +32,7 @@ func (c *commandEnableVacuum) Do(args []string, commandEnv *CommandEnv, writer i
 		return
 	}
 
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		_, err = client.EnableVacuum(context.Background(), &master_pb.EnableVacuumRequest{})
 		return err
 	})

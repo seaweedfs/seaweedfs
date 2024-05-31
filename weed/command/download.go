@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"context"
 
 	"google.golang.org/grpc"
 
@@ -50,7 +51,7 @@ func runDownload(cmd *Command, args []string) bool {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	for _, fid := range args {
-		if e := downloadToFile(func() pb.ServerAddress { return pb.ServerAddress(*d.server) }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
+		if e := downloadToFile(func(ctx context.Context) pb.ServerAddress { return pb.ServerAddress(*d.server) }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
 			fmt.Println("Download Error: ", fid, e)
 		}
 	}

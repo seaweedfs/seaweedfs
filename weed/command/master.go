@@ -7,6 +7,7 @@ import (
 	"path"
 	"strings"
 	"time"
+	"context"
 
 	hashicorpRaft "github.com/hashicorp/raft"
 
@@ -218,7 +219,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		}()
 	}
 
-	go ms.MasterClient.KeepConnectedToMaster()
+	go ms.MasterClient.KeepConnectedToMaster(context.Background())
 
 	// start http server
 	var (

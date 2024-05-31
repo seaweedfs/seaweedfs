@@ -57,7 +57,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 
 	// collect filers
 	var filers []pb.ServerAddress
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
 			FilerGroup: *commandEnv.option.FilerGroup,
@@ -103,7 +103,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 
 	// collect all masters
 	var masters []pb.ServerAddress
-	masters = append(masters, commandEnv.MasterClient.GetMasters()...)
+	masters = append(masters, commandEnv.MasterClient.GetMasters(context.Background())...)
 
 	// check from master to volume servers
 	for _, master := range masters {

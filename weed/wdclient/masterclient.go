@@ -61,7 +61,7 @@ func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []stri
 	if err == nil && len(fullUrls) > 0 {
 		return
 	}
-	err = pb.WithMasterClient(false, mc.GetMaster(), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+	err = pb.WithMasterClient(false, mc.GetMaster(context.Background()), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: []string{fileId},
 		})
@@ -103,31 +103,43 @@ func (mc *MasterClient) setCurrentMaster(master pb.ServerAddress) {
 	mc.currentMasterLock.Unlock()
 }
 
-func (mc *MasterClient) GetMaster() pb.ServerAddress {
-	mc.WaitUntilConnected()
+func (mc *MasterClient) GetMaster(ctx context.Context) pb.ServerAddress {
+	mc.WaitUntilConnected(ctx)
 	return mc.getCurrentMaster()
 }
 
-func (mc *MasterClient) GetMasters() []pb.ServerAddress {
-	mc.WaitUntilConnected()
+func (mc *MasterClient) GetMasters(ctx context.Context) []pb.ServerAddress {
+	mc.WaitUntilConnected(ctx)
 	return mc.masters.GetInstances()
 }
 
-func (mc *MasterClient) WaitUntilConnected() {
+func (mc *MasterClient) WaitUntilConnected(ctx context.Context) {
 	for {
-		if mc.getCurrentMaster() != "" {
+		select {
+		case <-ctx.Done():
+			glog.V(0).Infof("Connection wait stopped: %v", ctx.Err())
 			return
+		default:
+			if mc.getCurrentMaster() != "" {
+				return
+			}
+			time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
+			print(".")
 		}
-		time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
-		print(".")
 	}
 }
 
-func (mc *MasterClient) KeepConnectedToMaster() {
+func (mc *MasterClient) KeepConnectedToMaster(ctx context.Context) {
 	glog.V(1).Infof("%s.%s masterClient bootstraps with masters %v", mc.FilerGroup, mc.clientType, mc.masters)
 	for {
-		mc.tryAllMasters()
-		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done():
+			glog.V(0).Infof("Connection to masters stopped: %v", ctx.Err())
+			return
+		default:
+			mc.tryAllMasters(ctx)
+			time.Sleep(time.Second)
+		}
 	}
 }
 
@@ -157,25 +169,28 @@ func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddres
 	return
 }
 
-func (mc *MasterClient) tryAllMasters() {
+func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 	var nextHintedLeader pb.ServerAddress
 	mc.masters.RefreshBySrvIfAvailable()
 	for _, master := range mc.masters.GetInstances() {
-		nextHintedLeader = mc.tryConnectToMaster(master)
+		nextHintedLeader = mc.tryConnectToMaster(ctx, master)
 		for nextHintedLeader != "" {
-			nextHintedLeader = mc.tryConnectToMaster(nextHintedLeader)
+			select {
+			case <-ctx.Done():
+				glog.V(0).Infof("Connection attempt to all masters stopped: %v", ctx.Err())
+				return
+			default:
+				nextHintedLeader = mc.tryConnectToMaster(ctx, nextHintedLeader)
+			}
 		}
 		mc.setCurrentMaster("")
 	}
 }
 
-func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedLeader pb.ServerAddress) {
+func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.ServerAddress) (nextHintedLeader pb.ServerAddress) {
 	glog.V(1).Infof("%s.%s masterClient Connecting to master %v", mc.FilerGroup, mc.clientType, master)
 	stats.MasterClientConnectCounter.WithLabelValues("total").Inc()
 	gprcErr := pb.WithMasterClient(true, master, mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
 		stream, err := client.KeepConnected(ctx)
 		if err != nil {
 			glog.V(1).Infof("%s.%s masterClient failed to keep connected to %s: %v", mc.FilerGroup, mc.clientType, master, err)
@@ -220,39 +235,45 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 		mc.setCurrentMaster(master)
 
 		for {
-			resp, err := stream.Recv()
-			if err != nil {
-				glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
-				stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
-				return err
-			}
-
-			if resp.VolumeLocation != nil {
-				// maybe the leader is changed
-				if resp.VolumeLocation.Leader != "" && string(mc.GetMaster()) != resp.VolumeLocation.Leader {
-					glog.V(0).Infof("currentMaster %v redirected to leader %v", mc.GetMaster(), resp.VolumeLocation.Leader)
-					nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
-					stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
-					return nil
+			select {
+			case <-ctx.Done():
+				glog.V(0).Infof("Connection attempt to master stopped: %v", ctx.Err())
+				return ctx.Err()
+			default:
+				resp, err := stream.Recv()
+				if err != nil {
+					glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
+					stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
+					return err
 				}
-				mc.updateVidMap(resp)
-			}
 
-			if resp.ClusterNodeUpdate != nil {
-				update := resp.ClusterNodeUpdate
-				mc.OnPeerUpdateLock.RLock()
-				if mc.OnPeerUpdate != nil {
-					if update.FilerGroup == mc.FilerGroup {
-						if update.IsAdd {
-							glog.V(0).Infof("+ %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
-						} else {
-							glog.V(0).Infof("- %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
-						}
-						stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
-						mc.OnPeerUpdate(update, time.Now())
+				if resp.VolumeLocation != nil {
+					// maybe the leader is changed
+					if resp.VolumeLocation.Leader != "" && string(mc.GetMaster(ctx)) != resp.VolumeLocation.Leader {
+						glog.V(0).Infof("currentMaster %v redirected to leader %v", mc.GetMaster(ctx), resp.VolumeLocation.Leader)
+						nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
+						stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
+						return nil
 					}
+					mc.updateVidMap(resp)
 				}
-				mc.OnPeerUpdateLock.RUnlock()
+
+				if resp.ClusterNodeUpdate != nil {
+					update := resp.ClusterNodeUpdate
+					mc.OnPeerUpdateLock.RLock()
+					if mc.OnPeerUpdate != nil {
+						if update.FilerGroup == mc.FilerGroup {
+							if update.IsAdd {
+								glog.V(0).Infof("+ %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
+							} else {
+								glog.V(0).Infof("- %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
+							}
+							stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
+							mc.OnPeerUpdate(update, time.Now())
+						}
+					}
+					mc.OnPeerUpdateLock.RUnlock()
+				}
 			}
 		}
 	})
@@ -297,9 +318,9 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		len(resp.VolumeLocation.NewEcVids), len(resp.VolumeLocation.DeletedEcVids))
 }
 
-func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
+func (mc *MasterClient) WithClient(ctx context.Context, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
 	return util.Retry("master grpc", func() error {
-		return pb.WithMasterClient(streamingMode, mc.GetMaster(), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		return pb.WithMasterClient(streamingMode, mc.GetMaster(ctx), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 			return fn(client)
 		})
 	})

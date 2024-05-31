@@ -181,7 +181,7 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 }
 
 func (vs *VolumeServer) notifyMasterVolumeReadonly(v *storage.Volume, isReadOnly bool) error {
-	if grpcErr := pb.WithMasterClient(false, vs.GetMaster(), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+	if grpcErr := pb.WithMasterClient(false, vs.GetMaster(context.Background()), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		_, err := client.VolumeMarkReadonly(context.Background(), &master_pb.VolumeMarkReadonlyRequest{
 			Ip:               vs.store.Ip,
 			Port:             uint32(vs.store.Port),
@@ -197,8 +197,8 @@ func (vs *VolumeServer) notifyMasterVolumeReadonly(v *storage.Volume, isReadOnly
 		}
 		return nil
 	}); grpcErr != nil {
-		glog.V(0).Infof("connect to %s: %v", vs.GetMaster(), grpcErr)
-		return fmt.Errorf("grpc VolumeMarkReadonly with master %s: %v", vs.GetMaster(), grpcErr)
+		glog.V(0).Infof("connect to %s: %v", vs.GetMaster(context.Background()), grpcErr)
+		return fmt.Errorf("grpc VolumeMarkReadonly with master %s: %v", vs.GetMaster(context.Background()), grpcErr)
 	}
 	return nil
 }

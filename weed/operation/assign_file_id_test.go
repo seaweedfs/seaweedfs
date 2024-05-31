@@ -6,12 +6,13 @@ import (
 	"google.golang.org/grpc"
 	"testing"
 	"time"
+	"context"
 )
 
 func BenchmarkWithConcurrency(b *testing.B) {
 	concurrencyLevels := []int{1, 10, 100, 1000}
 
-	ap, _ := NewAssignProxy(func() pb.ServerAddress {
+	ap, _ := NewAssignProxy(func(ctx context.Context) pb.ServerAddress {
 		return pb.ServerAddress("localhost:9333")
 	}, grpc.WithInsecure(), 16)
 
@@ -47,7 +48,7 @@ func BenchmarkWithConcurrency(b *testing.B) {
 }
 
 func BenchmarkStreamAssign(b *testing.B) {
-	ap, _ := NewAssignProxy(func() pb.ServerAddress {
+	ap, _ := NewAssignProxy(func(ctx context.Context) pb.ServerAddress {
 		return pb.ServerAddress("localhost:9333")
 	}, grpc.WithInsecure(), 16)
 	for i := 0; i < b.N; i++ {
@@ -59,7 +60,7 @@ func BenchmarkStreamAssign(b *testing.B) {
 
 func BenchmarkUnaryAssign(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		Assign(func() pb.ServerAddress {
+		Assign(func(ctx context.Context) pb.ServerAddress {
 			return pb.ServerAddress("localhost:9333")
 		}, grpc.WithInsecure(), &VolumeAssignRequest{
 			Count: 1,

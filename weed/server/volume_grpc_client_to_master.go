@@ -21,7 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func (vs *VolumeServer) GetMaster() pb.ServerAddress {
+func (vs *VolumeServer) GetMaster(ctx context.Context) pb.ServerAddress {
 	return vs.currentMaster
 }
 

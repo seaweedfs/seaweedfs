@@ -46,12 +46,12 @@ func RunShell(options ShellOptions) {
 
 	commandEnv := NewCommandEnv(&options)
 
-	go commandEnv.MasterClient.KeepConnectedToMaster()
-	commandEnv.MasterClient.WaitUntilConnected()
+	go commandEnv.MasterClient.KeepConnectedToMaster(context.Background())
+	commandEnv.MasterClient.WaitUntilConnected(context.Background())
 
 	if commandEnv.option.FilerAddress == "" {
 		var filers []pb.ServerAddress
-		commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 				ClientType: cluster.FilerType,
 				FilerGroup: *options.FilerGroup,
