@@ -139,6 +139,12 @@ func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, vol
 			KeepLocalDatFile:       keepLocalDatFile,
 		})
 
+		if stream == nil && copyErr == nil {
+			// when the volume is already uploaded, VolumeTierMoveDatToRemote will return nil stream and nil error
+			// so we should directly return in this case
+			fmt.Fprintf(writer, "volume %v already uploaded", volumeId)
+			return nil
+		}
 		var lastProcessed int64
 		for {
 			resp, recvErr := stream.Recv()
