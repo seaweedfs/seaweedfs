@@ -46,8 +46,9 @@ func RunShell(options ShellOptions) {
 
 	commandEnv := NewCommandEnv(&options)
 
-	go commandEnv.MasterClient.KeepConnectedToMaster(context.Background())
-	commandEnv.MasterClient.WaitUntilConnected(context.Background())
+	ctx := context.Background()
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
+	commandEnv.MasterClient.WaitUntilConnected(ctx)
 
 	if commandEnv.option.FilerAddress == "" {
 		var filers []pb.ServerAddress
