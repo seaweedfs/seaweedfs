@@ -292,6 +292,12 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 			_, err := stream.Recv()
 			if err != nil {
 				glog.V(2).Infof("- client %v: %v", clientName, err)
+				go func() {
+					// consume message chan to avoid deadlock, go routine exit when message chan is closed
+					for range messageChan {
+						// no op
+					}
+				}()
 				close(stopChan)
 				return
 			}
@@ -367,6 +373,8 @@ func (ms *MasterServer) addClient(filerGroup, clientType string, clientAddress p
 func (ms *MasterServer) deleteClient(clientName string) {
 	glog.V(0).Infof("- client %v", clientName)
 	ms.clientChansLock.Lock()
+	// close message chan, so that the KeepConnected go routine can exit
+	close(ms.clientChans[clientName])
 	delete(ms.clientChans, clientName)
 	ms.clientChansLock.Unlock()
 }
