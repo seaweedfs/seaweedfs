@@ -7,11 +7,11 @@ import (
 )
 
 func (d *Disk) GetEcShards() (ret []*erasure_coding.EcVolumeInfo) {
-	d.RLock()
+	d.ecShardsLock.RLock()
 	for _, ecVolumeInfo := range d.ecShards {
 		ret = append(ret, ecVolumeInfo)
 	}
-	d.RUnlock()
+	d.ecShardsLock.RUnlock()
 	return ret
 }
 

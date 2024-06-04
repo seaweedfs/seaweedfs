@@ -84,7 +84,9 @@ func (dn *DataNode) HasEcShards(volumeId needle.VolumeId) (found bool) {
 	defer dn.RUnlock()
 	for _, c := range dn.children {
 		disk := c.(*Disk)
+		disk.ecShardsLock.RLock()
 		_, found = disk.ecShards[volumeId]
+		disk.ecShardsLock.RUnlock()
 		if found {
 			return
 		}
@@ -100,7 +102,9 @@ func (dn *DataNode) doUpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo
 	}
 	for _, shard := range actualShards {
 		disk := dn.getOrCreateDisk(shard.DiskType)
+		disk.ecShardsLock.Lock()
 		disk.ecShards[shard.VolumeId] = shard
+		disk.ecShardsLock.Unlock()
 	}
 	dn.Unlock()
 }
