@@ -60,7 +60,6 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 	successRedirect := formValues.Get("success_action_redirect")
 	successStatus := formValues.Get("success_action_status")
-	fmt.Printf("successRedirect:%s, successStatus:%s\n", successRedirect, successStatus)
 	var redirectURL *url.URL
 	if successRedirect != "" {
 		redirectURL, err = url.Parse(successRedirect)
@@ -168,10 +167,8 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	case "200":
 		s3err.WriteEmptyResponse(w, r, http.StatusOK)
 	case "204":
-		fmt.Println("204")
 		s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 	default:
-		fmt.Println("default")
 		s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 	}
 
