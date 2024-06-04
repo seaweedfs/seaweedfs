@@ -361,8 +361,7 @@ func (ms *MasterServer) addClient(filerGroup, clientType string, clientAddress p
 	// the KeepConnected loop is no longer listening on this channel but we're
 	// trying to send to it in SendHeartbeat and so we can't lock the
 	// clientChansLock to remove the channel and we're stuck writing to it
-	// 100 is probably overkill
-	messageChan = make(chan *master_pb.KeepConnectedResponse, 100)
+	messageChan = make(chan *master_pb.KeepConnectedResponse, 10000)
 
 	ms.clientChansLock.Lock()
 	ms.clientChans[clientName] = messageChan
