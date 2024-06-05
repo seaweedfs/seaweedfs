@@ -53,7 +53,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12
 	github.com/karlseguin/ccache/v2 v2.0.8
-	github.com/klauspost/compress v1.17.7 // indirect
+	github.com/klauspost/compress v1.17.8 // indirect
 	github.com/klauspost/reedsolomon v1.12.1
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.9
@@ -118,10 +118,10 @@ require (
 	google.golang.org/protobuf v1.34.1
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
-	modernc.org/libc v1.49.3 // indirect
+	modernc.org/libc v1.50.9 // indirect
 	modernc.org/mathutil v1.6.0
 	modernc.org/memory v1.8.0 // indirect
-	modernc.org/sqlite v1.29.8
+	modernc.org/sqlite v1.30.0
 	modernc.org/strutil v1.2.0
 	modernc.org/token v1.1.0 // indirect
 )
@@ -131,7 +131,7 @@ require (
 	github.com/arangodb/go-driver v1.6.2
 	github.com/armon/go-metrics v0.4.1
 	github.com/aws/aws-sdk-go-v2 v1.27.0
-	github.com/aws/aws-sdk-go-v2/config v1.27.11
+	github.com/aws/aws-sdk-go-v2/config v1.27.16
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.16
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.54.3
 	github.com/cognusion/imaging v1.0.1
@@ -143,17 +143,18 @@ require (
 	github.com/hashicorp/raft v1.6.1
 	github.com/hashicorp/raft-boltdb/v2 v2.3.0
 	github.com/orcaman/concurrent-map/v2 v2.0.1
-	github.com/parquet-go/parquet-go v0.21.0
+	github.com/parquet-go/parquet-go v0.22.0
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/rclone/rclone v1.66.0
 	github.com/rdleal/intervalst v1.4.0
-	github.com/schollz/progressbar/v3 v3.14.2
+	github.com/schollz/progressbar/v3 v3.14.3
 	github.com/shirou/gopsutil/v3 v3.24.4
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.4.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.68.1
-	go.etcd.io/etcd/client/pkg/v3 v3.5.13
+	go.etcd.io/etcd/client/pkg/v3 v3.5.14
 	go.uber.org/atomic v1.11.0
+	golang.org/x/sync v0.7.0
 	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
 )
 
@@ -258,7 +259,6 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20231016141302-07b5767bb0ed // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-runewidth v0.0.15 // indirect
-	github.com/mattn/go-sqlite3 v2.0.1+incompatible // indirect
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/montanaflynn/stats v0.7.0 // indirect
@@ -325,7 +325,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/mod v0.17.0 // indirect
-	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/term v0.20.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240506185236-b8a5c65736ae // indirect
