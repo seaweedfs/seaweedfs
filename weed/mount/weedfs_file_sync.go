@@ -104,9 +104,6 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		}
 	}
 
-	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
-	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-
 	if !fh.dirtyMetadata {
 		return fuse.OK
 	}
@@ -114,6 +111,9 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	if wfs.IsOverQuota {
 		return fuse.Status(syscall.ENOSPC)
 	}
+
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		fh.entryLock.Lock()
