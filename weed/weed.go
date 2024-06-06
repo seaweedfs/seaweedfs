@@ -47,7 +47,7 @@ func init() {
 }
 
 func main() {
-	glog.MaxSize = 1024 * 1024 * 10
+	glog.MaxSize = 1024 * 1024 * 1024
 	glog.MaxFileCount = 5
 	flag.Usage = usage
 
