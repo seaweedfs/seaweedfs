@@ -1,4 +1,4 @@
-package sub_coordinator
+package filer_client
 
 import (
 	"bytes"

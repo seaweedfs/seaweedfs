@@ -3,6 +3,7 @@ package sub_coordinator
 import (
 	"fmt"
 	cmap "github.com/orcaman/concurrent-map/v2"
+	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
@@ -18,7 +19,7 @@ type TopicConsumerGroups struct {
 type SubCoordinator struct {
 	// map topic name to consumer groups
 	TopicSubscribers    cmap.ConcurrentMap[string, *TopicConsumerGroups]
-	FilerClientAccessor *FilerClientAccessor
+	FilerClientAccessor *filer_client.FilerClientAccessor
 }
 
 func NewSubCoordinator() *SubCoordinator {

@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
@@ -47,7 +48,7 @@ type MessageQueueBroker struct {
 	lockAsBalancer    *cluster.LiveLock
 	SubCoordinator    *sub_coordinator.SubCoordinator
 	accessLock        sync.Mutex
-	fca               *sub_coordinator.FilerClientAccessor
+	fca               *filer_client.FilerClientAccessor
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -64,7 +65,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		PubBalancer:       pubBalancer,
 		SubCoordinator:    subCoordinator,
 	}
-	fca := &sub_coordinator.FilerClientAccessor{
+	fca := &filer_client.FilerClientAccessor{
 		GetFiler:          mqBroker.GetFiler,
 		GetGrpcDialOption: mqBroker.GetGrpcDialOption,
 	}
