@@ -110,7 +110,7 @@ spec:
             - "-ec"
             - |
               exec /usr/bin/weed \
-              {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "emptyDir") }}
+              {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "persistentVolumeClaim") (eq .Values.master.logs.type "emptyDir") }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
@@ -158,7 +158,7 @@ spec:
           volumeMounts:
             - name : data-{{ .Release.Namespace }}
               mountPath: /data
-            {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "emptyDir") }}
+            {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "persistentVolumeClaim") (eq .Values.master.logs.type "emptyDir") }}
             - name: seaweedfs-master-log-volume
               mountPath: "/logs/"
             {{- end }}
