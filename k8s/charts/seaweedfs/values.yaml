@@ -127,6 +127,12 @@ master:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Labels to be added to the master pods
+  podLabels: {}
+
+  # Annotations to be added to the master pods
+  podAnnotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -369,6 +375,12 @@ volume:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Labels to be added to the volume pods
+  podLabels: {}
+
+  # Annotations to be added to the volume pods
+  podAnnotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -550,6 +562,12 @@ filer:
 
   extraVolumes: ""
   extraVolumeMounts: ""
+
+  # Labels to be added to the filer pods
+  podLabels: {}
+
+  # Annotations to be added to the filer pods
+  podAnnotations: {}
 
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
@@ -760,6 +778,12 @@ s3:
 
   extraVolumes: ""
   extraVolumeMounts: ""
+
+  # Labels to be added to the s3 pods
+  podLabels: {}
+
+  # Annotations to be added to the s3 pods
+  podAnnotations: {}
 
   # Resource requests, limits, etc. for the server cluster placement. This
   # should map directly to the value of the resources field for a PodSpec,
