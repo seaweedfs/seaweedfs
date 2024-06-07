@@ -373,8 +373,10 @@ func (ms *MasterServer) deleteClient(clientName string) {
 	glog.V(0).Infof("- client %v", clientName)
 	ms.clientChansLock.Lock()
 	// close message chan, so that the KeepConnected go routine can exit
-	close(ms.clientChans[clientName])
-	delete(ms.clientChans, clientName)
+	if clientChan, ok := ms.clientChans[clientName]; ok {
+		close(clientChan)
+		delete(ms.clientChans, clientName)
+	}
 	ms.clientChansLock.Unlock()
 }
 
