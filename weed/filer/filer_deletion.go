@@ -2,7 +2,6 @@ package filer
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
-	"math"
 	"strings"
 	"time"
 
@@ -138,47 +137,19 @@ func (f *Filer) DeleteChunksNotRecursive(chunks []*filer_pb.FileChunk) {
 }
 
 func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
-
-	if oldEntry == nil {
-		return
+	var oldChunks, newChunks []*filer_pb.FileChunk
+	if oldEntry != nil {
+		oldChunks = oldEntry.GetChunks()
 	}
-	if newEntry == nil {
-		f.DeleteChunks(oldEntry.GetChunks())
-		return
-	}
-
-	var toDelete []*filer_pb.FileChunk
-	newChunkIds := make(map[string]bool)
-	newDataChunks, newManifestChunks, err := ResolveChunkManifest(f.MasterClient.GetLookupFileIdFunction(),
-		newEntry.GetChunks(), 0, math.MaxInt64)
-	if err != nil {
-		glog.Errorf("Failed to resolve new entry chunks when delete old entry chunks. new: %s, old: %s",
-			newEntry.GetChunks(), oldEntry.Chunks)
-		return
-	}
-	for _, newChunk := range newDataChunks {
-		newChunkIds[newChunk.GetFileIdString()] = true
-	}
-	for _, newChunk := range newManifestChunks {
-		newChunkIds[newChunk.GetFileIdString()] = true
+	if newEntry != nil {
+		newChunks = newEntry.GetChunks()
 	}
 
-	oldDataChunks, oldManifestChunks, err := ResolveChunkManifest(f.MasterClient.GetLookupFileIdFunction(),
-		oldEntry.GetChunks(), 0, math.MaxInt64)
+	toDelete, err := MinusChunks(f.MasterClient.GetLookupFileIdFunction(), oldChunks, newChunks)
 	if err != nil {
 		glog.Errorf("Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s",
-			newEntry.GetChunks(), oldEntry.GetChunks())
+			newChunks, oldChunks)
 		return
-	}
-	for _, oldChunk := range oldDataChunks {
-		if _, found := newChunkIds[oldChunk.GetFileIdString()]; !found {
-			toDelete = append(toDelete, oldChunk)
-		}
-	}
-	for _, oldChunk := range oldManifestChunks {
-		if _, found := newChunkIds[oldChunk.GetFileIdString()]; !found {
-			toDelete = append(toDelete, oldChunk)
-		}
 	}
 	f.DeleteChunksNotRecursive(toDelete)
 }
