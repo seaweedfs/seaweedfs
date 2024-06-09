@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"net"
 	"sort"
@@ -260,7 +261,12 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		return ms.informNewLeader(stream)
 	}
 
-	peerAddress := pb.ServerAddress(req.ClientAddress)
+	clientAddress := req.ClientAddress
+	// Ensure that the clientAddress is unique.
+	if clientAddress == "" {
+		clientAddress = uuid.New().String()
+	}
+	peerAddress := pb.ServerAddress(clientAddress)
 
 	// buffer by 1 so we don't end up getting stuck writing to stopChan forever
 	stopChan := make(chan bool, 1)
