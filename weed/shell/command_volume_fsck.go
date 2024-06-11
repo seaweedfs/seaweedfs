@@ -656,7 +656,7 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 			if _, ok := volumeIdToServer[dataNodeId]; !ok {
 				volumeIdToServer[dataNodeId] = make(map[uint32]VInfo)
 			}
-			volumeCount := 0
+			count := 0
 			for _, vi := range diskInfo.VolumeInfos {
 				volumeIdToServer[dataNodeId][vi.Id] = VInfo{
 					server:     pb.NewServerAddressFromDataNode(t),
@@ -664,7 +664,7 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 					isEcVolume: false,
 					isReadOnly: vi.ReadOnly,
 				}
-				volumeCount += 1
+				count += 1
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
 				volumeIdToServer[dataNodeId][ecShardInfo.Id] = VInfo{
@@ -673,10 +673,10 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 					isEcVolume: true,
 					isReadOnly: true,
 				}
-				volumeCount += 1
+				count += 1
 			}
 			if *c.verbose {
-				fmt.Fprintf(c.writer, "dn %+v collected %d volumes and locations.\n", dataNodeId, volumeCount)
+				fmt.Fprintf(c.writer, "dn %+v collected %d volumes and locations.\n", dataNodeId, count)
 			}
 		}
 	})
