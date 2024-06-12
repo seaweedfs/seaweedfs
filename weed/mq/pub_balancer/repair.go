@@ -14,8 +14,7 @@ func (balancer *Balancer) RepairTopics() []BalanceAction {
 }
 
 type TopicPartitionInfo struct {
-	Leader    string
-	Followers []string
+	Broker string
 }
 
 // RepairMissingTopicPartitions check the stats of all brokers,
@@ -38,11 +37,7 @@ func RepairMissingTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStat
 				tpi = &TopicPartitionInfo{}
 				topicPartitionToInfo[topicPartitionStat.Partition] = tpi
 			}
-			if topicPartitionStat.IsLeader {
-				tpi.Leader = broker
-			} else {
-				tpi.Followers = append(tpi.Followers, broker)
-			}
+			tpi.Broker = broker
 		}
 	}
 

@@ -311,7 +311,7 @@ func parseSignature(signElement string) (string, s3err.ErrorCode) {
 	return signature, s3err.ErrNone
 }
 
-// doesPolicySignatureMatch - Verify query headers with post policy
+// doesPolicySignatureV4Match - Verify query headers with post policy
 //   - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-HTTPPOSTConstructPolicy.html
 //
 // returns ErrNone if the signature matches.

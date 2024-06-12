@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 	"sync"
@@ -193,6 +194,7 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 		})
 
 		if lastError != nil {
+			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorChunkAssign).Inc()
 			continue
 		}
 
@@ -262,6 +264,7 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 		WritableVolumeCount: so.VolumeGrowthCount,
 	}
 	if so.DataCenter != "" || so.Rack != "" || so.DataNode != "" {
+		ar.WritableVolumeCount = uint32(count)
 		altRequest = &VolumeAssignRequest{
 			Count:               uint64(count),
 			Replication:         so.Replication,

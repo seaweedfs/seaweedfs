@@ -3,6 +3,7 @@ package topology
 import (
 	"errors"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -233,13 +234,18 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 }
 
 func (vl *VolumeLayout) isAllWritable(vid needle.VolumeId) bool {
-	for _, dn := range vl.vid2location[vid].list {
-		if v, getError := dn.GetVolumesById(vid); getError == nil {
-			if v.ReadOnly {
-				return false
+	if location, ok := vl.vid2location[vid]; ok {
+		for _, dn := range location.list {
+			if v, getError := dn.GetVolumesById(vid); getError == nil {
+				if v.ReadOnly {
+					return false
+				}
 			}
 		}
+	} else {
+		return false
 	}
+
 	return true
 }
 
@@ -297,10 +303,10 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 			// check whether picked file is close to full
 			dn := locationList.Head()
 			info, _ := dn.GetVolumesById(vid)
-			if float64(info.Size) > float64(vl.volumeSizeLimit)*option.Threshold() {
+			if float64(info.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 				shouldGrow = true
 			}
-			return vid, count, locationList, shouldGrow, nil
+			return vid, count, locationList.Copy(), shouldGrow, nil
 		}
 		return 0, 0, nil, shouldGrow, errors.New("Strangely vid " + vid.String() + " is on no machine!")
 	}
@@ -328,14 +334,14 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 			vid, locationList = writableVolumeId, volumeLocationList.Copy()
 			// check whether picked file is close to full
 			info, _ := dn.GetVolumesById(writableVolumeId)
-			if float64(info.Size) > float64(vl.volumeSizeLimit)*option.Threshold() {
+			if float64(info.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 				shouldGrow = true
 			}
 			counter = count
 			return
 		}
 	}
-	return vid, count, locationList, shouldGrow, fmt.Errorf("No writable volumes in DataCenter:%v Rack:%v DataNode:%v", option.DataCenter, option.Rack, option.DataNode)
+	return vid, count, locationList, true, fmt.Errorf("No writable volumes in DataCenter:%v Rack:%v DataNode:%v", option.DataCenter, option.Rack, option.DataNode)
 }
 
 func (vl *VolumeLayout) HasGrowRequest() bool {
@@ -349,18 +355,21 @@ func (vl *VolumeLayout) DoneGrowRequest() {
 }
 
 func (vl *VolumeLayout) ShouldGrowVolumes(option *VolumeGrowOption) bool {
-	active, crowded := vl.GetActiveVolumeCount(option)
+	total, active, crowded := vl.GetActiveVolumeCount(option)
+	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "total").Set(float64(total))
+	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "active").Set(float64(active))
+	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "crowded").Set(float64(crowded))
 	//glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, high)
 	return active <= crowded
 }
 
-func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (active, crowded int) {
+func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (total, active, crowded int) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
-
 	if option.DataCenter == "" {
-		return len(vl.writables), len(vl.crowded)
+		return len(vl.writables), len(vl.writables), len(vl.crowded)
 	}
+	total = len(vl.writables)
 	for _, v := range vl.writables {
 		for _, dn := range vl.vid2location[v].list {
 			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
@@ -372,7 +381,7 @@ func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (active, 
 				}
 				active++
 				info, _ := dn.GetVolumesById(v)
-				if float64(info.Size) > float64(vl.volumeSizeLimit)*option.Threshold() {
+				if float64(info.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 					crowded++
 				}
 			}

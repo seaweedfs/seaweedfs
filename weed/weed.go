@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -48,6 +50,19 @@ func main() {
 	glog.MaxSize = 1024 * 1024 * 10
 	glog.MaxFileCount = 5
 	flag.Usage = usage
+
+	err := sentry.Init(sentry.ClientOptions{
+		SampleRate:         0.1,
+		EnableTracing:      true,
+		TracesSampleRate:   0.1,
+		ProfilesSampleRate: 0.1,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sentry.Init: %v", err)
+	}
+	// Flush buffered events before the program terminates.
+	// Set the timeout to the maximum duration the program can afford to wait.
+	defer sentry.Flush(2 * time.Second)
 
 	if command.AutocompleteMain(commands) {
 		return

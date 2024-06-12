@@ -56,12 +56,27 @@ func (b *MessageQueueBroker) readTopicConfFromFiler(t topic.Topic) (conf *mq_pb.
 	return conf, nil
 }
 
-func (b *MessageQueueBroker) GetOrGenLocalPartition(t topic.Topic, partition topic.Partition) (localPartition *topic.LocalPartition, isGenerated bool, err error) {
+func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partition topic.Partition) (localTopicPartition *topic.LocalPartition, getOrGenError error) {
+	// get or generate a local partition
+	conf, readConfErr := b.readTopicConfFromFiler(t)
+	if readConfErr != nil {
+		glog.Errorf("topic %v not found: %v", t, readConfErr)
+		return nil, fmt.Errorf("topic %v not found: %v", t, readConfErr)
+	}
+	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
+	if getOrGenError != nil {
+		glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
+		return nil, fmt.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
+	}
+	return localTopicPartition, nil
+}
+
+func (b *MessageQueueBroker) doGetOrGenLocalPartition(t topic.Topic, partition topic.Partition, conf *mq_pb.ConfigureTopicResponse) (localPartition *topic.LocalPartition, isGenerated bool, err error) {
 	b.accessLock.Lock()
 	defer b.accessLock.Unlock()
 
-	if localPartition = b.localTopicManager.GetTopicPartition(t, partition); localPartition == nil {
-		localPartition, isGenerated, err = b.genLocalPartitionFromFiler(t, partition)
+	if localPartition = b.localTopicManager.GetLocalPartition(t, partition); localPartition == nil {
+		localPartition, isGenerated, err = b.genLocalPartitionFromFiler(t, partition, conf)
 		if err != nil {
 			return nil, false, err
 		}
@@ -69,16 +84,12 @@ func (b *MessageQueueBroker) GetOrGenLocalPartition(t topic.Topic, partition top
 	return localPartition, isGenerated, nil
 }
 
-func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition topic.Partition) (localPartition *topic.LocalPartition, isGenerated bool, err error) {
+func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition topic.Partition, conf *mq_pb.ConfigureTopicResponse) (localPartition *topic.LocalPartition, isGenerated bool, err error) {
 	self := b.option.BrokerAddress()
-	conf, err := b.readTopicConfFromFiler(t)
-	if err != nil {
-		return nil, isGenerated, err
-	}
 	for _, assignment := range conf.BrokerPartitionAssignments {
 		if assignment.LeaderBroker == string(self) && partition.Equals(topic.FromPbPartition(assignment.Partition)) {
-			localPartition = topic.FromPbBrokerPartitionAssignment(b.option.BrokerAddress(), partition, assignment, b.genLogFlushFunc(t, assignment.Partition), b.genLogOnDiskReadFunc(t, assignment.Partition))
-			b.localTopicManager.AddTopicPartition(t, localPartition)
+			localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, assignment.Partition), b.genLogOnDiskReadFunc(t, assignment.Partition))
+			b.localTopicManager.AddLocalPartition(t, localPartition)
 			isGenerated = true
 			break
 		}

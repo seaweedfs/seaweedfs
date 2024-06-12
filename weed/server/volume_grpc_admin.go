@@ -236,6 +236,9 @@ func (vs *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.
 	if v == nil {
 		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
+	if v.DataBackend == nil {
+		return nil, fmt.Errorf("volume %d data backend not found", req.VolumeId)
+	}
 
 	volumeSize, _, _ := v.DataBackend.GetStat()
 	resp.IsReadOnly = v.IsReadOnly()

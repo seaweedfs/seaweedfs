@@ -2,17 +2,19 @@ package util
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"sync"
 	"sync/atomic"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // LockTable is a table of locks that can be acquired.
 // Locks are acquired in order of request.
 type LockTable[T comparable] struct {
-	lockIdSeq int64
-	mu        sync.Mutex
-	locks     map[T]*LockEntry
+	lockIdSeq     int64
+	mu            sync.Mutex
+	locks         map[T]*LockEntry
+	locksInFlight map[T]int
 }
 
 type LockEntry struct {
@@ -39,7 +41,8 @@ type ActiveLock struct {
 
 func NewLockTable[T comparable]() *LockTable[T] {
 	return &LockTable[T]{
-		locks: make(map[T]*LockEntry),
+		locks:         make(map[T]*LockEntry),
+		locksInFlight: make(map[T]int),
 	}
 }
 
@@ -57,7 +60,9 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 		entry = &LockEntry{}
 		entry.cond = sync.NewCond(&entry.mu)
 		lt.locks[key] = entry
+		lt.locksInFlight[key] = 0
 	}
+	lt.locksInFlight[key]++
 	lt.mu.Unlock()
 
 	lock = lt.NewActiveLock(intention, lockType)
@@ -120,6 +125,7 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 		return
 	}
 
+	lt.locksInFlight[key]--
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
@@ -139,8 +145,9 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 	}
 
 	// If there are no waiters, release the lock
-	if len(entry.waiters) == 0 && entry.activeExclusiveLockOwnerCount <= 0 && entry.activeSharedLockOwnerCount <= 0 {
+	if len(entry.waiters) == 0 && lt.locksInFlight[key] <= 0 && entry.activeExclusiveLockOwnerCount <= 0 && entry.activeSharedLockOwnerCount <= 0 {
 		delete(lt.locks, key)
+		delete(lt.locksInFlight, key)
 	}
 
 	if glog.V(4) {

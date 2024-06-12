@@ -85,7 +85,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 				return nil, fmt.Errorf("no free volumes left for " + option.String())
 			}
 			vl.AddGrowRequest()
-			ms.vgCh <- &topology.VolumeGrowRequest{
+			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 				Option: option,
 				Count:  int(req.WritableVolumeCount),
 			}
@@ -97,6 +97,9 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			continue
 		}
 		dn := dnList.Head()
+		if dn == nil {
+			continue
+		}
 		var replicas []*master_pb.Location
 		for _, r := range dnList.Rest() {
 			replicas = append(replicas, &master_pb.Location{

@@ -2,16 +2,17 @@ package s3api
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"modernc.org/strutil"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"modernc.org/strutil"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -170,8 +171,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 
-	dstUrl := fmt.Sprintf("http://%s%s/%s/%04d.part",
-		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(dstBucket), uploadID, partID)
+	dstUrl := s3a.genPartUploadUrl(dstBucket, uploadID, partID)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlEscapeObject(srcObject))
 

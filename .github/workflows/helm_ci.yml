@@ -45,7 +45,7 @@ jobs:
         run: ct lint --target-branch ${{ github.event.repository.default_branch }} --all --validate-maintainers=false --chart-dirs k8s/charts
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.9.0
+        uses: helm/kind-action@v1.10.0
 
       - name: Run chart-testing (install)
         run: ct install --target-branch ${{ github.event.repository.default_branch }} --all --chart-dirs k8s/charts

@@ -32,7 +32,8 @@ func (c *commandFsMetaLoad) Help() string {
 
 	fs.meta.load <filer_host>-<port>-<time>.meta
 	fs.meta.load -v=false <filer_host>-<port>-<time>.meta // skip printing out the verbose output
-	fs.meta.load -dirPrefix=/buckets/important* <filer_host>.meta // load any dirs with prefix "important"
+ 	fs.meta.load -concurrency=1 <filer_host>-<port>-<time>.meta // number of parallel meta load to filer
+	fs.meta.load -dirPrefix=/buckets/important <filer_host>.meta // load any dirs with prefix "important"
 
 `
 }

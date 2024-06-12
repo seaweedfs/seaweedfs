@@ -44,7 +44,15 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 	}
 
 	if r.Method == "POST" {
-		e = parseMultipart(r, sizeLimit, pu)
+		contentType := r.Header.Get("Content-Type")
+
+		// If content-type is explicitly set, upload the file without parsing form-data
+		if contentType != "" && !strings.Contains(contentType, "form-data") {
+			e = parseRawPost(r, sizeLimit, pu)
+		} else {
+			e = parseMultipart(r, sizeLimit, pu)
+		}
+
 	} else {
 		e = parsePut(r, sizeLimit, pu)
 	}
@@ -202,6 +210,68 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 	}
 	pu.IsGzipped = part.Header.Get("Content-Encoding") == "gzip"
 	// pu.IsZstd = part.Header.Get("Content-Encoding") == "zstd"
+
+	return
+}
+
+func parseRawPost(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
+
+	defer func() {
+		if e != nil && r.Body != nil {
+			io.Copy(io.Discard, r.Body)
+			r.Body.Close()
+		}
+	}()
+
+	pu.FileName = r.Header.Get("Content-Disposition")
+
+	if pu.FileName != "" && strings.Contains(pu.FileName, "filename=") {
+		parts := strings.Split(pu.FileName, "filename=")
+		parts = strings.Split(parts[1], "\"")
+
+		pu.FileName = parts[1]
+	} else {
+		pu.FileName = ""
+	}
+
+	if pu.FileName != "" {
+		pu.FileName = path.Base(pu.FileName)
+	} else {
+		pu.FileName = path.Base(r.URL.Path)
+	}
+
+	var dataSize int64
+	dataSize, e = pu.bytesBuffer.ReadFrom(io.LimitReader(r.Body, sizeLimit+1))
+
+	if e != nil {
+		glog.V(0).Infoln("Reading Content [ERROR]", e)
+		return
+	}
+	if dataSize == sizeLimit+1 {
+		e = fmt.Errorf("file over the limited %d bytes", sizeLimit)
+		return
+	}
+	pu.Data = pu.bytesBuffer.Bytes()
+	pu.IsChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
+
+	if !pu.IsChunkedFile {
+
+		dotIndex := strings.LastIndex(pu.FileName, ".")
+		ext, mtype := "", ""
+		if dotIndex > 0 {
+			ext = strings.ToLower(pu.FileName[dotIndex:])
+			mtype = mime.TypeByExtension(ext)
+		}
+		contentType := r.Header.Get("Content-Type")
+
+		if contentType != "" && contentType != "application/octet-stream" && mtype != contentType {
+			pu.MimeType = contentType // only return mime type if not deducible
+			mtype = contentType
+		}
+
+	}
+	pu.IsGzipped = r.Header.Get("Content-Encoding") == "gzip"
+	// pu.IsZstd = r.Header.Get("Content-Encoding") == "zstd"
 
 	return
 }

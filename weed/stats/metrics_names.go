@@ -40,6 +40,18 @@ const (
 	ErrorReadInternal        = "read.internal.error"
 	ErrorWriteEntry          = "write.entry.failed"
 	RepeatErrorUploadContent = "upload.content.repeat.failed"
+	ErrorChunkAssign         = "chunkAssign.failed"
+	ErrorReadChunk           = "read.chunk.failed"
 	ErrorReadCache           = "read.cache.failed"
 	ErrorReadStream          = "read.stream.failed"
+
+	// s3 handler
+	ErrorCompletedNoSuchUpload      = "errorCompletedNoSuchUpload"
+	ErrorCompleteEntityTooSmall     = "errorCompleteEntityTooSmall"
+	ErrorCompletedPartEmpty         = "errorCompletedPartEmpty"
+	ErrorCompletedPartNumber        = "errorCompletedPartNumber"
+	ErrorCompletedPartNotFound      = "errorCompletedPartNotFound"
+	ErrorCompletedEtagInvalid       = "errorCompletedEtagInvalid"
+	ErrorCompletedEtagMismatch      = "errorCompletedEtagMismatch"
+	ErrorCompletedPartEntryMismatch = "errorCompletedPartEntryMismatch"
 )

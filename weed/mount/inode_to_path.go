@@ -114,9 +114,9 @@ func (i *InodeToPath) AllocateInode(path util.FullPath, unixTime int64) uint64 {
 	return inode
 }
 
-func (i *InodeToPath) GetInode(path util.FullPath) uint64 {
+func (i *InodeToPath) GetInode(path util.FullPath) (uint64, bool) {
 	if path == "/" {
-		return 1
+		return 1, true
 	}
 	i.Lock()
 	defer i.Unlock()
@@ -125,7 +125,7 @@ func (i *InodeToPath) GetInode(path util.FullPath) uint64 {
 		// glog.Fatalf("GetInode unknown inode for %s", path)
 		// this could be the parent for mount point
 	}
-	return inode
+	return inode, found
 }
 
 func (i *InodeToPath) GetPath(inode uint64) (util.FullPath, fuse.Status) {
@@ -146,8 +146,8 @@ func (i *InodeToPath) HasPath(path util.FullPath) bool {
 }
 
 func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
-	i.RLock()
-	defer i.RUnlock()
+	i.Lock()
+	defer i.Unlock()
 	inode, found := i.path2inode[fullpath]
 	if !found {
 		// https://github.com/seaweedfs/seaweedfs/issues/4968

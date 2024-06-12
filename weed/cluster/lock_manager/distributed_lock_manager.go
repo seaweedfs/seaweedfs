@@ -55,7 +55,8 @@ func (dlm *DistributedLockManager) FindLockOwner(key string) (owner string, move
 		return
 	}
 	if movedTo != dlm.Host {
-		glog.V(0).Infof("lock %s not on current %s but on %s", key, dlm.Host, movedTo)
+		servers := dlm.LockRing.GetSnapshot()
+		glog.V(0).Infof("lock %s not on current %s but on %s from %v", key, dlm.Host, movedTo, servers)
 		return
 	}
 	owner, err = dlm.lockManager.GetLockOwner(key)

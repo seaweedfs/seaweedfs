@@ -53,11 +53,15 @@ func Post(url string, values url.Values) ([]byte, error) {
 // github.com/seaweedfs/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
 // may need increasing http.Client.Timeout
 func Get(url string) ([]byte, bool, error) {
+	return GetAuthenticated(url, "")
+}
 
+func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
 	request, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, true, err
 	}
+	maybeAddAuth(request, jwt)
 	request.Header.Add("Accept-Encoding", "gzip")
 
 	response, err := client.Do(request)
@@ -101,11 +105,15 @@ func Head(url string) (http.Header, error) {
 	return r.Header, nil
 }
 
-func Delete(url string, jwt string) error {
-	req, err := http.NewRequest("DELETE", url, nil)
+func maybeAddAuth(req *http.Request, jwt string) {
 	if jwt != "" {
 		req.Header.Set("Authorization", "BEARER "+string(jwt))
 	}
+}
+
+func Delete(url string, jwt string) error {
+	req, err := http.NewRequest("DELETE", url, nil)
+	maybeAddAuth(req, jwt)
 	if err != nil {
 		return err
 	}
@@ -133,9 +141,7 @@ func Delete(url string, jwt string) error {
 
 func DeleteProxied(url string, jwt string) (body []byte, httpStatus int, err error) {
 	req, err := http.NewRequest("DELETE", url, nil)
-	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+string(jwt))
-	}
+	maybeAddAuth(req, jwt)
 	if err != nil {
 		return
 	}
@@ -193,9 +199,7 @@ func DownloadFile(fileUrl string, jwt string) (filename string, header http.Head
 		return "", nil, nil, err
 	}
 
-	if len(jwt) > 0 {
-		req.Header.Set("Authorization", "BEARER "+jwt)
-	}
+	maybeAddAuth(req, jwt)
 
 	response, err := client.Do(req)
 	if err != nil {
@@ -229,7 +233,7 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 
 	if cipherKey != nil {
 		var n int
-		_, err := readEncryptedUrl(fileUrl, cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
+		_, err := readEncryptedUrl(fileUrl, "", cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
 			n = copy(buf, data)
 		})
 		return int64(n), err
@@ -298,11 +302,16 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 }
 
 func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
+	return ReadUrlAsStreamAuthenticated(fileUrl, "", cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
+}
+
+func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
 	if cipherKey != nil {
-		return readEncryptedUrl(fileUrl, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
+		return readEncryptedUrl(fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
 
 	req, err := http.NewRequest("GET", fileUrl, nil)
+	maybeAddAuth(req, jwt)
 	if err != nil {
 		return false, err
 	}
@@ -319,7 +328,7 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 	}
 	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
-		retryable = r.StatusCode == http.StatusNotFound || r.StatusCode >= 500
+		retryable = r.StatusCode == http.StatusNotFound || r.StatusCode >= 499
 		return retryable, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
@@ -354,8 +363,8 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 
 }
 
-func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
-	encryptedData, retryable, err := Get(fileUrl)
+func readEncryptedUrl(fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
+	encryptedData, retryable, err := GetAuthenticated(fileUrl, jwt)
 	if err != nil {
 		return retryable, fmt.Errorf("fetch %s: %v", fileUrl, err)
 	}
@@ -392,9 +401,7 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 		req.Header.Add("Accept-Encoding", "gzip")
 	}
 
-	if len(jwt) > 0 {
-		req.Header.Set("Authorization", "BEARER "+jwt)
-	}
+	maybeAddAuth(req, jwt)
 
 	r, err := client.Do(req)
 	if err != nil {
