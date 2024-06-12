@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 
 	"github.com/hashicorp/raft"
 
@@ -80,13 +81,19 @@ func (ms *MasterServer) RaftRemoveServer(ctx context.Context, req *master_pb.Raf
 		_, ok := ms.clientChans[fmt.Sprintf("%s@%s", cluster.MasterType, req.Id)]
 		ms.clientChansLock.RUnlock()
 		if ok {
+			glog.V(0).Infoln("raft remove server %s failed: client connection to master exists", req.Id)
 			return resp, fmt.Errorf("raft remove server %s failed: client connection to master exists", req.Id)
 		}
 	}
 
 	idxFuture := ms.Topo.HashicorpRaft.RemoveServer(raft.ServerID(req.Id), 0, 0)
 	if err := idxFuture.Error(); err != nil {
+		glog.V(0).Infoln("HashicorpRaft RemoveServer failed err: %v", err)
 		return nil, err
 	}
+	// 将废弃连接关闭
+	ms.Topo.HashicorpRaftTransportManager.CloseConn(raft.ServerID(req.Id))
+	glog.V(0).Infoln("HashicorpRaft RemoveServer success %s", req.Id)
+
 	return resp, nil
 }

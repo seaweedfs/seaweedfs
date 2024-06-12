@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	transport "github.com/Jille/raft-grpc-transport"
 	"math/rand"
 	"sync"
 	"time"
@@ -47,11 +48,12 @@ type Topology struct {
 
 	Configuration *Configuration
 
-	RaftServer           raft.Server
-	RaftServerAccessLock sync.RWMutex
-	HashicorpRaft        *hashicorpRaft.Raft
-	UuidAccessLock       sync.RWMutex
-	UuidMap              map[string][]string
+	RaftServer                    raft.Server
+	RaftServerAccessLock          sync.RWMutex
+	HashicorpRaft                 *hashicorpRaft.Raft
+	HashicorpRaftTransportManager *transport.Manager
+	UuidAccessLock                sync.RWMutex
+	UuidMap                       map[string][]string
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {

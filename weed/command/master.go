@@ -176,6 +176,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		if raftServer, err = weed_server.NewHashicorpRaftServer(raftServerOption); err != nil {
 			glog.Fatalf("NewHashicorpRaftServer: %s", err)
 		}
+		ms.Topo.HashicorpRaftTransportManager = raftServer.TransportManager
 	} else {
 		raftServer, err = weed_server.NewRaftServer(raftServerOption)
 		if raftServer == nil {
