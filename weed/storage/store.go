@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
@@ -80,13 +81,13 @@ func (s *Store) String() (str string) {
 }
 
 func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int, publicUrl string, dirnames []string, maxVolumeCounts []int32,
-	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType, ldbTimeout int64) (s *Store) {
+	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType, ldbTimeout int64, ecVolumeExpireClose int64, ecVolumeLoopTime int64) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 
 	var wg sync.WaitGroup
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i])
+		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], ecVolumeExpireClose)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 
@@ -104,6 +105,14 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 	s.NewEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
 	s.DeletedEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
 
+	go func() {
+		for {
+			time.Sleep(time.Duration(ecVolumeLoopTime) * time.Minute)
+			for _, location := range s.Locations {
+				location.releaseEcFd()
+			}
+		}
+	}()
 	return
 }
 func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement string, ttlString string, preallocate int64, MemoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {

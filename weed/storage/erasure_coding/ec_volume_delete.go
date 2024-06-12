@@ -39,7 +39,12 @@ func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 	types.NeedleIdToBytes(b, needleId)
 
 	ev.ecjFileAccessLock.Lock()
-
+	if ev.ecjFile == nil {
+		indexBaseFileName := EcShardFileName(ev.Collection, ev.dirIdx, int(ev.VolumeId))
+		if ev.ecjFile, err = os.OpenFile(indexBaseFileName+".ecj", os.O_RDWR|os.O_CREATE, 0644); err != nil {
+			return err
+		}
+	}
 	ev.ecjFile.Seek(0, io.SeekEnd)
 	ev.ecjFile.Write(b)
 

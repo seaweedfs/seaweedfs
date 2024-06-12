@@ -92,7 +92,17 @@ func (shard *EcVolumeShard) Destroy() {
 }
 
 func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {
-
+	if shard.ecdFile == nil {
+		baseFileName := shard.FileName()
+		var e error
+		// open ecd file
+		if shard.ecdFile, e = os.OpenFile(baseFileName+ToExt(int(shard.ShardId)), os.O_RDONLY, 0644); e != nil {
+			if e == os.ErrNotExist || strings.Contains(e.Error(), "no such file or directory") {
+				return 0, os.ErrNotExist
+			}
+			return 0, fmt.Errorf("cannot read ec volume shard %s%s: %v", baseFileName, ToExt(int(shard.ShardId)), e)
+		}
+	}
 	return shard.ecdFile.ReadAt(buf, offset)
 
 }

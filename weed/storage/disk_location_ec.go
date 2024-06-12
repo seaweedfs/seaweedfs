@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"os"
 	"path"
 	"regexp"
@@ -85,7 +86,7 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 	defer l.ecVolumesLock.Unlock()
 	ecVolume, found := l.ecVolumes[vid]
 	if !found {
-		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, l.IdxDirectory, collection, vid)
+		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, l.IdxDirectory, collection, vid, l.EcVolumeExpireClose)
 		if err != nil {
 			return fmt.Errorf("failed to create ec volume %d: %v", vid, err)
 		}
@@ -227,4 +228,16 @@ func (l *DiskLocation) EcShardCount() int {
 		shardCount += len(ecVolume.Shards)
 	}
 	return shardCount
+}
+
+func (l *DiskLocation) releaseEcFd() {
+	l.ecVolumesLock.Lock()
+	defer l.ecVolumesLock.Unlock()
+
+	for _, ecVolume := range l.ecVolumes {
+		if ecVolume.IsExpire() {
+			glog.V(0).Infof("Close EC Volume %v Collection %s ", ecVolume.VolumeId, ecVolume.Collection)
+			ecVolume.Close()
+		}
+	}
 }

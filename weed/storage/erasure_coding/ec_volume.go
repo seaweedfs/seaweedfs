@@ -39,9 +39,11 @@ type EcVolume struct {
 	ecjFile                   *os.File
 	ecjFileAccessLock         sync.Mutex
 	diskType                  types.DiskType
+	lastReadAt                time.Time
+	expireTime                int64
 }
 
-func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
+func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId, ecVolumeExpireClose int64) (ev *EcVolume, err error) {
 	ev = &EcVolume{dir: dir, dirIdx: dirIdx, Collection: collection, VolumeId: vid, diskType: diskType}
 
 	dataBaseFileName := EcShardFileName(collection, dir, int(vid))
@@ -73,7 +75,8 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	}
 
 	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
-
+	ev.lastReadAt = time.Now()
+	ev.expireTime = ecVolumeExpireClose
 	return
 }
 
@@ -217,6 +220,7 @@ func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.
 	}
 
 	intervals = ev.LocateEcShardNeedleInterval(version, offset.ToActualOffset(), types.Size(needle.GetActualSize(size, version)))
+	ev.lastReadAt = time.Now()
 	return
 }
 
@@ -229,6 +233,12 @@ func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset i
 }
 
 func (ev *EcVolume) FindNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size types.Size, err error) {
+	if ev.ecxFile == nil {
+		indexBaseFileName := EcShardFileName(ev.Collection, ev.dirIdx, int(ev.VolumeId))
+		if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
+			return types.Offset{}, types.TombstoneFileSize, fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
+		}
+	}
 	return SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, nil)
 }
 
@@ -257,4 +267,11 @@ func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId t
 
 	err = NotFoundError
 	return
+}
+
+func (ev *EcVolume) IsExpire() bool {
+	if ev.ecjFile != nil && time.Now().After(ev.lastReadAt.Add(time.Minute*time.Duration(ev.expireTime))) {
+		return true
+	}
+	return false
 }

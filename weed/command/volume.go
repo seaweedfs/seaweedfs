@@ -72,6 +72,9 @@ type VolumeServerOptions struct {
 	ldbTimeout                *int64
 	username                  *string
 	password                  *string
+
+	ecVolumeExpireClose *int64
+	ecVolumeLoopTime    *int64
 }
 
 func init() {
@@ -107,6 +110,8 @@ func init() {
 	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
 	v.username = cmdVolume.Flag.String("username", "", "username for authentication")
 	v.password = cmdVolume.Flag.String("password", "", "password for authentication")
+	v.ecVolumeExpireClose = cmdVolume.Flag.Int64("ecVolumeExpireClose", 60, "How long has it been since the last reading that ec volume needs to be closed (default 60 minutes)")
+	v.ecVolumeLoopTime = cmdVolume.Flag.Int64("ecVolumeLoopTime", 60*12, "Interval to check if ec volume needs to be closed (default 720 minutes)")
 }
 
 var cmdVolume = &Command{
@@ -259,6 +264,8 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.ldbTimeout,
 		*v.username,
 		*v.password,
+		*v.ecVolumeExpireClose,
+		*v.ecVolumeLoopTime,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)

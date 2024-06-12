@@ -36,6 +36,8 @@ type DiskLocation struct {
 
 	isDiskSpaceLow bool
 	closeCh        chan struct{}
+
+	EcVolumeExpireClose int64
 }
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
@@ -59,7 +61,7 @@ func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 	return dirUuidString, nil
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType, ecVolumeExpireClose int64) *DiskLocation {
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
 		idxDir = dir
@@ -78,6 +80,7 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpace:           minFreeSpace,
+		EcVolumeExpireClose:    ecVolumeExpireClose,
 	}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
