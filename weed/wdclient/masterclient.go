@@ -235,45 +235,43 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 		mc.setCurrentMaster(master)
 
 		for {
-			select {
-			case <-ctx.Done():
-				glog.V(0).Infof("Connection attempt to master stopped: %v", ctx.Err())
-				return ctx.Err()
-			default:
-				resp, err := stream.Recv()
-				if err != nil {
-					glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
-					stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
-					return err
-				}
+			resp, err := stream.Recv()
+			if err != nil {
+				glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
+				stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
+				return err
+			}
 
-				if resp.VolumeLocation != nil {
-					// maybe the leader is changed
-					if resp.VolumeLocation.Leader != "" && string(mc.GetMaster(ctx)) != resp.VolumeLocation.Leader {
-						glog.V(0).Infof("currentMaster %v redirected to leader %v", mc.GetMaster(ctx), resp.VolumeLocation.Leader)
-						nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
-						stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
-						return nil
-					}
-					mc.updateVidMap(resp)
+			if resp.VolumeLocation != nil {
+				// maybe the leader is changed
+				if resp.VolumeLocation.Leader != "" && string(mc.GetMaster(ctx)) != resp.VolumeLocation.Leader {
+					glog.V(0).Infof("currentMaster %v redirected to leader %v", mc.GetMaster(ctx), resp.VolumeLocation.Leader)
+					nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
+					stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
+					return nil
 				}
+				mc.updateVidMap(resp)
+			}
 
-				if resp.ClusterNodeUpdate != nil {
-					update := resp.ClusterNodeUpdate
-					mc.OnPeerUpdateLock.RLock()
-					if mc.OnPeerUpdate != nil {
-						if update.FilerGroup == mc.FilerGroup {
-							if update.IsAdd {
-								glog.V(0).Infof("+ %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
-							} else {
-								glog.V(0).Infof("- %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
-							}
-							stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
-							mc.OnPeerUpdate(update, time.Now())
+			if resp.ClusterNodeUpdate != nil {
+				update := resp.ClusterNodeUpdate
+				mc.OnPeerUpdateLock.RLock()
+				if mc.OnPeerUpdate != nil {
+					if update.FilerGroup == mc.FilerGroup {
+						if update.IsAdd {
+							glog.V(0).Infof("+ %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
+						} else {
+							glog.V(0).Infof("- %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
 						}
+						stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
+						mc.OnPeerUpdate(update, time.Now())
 					}
-					mc.OnPeerUpdateLock.RUnlock()
 				}
+				mc.OnPeerUpdateLock.RUnlock()
+			}
+			if err := ctx.Err(); err != nil {
+				glog.V(0).Infof("Connection attempt to master stopped: %v", err)
+				return err
 			}
 		}
 	})
