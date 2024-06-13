@@ -2,26 +2,27 @@ package erasure_coding
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"os"
 	"path"
 	"strconv"
 	"strings"
-
-	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"sync"
 )
 
 type ShardId uint8
 
 type EcVolumeShard struct {
-	VolumeId    needle.VolumeId
-	ShardId     ShardId
-	Collection  string
-	dir         string
-	ecdFile     *os.File
-	ecdFileSize int64
-	DiskType    types.DiskType
+	VolumeId          needle.VolumeId
+	ShardId           ShardId
+	Collection        string
+	dir               string
+	ecdFile           *os.File
+	ecdFileAccessLock sync.RWMutex
+	ecdFileSize       int64
+	DiskType          types.DiskType
 }
 
 func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string, id needle.VolumeId, shardId ShardId) (v *EcVolumeShard, e error) {
@@ -50,6 +51,15 @@ func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string
 }
 
 func (shard *EcVolumeShard) Size() int64 {
+	shard.ecdFileAccessLock.RLock()
+	defer shard.ecdFileAccessLock.Unlock()
+
+	if shard.ecdFile == nil {
+		err := shard.tryOpenEcdFile()
+		if err != nil {
+			return 0
+		}
+	}
 	return shard.ecdFileSize
 }
 
@@ -80,6 +90,9 @@ func EcShardBaseFileName(collection string, id int) (baseFileName string) {
 }
 
 func (shard *EcVolumeShard) Close() {
+	shard.ecdFileAccessLock.Lock()
+	defer shard.ecdFileAccessLock.Unlock()
+
 	if shard.ecdFile != nil {
 		_ = shard.ecdFile.Close()
 		shard.ecdFile = nil
@@ -92,17 +105,31 @@ func (shard *EcVolumeShard) Destroy() {
 }
 
 func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {
+	shard.ecdFileAccessLock.RLock()
+	defer shard.ecdFileAccessLock.RUnlock()
+
 	if shard.ecdFile == nil {
-		baseFileName := shard.FileName()
-		var e error
-		// open ecd file
-		if shard.ecdFile, e = os.OpenFile(baseFileName+ToExt(int(shard.ShardId)), os.O_RDONLY, 0644); e != nil {
-			if e == os.ErrNotExist || strings.Contains(e.Error(), "no such file or directory") {
-				return 0, os.ErrNotExist
-			}
-			return 0, fmt.Errorf("cannot read ec volume shard %s%s: %v", baseFileName, ToExt(int(shard.ShardId)), e)
+		err := shard.tryOpenEcdFile()
+		if err != nil {
+			return 0, err
 		}
 	}
-	return shard.ecdFile.ReadAt(buf, offset)
 
+	return shard.ecdFile.ReadAt(buf, offset)
+}
+
+func (shard *EcVolumeShard) tryOpenEcdFile() (err error) {
+	shard.ecdFileAccessLock.Lock()
+	defer shard.ecdFileAccessLock.Unlock()
+
+	if shard.ecdFile == nil {
+		baseFileName := shard.FileName()
+		if shard.ecdFile, err = os.OpenFile(baseFileName+ToExt(int(shard.ShardId)), os.O_RDONLY, 0644); err != nil {
+			if err == os.ErrNotExist || strings.Contains(err.Error(), "no such file or directory") {
+				return err
+			}
+			return fmt.Errorf("cannot read ec volume shard %s%s: %v", baseFileName, ToExt(int(shard.ShardId)), err)
+		}
+	}
+	return
 }

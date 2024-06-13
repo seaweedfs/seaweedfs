@@ -24,9 +24,25 @@ var (
 	}
 )
 
-func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
+func (ev *EcVolume) markNeedleDelete(needleId types.NeedleId) (err error) {
+	ev.ecxFileAccessLock.RLock()
+	defer ev.ecxFileAccessLock.RUnlock()
+
+	// 如果文件已关闭，则先打开，这里涉及读锁 升级 写锁
+	err = ev.tryOpenEcxFile()
+
+	if err != nil {
+		return err
+	}
 
 	_, _, err = SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, MarkNeedleDeleted)
+
+	return err
+}
+
+func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
+
+	err = ev.markNeedleDelete(needleId)
 
 	if err != nil {
 		if err == NotFoundError {

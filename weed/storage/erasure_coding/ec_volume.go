@@ -29,6 +29,7 @@ type EcVolume struct {
 	dir                       string
 	dirIdx                    string
 	ecxFile                   *os.File
+	ecxFileAccessLock         sync.RWMutex
 	ecxFileSize               int64
 	ecxCreatedAt              time.Time
 	Shards                    []*EcVolumeShard
@@ -93,6 +94,8 @@ func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
 		}
 		return int(a.ShardId - b.ShardId)
 	})
+
+	ev.lastReadAt = time.Now()
 	return true
 }
 
@@ -110,6 +113,7 @@ func (ev *EcVolume) DeleteEcVolumeShard(shardId ShardId) (ecVolumeShard *EcVolum
 	ecVolumeShard = ev.Shards[foundPosition]
 
 	ev.Shards = append(ev.Shards[:foundPosition], ev.Shards[foundPosition+1:]...)
+	ev.lastReadAt = time.Now()
 	return ecVolumeShard, true
 }
 
@@ -133,9 +137,11 @@ func (ev *EcVolume) Close() {
 		ev.ecjFileAccessLock.Unlock()
 	}
 	if ev.ecxFile != nil {
+		ev.ecxFileAccessLock.Lock()
 		_ = ev.ecxFile.Sync()
 		_ = ev.ecxFile.Close()
 		ev.ecxFile = nil
+		ev.ecxFileAccessLock.Unlock()
 	}
 }
 
@@ -233,13 +239,33 @@ func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset i
 }
 
 func (ev *EcVolume) FindNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size types.Size, err error) {
+
+	ev.ecxFileAccessLock.RLock()
+	defer ev.ecxFileAccessLock.RUnlock()
+
+	// 如果文件已关闭，则先打开，这里涉及读锁 升级 写锁
+	err = ev.tryOpenEcxFile()
+
+	if err != nil {
+		return types.Offset{}, types.TombstoneFileSize, err
+	}
+
+	return SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, nil)
+}
+
+func (ev *EcVolume) tryOpenEcxFile() (err error) {
+	ev.ecxFileAccessLock.Lock()
+	defer ev.ecxFileAccessLock.Unlock()
+
 	if ev.ecxFile == nil {
 		indexBaseFileName := EcShardFileName(ev.Collection, ev.dirIdx, int(ev.VolumeId))
 		if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
-			return types.Offset{}, types.TombstoneFileSize, fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
+			return fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
 		}
 	}
-	return SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, nil)
+
+	ev.lastReadAt = time.Now()
+	return
 }
 
 func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId types.NeedleId, processNeedleFn func(file *os.File, offset int64) error) (offset types.Offset, size types.Size, err error) {
@@ -270,7 +296,7 @@ func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId t
 }
 
 func (ev *EcVolume) IsExpire() bool {
-	if ev.ecjFile != nil && time.Now().After(ev.lastReadAt.Add(time.Minute*time.Duration(ev.expireTime))) {
+	if ev.ecxFile != nil && time.Now().After(ev.lastReadAt.Add(time.Minute*time.Duration(ev.expireTime))) {
 		return true
 	}
 	return false

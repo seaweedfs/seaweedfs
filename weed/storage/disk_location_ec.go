@@ -3,13 +3,12 @@ package storage
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"golang.org/x/exp/slices"
 	"os"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
-
-	"golang.org/x/exp/slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -231,13 +230,25 @@ func (l *DiskLocation) EcShardCount() int {
 }
 
 func (l *DiskLocation) releaseEcFd() {
-	l.ecVolumesLock.Lock()
-	defer l.ecVolumesLock.Unlock()
-
-	for _, ecVolume := range l.ecVolumes {
-		if ecVolume.IsExpire() {
-			glog.V(0).Infof("Close EC Volume %v Collection %s ", ecVolume.VolumeId, ecVolume.Collection)
-			ecVolume.Close()
+	expireEcVolumes := l.obtainExpiresEcVolumes()
+	if expireEcVolumes != nil && len(expireEcVolumes) > 0 {
+		for _, ecVolume := range expireEcVolumes {
+			if ecVolume.IsExpire() {
+				glog.V(0).Infof("Close EC Volume %v Collection %s ", ecVolume.VolumeId, ecVolume.Collection)
+				ecVolume.Close()
+			}
 		}
 	}
+}
+func (l *DiskLocation) obtainExpiresEcVolumes() []*erasure_coding.EcVolume {
+	l.ecVolumesLock.RLock()
+	defer l.ecVolumesLock.RUnlock()
+
+	expireEcVolumes := make([]*erasure_coding.EcVolume, len(l.ecVolumes))
+	for _, ecVolume := range l.ecVolumes {
+		if ecVolume.IsExpire() {
+			expireEcVolumes = append(expireEcVolumes, ecVolume)
+		}
+	}
+	return expireEcVolumes
 }
