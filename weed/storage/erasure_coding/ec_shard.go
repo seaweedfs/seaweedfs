@@ -51,15 +51,6 @@ func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string
 }
 
 func (shard *EcVolumeShard) Size() int64 {
-	shard.ecdFileAccessLock.RLock()
-	defer shard.ecdFileAccessLock.Unlock()
-
-	if shard.ecdFile == nil {
-		err := shard.tryOpenEcdFile()
-		if err != nil {
-			return 0
-		}
-	}
 	return shard.ecdFileSize
 }
 
