@@ -29,6 +29,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	if isReplacing {
 		fs.filer.MetaAggregator.ListenersCond.Broadcast() // nudges the subscribers that are waiting
 	} else if alreadyKnown {
+		fs.filer.MetaAggregator.ListenersCond.Broadcast() // nudges the subscribers that are waiting
 		return fmt.Errorf("duplicated subscription detected for client %s id %d", clientName, req.ClientId)
 	}
 	defer func() {
