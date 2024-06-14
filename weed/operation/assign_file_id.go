@@ -47,9 +47,9 @@ func NewAssignProxy(masterFn GetMasterFn, grpcDialOption grpc.DialOption, concur
 	ap = &AssignProxy{
 		pool: make(chan *singleThreadAssignProxy, concurrency),
 	}
-	ap.grpcConnection, err = pb.GrpcDial(context.Background(), masterFn().ToGrpcAddress(), true, grpcDialOption)
+	ap.grpcConnection, err = pb.GrpcDial(context.Background(), masterFn(context.Background()).ToGrpcAddress(), true, grpcDialOption)
 	if err != nil {
-		return nil, fmt.Errorf("fail to dial %s: %v", masterFn().ToGrpcAddress(), err)
+		return nil, fmt.Errorf("fail to dial %s: %v", masterFn(context.Background()).ToGrpcAddress(), err)
 	}
 	for i := 0; i < concurrency; i++ {
 		ap.pool <- &singleThreadAssignProxy{}
@@ -153,7 +153,7 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			continue
 		}
 
-		lastError = WithMasterServerClient(false, masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+		lastError = WithMasterServerClient(false, masterFn(context.Background()), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 			req := &master_pb.AssignRequest{
 				Count:               request.Count,
 				Replication:         request.Replication,
