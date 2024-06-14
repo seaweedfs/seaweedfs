@@ -2,6 +2,7 @@ package broker
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
+	"context"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
@@ -75,9 +76,9 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
 	pubBalancer.OnPartitionChange = mqBroker.SubCoordinator.OnPartitionChange
 
-	go mqBroker.MasterClient.KeepConnectedToMaster()
+	go mqBroker.MasterClient.KeepConnectedToMaster(context.Background())
 
-	existingNodes := cluster.ListExistingPeerUpdates(mqBroker.MasterClient.GetMaster(), grpcDialOption, option.FilerGroup, cluster.FilerType)
+	existingNodes := cluster.ListExistingPeerUpdates(mqBroker.MasterClient.GetMaster(context.Background()), grpcDialOption, option.FilerGroup, cluster.FilerType)
 	for _, newNode := range existingNodes {
 		mqBroker.OnBrokerUpdate(newNode, time.Now())
 	}

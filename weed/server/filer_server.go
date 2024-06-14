@@ -160,7 +160,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
-	go fs.filer.KeepMasterClientConnected()
+	go fs.filer.KeepMasterClientConnected(context.Background())
 
 	if !util.LoadConfiguration("filer", false) {
 		v.SetDefault("leveldb2.enabled", true)
@@ -196,7 +196,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	existingNodes := fs.filer.ListExistingPeerUpdates()
+	existingNodes := fs.filer.ListExistingPeerUpdates(context.Background())
 	startFromTime := time.Now().Add(-filer.LogFlushInterval)
 	if option.JoinExistingFiler {
 		startFromTime = time.Time{}

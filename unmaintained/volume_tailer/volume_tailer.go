@@ -5,6 +5,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"log"
 	"time"
+	"context"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -38,7 +39,7 @@ func main() {
 		sinceTimeNs = time.Now().Add(-*rewindDuration).UnixNano()
 	}
 
-	err := operation.TailVolume(func() pb.ServerAddress { return pb.ServerAddress(*master) }, grpcDialOption, vid, uint64(sinceTimeNs), *timeoutSeconds, func(n *needle.Needle) (err error) {
+	err := operation.TailVolume(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*master) }, grpcDialOption, vid, uint64(sinceTimeNs), *timeoutSeconds, func(n *needle.Needle) (err error) {
 		if n.Size == 0 {
 			println("-", n.String())
 			return nil
