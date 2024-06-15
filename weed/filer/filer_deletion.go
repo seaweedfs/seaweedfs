@@ -114,10 +114,14 @@ func (f *Filer) DirectDeleteChunks(chunks []*filer_pb.FileChunk) {
 }
 
 func (f *Filer) DeleteUncommittedChunks(chunks []*filer_pb.FileChunk) {
-	f.DeleteChunks(chunks)
+	f.doDeleteChunks(chunks)
 }
 
 func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
+	f.doDeleteChunks(chunks)
+}
+
+func (f *Filer) doDeleteChunks(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
 		if !chunk.IsChunkManifest {
 			f.fileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
