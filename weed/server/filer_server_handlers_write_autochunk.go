@@ -134,7 +134,7 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	}
 	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
 	if replyerr != nil {
-		fs.filer.DeleteChunks(fileChunks)
+		fs.filer.DeleteUncommittedChunks(fileChunks)
 	}
 
 	return
