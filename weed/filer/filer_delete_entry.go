@@ -114,7 +114,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	}
 
 	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
-	f.DeleteChunks(chunksToDelete)
+	f.DeleteChunks(entry.FullPath, chunksToDelete)
 
 	return nil
 }
