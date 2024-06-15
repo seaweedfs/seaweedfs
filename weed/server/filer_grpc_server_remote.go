@@ -187,7 +187,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 		fs.filer.DeleteUncommittedChunks(chunks)
 		return nil, err
 	}
-	fs.filer.DeleteChunks(garbage)
+	fs.filer.DeleteChunks(entry.FullPath, garbage)
 
 	fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, false, nil)
 

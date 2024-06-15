@@ -2,6 +2,7 @@ package filer
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"strings"
 	"time"
 
@@ -117,7 +118,11 @@ func (f *Filer) DeleteUncommittedChunks(chunks []*filer_pb.FileChunk) {
 	f.doDeleteChunks(chunks)
 }
 
-func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
+func (f *Filer) DeleteChunks(fullpath util.FullPath, chunks []*filer_pb.FileChunk) {
+	rule := f.FilerConf.MatchStorageRule(string(fullpath))
+	if rule.DisableChunkDeletion {
+		return
+	}
 	f.doDeleteChunks(chunks)
 }
 
@@ -155,8 +160,7 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 
 	toDelete, err := MinusChunks(f.MasterClient.GetLookupFileIdFunction(), oldChunks, newChunks)
 	if err != nil {
-		glog.Errorf("Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s",
-			newChunks, oldChunks)
+		glog.Errorf("Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s", newChunks, oldChunks)
 		return
 	}
 	f.DeleteChunksNotRecursive(toDelete)
