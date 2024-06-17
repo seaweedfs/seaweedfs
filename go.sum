@@ -806,8 +806,8 @@ github.com/fatih/color v1.12.0/go.mod h1:ELkj/draVOlAH/xkhN6mQ50Qd0MPOk5AAr3maGE
 github.com/fatih/color v1.13.0/go.mod h1:kLAiJbzzSOZDVNGyDpeOxJ47H46qBXwg5ILebYFFOfk=
 github.com/fatih/color v1.14.1 h1:qfhVLaG5s+nCROl1zJsZRxFeYrHLqWroPOQ8BWiNb4w=
 github.com/fatih/color v1.14.1/go.mod h1:2oHN61fhTpgcxD3TSWCgKDiH1+x4OiDVVGH8WlgGZGg=
-github.com/fclairamb/ftpserverlib v0.24.0 h1:c0TaueBw41pzn3VS5G9+xFQMYEl50X0ymiDCnKHLHRE=
-github.com/fclairamb/ftpserverlib v0.24.0/go.mod h1:+9afJRWESpCq4/O8Vr00Q2jfinRxP6PiCpXph6CgGuc=
+github.com/fclairamb/ftpserverlib v0.24.1 h1:D+dDP+KibZKI182zQlITMJmaayCyIYpLpprzg8ZhtqA=
+github.com/fclairamb/ftpserverlib v0.24.1/go.mod h1:aAwyOAC6IIe+IZeeGD1QjuE3GGDzqW/c5Xtn+Dp0JUM=
 github.com/fclairamb/go-log v0.5.0 h1:Gz9wSamEaA6lta4IU2cjJc2xSq5sV5VYSB5w/SUHhVc=
 github.com/fclairamb/go-log v0.5.0/go.mod h1:XoRO1dYezpsGmLLkZE9I+sHqpqY65p8JA+Vqblb7k40=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
