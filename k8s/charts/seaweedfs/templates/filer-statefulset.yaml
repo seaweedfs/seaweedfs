@@ -269,9 +269,9 @@ spec:
             failureThreshold: {{ .Values.filer.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.filer.livenessProbe.timeoutSeconds }}
           {{- end }}
-          {{- if .Values.filer.resources }}
+          {{- with .Values.filer.resources }}
           resources:
-            {{ tpl .Values.filer.resources . | nindent 12 | trim }}
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- if .Values.filer.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
