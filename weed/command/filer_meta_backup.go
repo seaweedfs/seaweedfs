@@ -207,7 +207,7 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 		DirectoriesToWatch:     nil,
 		StartTsNs:              startTime.UnixNano(),
 		StopTsNs:               0,
-		EventErrorType:         pb.TrivialOnError,
+		EventErrorType:         pb.RetryForeverOnError,
 	}
 
 	return pb.FollowMetadata(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, metadataFollowOption, processEventFnWithOffset)

@@ -158,7 +158,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		DirectoriesToWatch:     nil,
 		StartTsNs:              startFrom.UnixNano(),
 		StopTsNs:               0,
-		EventErrorType:         pb.TrivialOnError,
+		EventErrorType:         pb.RetryForeverOnError,
 	}
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, metadataFollowOption, processEventFnWithOffset)
