@@ -25,11 +25,11 @@ var (
 )
 
 func (ev *EcVolume) markNeedleDelete(needleId types.NeedleId) (err error) {
-	ev.ecxFileAccessLock.RLock()
-	defer ev.ecxFileAccessLock.RUnlock()
-
 	// 如果文件已关闭，则先打开，这里涉及读锁 升级 写锁
 	err = ev.tryOpenEcxFile()
+
+	ev.ecxFileAccessLock.RLock()
+	defer ev.ecxFileAccessLock.RUnlock()
 
 	if err != nil {
 		return err

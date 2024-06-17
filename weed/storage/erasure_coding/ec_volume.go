@@ -240,11 +240,11 @@ func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset i
 
 func (ev *EcVolume) FindNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size types.Size, err error) {
 
-	ev.ecxFileAccessLock.RLock()
-	defer ev.ecxFileAccessLock.RUnlock()
-
 	// 如果文件已关闭，则先打开，这里涉及读锁 升级 写锁
 	err = ev.tryOpenEcxFile()
+
+	ev.ecxFileAccessLock.RLock()
+	defer ev.ecxFileAccessLock.RUnlock()
 
 	if err != nil {
 		return types.Offset{}, types.TombstoneFileSize, err
@@ -254,18 +254,21 @@ func (ev *EcVolume) FindNeedleFromEcx(needleId types.NeedleId) (offset types.Off
 }
 
 func (ev *EcVolume) tryOpenEcxFile() (err error) {
-	ev.ecxFileAccessLock.Lock()
-	defer ev.ecxFileAccessLock.Unlock()
-
 	if ev.ecxFile == nil {
-		indexBaseFileName := EcShardFileName(ev.Collection, ev.dirIdx, int(ev.VolumeId))
-		if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
-			return fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
+		ev.ecxFileAccessLock.Lock()
+		defer ev.ecxFileAccessLock.Unlock()
+		if ev.ecxFile == nil {
+			indexBaseFileName := EcShardFileName(ev.Collection, ev.dirIdx, int(ev.VolumeId))
+			if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
+				return fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
+			}
 		}
+		ev.lastReadAt = time.Now()
+		return nil
 	}
 
-	ev.lastReadAt = time.Now()
-	return
+	return nil
+
 }
 
 func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId types.NeedleId, processNeedleFn func(file *os.File, offset int64) error) (offset types.Offset, size types.Size, err error) {

@@ -96,9 +96,6 @@ func (shard *EcVolumeShard) Destroy() {
 }
 
 func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {
-	shard.ecdFileAccessLock.RLock()
-	defer shard.ecdFileAccessLock.RUnlock()
-
 	if shard.ecdFile == nil {
 		err := shard.tryOpenEcdFile()
 		if err != nil {
@@ -106,20 +103,24 @@ func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {
 		}
 	}
 
+	shard.ecdFileAccessLock.RLock()
+	defer shard.ecdFileAccessLock.RUnlock()
+
 	return shard.ecdFile.ReadAt(buf, offset)
 }
 
 func (shard *EcVolumeShard) tryOpenEcdFile() (err error) {
-	shard.ecdFileAccessLock.Lock()
-	defer shard.ecdFileAccessLock.Unlock()
-
 	if shard.ecdFile == nil {
-		baseFileName := shard.FileName()
-		if shard.ecdFile, err = os.OpenFile(baseFileName+ToExt(int(shard.ShardId)), os.O_RDONLY, 0644); err != nil {
-			if err == os.ErrNotExist || strings.Contains(err.Error(), "no such file or directory") {
-				return err
+		shard.ecdFileAccessLock.Lock()
+		defer shard.ecdFileAccessLock.Unlock()
+		if shard.ecdFile == nil {
+			baseFileName := shard.FileName()
+			if shard.ecdFile, err = os.OpenFile(baseFileName+ToExt(int(shard.ShardId)), os.O_RDONLY, 0644); err != nil {
+				if err == os.ErrNotExist || strings.Contains(err.Error(), "no such file or directory") {
+					return err
+				}
+				return fmt.Errorf("cannot read ec volume shard %s%s: %v", baseFileName, ToExt(int(shard.ShardId)), err)
 			}
-			return fmt.Errorf("cannot read ec volume shard %s%s: %v", baseFileName, ToExt(int(shard.ShardId)), err)
 		}
 	}
 	return
