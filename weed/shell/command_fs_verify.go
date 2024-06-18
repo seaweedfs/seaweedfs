@@ -57,7 +57,7 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	c.verbose = fsVerifyCommand.Bool("v", false, "print out each processed files")
 	modifyTimeAgo := fsVerifyCommand.Duration("modifyTimeAgo", 0, "only include files after this modify time to verify")
 	c.concurrency = fsVerifyCommand.Int("concurrency", 0, "number of parallel verification per volume server")
-	c.metadataFromLog = fsVerifyCommand.Bool("metadataFromLog", false, "")
+	c.metadataFromLog = fsVerifyCommand.Bool("metadataFromLog", false, "Using  filer log to get metadata")
 	if err = fsVerifyCommand.Parse(args); err != nil {
 		return err
 	}
@@ -146,11 +146,14 @@ type ItemEntry struct {
 func (c *commandFsVerify) verifyProcessMetadata(path string, errorCount *atomic.Uint64, wg *sync.WaitGroup) (fileCount uint64, err error) {
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
-		if resp.EventNotification.NewEntry == nil {
+		if resp.EventNotification.NewEntry == nil || len(message.NewEntry.Chunks) == 0 {
 			return nil
 		}
-		entry := message.NewEntry
-		if c.verifyEntry(entry.Name, entry.Chunks, errorCount, wg) {
+		entryPath := fmt.Sprintf("%s/%s", message.NewParentPath, message.NewEntry.Name)
+		if c.verifyEntry(entryPath, message.NewEntry.Chunks, errorCount, wg) {
+			if *c.verbose {
+				fmt.Fprintf(c.writer, "file: %s needles:%d verifed\n", entryPath, len(message.NewEntry.Chunks))
+			}
 			fileCount++
 		}
 		return nil
