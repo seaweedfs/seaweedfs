@@ -240,6 +240,14 @@ func (l *DiskLocation) releaseEcFd() {
 		}
 	}
 }
+
+func (l *DiskLocation) releaseAllEcFd() {
+	for _, ecVolume := range l.ecVolumes {
+		glog.V(0).Infof("init: Close EC Volume %v Collection %s ", ecVolume.VolumeId, ecVolume.Collection)
+		ecVolume.Close()
+	}
+}
+
 func (l *DiskLocation) obtainExpiresEcVolumes() []*erasure_coding.EcVolume {
 	l.ecVolumesLock.RLock()
 	defer l.ecVolumesLock.RUnlock()

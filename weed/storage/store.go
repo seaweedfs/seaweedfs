@@ -95,6 +95,7 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 		go func() {
 			defer wg.Done()
 			location.loadExistingVolumes(needleMapKind, ldbTimeout)
+			location.releaseAllEcFd()
 		}()
 	}
 	wg.Wait()
