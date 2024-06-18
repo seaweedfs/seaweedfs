@@ -244,7 +244,7 @@ func (l *DiskLocation) obtainExpiresEcVolumes() []*erasure_coding.EcVolume {
 	l.ecVolumesLock.RLock()
 	defer l.ecVolumesLock.RUnlock()
 
-	expireEcVolumes := make([]*erasure_coding.EcVolume, len(l.ecVolumes))
+	expireEcVolumes := make([]*erasure_coding.EcVolume, 0)
 	for _, ecVolume := range l.ecVolumes {
 		if ecVolume.IsExpire() {
 			expireEcVolumes = append(expireEcVolumes, ecVolume)
