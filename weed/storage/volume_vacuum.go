@@ -149,11 +149,18 @@ func (v *Volume) CommitCompact() error {
 			}
 		}
 		var e error
-		if e = os.Rename(v.FileName(".cpd"), v.FileName(".dat")); e != nil {
-			return fmt.Errorf("rename %s: %v", v.FileName(".cpd"), e)
+		cpdFile := v.FileName(".cpd")
+		if _, err := os.Stat(cpdFile); err == nil {
+			if e = os.Rename(cpdFile, v.FileName(".dat")); e != nil {
+				return fmt.Errorf("rename %s: %v", v.FileName(".cpd"), e)
+			}
+
 		}
-		if e = os.Rename(v.FileName(".cpx"), v.FileName(".idx")); e != nil {
-			return fmt.Errorf("rename %s: %v", v.FileName(".cpx"), e)
+		cpxFile := v.FileName(".cpx")
+		if _, err := os.Stat(cpdFile); err == nil {
+			if e = os.Rename(cpxFile, v.FileName(".idx")); e != nil {
+				return fmt.Errorf("rename %s: %v", v.FileName(".cpx"), e)
+			}
 		}
 	}
 
