@@ -324,7 +324,8 @@ var ErrVolumeNotFound = fmt.Errorf("volume not found")
 
 func (l *DiskLocation) DeleteVolume(vid needle.VolumeId, onlyEmpty bool) error {
 
-	_, ok := l.volumes[vid]
+	//_, ok := l.volumes[vid]
+	_, ok := l.FindVolume(vid)
 	if !ok {
 		return ErrVolumeNotFound
 	}
