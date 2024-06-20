@@ -163,9 +163,10 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 					Directory: message.NewParentPath,
 					Name:      message.NewEntry.Name,
 				})
-				if strings.HasSuffix(errReq.Error(), "no entry is found in filer store") {
-					return nil
-				} else if errReq != nil {
+				if errReq != nil {
+					if strings.HasSuffix(errReq.Error(), "no entry is found in filer store") {
+						return nil
+					}
 					return errReq
 				}
 				if entryResp.Entry.Attributes.Mtime == message.NewEntry.Attributes.Mtime &&
