@@ -294,6 +294,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 	if lenWriters <= 0 {
 		//glog.V(0).Infoln("No more writable volumes!")
 		shouldGrow = true
+		vl.SetVolumeCrowded(vid)
 		return 0, 0, nil, shouldGrow, errors.New("No more writable volumes!")
 	}
 	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
@@ -305,6 +306,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 			info, _ := dn.GetVolumesById(vid)
 			if float64(info.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 				shouldGrow = true
+				vl.SetVolumeCrowded(vid)
 			}
 			return vid, count, locationList.Copy(), shouldGrow, nil
 		}
@@ -360,7 +362,7 @@ func (vl *VolumeLayout) ShouldGrowVolumes(option *VolumeGrowOption) bool {
 	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "active").Set(float64(active))
 	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "crowded").Set(float64(crowded))
 	//glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, high)
-	return active <= crowded
+	return (float64(active) * VolumeGrowStrategy.CrowdedThreshold) <= float64(crowded)
 }
 
 func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (total, active, crowded int) {
@@ -381,7 +383,7 @@ func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (total, a
 				}
 				active++
 				info, _ := dn.GetVolumesById(v)
-				if float64(info.Size) > float64(vl.volumeSizeLimit)* VolumeGrowStrategy.Threshold{
+				if float64(info.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 					crowded++
 				}
 			}

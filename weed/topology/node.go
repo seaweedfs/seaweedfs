@@ -268,6 +268,7 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
 			for _, v := range dn.GetVolumes() {
+				start := time.Now()
 				topo := n.GetTopology()
 				diskType := types.ToDiskType(v.DiskType)
 				vl := topo.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
@@ -295,6 +296,7 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 						stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(0)
 					}
 				}
+				glog.V(3).Infoln("volume check is full cost", (time.Now().Sub(start)))
 			}
 		}
 	} else {

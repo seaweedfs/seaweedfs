@@ -186,12 +186,20 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 			if err = l.loadEcShards(sameVolumeShards, collection, volumeId); err != nil {
 				return fmt.Errorf("loadEcShards collection:%v volumeId:%d : %v", collection, volumeId, err)
 			}
+			l.closeEcVolumeById(volumeId)
 			prevVolumeId = volumeId
 			continue
 		}
 
 	}
 	return nil
+}
+
+func (l *DiskLocation) closeEcVolumeById(vid needle.VolumeId) {
+	ecVolumeToClose, _ := l.FindEcVolume(vid)
+	if ecVolumeToClose != nil {
+		ecVolumeToClose.Close()
+	}
 }
 
 func (l *DiskLocation) deleteEcVolumeById(vid needle.VolumeId) (e error) {

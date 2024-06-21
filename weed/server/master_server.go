@@ -99,11 +99,13 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	v.SetDefault("master.volume_growth.copy_3", 3)
 	v.SetDefault("master.volume_growth.copy_other", 1)
 	v.SetDefault("master.volume_growth.threshold", 0.9)
+	v.SetDefault("master.volume_growth.crowded_threshold", 0.6)
 	topology.VolumeGrowStrategy.Copy1Count = v.GetInt("master.volume_growth.copy_1")
 	topology.VolumeGrowStrategy.Copy2Count = v.GetInt("master.volume_growth.copy_2")
 	topology.VolumeGrowStrategy.Copy3Count = v.GetInt("master.volume_growth.copy_3")
 	topology.VolumeGrowStrategy.CopyOtherCount = v.GetInt("master.volume_growth.copy_other")
 	topology.VolumeGrowStrategy.Threshold = v.GetFloat64("master.volume_growth.threshold")
+	topology.VolumeGrowStrategy.CrowdedThreshold = v.GetFloat64("master.volume_growth.crowded_threshold")
 
 	var preallocateSize int64
 	if option.VolumePreallocate {

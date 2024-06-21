@@ -31,20 +31,22 @@ type VolumeGrowRequest struct {
 }
 
 type volumeGrowthStrategy struct {
-	Copy1Count int
-	Copy2Count int
-	Copy3Count int
-	CopyOtherCount int
-	Threshold float64
+	Copy1Count       int
+	Copy2Count       int
+	Copy3Count       int
+	CopyOtherCount   int
+	Threshold        float64
+	CrowdedThreshold float64
 }
 
 var (
 	VolumeGrowStrategy = volumeGrowthStrategy{
-		Copy1Count: 7,
-		Copy2Count: 6,
-		Copy3Count: 3,
-		CopyOtherCount: 1,
-		Threshold: 0.9,
+		Copy1Count:       7,
+		Copy2Count:       6,
+		Copy3Count:       3,
+		CopyOtherCount:   1,
+		Threshold:        0.9,
+		CrowdedThreshold: 0.6,
 	}
 )
 
@@ -77,7 +79,8 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 // given copyCount, how many logical volumes to create
 func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
 	switch copyCount {
-	case 1: count = VolumeGrowStrategy.Copy1Count
+	case 1:
+		count = VolumeGrowStrategy.Copy1Count
 	case 2:
 		count = VolumeGrowStrategy.Copy2Count
 	case 3:
