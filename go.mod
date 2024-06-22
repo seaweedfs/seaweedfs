@@ -115,7 +115,7 @@ require (
 	google.golang.org/api v0.181.0
 	google.golang.org/genproto v0.0.0-20240401170217-c3f982113cda // indirect
 	google.golang.org/grpc v1.64.0
-	google.golang.org/protobuf v1.34.1
+	google.golang.org/protobuf v1.34.2
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/libc v1.50.9 // indirect
@@ -155,7 +155,7 @@ require (
 	go.etcd.io/etcd/client/pkg/v3 v3.5.14
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.7.0
-	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
+	google.golang.org/grpc/security/advancedtls v0.0.0-20240621202332-c8568c99b8c5
 )
 
 require (
@@ -328,7 +328,7 @@ require (
 	golang.org/x/term v0.21.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240506185236-b8a5c65736ae // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240513163218-0867130af1f8 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240604185151-ef581f913117 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/validator.v2 v2.0.1 // indirect
