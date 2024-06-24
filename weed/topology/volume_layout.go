@@ -294,7 +294,6 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 	if lenWriters <= 0 {
 		//glog.V(0).Infoln("No more writable volumes!")
 		shouldGrow = true
-		vl.setVolumeCrowded(vid)
 		return 0, 0, nil, shouldGrow, errors.New("No more writable volumes!")
 	}
 	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
