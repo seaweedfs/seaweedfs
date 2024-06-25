@@ -3,10 +3,12 @@ package security
 import (
 	"crypto/x509"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	util "github.com/seaweedfs/seaweedfs/weed/util"
 	util_services "github.com/seaweedfs/seaweedfs/weed/util/services"
 	"github.com/spf13/viper"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 )
@@ -23,12 +25,26 @@ func init() {
 
 	for _, service := range util_services.GetAll() {
 		if caCertFilePath := viper.GetString(fmt.Sprintf("https.%s.ca", service.LowerCaseString())); caCertFilePath != "" {
-			tlsConfig := LoadClientTLSHTTP(caCertFilePath)
+			certPool := LoadHTTPClientCertPool(caCertFilePath)
 			mu.Lock()
 			defer mu.Unlock()
-			certPools[service] = tlsConfig.ClientCAs
+			certPools[service] = certPool
 		}
 	}
+}
+
+func LoadHTTPClientCertPool(cert string) *x509.CertPool {
+	clientCerts, err := os.ReadFile(cert)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	certPool := x509.NewCertPool()
+	ok := certPool.AppendCertsFromPEM(clientCerts)
+	if !ok {
+		glog.Fatalf("Error processing certificate in %s\n", cert)
+	}
+
+	return certPool
 }
 
 func GetMasterCertPool() *x509.CertPool {
