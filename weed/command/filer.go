@@ -333,29 +333,6 @@ func (fo *FilerOptions) startFiler() {
 		}()
 	}
 
-	var (
-		clientCertFile,
-		certFile,
-		keyFile string
-	)
-	useTLS := false
-	useMTLS := false
-
-	if viper.GetString("https.filer.key") != "" {
-		useTLS = true
-		certFile = viper.GetString("https.filer.cert")
-		keyFile = viper.GetString("https.filer.key")
-	}
-
-	if viper.GetString("https.filer.ca") != "" {
-		useMTLS = true
-		clientCertFile = viper.GetString("https.filer.ca")
-	}
-
-	if useMTLS {
-		httpS.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
-	}
-
 	if filerLocalListener != nil {
 		go func() {
 			if err := httpS.Serve(filerLocalListener); err != nil {
@@ -363,7 +340,11 @@ func (fo *FilerOptions) startFiler() {
 			}
 		}()
 	}
-	if useTLS {
+
+	if viper.GetString("https.filer.key") != "" {
+		certFile := viper.GetString("https.filer.cert")
+		keyFile := viper.GetString("https.filer.key")
+
 		if err := httpS.ServeTLS(filerListener, certFile, keyFile); err != nil {
 			glog.Fatalf("Filer Fail to serve: %v", e)
 		}

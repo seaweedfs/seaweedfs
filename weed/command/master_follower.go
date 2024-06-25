@@ -144,39 +144,17 @@ func startMasterFollower(masterOptions MasterOptions) {
 	go ms.MasterClient.KeepConnectedToMaster(context.Background())
 
 	// start http server
-	var (
-		clientCertFile,
-		certFile,
-		keyFile string
-	)
-	useTLS := false
-	useMTLS := false
-
-	if viper.GetString("https.master.key") != "" {
-		useTLS = true
-		certFile = viper.GetString("https.master.cert")
-		keyFile = viper.GetString("https.master.key")
-	}
-
-	if viper.GetString("https.master.ca") != "" {
-		useMTLS = true
-		clientCertFile = viper.GetString("https.master.ca")
-	}
-
 	httpS := &http.Server{Handler: r}
 	if masterLocalListener != nil {
 		go httpS.Serve(masterLocalListener)
 	}
 
-	if useMTLS {
-		httpS.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
-	}
-
-	if useTLS {
+	if viper.GetString("https.master.key") != "" {
+		certFile := viper.GetString("https.master.cert")
+		keyFile := viper.GetString("https.master.key")
 		go httpS.ServeTLS(masterListener, certFile, keyFile)
 	} else {
 		go httpS.Serve(masterListener)
 	}
-
 	select {}
 }
