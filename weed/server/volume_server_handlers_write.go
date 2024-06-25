@@ -53,7 +53,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	// http 204 status code does not allow body
 	if writeError == nil && isUnchanged {
-		setEtag(w, reqNeedle.Etag())
+		SetEtag(w, reqNeedle.Etag())
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -65,7 +65,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	ret.Size = uint32(originalSize)
 	ret.ETag = reqNeedle.Etag()
 	ret.Mime = string(reqNeedle.Mime)
-	setEtag(w, ret.ETag)
+	SetEtag(w, ret.ETag)
 	w.Header().Set("Content-MD5", contentMd5)
 	writeJsonQuiet(w, r, httpStatus, ret)
 }
@@ -147,7 +147,7 @@ func writeDeleteResult(err error, count int64, w http.ResponseWriter, r *http.Re
 	}
 }
 
-func setEtag(w http.ResponseWriter, etag string) {
+func SetEtag(w http.ResponseWriter, etag string) {
 	if etag != "" {
 		if strings.HasPrefix(etag, "\"") {
 			w.Header().Set("ETag", etag)
