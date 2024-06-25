@@ -22,7 +22,7 @@ func init() {
 	}
 
 	for _, service := range util_services.GetAll() {
-		if caCertFilePath := viper.GetString(fmt.Sprintf("https.%s.ca", service.String())); caCertFilePath != "" {
+		if caCertFilePath := viper.GetString(fmt.Sprintf("https.%s.ca", service.LowerCaseString())); caCertFilePath != "" {
 			tlsConfig := LoadClientTLSHTTP(caCertFilePath)
 			mu.Lock()
 			defer mu.Unlock()
