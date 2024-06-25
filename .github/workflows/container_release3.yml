@@ -48,7 +48,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
       -
         name: Build
-        uses: docker/build-push-action@c382f710d39a5bb4e430307530a720f50c2d3318 # v2
+        uses: docker/build-push-action@31159d49c0d4756269a0940a750801a1ea5d7003 # v2
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
