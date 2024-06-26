@@ -217,7 +217,12 @@ func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jw
 			PairMap:           nil,
 			Jwt:               jwt,
 		}
-		ret, e, _ := Upload(fi.Reader, uploadOption)
+		
+		uploader, err := NewUploader()
+		if err != nil {
+			return 0, err
+		}
+		ret, e, _ := uploader.Upload(fi.Reader, uploadOption)
 		if e != nil {
 			return 0, e
 		}
@@ -239,7 +244,12 @@ func upload_one_chunk(filename string, reader io.Reader, masterFn GetMasterFn,
 		PairMap:           nil,
 		Jwt:               jwt,
 	}
-	uploadResult, uploadError, _ := Upload(reader, uploadOption)
+
+	uploader, err := NewUploader()
+	if err != nil {
+		return 0, err
+	}
+	uploadResult, uploadError, _ := uploader.Upload(reader, uploadOption)
 	if uploadError != nil {
 		return 0, uploadError
 	}
@@ -265,6 +275,11 @@ func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt s
 		PairMap:           nil,
 		Jwt:               jwt,
 	}
-	_, e = UploadData(buf, uploadOption)
+
+	uploader, err := NewUploader()
+	if err != nil {
+		return err
+	}
+	_, e = uploader.UploadData(buf, uploadOption)
 	return e
 }

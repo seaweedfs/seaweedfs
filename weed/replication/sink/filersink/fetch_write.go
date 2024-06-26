@@ -91,7 +91,11 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 	}
 	defer util_http.CloseResponse(resp)
 
-	fileId, uploadResult, err, _ := operation.UploadWithRetry(
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return "", err
+	}
+	fileId, uploadResult, err, _ := uploader.UploadWithRetry(
 		fs,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,

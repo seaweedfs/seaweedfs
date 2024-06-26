@@ -8,19 +8,24 @@ import (
 )
 
 var (
-	clientCfg   *util_http.ClientCfg
+	clientCfg    *util_http.ClientCfg
+	clientCfgErr error
+
 	once        sync.Once
 	serviceName = util_http.Unknown
 )
 
 func initClientConfig() {
-	var err error
 	once.Do(func() {
-		clientCfg, err = util_http.NewClientCfg(serviceName)
+		clientCfg, clientCfgErr = NewClientCfg()
 	})
-	if err != nil {
-		glog.Fatalf("Error init client config for `%s`:`%s`", serviceName, err)
+	if clientCfgErr != nil {
+		glog.Fatalf("Error init client config for `%s`:`%s`", serviceName, clientCfgErr)
 	}
+}
+
+func NewClientCfg() (*util_http.ClientCfg, error) {
+	return util_http.NewClientCfg(serviceName, util_http.AddDialContext)
 }
 
 func GetClientCfg() *util_http.ClientCfg {

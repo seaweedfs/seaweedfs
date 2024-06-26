@@ -344,7 +344,11 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 			return err
 		}
 
-		finalFileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
+		uploader, err := operation.NewUploader()
+		if err != nil {
+			return err
+		}
+		finalFileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
 			worker,
 			&filer_pb.AssignVolumeRequest{
 				Count:       1,
@@ -423,7 +427,12 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				<-concurrentChunks
 			}()
 
-			fileId, uploadResult, err, _ := operation.UploadWithRetry(
+			uploader, err := operation.NewUploader()
+			if err != nil {
+				uploadError = err
+				return
+			}
+			fileId, uploadResult, err, _ := uploader.UploadWithRetry(
 				worker,
 				&filer_pb.AssignVolumeRequest{
 					Count:       1,
@@ -535,8 +544,11 @@ func detectMimeType(f *os.File) string {
 }
 
 func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
-
-	finalFileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return nil, err
+	}
+	finalFileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
 		worker,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,
