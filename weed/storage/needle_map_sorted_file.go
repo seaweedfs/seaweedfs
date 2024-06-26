@@ -27,7 +27,7 @@ func NewSortedFileNeedleMap(indexBaseFileName string, indexFile *os.File) (m *So
 	}
 	glog.V(1).Infof("Opening %s...", fileName)
 
-	if m.dbFile, err = os.Open(indexBaseFileName + ".sdx"); err != nil {
+	if m.dbFile, err = os.OpenFile(indexBaseFileName+".sdx", os.O_RDWR, 0); err != nil {
 		return
 	}
 	dbStat, _ := m.dbFile.Stat()

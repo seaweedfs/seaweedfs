@@ -27,8 +27,14 @@ spec:
       {{ with .Values.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.s3.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
       annotations:
       {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.s3.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
@@ -198,9 +204,9 @@ spec:
             failureThreshold: {{ .Values.s3.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.s3.livenessProbe.timeoutSeconds }}
           {{- end }}
-          {{- if .Values.s3.resources }}
+          {{- with .Values.s3.resources }}
           resources:
-            {{ tpl .Values.s3.resources . | nindent 12 | trim }}
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- if .Values.s3.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.s3.containerSecurityContext "enabled" | toYaml | nindent 12 }}

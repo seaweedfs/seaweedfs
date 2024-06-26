@@ -25,8 +25,9 @@ func init() {
 }
 
 type LevelDB2Store struct {
-	dbs     []*leveldb.DB
-	dbCount int
+	dbs      []*leveldb.DB
+	dbCount  int
+	ReadOnly bool
 }
 
 func (store *LevelDB2Store) GetName() string {
@@ -49,6 +50,7 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 		BlockCacheCapacity: 32 * 1024 * 1024,         // default value is 8MiB
 		WriteBuffer:        16 * 1024 * 1024,         // default value is 4MiB
 		Filter:             filter.NewBloomFilter(8), // false positive rate 0.02
+		ReadOnly:           store.ReadOnly,
 	}
 
 	for d := 0; d < dbCount; d++ {

@@ -28,8 +28,14 @@ spec:
       {{ with .Values.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.volume.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
       annotations:
       {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.volume.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
@@ -236,9 +242,9 @@ spec:
             failureThreshold: {{ .Values.volume.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.volume.livenessProbe.timeoutSeconds }}
           {{- end }}
-          {{- if .Values.volume.resources }}
+          {{- with .Values.volume.resources }}
           resources:
-            {{ tpl .Values.volume.resources . | nindent 12 | trim }}
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- if .Values.volume.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}

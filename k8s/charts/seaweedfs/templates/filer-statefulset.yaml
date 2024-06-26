@@ -35,8 +35,14 @@ spec:
       {{ with .Values.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.filer.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
       annotations:
       {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.filer.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
@@ -129,7 +135,7 @@ spec:
             - "-ec"
             - |
               exec /usr/bin/weed \
-              {{- if or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "emptyDir") }}
+              {{- if or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "persistentVolumeClaim") (eq .Values.filer.logs.type "emptyDir") }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
@@ -197,7 +203,7 @@ spec:
               {{- end }}
               -master={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
           volumeMounts:
-            {{- if or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "emptyDir") }}
+            {{- if (or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "persistentVolumeClaim") (eq .Values.filer.logs.type "emptyDir")) }}
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
             {{- end }}
@@ -263,9 +269,9 @@ spec:
             failureThreshold: {{ .Values.filer.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.filer.livenessProbe.timeoutSeconds }}
           {{- end }}
-          {{- if .Values.filer.resources }}
+          {{- with .Values.filer.resources }}
           resources:
-            {{ tpl .Values.filer.resources . | nindent 12 | trim }}
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- if .Values.filer.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}

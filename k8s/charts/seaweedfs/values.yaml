@@ -127,6 +127,12 @@ master:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Labels to be added to the master pods
+  podLabels: {}
+
+  # Annotations to be added to the master pods
+  podAnnotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -134,7 +140,7 @@ master:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # updatePartition is used to control a careful rolling update of SeaweedFS
   # masters.
@@ -369,6 +375,12 @@ volume:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Labels to be added to the volume pods
+  podLabels: {}
+
+  # Annotations to be added to the volume pods
+  podAnnotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -389,7 +401,7 @@ volume:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
@@ -551,6 +563,12 @@ filer:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Labels to be added to the filer pods
+  podLabels: {}
+
+  # Annotations to be added to the filer pods
+  podAnnotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -575,7 +593,7 @@ filer:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
@@ -761,11 +779,17 @@ s3:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Labels to be added to the s3 pods
+  podLabels: {}
+
+  # Annotations to be added to the s3 pods
+  podAnnotations: {}
+
   # Resource requests, limits, etc. for the server cluster placement. This
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array

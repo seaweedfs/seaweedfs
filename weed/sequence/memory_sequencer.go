@@ -30,7 +30,3 @@ func (m *MemorySequencer) SetMax(seenValue uint64) {
 		m.counter = seenValue + 1
 	}
 }
-
-func (m *MemorySequencer) Peek() uint64 {
-	return m.counter
-}

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -218,7 +219,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		}()
 	}
 
-	go ms.MasterClient.KeepConnectedToMaster()
+	go ms.MasterClient.KeepConnectedToMaster(context.Background())
 
 	// start http server
 	var (

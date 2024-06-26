@@ -34,8 +34,14 @@ spec:
       {{ with .Values.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.master.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
       annotations:
       {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.master.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
@@ -110,7 +116,7 @@ spec:
             - "-ec"
             - |
               exec /usr/bin/weed \
-              {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "emptyDir") }}
+              {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "persistentVolumeClaim") (eq .Values.master.logs.type "emptyDir") }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
@@ -158,7 +164,7 @@ spec:
           volumeMounts:
             - name : data-{{ .Release.Namespace }}
               mountPath: /data
-            {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "emptyDir") }}
+            {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "persistentVolumeClaim") (eq .Values.master.logs.type "emptyDir") }}
             - name: seaweedfs-master-log-volume
               mountPath: "/logs/"
             {{- end }}
@@ -221,9 +227,9 @@ spec:
             failureThreshold: {{ .Values.master.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.master.livenessProbe.timeoutSeconds }}
           {{- end }}
-          {{- if .Values.master.resources }}
+          {{- with .Values.master.resources }}
           resources:
-            {{ tpl .Values.master.resources . | nindent 12 | trim }}
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- if .Values.master.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.master.containerSecurityContext "enabled" | toYaml | nindent 12 }}

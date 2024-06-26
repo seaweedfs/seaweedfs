@@ -74,7 +74,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		DirectoriesToWatch:     nil,
 		StartTsNs:              lastOffsetTs.UnixNano(),
 		StopTsNs:               0,
-		EventErrorType:         pb.TrivialOnError,
+		EventErrorType:         pb.RetryForeverOnError,
 	}
 
 	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)

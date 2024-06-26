@@ -31,9 +31,10 @@ func init() {
 }
 
 type LevelDB3Store struct {
-	dir     string
-	dbs     map[string]*leveldb.DB
-	dbsLock sync.RWMutex
+	dir      string
+	dbs      map[string]*leveldb.DB
+	dbsLock  sync.RWMutex
+	ReadOnly bool
 }
 
 func (store *LevelDB3Store) GetName() string {
@@ -69,12 +70,14 @@ func (store *LevelDB3Store) loadDB(name string) (*leveldb.DB, error) {
 		BlockCacheCapacity: 32 * 1024 * 1024, // default value is 8MiB
 		WriteBuffer:        16 * 1024 * 1024, // default value is 4MiB
 		Filter:             bloom,
+		ReadOnly:           store.ReadOnly,
 	}
 	if name != DEFAULT {
 		opts = &opt.Options{
 			BlockCacheCapacity: 16 * 1024 * 1024, // default value is 8MiB
 			WriteBuffer:        8 * 1024 * 1024,  // default value is 4MiB
 			Filter:             bloom,
+			ReadOnly:           store.ReadOnly,
 		}
 	}
 

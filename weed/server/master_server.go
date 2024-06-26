@@ -292,12 +292,12 @@ func (ms *MasterServer) startAdminScripts() {
 
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
-	go commandEnv.MasterClient.KeepConnectedToMaster()
+	go commandEnv.MasterClient.KeepConnectedToMaster(context.Background())
 
 	go func() {
 		for {
 			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
-			if ms.Topo.IsLeader() && ms.MasterClient.GetMaster() != "" {
+			if ms.Topo.IsLeader() && ms.MasterClient.GetMaster(context.Background()) != "" {
 				shellOptions.FilerAddress = ms.GetOneFiler(cluster.FilerGroupName(*shellOptions.FilerGroup))
 				if shellOptions.FilerAddress == "" {
 					continue
