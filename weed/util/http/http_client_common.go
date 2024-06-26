@@ -23,15 +23,15 @@ type ClientCfg struct {
 	expectHttpsScheme bool
 }
 
-func (cfg *ClientCfg) GetHttpSheme() string {
+func (cfg *ClientCfg) GetHttpScheme() string {
 	if cfg.expectHttpsScheme {
 		return "https"
 	}
 	return "http"
 }
 
-func (cfg *ClientCfg) FixHttpSheme(rawURL string) (string, error) {
-	expectedScheme := cfg.GetHttpSheme()
+func (cfg *ClientCfg) FixHttpScheme(rawURL string) (string, error) {
+	expectedScheme := cfg.GetHttpScheme()
 
 	if !(strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://")) {
 		return expectedScheme + "://" + rawURL, nil

@@ -17,7 +17,7 @@ import (
 )
 
 func Post(clientCfg *ClientCfg, url string, values url.Values) ([]byte, error) {
-	url, err := clientCfg.FixHttpSheme(url)
+	url, err := clientCfg.FixHttpScheme(url)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func Get(clientCfg *ClientCfg, url string) ([]byte, bool, error) {
 }
 
 func GetAuthenticated(clientCfg *ClientCfg, url, jwt string) ([]byte, bool, error) {
-	url, err := clientCfg.FixHttpSheme(url)
+	url, err := clientCfg.FixHttpScheme(url)
 	if err != nil {
 		return nil, true, err
 	}
@@ -88,7 +88,7 @@ func GetAuthenticated(clientCfg *ClientCfg, url, jwt string) ([]byte, bool, erro
 }
 
 func Head(clientCfg *ClientCfg, url string) (http.Header, error) {
-	url, err := clientCfg.FixHttpSheme(url)
+	url, err := clientCfg.FixHttpScheme(url)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func maybeAddAuth(req *http.Request, jwt string) {
 }
 
 func Delete(clientCfg *ClientCfg, url string, jwt string) error {
-	url, err := clientCfg.FixHttpSheme(url)
+	url, err := clientCfg.FixHttpScheme(url)
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func Delete(clientCfg *ClientCfg, url string, jwt string) error {
 }
 
 func DeleteProxied(clientCfg *ClientCfg, url string, jwt string) (body []byte, httpStatus int, err error) {
-	url, err = clientCfg.FixHttpSheme(url)
+	url, err = clientCfg.FixHttpScheme(url)
 	if err != nil {
 		return
 	}
@@ -165,7 +165,7 @@ func DeleteProxied(clientCfg *ClientCfg, url string, jwt string) (body []byte, h
 }
 
 func GetBufferStream(clientCfg *ClientCfg, url string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
-	url, err := clientCfg.FixHttpSheme(url)
+	url, err := clientCfg.FixHttpScheme(url)
 	if err != nil {
 		return err
 	}
@@ -192,7 +192,7 @@ func GetBufferStream(clientCfg *ClientCfg, url string, values url.Values, alloca
 }
 
 func GetUrlStream(clientCfg *ClientCfg, url string, values url.Values, readFn func(io.Reader) error) error {
-	url, err := clientCfg.FixHttpSheme(url)
+	url, err := clientCfg.FixHttpScheme(url)
 	if err != nil {
 		return err
 	}
@@ -208,7 +208,7 @@ func GetUrlStream(clientCfg *ClientCfg, url string, values url.Values, readFn fu
 }
 
 func DownloadFile(clientCfg *ClientCfg, fileUrl string, jwt string) (filename string, header http.Header, resp *http.Response, e error) {
-	fileUrl, err := clientCfg.FixHttpSheme(fileUrl)
+	fileUrl, err := clientCfg.FixHttpScheme(fileUrl)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -237,15 +237,16 @@ func DownloadFile(clientCfg *ClientCfg, fileUrl string, jwt string) (filename st
 }
 
 func Do(clientCfg *ClientCfg, req *http.Request) (resp *http.Response, err error) {
+	req.URL.Scheme = clientCfg.GetHttpScheme()
 	return clientCfg.Client.Do(req)
 }
 
 func NormalizeUrl(clientCfg *ClientCfg, url string) (string, error) {
-	return clientCfg.FixHttpSheme(url)
+	return clientCfg.FixHttpScheme(url)
 }
 
 func ReadUrl(clientCfg *ClientCfg, fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
-	fileUrl, err := clientCfg.FixHttpSheme(fileUrl)
+	fileUrl, err := clientCfg.FixHttpScheme(fileUrl)
 	if err != nil {
 		return 0, err
 	}
@@ -325,7 +326,7 @@ func ReadUrlAsStream(clientCfg *ClientCfg, fileUrl string, cipherKey []byte, isC
 }
 
 func ReadUrlAsStreamAuthenticated(clientCfg *ClientCfg, fileUrl, jwt string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
-	fileUrl, err = clientCfg.FixHttpSheme(fileUrl)
+	fileUrl, err = clientCfg.FixHttpScheme(fileUrl)
 	if err != nil {
 		return false, err
 	}
@@ -388,7 +389,7 @@ func ReadUrlAsStreamAuthenticated(clientCfg *ClientCfg, fileUrl, jwt string, cip
 }
 
 func readEncryptedUrl(clientCfg *ClientCfg, fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
-	fileUrl, err := clientCfg.FixHttpSheme(fileUrl)
+	fileUrl, err := clientCfg.FixHttpScheme(fileUrl)
 	if err != nil {
 		return false, err
 	}
@@ -419,7 +420,7 @@ func readEncryptedUrl(clientCfg *ClientCfg, fileUrl, jwt string, cipherKey []byt
 }
 
 func ReadUrlAsReaderCloser(clientCfg *ClientCfg, fileUrl string, jwt string, rangeHeader string) (*http.Response, io.ReadCloser, error) {
-	fileUrl, err := clientCfg.FixHttpSheme(fileUrl)
+	fileUrl, err := clientCfg.FixHttpScheme(fileUrl)
 	if err != nil {
 		return nil, nil, err
 	}
