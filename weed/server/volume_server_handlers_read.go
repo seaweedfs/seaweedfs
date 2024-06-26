@@ -99,7 +99,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 				}
 			}
 
-			response, err := client.Do(request)
+			response, err := http_unknown.Do(request)
 			if err != nil {
 				glog.V(0).Infof("request remote url %s: %v", r.URL.String(), err)
 				InternalError(w)

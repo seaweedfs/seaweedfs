@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
 )
 
 var (
@@ -51,8 +52,6 @@ func main() {
 	for x := 0; x < *concurrency; x++ {
 		wg.Add(1)
 
-		client := &http.Client{}
-
 		go func() {
 			defer wg.Done()
 			rand.Shuffle(len(fileNames), func(i, j int) {
@@ -60,7 +59,7 @@ func main() {
 			})
 			for t := 0; t < *times; t++ {
 				for _, filename := range fileNames {
-					if size, err := uploadFileToFiler(client, filename, *destination); err == nil {
+					if size, err := uploadFileToFiler(http_unknown.GetClient(), filename, *destination); err == nil {
 						statsChan <- stat{
 							size: size,
 						}

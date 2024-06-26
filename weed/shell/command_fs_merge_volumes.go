@@ -20,14 +20,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-)
-
-var (
-	client *http.Client
+	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
 )
 
 func init() {
-	client = &http.Client{}
 	Commands = append(Commands, &commandFsMergeVolumes{})
 }
 
@@ -105,6 +101,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 		return nil
 	}
 
+	client := http_unknown.GetClient()
 	defer client.CloseIdleConnections()
 
 	return commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
@@ -349,7 +346,7 @@ func readUrl(fileUrl string) (*http.Response, io.ReadCloser, error) {
 	}
 	req.Header.Add("Accept-Encoding", "gzip")
 
-	r, err := client.Do(req)
+	r, err := http_unknown.Do(req)
 	if err != nil {
 		return nil, nil, err
 	}

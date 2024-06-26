@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
 )
 
 var (
@@ -43,16 +44,12 @@ func main() {
 		go func(x int) {
 			defer wg.Done()
 
-			client := &http.Client{Transport: &http.Transport{
-				MaxIdleConns:        1024,
-				MaxIdleConnsPerHost: 1024,
-			}}
 			r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(x)))
 
 			for t := 0; t < *times; t++ {
 				for f := 0; f < *fileCount; f++ {
 					fn := r.Intn(*fileCount)
-					if size, err := uploadFileToFiler(client, data, fmt.Sprintf("file%04d", fn), *destination); err == nil {
+					if size, err := uploadFileToFiler(http_unknown.GetClient(), data, fmt.Sprintf("file%04d", fn), *destination); err == nil {
 						statsChan <- stat{
 							size: size,
 						}
