@@ -82,18 +82,18 @@ type Uploader struct {
 }
 
 func NewUploader() (*Uploader, error) {
-	var clientCfg *util_http.ClientCfg
 	once.Do(func ()  {
 		// With Dial context
+		var clientCfg *util_http.ClientCfg
 		clientCfg, uploaderErr = util_unknown.NewClientCfg(util_http.AddDialContext)
-		if uploader != nil {
+		if uploaderErr != nil {
 			uploaderErr = fmt.Errorf("error initializing the loader: %s", uploaderErr)
 		}
+		if clientCfg != nil {
+			uploader = newUploader(clientCfg.Client)
+		}
 	})
-	if uploaderErr != nil {
-		return nil, uploaderErr
-	}
-	return newUploader(clientCfg.Client), nil
+	return uploader, uploaderErr
 }
 
 func newUploader(client HTTPClient) (*Uploader) {
