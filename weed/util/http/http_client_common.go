@@ -48,7 +48,7 @@ func (cfg *ClientCfg) FixHttpScheme(rawURL string) (string, error) {
 	return parsedURL.String(), nil
 }
 
-func NewClientCfg(serviceName ServiceName) (*ClientCfg, error) {
+func NewClientCfg(serviceName ServiceName, opts ...NewClientCfgOpt) (*ClientCfg, error) {
 	clientCfg := ClientCfg{}
 	clientCfg.expectHttpsScheme = false
 
@@ -88,6 +88,10 @@ func NewClientCfg(serviceName ServiceName) (*ClientCfg, error) {
 	}
 	clientCfg.Client = &http.Client{
 		Transport: clientCfg.Transport,
+	}
+
+	for _, opt := range opts {
+		opt(&clientCfg)
 	}
 	return &clientCfg, nil
 }
