@@ -24,8 +24,8 @@ func initClientConfig() {
 	}
 }
 
-func NewClientCfg() (*util_http.ClientCfg, error) {
-	return util_http.NewClientCfg(serviceName, util_http.AddDialContext)
+func NewClientCfg(opts ...util_http.NewClientCfgOpt) (*util_http.ClientCfg, error) {
+	return util_http.NewClientCfg(serviceName)
 }
 
 func GetClientCfg() *util_http.ClientCfg {

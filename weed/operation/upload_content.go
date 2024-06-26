@@ -23,7 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-	util_unknown_with_dial_context "github.com/seaweedfs/seaweedfs/weed/util/http/unknown_with_dial_context"
+	util_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
 )
 
 type UploadOption struct {
@@ -84,7 +84,8 @@ type Uploader struct {
 func NewUploader() (*Uploader, error) {
 	var clientCfg *util_http.ClientCfg
 	once.Do(func ()  {
-		clientCfg, uploaderErr = util_unknown_with_dial_context.NewClientCfg()
+		// With Dial context
+		clientCfg, uploaderErr = util_unknown.NewClientCfg(util_http.AddDialContext)
 		if uploader != nil {
 			uploaderErr = fmt.Errorf("error initializing the loader: %s", uploaderErr)
 		}
