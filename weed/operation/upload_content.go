@@ -23,7 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-	util_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
+	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
 )
 
 type UploadOption struct {
@@ -77,6 +77,16 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// HTTPClient implement with override Do method
+type UploaderHTTPClient struct {
+	clientCfg *util_http.ClientCfg
+}
+
+func (uploaderHTTPClient *UploaderHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	return util_http.Do(uploaderHTTPClient.clientCfg, req)
+}
+
+// Uploader
 type Uploader struct {
 	client HTTPClient
 }
@@ -85,12 +95,12 @@ func NewUploader() (*Uploader, error) {
 	once.Do(func ()  {
 		// With Dial context
 		var clientCfg *util_http.ClientCfg
-		clientCfg, uploaderErr = util_unknown.NewClientCfg(util_http.AddDialContext)
+		clientCfg, uploaderErr = http_unknown.NewClientCfg(util_http.AddDialContext)
 		if uploaderErr != nil {
 			uploaderErr = fmt.Errorf("error initializing the loader: %s", uploaderErr)
 		}
 		if clientCfg != nil {
-			uploader = newUploader(clientCfg.Client)
+			uploader = newUploader(&UploaderHTTPClient{clientCfg: clientCfg})
 		}
 	})
 	return uploader, uploaderErr

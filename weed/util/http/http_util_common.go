@@ -16,12 +16,12 @@ import (
 	util "github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func Post(clientCfg *ClientCfg, url string, values url.Values) ([]byte, error) {
-	url, err := clientCfg.FixHttpScheme(url)
+func Post(clientCfg *ClientCfg, rawURL string, values url.Values) ([]byte, error) {
+	rawURL, err := clientCfg.FixHttpScheme(rawURL)
 	if err != nil {
 		return nil, err
 	}
-	r, err := clientCfg.Client.PostForm(url, values)
+	r, err := clientCfg.Client.PostForm(rawURL, values)
 	if err != nil {
 		return nil, err
 	}
@@ -29,9 +29,9 @@ func Post(clientCfg *ClientCfg, url string, values url.Values) ([]byte, error) {
 	b, err := io.ReadAll(r.Body)
 	if r.StatusCode >= 400 {
 		if err != nil {
-			return nil, fmt.Errorf("%s: %d - %s", url, r.StatusCode, string(b))
+			return nil, fmt.Errorf("%s: %d - %s", rawURL, r.StatusCode, string(b))
 		} else {
-			return nil, fmt.Errorf("%s: %s", url, r.Status)
+			return nil, fmt.Errorf("%s: %s", rawURL, r.Status)
 		}
 	}
 	if err != nil {
@@ -42,16 +42,16 @@ func Post(clientCfg *ClientCfg, url string, values url.Values) ([]byte, error) {
 
 // github.com/seaweedfs/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
 // may need increasing http.Client.Timeout
-func Get(clientCfg *ClientCfg, url string) ([]byte, bool, error) {
-	return GetAuthenticated(clientCfg, url, "")
+func Get(clientCfg *ClientCfg, rawURL string) ([]byte, bool, error) {
+	return GetAuthenticated(clientCfg, rawURL, "")
 }
 
-func GetAuthenticated(clientCfg *ClientCfg, url, jwt string) ([]byte, bool, error) {
-	url, err := clientCfg.FixHttpScheme(url)
+func GetAuthenticated(clientCfg *ClientCfg, rawURL, jwt string) ([]byte, bool, error) {
+	rawURL, err := clientCfg.FixHttpScheme(rawURL)
 	if err != nil {
 		return nil, true, err
 	}
-	request, err := http.NewRequest("GET", url, nil)
+	request, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {
 		return nil, true, err
 	}
@@ -79,7 +79,7 @@ func GetAuthenticated(clientCfg *ClientCfg, url, jwt string) ([]byte, bool, erro
 	b, err := io.ReadAll(reader)
 	if response.StatusCode >= 400 {
 		retryable := response.StatusCode >= 500
-		return nil, retryable, fmt.Errorf("%s: %s", url, response.Status)
+		return nil, retryable, fmt.Errorf("%s: %s", rawURL, response.Status)
 	}
 	if err != nil {
 		return nil, false, err
@@ -87,18 +87,18 @@ func GetAuthenticated(clientCfg *ClientCfg, url, jwt string) ([]byte, bool, erro
 	return b, false, nil
 }
 
-func Head(clientCfg *ClientCfg, url string) (http.Header, error) {
-	url, err := clientCfg.FixHttpScheme(url)
+func Head(clientCfg *ClientCfg, rawURL string) (http.Header, error) {
+	rawURL, err := clientCfg.FixHttpScheme(rawURL)
 	if err != nil {
 		return nil, err
 	}
-	r, err := clientCfg.Client.Head(url)
+	r, err := clientCfg.Client.Head(rawURL)
 	if err != nil {
 		return nil, err
 	}
 	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s: %s", url, r.Status)
+		return nil, fmt.Errorf("%s: %s", rawURL, r.Status)
 	}
 	return r.Header, nil
 }
@@ -109,12 +109,12 @@ func maybeAddAuth(req *http.Request, jwt string) {
 	}
 }
 
-func Delete(clientCfg *ClientCfg, url string, jwt string) error {
-	url, err := clientCfg.FixHttpScheme(url)
+func Delete(clientCfg *ClientCfg, rawURL string, jwt string) error {
+	rawURL, err := clientCfg.FixHttpScheme(rawURL)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest("DELETE", url, nil)
+	req, err := http.NewRequest("DELETE", rawURL, nil)
 	maybeAddAuth(req, jwt)
 	if err != nil {
 		return err
@@ -141,12 +141,12 @@ func Delete(clientCfg *ClientCfg, url string, jwt string) error {
 	return errors.New(string(body))
 }
 
-func DeleteProxied(clientCfg *ClientCfg, url string, jwt string) (body []byte, httpStatus int, err error) {
-	url, err = clientCfg.FixHttpScheme(url)
+func DeleteProxied(clientCfg *ClientCfg, rawURL string, jwt string) (body []byte, httpStatus int, err error) {
+	rawURL, err = clientCfg.FixHttpScheme(rawURL)
 	if err != nil {
 		return
 	}
-	req, err := http.NewRequest("DELETE", url, nil)
+	req, err := http.NewRequest("DELETE", rawURL, nil)
 	maybeAddAuth(req, jwt)
 	if err != nil {
 		return
@@ -164,18 +164,18 @@ func DeleteProxied(clientCfg *ClientCfg, url string, jwt string) (body []byte, h
 	return
 }
 
-func GetBufferStream(clientCfg *ClientCfg, url string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
-	url, err := clientCfg.FixHttpScheme(url)
+func GetBufferStream(clientCfg *ClientCfg, rawURL string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
+	rawURL, err := clientCfg.FixHttpScheme(rawURL)
 	if err != nil {
 		return err
 	}
-	r, err := clientCfg.Client.PostForm(url, values)
+	r, err := clientCfg.Client.PostForm(rawURL, values)
 	if err != nil {
 		return err
 	}
 	defer CloseResponse(r)
 	if r.StatusCode != 200 {
-		return fmt.Errorf("%s: %s", url, r.Status)
+		return fmt.Errorf("%s: %s", rawURL, r.Status)
 	}
 	for {
 		n, err := r.Body.Read(allocatedBytes)
@@ -191,18 +191,18 @@ func GetBufferStream(clientCfg *ClientCfg, url string, values url.Values, alloca
 	}
 }
 
-func GetUrlStream(clientCfg *ClientCfg, url string, values url.Values, readFn func(io.Reader) error) error {
-	url, err := clientCfg.FixHttpScheme(url)
+func GetUrlStream(clientCfg *ClientCfg, rawURL string, values url.Values, readFn func(io.Reader) error) error {
+	rawURL, err := clientCfg.FixHttpScheme(rawURL)
 	if err != nil {
 		return err
 	}
-	r, err := clientCfg.Client.PostForm(url, values)
+	r, err := clientCfg.Client.PostForm(rawURL, values)
 	if err != nil {
 		return err
 	}
 	defer CloseResponse(r)
 	if r.StatusCode != 200 {
-		return fmt.Errorf("%s: %s", url, r.Status)
+		return fmt.Errorf("%s: %s", rawURL, r.Status)
 	}
 	return readFn(r.Body)
 }
@@ -241,8 +241,8 @@ func Do(clientCfg *ClientCfg, req *http.Request) (resp *http.Response, err error
 	return clientCfg.Client.Do(req)
 }
 
-func NormalizeUrl(clientCfg *ClientCfg, url string) (string, error) {
-	return clientCfg.FixHttpScheme(url)
+func NormalizeUrl(clientCfg *ClientCfg, rawURL string) (string, error) {
+	return clientCfg.FixHttpScheme(rawURL)
 }
 
 func ReadUrl(clientCfg *ClientCfg, fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {

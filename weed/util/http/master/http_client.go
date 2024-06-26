@@ -25,7 +25,7 @@ func initClientConfig() {
 }
 
 func NewClientCfg(opts ...util_http.NewClientCfgOpt) (*util_http.ClientCfg, error) {
-	return util_http.NewClientCfg(serviceName)
+	return util_http.NewClientCfg(serviceName, opts...)
 }
 
 func GetClientCfg() *util_http.ClientCfg {
