@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -304,7 +305,7 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 	if err != nil {
 		return err
 	}
-	defer util.CloseResponse(resp)
+	defer util_http.CloseResponse(resp)
 	defer reader.Close()
 
 	var filename string
@@ -353,7 +354,7 @@ func readUrl(fileUrl string) (*http.Response, io.ReadCloser, error) {
 		return nil, nil, err
 	}
 	if r.StatusCode >= 400 {
-		util.CloseResponse(r)
+		util_http.CloseResponse(r)
 		return nil, nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 

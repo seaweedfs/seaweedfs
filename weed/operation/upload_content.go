@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type UploadOption struct {
@@ -339,14 +340,14 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	}
 	// print("+")
 	resp, post_err := HttpClient.Do(req)
-	defer util.CloseResponse(resp)
+	defer util_http.CloseResponse(resp)
 	if post_err != nil {
 		if strings.Contains(post_err.Error(), "connection reset by peer") ||
 			strings.Contains(post_err.Error(), "use of closed network connection") {
 			glog.V(1).Infof("repeat error upload request %s: %v", option.UploadUrl, postErr)
 			stats.FilerHandlerCounter.WithLabelValues(stats.RepeatErrorUploadContent).Inc()
 			resp, post_err = HttpClient.Do(req)
-			defer util.CloseResponse(resp)
+			defer util_http.CloseResponse(resp)
 		}
 	}
 	if post_err != nil {

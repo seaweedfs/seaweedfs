@@ -15,6 +15,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -63,11 +65,11 @@ func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpti
 	if lookupError != nil {
 		return lookupError
 	}
-	filename, _, rc, err := util.DownloadFile(fileUrl, jwt)
+	filename, _, rc, err := http_unknown.DownloadFile(fileUrl, jwt)
 	if err != nil {
 		return err
 	}
-	defer util.CloseResponse(rc)
+	defer util_http.CloseResponse(rc)
 	if filename == "" {
 		filename = fileId
 	}
@@ -116,10 +118,10 @@ func fetchContent(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption
 		return "", nil, lookupError
 	}
 	var rc *http.Response
-	if filename, _, rc, e = util.DownloadFile(fileUrl, jwt); e != nil {
+	if filename, _, rc, e = http_unknown.DownloadFile(fileUrl, jwt); e != nil {
 		return "", nil, e
 	}
-	defer util.CloseResponse(rc)
+	defer util_http.CloseResponse(rc)
 	content, e = io.ReadAll(rc.Body)
 	return
 }

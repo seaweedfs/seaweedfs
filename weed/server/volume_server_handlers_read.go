@@ -27,6 +27,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
@@ -81,7 +83,8 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 		if vs.ReadMode == "proxy" {
 			// proxy client request to target server
-			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations[0].Url))
+			rawURL, _ := http_unknown.NormalizeUrl(lookupResult.Locations[0].Url)
+			u, _ := url.Parse(rawURL)
 			r.URL.Host = u.Host
 			r.URL.Scheme = u.Scheme
 			request, err := http.NewRequest("GET", r.URL.String(), nil)
@@ -102,7 +105,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 				InternalError(w)
 				return
 			}
-			defer util.CloseResponse(response)
+			defer util_http.CloseResponse(response)
 			// proxy target response to client
 			for k, vv := range response.Header {
 				for _, v := range vv {
@@ -116,7 +119,8 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			return
 		} else {
 			// redirect
-			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations[0].PublicUrl))
+			rawURL, _ := http_unknown.NormalizeUrl(lookupResult.Locations[0].PublicUrl)
+			u, _ := url.Parse(rawURL)
 			u.Path = fmt.Sprintf("%s/%s,%s", u.Path, vid, fid)
 			arg := url.Values{}
 			if c := r.FormValue("collection"); c != "" {

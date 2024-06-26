@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
@@ -110,11 +111,11 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 	location := ms.findVolumeLocation(collection, vid)
 	if location.Error == "" {
 		loc := location.Locations[rand.Intn(len(location.Locations))]
-		var url string
+		url, _ := http_unknown.NormalizeUrl(loc.PublicUrl)
 		if r.URL.RawQuery != "" {
-			url = util.NormalizeUrl(loc.PublicUrl) + r.URL.Path + "?" + r.URL.RawQuery
+			url = url + r.URL.Path + "?" + r.URL.RawQuery
 		} else {
-			url = util.NormalizeUrl(loc.PublicUrl) + r.URL.Path
+			url = url + r.URL.Path
 		}
 		http.Redirect(w, r, url, http.StatusPermanentRedirect)
 	} else {
