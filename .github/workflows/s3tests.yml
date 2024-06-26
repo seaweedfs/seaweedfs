@@ -216,7 +216,7 @@ jobs:
           go install -tags "sqlite" -buildvcs=false
           export WEED_LEVELDB2_ENABLED="false" WEED_SQLITE_ENABLED="true" WEED_SQLITE_DBFILE="./filer.db"
           set -x
-          weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 -s3.allowListRecursive=true \
+          weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
             -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &

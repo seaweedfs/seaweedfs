@@ -165,14 +165,11 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	if !util.LoadConfiguration("filer", false) {
 		v.SetDefault("leveldb2.enabled", true)
 		v.SetDefault("leveldb2.dir", option.DefaultLevelDbDir)
-		if v.GetBool("leveldb2.enabled") {
-			levelDbDir := v.GetString("leveldb2.dir")
-			_, err := os.Stat(levelDbDir)
-			if os.IsNotExist(err) {
-				os.MkdirAll(levelDbDir, 0755)
-			}
-			glog.V(0).Infof("create filer store dir in %s", levelDbDir)
+		_, err := os.Stat(option.DefaultLevelDbDir)
+		if os.IsNotExist(err) {
+			os.MkdirAll(option.DefaultLevelDbDir, 0755)
 		}
+		glog.V(0).Infof("default to create filer store dir in %s", option.DefaultLevelDbDir)
 	} else {
 		glog.Warningf("skipping default store dir in %s", option.DefaultLevelDbDir)
 	}
