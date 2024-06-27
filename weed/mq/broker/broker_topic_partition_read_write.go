@@ -13,7 +13,7 @@ import (
 	"math"
 	"sync/atomic"
 	"time"
-	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, partition *mq_pb.Partition) log_buffer.LogFlushFuncType {
@@ -132,7 +132,7 @@ func (b *MessageQueueBroker) genLogOnDiskReadFunc(t topic.Topic, partition *mq_p
 			for _, urlString := range urlStrings {
 				// TODO optimization opportunity: reuse the buffer
 				var data []byte
-				if data, _, err = http_unknown.Get(urlString); err == nil {
+				if data, _, err = util_http.GetGlobalHttpClient().Get(urlString); err == nil {
 					processed = true
 					if processedTsNs, err = eachChunkFn(data, eachLogEntryFn, starTsNs, stopTsNs); err != nil {
 						return

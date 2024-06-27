@@ -9,7 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type ReaderCache struct {
@@ -171,7 +171,7 @@ func (s *SingleChunkCacher) startCaching() {
 
 	s.data = mem.Allocate(s.chunkSize)
 
-	_, s.err = http_unknown.RetriedFetchChunkData(s.data, urlStrings, s.cipherKey, s.isGzipped, true, 0)
+	_, s.err = util_http.GetGlobalHttpClient().RetriedFetchChunkData(s.data, urlStrings, s.cipherKey, s.isGzipped, true, 0)
 	if s.err != nil {
 		mem.Free(s.data)
 		s.data = nil

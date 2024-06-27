@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"net/http"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
 )
 
 func (fs *FilerServer) maybeAddVolumeJwtAuthorization(r *http.Request, fileId string, isWrite bool) {
@@ -61,7 +60,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	proxyResponse, postErr := http_unknown.Do(proxyReq)
+	proxyResponse, postErr := util_http.GetGlobalHttpClient().Do(proxyReq)
 
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)

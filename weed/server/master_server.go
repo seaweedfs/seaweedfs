@@ -30,7 +30,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 const (
@@ -257,7 +257,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 			}
 			director(req)
 		}
-		proxy.Transport = http_unknown.GetClientTransport()
+		proxy.Transport = util_http.GetGlobalHttpClient().GetClientTransport()
 		proxy.ServeHTTP(w, r)
 	}
 }

@@ -16,12 +16,12 @@ import (
 	util "github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func Post(clientCfg *ClientCfg, rawURL string, values url.Values) ([]byte, error) {
-	rawURL, err := clientCfg.FixHttpScheme(rawURL)
+func Post(httpClient *HttpClient, rawURL string, values url.Values) ([]byte, error) {
+	rawURL, err := httpClient.FixHttpScheme(rawURL)
 	if err != nil {
 		return nil, err
 	}
-	r, err := clientCfg.Client.PostForm(rawURL, values)
+	r, err := httpClient.Client.PostForm(rawURL, values)
 	if err != nil {
 		return nil, err
 	}
@@ -42,12 +42,12 @@ func Post(clientCfg *ClientCfg, rawURL string, values url.Values) ([]byte, error
 
 // github.com/seaweedfs/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
 // may need increasing http.Client.Timeout
-func Get(clientCfg *ClientCfg, rawURL string) ([]byte, bool, error) {
-	return GetAuthenticated(clientCfg, rawURL, "")
+func Get(httpClient *HttpClient, rawURL string) ([]byte, bool, error) {
+	return GetAuthenticated(httpClient, rawURL, "")
 }
 
-func GetAuthenticated(clientCfg *ClientCfg, rawURL, jwt string) ([]byte, bool, error) {
-	rawURL, err := clientCfg.FixHttpScheme(rawURL)
+func GetAuthenticated(httpClient *HttpClient, rawURL, jwt string) ([]byte, bool, error) {
+	rawURL, err := httpClient.FixHttpScheme(rawURL)
 	if err != nil {
 		return nil, true, err
 	}
@@ -58,7 +58,7 @@ func GetAuthenticated(clientCfg *ClientCfg, rawURL, jwt string) ([]byte, bool, e
 	maybeAddAuth(request, jwt)
 	request.Header.Add("Accept-Encoding", "gzip")
 
-	response, err := clientCfg.Client.Do(request)
+	response, err := httpClient.Client.Do(request)
 	if err != nil {
 		return nil, true, err
 	}
@@ -87,12 +87,12 @@ func GetAuthenticated(clientCfg *ClientCfg, rawURL, jwt string) ([]byte, bool, e
 	return b, false, nil
 }
 
-func Head(clientCfg *ClientCfg, rawURL string) (http.Header, error) {
-	rawURL, err := clientCfg.FixHttpScheme(rawURL)
+func Head(httpClient *HttpClient, rawURL string) (http.Header, error) {
+	rawURL, err := httpClient.FixHttpScheme(rawURL)
 	if err != nil {
 		return nil, err
 	}
-	r, err := clientCfg.Client.Head(rawURL)
+	r, err := httpClient.Client.Head(rawURL)
 	if err != nil {
 		return nil, err
 	}
@@ -109,8 +109,8 @@ func maybeAddAuth(req *http.Request, jwt string) {
 	}
 }
 
-func Delete(clientCfg *ClientCfg, rawURL string, jwt string) error {
-	rawURL, err := clientCfg.FixHttpScheme(rawURL)
+func Delete(httpClient *HttpClient, rawURL string, jwt string) error {
+	rawURL, err := httpClient.FixHttpScheme(rawURL)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func Delete(clientCfg *ClientCfg, rawURL string, jwt string) error {
 	if err != nil {
 		return err
 	}
-	resp, e := clientCfg.Client.Do(req)
+	resp, e := httpClient.Client.Do(req)
 	if e != nil {
 		return e
 	}
@@ -141,8 +141,8 @@ func Delete(clientCfg *ClientCfg, rawURL string, jwt string) error {
 	return errors.New(string(body))
 }
 
-func DeleteProxied(clientCfg *ClientCfg, rawURL string, jwt string) (body []byte, httpStatus int, err error) {
-	rawURL, err = clientCfg.FixHttpScheme(rawURL)
+func DeleteProxied(httpClient *HttpClient, rawURL string, jwt string) (body []byte, httpStatus int, err error) {
+	rawURL, err = httpClient.FixHttpScheme(rawURL)
 	if err != nil {
 		return
 	}
@@ -151,7 +151,7 @@ func DeleteProxied(clientCfg *ClientCfg, rawURL string, jwt string) (body []byte
 	if err != nil {
 		return
 	}
-	resp, err := clientCfg.Client.Do(req)
+	resp, err := httpClient.Client.Do(req)
 	if err != nil {
 		return
 	}
@@ -164,12 +164,12 @@ func DeleteProxied(clientCfg *ClientCfg, rawURL string, jwt string) (body []byte
 	return
 }
 
-func GetBufferStream(clientCfg *ClientCfg, rawURL string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
-	rawURL, err := clientCfg.FixHttpScheme(rawURL)
+func GetBufferStream(httpClient *HttpClient, rawURL string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
+	rawURL, err := httpClient.FixHttpScheme(rawURL)
 	if err != nil {
 		return err
 	}
-	r, err := clientCfg.Client.PostForm(rawURL, values)
+	r, err := httpClient.Client.PostForm(rawURL, values)
 	if err != nil {
 		return err
 	}
@@ -191,12 +191,12 @@ func GetBufferStream(clientCfg *ClientCfg, rawURL string, values url.Values, all
 	}
 }
 
-func GetUrlStream(clientCfg *ClientCfg, rawURL string, values url.Values, readFn func(io.Reader) error) error {
-	rawURL, err := clientCfg.FixHttpScheme(rawURL)
+func GetUrlStream(httpClient *HttpClient, rawURL string, values url.Values, readFn func(io.Reader) error) error {
+	rawURL, err := httpClient.FixHttpScheme(rawURL)
 	if err != nil {
 		return err
 	}
-	r, err := clientCfg.Client.PostForm(rawURL, values)
+	r, err := httpClient.Client.PostForm(rawURL, values)
 	if err != nil {
 		return err
 	}
@@ -207,8 +207,8 @@ func GetUrlStream(clientCfg *ClientCfg, rawURL string, values url.Values, readFn
 	return readFn(r.Body)
 }
 
-func DownloadFile(clientCfg *ClientCfg, fileUrl string, jwt string) (filename string, header http.Header, resp *http.Response, e error) {
-	fileUrl, err := clientCfg.FixHttpScheme(fileUrl)
+func DownloadFile(httpClient *HttpClient, fileUrl string, jwt string) (filename string, header http.Header, resp *http.Response, e error) {
+	fileUrl, err := httpClient.FixHttpScheme(fileUrl)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -219,7 +219,7 @@ func DownloadFile(clientCfg *ClientCfg, fileUrl string, jwt string) (filename st
 
 	maybeAddAuth(req, jwt)
 
-	response, err := clientCfg.Client.Do(req)
+	response, err := httpClient.Client.Do(req)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -236,24 +236,24 @@ func DownloadFile(clientCfg *ClientCfg, fileUrl string, jwt string) (filename st
 	return
 }
 
-func Do(clientCfg *ClientCfg, req *http.Request) (resp *http.Response, err error) {
-	req.URL.Scheme = clientCfg.GetHttpScheme()
-	return clientCfg.Client.Do(req)
+func Do(httpClient *HttpClient, req *http.Request) (resp *http.Response, err error) {
+	req.URL.Scheme = httpClient.GetHttpScheme()
+	return httpClient.Client.Do(req)
 }
 
-func NormalizeUrl(clientCfg *ClientCfg, rawURL string) (string, error) {
-	return clientCfg.FixHttpScheme(rawURL)
+func NormalizeUrl(httpClient *HttpClient, rawURL string) (string, error) {
+	return httpClient.FixHttpScheme(rawURL)
 }
 
-func ReadUrl(clientCfg *ClientCfg, fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
-	fileUrl, err := clientCfg.FixHttpScheme(fileUrl)
+func ReadUrl(httpClient *HttpClient, fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
+	fileUrl, err := httpClient.FixHttpScheme(fileUrl)
 	if err != nil {
 		return 0, err
 	}
 
 	if cipherKey != nil {
 		var n int
-		_, err := readEncryptedUrl(clientCfg, fileUrl, "", cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
+		_, err := readEncryptedUrl(httpClient, fileUrl, "", cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
 			n = copy(buf, data)
 		})
 		return int64(n), err
@@ -269,7 +269,7 @@ func ReadUrl(clientCfg *ClientCfg, fileUrl string, cipherKey []byte, isContentCo
 		req.Header.Set("Accept-Encoding", "gzip")
 	}
 
-	r, err := clientCfg.Client.Do(req)
+	r, err := httpClient.Client.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -321,18 +321,18 @@ func ReadUrl(clientCfg *ClientCfg, fileUrl string, cipherKey []byte, isContentCo
 	return n, err
 }
 
-func ReadUrlAsStream(clientCfg *ClientCfg, fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
-	return ReadUrlAsStreamAuthenticated(clientCfg, fileUrl, "", cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
+func ReadUrlAsStream(httpClient *HttpClient, fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
+	return ReadUrlAsStreamAuthenticated(httpClient, fileUrl, "", cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 }
 
-func ReadUrlAsStreamAuthenticated(clientCfg *ClientCfg, fileUrl, jwt string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
-	fileUrl, err = clientCfg.FixHttpScheme(fileUrl)
+func ReadUrlAsStreamAuthenticated(httpClient *HttpClient, fileUrl, jwt string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
+	fileUrl, err = httpClient.FixHttpScheme(fileUrl)
 	if err != nil {
 		return false, err
 	}
 
 	if cipherKey != nil {
-		return readEncryptedUrl(clientCfg, fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
+		return readEncryptedUrl(httpClient, fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
 
 	req, err := http.NewRequest("GET", fileUrl, nil)
@@ -347,7 +347,7 @@ func ReadUrlAsStreamAuthenticated(clientCfg *ClientCfg, fileUrl, jwt string, cip
 		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 	}
 
-	r, err := clientCfg.Client.Do(req)
+	r, err := httpClient.Client.Do(req)
 	if err != nil {
 		return true, err
 	}
@@ -388,13 +388,13 @@ func ReadUrlAsStreamAuthenticated(clientCfg *ClientCfg, fileUrl, jwt string, cip
 
 }
 
-func readEncryptedUrl(clientCfg *ClientCfg, fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
-	fileUrl, err := clientCfg.FixHttpScheme(fileUrl)
+func readEncryptedUrl(httpClient *HttpClient, fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
+	fileUrl, err := httpClient.FixHttpScheme(fileUrl)
 	if err != nil {
 		return false, err
 	}
 
-	encryptedData, retryable, err := GetAuthenticated(clientCfg, fileUrl, jwt)
+	encryptedData, retryable, err := GetAuthenticated(httpClient, fileUrl, jwt)
 	if err != nil {
 		return retryable, fmt.Errorf("fetch %s: %v", fileUrl, err)
 	}
@@ -419,8 +419,8 @@ func readEncryptedUrl(clientCfg *ClientCfg, fileUrl, jwt string, cipherKey []byt
 	return false, nil
 }
 
-func ReadUrlAsReaderCloser(clientCfg *ClientCfg, fileUrl string, jwt string, rangeHeader string) (*http.Response, io.ReadCloser, error) {
-	fileUrl, err := clientCfg.FixHttpScheme(fileUrl)
+func ReadUrlAsReaderCloser(httpClient *HttpClient, fileUrl string, jwt string, rangeHeader string) (*http.Response, io.ReadCloser, error) {
+	fileUrl, err := httpClient.FixHttpScheme(fileUrl)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -436,7 +436,7 @@ func ReadUrlAsReaderCloser(clientCfg *ClientCfg, fileUrl string, jwt string, ran
 
 	maybeAddAuth(req, jwt)
 
-	r, err := clientCfg.Client.Do(req)
+	r, err := httpClient.Client.Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -492,7 +492,7 @@ func (r *CountingReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func RetriedFetchChunkData(clientCfg *ClientCfg, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
+func RetriedFetchChunkData(httpClient *HttpClient, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
 
 	var shouldRetry bool
 
@@ -502,7 +502,7 @@ func RetriedFetchChunkData(clientCfg *ClientCfg, buffer []byte, urlStrings []str
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
-			shouldRetry, err = ReadUrlAsStream(clientCfg, urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+			shouldRetry, err = ReadUrlAsStream(httpClient, urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
 				if n < len(buffer) {
 					x := copy(buffer[n:], data)
 					n += x

@@ -15,7 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type ReplicationSource interface {
@@ -107,7 +107,7 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Header, resp *http.Response, err error) {
 
 	if fs.proxyByFiler {
-		return http_unknown.DownloadFile("http://"+fs.address+"/?proxyChunkId="+fileId, "")
+		return util_http.GetGlobalHttpClient().DownloadFile("http://"+fs.address+"/?proxyChunkId="+fileId, "")
 	}
 
 	fileUrls, err := fs.LookupFileId(fileId)
@@ -116,7 +116,7 @@ func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Hea
 	}
 
 	for _, fileUrl := range fileUrls {
-		filename, header, resp, err = http_unknown.DownloadFile(fileUrl, "")
+		filename, header, resp, err = util_http.GetGlobalHttpClient().DownloadFile(fileUrl, "")
 		if err != nil {
 			glog.V(1).Infof("fail to read from %s: %v", fileUrl, err)
 		} else {

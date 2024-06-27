@@ -15,7 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -105,7 +104,7 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (wri
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 
-	resp, err := http_unknown.Do(req)
+	resp, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return written, err
 	}

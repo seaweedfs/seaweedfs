@@ -23,7 +23,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
 )
 
 type UploadOption struct {
@@ -77,38 +76,29 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// HTTPClient implement with override Do method
-type UploaderHTTPClient struct {
-	clientCfg *util_http.ClientCfg
-}
-
-func (uploaderHTTPClient *UploaderHTTPClient) Do(req *http.Request) (*http.Response, error) {
-	return util_http.Do(uploaderHTTPClient.clientCfg, req)
-}
-
 // Uploader
 type Uploader struct {
-	client HTTPClient
+	httpClient HTTPClient
 }
 
 func NewUploader() (*Uploader, error) {
 	once.Do(func ()  {
 		// With Dial context
-		var clientCfg *util_http.ClientCfg
-		clientCfg, uploaderErr = http_unknown.NewClientCfg(util_http.AddDialContext)
+		var httpClient *util_http.GlobalHttpClient
+		httpClient, uploaderErr = util_http.NewGlobalHttpClient(util_http.AddDialContext)
 		if uploaderErr != nil {
 			uploaderErr = fmt.Errorf("error initializing the loader: %s", uploaderErr)
 		}
-		if clientCfg != nil {
-			uploader = newUploader(&UploaderHTTPClient{clientCfg: clientCfg})
+		if httpClient != nil {
+			uploader = newUploader(httpClient)
 		}
 	})
 	return uploader, uploaderErr
 }
 
-func newUploader(client HTTPClient) (*Uploader) {
+func newUploader(httpClient HTTPClient) (*Uploader) {
 	return &Uploader{
-		client: client,
+		httpClient: httpClient,
 	}
 }
 
@@ -374,14 +364,14 @@ func (uploader *Uploader) upload_content(fillBufferFunction func(w io.Writer) er
 		req.Header.Set("Authorization", "BEARER "+string(option.Jwt))
 	}
 	// print("+")
-	resp, post_err := uploader.client.Do(req)
+	resp, post_err := uploader.httpClient.Do(req)
 	defer util_http.CloseResponse(resp)
 	if post_err != nil {
 		if strings.Contains(post_err.Error(), "connection reset by peer") ||
 			strings.Contains(post_err.Error(), "use of closed network connection") {
 			glog.V(1).Infof("repeat error upload request %s: %v", option.UploadUrl, postErr)
 			stats.FilerHandlerCounter.WithLabelValues(stats.RepeatErrorUploadContent).Inc()
-			resp, post_err = uploader.client.Do(req)
+			resp, post_err = uploader.httpClient.Do(req)
 			defer util_http.CloseResponse(resp)
 		}
 	}

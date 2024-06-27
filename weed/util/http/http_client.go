@@ -17,21 +17,29 @@ var (
 	once sync.Once
 )
 
-type ClientCfg struct {
+type HttpClient struct {
 	Client            *http.Client
 	Transport         *http.Transport
 	expectHttpsScheme bool
 }
 
-func (cfg *ClientCfg) GetHttpScheme() string {
-	if cfg.expectHttpsScheme {
+func (httpClient *HttpClient) GetClient() *http.Client {
+	return httpClient.Client
+}
+
+func (httpClient *HttpClient) GetClientTransport() *http.Transport {
+	return httpClient.Transport
+}
+
+func (httpClient *HttpClient) GetHttpScheme() string {
+	if httpClient.expectHttpsScheme {
 		return "https"
 	}
 	return "http"
 }
 
-func (cfg *ClientCfg) FixHttpScheme(rawURL string) (string, error) {
-	expectedScheme := cfg.GetHttpScheme()
+func (httpClient *HttpClient) FixHttpScheme(rawURL string) (string, error) {
+	expectedScheme := httpClient.GetHttpScheme()
 
 	if !(strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://")) {
 		return expectedScheme + "://" + rawURL, nil
@@ -48,23 +56,23 @@ func (cfg *ClientCfg) FixHttpScheme(rawURL string) (string, error) {
 	return parsedURL.String(), nil
 }
 
-func NewClientCfg(serviceName ServiceName, opts ...NewClientCfgOpt) (*ClientCfg, error) {
-	clientCfg := ClientCfg{}
-	clientCfg.expectHttpsScheme = false
+func NewHttpClient(serviceOrClientName ServiceOrClientName, opts ...HttpClientOpt) (*HttpClient, error) {
+	httpClient := HttpClient{}
+	httpClient.expectHttpsScheme = false
 
-	clientCertPair, err := GetClientCertPair(serviceName)
+	clientCertPair, err := GetClientCertPair(serviceOrClientName)
 	if err != nil {
 		return nil, err
 	}
 
-	clientCaCert, clientCaCertName, err := GetClientCaCert(serviceName)
+	clientCaCert, clientCaCertName, err := GetClientCaCert(serviceOrClientName)
 	if err != nil {
 		return nil, err
 	}
 
 	var tlsConfig *tls.Config = nil
 	if clientCertPair != nil || len(clientCaCert) != 0 {
-		clientCfg.expectHttpsScheme = true
+		httpClient.expectHttpsScheme = true
 		caCertPool, err := CreateHTTPClientCertPool(clientCaCert, clientCaCertName)
 		if err != nil {
 			return nil, err
@@ -81,30 +89,30 @@ func NewClientCfg(serviceName ServiceName, opts ...NewClientCfgOpt) (*ClientCfg,
 		}
 	}
 
-	clientCfg.Transport = &http.Transport{
+	httpClient.Transport = &http.Transport{
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 		TLSClientConfig:     tlsConfig,
 	}
-	clientCfg.Client = &http.Client{
-		Transport: clientCfg.Transport,
+	httpClient.Client = &http.Client{
+		Transport: httpClient.Transport,
 	}
 
 	for _, opt := range opts {
-		opt(&clientCfg)
+		opt(&httpClient)
 	}
-	return &clientCfg, nil
+	return &httpClient, nil
 }
 
-func GetFileNameFromSecurityConfiguration(serviceName ServiceName, fileType string) string {
+func GetFileNameFromSecurityConfiguration(serviceOrClientName ServiceOrClientName, fileType string) string {
 	once.Do(func() {
 		util.LoadConfiguration("security", false)
 	})
-	return viper.GetString(fmt.Sprintf("https.%s.%s", serviceName.LowerCaseString(), fileType))
+	return viper.GetString(fmt.Sprintf("https.%s.%s", serviceOrClientName.LowerCaseString(), fileType))
 }
 
-func GetFileContentFromSecurityConfiguration(serviceName ServiceName, fileType string) ([]byte, string, error) {
-	if fileName := GetFileNameFromSecurityConfiguration(serviceName, fileType); fileName != "" {
+func GetFileContentFromSecurityConfiguration(serviceOrClientName ServiceOrClientName, fileType string) ([]byte, string, error) {
+	if fileName := GetFileNameFromSecurityConfiguration(serviceOrClientName, fileType); fileName != "" {
 		fileContent, err := os.ReadFile(fileName)
 		if err != nil {
 			return nil, fileName, err
@@ -114,9 +122,9 @@ func GetFileContentFromSecurityConfiguration(serviceName ServiceName, fileType s
 	return nil, "", nil
 }
 
-func GetClientCertPair(serviceName ServiceName) (*tls.Certificate, error) {
-	certFileName := GetFileNameFromSecurityConfiguration(serviceName, "cert")
-	keyFileName := GetFileNameFromSecurityConfiguration(serviceName, "key")
+func GetClientCertPair(serviceOrClientName ServiceOrClientName) (*tls.Certificate, error) {
+	certFileName := GetFileNameFromSecurityConfiguration(serviceOrClientName, "cert")
+	keyFileName := GetFileNameFromSecurityConfiguration(serviceOrClientName, "key")
 	if certFileName == "" && keyFileName == "" {
 		return nil, nil
 	}
@@ -130,8 +138,8 @@ func GetClientCertPair(serviceName ServiceName) (*tls.Certificate, error) {
 	return nil, fmt.Errorf("error loading key pair: key `%s` and certificate `%s`", keyFileName, certFileName)
 }
 
-func GetClientCaCert(serviceName ServiceName) ([]byte, string, error) {
-	return GetFileContentFromSecurityConfiguration(serviceName, "ca")
+func GetClientCaCert(serviceOrClientName ServiceOrClientName) ([]byte, string, error) {
+	return GetFileContentFromSecurityConfiguration(serviceOrClientName, "ca")
 }
 
 func CreateHTTPClientCertPool(certContent []byte, fileName string) (*x509.CertPool, error) {

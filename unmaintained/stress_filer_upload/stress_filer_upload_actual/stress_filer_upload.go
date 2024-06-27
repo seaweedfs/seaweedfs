@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	http_unknown "github.com/seaweedfs/seaweedfs/weed/util/http/unknown"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -59,7 +59,7 @@ func main() {
 			})
 			for t := 0; t < *times; t++ {
 				for _, filename := range fileNames {
-					if size, err := uploadFileToFiler(http_unknown.GetClient(), filename, *destination); err == nil {
+					if size, err := uploadFileToFiler(util_http.GetGlobalHttpClient().GetClient(), filename, *destination); err == nil {
 						statsChan <- stat{
 							size: size,
 						}
