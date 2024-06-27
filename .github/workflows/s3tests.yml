@@ -80,7 +80,6 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_prefix_delimiter_not_exist \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_prefix_delimiter_not_exist \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_notempty \
-          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_defaultempty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_alt \
@@ -253,7 +252,6 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_prefix_delimiter_not_exist \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_prefix_delimiter_not_exist \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_notempty \
-          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_defaultempty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_alt \
