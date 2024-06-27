@@ -106,19 +106,20 @@ func (v *volumesBinaryState) copyState(list *VolumeLocationList) copyState {
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
-	growRequestCount int32
-	rp               *super_block.ReplicaPlacement
-	ttl              *needle.TTL
-	diskType         types.DiskType
-	vid2location     map[needle.VolumeId]*VolumeLocationList
-	writables        []needle.VolumeId // transient array of writable volume id
-	crowded          map[needle.VolumeId]struct{}
-	readonlyVolumes  *volumesBinaryState // readonly volumes
-	oversizedVolumes *volumesBinaryState // oversized volumes
-	vacuumedVolumes  map[needle.VolumeId]time.Time
-	volumeSizeLimit  uint64
-	replicationAsMin bool
-	accessLock       sync.RWMutex
+	growRequestCount  int32
+	rp                *super_block.ReplicaPlacement
+	ttl               *needle.TTL
+	diskType          types.DiskType
+	vid2location      map[needle.VolumeId]*VolumeLocationList
+	writables         []needle.VolumeId // transient array of writable volume id
+	crowded           map[needle.VolumeId]struct{}
+	crowdedAccessLock sync.RWMutex
+	readonlyVolumes   *volumesBinaryState // readonly volumes
+	oversizedVolumes  *volumesBinaryState // oversized volumes
+	vacuumedVolumes   map[needle.VolumeId]time.Time
+	volumeSizeLimit   uint64
+	replicationAsMin  bool
+	accessLock        sync.RWMutex
 }
 
 type VolumeLayoutStats struct {
@@ -368,7 +369,7 @@ func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (total, a
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 	if option.DataCenter == "" {
-		return len(vl.writables), len(vl.writables), len(vl.crowded)
+		return len(vl.writables), len(vl.writables), len(vl.getVolumeCrowded())
 	}
 	total = len(vl.writables)
 	for _, v := range vl.writables {
@@ -498,14 +499,24 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid needle.VolumeId) bool {
 }
 
 func (vl *VolumeLayout) removeFromCrowded(vid needle.VolumeId) {
+	vl.crowdedAccessLock.Lock()
+	defer vl.crowdedAccessLock.Unlock()
 	delete(vl.crowded, vid)
 }
 
 func (vl *VolumeLayout) setVolumeCrowded(vid needle.VolumeId) {
+	vl.crowdedAccessLock.Lock()
+	defer vl.crowdedAccessLock.Unlock()
 	if _, ok := vl.crowded[vid]; !ok {
 		vl.crowded[vid] = struct{}{}
 		glog.V(0).Infoln("Volume", vid, "becomes crowded")
 	}
+}
+
+func (vl *VolumeLayout) getVolumeCrowded() map[needle.VolumeId]struct{} {
+	vl.crowdedAccessLock.RLock()
+	defer vl.crowdedAccessLock.RUnlock()
+	return vl.crowded
 }
 
 func (vl *VolumeLayout) SetVolumeCrowded(vid needle.VolumeId) {
