@@ -48,9 +48,6 @@ image:
 
 master:
   enabled: true
-  repository: null
-  imageName: null
-  imageTag: null
   imageOverride: null
   restartPolicy: null
   replicas: 1
@@ -256,9 +253,6 @@ master:
 
 volume:
   enabled: true
-  repository: null
-  imageName: null
-  imageTag: null
   imageOverride: null
   restartPolicy: null
   port: 8080
@@ -473,9 +467,6 @@ volume:
 
 filer:
   enabled: true
-  repository: null
-  imageName: null
-  imageTag: null
   imageOverride: null
   restartPolicy: null
   replicas: 1
@@ -740,9 +731,7 @@ filer:
 
 s3:
   enabled: false
-  repository: null
-  imageName: null
-  imageTag: null
+  imageOverride: null
   restartPolicy: null
   replicas: 1
   bindAddress: 0.0.0.0
