@@ -265,10 +265,10 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 
 func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSizeLimit uint64, growThreshold float64) {
 	if n.IsRack() {
+		start := time.Now()
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
 			for _, v := range dn.GetVolumes() {
-				start := time.Now()
 				topo := n.GetTopology()
 				diskType := types.ToDiskType(v.DiskType)
 				vl := topo.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
@@ -296,12 +296,11 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 						stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(0)
 					}
 				}
-				costTime := time.Now().Sub(start)
-				if costTime > time.Millisecond*100 {
-					glog.V(3).Infoln("volume check is full cost", costTime)
-				}
-
 			}
+		}
+		costTime := time.Now().Sub(start)
+		if costTime > time.Millisecond*100 {
+			glog.V(3).Infoln("volume check is full cost", costTime)
 		}
 	} else {
 		for _, c := range n.Children() {
