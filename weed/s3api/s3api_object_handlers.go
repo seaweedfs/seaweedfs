@@ -98,7 +98,6 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 		listEntry.Owner = CanonicalUser{
 			ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
 			DisplayName: entry.Attributes.UserName,
-			set:         true,
 		}
 	}
 	return listEntry
