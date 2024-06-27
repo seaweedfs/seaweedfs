@@ -296,7 +296,11 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 						stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(0)
 					}
 				}
-				glog.V(3).Infoln("volume check is full cost", (time.Now().Sub(start)))
+				costTime := time.Now().Sub(start)
+				if costTime > time.Millisecond*100 {
+					glog.V(3).Infoln("volume check is full cost", costTime)
+				}
+
 			}
 		}
 	} else {
