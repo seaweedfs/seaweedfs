@@ -116,7 +116,7 @@ func uploadFileToFiler(data []byte, filename, destination string) (size int64, e
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	// request.Close = true  // can not use this, which do not reuse http connection, impacting filer->volume also.
 
-	resp, err := util_http.GetFilerHttpClient().Do(request)
+	resp, err := util_http.GetGlobalHttpClient().Do(request)
 	if err != nil {
 		return 0, fmt.Errorf("http POST %s: %v", uri, err)
 	} else {

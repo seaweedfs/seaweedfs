@@ -132,7 +132,7 @@ func uploadFileToFiler(filename, destination string) (size int64, err error) {
 	request, err := http.NewRequest("POST", uri, body)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 
-	resp, err := util_http.GetFilerHttpClient().Do(request)
+	resp, err := util_http.GetGlobalHttpClient().Do(request)
 	if err != nil {
 		return 0, fmt.Errorf("http POST %s: %v", uri, err)
 	} else {
