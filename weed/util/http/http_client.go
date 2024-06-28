@@ -26,7 +26,7 @@ type HTTPClient struct {
 
 func (httpClient *HTTPClient) Do(req *http.Request) (*http.Response, error) {
 	req.URL.Scheme = httpClient.GetHttpScheme()
-	return httpClient.Do(req)
+	return httpClient.Client.Do(req)
 }
 
 func (httpClient *HTTPClient) Get(url string) (resp *http.Response, err error) {
@@ -34,7 +34,7 @@ func (httpClient *HTTPClient) Get(url string) (resp *http.Response, err error) {
 	if err != nil {
 		return nil, err
 	}
-	return httpClient.Get(url)
+	return httpClient.Client.Get(url)
 }
 
 func (httpClient *HTTPClient) Post(url, contentType string, body io.Reader) (resp *http.Response, err error) {
@@ -42,7 +42,7 @@ func (httpClient *HTTPClient) Post(url, contentType string, body io.Reader) (res
 	if err != nil {
 		return nil, err
 	}
-	return httpClient.Post(url, contentType, body)
+	return httpClient.Client.Post(url, contentType, body)
 }
 
 func (httpClient *HTTPClient) PostForm(url string, data url.Values) (resp *http.Response, err error) {
@@ -50,7 +50,7 @@ func (httpClient *HTTPClient) PostForm(url string, data url.Values) (resp *http.
 	if err != nil {
 		return nil, err
 	}
-	return httpClient.PostForm(url, data)
+	return httpClient.Client.PostForm(url, data)
 }
 
 func (httpClient *HTTPClient) Head(url string) (resp *http.Response, err error) {
@@ -58,10 +58,10 @@ func (httpClient *HTTPClient) Head(url string) (resp *http.Response, err error) 
 	if err != nil {
 		return nil, err
 	}
-	return httpClient.Head(url)
+	return httpClient.Client.Head(url)
 }
 func (httpClient *HTTPClient) CloseIdleConnections() {
-	httpClient.CloseIdleConnections()
+	httpClient.Client.CloseIdleConnections()
 }
 
 func (httpClient *HTTPClient) GetClientTransport() *http.Transport {
