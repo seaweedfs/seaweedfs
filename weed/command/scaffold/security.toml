@@ -115,6 +115,7 @@ ca = ""
 cert = ""
 key = ""
 ca = ""
+# disbale_tls_verify_client_cert = true|false (default: false)
 
 # https client for master|volume|filer connection
 # It is necessary that the parameters  [https.volume]|[https.master]|[https.filer] are set
