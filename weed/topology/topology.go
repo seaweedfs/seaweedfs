@@ -273,7 +273,7 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	vl.EnsureCorrectWritables(&v)
 }
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
-	glog.Infof("removing volume info: %+v from %v", v, dn.id)
+	glog.V(0).Infof("removing volume info: %+v from %v", v, dn.id)
 	if v.ReplicaPlacement.GetCopyCount() > 1 {
 		stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(0)
 	}

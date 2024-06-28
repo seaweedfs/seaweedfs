@@ -27,6 +27,7 @@ type BucketLoggingStatus struct {
 type CanonicalUser struct {
 	ID          string `xml:"ID"`
 	DisplayName string `xml:"DisplayName,omitempty"`
+	set         bool
 }
 
 type CopyObject struct {
@@ -62,6 +63,7 @@ func (t *CopyObject) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
 	return e.EncodeElement(layout, start)
 }
+
 func (t *CopyObject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T CopyObject
 	var overlay struct {
@@ -96,6 +98,7 @@ func (t *CopyObjectResult) MarshalXML(e *xml.Encoder, start xml.StartElement) er
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
 	return e.EncodeElement(layout, start)
 }
+
 func (t *CopyObjectResult) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T CopyObjectResult
 	var overlay struct {
@@ -125,6 +128,7 @@ func (t *CreateBucket) MarshalXML(e *xml.Encoder, start xml.StartElement) error 
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
 	return e.EncodeElement(layout, start)
 }
+
 func (t *CreateBucket) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T CreateBucket
 	var overlay struct {
@@ -589,8 +593,9 @@ type ListBucketResult struct {
 	Prefix         string          `xml:"Prefix"`
 	Marker         string          `xml:"Marker"`
 	NextMarker     string          `xml:"NextMarker,omitempty"`
-	MaxKeys        int             `xml:"MaxKeys"`
+	MaxKeys        uint16          `xml:"MaxKeys"`
 	Delimiter      string          `xml:"Delimiter,omitempty"`
+	EncodingType   string          `xml:"EncodingType,omitempty"`
 	IsTruncated    bool            `xml:"IsTruncated"`
 	Contents       []ListEntry     `xml:"Contents,omitempty"`
 	CommonPrefixes []PrefixEntry   `xml:"CommonPrefixes,omitempty"`
@@ -615,6 +620,14 @@ func (t *ListEntry) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
 	return e.EncodeElement(layout, start)
 }
+func (c CanonicalUser) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	if !c.set {
+		return nil
+	}
+	type canonicalUserWrapper CanonicalUser
+	return e.EncodeElement(canonicalUserWrapper(c), start)
+}
+
 func (t *ListEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T ListEntry
 	var overlay struct {
@@ -784,6 +797,7 @@ func (t *PutObjectResult) MarshalXML(e *xml.Encoder, start xml.StartElement) err
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
 	return e.EncodeElement(layout, start)
 }
+
 func (t *PutObjectResult) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T PutObjectResult
 	var overlay struct {
@@ -822,6 +836,7 @@ func (t *SetBucketAccessControlPolicy) MarshalXML(e *xml.Encoder, start xml.Star
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
 	return e.EncodeElement(layout, start)
 }
+
 func (t *SetBucketAccessControlPolicy) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T SetBucketAccessControlPolicy
 	var overlay struct {
@@ -855,6 +870,7 @@ func (t *SetBucketLoggingStatus) MarshalXML(e *xml.Encoder, start xml.StartEleme
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
 	return e.EncodeElement(layout, start)
 }
+
 func (t *SetBucketLoggingStatus) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T SetBucketLoggingStatus
 	var overlay struct {
@@ -889,6 +905,7 @@ func (t *SetObjectAccessControlPolicy) MarshalXML(e *xml.Encoder, start xml.Star
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
 	return e.EncodeElement(layout, start)
 }
+
 func (t *SetObjectAccessControlPolicy) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T SetObjectAccessControlPolicy
 	var overlay struct {
@@ -940,6 +957,7 @@ func (t *VersionEntry) MarshalXML(e *xml.Encoder, start xml.StartElement) error 
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
 	return e.EncodeElement(layout, start)
 }
+
 func (t *VersionEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T VersionEntry
 	var overlay struct {
@@ -965,6 +983,7 @@ func (b *xsdBase64Binary) UnmarshalText(text []byte) (err error) {
 	*b, err = base64.StdEncoding.DecodeString(string(text))
 	return
 }
+
 func (b xsdBase64Binary) MarshalText() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := base64.NewEncoder(base64.StdEncoding, &buf)
@@ -978,9 +997,11 @@ type xsdDateTime time.Time
 func (t *xsdDateTime) UnmarshalText(text []byte) error {
 	return _unmarshalTime(text, (*time.Time)(t), s3TimeFormat)
 }
+
 func (t xsdDateTime) MarshalText() ([]byte, error) {
 	return []byte((time.Time)(t).Format(s3TimeFormat)), nil
 }
+
 func (t xsdDateTime) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	if (time.Time)(t).IsZero() {
 		return nil
@@ -991,6 +1012,7 @@ func (t xsdDateTime) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	}
 	return e.EncodeElement(m, start)
 }
+
 func (t xsdDateTime) MarshalXMLAttr(name xml.Name) (xml.Attr, error) {
 	if (time.Time)(t).IsZero() {
 		return xml.Attr{}, nil
@@ -998,6 +1020,7 @@ func (t xsdDateTime) MarshalXMLAttr(name xml.Name) (xml.Attr, error) {
 	m, err := t.MarshalText()
 	return xml.Attr{Name: name, Value: string(m)}, err
 }
+
 func _unmarshalTime(text []byte, t *time.Time, format string) (err error) {
 	s := string(bytes.TrimSpace(text))
 	*t, err = time.Parse(format, s)

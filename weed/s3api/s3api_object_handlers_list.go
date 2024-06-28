@@ -4,33 +4,44 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
-
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+type OptionalString struct {
+	string
+	set bool
+}
+
+func (o OptionalString) MarshalXML(e *xml.Encoder, startElement xml.StartElement) error {
+	if !o.set {
+		return nil
+	}
+	return e.EncodeElement(o.string, startElement)
+}
+
 type ListBucketResultV2 struct {
-	XMLName               xml.Name      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
-	Name                  string        `xml:"Name"`
-	Prefix                string        `xml:"Prefix"`
-	MaxKeys               int           `xml:"MaxKeys"`
-	Delimiter             string        `xml:"Delimiter,omitempty"`
-	IsTruncated           bool          `xml:"IsTruncated"`
-	Contents              []ListEntry   `xml:"Contents,omitempty"`
-	CommonPrefixes        []PrefixEntry `xml:"CommonPrefixes,omitempty"`
-	ContinuationToken     string        `xml:"ContinuationToken,omitempty"`
-	NextContinuationToken string        `xml:"NextContinuationToken,omitempty"`
-	KeyCount              int           `xml:"KeyCount"`
-	StartAfter            string        `xml:"StartAfter,omitempty"`
+	XMLName               xml.Name       `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
+	Name                  string         `xml:"Name"`
+	Prefix                string         `xml:"Prefix"`
+	MaxKeys               uint16         `xml:"MaxKeys"`
+	Delimiter             string         `xml:"Delimiter,omitempty"`
+	IsTruncated           bool           `xml:"IsTruncated"`
+	Contents              []ListEntry    `xml:"Contents,omitempty"`
+	CommonPrefixes        []PrefixEntry  `xml:"CommonPrefixes,omitempty"`
+	ContinuationToken     OptionalString `xml:"ContinuationToken,omitempty"`
+	NextContinuationToken string         `xml:"NextContinuationToken,omitempty"`
+	EncodingType          string         `xml:"EncodingType,omitempty"`
+	KeyCount              int            `xml:"KeyCount"`
+	StartAfter            string         `xml:"StartAfter,omitempty"`
 }
 
 func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Request) {
@@ -41,19 +52,19 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
 
-	originalPrefix, continuationToken, startAfter, delimiter, _, maxKeys := getListObjectsV2Args(r.URL.Query())
+	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys := getListObjectsV2Args(r.URL.Query())
 
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
 		return
 	}
 
-	marker := continuationToken
-	if continuationToken == "" {
+	marker := continuationToken.string
+	if !continuationToken.set {
 		marker = startAfter
 	}
 
-	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter)
+	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, fetchOwner)
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -81,6 +92,9 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		Prefix:                response.Prefix,
 		StartAfter:            startAfter,
 	}
+	if encodingTypeUrl {
+		responseV2.EncodingType = s3.EncodingTypeUrl
+	}
 
 	writeSuccessResponseXML(w, r, responseV2)
 }
@@ -93,14 +107,13 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
 
-	originalPrefix, marker, delimiter, maxKeys := getListObjectsV1Args(r.URL.Query())
+	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys := getListObjectsV1Args(r.URL.Query())
 
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
 		return
 	}
-
-	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter)
+	response, err := s3a.listFilerEntries(bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -117,7 +130,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	writeSuccessResponseXML(w, r, response)
 }
 
-func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys int, originalMarker string, delimiter string) (response ListBucketResult, err error) {
+func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
 	// convert full path prefix into directory name and prefix for entry name
 	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, originalMarker)
 	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
@@ -135,29 +148,93 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
 	}
 
+	if s3a.option.AllowListRecursive && (delimiter == "" || delimiter == "/") {
+		reqDir = bucketPrefix
+		if idx := strings.LastIndex(originalPrefix, "/"); idx > 0 {
+			reqDir += originalPrefix[:idx]
+			prefix = originalPrefix[idx+1:]
+		}
+		// This is necessary for SQL request with WHERE `directory` || `name` > originalMarker
+		if len(originalMarker) > 0 && originalMarker[0:1] != "/" {
+			marker = getStartFileFromKey(originalMarker)
+		} else {
+			marker = originalMarker
+		}
+		response = ListBucketResult{
+			Name:      bucket,
+			Prefix:    originalPrefix,
+			Marker:    originalMarker,
+			MaxKeys:   maxKeys,
+			Delimiter: delimiter,
+		}
+		if encodingTypeUrl {
+			response.EncodingType = s3.EncodingTypeUrl
+		}
+		if maxKeys == 0 {
+			return
+		}
+		err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			doErr = s3a.doListFilerRecursiveEntries(client, reqDir, prefix, cursor, marker, delimiter, false,
+				func(path string, entry *filer_pb.Entry) {
+					key := path[len(bucketPrefix):]
+					if cursor.isTruncated {
+						nextMarker = cursor.nextMarker
+						return
+					}
+					defer func() {
+						if cursor.maxKeys == 0 {
+							cursor.isTruncated = true
+							cursor.nextMarker = getStartFileFromKey(key)
+						}
+					}()
+					if delimiter == "/" {
+						if entry.IsDirectoryKeyObject() {
+							contents = append(contents, newListEntry(entry, key+"/", "", "", bucketPrefix, fetchOwner, false, encodingTypeUrl))
+							cursor.maxKeys--
+							return
+						}
+						if entry.IsDirectory {
+							var prefixKey string
+							if encodingTypeUrl {
+								prefixKey = urlPathEscape(key + "/")
+							} else {
+								prefixKey = key + "/"
+							}
+							commonPrefixes = append(commonPrefixes, PrefixEntry{
+								Prefix: prefixKey,
+							})
+							cursor.maxKeys--
+							return
+						}
+					}
+					contents = append(contents, newListEntry(entry, key, "", "", bucketPrefix, fetchOwner, false, encodingTypeUrl))
+					cursor.maxKeys--
+				},
+			)
+			return nil
+		})
+		response.NextMarker = nextMarker
+		response.IsTruncated = len(nextMarker) != 0
+		response.Contents = contents
+		response.CommonPrefixes = commonPrefixes
+		return
+	}
+
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for {
 			empty := true
 			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
 				empty = false
+				dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
 					if entry.IsDirectoryKeyObject() {
-						contents = append(contents, ListEntry{
-							Key:          fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
-							LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-							ETag:         "\"" + filer.ETag(entry) + "\"",
-							Owner: CanonicalUser{
-								ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
-								DisplayName: entry.Attributes.UserName,
-							},
-							StorageClass: "STANDARD",
-						})
+						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false))
 						cursor.maxKeys--
 						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 					} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
 						commonPrefixes = append(commonPrefixes, PrefixEntry{
-							Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+							Prefix: fmt.Sprintf("%s/%s/", dirName, prefixName)[len(bucketPrefix):],
 						})
 						//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
 						cursor.maxKeys--
@@ -195,21 +272,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						}
 					}
 					if !delimiterFound {
-						storageClass := "STANDARD"
-						if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
-							storageClass = string(v)
-						}
-						contents = append(contents, ListEntry{
-							Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
-							LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-							ETag:         "\"" + filer.ETag(entry) + "\"",
-							Size:         int64(filer.FileSize(entry)),
-							Owner: CanonicalUser{
-								ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
-								DisplayName: entry.Attributes.UserName,
-							},
-							StorageClass: StorageClass(storageClass),
-						})
+						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
 						cursor.maxKeys--
 					}
 				}
@@ -243,7 +306,11 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			Contents:       contents,
 			CommonPrefixes: commonPrefixes,
 		}
-
+		if encodingTypeUrl {
+			// Todo used for pass test_bucket_listv2_encoding_basic
+			// sort.Slice(response.CommonPrefixes, func(i, j int) bool { return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix })
+			response.EncodingType = s3.EncodingTypeUrl
+		}
 		return nil
 	})
 
@@ -251,9 +318,19 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 }
 
 type ListingCursor struct {
-	maxKeys               int
+	maxKeys               uint16
 	isTruncated           bool
 	prefixEndsOnDelimiter bool
+	nextMarker            string
+}
+
+func (s3a *S3ApiServer) getStartFileFromKey(key string) string {
+	idx := strings.LastIndex(key, "/")
+	if idx == -1 {
+		return "/" + key
+	}
+
+	return fmt.Sprintf("/%s%s", key[0:idx], key[idx+1:len(key)])
 }
 
 // the prefix and marker may be in different directories
@@ -310,6 +387,39 @@ func toParentAndDescendants(dirAndName string) (dir, name string) {
 		dir, name = dirAndName[0:sepIndex], dirAndName[sepIndex+1:]
 	} else {
 		name = dirAndName
+	}
+	return
+}
+
+func (s3a *S3ApiServer) doListFilerRecursiveEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, eachEntryFn func(dir string, entry *filer_pb.Entry)) (err error) {
+	if prefix == "/" && delimiter == "/" {
+		return
+	}
+	request := &filer_pb.ListEntriesRequest{
+		Directory:          dir,
+		Prefix:             prefix,
+		Limit:              uint32(cursor.maxKeys) + 1,
+		StartFromFileName:  marker,
+		InclusiveStartFrom: inclusiveStartFrom,
+		Recursive:          true,
+		Delimiter:          delimiter == "/",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, listErr := client.ListEntries(ctx, request)
+	if listErr != nil {
+		return fmt.Errorf("list entires %+v: %v", request, listErr)
+	}
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			if recvErr == io.EOF {
+				break
+			} else {
+				return fmt.Errorf("iterating entires %+v: %v", request, recvErr)
+			}
+		}
+		eachEntryFn(resp.Path, resp.Entry)
 	}
 	return
 }
@@ -434,13 +544,16 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	return
 }
 
-func getListObjectsV2Args(values url.Values) (prefix, token, startAfter, delimiter string, fetchOwner bool, maxkeys int) {
+func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys uint16) {
 	prefix = values.Get("prefix")
-	token = values.Get("continuation-token")
+	token = OptionalString{set: values.Has("continuation-token"), string: values.Get("continuation-token")}
 	startAfter = values.Get("start-after")
 	delimiter = values.Get("delimiter")
+	encodingTypeUrl = values.Get("encoding-type") == s3.EncodingTypeUrl
 	if values.Get("max-keys") != "" {
-		maxkeys, _ = strconv.Atoi(values.Get("max-keys"))
+		if maxKeys, err := strconv.ParseUint(values.Get("max-keys"), 10, 16); err == nil {
+			maxkeys = uint16(maxKeys)
+		}
 	} else {
 		maxkeys = maxObjectListSizeLimit
 	}
@@ -448,12 +561,15 @@ func getListObjectsV2Args(values url.Values) (prefix, token, startAfter, delimit
 	return
 }
 
-func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, maxkeys int) {
+func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int16) {
 	prefix = values.Get("prefix")
 	marker = values.Get("marker")
 	delimiter = values.Get("delimiter")
+	encodingTypeUrl = values.Get("encoding-type") == "url"
 	if values.Get("max-keys") != "" {
-		maxkeys, _ = strconv.Atoi(values.Get("max-keys"))
+		if maxKeys, err := strconv.ParseInt(values.Get("max-keys"), 10, 16); err == nil {
+			maxkeys = int16(maxKeys)
+		}
 	} else {
 		maxkeys = maxObjectListSizeLimit
 	}

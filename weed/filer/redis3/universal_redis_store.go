@@ -135,6 +135,10 @@ func (store *UniversalRedis3Store) ListDirectoryPrefixedEntries(ctx context.Cont
 	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
+func (store *UniversalRedis3Store) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return lastFileName, filer.ErrUnsupportedRecursivePrefixed
+}
+
 func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	dirListKey := genDirectoryListKey(string(dirPath))

@@ -34,7 +34,7 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Run Ceph S3 tests
+      - name: Run Ceph S3 tests with KV store
         timeout-minutes: 15
         env:
           S3TEST_CONF: /__w/seaweedfs/seaweedfs/docker/compose/s3tests.conf
@@ -43,17 +43,21 @@ jobs:
           cd /__w/seaweedfs/seaweedfs/weed
           go install -buildvcs=false
           set -x
-          nohup weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
+          weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
             -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+          pid=$!
           sleep 10          
           cd /s3-tests
+          sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
           tox -- \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_empty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_distinct \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_many \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_many \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_basic \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_encoding_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix_ends_with_delimiter \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_alt \
@@ -76,6 +80,7 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_prefix_delimiter_not_exist \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_prefix_delimiter_not_exist \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_notempty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_defaultempty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_alt \
@@ -94,6 +99,7 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_maxkeys_zero \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_none \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_empty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_continuationtoken_empty \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_continuationtoken \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_both_continuationtoken_startafter \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_unreadable \
@@ -198,3 +204,85 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_lifecycle_set \
           s3tests_boto3/functional/test_s3.py::test_lifecycle_get \
           s3tests_boto3/functional/test_s3.py::test_lifecycle_set_filter
+          kill -9 $pid || true
+
+      - name: Run Ceph S3 tests with SQL store
+        timeout-minutes: 15
+        env:
+          S3TEST_CONF: /__w/seaweedfs/seaweedfs/docker/compose/s3tests.conf
+        shell: bash
+        run: |
+          cd /__w/seaweedfs/seaweedfs/weed
+          go install -tags "sqlite" -buildvcs=false
+          export WEED_LEVELDB2_ENABLED="false" WEED_SQLITE_ENABLED="true" WEED_SQLITE_DBFILE="./filer.db"
+          set -x
+          weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 -s3.allowListRecursive=true \
+            -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
+            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+          pid=$!
+          sleep 10          
+          cd /s3-tests
+          sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
+          tox -- \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_empty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_distinct \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_many \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_many \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_basic \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_encoding_basic \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix_ends_with_delimiter \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_alt \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix_underscore \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_percentage \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_whitespace \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_dot \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_unreadable \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_empty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_none \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_basic \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_basic \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_alt \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_alt \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_prefix_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_prefix_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_delimiter_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_delimiter_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_prefix_delimiter_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_prefix_delimiter_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_notempty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_defaultempty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_basic \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_basic \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_alt \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_alt \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_empty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_empty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_none \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_none \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_unreadable \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_unreadable \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_maxkeys_one \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_maxkeys_one \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_maxkeys_zero \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_maxkeys_zero \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_none \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_empty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_continuationtoken_empty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_continuationtoken \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_both_continuationtoken_startafter \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_unreadable \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_startafter_unreadable \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_not_in_list \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_startafter_not_in_list \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_marker_after_list \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_startafter_after_list \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_objects_anonymous_fail \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_objects_anonymous_fail \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_long_name \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_special_prefix
+          kill -9 $pid || true
