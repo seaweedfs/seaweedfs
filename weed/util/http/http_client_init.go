@@ -11,17 +11,17 @@ var (
 	globalHttpClient *HTTPClient
 )
 
-// func GetFilerHttpClient() *HTTPClient {
-// 	return filerHttpClient
-// }
+func GetFilerHttpClient() *HTTPClient {
+	return filerHttpClient
+}
 
-// func GetVolumeHttpClient() *HTTPClient {
-// 	return volumeHttpClient
-// }
+func GetVolumeHttpClient() *HTTPClient {
+	return volumeHttpClient
+}
 
-// func GetMasterHttpClient() *HTTPClient {
-// 	return masterHttpClient
-// }
+func GetMasterHttpClient() *HTTPClient {
+	return masterHttpClient
+}
 
 func GetGlobalHttpClient() *HTTPClient {
 	return globalHttpClient
