@@ -281,8 +281,16 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 		return actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, eachEntryFunc)
 	}
 
+	// after remove compare in pr #4924 , the loop will fetch some objects based on the limit parameter
+	// When the limit parameter is set too small and the number of objects is too large, it can cause performance issues.
+	// so it will at least fetch 500 objects a time if limit < 500
+	fetchLimit := int64(500)
+	if limit > fetchLimit {
+		fetchLimit = limit
+	}
+
 	var notPrefixed []*Entry
-	lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
+	lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, fetchLimit, func(entry *Entry) bool {
 		notPrefixed = append(notPrefixed, entry)
 		return true
 	})
@@ -305,7 +313,7 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 		}
 		if count < limit && lastFileName < prefix {
 			notPrefixed = notPrefixed[:0]
-			lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit, func(entry *Entry) bool {
+			lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, fetchLimit, func(entry *Entry) bool {
 				notPrefixed = append(notPrefixed, entry)
 				return true
 			})
