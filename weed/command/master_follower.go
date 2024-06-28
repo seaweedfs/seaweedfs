@@ -14,7 +14,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 	"google.golang.org/grpc/reflection"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -151,12 +150,6 @@ func startMasterFollower(masterOptions MasterOptions) {
 		go httpS.Serve(masterLocalListener)
 	}
 
-	if viper.GetString("https.master.key") != "" {
-		certFile := viper.GetString("https.master.cert")
-		keyFile := viper.GetString("https.master.key")
-		go httpS.ServeTLS(masterListener, certFile, keyFile)
-	} else {
-		go httpS.Serve(masterListener)
-	}
+	go httpS.Serve(masterListener)
 	select {}
 }
