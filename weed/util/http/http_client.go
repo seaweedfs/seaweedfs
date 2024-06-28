@@ -11,34 +11,71 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"io"
 )
 
 var (
-	once sync.Once
+	onceLoadSecurityConfiguration sync.Once
 )
 
-type HttpClient struct {
+type HTTPClient struct {
 	Client            *http.Client
 	Transport         *http.Transport
 	expectHttpsScheme bool
 }
 
-func (httpClient *HttpClient) GetClient() *http.Client {
-	return httpClient.Client
+func (httpClient *HTTPClient) Do(req *http.Request) (*http.Response, error) {
+	req.URL.Scheme = httpClient.GetHttpScheme()
+	return httpClient.Do(req)
 }
 
-func (httpClient *HttpClient) GetClientTransport() *http.Transport {
+func (httpClient *HTTPClient) Get(url string) (resp *http.Response, err error) {
+	url, err = httpClient.NormalizeHttpScheme(url)
+	if err != nil {
+		return nil, err
+	}
+	return httpClient.Get(url)
+}
+
+func (httpClient *HTTPClient) Post(url, contentType string, body io.Reader) (resp *http.Response, err error) {
+	url, err = httpClient.NormalizeHttpScheme(url)
+	if err != nil {
+		return nil, err
+	}
+	return httpClient.Post(url, contentType, body)
+}
+
+func (httpClient *HTTPClient) PostForm(url string, data url.Values) (resp *http.Response, err error) {
+	url, err = httpClient.NormalizeHttpScheme(url)
+	if err != nil {
+		return nil, err
+	}
+	return httpClient.PostForm(url, data)
+}
+
+func (httpClient *HTTPClient) Head(url string) (resp *http.Response, err error) {
+	url, err = httpClient.NormalizeHttpScheme(url)
+	if err != nil {
+		return nil, err
+	}
+	return httpClient.Head(url)
+}
+func (httpClient *HTTPClient) CloseIdleConnections() {
+	httpClient.CloseIdleConnections()
+}
+
+func (httpClient *HTTPClient) GetClientTransport() *http.Transport {
 	return httpClient.Transport
 }
 
-func (httpClient *HttpClient) GetHttpScheme() string {
+func (httpClient *HTTPClient) GetHttpScheme() string {
 	if httpClient.expectHttpsScheme {
 		return "https"
 	}
 	return "http"
 }
 
-func (httpClient *HttpClient) FixHttpScheme(rawURL string) (string, error) {
+func (httpClient *HTTPClient) NormalizeHttpScheme(rawURL string) (string, error) {
 	expectedScheme := httpClient.GetHttpScheme()
 
 	if !(strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://")) {
@@ -56,8 +93,8 @@ func (httpClient *HttpClient) FixHttpScheme(rawURL string) (string, error) {
 	return parsedURL.String(), nil
 }
 
-func NewHttpClient(serviceOrClientName ServiceOrClientName, opts ...HttpClientOpt) (*HttpClient, error) {
-	httpClient := HttpClient{}
+func NewHttpClient(serviceOrClientName ServiceOrClientName, opts ...HttpClientOpt) (*HTTPClient, error) {
+	httpClient := HTTPClient{}
 	httpClient.expectHttpsScheme = false
 
 	clientCertPair, err := GetClientCertPair(serviceOrClientName)
@@ -105,7 +142,7 @@ func NewHttpClient(serviceOrClientName ServiceOrClientName, opts ...HttpClientOp
 }
 
 func GetFileNameFromSecurityConfiguration(serviceOrClientName ServiceOrClientName, fileType string) string {
-	once.Do(func() {
+	onceLoadSecurityConfiguration.Do(func() {
 		util.LoadConfiguration("security", false)
 	})
 	return viper.GetString(fmt.Sprintf("https.%s.%s", serviceOrClientName.LowerCaseString(), fileType))

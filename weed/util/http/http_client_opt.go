@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-type HttpClientOpt = func(clientCfg *HttpClient)
+type HttpClientOpt = func(clientCfg *HTTPClient)
 
-func AddDialContext(httpClient *HttpClient) {
+func AddDialContext(httpClient *HTTPClient) {
 	dialContext := (&net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 10 * time.Second,
