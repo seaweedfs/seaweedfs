@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -564,6 +566,25 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 		if err != nil {
 			return fmt.Errorf("volume %d failed to save vif: %v", i, err)
 		}
+                // update superblock
+                datFile, err := os.OpenFile(filepath.Join(location.Directory, baseFileName+".dat"), os.O_RDWR, 0644)
+                if err != nil {
+                        return fmt.Errorf("volume %d failed to load superblock: %v", i, err)
+                }
+                datBackend := backend.NewDiskFile(datFile)
+                defer datBackend.Close()
+
+                superBlock, err := super_block.ReadSuperBlock(datBackend)
+
+                if err != nil {
+                        return fmt.Errorf("volume %d failed to parse superblock: %v", i, err)
+                }
+                replica, err := super_block.NewReplicaPlacementFromString(replication)
+                superBlock.ReplicaPlacement = replica
+                header := superBlock.Bytes()
+                if n, e := datBackend.WriteAt(header, 0); n == 0 || e != nil {
+                        return fmt.Errorf("volume %d failed to write superblock: %v", i, err)
+                }
 		return nil
 	}
 
