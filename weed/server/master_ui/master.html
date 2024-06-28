@@ -1,14 +1,15 @@
 <!DOCTYPE html>
 <html>
+{{ $contextPath := .ContextPath }}
 <head>
     <title>SeaweedFS {{ .Version }}</title>
-    <link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ $contextPath }}/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
 </head>
 <body>
 <div class="container">
     <div class="page-header">
         <h1>
-            <a href="https://github.com/seaweedfs/seaweedfs"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
+            <a href="https://github.com/seaweedfs/seaweedfs"><img src="{{ $contextPath }}/seaweedfsstatic/seaweed50x50.png"></img></a>
             SeaweedFS <small>{{ .Version }}</small>
         </h1>
     </div>
