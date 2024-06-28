@@ -95,18 +95,30 @@ allowed_commonNames = ""    # comma-separated SSL certificate common names
 cert = ""
 key = ""
 
-# volume server https options
 # Note: work in progress!
-#     this does not work with other clients, e.g., "weed filer|mount" etc, yet.
-[https.client]
-enabled = true
+#     this does not work with other clients, e.g., "weed command|mount" etc, yet.
 
+# volume server https options
 [https.volume]
 cert = ""
 key = ""
 ca = ""
 
+# master server https options
 [https.master]
 cert = ""
 key = ""
 ca = ""
+
+# filer server https options
+[https.filer]
+cert = ""
+key = ""
+ca = ""
+
+# https client for master|volume|filer connection
+# It is necessary that the parameters  [https.volume]|[https.master]|[https.filer] are set
+[https.global_client]
+cert = "/certs-for-server/server.crt"
+key = "/certs-for-server/server.key"
+ca = "/certs-global/rootCA.crt"

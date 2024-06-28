@@ -11,12 +11,12 @@ func _() {
 	_ = x[Master-0]
 	_ = x[Volume-1]
 	_ = x[Filer-2]
-	_ = x[Global-3]
+	_ = x[Global_client-3]
 }
 
-const _ServiceOrClientName_name = "MasterVolumeFilerGlobal"
+const _ServiceOrClientName_name = "MasterVolumeFilerGlobal_client"
 
-var _ServiceOrClientName_index = [...]uint8{0, 6, 12, 17, 23}
+var _ServiceOrClientName_index = [...]uint8{0, 6, 12, 17, 30}
 
 func (i ServiceOrClientName) String() string {
 	if i < 0 || i >= ServiceOrClientName(len(_ServiceOrClientName_index)-1) {

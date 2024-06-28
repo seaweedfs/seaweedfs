@@ -13,5 +13,5 @@ package http
 // }
 
 func NewGlobalHttpClient(opt ...HttpClientOpt)(*HTTPClient, error) {
-	return NewHttpClient(Global, opt...)
+	return NewHttpClient(Global_client, opt...)
 }

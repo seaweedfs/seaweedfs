@@ -9,7 +9,7 @@ const (
 	Master ServiceOrClientName = iota
 	Volume
 	Filer
-	Global
+	Global_client
 )
 
 func (name *ServiceOrClientName) LowerCaseString() string {
