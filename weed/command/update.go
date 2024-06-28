@@ -81,6 +81,8 @@ var cmdUpdate = &Command{
 }
 
 func runUpdate(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
+
 	path, _ := os.Executable()
 	_, name := filepath.Split(path)
 

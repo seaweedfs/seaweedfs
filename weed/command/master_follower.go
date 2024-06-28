@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc/reflection"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -68,6 +69,7 @@ var cmdMasterFollower = &Command{
 }
 
 func runMasterFollower(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("master", false)

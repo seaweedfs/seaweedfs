@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func init() {
@@ -18,6 +19,8 @@ type parameter struct {
 }
 
 func runFuse(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
+
 	rawArgs := strings.Join(args, " ")
 	rawArgsLen := len(rawArgs)
 	option := strings.Builder{}

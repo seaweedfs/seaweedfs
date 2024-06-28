@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"os"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type RemoteGatewayOptions struct {
@@ -77,6 +78,7 @@ var cmdFilerRemoteGateway = &Command{
 }
 
 func runFilerRemoteGateway(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")

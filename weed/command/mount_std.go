@@ -28,9 +28,11 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func runMount(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	if *mountOptions.debug {
 		go http.ListenAndServe(fmt.Sprintf(":%d", *mountOptions.debugPort), nil)

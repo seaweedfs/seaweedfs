@@ -111,6 +111,7 @@ var (
 )
 
 func runBenchmark(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	util.LoadConfiguration("security", false)
 	b.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")

@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -41,6 +42,7 @@ var cmdIam = &Command{
 }
 
 func runIam(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 	return iamStandaloneOptions.startIamServer()
 }
 

@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials/tls/certprovider"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/reflection"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -174,6 +175,8 @@ var cmdFiler = &Command{
 }
 
 func runFiler(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
+
 	if *f.debug {
 		go http.ListenAndServe(fmt.Sprintf(":%d", *f.debugPort), nil)
 	}

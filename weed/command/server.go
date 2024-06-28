@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type ServerOptions struct {
@@ -174,6 +175,7 @@ func init() {
 }
 
 func runServer(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	if *serverOptions.debug {
 		go http.ListenAndServe(fmt.Sprintf(":%d", *serverOptions.debugPort), nil)

@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func init() {
@@ -72,6 +73,8 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 }
 
 func runFix(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
+
 	for _, arg := range args {
 		basePath, f := path.Split(util.ResolvePath(arg))
 		if util.FolderExists(arg) {

@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/shell"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -34,6 +35,7 @@ var cmdShell = &Command{
 }
 
 func runShell(command *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	util.LoadConfiguration("security", false)
 	shellOptions.GrpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")

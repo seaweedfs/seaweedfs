@@ -5,6 +5,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func init() {
@@ -33,6 +34,7 @@ var (
 )
 
 func runCompact(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	if *compactVolumeId == -1 {
 		return false

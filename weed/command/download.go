@@ -48,6 +48,8 @@ var cmdDownload = &Command{
 }
 
 func runDownload(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
+	
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 

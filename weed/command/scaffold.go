@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/seaweedfs/seaweedfs/weed/command/scaffold"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func init() {
@@ -34,6 +35,7 @@ var (
 )
 
 func runScaffold(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	content := ""
 	switch *config {
