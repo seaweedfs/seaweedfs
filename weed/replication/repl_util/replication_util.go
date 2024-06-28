@@ -21,7 +21,7 @@ func CopyFromChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerS
 		var shouldRetry bool
 
 		for _, fileUrl := range fileUrls {
-			shouldRetry, err = util_http.GetGlobalHttpClient().ReadUrlAsStream(fileUrl, chunk.CipherKey, chunk.IsGzipped, chunk.IsFullChunk(), chunk.OffsetInChunk, int(chunk.ViewSize), func(data []byte) {
+			shouldRetry, err = util_http.ReadUrlAsStream(util_http.GetGlobalHttpClient(), fileUrl, chunk.CipherKey, chunk.IsGzipped, chunk.IsFullChunk(), chunk.OffsetInChunk, int(chunk.ViewSize), func(data []byte) {
 				writeErr = writeFunc(data)
 			})
 			if err != nil {

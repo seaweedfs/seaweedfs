@@ -132,7 +132,7 @@ func (b *MessageQueueBroker) genLogOnDiskReadFunc(t topic.Topic, partition *mq_p
 			for _, urlString := range urlStrings {
 				// TODO optimization opportunity: reuse the buffer
 				var data []byte
-				if data, _, err = util_http.GetGlobalHttpClient().Get(urlString); err == nil {
+				if data, _, err = util_http.Get(util_http.GetGlobalHttpClient(), urlString); err == nil {
 					processed = true
 					if processedTsNs, err = eachChunkFn(data, eachLogEntryFn, starTsNs, stopTsNs); err != nil {
 						return

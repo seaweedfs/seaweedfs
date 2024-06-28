@@ -82,7 +82,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 		if vs.ReadMode == "proxy" {
 			// proxy client request to target server
-			rawURL, _ := util_http.GetGlobalHttpClient().NormalizeUrl(lookupResult.Locations[0].Url)
+			rawURL, _ := util_http.NormalizeUrl(util_http.GetGlobalHttpClient(), lookupResult.Locations[0].Url)
 			u, _ := url.Parse(rawURL)
 			r.URL.Host = u.Host
 			r.URL.Scheme = u.Scheme
@@ -118,7 +118,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			return
 		} else {
 			// redirect
-			rawURL, _ := util_http.GetGlobalHttpClient().NormalizeUrl(lookupResult.Locations[0].PublicUrl)
+			rawURL, _ := util_http.NormalizeUrl(util_http.GetGlobalHttpClient(), lookupResult.Locations[0].PublicUrl)
 			u, _ := url.Parse(rawURL)
 			u.Path = fmt.Sprintf("%s/%s,%s", u.Path, vid, fid)
 			arg := url.Values{}

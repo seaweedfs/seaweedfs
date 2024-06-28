@@ -107,7 +107,7 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Header, resp *http.Response, err error) {
 
 	if fs.proxyByFiler {
-		return util_http.GetGlobalHttpClient().DownloadFile("http://"+fs.address+"/?proxyChunkId="+fileId, "")
+		return util_http.DownloadFile(util_http.GetGlobalHttpClient(), "http://"+fs.address+"/?proxyChunkId="+fileId, "")
 	}
 
 	fileUrls, err := fs.LookupFileId(fileId)
@@ -116,7 +116,7 @@ func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Hea
 	}
 
 	for _, fileUrl := range fileUrls {
-		filename, header, resp, err = util_http.GetGlobalHttpClient().DownloadFile(fileUrl, "")
+		filename, header, resp, err = util_http.DownloadFile(util_http.GetGlobalHttpClient(), fileUrl, "")
 		if err != nil {
 			glog.V(1).Infof("fail to read from %s: %v", fileUrl, err)
 		} else {

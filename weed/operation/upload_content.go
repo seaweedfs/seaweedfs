@@ -84,7 +84,7 @@ type Uploader struct {
 func NewUploader() (*Uploader, error) {
 	once.Do(func ()  {
 		// With Dial context
-		var httpClient *util_http.GlobalHttpClient
+		var httpClient *util_http.HTTPClient
 		httpClient, uploaderErr = util_http.NewGlobalHttpClient(util_http.AddDialContext)
 		if uploaderErr != nil {
 			uploaderErr = fmt.Errorf("error initializing the loader: %s", uploaderErr)

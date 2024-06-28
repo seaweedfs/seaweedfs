@@ -216,7 +216,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				if isSecure {
 					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(context.Background()), b.grpcDialOption, df.fp.Fid)
 				}
-				if e := util_http.GetGlobalHttpClient().Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
+				if e := util_http.Delete(util_http.GetGlobalHttpClient(), fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
 					s.completed++
 				} else {
 					s.failed++
@@ -297,7 +297,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		}
 		var bytes []byte
 		for _, url := range urls {
-			bytes, _, err = util_http.GetGlobalHttpClient().Get(url)
+			bytes, _, err = util_http.Get(util_http.GetGlobalHttpClient(), url)
 			if err == nil {
 				break
 			}

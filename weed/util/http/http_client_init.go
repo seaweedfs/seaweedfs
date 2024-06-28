@@ -8,18 +8,23 @@ var (
 	filerHttpClient *HTTPClient
 	volumeHttpClient *HTTPClient
 	masterHttpClient *HTTPClient
+	globalHttpClient *HTTPClient
 )
 
-func GetFilerHttpClient() *HTTPClient {
-	return filerHttpClient
-}
+// func GetFilerHttpClient() *HTTPClient {
+// 	return filerHttpClient
+// }
 
-func GetVolumeHttpClient() *HTTPClient {
-	return volumeHttpClient
-}
+// func GetVolumeHttpClient() *HTTPClient {
+// 	return volumeHttpClient
+// }
 
-func GetMasterHttpClient() *HTTPClient {
-	return masterHttpClient
+// func GetMasterHttpClient() *HTTPClient {
+// 	return masterHttpClient
+// }
+
+func GetGlobalHttpClient() *HTTPClient {
+	return globalHttpClient
 }
 
 func InitAllHttpClients() {
@@ -35,5 +40,9 @@ func InitAllHttpClients() {
 	masterHttpClient, err = NewMasterHttpClient()
 	if err != nil {
 		glog.Fatalf("error init master http client: %v", err)
+	}
+	globalHttpClient, err = NewGlobalHttpClient()
+	if err != nil {
+		glog.Fatalf("error init global http client: %v", err)
 	}
 }

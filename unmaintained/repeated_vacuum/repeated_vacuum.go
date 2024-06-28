@@ -35,7 +35,7 @@ func main() {
 	go func() {
 		for {
 			println("vacuum threshold", *garbageThreshold)
-			_, _, err := util_http.GetGlobalHttpClient().Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", pb.ServerAddress(*master).ToHttpAddress(), *garbageThreshold))
+			_, _, err := util_http.Get(util_http.GetGlobalHttpClient(), fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", pb.ServerAddress(*master).ToHttpAddress(), *garbageThreshold))
 			if err != nil {
 				log.Fatalf("vacuum: %v", err)
 			}
@@ -48,7 +48,7 @@ func main() {
 
 		assignResult, targetUrl := genFile(grpcDialOption, i)
 
-		util_http.GetGlobalHttpClient().Delete(targetUrl, string(assignResult.Auth))
+		util_http.Delete(util_http.GetGlobalHttpClient(), targetUrl, string(assignResult.Auth))
 	}
 
 }

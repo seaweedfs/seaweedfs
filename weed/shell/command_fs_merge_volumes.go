@@ -100,7 +100,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 		return nil
 	}
 
-	client := util_http.GetGlobalHttpClient().GetClient()
+	client := util_http.GetGlobalHttpClient()
 	defer client.CloseIdleConnections()
 
 	return commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {

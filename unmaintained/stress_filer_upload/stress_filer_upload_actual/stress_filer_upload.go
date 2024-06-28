@@ -59,7 +59,7 @@ func main() {
 			})
 			for t := 0; t < *times; t++ {
 				for _, filename := range fileNames {
-					if size, err := uploadFileToFiler(util_http.GetGlobalHttpClient().GetClient(), filename, *destination); err == nil {
+					if size, err := uploadFileToFiler(filename, *destination); err == nil {
 						statsChan <- stat{
 							size: size,
 						}
@@ -98,7 +98,7 @@ func main() {
 
 }
 
-func uploadFileToFiler(client *http.Client, filename, destination string) (size int64, err error) {
+func uploadFileToFiler(filename, destination string) (size int64, err error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		panic(err)
@@ -132,7 +132,7 @@ func uploadFileToFiler(client *http.Client, filename, destination string) (size 
 	request, err := http.NewRequest("POST", uri, body)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 
-	resp, err := client.Do(request)
+	resp, err := util_http.GetFilerHttpClient().Do(request)
 	if err != nil {
 		return 0, fmt.Errorf("http POST %s: %v", uri, err)
 	} else {

@@ -49,7 +49,7 @@ func main() {
 			for t := 0; t < *times; t++ {
 				for f := 0; f < *fileCount; f++ {
 					fn := r.Intn(*fileCount)
-					if size, err := uploadFileToFiler(util_http.GetGlobalHttpClient().GetClient(), data, fmt.Sprintf("file%04d", fn), *destination); err == nil {
+					if size, err := uploadFileToFiler(data, fmt.Sprintf("file%04d", fn), *destination); err == nil {
 						statsChan <- stat{
 							size: size,
 						}
@@ -90,7 +90,7 @@ func main() {
 
 }
 
-func uploadFileToFiler(client *http.Client, data []byte, filename, destination string) (size int64, err error) {
+func uploadFileToFiler(data []byte, filename, destination string) (size int64, err error) {
 
 	if !strings.HasSuffix(destination, "/") {
 		destination = destination + "/"
@@ -116,7 +116,7 @@ func uploadFileToFiler(client *http.Client, data []byte, filename, destination s
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	// request.Close = true  // can not use this, which do not reuse http connection, impacting filer->volume also.
 
-	resp, err := client.Do(request)
+	resp, err := util_http.GetFilerHttpClient().Do(request)
 	if err != nil {
 		return 0, fmt.Errorf("http POST %s: %v", uri, err)
 	} else {

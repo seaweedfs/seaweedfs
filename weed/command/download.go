@@ -66,7 +66,7 @@ func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpti
 	if lookupError != nil {
 		return lookupError
 	}
-	filename, _, rc, err := util_http.GetGlobalHttpClient().DownloadFile(fileUrl, jwt)
+	filename, _, rc, err := util_http.DownloadFile(util_http.GetGlobalHttpClient(), fileUrl, jwt)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func fetchContent(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption
 		return "", nil, lookupError
 	}
 	var rc *http.Response
-	if filename, _, rc, e = util_http.GetGlobalHttpClient().DownloadFile(fileUrl, jwt); e != nil {
+	if filename, _, rc, e = util_http.DownloadFile(util_http.GetGlobalHttpClient(), fileUrl, jwt); e != nil {
 		return "", nil, e
 	}
 	defer util_http.CloseResponse(rc)

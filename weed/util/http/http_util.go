@@ -179,6 +179,7 @@ func GetUrlStream(httpClient HTTPClientInterface, rawURL string, values url.Valu
 	return readFn(r.Body)
 }
 
+// For volume server
 func DownloadFile(httpClient HTTPClientInterface, fileUrl string, jwt string) (filename string, header http.Header, resp *http.Response, e error) {
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {

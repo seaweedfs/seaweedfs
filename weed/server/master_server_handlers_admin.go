@@ -111,7 +111,7 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 	location := ms.findVolumeLocation(collection, vid)
 	if location.Error == "" {
 		loc := location.Locations[rand.Intn(len(location.Locations))]
-		url, _ := util_http.GetGlobalHttpClient().NormalizeUrl(loc.PublicUrl)
+		url, _ := util_http.NormalizeUrl(util_http.GetGlobalHttpClient(), loc.PublicUrl)
 		if r.URL.RawQuery != "" {
 			url = url + r.URL.Path + "?" + r.URL.RawQuery
 		} else {
