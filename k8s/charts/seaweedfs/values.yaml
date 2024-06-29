@@ -19,6 +19,7 @@ global:
       filerRead: false
   # we will use this serviceAccountName for all ClusterRoles/ClusterRoleBindings
   serviceAccountName: "seaweedfs"
+  automountServiceAccountToken: true
   certificates:
     alphacrds: false
   monitoring:
