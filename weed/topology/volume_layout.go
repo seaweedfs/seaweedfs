@@ -361,7 +361,7 @@ func (vl *VolumeLayout) ShouldGrowVolumes(option *VolumeGrowOption) bool {
 	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "total").Set(float64(total))
 	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "active").Set(float64(active))
 	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "crowded").Set(float64(crowded))
-	//glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, high)
+	glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, crowded)
 	return (float64(active) * VolumeGrowStrategy.CrowdedThreshold) <= float64(crowded)
 }
 

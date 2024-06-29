@@ -26,8 +26,10 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			if !ok {
 				break
 			}
+			glog.V(1).Infoln("enter automatic volume grow: ", req)
 
 			if !ms.Topo.IsLeader() {
+				glog.V(1).Infoln("current ip is not leader, skip request: ", req)
 				//discard buffered requests
 				time.Sleep(time.Second * 1)
 				continue
@@ -65,7 +67,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				}()
 
 			} else {
-				glog.V(4).Infoln("discard volume grow request")
+				glog.V(3).Infoln("discard volume grow request: ", req)
 				time.Sleep(time.Millisecond * 211)
 				vl.DoneGrowRequest()
 			}
