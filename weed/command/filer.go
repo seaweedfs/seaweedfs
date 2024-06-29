@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"google.golang.org/grpc/reflection"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -267,6 +269,7 @@ func (fo *FilerOptions) startFiler() {
 		JoinExistingFiler:     *fo.joinExistingFiler,
 	})
 	if nfs_err != nil {
+		sentry.CaptureException(nfs_err)
 		glog.Fatalf("Filer startup error: %v", nfs_err)
 	}
 
@@ -275,16 +278,21 @@ func (fo *FilerOptions) startFiler() {
 		glog.V(0).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
 		publicListener, localPublicListener, e := util.NewIpAndLocalListeners(*fo.bindIp, *fo.publicPort, 0)
 		if e != nil {
+			sentry.CaptureException(e)
 			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
 		}
 		go func() {
 			if e := http.Serve(publicListener, publicVolumeMux); e != nil {
+				localHub := sentry.CurrentHub().Clone()
+				localHub.CaptureException(e)
 				glog.Fatalf("Volume server fail to serve public: %v", e)
 			}
 		}()
 		if localPublicListener != nil {
 			go func() {
 				if e := http.Serve(localPublicListener, publicVolumeMux); e != nil {
+					localHub := sentry.CurrentHub().Clone()
+					localHub.CaptureException(e)
 					glog.Errorf("Volume server fail to serve public: %v", e)
 				}
 			}()
@@ -297,6 +305,7 @@ func (fo *FilerOptions) startFiler() {
 		time.Duration(10)*time.Second,
 	)
 	if e != nil {
+		sentry.CaptureException(e)
 		glog.Fatalf("Filer listener error: %v", e)
 	}
 
@@ -304,6 +313,7 @@ func (fo *FilerOptions) startFiler() {
 	grpcPort := *fo.portGrpc
 	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*fo.bindIp, grpcPort, 0)
 	if err != nil {
+		sentry.CaptureException(err)
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
@@ -314,19 +324,22 @@ func (fo *FilerOptions) startFiler() {
 	}
 	go grpcS.Serve(grpcL)
 
-	httpS := &http.Server{Handler: defaultMux}
+	httpS := &http.Server{Handler: sentryhttp.New(sentryhttp.Options{}).Handle(defaultMux)}
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
 		if localSocket == "" {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-filer-%d.sock", *fo.port)
 		}
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
+			sentry.CaptureException(err)
 			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
 		go func() {
 			// start on local unix socket
 			filerSocketListener, err := net.Listen("unix", localSocket)
 			if err != nil {
+				localHub := sentry.CurrentHub().Clone()
+				localHub.CaptureException(err)
 				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
 			}
 			httpS.Serve(filerSocketListener)
@@ -335,11 +348,14 @@ func (fo *FilerOptions) startFiler() {
 	if filerLocalListener != nil {
 		go func() {
 			if err := httpS.Serve(filerLocalListener); err != nil {
+				localHub := sentry.CurrentHub().Clone()
+				localHub.CaptureException(e)
 				glog.Errorf("Filer Fail to serve: %v", e)
 			}
 		}()
 	}
 	if err := httpS.Serve(filerListener); err != nil {
+		sentry.CaptureException(err)
 		glog.Fatalf("Filer Fail to serve: %v", e)
 	}
 

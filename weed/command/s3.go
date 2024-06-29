@@ -25,6 +25,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
@@ -236,7 +237,8 @@ func (s3opt *S3Options) startS3Server() bool {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
 
-	httpS := &http.Server{Handler: router}
+	sentryHandler := sentryhttp.New(sentryhttp.Options{})
+	httpS := &http.Server{Handler: sentryHandler.Handle(router)}
 
 	if *s3opt.portGrpc == 0 {
 		*s3opt.portGrpc = 10000 + *s3opt.port
