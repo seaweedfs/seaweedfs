@@ -43,7 +43,7 @@ func TestIsRequestPresignedSignatureV4(t *testing.T) {
 	for i, testCase := range testCases {
 		// creating an input HTTP request.
 		// Only the query parameters are relevant for this particular test.
-		inputReq, err := http.NewRequest("GET", "http://example.com", nil)
+		inputReq, err := http.NewRequest(http.MethodGet, "http://example.com", nil)
 		if err != nil {
 			t.Fatalf("Error initializing input HTTP request: %v", err)
 		}
@@ -85,9 +85,9 @@ func TestIsReqAuthenticated(t *testing.T) {
 		s3Error s3err.ErrorCode
 	}{
 		// When request is unsigned, access denied is returned.
-		{mustNewRequest("GET", "http://127.0.0.1:9000", 0, nil, t), s3err.ErrAccessDenied},
+		{mustNewRequest(http.MethodGet, "http://127.0.0.1:9000", 0, nil, t), s3err.ErrAccessDenied},
 		// When request is properly signed, error is none.
-		{mustNewSignedRequest("GET", "http://127.0.0.1:9000", 0, nil, t), s3err.ErrNone},
+		{mustNewSignedRequest(http.MethodGet, "http://127.0.0.1:9000", 0, nil, t), s3err.ErrNone},
 	}
 
 	// Validates all testcases.
@@ -117,8 +117,8 @@ func TestCheckaAnonymousRequestAuthType(t *testing.T) {
 		ErrCode s3err.ErrorCode
 		Action  Action
 	}{
-		{Request: mustNewRequest("GET", "http://127.0.0.1:9000/bucket", 0, nil, t), ErrCode: s3err.ErrNone, Action: s3_constants.ACTION_READ},
-		{Request: mustNewRequest("PUT", "http://127.0.0.1:9000/bucket", 0, nil, t), ErrCode: s3err.ErrAccessDenied, Action: s3_constants.ACTION_WRITE},
+		{Request: mustNewRequest(http.MethodGet, "http://127.0.0.1:9000/bucket", 0, nil, t), ErrCode: s3err.ErrNone, Action: s3_constants.ACTION_READ},
+		{Request: mustNewRequest(http.MethodPut, "http://127.0.0.1:9000/bucket", 0, nil, t), ErrCode: s3err.ErrAccessDenied, Action: s3_constants.ACTION_WRITE},
 	}
 	for i, testCase := range testCases {
 		_, s3Error := iam.authRequest(testCase.Request, testCase.Action)
@@ -155,9 +155,9 @@ func TestCheckAdminRequestAuthType(t *testing.T) {
 		Request *http.Request
 		ErrCode s3err.ErrorCode
 	}{
-		{Request: mustNewRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrAccessDenied},
-		{Request: mustNewSignedRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrNone},
-		{Request: mustNewPresignedRequest(iam, "GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrNone},
+		{Request: mustNewRequest(http.MethodGet, "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrAccessDenied},
+		{Request: mustNewSignedRequest(http.MethodGet, "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrNone},
+		{Request: mustNewPresignedRequest(iam, http.MethodGet, "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrNone},
 	}
 	for i, testCase := range testCases {
 		if _, s3Error := iam.reqSignatureV4Verify(testCase.Request); s3Error != testCase.ErrCode {
@@ -214,7 +214,7 @@ func mustNewPresignedRequest(iam *IdentityAccessManagement, method string, urlSt
 // Returns new HTTP request object.
 func newTestRequest(method, urlStr string, contentLength int64, body io.ReadSeeker) (*http.Request, error) {
 	if method == "" {
-		method = "POST"
+		method = http.MethodPost
 	}
 
 	// Save for subsequent use

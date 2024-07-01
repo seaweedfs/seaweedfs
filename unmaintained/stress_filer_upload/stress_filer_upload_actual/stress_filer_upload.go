@@ -130,7 +130,7 @@ func uploadFileToFiler(client *http.Client, filename, destination string) (size 
 
 	uri := destination + file.Name()
 
-	request, err := http.NewRequest("POST", uri, body)
+	request, err := http.NewRequest(http.MethodPost, uri, body)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := client.Do(request)

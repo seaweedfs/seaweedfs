@@ -115,7 +115,7 @@ func uploadFileToFiler(client *http.Client, data []byte, filename, destination s
 
 	uri := destination + filename
 
-	request, err := http.NewRequest("POST", uri, body)
+	request, err := http.NewRequest(http.MethodPost, uri, body)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	// request.Close = true  // can not use this, which do not reuse http connection, impacting filer->volume also.
 

@@ -39,7 +39,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	var reply *FilerPostResult
 	var err error
 	var md5bytes []byte
-	if r.Method == "POST" {
+	if r.Method == http.MethodPost {
 		if r.Header.Get("Content-Type") == "" && strings.HasSuffix(r.URL.Path, "/") {
 			reply, err = fs.mkdir(ctx, w, r, so)
 		} else {
