@@ -34,6 +34,7 @@ const (
 	SeaweedFiler_Statistics_FullMethodName                      = "/filer_pb.SeaweedFiler/Statistics"
 	SeaweedFiler_Ping_FullMethodName                            = "/filer_pb.SeaweedFiler/Ping"
 	SeaweedFiler_GetFilerConfiguration_FullMethodName           = "/filer_pb.SeaweedFiler/GetFilerConfiguration"
+	SeaweedFiler_TraverseBfsMetadata_FullMethodName             = "/filer_pb.SeaweedFiler/TraverseBfsMetadata"
 	SeaweedFiler_SubscribeMetadata_FullMethodName               = "/filer_pb.SeaweedFiler/SubscribeMetadata"
 	SeaweedFiler_SubscribeLocalMetadata_FullMethodName          = "/filer_pb.SeaweedFiler/SubscribeLocalMetadata"
 	SeaweedFiler_KvGet_FullMethodName                           = "/filer_pb.SeaweedFiler/KvGet"
@@ -64,6 +65,7 @@ type SeaweedFilerClient interface {
 	Statistics(ctx context.Context, in *StatisticsRequest, opts ...grpc.CallOption) (*StatisticsResponse, error)
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	GetFilerConfiguration(ctx context.Context, in *GetFilerConfigurationRequest, opts ...grpc.CallOption) (*GetFilerConfigurationResponse, error)
+	TraverseBfsMetadata(ctx context.Context, in *TraverseBfsMetadataRequest, opts ...grpc.CallOption) (SeaweedFiler_TraverseBfsMetadataClient, error)
 	SubscribeMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (SeaweedFiler_SubscribeMetadataClient, error)
 	SubscribeLocalMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (SeaweedFiler_SubscribeLocalMetadataClient, error)
 	KvGet(ctx context.Context, in *KvGetRequest, opts ...grpc.CallOption) (*KvGetResponse, error)
@@ -265,8 +267,40 @@ func (c *seaweedFilerClient) GetFilerConfiguration(ctx context.Context, in *GetF
 	return out, nil
 }
 
+func (c *seaweedFilerClient) TraverseBfsMetadata(ctx context.Context, in *TraverseBfsMetadataRequest, opts ...grpc.CallOption) (SeaweedFiler_TraverseBfsMetadataClient, error) {
+	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[2], SeaweedFiler_TraverseBfsMetadata_FullMethodName, opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &seaweedFilerTraverseBfsMetadataClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type SeaweedFiler_TraverseBfsMetadataClient interface {
+	Recv() (*TraverseBfsMetadataResponse, error)
+	grpc.ClientStream
+}
+
+type seaweedFilerTraverseBfsMetadataClient struct {
+	grpc.ClientStream
+}
+
+func (x *seaweedFilerTraverseBfsMetadataClient) Recv() (*TraverseBfsMetadataResponse, error) {
+	m := new(TraverseBfsMetadataResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 func (c *seaweedFilerClient) SubscribeMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (SeaweedFiler_SubscribeMetadataClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[2], SeaweedFiler_SubscribeMetadata_FullMethodName, opts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[3], SeaweedFiler_SubscribeMetadata_FullMethodName, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +332,7 @@ func (x *seaweedFilerSubscribeMetadataClient) Recv() (*SubscribeMetadataResponse
 }
 
 func (c *seaweedFilerClient) SubscribeLocalMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (SeaweedFiler_SubscribeLocalMetadataClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[3], SeaweedFiler_SubscribeLocalMetadata_FullMethodName, opts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[4], SeaweedFiler_SubscribeLocalMetadata_FullMethodName, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -411,6 +445,7 @@ type SeaweedFilerServer interface {
 	Statistics(context.Context, *StatisticsRequest) (*StatisticsResponse, error)
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	GetFilerConfiguration(context.Context, *GetFilerConfigurationRequest) (*GetFilerConfigurationResponse, error)
+	TraverseBfsMetadata(*TraverseBfsMetadataRequest, SeaweedFiler_TraverseBfsMetadataServer) error
 	SubscribeMetadata(*SubscribeMetadataRequest, SeaweedFiler_SubscribeMetadataServer) error
 	SubscribeLocalMetadata(*SubscribeMetadataRequest, SeaweedFiler_SubscribeLocalMetadataServer) error
 	KvGet(context.Context, *KvGetRequest) (*KvGetResponse, error)
@@ -472,6 +507,9 @@ func (UnimplementedSeaweedFilerServer) Ping(context.Context, *PingRequest) (*Pin
 }
 func (UnimplementedSeaweedFilerServer) GetFilerConfiguration(context.Context, *GetFilerConfigurationRequest) (*GetFilerConfigurationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFilerConfiguration not implemented")
+}
+func (UnimplementedSeaweedFilerServer) TraverseBfsMetadata(*TraverseBfsMetadataRequest, SeaweedFiler_TraverseBfsMetadataServer) error {
+	return status.Errorf(codes.Unimplemented, "method TraverseBfsMetadata not implemented")
 }
 func (UnimplementedSeaweedFilerServer) SubscribeMetadata(*SubscribeMetadataRequest, SeaweedFiler_SubscribeMetadataServer) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeMetadata not implemented")
@@ -789,6 +827,27 @@ func _SeaweedFiler_GetFilerConfiguration_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedFiler_TraverseBfsMetadata_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(TraverseBfsMetadataRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(SeaweedFilerServer).TraverseBfsMetadata(m, &seaweedFilerTraverseBfsMetadataServer{stream})
+}
+
+type SeaweedFiler_TraverseBfsMetadataServer interface {
+	Send(*TraverseBfsMetadataResponse) error
+	grpc.ServerStream
+}
+
+type seaweedFilerTraverseBfsMetadataServer struct {
+	grpc.ServerStream
+}
+
+func (x *seaweedFilerTraverseBfsMetadataServer) Send(m *TraverseBfsMetadataResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
 func _SeaweedFiler_SubscribeMetadata_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(SubscribeMetadataRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -1054,6 +1113,11 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamRenameEntry",
 			Handler:       _SeaweedFiler_StreamRenameEntry_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "TraverseBfsMetadata",
+			Handler:       _SeaweedFiler_TraverseBfsMetadata_Handler,
 			ServerStreams: true,
 		},
 		{

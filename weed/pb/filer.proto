@@ -54,6 +54,9 @@ service SeaweedFiler {
     rpc GetFilerConfiguration (GetFilerConfigurationRequest) returns (GetFilerConfigurationResponse) {
     }
 
+    rpc TraverseBfsMetadata (TraverseBfsMetadataRequest) returns (stream TraverseBfsMetadataResponse) {
+    }
+
     rpc SubscribeMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
     }
 
@@ -358,6 +361,15 @@ message SubscribeMetadataResponse {
     string directory = 1;
     EventNotification event_notification = 2;
     int64 ts_ns = 3;
+}
+
+message TraverseBfsMetadataRequest {
+    string directory = 1;
+    repeated string excluded_prefixes = 2;
+}
+message TraverseBfsMetadataResponse {
+    string directory = 1;
+    Entry entry = 2;
 }
 
 message LogEntry {

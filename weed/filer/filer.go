@@ -78,7 +78,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 	return f
 }
 
-func (f *Filer) MaybeBootstrapFromPeers(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, snapshotTime time.Time) (err error) {
+func (f *Filer) MaybeBootstrapFromOnePeer(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, snapshotTime time.Time) (err error) {
 	if len(existingNodes) == 0 {
 		return
 	}
@@ -91,25 +91,13 @@ func (f *Filer) MaybeBootstrapFromPeers(self pb.ServerAddress, existingNodes []*
 	}
 
 	glog.V(0).Infof("bootstrap from %v clientId:%d", earliestNode.Address, f.UniqueFilerId)
-	f.UniqueFilerEpoch++
 
-	metadataFollowOption := &pb.MetadataFollowOption{
-		ClientName:             "bootstrap",
-		ClientId:               f.UniqueFilerId,
-		ClientEpoch:            f.UniqueFilerEpoch,
-		SelfSignature:          f.Signature,
-		PathPrefix:             "/",
-		AdditionalPathPrefixes: nil,
-		DirectoriesToWatch:     nil,
-		StartTsNs:              0,
-		StopTsNs:               snapshotTime.UnixNano(),
-		EventErrorType:         pb.FatalOnError,
-	}
-
-	err = pb.FollowMetadata(pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, metadataFollowOption, func(resp *filer_pb.SubscribeMetadataResponse) error {
-		return Replay(f.Store, resp)
+	return pb.WithFilerClient(false, f.UniqueFilerId, pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.StreamBfs(client, "/", snapshotTime.UnixNano(), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
+			return f.Store.InsertEntry(context.Background(), FromPbEntry(string(parentPath), entry))
+		})
 	})
-	return
+
 }
 
 func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, startFrom time.Time) {

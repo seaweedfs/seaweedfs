@@ -34,7 +34,8 @@ Your support will be really appreciated by me and other supporters!
 ### Gold Sponsors
 [![nodion](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/sponsor_nodion.png)](https://www.nodion.com)
 [![piknik](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/piknik.png)](https://www.piknik.com)
-- VPS provided by [keepsec.ca](https://www.keepsec.ca/)
+[![keepsec](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/keepsec.png)](https://www.keepsec.ca)
+
 ---
 
 - [Download Binaries for different platforms](https://github.com/seaweedfs/seaweedfs/releases/latest)
