@@ -226,7 +226,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	AdjustPassthroughHeaders(w, r, filename)
 	totalSize := int64(entry.Size())
 
-	if r.Method == "HEAD" {
+	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
 	}

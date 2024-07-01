@@ -342,7 +342,7 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 
 func readUrl(fileUrl string) (*http.Response, io.ReadCloser, error) {
 
-	req, err := http.NewRequest("GET", fileUrl, nil)
+	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -143,7 +143,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		return
 	}
 
-	if r.Method == "DELETE" {
+	if r.Method == http.MethodDelete {
 		if resp.StatusCode == http.StatusNotFound {
 			// this is normal
 			responseStatusCode := responseFn(resp, w)
