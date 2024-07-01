@@ -74,7 +74,6 @@ type FilerOption struct {
 	DiskType              string
 	AllowedOrigins        []string
 	ExposeDirectoryData   bool
-	JoinExistingFiler     bool
 }
 
 type FilerServer struct {
@@ -198,9 +197,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	existingNodes := fs.filer.ListExistingPeerUpdates(context.Background())
 	startFromTime := time.Now().Add(-filer.LogFlushInterval)
-	if option.JoinExistingFiler {
-		startFromTime = time.Time{}
-	}
 	if isFresh {
 		glog.V(0).Infof("%s bootstrap from peers %+v", option.Host, existingNodes)
 		if err := fs.filer.MaybeBootstrapFromOnePeer(option.Host, existingNodes, startFromTime); err != nil {
