@@ -1,58 +1,58 @@
-#name: "docker: build release containers for large volume"
-#
-#on:
-#  release:
-#    types: [created]
-#  workflow_dispatch: {}
-#
-#permissions:
-#  contents: read
-#
-#jobs:
-#
-#  build-large-release-container:
-#    runs-on: [ubuntu-latest]
-#
-#    steps:
-#      -
-#        name: Checkout
-#        uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v2
-#      -
-#        name: Docker meta
-#        id: docker_meta
-#        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v3
-#        with:
-#          images: |
-#            chrislusf/seaweedfs
-#          tags: |
-#            type=ref,event=tag,suffix=_large_disk
-#          flavor: |
-#            latest=false
-#          labels: |
-#            org.opencontainers.image.title=seaweedfs
-#            org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
-#            org.opencontainers.image.vendor=Chris Lu
-#      -
-#        name: Set up QEMU
-#        uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v1
-#      -
-#        name: Set up Docker Buildx
-#        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v1
-#      -
-#        name: Login to Docker Hub
-#        if: github.event_name != 'pull_request'
-#        uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # v1
-#        with:
-#          username: ${{ secrets.DOCKER_USERNAME }}
-#          password: ${{ secrets.DOCKER_PASSWORD }}
-#      -
-#        name: Build
-#        uses: docker/build-push-action@2cdde995de11925a030ce8070c3d77a52ffcf1c0 # v2
-#        with:
-#          context: ./docker
-#          push: ${{ github.event_name != 'pull_request' }}
-#          file: ./docker/Dockerfile.go_build
-#          build-args: TAGS=5BytesOffset
-#          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
-#          tags: ${{ steps.docker_meta.outputs.tags }}
-#          labels: ${{ steps.docker_meta.outputs.labels }}
+name: "docker: build release containers for large volume"
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+
+  build-large-release-container:
+    runs-on: [ubuntu-latest]
+
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v2
+      -
+        name: Docker meta
+        id: docker_meta
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v3
+        with:
+          images: |
+            chrislusf/seaweedfs
+          tags: |
+            type=ref,event=tag,suffix=_large_disk
+          flavor: |
+            latest=false
+          labels: |
+            org.opencontainers.image.title=seaweedfs
+            org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
+            org.opencontainers.image.vendor=Chris Lu
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v1
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v1
+      -
+        name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # v1
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      -
+        name: Build
+        uses: docker/build-push-action@2cdde995de11925a030ce8070c3d77a52ffcf1c0 # v2
+        with:
+          context: ./docker
+          push: ${{ github.event_name != 'pull_request' }}
+          file: ./docker/Dockerfile.go_build
+          build-args: TAGS=5BytesOffset
+          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
