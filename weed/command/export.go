@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 const (
@@ -147,6 +148,7 @@ func (scanner *VolumeFileScanner4Export) VisitNeedle(n *needle.Needle, offset in
 }
 
 func runExport(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	var err error
 

@@ -299,8 +299,13 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 				PairMap:           nil,
 				Jwt:               auth,
 			}
+			
 			var uploadErr error
-			uploadResult, uploadErr, _ = operation.Upload(reader, uploadOption)
+			uploader, uploadErr := operation.NewUploader()
+			if uploadErr != nil {
+				return uploadErr
+			}
+			uploadResult, uploadErr, _ = uploader.Upload(reader, uploadOption)
 			if uploadErr != nil {
 				return uploadErr
 			}

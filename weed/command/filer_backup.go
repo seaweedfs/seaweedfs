@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"regexp"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type FilerBackupOptions struct {
@@ -57,6 +58,7 @@ var cmdFilerBackup = &Command{
 }
 
 func runFilerBackup(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("replication", true)

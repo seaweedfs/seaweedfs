@@ -392,8 +392,11 @@ func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo,
 }
 
 func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
-
-	fileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return nil, err
+	}
+	fileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
 		f.fs,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,

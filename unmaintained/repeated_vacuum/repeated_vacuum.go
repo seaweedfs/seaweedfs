@@ -1,19 +1,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"log"
 	"math/rand"
 	"time"
-	"context"
 
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -34,7 +35,7 @@ func main() {
 	go func() {
 		for {
 			println("vacuum threshold", *garbageThreshold)
-			_, _, err := util.Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", pb.ServerAddress(*master).ToHttpAddress(), *garbageThreshold))
+			_, _, err := util_http.Get(util_http.GetGlobalHttpClient(), fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", pb.ServerAddress(*master).ToHttpAddress(), *garbageThreshold))
 			if err != nil {
 				log.Fatalf("vacuum: %v", err)
 			}
@@ -47,8 +48,7 @@ func main() {
 
 		assignResult, targetUrl := genFile(grpcDialOption, i)
 
-		util.Delete(targetUrl, string(assignResult.Auth))
-
+		util_http.Delete(util_http.GetGlobalHttpClient(), targetUrl, string(assignResult.Auth))
 	}
 
 }
@@ -76,7 +76,12 @@ func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, st
 		PairMap:           nil,
 		Jwt:               assignResult.Auth,
 	}
-	_, err = operation.UploadData(data, uploadOption)
+	
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = uploader.UploadData(data, uploadOption)
 	if err != nil {
 		log.Fatalf("upload: %v", err)
 	}

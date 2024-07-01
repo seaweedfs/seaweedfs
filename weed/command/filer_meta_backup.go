@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -54,6 +55,7 @@ The backup writes to another filer store specified in a backup_filer.toml.
 }
 
 func runFilerMetaBackup(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	util.LoadConfiguration("security", false)
 	metaBackup.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")

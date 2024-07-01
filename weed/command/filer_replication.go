@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sub"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func init() {
@@ -29,6 +30,7 @@ var cmdFilerReplicate = &Command{
 }
 
 func runFilerReplicate(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("replication", true)

@@ -29,6 +29,7 @@ import (
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -102,6 +103,7 @@ var (
 )
 
 func runMaster(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("master", false)

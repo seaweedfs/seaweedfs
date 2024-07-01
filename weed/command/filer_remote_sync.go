@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type RemoteSyncOptions struct {
@@ -72,6 +73,7 @@ var cmdFilerRemoteSynchronize = &Command{
 }
 
 func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")

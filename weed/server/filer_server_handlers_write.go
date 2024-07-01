@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -120,7 +121,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		fs.autoChunk(ctx, w, r, contentLength, so)
 	}
 
-	util.CloseRequest(r)
+	util_http.CloseRequest(r)
 
 }
 

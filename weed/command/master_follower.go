@@ -15,6 +15,7 @@ import (
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/reflection"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -67,6 +68,7 @@ var cmdMasterFollower = &Command{
 }
 
 func runMasterFollower(cmd *Command, args []string) bool {
+	util_http.InitAllHttpClients()
 
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("master", false)
@@ -147,7 +149,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	if masterLocalListener != nil {
 		go httpS.Serve(masterLocalListener)
 	}
-	go httpS.Serve(masterListener)
 
+	go httpS.Serve(masterListener)
 	select {}
 }
