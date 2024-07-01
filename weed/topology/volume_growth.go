@@ -131,6 +131,7 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 				Url:        server.Url(),
 				PublicUrl:  server.PublicUrl,
 				DataCenter: server.GetDataCenterId(),
+				GrpcPort:   uint32(server.GrpcPort),
 				NewVids:    []uint32{uint32(vid)},
 			})
 		}

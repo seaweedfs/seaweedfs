@@ -65,6 +65,7 @@ type FilerOptions struct {
 	exposeDirectoryData     *bool
 	username                *string
 	password                *string
+	joinExistingFiler       *bool
 }
 
 func init() {
@@ -99,6 +100,7 @@ func init() {
 	f.exposeDirectoryData = cmdFiler.Flag.Bool("exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
 	f.username = cmdFiler.Flag.String("username", "", "username for basic authentication")
 	f.password = cmdFiler.Flag.String("password", "", "password for basic authentication")
+	f.joinExistingFiler = cmdFiler.Flag.Bool("joinExistingFiler", false, "enable if new filer wants to join existing cluster")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -268,6 +270,7 @@ func (fo *FilerOptions) startFiler() {
 		AllowedOrigins:        strings.Split(*fo.allowedOrigins, ","),
 		Username:              *fo.username,
 		Password:              *fo.password,
+		JoinExistingFiler:     *fo.joinExistingFiler,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

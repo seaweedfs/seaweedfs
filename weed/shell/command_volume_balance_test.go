@@ -278,7 +278,7 @@ func TestDeleteEmptySelection(t *testing.T) {
 	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				if v.Size <= super_block.SuperBlockSize && v.ModifiedAtSecond > 0  {
+				if v.Size <= super_block.SuperBlockSize && v.ModifiedAtSecond > 0 {
 					fmt.Printf("empty volume %d from %s\n", v.Id, dn.Id)
 				}
 			}

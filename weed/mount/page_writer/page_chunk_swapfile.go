@@ -137,7 +137,7 @@ func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop in
 			maxStop = max(maxStop, logicStop)
 
 			if t.TsNs >= tsNs {
-				println("read new data2", t.TsNs - tsNs, "ns")
+				println("read new data2", t.TsNs-tsNs, "ns")
 			}
 		}
 	}

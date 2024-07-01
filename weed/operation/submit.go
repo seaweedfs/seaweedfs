@@ -1,6 +1,7 @@
 package operation
 
 import (
+	"context"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 	"mime"
@@ -40,7 +41,7 @@ type SubmitResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-type GetMasterFn func() pb.ServerAddress
+type GetMasterFn func(ctx context.Context) pb.ServerAddress
 
 func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []FilePart, replication string, collection string, dataCenter string, ttl string, diskType string, maxMB int, usePublicUrl bool) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))

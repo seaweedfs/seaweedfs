@@ -45,7 +45,7 @@ func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, partition *mq_pb.Par
 		b.accessLock.Lock()
 		defer b.accessLock.Unlock()
 		p := topic.FromPbPartition(partition)
-		if localPartition:=b.localTopicManager.GetLocalPartition(t, p); localPartition!=nil {
+		if localPartition := b.localTopicManager.GetLocalPartition(t, p); localPartition != nil {
 			localPartition.NotifyLogFlushed(logBuffer.LastFlushTsNs)
 		}
 

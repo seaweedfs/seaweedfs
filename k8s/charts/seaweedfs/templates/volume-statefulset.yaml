@@ -28,8 +28,14 @@ spec:
       {{ with .Values.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.volume.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
       annotations:
       {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.volume.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
@@ -71,6 +77,9 @@ spec:
         {{- if .Values.volume.initContainers }}
         {{ tpl .Values.volume.initContainers . | nindent 8 | trim }}
         {{- end }}
+      {{- end }}
+      {{- if .Values.volume.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.volume.podSecurityContext "enabled" | toYaml | nindent 8 }}
       {{- end }}
       containers:
         - name: seaweedfs
@@ -233,9 +242,12 @@ spec:
             failureThreshold: {{ .Values.volume.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.volume.livenessProbe.timeoutSeconds }}
           {{- end }}
-          {{- if .Values.volume.resources }}
+          {{- with .Values.volume.resources }}
           resources:
-            {{ tpl .Values.volume.resources . | nindent 12 | trim }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.volume.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if .Values.volume.sidecars }}
       {{- include "common.tplvalues.render" (dict "value" .Values.volume.sidecars "context" $) | nindent 8 }}
@@ -255,6 +267,10 @@ spec:
           persistentVolumeClaim:
             claimName: {{ $dir.claimName }}
       {{- end }}
+      {{- if eq $dir.type "emptyDir" }}
+        - name: {{ $dir.name }}
+          emptyDir: {}
+      {{- end }}
 
      {{- end }}
 
@@ -270,6 +286,10 @@ spec:
           persistentVolumeClaim:
             claimName: {{ .Values.volume.idx.claimName }}
        {{- end }}
+       {{- if eq .Values.volume.idx.type "emptyDir" }}
+        - name: idx
+          emptyDir: {}
+       {{- end }}
      {{- end }}
 
      {{- if .Values.volume.logs }}
@@ -283,6 +303,10 @@ spec:
         - name: logs
           persistentVolumeClaim:
             claimName: {{ .Values.volume.logs.claimName }}
+       {{- end }}
+       {{- if eq .Values.volume.logs.type "emptyDir" }}
+        - name: logs
+          emptyDir: {}
        {{- end }}
      {{- end }}
      {{- if .Values.global.enableSecurity }}

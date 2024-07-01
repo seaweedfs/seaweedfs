@@ -40,18 +40,18 @@ jobs:
       -
         name: Login to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # v1
+        uses: docker/login-action@0d4c9c5ea7693da7b068278f7b52bda2a190a446 # v1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       -
         name: Build
-        uses: docker/build-push-action@2cdde995de11925a030ce8070c3d77a52ffcf1c0 # v2
+        uses: docker/build-push-action@31159d49c0d4756269a0940a750801a1ea5d7003 # v2
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
-          build-args: TAGS=5BytesOffset,elastic,ydb,gocdk,tikv,rclone
+          build-args: TAGS=5BytesOffset,elastic,gocdk,sqlite,ydb,tikv,rclone
           platforms: linux/amd64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}

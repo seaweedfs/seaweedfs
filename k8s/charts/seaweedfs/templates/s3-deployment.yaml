@@ -27,8 +27,14 @@ spec:
       {{ with .Values.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.s3.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
       annotations:
       {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.s3.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
@@ -49,6 +55,9 @@ spec:
       {{- if .Values.s3.initContainers }}
       initContainers:
         {{ tpl .Values.s3.initContainers . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.s3.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.s3.podSecurityContext "enabled" | toYaml | nindent 8 }}
       {{- end }}
       containers:
         - name: seaweedfs
@@ -96,7 +105,7 @@ spec:
             - "-ec"
             - |
               exec /usr/bin/weed \
-               {{- if eq .Values.s3.logs.type "hostPath" }}
+              {{- if or (eq .Values.s3.logs.type "hostPath") (eq .Values.s3.logs.type "emptyDir") }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
@@ -133,7 +142,7 @@ spec:
               {{- end }}
               -filer={{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}
           volumeMounts:
-            {{- if eq .Values.s3.logs.type "hostPath" }}
+            {{- if or (eq .Values.s3.logs.type "hostPath") (eq .Values.s3.logs.type "emptyDir") }}
             - name: logs
               mountPath: "/logs/"
             {{- end }}
@@ -195,9 +204,12 @@ spec:
             failureThreshold: {{ .Values.s3.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.s3.livenessProbe.timeoutSeconds }}
           {{- end }}
-          {{- if .Values.s3.resources }}
+          {{- with .Values.s3.resources }}
           resources:
-            {{ tpl .Values.s3.resources . | nindent 12 | trim }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.s3.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.s3.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if .Values.s3.sidecars }}
       {{- include "common.tplvalues.render" (dict "value" .Values.s3.sidecars "context" $) | nindent 8 }}
@@ -218,6 +230,10 @@ spec:
           hostPath:
             path: {{ .Values.s3.logs.hostPathPrefix }}/logs/seaweedfs/s3
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.s3.logs.type "emptyDir" }}
+        - name: logs
+          emptyDir: {}
         {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config

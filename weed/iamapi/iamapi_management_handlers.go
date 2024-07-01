@@ -33,6 +33,7 @@ const (
 	StatementActionReadAcp  = "GetBucketAcl"
 	StatementActionList     = "List*"
 	StatementActionTagging  = "Tagging*"
+	StatementActionDelete   = "DeleteBucket*"
 )
 
 var (
@@ -58,6 +59,8 @@ func MapToStatementAction(action string) string {
 		return s3_constants.ACTION_LIST
 	case StatementActionTagging:
 		return s3_constants.ACTION_TAGGING
+	case StatementActionDelete:
+		return s3_constants.ACTION_DELETE_BUCKET
 	default:
 		return ""
 	}
@@ -79,6 +82,8 @@ func MapToIdentitiesAction(action string) string {
 		return StatementActionList
 	case s3_constants.ACTION_TAGGING:
 		return StatementActionTagging
+	case s3_constants.ACTION_DELETE_BUCKET:
+		return StatementActionDelete
 	default:
 		return ""
 	}

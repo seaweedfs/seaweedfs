@@ -103,7 +103,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 
 	// collect all masters
 	var masters []pb.ServerAddress
-	masters = append(masters, commandEnv.MasterClient.GetMasters()...)
+	masters = append(masters, commandEnv.MasterClient.GetMasters(context.Background())...)
 
 	// check from master to volume servers
 	for _, master := range masters {

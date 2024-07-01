@@ -35,7 +35,6 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		}
 	}
 
-
 	t := topic.FromPbTopic(request.Topic)
 	var readErr, assignErr error
 	resp, readErr = b.readTopicConfFromFiler(t)

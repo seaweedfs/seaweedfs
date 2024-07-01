@@ -31,7 +31,6 @@ func toParquetFieldType(fieldType *schema_pb.Type) (dataType parquet.Node, err e
 		return nil, fmt.Errorf("unknown field type: %T", fieldType.Kind)
 	}
 
-
 	return dataType, err
 }
 

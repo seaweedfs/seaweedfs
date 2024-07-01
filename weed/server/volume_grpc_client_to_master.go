@@ -21,7 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func (vs *VolumeServer) GetMaster() pb.ServerAddress {
+func (vs *VolumeServer) GetMaster(ctx context.Context) pb.ServerAddress {
 	return vs.currentMaster
 }
 
@@ -159,7 +159,9 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 	}
 
 	volumeTickChan := time.NewTicker(sleepInterval)
+	defer volumeTickChan.Stop()
 	ecShardTickChan := time.NewTicker(17 * sleepInterval)
+	defer ecShardTickChan.Stop()
 	dataCenter := vs.store.GetDataCenter()
 	rack := vs.store.GetRack()
 	ip := vs.store.Ip

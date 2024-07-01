@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -185,7 +186,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	setEtag(w, n.Etag())
+	SetEtag(w, n.Etag())
 
 	if n.HasPairs() {
 		pairMap := make(map[string]string)
@@ -291,7 +292,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 
 	w.Header().Set("X-File-Store", "chunked")
 
-	chunkedFileReader := operation.NewChunkedFileReader(chunkManifest.Chunks, vs.GetMaster(), vs.grpcDialOption)
+	chunkedFileReader := operation.NewChunkedFileReader(chunkManifest.Chunks, vs.GetMaster(context.Background()), vs.grpcDialOption)
 	defer chunkedFileReader.Close()
 
 	rs := conditionallyCropImages(chunkedFileReader, ext, r)
@@ -376,14 +377,14 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 
-	adjustPassthroughHeaders(w, r, filename)
+	AdjustPassthroughHeaders(w, r, filename)
 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return nil
 	}
 
-	return processRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
+	return ProcessRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
 		return func(writer io.Writer) error {
 			if _, e = rs.Seek(offset, 0); e != nil {
 				return e
@@ -405,14 +406,14 @@ func (vs *VolumeServer) streamWriteResponseContent(filename string, mimeType str
 		w.Header().Set("Content-Type", mimeType)
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
-	adjustPassthroughHeaders(w, r, filename)
+	AdjustPassthroughHeaders(w, r, filename)
 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
 	}
 
-	processRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
+	ProcessRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
 		return func(writer io.Writer) error {
 			return vs.store.ReadVolumeNeedleDataInto(volumeId, n, readOption, writer, offset, size)
 		}, nil

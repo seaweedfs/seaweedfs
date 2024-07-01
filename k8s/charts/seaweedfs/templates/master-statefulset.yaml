@@ -34,8 +34,14 @@ spec:
       {{ with .Values.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.master.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
       annotations:
       {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.master.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
@@ -60,6 +66,9 @@ spec:
       {{- if .Values.master.initContainers }}
       initContainers:
         {{ tpl .Values.master.initContainers . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.master.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.master.podSecurityContext "enabled" | toYaml | nindent 8 }}
       {{- end }}
       containers:
         - name: seaweedfs
@@ -105,9 +114,9 @@ spec:
           command:
             - "/bin/sh"
             - "-ec"
-            - | 
+            - |
               exec /usr/bin/weed \
-              {{- if eq .Values.master.logs.type "hostPath" }}
+              {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "persistentVolumeClaim") (eq .Values.master.logs.type "emptyDir") }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
@@ -155,7 +164,7 @@ spec:
           volumeMounts:
             - name : data-{{ .Release.Namespace }}
               mountPath: /data
-            {{- if eq .Values.master.logs.type "hostPath" }}
+            {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "persistentVolumeClaim") (eq .Values.master.logs.type "emptyDir") }}
             - name: seaweedfs-master-log-volume
               mountPath: "/logs/"
             {{- end }}
@@ -218,9 +227,12 @@ spec:
             failureThreshold: {{ .Values.master.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.master.livenessProbe.timeoutSeconds }}
           {{- end }}
-          {{- if .Values.master.resources }}
+          {{- with .Values.master.resources }}
           resources:
-            {{ tpl .Values.master.resources . | nindent 12 | trim }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.master.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.master.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
         {{- if .Values.master.sidecars }}
         {{- include "common.tplvalues.render" (dict "value" .Values.master.sidecars "context" $) | nindent 8 }}
@@ -235,7 +247,11 @@ spec:
         {{- if eq .Values.master.logs.type "existingClaim" }}
         - name: seaweedfs-master-log-volume
           persistentVolumeClaim:
-            claimName: {{ .Values.master.logs.claimName }} 
+            claimName: {{ .Values.master.logs.claimName }}
+        {{- end }}
+        {{- if eq .Values.master.logs.type "emptyDir" }}
+        - name: seaweedfs-master-log-volume
+          emptyDir: {}
         {{- end }}
         {{- if eq .Values.master.data.type "hostPath" }}
         - name: data-{{ .Release.Namespace }}
@@ -246,7 +262,11 @@ spec:
         {{- if eq .Values.master.data.type "existingClaim" }}
         - name: data-{{ .Release.Namespace }}
           persistentVolumeClaim:
-            claimName: {{ .Values.master.data.claimName }} 
+            claimName: {{ .Values.master.data.claimName }}
+        {{- end }}
+        {{- if eq .Values.master.data.type "emptyDir" }}
+        - name: data-{{ .Release.Namespace }}
+          emptyDir: {}
         {{- end }}
         - name: master-config
           configMap:

@@ -54,7 +54,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	}
 
 	// Start a server and create a client using advancedtls API with Provider.
-	options := &advancedtls.ServerOptions{
+	options := &advancedtls.Options{
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
 			IdentityProvider: serverIdentityProvider,
 		},
@@ -62,7 +62,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 			RootProvider: serverRootProvider,
 		},
 		RequireClientCert: true,
-		VType:             advancedtls.CertVerification,
+		VerificationType:             advancedtls.CertVerification,
 	}
 	allowedCommonNames := config.GetString(component + ".allowed_commonNames")
 	allowedWildcardDomain := config.GetString("grpc.allowed_wildcard_domain")
@@ -75,10 +75,10 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 			AllowedCommonNames:    allowedCommonNamesMap,
 			AllowedWildcardDomain: allowedWildcardDomain,
 		}
-		options.VerifyPeer = auther.Authenticate
+		options.AdditionalPeerVerification = auther.Authenticate
 	} else {
-		options.VerifyPeer = func(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
-			return &advancedtls.VerificationResults{}, nil
+		options.AdditionalPeerVerification = func(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
+			return &advancedtls.PostHandshakeVerificationResults{}, nil
 		}
 	}
 	ta, err := advancedtls.NewServerCreds(options)
@@ -118,17 +118,17 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		glog.Warningf("pemfile.NewProvider(%v) failed: %v", clientRootOptions, err)
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
-	options := &advancedtls.ClientOptions{
+	options := &advancedtls.Options{
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
 			IdentityProvider: clientProvider,
 		},
-		VerifyPeer: func(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
-			return &advancedtls.VerificationResults{}, nil
-		},
+		AdditionalPeerVerification: func(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
+		return &advancedtls.PostHandshakeVerificationResults{}, nil
+	},
 		RootOptions: advancedtls.RootCertificateOptions{
 			RootProvider: clientRootProvider,
 		},
-		VType: advancedtls.CertVerification,
+		VerificationType: advancedtls.CertVerification,
 	}
 	ta, err := advancedtls.NewClientCreds(options)
 	if err != nil {
@@ -155,12 +155,12 @@ func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
 	}
 }
 
-func (a Authenticator) Authenticate(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
+func (a Authenticator) Authenticate(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
 	if a.AllowedWildcardDomain != "" && strings.HasSuffix(params.Leaf.Subject.CommonName, a.AllowedWildcardDomain) {
-		return &advancedtls.VerificationResults{}, nil
+		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	if _, ok := a.AllowedCommonNames[params.Leaf.Subject.CommonName]; ok {
-		return &advancedtls.VerificationResults{}, nil
+		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	err := fmt.Errorf("Authenticate: invalid subject client common name: %s", params.Leaf.Subject.CommonName)
 	glog.Error(err)

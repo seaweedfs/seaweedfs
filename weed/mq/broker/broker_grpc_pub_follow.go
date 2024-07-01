@@ -13,10 +13,11 @@ import (
 )
 
 type memBuffer struct {
-	buf        []byte
-	startTime  time.Time
-	stopTime   time.Time
+	buf       []byte
+	startTime time.Time
+	stopTime  time.Time
 }
+
 func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_PublishFollowMeServer) (err error) {
 	var req *mq_pb.PublishFollowMeRequest
 	req, err = stream.Recv()
@@ -84,7 +85,6 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 		}
 	}
 
-
 	t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
 
 	logBuffer.ShutdownLogBuffer()
@@ -96,7 +96,6 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
 	partitionGeneration := time.Unix(0, p.UnixTimeNs).UTC().Format(topic.TIME_FORMAT)
 	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", topicDir, partitionGeneration, p.RangeStart, p.RangeStop)
-
 
 	// flush the remaining messages
 	inMemoryBuffers.CloseInput()

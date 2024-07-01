@@ -280,6 +280,13 @@ tls_client_key_file=""
 [mongodb]
 enabled = false
 uri = "mongodb://localhost:27017"
+username = ""
+password = ""
+ssl = false
+ssl_ca_file = ""
+ssl_cert_file = ""
+ssl_key_file = "
+insecure_skip_verify = false
 option_pool_size = 0
 database = "seaweedfs"
 

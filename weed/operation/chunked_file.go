@@ -1,6 +1,7 @@
 package operation
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -173,7 +174,7 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 	for ; chunkIndex < len(cf.chunkList); chunkIndex++ {
 		ci := cf.chunkList[chunkIndex]
 		// if we need read date from local volume server first?
-		fileUrl, jwt, lookupError := LookupFileId(func() pb.ServerAddress {
+		fileUrl, jwt, lookupError := LookupFileId(func(_ context.Context) pb.ServerAddress {
 			return cf.master
 		}, cf.grpcDialOption, ci.Fid)
 		if lookupError != nil {

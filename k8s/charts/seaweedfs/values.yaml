@@ -19,12 +19,14 @@ global:
       filerRead: false
   # we will use this serviceAccountName for all ClusterRoles/ClusterRoleBindings
   serviceAccountName: "seaweedfs"
+  automountServiceAccountToken: true
   certificates:
     alphacrds: false
   monitoring:
     enabled: false
     gatewayHost: null
     gatewayPort: null
+    additionalLabels: {}
   # if enabled will use global.replicationPlacment and override master & filer defaultReplicaPlacement config
   enableReplication: false
   #  replication type is XYZ:
@@ -47,9 +49,6 @@ image:
 
 master:
   enabled: true
-  repository: null
-  imageName: null
-  imageTag: null
   imageOverride: null
   restartPolicy: null
   replicas: 1
@@ -92,11 +91,18 @@ master:
   #  data:
   #    type: "existingClaim"
   #    claimName: "my-pvc"
+  #
+  # You can also use emptyDir storage:
+  #  data:
+  #    type: "emptyDir"
   data:
     type: "hostPath"
     storageClass: ""
     hostPathPrefix: /ssd
 
+  # You can also use emptyDir storage:
+  #  logs:
+  #    type: "emptyDir"
   logs:
     type: "hostPath"
     size: ""
@@ -119,6 +125,12 @@ master:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Labels to be added to the master pods
+  podLabels: {}
+
+  # Annotations to be added to the master pods
+  podAnnotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -126,7 +138,7 @@ master:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # updatePartition is used to control a careful rolling update of SeaweedFS
   # masters.
@@ -165,6 +177,25 @@ master:
   # used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
+
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  podSecurityContext: {}
+
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  containerSecurityContext: {}
 
   ingress:
     enabled: false
@@ -223,9 +254,6 @@ master:
 
 volume:
   enabled: true
-  repository: null
-  imageName: null
-  imageTag: null
   imageOverride: null
   restartPolicy: null
   port: 8080
@@ -255,9 +283,14 @@ volume:
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
   #
   # You may also spacify an existing claim:
-  #    - name: data
-  #      type: "existingClaim"
-  #      claimName: "my-pvc"
+  #   - name: data
+  #     type: "existingClaim"
+  #     claimName: "my-pvc"
+  #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
+  #
+  # You can also use emptyDir storage:
+  #   - name: data
+  #     type: "emptyDir"
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
 
   dataDirs:
@@ -290,6 +323,11 @@ volume:
   # idx:
   #   type: "existingClaim"
   #   claimName: "myClaim"
+  #
+  # or
+  #
+  # idx:
+  #  type: "emptyDir"
 
   # same applies to "logs"
 
@@ -332,6 +370,12 @@ volume:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Labels to be added to the volume pods
+  podLabels: {}
+
+  # Annotations to be added to the volume pods
+  podAnnotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -352,7 +396,7 @@ volume:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
@@ -376,6 +420,25 @@ volume:
   serviceAccountName: ""
 
   extraEnvironmentVars:
+
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  podSecurityContext: {}
+
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  containerSecurityContext: {}
 
   # used to configure livenessProbe on volume-server containers
   #
@@ -405,9 +468,6 @@ volume:
 
 filer:
   enabled: true
-  repository: null
-  imageName: null
-  imageTag: null
   imageOverride: null
   restartPolicy: null
   replicas: 1
@@ -460,12 +520,19 @@ filer:
   #  data:
   #    type: "existingClaim"
   #    claimName: "my-pvc"
+  #
+  # You can also use emptyDir storage:
+  #  data:
+  #    type: "emptyDir"
   data:
     type: "hostPath"
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
 
+  # You can also use emptyDir storage:
+  #  logs:
+  #    type: "emptyDir"
   logs:
     type: "hostPath"
     size: ""
@@ -487,6 +554,12 @@ filer:
 
   extraVolumes: ""
   extraVolumeMounts: ""
+
+  # Labels to be added to the filer pods
+  podLabels: {}
+
+  # Annotations to be added to the filer pods
+  podAnnotations: {}
 
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
@@ -512,7 +585,7 @@ filer:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
@@ -534,6 +607,25 @@ filer:
   # used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
+
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  podSecurityContext: {}
+
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  containerSecurityContext: {}
 
   ingress:
     enabled: false
@@ -605,7 +697,7 @@ filer:
     timeoutSeconds: 10
 
   # secret env variables
-  secretExtraEnvironmentVars: []
+  secretExtraEnvironmentVars: {}
       # WEED_POSTGRES_USERNAME:
       #   secretKeyRef:
       #     name: postgres-credentials
@@ -640,9 +732,7 @@ filer:
 
 s3:
   enabled: false
-  repository: null
-  imageName: null
-  imageTag: null
+  imageOverride: null
   restartPolicy: null
   replicas: 1
   bindAddress: 0.0.0.0
@@ -679,6 +769,12 @@ s3:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Labels to be added to the s3 pods
+  podLabels: {}
+
+  # Annotations to be added to the s3 pods
+  podAnnotations: {}
+
   # Resource requests, limits, etc. for the server cluster placement. This
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
@@ -706,6 +802,28 @@ s3:
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
 
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  podSecurityContext: {}
+
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  containerSecurityContext: {}
+
+  # You can also use emptyDir storage:
+  #  logs:
+  #    type: "emptyDir"
   logs:
     type: "hostPath"
     size: ""
