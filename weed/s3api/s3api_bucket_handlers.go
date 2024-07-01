@@ -28,12 +28,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-type ListAllMyBucketsResult struct {
-	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResult"`
-	Owner   *s3.Owner
-	Buckets []*s3.Bucket `xml:"Buckets>Bucket"`
-}
-
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
 	glog.V(3).Infof("ListBucketsHandler")
@@ -59,25 +53,25 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	identityId := r.Header.Get(s3_constants.AmzIdentityId)
 
-	var buckets []*s3.Bucket
+	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
 			if identity != nil && !identity.canDo(s3_constants.ACTION_LIST, entry.Name, "") {
 				continue
 			}
-			buckets = append(buckets, &s3.Bucket{
-				Name:         aws.String(entry.Name),
-				CreationDate: aws.Time(time.Unix(entry.Attributes.Crtime, 0).UTC()),
+			listBuckets.Bucket = append(listBuckets.Bucket, ListAllMyBucketsEntry{
+				Name:         entry.Name,
+				CreationDate: time.Unix(entry.Attributes.Crtime, 0).UTC(),
 			})
 		}
 	}
 
 	response = ListAllMyBucketsResult{
-		Owner: &s3.Owner{
-			ID:          aws.String(identityId),
-			DisplayName: aws.String(identityId),
+		Owner: CanonicalUser{
+			ID:          identityId,
+			DisplayName: identityId,
 		},
-		Buckets: buckets,
+		Buckets: listBuckets,
 	}
 
 	writeSuccessResponseXML(w, r, response)
@@ -487,7 +481,7 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 // GetBucketLocationHandler Get bucket location
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLocation.html
 func (s3a *S3ApiServer) GetBucketLocationHandler(w http.ResponseWriter, r *http.Request) {
-	writeSuccessResponseXML(w, r, LocationConstraint{})
+	writeSuccessResponseXML(w, r, CreateBucketConfiguration{})
 }
 
 // GetBucketRequestPaymentHandler Get bucket location
