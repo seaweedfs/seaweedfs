@@ -350,7 +350,7 @@ func (fo *FilerOptions) startFiler() {
 		certFile := viper.GetString("https.filer.cert")
 		keyFile := viper.GetString("https.filer.key")
 		caCertFile := viper.GetString("https.filer.ca")
-		disbaleTlsVerifyClientCert := viper.GetBool("https.filer.disbale_tls_verify_client_cert")
+		disbaleTlsVerifyClientCert := viper.GetBool("https.filer.disable_tls_verify_client_cert")
 
 		pemfileOptions := pemfile.Options{
 			CertFile:        certFile,
