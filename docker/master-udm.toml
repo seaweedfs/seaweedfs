@@ -4,3 +4,4 @@
 	[storage.backend.udm.tape]
 	enabled = true
     grpc_server = "localhost:50051"
+    read_disabled = "false"
