@@ -5,9 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"golang.org/x/exp/slices"
 	"math"
 	"path/filepath"
 	"sort"
@@ -15,10 +12,17 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/exp/slices"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/google/uuid"
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -106,7 +110,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
 				return &CompleteMultipartUploadResult{
 					CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
-						Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+						Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), util.UrlPathEscape(entryName))),
 						Bucket:   input.Bucket,
 						ETag:     aws.String("\"" + filer.ETagChunks(entry.GetChunks()) + "\""),
 						Key:      objectKey(input.Key),
@@ -243,7 +247,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	output = &CompleteMultipartUploadResult{
 		CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
-			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), util.UrlPathEscape(entryName))),
 			Bucket:   input.Bucket,
 			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:      objectKey(input.Key),
