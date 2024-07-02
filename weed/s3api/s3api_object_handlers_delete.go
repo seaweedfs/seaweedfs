@@ -3,11 +3,13 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"golang.org/x/exp/slices"
 	"io"
 	"net/http"
 	"strings"
+
+	"golang.org/x/exp/slices"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 
@@ -27,7 +29,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
 
-	object = urlPathEscape(removeDuplicateSlashes(object))
+	object = util.UrlPathEscape(removeDuplicateSlashes(object))
 
 	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 

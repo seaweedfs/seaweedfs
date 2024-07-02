@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -28,19 +27,11 @@ func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 }
 
 func urlEscapeObject(object string) string {
-	t := urlPathEscape(removeDuplicateSlashes(object))
+	t := util.UrlPathEscape(removeDuplicateSlashes(object))
 	if strings.HasPrefix(t, "/") {
 		return t
 	}
 	return "/" + t
-}
-
-func urlPathEscape(object string) string {
-	var escapedParts []string
-	for _, part := range strings.Split(object, "/") {
-		escapedParts = append(escapedParts, url.PathEscape(part))
-	}
-	return strings.Join(escapedParts, "/")
 }
 
 func removeDuplicateSlashes(object string) string {
@@ -64,7 +55,7 @@ func removeDuplicateSlashes(object string) string {
 }
 
 func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
-	object = urlPathEscape(removeDuplicateSlashes(object))
+	object = util.UrlPathEscape(removeDuplicateSlashes(object))
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object)
 	return destUrl

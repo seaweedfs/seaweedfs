@@ -290,6 +290,10 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
 
 	glog.V(4).Infof("DeleteEntry %v", req)
+	req.Name, err = util.UrlPathUnescape(req.Name)
+	if err != nil {
+		return nil, err
+	}
 
 	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures)
 	resp = &filer_pb.DeleteEntryResponse{}
