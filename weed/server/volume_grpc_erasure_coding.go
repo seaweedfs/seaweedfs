@@ -448,7 +448,7 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 }
 
 func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_server_pb.VolumeEcShardsMoveRequest) (*volume_server_pb.VolumeEcShardsMoveResponse, error) {
-	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
+	glog.V(0).Infof("VolumeEcShardsMove: %v", req)
 
 	location := vs.store.FindFreeLocation(types.HardDriveType)
 	if location == nil {

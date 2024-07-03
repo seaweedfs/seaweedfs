@@ -9,6 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
 	"math/rand"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -133,7 +135,9 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	if !found {
 		return fmt.Errorf("volume %d not found", vid)
 	}
-
+	sort.SliceStable(locations, func(i int, j int) bool {
+		return strings.Compare(locations[i].Url, locations[j].Url) >= 0
+	})
 	// fmt.Printf("found ec %d shards on %v\n", vid, locations)
 
 	// mark the volume as readonly
