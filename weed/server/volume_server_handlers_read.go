@@ -81,9 +81,10 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 		if vs.ReadMode == "proxy" {
 			// proxy client request to target server
+			localUrl := fmt.Sprintf("%s:%d", vs.store.Ip, vs.store.Port)
 			var proxyIp string
 			for _, loc := range lookupResult.Locations {
-				if vs.store.Ip == loc.Url {
+				if localUrl == loc.Url {
 					continue
 				}
 				proxyIp = loc.Url
