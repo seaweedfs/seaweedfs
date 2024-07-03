@@ -116,14 +116,13 @@
             {{ else }}
             <table width="100%" class="table table-hover">
                 {{ $path := .Path }}
-                {{ $limit := .Limit }}
                 {{ $showDirDel := .ShowDirectoryDelete }}
                 {{ range $entry_index, $entry := .Entries }}
                 <tr>
                     <td>
                         {{ if $entry.IsDirectory }}
                         <span class="glyphicon glyphicon-folder-open" aria-hidden="true"></span>&nbsp;
-                        <a href="{{ printpath $path  "/" $entry.Name "/" "?" "limit" "=" }}{{ print $limit }}" >
+                        <a href="{{ printpath $path  "/" $entry.Name "/"}}" >
                         {{ $entry.Name }}
                         </a>
                         {{ else }}

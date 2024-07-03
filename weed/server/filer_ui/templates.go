@@ -9,15 +9,9 @@ import (
 )
 
 func printpath(parts ...string) string {
-	var escapedParts []string
-	for _, p := range parts {
-		if len(p) == 1 {
-			escapedParts = append(escapedParts, p)
-		} else {
-			escapedParts = append(escapedParts, url.PathEscape(p))
-		}
-	}
-	return strings.Join(escapedParts, "")
+	concat := strings.Join(parts, "")
+	escaped := url.PathEscape(concat)
+	return strings.ReplaceAll(escaped, "%2F", "/")
 }
 
 var funcMap = template.FuncMap{
