@@ -63,9 +63,9 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 	v.SetConfigFile(*metaBackup.backupFilerConfig)
 
 	if err := v.ReadInConfig(); err != nil { // Handle errors reading the config file
-		glog.Fatalf("Failed to load %s file.\nPlease use this command to generate the a %s.toml file\n"+
+		glog.Fatalf("Failed to load %s file: %v\nPlease use this command to generate the a %s.toml file\n"+
 			"    weed scaffold -config=%s -output=.\n\n\n",
-			*metaBackup.backupFilerConfig, "backup_filer", "filer")
+			*metaBackup.backupFilerConfig, err, "backup_filer", "filer")
 	}
 
 	if err := metaBackup.initStore(v); err != nil {
