@@ -48,7 +48,7 @@ func init() {
 
 func main() {
 	glog.MaxSize = 1024 * 1024 * 1024
-	glog.MaxFileCount = 5
+	glog.MaxFileCount = 20
 	flag.Usage = usage
 
 	err := sentry.Init(sentry.ClientOptions{
