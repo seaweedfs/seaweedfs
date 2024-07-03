@@ -81,7 +81,20 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 		if vs.ReadMode == "proxy" {
 			// proxy client request to target server
-			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations[0].Url))
+			var proxyIp string
+			for _, loc := range lookupResult.Locations {
+				if vs.store.Ip == loc.Url {
+					continue
+				}
+				proxyIp = loc.Url
+				break
+			}
+			if proxyIp == "" {
+				glog.V(0).Infof("failed to instance http request of location: %v", lookupResult.Locations)
+				InternalError(w)
+				return
+			}
+			u, _ := url.Parse(util.NormalizeUrl(proxyIp))
 			r.URL.Host = u.Host
 			r.URL.Scheme = u.Scheme
 			request, err := http.NewRequest("GET", r.URL.String(), nil)
