@@ -342,6 +342,6 @@ require (
 	storj.io/uplink v1.12.2 // indirect
 )
 
-replace github.com/Jille/raft-grpc-transport v1.5.0 => github.com/ZTO-Express/raft-grpc-transport v1.5.1-0.20240612060400-ca2c3db61cca
+replace github.com/Jille/raft-grpc-transport v1.5.0 => github.com/ZTO-Express/raft-grpc-transport v1.5.1-0.20240626085712-4ee8b42068c3
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
