@@ -37,19 +37,19 @@ func urlEscapeObject(object string) string {
 	return "/" + t
 }
 
-func urlPathEscape(object string) string {
-	var escapedParts []string
-	for _, part := range strings.Split(object, "/") {
-		escapedParts = append(escapedParts, url.PathEscape(part))
-	}
-	return strings.Join(escapedParts, "/")
-}
-
 func entryUrlEncode(dir string, entry string, encodingTypeUrl bool) (dirName string, entryName string, prefix string) {
 	if !encodingTypeUrl {
 		return dir, entry, entry
 	}
 	return urlPathEscape(dir), url.QueryEscape(entry), urlPathEscape(entry)
+}
+
+func urlPathEscape(object string) string {
+	var escapedParts []string
+	for _, part := range strings.Split(object, "/") {
+		escapedParts = append(escapedParts, strings.ReplaceAll(url.PathEscape(part), "+", "%2B"))
+	}
+	return strings.Join(escapedParts, "/")
 }
 
 func removeDuplicateSlashes(object string) string {
