@@ -292,7 +292,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 func urlPathUnescape(object string) (string, error) {
 	var unescapedParts []string
 	for _, part := range strings.Split(object, "/") {
-		unescapedPart, err := url.PathUnescape(part)
+		unescapedPart, err := url.PathUnescape(strings.ReplaceAll(part, "%2B", "+"))
 		if err != nil {
 			return "", fmt.Errorf("cannot unescape path: %w", err)
 		}
