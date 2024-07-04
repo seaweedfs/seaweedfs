@@ -13,5 +13,4 @@ type HTTPClientInterface interface {
 	PostForm(url string, data url.Values) (resp *http.Response, err error)
 	Head(url string) (resp *http.Response, err error)
 	CloseIdleConnections()
-	NormalizeHttpScheme(rawURL string) (string, error)
 }

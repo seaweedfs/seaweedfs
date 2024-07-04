@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc"
 )
 
@@ -44,7 +45,7 @@ type S3ApiServer struct {
 	cb             *CircuitBreaker
 	randomClientId int32
 	filerGuard     *security.Guard
-	client         *http.Client
+	filerClient    util_http.HTTPClientInterface
 	bucketRegistry *BucketRegistry
 }
 
@@ -84,12 +85,9 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	}
 	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
 	if option.LocalFilerSocket == "" {
-		s3ApiServer.client = &http.Client{Transport: &http.Transport{
-			MaxIdleConns:        1024,
-			MaxIdleConnsPerHost: 1024,
-		}}
+		s3ApiServer.filerClient = util_http.GetGlobalHttpClient()
 	} else {
-		s3ApiServer.client = &http.Client{
+		s3ApiServer.filerClient = &http.Client{
 			Transport: &http.Transport{
 				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 					return net.Dial("unix", option.LocalFilerSocket)

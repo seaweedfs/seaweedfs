@@ -136,7 +136,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	// ensure that the Authorization header is overriding any previous
 	// Authorization header which might be already present in proxyReq
 	s3a.maybeAddFilerJwtAuthorization(proxyReq, true)
-	resp, postErr := s3a.client.Do(proxyReq)
+	resp, postErr := s3a.filerClient.Do(proxyReq)
 
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)

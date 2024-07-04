@@ -205,7 +205,15 @@ func DownloadFile(httpClient HTTPClientInterface, fileUrl string, jwt string) (f
 }
 
 func NormalizeUrl(httpClient HTTPClientInterface, rawURL string) (string, error) {
-	return httpClient.NormalizeHttpScheme(rawURL)
+	switch httpClient := httpClient.(type){
+	case *HTTPClient:
+		return httpClient.NormalizeHttpScheme(rawURL)
+	default:
+		if !(strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://")) {
+			return  "http://" + rawURL, nil
+		}
+	}
+	return rawURL, nil
 }
 
 func ReadUrl(httpClient HTTPClientInterface, fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
