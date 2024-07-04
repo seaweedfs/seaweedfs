@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -34,6 +38,13 @@ func urlEscapeObject(object string) string {
 	return "/" + t
 }
 
+func entryUrlEncode(dir string, entry string, encodingTypeUrl bool) (dirName string, entryName string, prefix string) {
+	if !encodingTypeUrl {
+		return dir, entry, entry
+	}
+	return util.UrlPathEscape(dir), url.QueryEscape(entry), util.UrlPathEscape(entry)
+}
+
 func removeDuplicateSlashes(object string) string {
 	result := strings.Builder{}
 	result.Grow(len(object))
@@ -52,6 +63,37 @@ func removeDuplicateSlashes(object string) string {
 		}
 	}
 	return result.String()
+}
+
+func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool, encodingTypeUrl bool) (listEntry ListEntry) {
+	storageClass := "STANDARD"
+	if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
+		storageClass = string(v)
+	}
+	keyFormat := "%s/%s"
+	if isDirectory {
+		keyFormat += "/"
+	}
+	if key == "" {
+		key = fmt.Sprintf(keyFormat, dir, name)[len(bucketPrefix):]
+	}
+	if encodingTypeUrl {
+		key = util.UrlPathEscape(key)
+	}
+	listEntry = ListEntry{
+		Key:          key,
+		LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
+		ETag:         "\"" + filer.ETag(entry) + "\"",
+		Size:         int64(filer.FileSize(entry)),
+		StorageClass: StorageClass(storageClass),
+	}
+	if fetchOwner {
+		listEntry.Owner = CanonicalUser{
+			ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
+			DisplayName: entry.Attributes.UserName,
+		}
+	}
+	return listEntry
 }
 
 func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
