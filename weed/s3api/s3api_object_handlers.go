@@ -30,18 +30,26 @@ func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 }
 
 func urlEscapeObject(object string) string {
-	t := util.UrlPathEscape(removeDuplicateSlashes(object))
+	t := urlPathEscape(removeDuplicateSlashes(object))
 	if strings.HasPrefix(t, "/") {
 		return t
 	}
 	return "/" + t
 }
 
+func urlPathEscape(object string) string {
+	var escapedParts []string
+	for _, part := range strings.Split(object, "/") {
+		escapedParts = append(escapedParts, url.PathEscape(part))
+	}
+	return strings.Join(escapedParts, "/")
+}
+
 func entryUrlEncode(dir string, entry string, encodingTypeUrl bool) (dirName string, entryName string, prefix string) {
 	if !encodingTypeUrl {
 		return dir, entry, entry
 	}
-	return util.UrlPathEscape(dir), url.QueryEscape(entry), util.UrlPathEscape(entry)
+	return urlPathEscape(dir), url.QueryEscape(entry), urlPathEscape(entry)
 }
 
 func removeDuplicateSlashes(object string) string {
@@ -77,7 +85,7 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 		key = fmt.Sprintf(keyFormat, dir, name)[len(bucketPrefix):]
 	}
 	if encodingTypeUrl {
-		key = util.UrlPathEscape(key)
+		key = urlPathEscape(key)
 	}
 	listEntry = ListEntry{
 		Key:          key,
@@ -96,7 +104,7 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 }
 
 func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
-	object = util.UrlPathEscape(removeDuplicateSlashes(object))
+	object = urlPathEscape(removeDuplicateSlashes(object))
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object)
 	return destUrl

@@ -27,7 +27,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
 
-	object = util.UrlPathEscape(removeDuplicateSlashes(object))
+	object = urlPathEscape(removeDuplicateSlashes(object))
 
 	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 

@@ -3,9 +3,11 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -287,10 +289,22 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	return &filer_pb.AppendToEntryResponse{}, err
 }
 
+func urlPathUnescape(object string) (string, error) {
+	var unescapedParts []string
+	for _, part := range strings.Split(object, "/") {
+		unescapedPart, err := url.PathUnescape(part)
+		if err != nil {
+			return "", fmt.Errorf("cannot unescape path: %w", err)
+		}
+		unescapedParts = append(unescapedParts, unescapedPart)
+	}
+	return strings.Join(unescapedParts, "/"), nil
+}
+
 func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (resp *filer_pb.DeleteEntryResponse, err error) {
 
 	glog.V(4).Infof("DeleteEntry %v", req)
-	req.Name, err = util.UrlPathUnescape(req.Name)
+	req.Name, err = urlPathUnescape(req.Name)
 	if err != nil {
 		return nil, err
 	}
