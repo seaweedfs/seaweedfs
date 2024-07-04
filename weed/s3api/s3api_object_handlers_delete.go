@@ -3,13 +3,11 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"golang.org/x/exp/slices"
 	"io"
 	"net/http"
 	"strings"
-
-	"golang.org/x/exp/slices"
-
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 
