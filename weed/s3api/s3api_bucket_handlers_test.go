@@ -9,7 +9,7 @@ import (
 func TestListBucketsHandler(t *testing.T) {
 
 	expected := `<?xml version="1.0" encoding="UTF-8"?>
-<ListAllMyBucketsResult><Owner xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><ID xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></ID></Owner><Buckets xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Bucket xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name xmlns="http://s3.amazonaws.com/doc/2006-03-01/">test1</Name><CreationDate xmlns="http://s3.amazonaws.com/doc/2006-03-01/">2011-04-09T12:34:49Z</CreationDate></Bucket><Bucket xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name xmlns="http://s3.amazonaws.com/doc/2006-03-01/">test2</Name><CreationDate xmlns="http://s3.amazonaws.com/doc/2006-03-01/">2011-02-09T12:34:49Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>`
+<ListAllMyBucketsResult><Owner><ID></ID></Owner><Buckets><Bucket><Name>test1</Name><CreationDate>2011-04-09T12:34:49Z</CreationDate></Bucket><Bucket><Name>test2</Name><CreationDate>2011-02-09T12:34:49Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>`
 	var response ListAllMyBucketsResult
 
 	var bucketsList ListAllMyBucketsList

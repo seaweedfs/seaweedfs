@@ -10,31 +10,31 @@ import (
 )
 
 type AccessControlList struct {
-	Grant []Grant `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Grant,omitempty"`
+	Grant []Grant `xml:"Grant,omitempty"`
 }
 
 type AccessControlPolicy struct {
-	Owner             CanonicalUser     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Owner"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList"`
+	Owner             CanonicalUser     `xml:"Owner"`
+	AccessControlList AccessControlList `xml:"AccessControlList"`
 }
 
 type AmazonCustomerByEmail struct {
-	EmailAddress string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ EmailAddress"`
+	EmailAddress string `xml:"EmailAddress"`
 }
 
 type Anon1 struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *Anon1) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon1
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -44,7 +44,7 @@ func (t *Anon1) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon1
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -55,19 +55,19 @@ type Anon10 struct {
 }
 
 type Anon11 struct {
-	Bucket            string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList,omitempty"`
-	AWSAccessKeyId    string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp         time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature         string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential        string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket            string            `xml:"Bucket"`
+	AccessControlList AccessControlList `xml:"AccessControlList,omitempty"`
+	AWSAccessKeyId    string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp         time.Time         `xml:"Timestamp,omitempty"`
+	Signature         string            `xml:"Signature,omitempty"`
+	Credential        string            `xml:"Credential,omitempty"`
 }
 
 func (t *Anon11) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon11
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -77,7 +77,7 @@ func (t *Anon11) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon11
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -88,22 +88,22 @@ type Anon12 struct {
 }
 
 type Anon13 struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key            string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	GetMetadata    bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetMetadata"`
-	GetData        bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetData"`
-	InlineData     bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InlineData"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	Key            string    `xml:"Key"`
+	GetMetadata    bool      `xml:"GetMetadata"`
+	GetData        bool      `xml:"GetData"`
+	InlineData     bool      `xml:"InlineData"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *Anon13) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon13
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -113,7 +113,7 @@ func (t *Anon13) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon13
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -121,35 +121,35 @@ func (t *Anon13) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon14 struct {
-	GetObjectResponse GetObjectResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetObjectResponse"`
+	GetObjectResponse GetObjectResult `xml:"GetObjectResponse"`
 }
 
 type Anon15 struct {
-	Bucket                                 string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key                                    string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	GetMetadata                            bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetMetadata"`
-	GetData                                bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetData"`
-	InlineData                             bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InlineData"`
-	ByteRangeStart                         int64     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ByteRangeStart,omitempty"`
-	ByteRangeEnd                           int64     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ByteRangeEnd,omitempty"`
-	IfModifiedSince                        time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfModifiedSince,omitempty"`
-	IfUnmodifiedSince                      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfUnmodifiedSince,omitempty"`
-	IfMatch                                []string  `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfMatch,omitempty"`
-	IfNoneMatch                            []string  `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfNoneMatch,omitempty"`
-	ReturnCompleteObjectOnConditionFailure bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ReturnCompleteObjectOnConditionFailure,omitempty"`
-	AWSAccessKeyId                         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp                              time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature                              string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential                             string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket                                 string    `xml:"Bucket"`
+	Key                                    string    `xml:"Key"`
+	GetMetadata                            bool      `xml:"GetMetadata"`
+	GetData                                bool      `xml:"GetData"`
+	InlineData                             bool      `xml:"InlineData"`
+	ByteRangeStart                         int64     `xml:"ByteRangeStart,omitempty"`
+	ByteRangeEnd                           int64     `xml:"ByteRangeEnd,omitempty"`
+	IfModifiedSince                        time.Time `xml:"IfModifiedSince,omitempty"`
+	IfUnmodifiedSince                      time.Time `xml:"IfUnmodifiedSince,omitempty"`
+	IfMatch                                []string  `xml:"IfMatch,omitempty"`
+	IfNoneMatch                            []string  `xml:"IfNoneMatch,omitempty"`
+	ReturnCompleteObjectOnConditionFailure bool      `xml:"ReturnCompleteObjectOnConditionFailure,omitempty"`
+	AWSAccessKeyId                         string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp                              time.Time `xml:"Timestamp,omitempty"`
+	Signature                              string    `xml:"Signature,omitempty"`
+	Credential                             string    `xml:"Credential,omitempty"`
 }
 
 func (t *Anon15) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon15
 	var layout struct {
 		*T
-		IfModifiedSince   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfModifiedSince,omitempty"`
-		IfUnmodifiedSince *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfUnmodifiedSince,omitempty"`
-		Timestamp         *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		IfModifiedSince   *xsdDateTime `xml:"IfModifiedSince,omitempty"`
+		IfUnmodifiedSince *xsdDateTime `xml:"IfUnmodifiedSince,omitempty"`
+		Timestamp         *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.IfModifiedSince = (*xsdDateTime)(&layout.T.IfModifiedSince)
@@ -161,9 +161,9 @@ func (t *Anon15) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon15
 	var overlay struct {
 		*T
-		IfModifiedSince   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfModifiedSince,omitempty"`
-		IfUnmodifiedSince *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfUnmodifiedSince,omitempty"`
-		Timestamp         *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		IfModifiedSince   *xsdDateTime `xml:"IfModifiedSince,omitempty"`
+		IfUnmodifiedSince *xsdDateTime `xml:"IfUnmodifiedSince,omitempty"`
+		Timestamp         *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.IfModifiedSince = (*xsdDateTime)(&overlay.T.IfModifiedSince)
@@ -173,27 +173,27 @@ func (t *Anon15) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon16 struct {
-	GetObjectResponse GetObjectResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetObjectResponse"`
+	GetObjectResponse GetObjectResult `xml:"GetObjectResponse"`
 }
 
 type Anon17 struct {
-	Bucket            string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key               string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	Metadata          []MetadataEntry   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Metadata,omitempty"`
-	ContentLength     int64             `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ContentLength"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList,omitempty"`
-	StorageClass      StorageClass      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ StorageClass,omitempty"`
-	AWSAccessKeyId    string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp         time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature         string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential        string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket            string            `xml:"Bucket"`
+	Key               string            `xml:"Key"`
+	Metadata          []MetadataEntry   `xml:"Metadata,omitempty"`
+	ContentLength     int64             `xml:"ContentLength"`
+	AccessControlList AccessControlList `xml:"AccessControlList,omitempty"`
+	StorageClass      StorageClass      `xml:"StorageClass,omitempty"`
+	AWSAccessKeyId    string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp         time.Time         `xml:"Timestamp,omitempty"`
+	Signature         string            `xml:"Signature,omitempty"`
+	Credential        string            `xml:"Credential,omitempty"`
 }
 
 func (t *Anon17) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon17
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -203,7 +203,7 @@ func (t *Anon17) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon17
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -211,29 +211,29 @@ func (t *Anon17) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon18 struct {
-	PutObjectResponse PutObjectResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ PutObjectResponse"`
+	PutObjectResponse PutObjectResult `xml:"PutObjectResponse"`
 }
 
 type Anon19 struct {
-	Bucket            string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key               string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	Metadata          []MetadataEntry   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Metadata,omitempty"`
-	Data              []byte            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Data"`
-	ContentLength     int64             `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ContentLength"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList,omitempty"`
-	StorageClass      StorageClass      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ StorageClass,omitempty"`
-	AWSAccessKeyId    string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp         time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature         string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential        string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket            string            `xml:"Bucket"`
+	Key               string            `xml:"Key"`
+	Metadata          []MetadataEntry   `xml:"Metadata,omitempty"`
+	Data              []byte            `xml:"Data"`
+	ContentLength     int64             `xml:"ContentLength"`
+	AccessControlList AccessControlList `xml:"AccessControlList,omitempty"`
+	StorageClass      StorageClass      `xml:"StorageClass,omitempty"`
+	AWSAccessKeyId    string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp         time.Time         `xml:"Timestamp,omitempty"`
+	Signature         string            `xml:"Signature,omitempty"`
+	Credential        string            `xml:"Credential,omitempty"`
 }
 
 func (t *Anon19) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon19
 	var layout struct {
 		*T
-		Data      *xsdBase64Binary `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Data"`
-		Timestamp *xsdDateTime     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Data      *xsdBase64Binary `xml:"Data"`
+		Timestamp *xsdDateTime     `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Data = (*xsdBase64Binary)(&layout.T.Data)
@@ -244,8 +244,8 @@ func (t *Anon19) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon19
 	var overlay struct {
 		*T
-		Data      *xsdBase64Binary `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Data"`
-		Timestamp *xsdDateTime     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Data      *xsdBase64Binary `xml:"Data"`
+		Timestamp *xsdDateTime     `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Data = (*xsdBase64Binary)(&overlay.T.Data)
@@ -254,27 +254,27 @@ func (t *Anon19) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon2 struct {
-	GetBucketLoggingStatusResponse BucketLoggingStatus `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetBucketLoggingStatusResponse"`
+	GetBucketLoggingStatusResponse BucketLoggingStatus `xml:"GetBucketLoggingStatusResponse"`
 }
 
 type Anon20 struct {
-	PutObjectInlineResponse PutObjectResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ PutObjectInlineResponse"`
+	PutObjectInlineResponse PutObjectResult `xml:"PutObjectInlineResponse"`
 }
 
 type Anon21 struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key            string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	Key            string    `xml:"Key"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *Anon21) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon21
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -284,7 +284,7 @@ func (t *Anon21) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon21
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -292,26 +292,26 @@ func (t *Anon21) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon22 struct {
-	DeleteObjectResponse Status `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DeleteObjectResponse"`
+	DeleteObjectResponse Status `xml:"DeleteObjectResponse"`
 }
 
 type Anon23 struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Prefix         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Prefix,omitempty"`
-	Marker         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Marker,omitempty"`
-	MaxKeys        int       `xml:"http://s3.amazonaws.com/doc/2006-03-01/ MaxKeys,omitempty"`
-	Delimiter      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Delimiter,omitempty"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	Prefix         string    `xml:"Prefix,omitempty"`
+	Marker         string    `xml:"Marker,omitempty"`
+	MaxKeys        int       `xml:"MaxKeys,omitempty"`
+	Delimiter      string    `xml:"Delimiter,omitempty"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *Anon23) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon23
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -321,7 +321,7 @@ func (t *Anon23) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon23
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -329,24 +329,24 @@ func (t *Anon23) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon24 struct {
-	ListBucketResponse ListBucketResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResponse"`
+	ListBucketResponse ListBucketResult `xml:"ListBucketResponse"`
 }
 
 type Anon25 struct {
-	ListVersionsResponse ListVersionsResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListVersionsResponse"`
+	ListVersionsResponse ListVersionsResult `xml:"ListVersionsResponse"`
 }
 
 type Anon26 struct {
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
 }
 
 func (t *Anon26) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon26
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -356,7 +356,7 @@ func (t *Anon26) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon26
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -364,42 +364,42 @@ func (t *Anon26) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon27 struct {
-	ListAllMyBucketsResponse ListAllMyBucketsResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResponse"`
+	ListAllMyBucketsResponse ListAllMyBucketsResult `xml:"ListAllMyBucketsResponse"`
 }
 
 type Anon28 struct {
-	Location string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Location"`
-	Bucket   string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key      string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	ETag     string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ETag"`
+	Location string `xml:"Location"`
+	Bucket   string `xml:"Bucket"`
+	Key      string `xml:"Key"`
+	ETag     string `xml:"ETag"`
 }
 
 type Anon29 struct {
-	SourceBucket                string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ SourceBucket"`
-	SourceKey                   string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ SourceKey"`
-	DestinationBucket           string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DestinationBucket"`
-	DestinationKey              string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DestinationKey"`
-	MetadataDirective           MetadataDirective `xml:"http://s3.amazonaws.com/doc/2006-03-01/ MetadataDirective,omitempty"`
-	Metadata                    []MetadataEntry   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Metadata,omitempty"`
-	AccessControlList           AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList,omitempty"`
-	CopySourceIfModifiedSince   time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfModifiedSince,omitempty"`
-	CopySourceIfUnmodifiedSince time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfUnmodifiedSince,omitempty"`
-	CopySourceIfMatch           []string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfMatch,omitempty"`
-	CopySourceIfNoneMatch       []string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfNoneMatch,omitempty"`
-	StorageClass                StorageClass      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ StorageClass,omitempty"`
-	AWSAccessKeyId              string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp                   time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature                   string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential                  string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	SourceBucket                string            `xml:"SourceBucket"`
+	SourceKey                   string            `xml:"SourceKey"`
+	DestinationBucket           string            `xml:"DestinationBucket"`
+	DestinationKey              string            `xml:"DestinationKey"`
+	MetadataDirective           MetadataDirective `xml:"MetadataDirective,omitempty"`
+	Metadata                    []MetadataEntry   `xml:"Metadata,omitempty"`
+	AccessControlList           AccessControlList `xml:"AccessControlList,omitempty"`
+	CopySourceIfModifiedSince   time.Time         `xml:"CopySourceIfModifiedSince,omitempty"`
+	CopySourceIfUnmodifiedSince time.Time         `xml:"CopySourceIfUnmodifiedSince,omitempty"`
+	CopySourceIfMatch           []string          `xml:"CopySourceIfMatch,omitempty"`
+	CopySourceIfNoneMatch       []string          `xml:"CopySourceIfNoneMatch,omitempty"`
+	StorageClass                StorageClass      `xml:"StorageClass,omitempty"`
+	AWSAccessKeyId              string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp                   time.Time         `xml:"Timestamp,omitempty"`
+	Signature                   string            `xml:"Signature,omitempty"`
+	Credential                  string            `xml:"Credential,omitempty"`
 }
 
 func (t *Anon29) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon29
 	var layout struct {
 		*T
-		CopySourceIfModifiedSince   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfModifiedSince,omitempty"`
-		CopySourceIfUnmodifiedSince *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfUnmodifiedSince,omitempty"`
-		Timestamp                   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		CopySourceIfModifiedSince   *xsdDateTime `xml:"CopySourceIfModifiedSince,omitempty"`
+		CopySourceIfUnmodifiedSince *xsdDateTime `xml:"CopySourceIfUnmodifiedSince,omitempty"`
+		Timestamp                   *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.CopySourceIfModifiedSince = (*xsdDateTime)(&layout.T.CopySourceIfModifiedSince)
@@ -411,9 +411,9 @@ func (t *Anon29) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon29
 	var overlay struct {
 		*T
-		CopySourceIfModifiedSince   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfModifiedSince,omitempty"`
-		CopySourceIfUnmodifiedSince *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfUnmodifiedSince,omitempty"`
-		Timestamp                   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		CopySourceIfModifiedSince   *xsdDateTime `xml:"CopySourceIfModifiedSince,omitempty"`
+		CopySourceIfUnmodifiedSince *xsdDateTime `xml:"CopySourceIfUnmodifiedSince,omitempty"`
+		Timestamp                   *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.CopySourceIfModifiedSince = (*xsdDateTime)(&overlay.T.CopySourceIfModifiedSince)
@@ -423,19 +423,19 @@ func (t *Anon29) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon3 struct {
-	Bucket              string              `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	AWSAccessKeyId      string              `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp           time.Time           `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature           string              `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential          string              `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
-	BucketLoggingStatus BucketLoggingStatus `xml:"http://s3.amazonaws.com/doc/2006-03-01/ BucketLoggingStatus"`
+	Bucket              string              `xml:"Bucket"`
+	AWSAccessKeyId      string              `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp           time.Time           `xml:"Timestamp,omitempty"`
+	Signature           string              `xml:"Signature,omitempty"`
+	Credential          string              `xml:"Credential,omitempty"`
+	BucketLoggingStatus BucketLoggingStatus `xml:"BucketLoggingStatus"`
 }
 
 func (t *Anon3) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon3
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -445,7 +445,7 @@ func (t *Anon3) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon3
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -453,26 +453,26 @@ func (t *Anon3) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon30 struct {
-	CopyObjectResult CopyObjectResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopyObjectResult"`
+	CopyObjectResult CopyObjectResult `xml:"CopyObjectResult"`
 }
 
 type Anon4 struct {
 }
 
 type Anon5 struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key            string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	Key            string    `xml:"Key"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *Anon5) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon5
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -482,7 +482,7 @@ func (t *Anon5) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon5
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -490,22 +490,22 @@ func (t *Anon5) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon6 struct {
-	GetObjectAccessControlPolicyResponse AccessControlPolicy `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetObjectAccessControlPolicyResponse"`
+	GetObjectAccessControlPolicyResponse AccessControlPolicy `xml:"GetObjectAccessControlPolicyResponse"`
 }
 
 type Anon7 struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *Anon7) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon7
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -515,7 +515,7 @@ func (t *Anon7) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon7
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -523,24 +523,24 @@ func (t *Anon7) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type Anon8 struct {
-	GetBucketAccessControlPolicyResponse AccessControlPolicy `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetBucketAccessControlPolicyResponse"`
+	GetBucketAccessControlPolicyResponse AccessControlPolicy `xml:"GetBucketAccessControlPolicyResponse"`
 }
 
 type Anon9 struct {
-	Bucket            string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key               string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList"`
-	AWSAccessKeyId    string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp         time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature         string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential        string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket            string            `xml:"Bucket"`
+	Key               string            `xml:"Key"`
+	AccessControlList AccessControlList `xml:"AccessControlList"`
+	AWSAccessKeyId    string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp         time.Time         `xml:"Timestamp,omitempty"`
+	Signature         string            `xml:"Signature,omitempty"`
+	Credential        string            `xml:"Credential,omitempty"`
 }
 
 func (t *Anon9) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T Anon9
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -550,7 +550,7 @@ func (t *Anon9) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T Anon9
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -558,40 +558,40 @@ func (t *Anon9) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type BucketLoggingStatus struct {
-	LoggingEnabled LoggingSettings `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LoggingEnabled,omitempty"`
+	LoggingEnabled LoggingSettings `xml:"LoggingEnabled,omitempty"`
 }
 
 type CanonicalUser struct {
-	ID          string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ID"`
-	DisplayName string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DisplayName,omitempty"`
+	ID          string `xml:"ID"`
+	DisplayName string `xml:"DisplayName,omitempty"`
 }
 
 type CopyObject struct {
-	SourceBucket                string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ SourceBucket"`
-	SourceKey                   string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ SourceKey"`
-	DestinationBucket           string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DestinationBucket"`
-	DestinationKey              string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DestinationKey"`
-	MetadataDirective           MetadataDirective `xml:"http://s3.amazonaws.com/doc/2006-03-01/ MetadataDirective,omitempty"`
-	Metadata                    []MetadataEntry   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Metadata,omitempty"`
-	AccessControlList           AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList,omitempty"`
-	CopySourceIfModifiedSince   time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfModifiedSince,omitempty"`
-	CopySourceIfUnmodifiedSince time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfUnmodifiedSince,omitempty"`
-	CopySourceIfMatch           []string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfMatch,omitempty"`
-	CopySourceIfNoneMatch       []string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfNoneMatch,omitempty"`
-	StorageClass                StorageClass      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ StorageClass,omitempty"`
-	AWSAccessKeyId              string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp                   time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature                   string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential                  string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	SourceBucket                string            `xml:"SourceBucket"`
+	SourceKey                   string            `xml:"SourceKey"`
+	DestinationBucket           string            `xml:"DestinationBucket"`
+	DestinationKey              string            `xml:"DestinationKey"`
+	MetadataDirective           MetadataDirective `xml:"MetadataDirective,omitempty"`
+	Metadata                    []MetadataEntry   `xml:"Metadata,omitempty"`
+	AccessControlList           AccessControlList `xml:"AccessControlList,omitempty"`
+	CopySourceIfModifiedSince   time.Time         `xml:"CopySourceIfModifiedSince,omitempty"`
+	CopySourceIfUnmodifiedSince time.Time         `xml:"CopySourceIfUnmodifiedSince,omitempty"`
+	CopySourceIfMatch           []string          `xml:"CopySourceIfMatch,omitempty"`
+	CopySourceIfNoneMatch       []string          `xml:"CopySourceIfNoneMatch,omitempty"`
+	StorageClass                StorageClass      `xml:"StorageClass,omitempty"`
+	AWSAccessKeyId              string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp                   time.Time         `xml:"Timestamp,omitempty"`
+	Signature                   string            `xml:"Signature,omitempty"`
+	Credential                  string            `xml:"Credential,omitempty"`
 }
 
 func (t *CopyObject) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T CopyObject
 	var layout struct {
 		*T
-		CopySourceIfModifiedSince   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfModifiedSince,omitempty"`
-		CopySourceIfUnmodifiedSince *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfUnmodifiedSince,omitempty"`
-		Timestamp                   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		CopySourceIfModifiedSince   *xsdDateTime `xml:"CopySourceIfModifiedSince,omitempty"`
+		CopySourceIfUnmodifiedSince *xsdDateTime `xml:"CopySourceIfUnmodifiedSince,omitempty"`
+		Timestamp                   *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.CopySourceIfModifiedSince = (*xsdDateTime)(&layout.T.CopySourceIfModifiedSince)
@@ -603,9 +603,9 @@ func (t *CopyObject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 	type T CopyObject
 	var overlay struct {
 		*T
-		CopySourceIfModifiedSince   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfModifiedSince,omitempty"`
-		CopySourceIfUnmodifiedSince *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopySourceIfUnmodifiedSince,omitempty"`
-		Timestamp                   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		CopySourceIfModifiedSince   *xsdDateTime `xml:"CopySourceIfModifiedSince,omitempty"`
+		CopySourceIfUnmodifiedSince *xsdDateTime `xml:"CopySourceIfUnmodifiedSince,omitempty"`
+		Timestamp                   *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.CopySourceIfModifiedSince = (*xsdDateTime)(&overlay.T.CopySourceIfModifiedSince)
@@ -615,19 +615,19 @@ func (t *CopyObject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 }
 
 type CopyObjectResponse struct {
-	CopyObjectResult CopyObjectResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CopyObjectResult"`
+	CopyObjectResult CopyObjectResult `xml:"CopyObjectResult"`
 }
 
 type CopyObjectResult struct {
-	LastModified time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
-	ETag         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ETag"`
+	LastModified time.Time `xml:"LastModified"`
+	ETag         string    `xml:"ETag"`
 }
 
 func (t *CopyObjectResult) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T CopyObjectResult
 	var layout struct {
 		*T
-		LastModified *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		LastModified *xsdDateTime `xml:"LastModified"`
 	}
 	layout.T = (*T)(t)
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
@@ -637,7 +637,7 @@ func (t *CopyObjectResult) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	type T CopyObjectResult
 	var overlay struct {
 		*T
-		LastModified *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		LastModified *xsdDateTime `xml:"LastModified"`
 	}
 	overlay.T = (*T)(t)
 	overlay.LastModified = (*xsdDateTime)(&overlay.T.LastModified)
@@ -645,18 +645,18 @@ func (t *CopyObjectResult) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 }
 
 type CreateBucket struct {
-	Bucket            string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList,omitempty"`
-	AWSAccessKeyId    string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp         time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature         string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
+	Bucket            string            `xml:"Bucket"`
+	AccessControlList AccessControlList `xml:"AccessControlList,omitempty"`
+	AWSAccessKeyId    string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp         time.Time         `xml:"Timestamp,omitempty"`
+	Signature         string            `xml:"Signature,omitempty"`
 }
 
 func (t *CreateBucket) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T CreateBucket
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -666,7 +666,7 @@ func (t *CreateBucket) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 	type T CreateBucket
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -674,30 +674,30 @@ func (t *CreateBucket) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 }
 
 type CreateBucketConfiguration struct {
-	LocationConstraint string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LocationConstraint"`
+	LocationConstraint string `xml:"LocationConstraint"`
 }
 
 type CreateBucketResponse struct {
-	CreateBucketReturn CreateBucketResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CreateBucketReturn"`
+	CreateBucketReturn CreateBucketResult `xml:"CreateBucketReturn"`
 }
 
 type CreateBucketResult struct {
-	BucketName string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ BucketName"`
+	BucketName string `xml:"BucketName"`
 }
 
 type DeleteBucket struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *DeleteBucket) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T DeleteBucket
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -707,7 +707,7 @@ func (t *DeleteBucket) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 	type T DeleteBucket
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -715,22 +715,22 @@ func (t *DeleteBucket) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 }
 
 type DeleteBucketResponse struct {
-	DeleteBucketResponse Status `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DeleteBucketResponse"`
+	DeleteBucketResponse Status `xml:"DeleteBucketResponse"`
 }
 
 type DeleteMarkerEntry struct {
-	Key          string        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	VersionId    string        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ VersionId"`
-	IsLatest     bool          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IsLatest"`
-	LastModified time.Time     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
-	Owner        CanonicalUser `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Owner,omitempty"`
+	Key          string        `xml:"Key"`
+	VersionId    string        `xml:"VersionId"`
+	IsLatest     bool          `xml:"IsLatest"`
+	LastModified time.Time     `xml:"LastModified"`
+	Owner        CanonicalUser `xml:"Owner,omitempty"`
 }
 
 func (t *DeleteMarkerEntry) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T DeleteMarkerEntry
 	var layout struct {
 		*T
-		LastModified *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		LastModified *xsdDateTime `xml:"LastModified"`
 	}
 	layout.T = (*T)(t)
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
@@ -740,7 +740,7 @@ func (t *DeleteMarkerEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 	type T DeleteMarkerEntry
 	var overlay struct {
 		*T
-		LastModified *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		LastModified *xsdDateTime `xml:"LastModified"`
 	}
 	overlay.T = (*T)(t)
 	overlay.LastModified = (*xsdDateTime)(&overlay.T.LastModified)
@@ -748,19 +748,19 @@ func (t *DeleteMarkerEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 }
 
 type DeleteObject struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key            string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	Key            string    `xml:"Key"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *DeleteObject) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T DeleteObject
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -770,7 +770,7 @@ func (t *DeleteObject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 	type T DeleteObject
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -778,22 +778,22 @@ func (t *DeleteObject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 }
 
 type DeleteObjectResponse struct {
-	DeleteObjectResponse Status `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DeleteObjectResponse"`
+	DeleteObjectResponse Status `xml:"DeleteObjectResponse"`
 }
 
 type GetBucketAccessControlPolicy struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *GetBucketAccessControlPolicy) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T GetBucketAccessControlPolicy
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -803,7 +803,7 @@ func (t *GetBucketAccessControlPolicy) UnmarshalXML(d *xml.Decoder, start xml.St
 	type T GetBucketAccessControlPolicy
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -811,22 +811,22 @@ func (t *GetBucketAccessControlPolicy) UnmarshalXML(d *xml.Decoder, start xml.St
 }
 
 type GetBucketAccessControlPolicyResponse struct {
-	GetBucketAccessControlPolicyResponse AccessControlPolicy `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetBucketAccessControlPolicyResponse"`
+	GetBucketAccessControlPolicyResponse AccessControlPolicy `xml:"GetBucketAccessControlPolicyResponse"`
 }
 
 type GetBucketLoggingStatus struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *GetBucketLoggingStatus) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T GetBucketLoggingStatus
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -836,7 +836,7 @@ func (t *GetBucketLoggingStatus) UnmarshalXML(d *xml.Decoder, start xml.StartEle
 	type T GetBucketLoggingStatus
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -844,26 +844,26 @@ func (t *GetBucketLoggingStatus) UnmarshalXML(d *xml.Decoder, start xml.StartEle
 }
 
 type GetBucketLoggingStatusResponse struct {
-	GetBucketLoggingStatusResponse BucketLoggingStatus `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetBucketLoggingStatusResponse"`
+	GetBucketLoggingStatusResponse BucketLoggingStatus `xml:"GetBucketLoggingStatusResponse"`
 }
 
 type GetObject struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key            string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	GetMetadata    bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetMetadata"`
-	GetData        bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetData"`
-	InlineData     bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InlineData"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	Key            string    `xml:"Key"`
+	GetMetadata    bool      `xml:"GetMetadata"`
+	GetData        bool      `xml:"GetData"`
+	InlineData     bool      `xml:"InlineData"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *GetObject) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T GetObject
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -873,7 +873,7 @@ func (t *GetObject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T GetObject
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -881,19 +881,19 @@ func (t *GetObject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type GetObjectAccessControlPolicy struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key            string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	Key            string    `xml:"Key"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *GetObjectAccessControlPolicy) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T GetObjectAccessControlPolicy
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -903,7 +903,7 @@ func (t *GetObjectAccessControlPolicy) UnmarshalXML(d *xml.Decoder, start xml.St
 	type T GetObjectAccessControlPolicy
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -911,35 +911,35 @@ func (t *GetObjectAccessControlPolicy) UnmarshalXML(d *xml.Decoder, start xml.St
 }
 
 type GetObjectAccessControlPolicyResponse struct {
-	GetObjectAccessControlPolicyResponse AccessControlPolicy `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetObjectAccessControlPolicyResponse"`
+	GetObjectAccessControlPolicyResponse AccessControlPolicy `xml:"GetObjectAccessControlPolicyResponse"`
 }
 
 type GetObjectExtended struct {
-	Bucket                                 string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key                                    string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	GetMetadata                            bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetMetadata"`
-	GetData                                bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetData"`
-	InlineData                             bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InlineData"`
-	ByteRangeStart                         int64     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ByteRangeStart,omitempty"`
-	ByteRangeEnd                           int64     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ByteRangeEnd,omitempty"`
-	IfModifiedSince                        time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfModifiedSince,omitempty"`
-	IfUnmodifiedSince                      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfUnmodifiedSince,omitempty"`
-	IfMatch                                []string  `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfMatch,omitempty"`
-	IfNoneMatch                            []string  `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfNoneMatch,omitempty"`
-	ReturnCompleteObjectOnConditionFailure bool      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ReturnCompleteObjectOnConditionFailure,omitempty"`
-	AWSAccessKeyId                         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp                              time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature                              string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential                             string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket                                 string    `xml:"Bucket"`
+	Key                                    string    `xml:"Key"`
+	GetMetadata                            bool      `xml:"GetMetadata"`
+	GetData                                bool      `xml:"GetData"`
+	InlineData                             bool      `xml:"InlineData"`
+	ByteRangeStart                         int64     `xml:"ByteRangeStart,omitempty"`
+	ByteRangeEnd                           int64     `xml:"ByteRangeEnd,omitempty"`
+	IfModifiedSince                        time.Time `xml:"IfModifiedSince,omitempty"`
+	IfUnmodifiedSince                      time.Time `xml:"IfUnmodifiedSince,omitempty"`
+	IfMatch                                []string  `xml:"IfMatch,omitempty"`
+	IfNoneMatch                            []string  `xml:"IfNoneMatch,omitempty"`
+	ReturnCompleteObjectOnConditionFailure bool      `xml:"ReturnCompleteObjectOnConditionFailure,omitempty"`
+	AWSAccessKeyId                         string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp                              time.Time `xml:"Timestamp,omitempty"`
+	Signature                              string    `xml:"Signature,omitempty"`
+	Credential                             string    `xml:"Credential,omitempty"`
 }
 
 func (t *GetObjectExtended) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T GetObjectExtended
 	var layout struct {
 		*T
-		IfModifiedSince   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfModifiedSince,omitempty"`
-		IfUnmodifiedSince *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfUnmodifiedSince,omitempty"`
-		Timestamp         *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		IfModifiedSince   *xsdDateTime `xml:"IfModifiedSince,omitempty"`
+		IfUnmodifiedSince *xsdDateTime `xml:"IfUnmodifiedSince,omitempty"`
+		Timestamp         *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.IfModifiedSince = (*xsdDateTime)(&layout.T.IfModifiedSince)
@@ -951,9 +951,9 @@ func (t *GetObjectExtended) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 	type T GetObjectExtended
 	var overlay struct {
 		*T
-		IfModifiedSince   *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfModifiedSince,omitempty"`
-		IfUnmodifiedSince *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IfUnmodifiedSince,omitempty"`
-		Timestamp         *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		IfModifiedSince   *xsdDateTime `xml:"IfModifiedSince,omitempty"`
+		IfUnmodifiedSince *xsdDateTime `xml:"IfUnmodifiedSince,omitempty"`
+		Timestamp         *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.IfModifiedSince = (*xsdDateTime)(&overlay.T.IfModifiedSince)
@@ -963,27 +963,27 @@ func (t *GetObjectExtended) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 }
 
 type GetObjectExtendedResponse struct {
-	GetObjectResponse GetObjectResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetObjectResponse"`
+	GetObjectResponse GetObjectResult `xml:"GetObjectResponse"`
 }
 
 type GetObjectResponse struct {
-	GetObjectResponse GetObjectResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ GetObjectResponse"`
+	GetObjectResponse GetObjectResult `xml:"GetObjectResponse"`
 }
 
 type GetObjectResult struct {
-	Status       Status          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Status"`
-	Metadata     []MetadataEntry `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Metadata,omitempty"`
-	Data         []byte          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Data,omitempty"`
-	LastModified time.Time       `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
-	ETag         string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ETag"`
+	Status       Status          `xml:"Status"`
+	Metadata     []MetadataEntry `xml:"Metadata,omitempty"`
+	Data         []byte          `xml:"Data,omitempty"`
+	LastModified time.Time       `xml:"LastModified"`
+	ETag         string          `xml:"ETag"`
 }
 
 func (t *GetObjectResult) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T GetObjectResult
 	var layout struct {
 		*T
-		Data         *xsdBase64Binary `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Data,omitempty"`
-		LastModified *xsdDateTime     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		Data         *xsdBase64Binary `xml:"Data,omitempty"`
+		LastModified *xsdDateTime     `xml:"LastModified"`
 	}
 	layout.T = (*T)(t)
 	layout.Data = (*xsdBase64Binary)(&layout.T.Data)
@@ -994,8 +994,8 @@ func (t *GetObjectResult) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 	type T GetObjectResult
 	var overlay struct {
 		*T
-		Data         *xsdBase64Binary `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Data,omitempty"`
-		LastModified *xsdDateTime     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		Data         *xsdBase64Binary `xml:"Data,omitempty"`
+		LastModified *xsdDateTime     `xml:"LastModified"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Data = (*xsdBase64Binary)(&overlay.T.Data)
@@ -1004,25 +1004,25 @@ func (t *GetObjectResult) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 }
 
 type Grant struct {
-	Grantee    Grantee    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Grantee"`
-	Permission Permission `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Permission"`
+	Grantee    Grantee    `xml:"Grantee"`
+	Permission Permission `xml:"Permission"`
 }
 
 type Group struct {
-	URI string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ URI"`
+	URI string `xml:"URI"`
 }
 
 type ListAllMyBuckets struct {
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
 }
 
 func (t *ListAllMyBuckets) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T ListAllMyBuckets
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -1032,7 +1032,7 @@ func (t *ListAllMyBuckets) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	type T ListAllMyBuckets
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -1040,15 +1040,15 @@ func (t *ListAllMyBuckets) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 }
 
 type ListAllMyBucketsEntry struct {
-	Name         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Name"`
-	CreationDate time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CreationDate"`
+	Name         string    `xml:"Name"`
+	CreationDate time.Time `xml:"CreationDate"`
 }
 
 func (t *ListAllMyBucketsEntry) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T ListAllMyBucketsEntry
 	var layout struct {
 		*T
-		CreationDate *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CreationDate"`
+		CreationDate *xsdDateTime `xml:"CreationDate"`
 	}
 	layout.T = (*T)(t)
 	layout.CreationDate = (*xsdDateTime)(&layout.T.CreationDate)
@@ -1058,7 +1058,7 @@ func (t *ListAllMyBucketsEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElem
 	type T ListAllMyBucketsEntry
 	var overlay struct {
 		*T
-		CreationDate *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CreationDate"`
+		CreationDate *xsdDateTime `xml:"CreationDate"`
 	}
 	overlay.T = (*T)(t)
 	overlay.CreationDate = (*xsdDateTime)(&overlay.T.CreationDate)
@@ -1066,35 +1066,35 @@ func (t *ListAllMyBucketsEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElem
 }
 
 type ListAllMyBucketsList struct {
-	Bucket []ListAllMyBucketsEntry `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket,omitempty"`
+	Bucket []ListAllMyBucketsEntry `xml:"Bucket,omitempty"`
 }
 
 type ListAllMyBucketsResponse struct {
-	ListAllMyBucketsResponse ListAllMyBucketsResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResponse"`
+	ListAllMyBucketsResponse ListAllMyBucketsResult `xml:"ListAllMyBucketsResponse"`
 }
 
 type ListAllMyBucketsResult struct {
-	Owner   CanonicalUser        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Owner"`
-	Buckets ListAllMyBucketsList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Buckets"`
+	Owner   CanonicalUser        `xml:"Owner"`
+	Buckets ListAllMyBucketsList `xml:"Buckets"`
 }
 
 type ListBucket struct {
-	Bucket         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Prefix         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Prefix,omitempty"`
-	Marker         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Marker,omitempty"`
-	MaxKeys        int       `xml:"http://s3.amazonaws.com/doc/2006-03-01/ MaxKeys,omitempty"`
-	Delimiter      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Delimiter,omitempty"`
-	AWSAccessKeyId string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp      time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature      string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential     string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket         string    `xml:"Bucket"`
+	Prefix         string    `xml:"Prefix,omitempty"`
+	Marker         string    `xml:"Marker,omitempty"`
+	MaxKeys        int       `xml:"MaxKeys,omitempty"`
+	Delimiter      string    `xml:"Delimiter,omitempty"`
+	AWSAccessKeyId string    `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp      time.Time `xml:"Timestamp,omitempty"`
+	Signature      string    `xml:"Signature,omitempty"`
+	Credential     string    `xml:"Credential,omitempty"`
 }
 
 func (t *ListBucket) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T ListBucket
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -1104,7 +1104,7 @@ func (t *ListBucket) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 	type T ListBucket
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -1112,37 +1112,37 @@ func (t *ListBucket) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 }
 
 type ListBucketResponse struct {
-	ListBucketResponse ListBucketResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResponse"`
+	ListBucketResponse ListBucketResult `xml:"ListBucketResponse"`
 }
 
 type ListBucketResult struct {
-	Metadata       []MetadataEntry `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Metadata,omitempty"`
-	Name           string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Name"`
-	Prefix         string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Prefix"`
-	Marker         string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Marker"`
-	NextMarker     string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ NextMarker,omitempty"`
-	MaxKeys        int             `xml:"http://s3.amazonaws.com/doc/2006-03-01/ MaxKeys"`
-	Delimiter      string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Delimiter,omitempty"`
-	IsTruncated    bool            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IsTruncated"`
-	Contents       []ListEntry     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Contents,omitempty"`
-	CommonPrefixes []PrefixEntry   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CommonPrefixes,omitempty"`
-	EncodingType   string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ EncodingType"`
+	Metadata       []MetadataEntry `xml:"Metadata,omitempty"`
+	Name           string          `xml:"Name"`
+	Prefix         string          `xml:"Prefix"`
+	Marker         string          `xml:"Marker"`
+	NextMarker     string          `xml:"NextMarker,omitempty"`
+	MaxKeys        int             `xml:"MaxKeys"`
+	Delimiter      string          `xml:"Delimiter,omitempty"`
+	IsTruncated    bool            `xml:"IsTruncated"`
+	Contents       []ListEntry     `xml:"Contents,omitempty"`
+	CommonPrefixes []PrefixEntry   `xml:"CommonPrefixes,omitempty"`
+	EncodingType   string          `xml:"EncodingType"`
 }
 
 type ListEntry struct {
-	Key          string        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	LastModified time.Time     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
-	ETag         string        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ETag"`
-	Size         int64         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Size"`
-	Owner        CanonicalUser `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Owner,omitempty"`
-	StorageClass StorageClass  `xml:"http://s3.amazonaws.com/doc/2006-03-01/ StorageClass"`
+	Key          string        `xml:"Key"`
+	LastModified time.Time     `xml:"LastModified"`
+	ETag         string        `xml:"ETag"`
+	Size         int64         `xml:"Size"`
+	Owner        CanonicalUser `xml:"Owner,omitempty"`
+	StorageClass StorageClass  `xml:"StorageClass"`
 }
 
 func (t *ListEntry) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T ListEntry
 	var layout struct {
 		*T
-		LastModified *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		LastModified *xsdDateTime `xml:"LastModified"`
 	}
 	layout.T = (*T)(t)
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
@@ -1152,7 +1152,7 @@ func (t *ListEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T ListEntry
 	var overlay struct {
 		*T
-		LastModified *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		LastModified *xsdDateTime `xml:"LastModified"`
 	}
 	overlay.T = (*T)(t)
 	overlay.LastModified = (*xsdDateTime)(&overlay.T.LastModified)
@@ -1160,44 +1160,44 @@ func (t *ListEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type ListVersionsResponse struct {
-	ListVersionsResponse ListVersionsResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListVersionsResponse"`
+	ListVersionsResponse ListVersionsResult `xml:"ListVersionsResponse"`
 }
 
 type ListVersionsResult struct {
-	Metadata            []MetadataEntry   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Metadata,omitempty"`
-	Name                string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Name"`
-	Prefix              string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Prefix"`
-	KeyMarker           string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ KeyMarker"`
-	VersionIdMarker     string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ VersionIdMarker"`
-	NextKeyMarker       string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ NextKeyMarker,omitempty"`
-	NextVersionIdMarker string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ NextVersionIdMarker,omitempty"`
-	MaxKeys             int               `xml:"http://s3.amazonaws.com/doc/2006-03-01/ MaxKeys"`
-	Delimiter           string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Delimiter,omitempty"`
-	IsTruncated         bool              `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IsTruncated"`
-	Version             VersionEntry      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Version,omitempty"`
-	DeleteMarker        DeleteMarkerEntry `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DeleteMarker,omitempty"`
-	CommonPrefixes      []PrefixEntry     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CommonPrefixes,omitempty"`
+	Metadata            []MetadataEntry   `xml:"Metadata,omitempty"`
+	Name                string            `xml:"Name"`
+	Prefix              string            `xml:"Prefix"`
+	KeyMarker           string            `xml:"KeyMarker"`
+	VersionIdMarker     string            `xml:"VersionIdMarker"`
+	NextKeyMarker       string            `xml:"NextKeyMarker,omitempty"`
+	NextVersionIdMarker string            `xml:"NextVersionIdMarker,omitempty"`
+	MaxKeys             int               `xml:"MaxKeys"`
+	Delimiter           string            `xml:"Delimiter,omitempty"`
+	IsTruncated         bool              `xml:"IsTruncated"`
+	Version             VersionEntry      `xml:"Version,omitempty"`
+	DeleteMarker        DeleteMarkerEntry `xml:"DeleteMarker,omitempty"`
+	CommonPrefixes      []PrefixEntry     `xml:"CommonPrefixes,omitempty"`
 }
 
 type LoggingSettings struct {
-	TargetBucket string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ TargetBucket"`
-	TargetPrefix string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ TargetPrefix"`
-	TargetGrants AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ TargetGrants,omitempty"`
+	TargetBucket string            `xml:"TargetBucket"`
+	TargetPrefix string            `xml:"TargetPrefix"`
+	TargetGrants AccessControlList `xml:"TargetGrants,omitempty"`
 }
 
 // May be one of COPY, REPLACE
 type MetadataDirective string
 
 type MetadataEntry struct {
-	Name  string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Name"`
-	Value string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Value"`
+	Name  string `xml:"Name"`
+	Value string `xml:"Value"`
 }
 
 // May be one of Enabled, Disabled
 type MfaDeleteStatus string
 
 type NotificationConfiguration struct {
-	TopicConfiguration []TopicConfiguration `xml:"http://s3.amazonaws.com/doc/2006-03-01/ TopicConfiguration,omitempty"`
+	TopicConfiguration []TopicConfiguration `xml:"TopicConfiguration,omitempty"`
 }
 
 // May be one of BucketOwner, Requester
@@ -1207,34 +1207,34 @@ type Payer string
 type Permission string
 
 type PostResponse struct {
-	Location string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Location"`
-	Bucket   string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key      string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	ETag     string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ETag"`
+	Location string `xml:"Location"`
+	Bucket   string `xml:"Bucket"`
+	Key      string `xml:"Key"`
+	ETag     string `xml:"ETag"`
 }
 
 type PrefixEntry struct {
-	Prefix string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Prefix"`
+	Prefix string `xml:"Prefix"`
 }
 
 type PutObject struct {
-	Bucket            string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key               string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	Metadata          []MetadataEntry   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Metadata,omitempty"`
-	ContentLength     int64             `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ContentLength"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList,omitempty"`
-	StorageClass      StorageClass      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ StorageClass,omitempty"`
-	AWSAccessKeyId    string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp         time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature         string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential        string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket            string            `xml:"Bucket"`
+	Key               string            `xml:"Key"`
+	Metadata          []MetadataEntry   `xml:"Metadata,omitempty"`
+	ContentLength     int64             `xml:"ContentLength"`
+	AccessControlList AccessControlList `xml:"AccessControlList,omitempty"`
+	StorageClass      StorageClass      `xml:"StorageClass,omitempty"`
+	AWSAccessKeyId    string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp         time.Time         `xml:"Timestamp,omitempty"`
+	Signature         string            `xml:"Signature,omitempty"`
+	Credential        string            `xml:"Credential,omitempty"`
 }
 
 func (t *PutObject) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T PutObject
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -1244,7 +1244,7 @@ func (t *PutObject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T PutObject
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -1252,25 +1252,25 @@ func (t *PutObject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 type PutObjectInline struct {
-	Bucket            string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key               string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	Metadata          []MetadataEntry   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Metadata,omitempty"`
-	Data              []byte            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Data"`
-	ContentLength     int64             `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ContentLength"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList,omitempty"`
-	StorageClass      StorageClass      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ StorageClass,omitempty"`
-	AWSAccessKeyId    string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp         time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature         string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential        string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket            string            `xml:"Bucket"`
+	Key               string            `xml:"Key"`
+	Metadata          []MetadataEntry   `xml:"Metadata,omitempty"`
+	Data              []byte            `xml:"Data"`
+	ContentLength     int64             `xml:"ContentLength"`
+	AccessControlList AccessControlList `xml:"AccessControlList,omitempty"`
+	StorageClass      StorageClass      `xml:"StorageClass,omitempty"`
+	AWSAccessKeyId    string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp         time.Time         `xml:"Timestamp,omitempty"`
+	Signature         string            `xml:"Signature,omitempty"`
+	Credential        string            `xml:"Credential,omitempty"`
 }
 
 func (t *PutObjectInline) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T PutObjectInline
 	var layout struct {
 		*T
-		Data      *xsdBase64Binary `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Data"`
-		Timestamp *xsdDateTime     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Data      *xsdBase64Binary `xml:"Data"`
+		Timestamp *xsdDateTime     `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Data = (*xsdBase64Binary)(&layout.T.Data)
@@ -1281,8 +1281,8 @@ func (t *PutObjectInline) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 	type T PutObjectInline
 	var overlay struct {
 		*T
-		Data      *xsdBase64Binary `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Data"`
-		Timestamp *xsdDateTime     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Data      *xsdBase64Binary `xml:"Data"`
+		Timestamp *xsdDateTime     `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Data = (*xsdBase64Binary)(&overlay.T.Data)
@@ -1291,23 +1291,23 @@ func (t *PutObjectInline) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 }
 
 type PutObjectInlineResponse struct {
-	PutObjectInlineResponse PutObjectResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ PutObjectInlineResponse"`
+	PutObjectInlineResponse PutObjectResult `xml:"PutObjectInlineResponse"`
 }
 
 type PutObjectResponse struct {
-	PutObjectResponse PutObjectResult `xml:"http://s3.amazonaws.com/doc/2006-03-01/ PutObjectResponse"`
+	PutObjectResponse PutObjectResult `xml:"PutObjectResponse"`
 }
 
 type PutObjectResult struct {
-	ETag         string    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ETag"`
-	LastModified time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+	ETag         string    `xml:"ETag"`
+	LastModified time.Time `xml:"LastModified"`
 }
 
 func (t *PutObjectResult) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T PutObjectResult
 	var layout struct {
 		*T
-		LastModified *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		LastModified *xsdDateTime `xml:"LastModified"`
 	}
 	layout.T = (*T)(t)
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
@@ -1317,7 +1317,7 @@ func (t *PutObjectResult) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 	type T PutObjectResult
 	var overlay struct {
 		*T
-		LastModified *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		LastModified *xsdDateTime `xml:"LastModified"`
 	}
 	overlay.T = (*T)(t)
 	overlay.LastModified = (*xsdDateTime)(&overlay.T.LastModified)
@@ -1325,27 +1325,27 @@ func (t *PutObjectResult) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 }
 
 type RequestPaymentConfiguration struct {
-	Payer Payer `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Payer"`
+	Payer Payer `xml:"Payer"`
 }
 
 type Result struct {
-	Status Status `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Status"`
+	Status Status `xml:"Status"`
 }
 
 type SetBucketAccessControlPolicy struct {
-	Bucket            string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList,omitempty"`
-	AWSAccessKeyId    string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp         time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature         string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential        string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket            string            `xml:"Bucket"`
+	AccessControlList AccessControlList `xml:"AccessControlList,omitempty"`
+	AWSAccessKeyId    string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp         time.Time         `xml:"Timestamp,omitempty"`
+	Signature         string            `xml:"Signature,omitempty"`
+	Credential        string            `xml:"Credential,omitempty"`
 }
 
 func (t *SetBucketAccessControlPolicy) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T SetBucketAccessControlPolicy
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -1355,7 +1355,7 @@ func (t *SetBucketAccessControlPolicy) UnmarshalXML(d *xml.Decoder, start xml.St
 	type T SetBucketAccessControlPolicy
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -1366,19 +1366,19 @@ type SetBucketAccessControlPolicyResponse struct {
 }
 
 type SetBucketLoggingStatus struct {
-	Bucket              string              `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	AWSAccessKeyId      string              `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp           time.Time           `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature           string              `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential          string              `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
-	BucketLoggingStatus BucketLoggingStatus `xml:"http://s3.amazonaws.com/doc/2006-03-01/ BucketLoggingStatus"`
+	Bucket              string              `xml:"Bucket"`
+	AWSAccessKeyId      string              `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp           time.Time           `xml:"Timestamp,omitempty"`
+	Signature           string              `xml:"Signature,omitempty"`
+	Credential          string              `xml:"Credential,omitempty"`
+	BucketLoggingStatus BucketLoggingStatus `xml:"BucketLoggingStatus"`
 }
 
 func (t *SetBucketLoggingStatus) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T SetBucketLoggingStatus
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -1388,7 +1388,7 @@ func (t *SetBucketLoggingStatus) UnmarshalXML(d *xml.Decoder, start xml.StartEle
 	type T SetBucketLoggingStatus
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -1399,20 +1399,20 @@ type SetBucketLoggingStatusResponse struct {
 }
 
 type SetObjectAccessControlPolicy struct {
-	Bucket            string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Bucket"`
-	Key               string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList"`
-	AWSAccessKeyId    string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AWSAccessKeyId,omitempty"`
-	Timestamp         time.Time         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
-	Signature         string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Signature,omitempty"`
-	Credential        string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Credential,omitempty"`
+	Bucket            string            `xml:"Bucket"`
+	Key               string            `xml:"Key"`
+	AccessControlList AccessControlList `xml:"AccessControlList"`
+	AWSAccessKeyId    string            `xml:"AWSAccessKeyId,omitempty"`
+	Timestamp         time.Time         `xml:"Timestamp,omitempty"`
+	Signature         string            `xml:"Signature,omitempty"`
+	Credential        string            `xml:"Credential,omitempty"`
 }
 
 func (t *SetObjectAccessControlPolicy) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T SetObjectAccessControlPolicy
 	var layout struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	layout.T = (*T)(t)
 	layout.Timestamp = (*xsdDateTime)(&layout.T.Timestamp)
@@ -1422,7 +1422,7 @@ func (t *SetObjectAccessControlPolicy) UnmarshalXML(d *xml.Decoder, start xml.St
 	type T SetObjectAccessControlPolicy
 	var overlay struct {
 		*T
-		Timestamp *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Timestamp,omitempty"`
+		Timestamp *xsdDateTime `xml:"Timestamp,omitempty"`
 	}
 	overlay.T = (*T)(t)
 	overlay.Timestamp = (*xsdDateTime)(&overlay.T.Timestamp)
@@ -1433,37 +1433,37 @@ type SetObjectAccessControlPolicyResponse struct {
 }
 
 type Status struct {
-	Code        int    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Code"`
-	Description string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Description"`
+	Code        int    `xml:"Code"`
+	Description string `xml:"Description"`
 }
 
 // May be one of STANDARD, REDUCED_REDUNDANCY, GLACIER, UNKNOWN
 type StorageClass string
 
 type TopicConfiguration struct {
-	Topic string   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Topic"`
-	Event []string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Event"`
+	Topic string   `xml:"Topic"`
+	Event []string `xml:"Event"`
 }
 
 type User struct {
 }
 
 type VersionEntry struct {
-	Key          string        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Key"`
-	VersionId    string        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ VersionId"`
-	IsLatest     bool          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ IsLatest"`
-	LastModified time.Time     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
-	ETag         string        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ETag"`
-	Size         int64         `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Size"`
-	Owner        CanonicalUser `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Owner,omitempty"`
-	StorageClass StorageClass  `xml:"http://s3.amazonaws.com/doc/2006-03-01/ StorageClass"`
+	Key          string        `xml:"Key"`
+	VersionId    string        `xml:"VersionId"`
+	IsLatest     bool          `xml:"IsLatest"`
+	LastModified time.Time     `xml:"LastModified"`
+	ETag         string        `xml:"ETag"`
+	Size         int64         `xml:"Size"`
+	Owner        CanonicalUser `xml:"Owner,omitempty"`
+	StorageClass StorageClass  `xml:"StorageClass"`
 }
 
 func (t *VersionEntry) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type T VersionEntry
 	var layout struct {
 		*T
-		LastModified *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		LastModified *xsdDateTime `xml:"LastModified"`
 	}
 	layout.T = (*T)(t)
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
@@ -1473,7 +1473,7 @@ func (t *VersionEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 	type T VersionEntry
 	var overlay struct {
 		*T
-		LastModified *xsdDateTime `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LastModified"`
+		LastModified *xsdDateTime `xml:"LastModified"`
 	}
 	overlay.T = (*T)(t)
 	overlay.LastModified = (*xsdDateTime)(&overlay.T.LastModified)
@@ -1481,8 +1481,8 @@ func (t *VersionEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 }
 
 type VersioningConfiguration struct {
-	Status    VersioningStatus `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Status,omitempty"`
-	MfaDelete MfaDeleteStatus  `xml:"http://s3.amazonaws.com/doc/2006-03-01/ MfaDelete,omitempty"`
+	Status    VersioningStatus `xml:"Status,omitempty"`
+	MfaDelete MfaDeleteStatus  `xml:"MfaDelete,omitempty"`
 }
 
 // May be one of Enabled, Suspended
