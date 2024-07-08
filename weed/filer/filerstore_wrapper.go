@@ -85,7 +85,7 @@ func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, storeId string, 
 
 func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerStore) {
 	store = fsw.defaultStore
-	if path == "/" {
+	if path == "/" || path == "//" {
 		return
 	}
 	var storeId string
