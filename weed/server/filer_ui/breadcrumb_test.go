@@ -15,6 +15,18 @@ func TestToBreadcrumb(t *testing.T) {
 		wantCrumbs []Breadcrumb
 	}{
 		{
+			name: "empty",
+			args: args{
+				fullpath: "",
+			},
+			wantCrumbs: []Breadcrumb{
+				{
+					Name: "/",
+					Link: "/",
+				},
+			},
+		},
+		{
 			name: "test1",
 			args: args{
 				fullpath: "/",
