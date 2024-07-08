@@ -110,7 +110,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
 
-	proxyReq, err := http.NewRequest("PUT", uploadUrl, body)
+	proxyReq, err := http.NewRequest(http.MethodPut, uploadUrl, body)
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", uploadUrl, err)

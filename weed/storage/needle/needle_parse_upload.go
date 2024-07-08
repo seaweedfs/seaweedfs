@@ -43,7 +43,7 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 		}
 	}
 
-	if r.Method == "POST" {
+	if r.Method == http.MethodPost {
 		contentType := r.Header.Get("Content-Type")
 
 		// If content-type is explicitly set, upload the file without parsing form-data

@@ -189,7 +189,7 @@ func TestDeleteUser(t *testing.T) {
 func executeRequest(req *http.Request, v interface{}) (*httptest.ResponseRecorder, error) {
 	rr := httptest.NewRecorder()
 	apiRouter := mux.NewRouter().SkipClean(true)
-	apiRouter.Path("/").Methods("POST").HandlerFunc(ias.DoActions)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(ias.DoActions)
 	apiRouter.ServeHTTP(rr, req)
 	return rr, xml.Unmarshal(rr.Body.Bytes(), &v)
 }

@@ -98,7 +98,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			u, _ := url.Parse(util.NormalizeUrl(proxyIp))
 			r.URL.Host = u.Host
 			r.URL.Scheme = u.Scheme
-			request, err := http.NewRequest("GET", r.URL.String(), nil)
+			request, err := http.NewRequest(http.MethodGet, r.URL.String(), nil)
 			if err != nil {
 				glog.V(0).Infof("failed to instance http request of url %s: %v", r.URL.String(), err)
 				InternalError(w)
@@ -267,7 +267,7 @@ func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) 
 	if len(ext) > 0 {
 		ext = strings.ToLower(ext)
 	}
-	if r.Method == "HEAD" {
+	if r.Method == http.MethodHead {
 		return true, true
 	}
 	_, _, _, shouldResize := shouldResizeImages(ext, r)
@@ -393,7 +393,7 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 
 	AdjustPassthroughHeaders(w, r, filename)
 
-	if r.Method == "HEAD" {
+	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return nil
 	}
@@ -422,7 +422,7 @@ func (vs *VolumeServer) streamWriteResponseContent(filename string, mimeType str
 	w.Header().Set("Accept-Ranges", "bytes")
 	AdjustPassthroughHeaders(w, r, filename)
 
-	if r.Method == "HEAD" {
+	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
 	}
