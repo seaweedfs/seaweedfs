@@ -79,7 +79,6 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	responseV2 := &ListBucketResultV2{
-		XMLName:               response.XMLName,
 		Name:                  response.Name,
 		CommonPrefixes:        response.CommonPrefixes,
 		Contents:              response.Contents,
@@ -87,7 +86,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		Delimiter:             response.Delimiter,
 		IsTruncated:           response.IsTruncated,
 		KeyCount:              len(response.Contents) + len(response.CommonPrefixes),
-		MaxKeys:               response.MaxKeys,
+		MaxKeys:               uint16(response.MaxKeys),
 		NextContinuationToken: response.NextMarker,
 		Prefix:                response.Prefix,
 		StartAfter:            startAfter,
@@ -300,7 +299,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			Prefix:         originalPrefix,
 			Marker:         originalMarker,
 			NextMarker:     nextMarker,
-			MaxKeys:        maxKeys,
+			MaxKeys:        int(maxKeys),
 			Delimiter:      delimiter,
 			IsTruncated:    cursor.isTruncated,
 			Contents:       contents,

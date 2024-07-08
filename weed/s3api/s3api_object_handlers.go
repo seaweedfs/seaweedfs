@@ -3,8 +3,6 @@ package s3api
 import (
 	"bytes"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"net/http"
 	"net/url"
@@ -98,7 +96,6 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 		listEntry.Owner = CanonicalUser{
 			ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
 			DisplayName: entry.Attributes.UserName,
-			set:         true,
 		}
 	}
 	return listEntry
@@ -184,7 +181,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		return
 	}
 
-	if r.Method == "DELETE" {
+	if r.Method == http.MethodDelete {
 		if resp.StatusCode == http.StatusNotFound {
 			// this is normal
 			responseStatusCode := responseFn(resp, w)

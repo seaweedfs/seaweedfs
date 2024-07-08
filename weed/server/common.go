@@ -127,7 +127,7 @@ func debug(params ...interface{}) {
 
 func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption) {
 	m := make(map[string]interface{})
-	if r.Method != "POST" {
+	if r.Method != http.MethodPost {
 		writeJsonError(w, r, http.StatusMethodNotAllowed, errors.New("Only submit via POST!"))
 		return
 	}

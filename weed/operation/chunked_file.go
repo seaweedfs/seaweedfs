@@ -95,7 +95,7 @@ func (cm *ChunkManifest) DeleteChunks(masterFn GetMasterFn, usePublicUrl bool, g
 }
 
 func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (written int64, e error) {
-	req, err := http.NewRequest("GET", fileUrl, nil)
+	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return written, err
 	}

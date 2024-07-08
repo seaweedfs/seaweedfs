@@ -49,25 +49,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.filer.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
-{{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
-{{- end -}}
-{{- end -}}
-
-{{/* Return the proper dbSchema image */}}
-{{- define "filer.dbSchema.image" -}}
-{{- if .Values.filer.dbSchema.imageOverride -}}
-{{- $imageOverride := .Values.filer.dbSchema.imageOverride -}}
-{{- printf "%s" $imageOverride -}}
-{{- else -}}
-{{- $registryName := default .Values.global.registry .Values.global.localRegistry | toString -}}
-{{- $repositoryName := .Values.global.repository | toString -}}
-{{- $name := .Values.filer.dbSchema.imageName | toString -}}
-{{- $tag := .Values.filer.dbSchema.imageTag | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- include "common.image" . }}
 {{- end -}}
 {{- end -}}
 
@@ -77,11 +59,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.master.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
-{{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- include "common.image" . }}
 {{- end -}}
 {{- end -}}
 
@@ -91,11 +69,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.s3.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
-{{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- include "common.image" . }}
 {{- end -}}
 {{- end -}}
 
@@ -105,11 +79,20 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.volume.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
+{{- include "common.image" . }}
+{{- end -}}
+{{- end -}}
+
+{{/* Computes the container image name for all components (if they are not overridden) */}}
+{{- define "common.image" -}}
+{{- $registryName := default .Values.image.registry .Values.global.registry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
 {{- $tag := .Chart.AppVersion | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- if $registryName -}}
+{{- printf "%s/%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- else -}}
+{{- printf "%s%s:%s" $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
 

@@ -180,10 +180,10 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		}
 	}
 	ms.SetRaftServer(raftServer)
-	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
-	r.HandleFunc("/cluster/healthz", raftServer.HealthzHandler).Methods("GET", "HEAD")
+	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods(http.MethodGet)
+	r.HandleFunc("/cluster/healthz", raftServer.HealthzHandler).Methods(http.MethodGet, http.MethodHead)
 	if *masterOption.raftHashicorp {
-		r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods("GET")
+		r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods(http.MethodGet)
 	}
 	// starting grpc server
 	grpcPort := *masterOption.portGrpc

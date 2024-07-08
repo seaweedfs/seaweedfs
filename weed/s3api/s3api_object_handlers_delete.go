@@ -27,11 +27,12 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
 
-	object = urlPathEscape(removeDuplicateSlashes(object))
+	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
+	dir, name := target.DirAndName()
 
 	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		err := doDeleteEntry(client, s3a.option.BucketsPath+"/"+bucket, object, true, false)
+		err := doDeleteEntry(client, dir, name, true, false)
 		if err != nil {
 			// skip deletion error, usually the file is not found
 			return nil
@@ -42,11 +43,8 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		}
 
 		directoriesWithDeletion := make(map[string]int)
-		lastSeparator := strings.LastIndex(object, "/")
-		if lastSeparator > 0 {
-			parentDirectoryPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object[:lastSeparator])
-			directoriesWithDeletion[parentDirectoryPath]++
-
+		if strings.LastIndex(object, "/") > 0 {
+			directoriesWithDeletion[dir]++
 			// purge empty folders, only checking folders with deletions
 			for len(directoriesWithDeletion) > 0 {
 				directoriesWithDeletion = s3a.doDeleteEmptyDirectories(client, directoriesWithDeletion)
