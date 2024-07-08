@@ -27,11 +27,12 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
 
-	object = urlPathEscape(removeDuplicateSlashes(object))
+	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
+	dir, name := target.DirAndName()
 
 	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		err := doDeleteEntry(client, s3a.option.BucketsPath+"/"+bucket, object, true, false)
+		err := doDeleteEntry(client, dir, name, true, false)
 		if err != nil {
 			// skip deletion error, usually the file is not found
 			return nil
