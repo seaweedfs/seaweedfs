@@ -155,7 +155,7 @@ require (
 	go.etcd.io/etcd/client/pkg/v3 v3.5.14
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.7.0
-	google.golang.org/grpc/security/advancedtls v0.0.0-20240621202332-c8568c99b8c5
+	google.golang.org/grpc/security/advancedtls v1.0.0
 )
 
 require (
