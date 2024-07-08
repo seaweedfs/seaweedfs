@@ -3,6 +3,8 @@ package s3api
 import (
 	"bytes"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"net/http"
 	"net/url"

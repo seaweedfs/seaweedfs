@@ -155,7 +155,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		}
 		// This is necessary for SQL request with WHERE `directory` || `name` > originalMarker
 		if len(originalMarker) > 0 && originalMarker[0:1] != "/" {
-			marker = getStartFileFromKey(originalMarker)
+			marker = s3a.getStartFileFromKey(originalMarker)
 		} else {
 			marker = originalMarker
 		}
@@ -163,7 +163,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			Name:      bucket,
 			Prefix:    originalPrefix,
 			Marker:    originalMarker,
-			MaxKeys:   maxKeys,
+			MaxKeys:   int(maxKeys),
 			Delimiter: delimiter,
 		}
 		if encodingTypeUrl {
@@ -183,7 +183,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					defer func() {
 						if cursor.maxKeys == 0 {
 							cursor.isTruncated = true
-							cursor.nextMarker = getStartFileFromKey(key)
+							cursor.nextMarker = s3a.getStartFileFromKey(key)
 						}
 					}()
 					if delimiter == "/" {

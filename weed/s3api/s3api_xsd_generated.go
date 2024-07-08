@@ -1125,9 +1125,8 @@ type ListBucketResult struct {
 	Prefix         string          `xml:"Prefix"`
 	Marker         string          `xml:"Marker"`
 	NextMarker     string          `xml:"NextMarker,omitempty"`
-	MaxKeys        uint16          `xml:"MaxKeys"`
+	MaxKeys        int             `xml:"MaxKeys"`
 	Delimiter      string          `xml:"Delimiter,omitempty"`
-	EncodingType   string          `xml:"EncodingType,omitempty"`
 	IsTruncated    bool            `xml:"IsTruncated"`
 	Contents       []ListEntry     `xml:"Contents,omitempty"`
 	CommonPrefixes []PrefixEntry   `xml:"CommonPrefixes,omitempty"`
@@ -1153,14 +1152,6 @@ func (t *ListEntry) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	layout.LastModified = (*xsdDateTime)(&layout.T.LastModified)
 	return e.EncodeElement(layout, start)
 }
-func (c CanonicalUser) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	if !c.set {
-		return nil
-	}
-	type canonicalUserWrapper CanonicalUser
-	return e.EncodeElement(canonicalUserWrapper(c), start)
-}
-
 func (t *ListEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type T ListEntry
 	var overlay struct {

@@ -27,8 +27,7 @@ func TestListObjectsHandler(t *testing.T) {
 			ETag:         "\"4397da7a7649e8085de9916c240e8166\"",
 			Size:         1234567,
 			Owner: CanonicalUser{
-				ID:  "65a011niqo39cdf8ec533ec3d1ccaafsa932",
-				set: true,
+				ID: "65a011niqo39cdf8ec533ec3d1ccaafsa932",
 			},
 			StorageClass: "STANDARD",
 		}},
