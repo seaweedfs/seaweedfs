@@ -284,3 +284,27 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_list_long_name \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_special_prefix
           kill -9 $pid || true
+
+      - uses: actions/checkout@v4
+        with:
+          repository: "rclone/rclone"
+          path: "/__w/seaweedfs/seaweedfs/rclone"
+
+      - name: Run RClone S3 tests
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          cd /__w/seaweedfs/seaweedfs/weed
+          go install -tags "sqlite" -buildvcs=false
+          export WEED_LEVELDB2_ENABLED="false" WEED_SQLITE_ENABLED="true" WEED_SQLITE_DBFILE="./filer.db"
+          set -x
+          weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
+            -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
+            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+          pid=$!
+          mkdir -p  ~/.config/rclone
+          cp /__w/seaweedfs/seaweedfs/docker/compose/rclone.conf ~/.config/rclone/rclone.conf     
+          cd /__w/seaweedfs/seaweedfs/rclone/backend/s3
+          go test -v -remote swfs:
+          kill -9 $pid || true
