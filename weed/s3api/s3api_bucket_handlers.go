@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -346,7 +347,9 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 			Expiration: Expiration{Days: days, set: true},
 		})
 	}
-
+	sort.Slice(response.Rules, func(i, j int) bool {
+		return response.Rules[i].ID < response.Rules[j].ID
+	})
 	writeSuccessResponseXML(w, r, response)
 }
 
