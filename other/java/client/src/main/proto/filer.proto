@@ -54,6 +54,9 @@ service SeaweedFiler {
     rpc GetFilerConfiguration (GetFilerConfigurationRequest) returns (GetFilerConfigurationResponse) {
     }
 
+    rpc TraverseBfsMetadata (TraverseBfsMetadataRequest) returns (stream TraverseBfsMetadataResponse) {
+    }
+
     rpc SubscribeMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
     }
 
@@ -360,6 +363,15 @@ message SubscribeMetadataResponse {
     int64 ts_ns = 3;
 }
 
+message TraverseBfsMetadataRequest {
+    string directory = 1;
+    repeated string excluded_prefixes = 2;
+}
+message TraverseBfsMetadataResponse {
+    string directory = 1;
+    Entry entry = 2;
+}
+
 message LogEntry {
     int64 ts_ns = 1;
     int32 partition_key_hash = 2;
@@ -426,6 +438,7 @@ message FilerConf {
         string rack = 10;
         string data_node = 11;
         uint32 max_file_name_length = 12;
+        bool disable_chunk_deletion = 13;
     }
     repeated PathConf locations = 2;
 }

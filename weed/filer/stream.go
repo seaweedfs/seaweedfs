@@ -69,11 +69,17 @@ func NewFileReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) io.R
 
 type DoStreamContent func(writer io.Writer) error
 
-func PrepareStreamContent(masterClient wdclient.HasLookupFileIdFunction, chunks []*filer_pb.FileChunk, offset int64, size int64) (DoStreamContent, error) {
-	return PrepareStreamContentWithThrottler(masterClient, chunks, offset, size, 0)
+func PrepareStreamContent(masterClient wdclient.HasLookupFileIdFunction, jwtFunc VolumeServerJwtFunction, chunks []*filer_pb.FileChunk, offset int64, size int64) (DoStreamContent, error) {
+	return PrepareStreamContentWithThrottler(masterClient, jwtFunc, chunks, offset, size, 0)
 }
 
-func PrepareStreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64) (DoStreamContent, error) {
+type VolumeServerJwtFunction func(fileId string) string
+
+func noJwtFunc(string) string {
+	return ""
+}
+
+func PrepareStreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, jwtFunc VolumeServerJwtFunction, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64) (DoStreamContent, error) {
 	glog.V(4).Infof("prepare to stream content for chunks: %d", len(chunks))
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
 
@@ -119,7 +125,8 @@ func PrepareStreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunc
 			}
 			urlStrings := fileId2Url[chunkView.FileId]
 			start := time.Now()
-			err := retriedStreamFetchChunkData(writer, urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+			jwt := jwtFunc(chunkView.FileId)
+			err := retriedStreamFetchChunkData(writer, urlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
 			offset += int64(chunkView.ViewSize)
 			remaining -= int64(chunkView.ViewSize)
 			stats.FilerRequestHistogram.WithLabelValues("chunkDownload").Observe(time.Since(start).Seconds())
@@ -143,7 +150,7 @@ func PrepareStreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunc
 }
 
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
-	streamFn, err := PrepareStreamContent(masterClient, chunks, offset, size)
+	streamFn, err := PrepareStreamContent(masterClient, noJwtFunc, chunks, offset, size)
 	if err != nil {
 		return err
 	}

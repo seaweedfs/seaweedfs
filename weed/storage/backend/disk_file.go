@@ -81,13 +81,20 @@ func (df *DiskFile) Close() error {
 	if df.File == nil {
 		return nil
 	}
-	if err := df.Sync(); err != nil {
-		return err
+	err := df.Sync()
+	var err1 error
+	if df.File != nil {
+		// always try to close
+		err1 = df.File.Close()
 	}
-	if err := df.File.Close(); err != nil {
-		return err
-	}
+	// assume closed
 	df.File = nil
+	if err != nil {
+		return err
+	}
+	if err1 != nil {
+		return err1
+	}
 	return nil
 }
 

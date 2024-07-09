@@ -138,7 +138,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 
 	// skip if ec volumes exists
 	if skipIfEcVolumesExists {
-		if util.FileExists(l.Directory + "/" + volumeName + ".ecx") {
+		if util.FileExists(l.IdxDirectory + "/" + volumeName + ".ecx") {
 			return false
 		}
 	}

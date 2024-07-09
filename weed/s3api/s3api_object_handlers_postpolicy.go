@@ -166,8 +166,10 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		s3err.PostLog(r, http.StatusCreated, s3err.ErrNone)
 	case "200":
 		s3err.WriteEmptyResponse(w, r, http.StatusOK)
+	case "204":
+		s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 	default:
-		writeSuccessResponseEmpty(w, r)
+		s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 	}
 
 }

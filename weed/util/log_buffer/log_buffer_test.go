@@ -3,6 +3,7 @@ package log_buffer
 import (
 	"crypto/rand"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"io"
 	"sync"
 	"testing"
@@ -18,7 +19,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	}, nil, func() {
 	})
 
-	startTime := MessagePosition{Time:time.Now()}
+	startTime := MessagePosition{Time: time.Now()}
 
 	messageSize := 1024
 	messageCount := 5000
@@ -37,7 +38,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 				println("processed all messages")
 				return true, io.EOF
 			}
-			return false,nil
+			return false, nil
 		})
 
 		fmt.Printf("before flush: sent %d received %d\n", messageCount, receivedMessageCount)
@@ -50,7 +51,11 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	var buf = make([]byte, messageSize)
 	for i := 0; i < messageCount; i++ {
 		rand.Read(buf)
-		lb.AddToBuffer(nil, buf, 0)
+		lb.AddToBuffer(&mq_pb.DataMessage{
+			Key:   nil,
+			Value: buf,
+			TsNs:  0,
+		})
 	}
 	wg.Wait()
 

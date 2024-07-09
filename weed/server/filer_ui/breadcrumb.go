@@ -13,6 +13,9 @@ type Breadcrumb struct {
 
 func ToBreadcrumb(fullpath string) (crumbs []Breadcrumb) {
 	parts := strings.Split(fullpath, "/")
+	if fullpath == "/" {
+		parts = []string{""}
+	}
 
 	for i := 0; i < len(parts); i++ {
 		name := parts[i]

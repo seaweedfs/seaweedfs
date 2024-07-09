@@ -1,16 +1,19 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"math"
+	"net/http"
+	"strings"
+	"time"
+
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"math"
-	"net/http"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -24,12 +27,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
-
-type ListAllMyBucketsResult struct {
-	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResult"`
-	Owner   *s3.Owner
-	Buckets []*s3.Bucket `xml:"Buckets>Bucket"`
-}
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -56,25 +53,25 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	identityId := r.Header.Get(s3_constants.AmzIdentityId)
 
-	var buckets []*s3.Bucket
+	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
 			if identity != nil && !identity.canDo(s3_constants.ACTION_LIST, entry.Name, "") {
 				continue
 			}
-			buckets = append(buckets, &s3.Bucket{
-				Name:         aws.String(entry.Name),
-				CreationDate: aws.Time(time.Unix(entry.Attributes.Crtime, 0).UTC()),
+			listBuckets.Bucket = append(listBuckets.Bucket, ListAllMyBucketsEntry{
+				Name:         entry.Name,
+				CreationDate: time.Unix(entry.Attributes.Crtime, 0).UTC(),
 			})
 		}
 	}
 
 	response = ListAllMyBucketsResult{
-		Owner: &s3.Owner{
-			ID:          aws.String(identityId),
-			DisplayName: aws.String(identityId),
+		Owner: CanonicalUser{
+			ID:          identityId,
+			DisplayName: identityId,
 		},
-		Buckets: buckets,
+		Buckets: listBuckets,
 	}
 
 	writeSuccessResponseXML(w, r, response)
@@ -216,6 +213,10 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 		return s3err.ErrNoSuchBucket
 	}
 
+	//if iam is enabled, the access was already checked before
+	if s3a.iam.isEnabled() {
+		return s3err.ErrNone
+	}
 	if !s3a.hasAccess(r, entry) {
 		return s3err.ErrAccessDenied
 	}
@@ -234,6 +235,7 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 	identityId := r.Header.Get(s3_constants.AmzIdentityId)
 	if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
 		if identityId != string(id) {
+			glog.V(3).Infof("hasAccess: %s != %s (entry.Extended = %v)", identityId, id, entry.Extended)
 			return false
 		}
 	}
@@ -325,44 +327,161 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchLifecycleConfiguration)
 		return
 	}
+
 	response := Lifecycle{}
-	for prefix, internalTtl := range ttls {
+	for locationPrefix, internalTtl := range ttls {
 		ttl, _ := needle.ReadTTL(internalTtl)
 		days := int(ttl.Minutes() / 60 / 24)
 		if days == 0 {
 			continue
 		}
+		prefix, found := strings.CutPrefix(locationPrefix, fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket))
+		if !found {
+			continue
+		}
 		response.Rules = append(response.Rules, Rule{
-			Status: Enabled, Filter: Filter{
-				Prefix: Prefix{string: prefix, set: true},
-				set:    true,
-			},
+			ID:         prefix,
+			Status:     Enabled,
+			Prefix:     Prefix{val: prefix, set: true},
 			Expiration: Expiration{Days: days, set: true},
 		})
 	}
+
 	writeSuccessResponseXML(w, r, response)
 }
 
 // PutBucketLifecycleConfigurationHandler Put Bucket Lifecycle configuration
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html
 func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+	// collect parameters
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketLifecycleConfigurationHandler %s", bucket)
 
-	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
 
+	lifeCycleConfig := Lifecycle{}
+	if err := xmlDecoder(r.Body, &lifeCycleConfig, r.ContentLength); err != nil {
+		glog.Warningf("PutBucketLifecycleConfigurationHandler xml decode: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+
+	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
+	if err != nil {
+		glog.Errorf("PutBucketLifecycleConfigurationHandler read filer config: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	collectionName := s3a.getCollectionName(bucket)
+	collectionTtls := fc.GetCollectionTtls(collectionName)
+	changed := false
+
+	for _, rule := range lifeCycleConfig.Rules {
+		if rule.Status != Enabled {
+			continue
+		}
+		var rulePrefix string
+		switch {
+		case rule.Filter.Prefix.set:
+			rulePrefix = rule.Filter.Prefix.val
+		case rule.Prefix.set:
+			rulePrefix = rule.Prefix.val
+		case !rule.Expiration.Date.IsZero() || rule.Transition.Days > 0 || !rule.Transition.Date.IsZero():
+			s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+			return
+		}
+
+		if rule.Expiration.Days == 0 {
+			continue
+		}
+
+		locConf := &filer_pb.FilerConf_PathConf{
+			LocationPrefix: fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, rulePrefix),
+			Collection:     collectionName,
+			Ttl:            fmt.Sprintf("%dd", rule.Expiration.Days),
+		}
+		if ttl, ok := collectionTtls[locConf.LocationPrefix]; ok && ttl == locConf.Ttl {
+			continue
+		}
+		if err := fc.AddLocationConf(locConf); err != nil {
+			glog.Errorf("PutBucketLifecycleConfigurationHandler add location config: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		changed = true
+	}
+
+	if changed {
+		var buf bytes.Buffer
+		if err := fc.ToText(&buf); err != nil {
+			glog.Errorf("PutBucketLifecycleConfigurationHandler save config to text: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		}
+		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+		}); err != nil {
+			glog.Errorf("PutBucketLifecycleConfigurationHandler save config inside filer: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
+
+	writeSuccessResponseEmpty(w, r)
 }
 
-// DeleteBucketMetricsConfiguration Delete Bucket Lifecycle
+// DeleteBucketLifecycleHandler Delete Bucket Lifecycle
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketLifecycle.html
 func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *http.Request) {
+	// collect parameters
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("DeleteBucketLifecycleHandler %s", bucket)
+
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+
+	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
+	if err != nil {
+		glog.Errorf("DeleteBucketLifecycleHandler read filer config: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	collectionTtls := fc.GetCollectionTtls(s3a.getCollectionName(bucket))
+	changed := false
+	for prefix, ttl := range collectionTtls {
+		bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
+		if strings.HasPrefix(prefix, bucketPrefix) && strings.HasSuffix(ttl, "d") {
+			fc.DeleteLocationConf(prefix)
+			changed = true
+		}
+	}
+
+	if changed {
+		var buf bytes.Buffer
+		if err := fc.ToText(&buf); err != nil {
+			glog.Errorf("DeleteBucketLifecycleHandler save config to text: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		}
+		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+		}); err != nil {
+			glog.Errorf("DeleteBucketLifecycleHandler save config inside filer: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
 
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
-
 }
 
 // GetBucketLocationHandler Get bucket location
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLocation.html
 func (s3a *S3ApiServer) GetBucketLocationHandler(w http.ResponseWriter, r *http.Request) {
-	writeSuccessResponseXML(w, r, LocationConstraint{})
+	writeSuccessResponseXML(w, r, CreateBucketConfiguration{})
 }
 
 // GetBucketRequestPaymentHandler Get bucket location

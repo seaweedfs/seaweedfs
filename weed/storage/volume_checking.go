@@ -127,7 +127,7 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", offset, offset+int64(size), err)
 	}
 	if n.Id != key {
-		return n.AppendAtNs, fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
+		return n.AppendAtNs, fmt.Errorf("index key %v does not match needle's Id %v", key, n.Id)
 	}
 	return n.AppendAtNs, err
 }
@@ -144,7 +144,7 @@ func verifyDeletedNeedleIntegrity(datFile backend.BackendStorageFile, v needle.V
 		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", fileSize-size, size, err)
 	}
 	if n.Id != key {
-		return n.AppendAtNs, fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
+		return n.AppendAtNs, fmt.Errorf("index key %v does not match needle's Id %v", key, n.Id)
 	}
 	return n.AppendAtNs, err
 }

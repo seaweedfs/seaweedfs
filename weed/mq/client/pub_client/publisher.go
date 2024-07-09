@@ -5,6 +5,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/buffered_queue"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -13,10 +14,11 @@ import (
 )
 
 type PublisherConfiguration struct {
-	Topic                     topic.Topic
-	CreateTopic               bool
-	CreateTopicPartitionCount int32
-	Brokers                   []string
+	Topic          topic.Topic
+	PartitionCount int32
+	Brokers        []string
+	PublisherName  string // for debugging
+	RecordType     *schema_pb.RecordType
 }
 
 type PublishClient struct {

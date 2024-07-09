@@ -113,11 +113,14 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 		return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, existingLocations[0].Url, dest, err)
 	}
 
+	if keepLocalDatFile {
+		return nil
+	}
 	// now the first replica has the .idx and .vif files.
 	// ask replicas on other volume server to delete its own local copy
 	for i, location := range existingLocations {
 		if i == 0 {
-			break
+			continue
 		}
 		fmt.Printf("delete volume %d from %s\n", vid, location.Url)
 		err = deleteVolume(commandEnv.option.GrpcDialOption, vid, location.ServerAddress(), false)
@@ -139,6 +142,12 @@ func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, vol
 			KeepLocalDatFile:       keepLocalDatFile,
 		})
 
+		if stream == nil && copyErr == nil {
+			// when the volume is already uploaded, VolumeTierMoveDatToRemote will return nil stream and nil error
+			// so we should directly return in this case
+			fmt.Fprintf(writer, "volume %v already uploaded", volumeId)
+			return nil
+		}
 		var lastProcessed int64
 		for {
 			resp, recvErr := stream.Recv()

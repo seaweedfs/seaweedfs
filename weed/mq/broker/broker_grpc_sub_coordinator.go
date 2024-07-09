@@ -39,18 +39,11 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 	go func() {
 		// try to load the partition assignment from filer
 		if conf, err := b.readTopicConfFromFiler(topic.FromPbTopic(initMessage.Topic)); err == nil {
-			assignedPartitions := make([]*mq_pb.SubscriberToSubCoordinatorResponse_AssignedPartition, len(conf.BrokerPartitionAssignments))
-			for i, assignment := range conf.BrokerPartitionAssignments {
-				assignedPartitions[i] = &mq_pb.SubscriberToSubCoordinatorResponse_AssignedPartition{
-					Partition: assignment.Partition,
-					Broker:    assignment.LeaderBroker,
-				}
-			}
 			// send partition assignment to subscriber
 			cgi.ResponseChan <- &mq_pb.SubscriberToSubCoordinatorResponse{
 				Message: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment_{
 					Assignment: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment{
-						AssignedPartitions: assignedPartitions,
+						PartitionAssignments: conf.BrokerPartitionAssignments,
 					},
 				},
 			}

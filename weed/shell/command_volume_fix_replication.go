@@ -4,16 +4,17 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"path/filepath"
+	"strconv"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
-	"io"
-	"path/filepath"
-	"strconv"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -315,8 +316,8 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 			fmt.Fprintf(writer, "replicating volume %d %s from %s to dataNode %s ...\n", replica.info.Id, replicaPlacement, replica.location.dataNode.Id, dst.dataNode.Id)
 
 			if !takeAction {
-				// adjust free volume count
-				dst.dataNode.DiskInfos[replica.info.DiskType].FreeVolumeCount--
+				// adjust volume count
+				addVolumeCount(dst.dataNode.DiskInfos[replica.info.DiskType], 1)
 				break
 			}
 
@@ -349,8 +350,8 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 				return err
 			}
 
-			// adjust free volume count
-			dst.dataNode.DiskInfos[replica.info.DiskType].FreeVolumeCount--
+			// adjust volume count
+			addVolumeCount(dst.dataNode.DiskInfos[replica.info.DiskType], 1)
 			break
 		}
 	}
@@ -359,6 +360,14 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 		fmt.Fprintf(writer, "failed to place volume %d replica as %s, existing:%+v\n", replica.info.Id, replicaPlacement, len(replicas))
 	}
 	return nil
+}
+
+func addVolumeCount(info *master_pb.DiskInfo, count int) {
+	if info == nil {
+		return
+	}
+	info.VolumeCount += int64(count)
+	info.FreeVolumeCount -= int64(count)
 }
 
 func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {

@@ -6,7 +6,7 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-    command: "-v=1 master -volumeSizeLimitMB 100 -resumeState=false -ip=master0 -port=9333 -peers=master0:9333,master1:9334,master2:9335 -mdir=/tmp"
+    command: "-v=0 master -volumeSizeLimitMB 100 -resumeState=false -ip=master0 -port=9333 -peers=master0:9333,master1:9334,master2:9335 -mdir=/tmp"
     environment:
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
@@ -16,7 +16,7 @@ services:
     ports:
       - 9334:9334
       - 19334:19334
-    command: "-v=1 master -volumeSizeLimitMB 100 -resumeState=false -ip=master1 -port=9334 -peers=master0:9333,master1:9334,master2:9335 -mdir=/tmp"
+    command: "-v=0 master -volumeSizeLimitMB 100 -resumeState=false -ip=master1 -port=9334 -peers=master0:9333,master1:9334,master2:9335 -mdir=/tmp"
     environment:
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
@@ -26,7 +26,7 @@ services:
     ports:
       - 9335:9335
       - 19335:19335
-    command: "-v=1 master -volumeSizeLimitMB 100 -resumeState=false -ip=master2 -port=9335 -peers=master0:9333,master1:9334,master2:9335 -mdir=/tmp"
+    command: "-v=0 master -volumeSizeLimitMB 100 -resumeState=false -ip=master2 -port=9335 -peers=master0:9333,master1:9334,master2:9335 -mdir=/tmp"
     environment:
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
@@ -85,6 +85,7 @@ services:
       - master2
       - volume1
       - volume2
+      - filer1
   broker1:
     image: chrislusf/seaweedfs:local
     ports:

@@ -34,25 +34,25 @@ jobs:
             org.opencontainers.image.vendor=Chris Lu
       -
         name: Set up QEMU
-        uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v1
+        uses: docker/setup-qemu-action@5927c834f5b4fdf503fca6f4c7eccda82949e1ee # v1
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@2b51285047da1547ffb1b2203d8be4c0af6b1f20 # v1
+        uses: docker/setup-buildx-action@4fd812986e6c8c2a69e18311145f9371337f27d4 # v1
       -
         name: Login to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # v1
+        uses: docker/login-action@0d4c9c5ea7693da7b068278f7b52bda2a190a446 # v1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       -
         name: Build
-        uses: docker/build-push-action@2cdde995de11925a030ce8070c3d77a52ffcf1c0 # v2
+        uses: docker/build-push-action@1a162644f9a7e87d8f4b053101d1d9a712edc18c # v2
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
-          build-args: TAGS=elastic,ydb,gocdk,tikv,rclone
+          build-args: TAGS=elastic,gocdk,sqlite,ydb,tikv,rclone
           platforms: linux/amd64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}

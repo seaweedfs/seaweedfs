@@ -4,7 +4,7 @@ import (
 	"sync"
 )
 
-// just for testing
+// default Sequencer
 type MemorySequencer struct {
 	counter      uint64
 	sequenceLock sync.Mutex
@@ -29,8 +29,4 @@ func (m *MemorySequencer) SetMax(seenValue uint64) {
 	if m.counter <= seenValue {
 		m.counter = seenValue + 1
 	}
-}
-
-func (m *MemorySequencer) Peek() uint64 {
-	return m.counter
 }

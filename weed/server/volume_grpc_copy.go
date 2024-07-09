@@ -84,17 +84,17 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		}()
 
 		var preallocateSize int64
-		if grpcErr := pb.WithMasterClient(false, vs.GetMaster(), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		if grpcErr := pb.WithMasterClient(false, vs.GetMaster(context.Background()), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get master %s configuration: %v", vs.GetMaster(), err)
+				return fmt.Errorf("get master %s configuration: %v", vs.GetMaster(context.Background()), err)
 			}
 			if resp.VolumePreallocate {
 				preallocateSize = int64(resp.VolumeSizeLimitMB) * (1 << 20)
 			}
 			return nil
 		}); grpcErr != nil {
-			glog.V(0).Infof("connect to %s: %v", vs.GetMaster(), grpcErr)
+			glog.V(0).Infof("connect to %s: %v", vs.GetMaster(context.Background()), grpcErr)
 		}
 
 		if preallocateSize > 0 && !hasRemoteDatFile {

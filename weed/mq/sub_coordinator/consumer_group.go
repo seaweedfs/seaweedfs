@@ -103,22 +103,22 @@ func (cg *ConsumerGroup) RebalanceConsumberGroupInstances(knownPartitionSlotToBr
 			partitionSlots = make([]*PartitionSlotToConsumerInstance, 0)
 		}
 		consumerGroupInstance.Partitions = ToPartitions(partitionSlotToBrokerList.RingSize, partitionSlots)
-		assignedPartitions := make([]*mq_pb.SubscriberToSubCoordinatorResponse_AssignedPartition, len(partitionSlots))
+		assignedPartitions := make([]*mq_pb.BrokerPartitionAssignment, len(partitionSlots))
 		for i, partitionSlot := range partitionSlots {
-			assignedPartitions[i] = &mq_pb.SubscriberToSubCoordinatorResponse_AssignedPartition{
+			assignedPartitions[i] = &mq_pb.BrokerPartitionAssignment{
 				Partition: &mq_pb.Partition{
 					RangeStop:  partitionSlot.RangeStop,
 					RangeStart: partitionSlot.RangeStart,
 					RingSize:   partitionSlotToBrokerList.RingSize,
 					UnixTimeNs: partitionSlot.UnixTimeNs,
 				},
-				Broker: partitionSlot.Broker,
+				LeaderBroker: partitionSlot.Broker,
 			}
 		}
 		response := &mq_pb.SubscriberToSubCoordinatorResponse{
 			Message: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment_{
 				Assignment: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment{
-					AssignedPartitions: assignedPartitions,
+					PartitionAssignments: assignedPartitions,
 				},
 			},
 		}

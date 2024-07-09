@@ -44,13 +44,6 @@ func (p *LocalPartitionPublishers) SignalShutdown() {
 	}
 }
 
-func (p *LocalPartitionPublishers) IsEmpty() bool {
-	p.publishersLock.RLock()
-	defer p.publishersLock.RUnlock()
-
-	return len(p.publishers) == 0
-}
-
 func (p *LocalPartitionPublishers) Size() int {
 	p.publishersLock.RLock()
 	defer p.publishersLock.RUnlock()

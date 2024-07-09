@@ -32,7 +32,7 @@ type VirtualFilerStore interface {
 
 type FilerStoreWrapper struct {
 	defaultStore   FilerStore
-	pathToStore    ptrie.Trie
+	pathToStore    ptrie.Trie[string]
 	storeIdToStore map[string]FilerStore
 }
 
@@ -42,7 +42,7 @@ func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 	}
 	return &FilerStoreWrapper{
 		defaultStore:   store,
-		pathToStore:    ptrie.New(),
+		pathToStore:    ptrie.New[string](),
 		storeIdToStore: make(map[string]FilerStore),
 	}
 }
@@ -85,12 +85,12 @@ func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, storeId string, 
 
 func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerStore) {
 	store = fsw.defaultStore
-	if path == "/" {
+	if path == "/" || path == "//" {
 		return
 	}
 	var storeId string
-	fsw.pathToStore.MatchPrefix([]byte(path), func(key []byte, value interface{}) bool {
-		storeId = value.(string)
+	fsw.pathToStore.MatchPrefix([]byte(path), func(key []byte, value string) bool {
+		storeId = value
 		return false
 	})
 	if storeId != "" {
@@ -182,7 +182,7 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	}()
 
 	existingEntry, findErr := fsw.FindEntry(ctx, fp)
-	if findErr == filer_pb.ErrNotFound {
+	if findErr == filer_pb.ErrNotFound || existingEntry == nil {
 		return nil
 	}
 	if len(existingEntry.HardLinkId) != 0 {

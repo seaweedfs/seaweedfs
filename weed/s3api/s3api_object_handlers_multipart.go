@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -247,8 +248,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 	glog.V(2).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part",
-		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID)
+	uploadUrl := s3a.genPartUploadUrl(bucket, uploadID, partID)
 
 	if partID == 1 && r.Header.Get("Content-Type") == "" {
 		dataReader = mimeDetect(r, dataReader)
@@ -269,6 +269,11 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
 	return fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, s3_constants.MultipartUploadsFolder)
+}
+
+func (s3a *S3ApiServer) genPartUploadUrl(bucket, uploadID string, partID int) string {
+	return fmt.Sprintf("http://%s%s/%s/%04d_%s.part",
+		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID, uuid.NewString())
 }
 
 // Generate uploadID hash string from object

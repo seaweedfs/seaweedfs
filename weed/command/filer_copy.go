@@ -472,7 +472,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 		for _, chunk := range chunks {
 			fileIds = append(fileIds, chunk.FileId)
 		}
-		operation.DeleteFiles(func() pb.ServerAddress {
+		operation.DeleteFiles(func(_ context.Context) pb.ServerAddress {
 			return pb.ServerAddress(copy.masters[0])
 		}, false, worker.options.grpcDialOption, fileIds)
 		return uploadError

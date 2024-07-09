@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
@@ -420,8 +419,7 @@ func TestPickForWrite(t *testing.T) {
 		Rack:       "",
 		DataNode:   "",
 	}
-	v := util.GetViper()
-	v.Set("master.volume_growth.threshold", 0.9)
+	VolumeGrowStrategy.Threshold = 0.9
 	for _, rpStr := range []string{"001", "010", "100"} {
 		rp, _ := super_block.NewReplicaPlacementFromString(rpStr)
 		vl := topo.GetVolumeLayout("test", rp, needle.EMPTY_TTL, types.HardDriveType)

@@ -1,6 +1,7 @@
 package operation
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,7 +95,7 @@ func (cm *ChunkManifest) DeleteChunks(masterFn GetMasterFn, usePublicUrl bool, g
 }
 
 func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (written int64, e error) {
-	req, err := http.NewRequest("GET", fileUrl, nil)
+	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return written, err
 	}
@@ -173,7 +174,7 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 	for ; chunkIndex < len(cf.chunkList); chunkIndex++ {
 		ci := cf.chunkList[chunkIndex]
 		// if we need read date from local volume server first?
-		fileUrl, jwt, lookupError := LookupFileId(func() pb.ServerAddress {
+		fileUrl, jwt, lookupError := LookupFileId(func(_ context.Context) pb.ServerAddress {
 			return cf.master
 		}, cf.grpcDialOption, ci.Fid)
 		if lookupError != nil {
