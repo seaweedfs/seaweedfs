@@ -100,10 +100,12 @@ message ListEntriesRequest {
     string startFromFileName = 3;
     bool inclusiveStartFrom = 4;
     uint32 limit = 5;
+    bool recursive = 6;
 }
 
 message ListEntriesResponse {
     Entry entry = 1;
+    string dir = 2;
 }
 
 message RemoteEntry {

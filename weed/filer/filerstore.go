@@ -11,6 +11,7 @@ const CountEntryChunksForGzip = 50
 
 var (
 	ErrUnsupportedListDirectoryPrefixed      = errors.New("unsupported directory prefix listing")
+	ErrUnsupportedRecursivePrefixed          = errors.New("unsupported recursive prefix listing")
 	ErrUnsupportedSuperLargeDirectoryListing = errors.New("unsupported super large directory listing")
 	ErrKvNotImplemented                      = errors.New("kv not implemented yet")
 	ErrKvNotFound                            = errors.New("kv: not found")
@@ -31,6 +32,7 @@ type FilerStore interface {
 	DeleteFolderChildren(context.Context, util.FullPath) (err error)
 	ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error)
 	ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error)
+	ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error)
 
 	BeginTransaction(ctx context.Context) (context.Context, error)
 	CommitTransaction(ctx context.Context) error
