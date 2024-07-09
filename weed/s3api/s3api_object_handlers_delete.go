@@ -30,10 +30,9 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
 	dir, name := target.DirAndName()
 
-	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		if err := doDeleteEntry(client, dir, name, true, false); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
 			return err
 		}
 
@@ -52,6 +51,10 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 		return nil
 	})
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
