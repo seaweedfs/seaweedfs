@@ -30,12 +30,10 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
 	dir, name := target.DirAndName()
 
-	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		err := doDeleteEntry(client, dir, name, true, false)
-		if err != nil {
-			// skip deletion error, usually the file is not found
-			return nil
+		if err := doDeleteEntry(client, dir, name, true, false); err != nil {
+			return err
 		}
 
 		if s3a.option.AllowEmptyFolder {
@@ -53,6 +51,10 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 		return nil
 	})
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
