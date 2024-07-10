@@ -51,14 +51,13 @@ func main() {
 	glog.MaxFileCount = 5
 	flag.Usage = usage
 
-	err := sentry.Init(sentry.ClientOptions{
-		SampleRate:         0.1,
-		EnableTracing:      true,
-		TracesSampleRate:   0.1,
-		ProfilesSampleRate: 0.1,
-	})
+	err := initSentry()
+	// Sentry does not return error for empty or unreachable DSN
+	// Provided DSN might be incorrect, so let's terminate program because we will call sentry later
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sentry.Init: %v", err)
+		setExitStatus(1)
+		exit()
 	}
 	// Flush buffered events before the program terminates.
 	// Set the timeout to the maximum duration the program can afford to wait.
@@ -128,12 +127,23 @@ var helpTemplate = `{{if .Runnable}}Usage: weed {{.UsageLine}}
   {{.Long}}
 `
 
+func initSentry() error {
+	return sentry.Init(sentry.ClientOptions{
+		SampleRate:         0.1,
+		EnableTracing:      true,
+		TracesSampleRate:   0.1,
+		ProfilesSampleRate: 0.1,
+	})
+}
+
 // tmpl executes the given template text on data, writing the result to w.
 func tmpl(w io.Writer, text string, data interface{}) {
 	t := template.New("top")
 	t.Funcs(template.FuncMap{"trim": strings.TrimSpace, "capitalize": capitalize})
 	template.Must(t.Parse(text))
 	if err := t.Execute(w, data); err != nil {
+		sentry.CaptureException(err)
+		sentry.Flush(2 * time.Second)
 		panic(err)
 	}
 }

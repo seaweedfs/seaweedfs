@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -337,7 +338,8 @@ func StartMetricsServer(ip string, port int) {
 		return
 	}
 	http.Handle("/metrics", promhttp.HandlerFor(Gather, promhttp.HandlerOpts{}))
-	log.Fatal(http.ListenAndServe(JoinHostPort(ip, port), nil))
+	handler := sentryhttp.New(sentryhttp.Options{}).Handle(http.DefaultServeMux)
+	log.Fatal(http.ListenAndServe(JoinHostPort(ip, port), handler))
 }
 
 func SourceName(port uint32) string {
