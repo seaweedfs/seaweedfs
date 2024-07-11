@@ -27,7 +27,6 @@ var (
 )
 
 func init() {
-	client = &http.Client{}
 	Commands = append(Commands, &commandFsMergeVolumes{})
 }
 
