@@ -226,17 +226,19 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 			glog.Errorf("Unexpected! failed to find iterator for filer %s", filerId)
 			continue
 		}
-		next, err := iter.getNext(v)
-		if err != nil {
-			if err == io.EOF {
+		next, nextErr := iter.getNext(v)
+		if nextErr != nil {
+			if nextErr == io.EOF {
 				// do nothing since the filer has no more log entries
+			}else {
+				return fmt.Errorf("failed to get next log entry for %v: %v", entryName, err)
 			}
-			return fmt.Errorf("failed to get next log entry for %v: %v", entryName, err)
+		} else {
+			heap.Push(v.pq, &LogEntryItem{
+				Entry: next,
+				filer: filerId,
+			})
 		}
-		heap.Push(v.pq, &LogEntryItem{
-			Entry: next,
-			filer: filerId,
-		})
 	}
 
 	return nil
