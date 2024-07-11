@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,15 +14,10 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	util "github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func Do(req *http.Request) (resp *http.Response, err error) {
-	return GetGlobalHttpClient().Do(req)
-}
-
-func Post(rawURL string, values url.Values) ([]byte, error) {
-	r, err := GetGlobalHttpClient().PostForm(rawURL, values)
+func Post(url string, values url.Values) ([]byte, error) {
+	r, err := GetGlobalHttpClient().PostForm(url, values)
 	if err != nil {
 		return nil, err
 	}
@@ -29,9 +25,9 @@ func Post(rawURL string, values url.Values) ([]byte, error) {
 	b, err := io.ReadAll(r.Body)
 	if r.StatusCode >= 400 {
 		if err != nil {
-			return nil, fmt.Errorf("%s: %d - %s", rawURL, r.StatusCode, string(b))
+			return nil, fmt.Errorf("%s: %d - %s", url, r.StatusCode, string(b))
 		} else {
-			return nil, fmt.Errorf("%s: %s", rawURL, r.Status)
+			return nil, fmt.Errorf("%s: %s", url, r.Status)
 		}
 	}
 	if err != nil {
@@ -42,12 +38,12 @@ func Post(rawURL string, values url.Values) ([]byte, error) {
 
 // github.com/seaweedfs/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
 // may need increasing http.Client.Timeout
-func Get(rawURL string) ([]byte, bool, error) {
-	return GetAuthenticated(rawURL, "")
+func Get(url string) ([]byte, bool, error) {
+	return GetAuthenticated(url, "")
 }
 
-func GetAuthenticated(rawURL, jwt string) ([]byte, bool, error) {
-	request, err := http.NewRequest("GET", rawURL, nil)
+func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
+	request, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, true, err
 	}
@@ -75,7 +71,7 @@ func GetAuthenticated(rawURL, jwt string) ([]byte, bool, error) {
 	b, err := io.ReadAll(reader)
 	if response.StatusCode >= 400 {
 		retryable := response.StatusCode >= 500
-		return nil, retryable, fmt.Errorf("%s: %s", rawURL, response.Status)
+		return nil, retryable, fmt.Errorf("%s: %s", url, response.Status)
 	}
 	if err != nil {
 		return nil, false, err
@@ -83,14 +79,14 @@ func GetAuthenticated(rawURL, jwt string) ([]byte, bool, error) {
 	return b, false, nil
 }
 
-func Head(rawURL string) (http.Header, error) {
-	r, err := GetGlobalHttpClient().Head(rawURL)
+func Head(url string) (http.Header, error) {
+	r, err := GetGlobalHttpClient().Head(url)
 	if err != nil {
 		return nil, err
 	}
 	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s: %s", rawURL, r.Status)
+		return nil, fmt.Errorf("%s: %s", url, r.Status)
 	}
 	return r.Header, nil
 }
@@ -101,8 +97,8 @@ func maybeAddAuth(req *http.Request, jwt string) {
 	}
 }
 
-func Delete(rawURL string, jwt string) error {
-	req, err := http.NewRequest("DELETE", rawURL, nil)
+func Delete(url string, jwt string) error {
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	maybeAddAuth(req, jwt)
 	if err != nil {
 		return err
@@ -129,8 +125,8 @@ func Delete(rawURL string, jwt string) error {
 	return errors.New(string(body))
 }
 
-func DeleteProxied(rawURL string, jwt string) (body []byte, httpStatus int, err error) {
-	req, err := http.NewRequest("DELETE", rawURL, nil)
+func DeleteProxied(url string, jwt string) (body []byte, httpStatus int, err error) {
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	maybeAddAuth(req, jwt)
 	if err != nil {
 		return
@@ -148,14 +144,14 @@ func DeleteProxied(rawURL string, jwt string) (body []byte, httpStatus int, err 
 	return
 }
 
-func GetBufferStream(rawURL string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
-	r, err := GetGlobalHttpClient().PostForm(rawURL, values)
+func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
+	r, err := GetGlobalHttpClient().PostForm(url, values)
 	if err != nil {
 		return err
 	}
 	defer CloseResponse(r)
 	if r.StatusCode != 200 {
-		return fmt.Errorf("%s: %s", rawURL, r.Status)
+		return fmt.Errorf("%s: %s", url, r.Status)
 	}
 	for {
 		n, err := r.Body.Read(allocatedBytes)
@@ -171,20 +167,20 @@ func GetBufferStream(rawURL string, values url.Values, allocatedBytes []byte, ea
 	}
 }
 
-func GetUrlStream(rawURL string, values url.Values, readFn func(io.Reader) error) error {
-	r, err := GetGlobalHttpClient().PostForm(rawURL, values)
+func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) error {
+	r, err := GetGlobalHttpClient().PostForm(url, values)
 	if err != nil {
 		return err
 	}
 	defer CloseResponse(r)
 	if r.StatusCode != 200 {
-		return fmt.Errorf("%s: %s", rawURL, r.Status)
+		return fmt.Errorf("%s: %s", url, r.Status)
 	}
 	return readFn(r.Body)
 }
 
 func DownloadFile(fileUrl string, jwt string) (filename string, header http.Header, resp *http.Response, e error) {
-	req, err := http.NewRequest("GET", fileUrl, nil)
+	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -208,11 +204,16 @@ func DownloadFile(fileUrl string, jwt string) (filename string, header http.Head
 	return
 }
 
-func NormalizeUrl(rawURL string) (string, error) {
-	return GetGlobalHttpClient().NormalizeHttpScheme(rawURL)
+func Do(req *http.Request) (resp *http.Response, err error) {
+	return GetGlobalHttpClient().Do(req)
+}
+
+func NormalizeUrl(url string) (string, error) {
+	return GetGlobalHttpClient().NormalizeHttpScheme(url)
 }
 
 func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
+
 	if cipherKey != nil {
 		var n int
 		_, err := readEncryptedUrl(fileUrl, "", cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
@@ -221,7 +222,7 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 		return int64(n), err
 	}
 
-	req, err := http.NewRequest("GET", fileUrl, nil)
+	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -292,7 +293,7 @@ func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isConte
 		return readEncryptedUrl(fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
 
-	req, err := http.NewRequest("GET", fileUrl, nil)
+	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	maybeAddAuth(req, jwt)
 	if err != nil {
 		return false, err
@@ -372,7 +373,8 @@ func readEncryptedUrl(fileUrl, jwt string, cipherKey []byte, isContentCompressed
 }
 
 func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*http.Response, io.ReadCloser, error) {
-	req, err := http.NewRequest("GET", fileUrl, nil)
+
+	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return nil, nil, err
 	}
