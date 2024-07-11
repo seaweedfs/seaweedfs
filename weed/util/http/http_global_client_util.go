@@ -16,6 +16,10 @@ import (
 	util "github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+func Do(req *http.Request) (resp *http.Response, err error) {
+	return GetGlobalHttpClient().Do(req)
+}
+
 func Post(rawURL string, values url.Values) ([]byte, error) {
 	r, err := GetGlobalHttpClient().PostForm(rawURL, values)
 	if err != nil {
