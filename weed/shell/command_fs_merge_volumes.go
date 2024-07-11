@@ -323,7 +323,12 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 	isCompressed := resp.Header.Get("Content-Encoding") == "gzip"
 	md5 := resp.Header.Get("Content-MD5")
 
-	_, err, _ = operation.Upload(reader, &operation.UploadOption{
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return err
+	}
+	
+	_, err, _ = uploader.Upload(reader, &operation.UploadOption{
 		UploadUrl:         uploadURL,
 		Filename:          filename,
 		IsInputCompressed: isCompressed,

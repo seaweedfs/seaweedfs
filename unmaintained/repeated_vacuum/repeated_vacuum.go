@@ -77,7 +77,13 @@ func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, st
 		PairMap:           nil,
 		Jwt:               assignResult.Auth,
 	}
-	_, err = operation.UploadData(data, uploadOption)
+
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		log.Fatalf("upload: %v", err)
+	}
+
+	_, err = uploader.UploadData(data, uploadOption)
 	if err != nil {
 		log.Fatalf("upload: %v", err)
 	}

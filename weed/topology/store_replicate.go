@@ -106,7 +106,12 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 				BytesBuffer:       bytesBuffer,
 			}
 
-			_, err := operation.UploadData(n.Data, uploadOption)
+			uploader, err := operation.NewUploader()
+			if err != nil {
+				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
+				return err
+			}
+			_, err = uploader.UploadData(n.Data, uploadOption)
 			if err != nil {
 				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
 			}

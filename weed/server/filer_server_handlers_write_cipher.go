@@ -53,7 +53,13 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		PairMap:           pu.PairMap,
 		Jwt:               auth,
 	}
-	uploadResult, uploadError := operation.UploadData(uncompressedData, uploadOption)
+	
+	uploader, uploaderErr := operation.NewUploader()
+	if uploaderErr != nil {
+		return nil, fmt.Errorf("uploader initialization error: %v", uploaderErr)
+	}
+
+	uploadResult, uploadError := uploader.UploadData(uncompressedData, uploadOption)
 	if uploadError != nil {
 		return nil, fmt.Errorf("upload to volume server: %v", uploadError)
 	}

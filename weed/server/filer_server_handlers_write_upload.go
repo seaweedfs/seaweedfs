@@ -158,7 +158,13 @@ func (fs *FilerServer) doUpload(urlLocation string, limitedReader io.Reader, fil
 		PairMap:           pairMap,
 		Jwt:               auth,
 	}
-	uploadResult, err, data := operation.Upload(limitedReader, uploadOption)
+
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return nil, err, []byte{}
+	}
+
+	uploadResult, err, data := uploader.Upload(limitedReader, uploadOption)
 	if uploadResult != nil && uploadResult.RetryCount > 0 {
 		stats.FilerHandlerCounter.WithLabelValues(stats.ChunkUploadRetry).Add(float64(uploadResult.RetryCount))
 	}
