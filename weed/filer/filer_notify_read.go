@@ -140,7 +140,7 @@ func NewLogFileEntryCollector(f *Filer, startPosition log_buffer.MessagePosition
 	dayEntryQueue := util.NewQueue[*Entry]()
 	for _, dayEntry := range dayEntries {
 		dayEntryQueue.Enqueue(dayEntry)
-		println("enqueue day entry", dayEntry.Name())
+		// println("enqueue day entry", dayEntry.Name())
 	}
 
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Year(), startPosition.Month(), startPosition.Day())
@@ -173,7 +173,7 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 	if dayEntry == nil {
 		return io.EOF
 	}
-	println("dequeue day entry", dayEntry.Name())
+	// println("dequeue day entry", dayEntry.Name())
 	if c.stopDate != "" {
 		if strings.Compare(dayEntry.Name(), c.stopDate) > 0 {
 			return io.EOF
@@ -200,7 +200,7 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 		}
 
 		tsMinute := fmt.Sprintf("%s-%s", dayEntry.Name(), hourMinute)
-		println("  enqueue", tsMinute)
+		// println("  enqueue", tsMinute)
 		t, parseErr := time.Parse("2006-01-02-15-04", tsMinute)
 		if parseErr != nil {
 			glog.Errorf("failed to parse %s: %v", tsMinute, parseErr)
