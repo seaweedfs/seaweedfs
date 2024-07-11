@@ -32,18 +32,24 @@ spec:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: filer
-      {{ with .Values.podLabels }}
+      {{- with .Values.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.filer.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
       annotations:
-      {{ with .Values.podAnnotations }}
+      {{- with .Values.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.filer.podAnnotations }}
       {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.filer.s3.existingConfigSecret }}
+        {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace .Values.filer.s3.existingConfigSecret) | default dict }}
+        checksum/s3config: {{ $configSecret | toYaml | sha256sum }}
+      {{- else }}
+        checksum/s3config: {{ include (print .Template.BasePath "/s3-secret.yaml") . | sha256sum }}
       {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.filer.restartPolicy }}
