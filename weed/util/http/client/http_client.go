@@ -93,36 +93,37 @@ func (httpClient *HTTPClient) NormalizeHttpScheme(rawURL string) (string, error)
 	return parsedURL.String(), nil
 }
 
-func NewHttpClient(serviceOrClientName ClientName, opts ...HttpClientOpt) (*HTTPClient, error) {
+func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, error) {
 	httpClient := HTTPClient{}
-	httpClient.expectHttpsScheme = false
-
-	clientCertPair, err := GetClientCertPair(serviceOrClientName)
-	if err != nil {
-		return nil, err
-	}
-
-	clientCaCert, clientCaCertName, err := GetClientCaCert(serviceOrClientName)
-	if err != nil {
-		return nil, err
-	}
-
+	httpClient.expectHttpsScheme = CheckIsHttpsClientEnabled(clientName)
 	var tlsConfig *tls.Config = nil
-	if clientCertPair != nil || len(clientCaCert) != 0 {
-		httpClient.expectHttpsScheme = true
-		caCertPool, err := CreateHTTPClientCertPool(clientCaCert, clientCaCertName)
+
+	if httpClient.expectHttpsScheme {
+		clientCertPair, err := GetClientCertPair(clientName)
 		if err != nil {
 			return nil, err
 		}
 
-		tlsConfig = &tls.Config{
-			Certificates:       []tls.Certificate{},
-			RootCAs:            caCertPool,
-			InsecureSkipVerify: false,
+		clientCaCert, clientCaCertName, err := GetClientCaCert(clientName)
+		if err != nil {
+			return nil, err
 		}
 
-		if clientCertPair != nil {
-			tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCertPair)
+		if clientCertPair != nil || len(clientCaCert) != 0 {
+			caCertPool, err := CreateHTTPClientCertPool(clientCaCert, clientCaCertName)
+			if err != nil {
+				return nil, err
+			}
+
+			tlsConfig = &tls.Config{
+				Certificates:       []tls.Certificate{},
+				RootCAs:            caCertPool,
+				InsecureSkipVerify: false,
+			}
+
+			if clientCertPair != nil {
+				tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCertPair)
+			}
 		}
 	}
 
@@ -141,15 +142,26 @@ func NewHttpClient(serviceOrClientName ClientName, opts ...HttpClientOpt) (*HTTP
 	return &httpClient, nil
 }
 
-func GetFileNameFromSecurityConfiguration(serviceOrClientName ClientName, fileType string) string {
+func GetStringOptionFromSecurityConfiguration(clientName ClientName, stringOptionName string) string {
 	onceLoadSecurityConfiguration.Do(func() {
 		util.LoadConfiguration("security", false)
 	})
-	return viper.GetString(fmt.Sprintf("https.%s.%s", serviceOrClientName.LowerCaseString(), fileType))
+	return viper.GetString(fmt.Sprintf("https.%s.%s", clientName.LowerCaseString(), stringOptionName))
 }
 
-func GetFileContentFromSecurityConfiguration(serviceOrClientName ClientName, fileType string) ([]byte, string, error) {
-	if fileName := GetFileNameFromSecurityConfiguration(serviceOrClientName, fileType); fileName != "" {
+func GetBoolOptionFromSecurityConfiguration(clientName ClientName, boolOptionName string) bool {
+	onceLoadSecurityConfiguration.Do(func() {
+		util.LoadConfiguration("security", false)
+	})
+	return viper.GetBool(fmt.Sprintf("https.%s.%s", clientName.LowerCaseString(), boolOptionName))
+}
+
+func CheckIsHttpsClientEnabled(clientName ClientName) bool {
+	return GetBoolOptionFromSecurityConfiguration(clientName, "enabled")
+}
+
+func GetFileContentFromSecurityConfiguration(clientName ClientName, fileType string) ([]byte, string, error) {
+	if fileName := GetStringOptionFromSecurityConfiguration(clientName, fileType); fileName != "" {
 		fileContent, err := os.ReadFile(fileName)
 		if err != nil {
 			return nil, fileName, err
@@ -159,9 +171,9 @@ func GetFileContentFromSecurityConfiguration(serviceOrClientName ClientName, fil
 	return nil, "", nil
 }
 
-func GetClientCertPair(serviceOrClientName ClientName) (*tls.Certificate, error) {
-	certFileName := GetFileNameFromSecurityConfiguration(serviceOrClientName, "cert")
-	keyFileName := GetFileNameFromSecurityConfiguration(serviceOrClientName, "key")
+func GetClientCertPair(clientName ClientName) (*tls.Certificate, error) {
+	certFileName := GetStringOptionFromSecurityConfiguration(clientName, "cert")
+	keyFileName := GetStringOptionFromSecurityConfiguration(clientName, "key")
 	if certFileName == "" && keyFileName == "" {
 		return nil, nil
 	}
@@ -175,8 +187,8 @@ func GetClientCertPair(serviceOrClientName ClientName) (*tls.Certificate, error)
 	return nil, fmt.Errorf("error loading key pair: key `%s` and certificate `%s`", keyFileName, certFileName)
 }
 
-func GetClientCaCert(serviceOrClientName ClientName) ([]byte, string, error) {
-	return GetFileContentFromSecurityConfiguration(serviceOrClientName, "ca")
+func GetClientCaCert(clientName ClientName) ([]byte, string, error) {
+	return GetFileContentFromSecurityConfiguration(clientName, "ca")
 }
 
 func CreateHTTPClientCertPool(certContent []byte, fileName string) (*x509.CertPool, error) {
