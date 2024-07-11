@@ -686,6 +686,10 @@ github.com/boombuler/barcode v1.0.0/go.mod h1:paBWMcWSl3LHKBqUq+rly7CNSldXjb2rDl
 github.com/boombuler/barcode v1.0.1/go.mod h1:paBWMcWSl3LHKBqUq+rly7CNSldXjb2rDl3JlRe0mD8=
 github.com/bradenaw/juniper v0.15.2 h1:0JdjBGEF2jP1pOxmlNIrPhAoQN7Ng5IMAY5D0PHMW4U=
 github.com/bradenaw/juniper v0.15.2/go.mod h1:UX4FX57kVSaDp4TPqvSjkAAewmRFAfXf27BOs5z9dq8=
+github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
+github.com/bsm/ginkgo/v2 v2.12.0/go.mod h1:SwYbGRRDovPVboqFv0tPTcG1sN61LM1Z4ARdbAV9g4c=
+github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=
+github.com/bsm/gomega v1.27.10/go.mod h1:JyEr/xRbxbtgWNi8tIEVPUYZ5Dzef52k01W3YH0H+O0=
 github.com/buengese/sgzip v0.1.1 h1:ry+T8l1mlmiWEsDrH/YHZnCVWD2S3im1KLsyO+8ZmTU=
 github.com/buengese/sgzip v0.1.1/go.mod h1:i5ZiXGF3fhV7gL1xaRRL1nDnmpNj0X061FQzOS8VMas=
 github.com/bwesterb/go-ristretto v1.2.0/go.mod h1:fUIoIZaG73pV5biE2Blr2xEzDoMj7NFEuV9ekS419A0=
