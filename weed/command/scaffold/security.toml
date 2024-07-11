@@ -94,19 +94,26 @@ allowed_commonNames = ""    # comma-separated SSL certificate common names
 [grpc.client]
 cert = ""
 key = ""
-
-# volume server https options
 # Note: work in progress!
 #     this does not work with other clients, e.g., "weed filer|mount" etc, yet.
 [https.client]
 enabled = true
 
+# volume server https options
 [https.volume]
 cert = ""
 key = ""
 ca = ""
 
+# master server https options
 [https.master]
 cert = ""
 key = ""
 ca = ""
+
+# filer server https options
+[https.filer]
+cert = ""
+key = ""
+ca = ""
+# disable_tls_verify_client_cert = true|false (default: false)

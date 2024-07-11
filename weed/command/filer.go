@@ -1,6 +1,9 @@
 package command
 
 import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/grpc/reflection"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -20,6 +21,10 @@ import (
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc/credentials/tls/certprovider"
+	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
+	"google.golang.org/grpc/reflection"
 )
 
 var (
@@ -63,6 +68,7 @@ type FilerOptions struct {
 	diskType                *string
 	allowedOrigins          *string
 	exposeDirectoryData     *bool
+	certProvider            certprovider.Provider
 }
 
 func init() {
@@ -220,6 +226,12 @@ func runFiler(cmd *Command, args []string) bool {
 	return true
 }
 
+// GetCertificateWithUpdate Auto refreshing TSL certificate
+func (fo *FilerOptions) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	certs, err := fo.certProvider.KeyMaterial(context.Background())
+	return &certs.Certs[0], err
+}
+
 func (fo *FilerOptions) startFiler() {
 
 	defaultMux := http.NewServeMux()
@@ -329,15 +341,62 @@ func (fo *FilerOptions) startFiler() {
 			httpS.Serve(filerSocketListener)
 		}()
 	}
-	if filerLocalListener != nil {
-		go func() {
-			if err := httpS.Serve(filerLocalListener); err != nil {
-				glog.Errorf("Filer Fail to serve: %v", e)
-			}
-		}()
-	}
-	if err := httpS.Serve(filerListener); err != nil {
-		glog.Fatalf("Filer Fail to serve: %v", e)
-	}
 
+	if viper.GetString("https.filer.key") != "" {
+		certFile := viper.GetString("https.filer.cert")
+		keyFile := viper.GetString("https.filer.key")
+		caCertFile := viper.GetString("https.filer.ca")
+		disbaleTlsVerifyClientCert := viper.GetBool("https.filer.disable_tls_verify_client_cert")
+
+		pemfileOptions := pemfile.Options{
+			CertFile:        certFile,
+			KeyFile:         keyFile,
+			RefreshDuration: security.CredRefreshingInterval,
+		}
+		if fo.certProvider, err = pemfile.NewProvider(pemfileOptions); err != nil {
+			glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
+		}
+
+		caCertPool := x509.NewCertPool()
+		if caCertFile != "" {
+			caCertFile, err := os.ReadFile(caCertFile)
+			if err != nil {
+				glog.Fatalf("error reading CA certificate: %v", err)
+			}
+			caCertPool.AppendCertsFromPEM(caCertFile)
+		}
+
+		clientAuth := tls.NoClientCert
+		if !disbaleTlsVerifyClientCert {
+			clientAuth = tls.RequireAndVerifyClientCert
+		}
+
+		httpS.TLSConfig = &tls.Config{
+			GetCertificate: fo.GetCertificateWithUpdate,
+			ClientAuth:     clientAuth,
+			ClientCAs:      caCertPool,
+		}
+
+		if filerLocalListener != nil {
+			go func() {
+				if err := httpS.ServeTLS(filerLocalListener, "", ""); err != nil {
+					glog.Errorf("Filer Fail to serve: %v", e)
+				}
+			}()
+		}
+		if err := httpS.ServeTLS(filerListener, "", ""); err != nil {
+			glog.Fatalf("Filer Fail to serve: %v", e)
+		}
+	} else {
+		if filerLocalListener != nil {
+			go func() {
+				if err := httpS.Serve(filerLocalListener); err != nil {
+					glog.Errorf("Filer Fail to serve: %v", e)
+				}
+			}()
+		}
+		if err := httpS.Serve(filerListener); err != nil {
+			glog.Fatalf("Filer Fail to serve: %v", e)
+		}
+	}
 }
