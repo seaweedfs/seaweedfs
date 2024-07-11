@@ -7,10 +7,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/http"
 	"strings"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // Downloads an item from an S3 Bucket in the region configured in the shared config
@@ -64,7 +64,7 @@ func main() {
 		fmt.Printf("error put request: %v\n", err)
 		return
 	}
-	defer util.CloseResponse(resp)
+	defer util_http.CloseResponse(resp)
 	fmt.Printf("response: %+v\n", resp)
 }
 
