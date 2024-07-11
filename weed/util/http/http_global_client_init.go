@@ -10,7 +10,7 @@ var (
 )
 
 func NewGlobalHttpClient(opt ...util_http_client.HttpClientOpt) (*util_http_client.HTTPClient, error) {
-	return util_http_client.NewHttpClient(util_http_client.Global_client, opt...)
+	return util_http_client.NewHttpClient(util_http_client.Client, opt...)
 }
 
 func GetGlobalHttpClient() *util_http_client.HTTPClient {
