@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -40,6 +41,7 @@ func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset in
 
 func main() {
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
 
 	vid := needle.VolumeId(*volumeId)
 

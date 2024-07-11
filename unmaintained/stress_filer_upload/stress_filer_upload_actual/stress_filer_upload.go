@@ -31,8 +31,8 @@ type stat struct {
 }
 
 func main() {
-
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
 
 	var fileNames []string
 

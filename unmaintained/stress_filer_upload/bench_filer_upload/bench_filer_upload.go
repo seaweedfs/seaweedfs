@@ -31,8 +31,8 @@ type stat struct {
 }
 
 func main() {
-
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
 
 	data := make([]byte, *size)
 	println("data len", len(data))

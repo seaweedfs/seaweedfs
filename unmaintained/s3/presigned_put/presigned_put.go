@@ -21,6 +21,8 @@ import (
 // For this exampl to work, the domainName is needd
 //     weed s3 -domainName=localhost
 func main() {
+	util_http.InitGlobalHttpClient()
+	
 	h := md5.New()
 	content := strings.NewReader(stringContent)
 	content.WriteTo(h)

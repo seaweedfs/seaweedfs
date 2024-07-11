@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -27,6 +28,8 @@ This is to see content in .idx files.
 */
 func main() {
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
+
 	fileName := strconv.Itoa(*fixVolumeId)
 	if *fixVolumeCollection != "" {
 		fileName = *fixVolumeCollection + "_" + fileName
