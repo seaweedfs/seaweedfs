@@ -22,10 +22,6 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-var (
-	client *http.Client
-)
-
 func init() {
 	Commands = append(Commands, &commandFsMergeVolumes{})
 }
@@ -104,7 +100,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 		return nil
 	}
 
-	defer client.CloseIdleConnections()
+	defer util_http.GetGlobalHttpClient().CloseIdleConnections()
 
 	return commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 		return filer_pb.TraverseBfs(commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) {
@@ -353,7 +349,7 @@ func readUrl(fileUrl string) (*http.Response, io.ReadCloser, error) {
 	}
 	req.Header.Add("Accept-Encoding", "gzip")
 
-	r, err := client.Do(req)
+	r, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
