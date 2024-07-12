@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	onceLoadSecurityConfiguration sync.Once
+	loadSecurityConfigOnce sync.Once
 )
 
 type HTTPClient struct {
@@ -142,17 +142,19 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 	return &httpClient, nil
 }
 
-func getStringOptionFromSecurityConfiguration(clientName ClientName, stringOptionName string) string {
-	onceLoadSecurityConfiguration.Do(func() {
+func loadSecurityConfig(){
+	loadSecurityConfigOnce.Do(func() {
 		util.LoadConfiguration("security", false)
 	})
+}
+
+func getStringOptionFromSecurityConfiguration(clientName ClientName, stringOptionName string) string {
+	loadSecurityConfig()
 	return viper.GetString(fmt.Sprintf("https.%s.%s", clientName.LowerCaseString(), stringOptionName))
 }
 
 func getBoolOptionFromSecurityConfiguration(clientName ClientName, boolOptionName string) bool {
-	onceLoadSecurityConfiguration.Do(func() {
-		util.LoadConfiguration("security", false)
-	})
+	loadSecurityConfig()
 	return viper.GetBool(fmt.Sprintf("https.%s.%s", clientName.LowerCaseString(), boolOptionName))
 }
 
