@@ -57,6 +57,7 @@ type FilerOptions struct {
 	disableHttp             *bool
 	cipher                  *bool
 	metricsHttpPort         *int
+	metricsHttpIp           *string
 	saveToFilerLimit        *int
 	defaultLevelDbDirectory *string
 	concurrentUploadLimitMB *int
@@ -90,6 +91,7 @@ func init() {
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
 	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	f.metricsHttpPort = cmdFiler.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	f.metricsHttpIp = cmdFiler.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	f.saveToFilerLimit = cmdFiler.Flag.Int("saveToFilerLimit", 0, "files smaller than this limit will be saved in filer store")
 	f.defaultLevelDbDirectory = cmdFiler.Flag.String("defaultStoreDir", ".", "if filer.toml is empty, use an embedded filer store in the directory")
 	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
@@ -178,7 +180,15 @@ func runFiler(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
-	go stats_collect.StartMetricsServer(*f.bindIp, *f.metricsHttpPort)
+	switch {
+	case *f.metricsHttpIp != "":
+		// noting to do, use f.metricsHttpIp
+	case *f.bindIp != "":
+		*f.metricsHttpIp = *f.bindIp
+	case *f.ip != "":
+		*f.metricsHttpIp = *f.ip
+	}
+	go stats_collect.StartMetricsServer(*f.metricsHttpIp, *f.metricsHttpPort)
 
 	filerAddress := pb.NewServerAddress(*f.ip, *f.port, *f.portGrpc).String()
 	startDelay := time.Duration(2)
