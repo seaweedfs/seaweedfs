@@ -76,7 +76,7 @@ var (
 			Subsystem: "master",
 			Name:      "volume_layout_total",
 			Help:      "Number of volumes in volume layouts",
-		}, []string{"collection", "replica", "type"})
+		}, []string{"collection", "dataCenter", "type"})
 
 	MasterLeaderChangeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{

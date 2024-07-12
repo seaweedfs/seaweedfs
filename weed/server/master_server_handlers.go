@@ -126,6 +126,12 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		startTime  = time.Now()
 	)
 
+	if !ms.Topo.DataCenterExists(option.DataCenter) {
+		lastErr = fmt.Errorf("data center %v not found in topology", option.DataCenter)
+		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{Error: "request timeout"})
+		return
+	}
+
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl)
 		if shouldGrow && !vl.HasGrowRequest() {
