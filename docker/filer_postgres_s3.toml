@@ -1,0 +1,12 @@
+[postgres_s3]
+enabled = true
+port = 5432
+hostname = "postgres"
+username = "seaweedfs"
+database = "seaweedfs"          # create or use an existing database
+password = "seaweedfs"
+schema = ""
+sslmode = "disable"
+connection_max_idle = 5
+connection_max_open = 10
+connection_max_lifetime_seconds = 0
