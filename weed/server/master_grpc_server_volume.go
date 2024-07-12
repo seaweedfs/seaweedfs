@@ -59,6 +59,8 @@ func (ms *MasterServer) ProcessGrowRequest() {
 						for _, newVidLocation := range newVidLocations {
 							ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: newVidLocation})
 						}
+					} else {
+						glog.V(1).Infof("automatic volume grow failed: %+v", err)
 					}
 					vl.DoneGrowRequest()
 
