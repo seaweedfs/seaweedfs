@@ -127,8 +127,9 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	)
 
 	if !ms.Topo.DataCenterExists(option.DataCenter) {
-		lastErr = fmt.Errorf("data center %v not found in topology", option.DataCenter)
-		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{Error: "request timeout"})
+		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{
+			Error: fmt.Sprintf("data center %v not found in topology", option.DataCenter),
+		})
 		return
 	}
 
