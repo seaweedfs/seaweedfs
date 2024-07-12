@@ -14,9 +14,12 @@ const (
 	ErrorGetInternal            = "errorGetInternal"
 
 	// master topology
-	ErrorWriteToLocalDisk = "errorWriteToLocalDisk"
-	ErrorUnmarshalPairs   = "errorUnmarshalPairs"
-	ErrorWriteToReplicas  = "errorWriteToReplicas"
+	ErrorWriteToLocalDisk      = "errorWriteToLocalDisk"
+	ErrorWriteVolumeNotFound   = "errorWriteVolumeNotFound"
+	ErrorWriteReplicasNotFound = "errorWriteReplicasNotFound"
+
+	ErrorUnmarshalPairs  = "errorUnmarshalPairs"
+	ErrorWriteToReplicas = "errorWriteToReplicas"
 
 	// master client
 	FailedToKeepConnected = "failedToKeepConnected"
@@ -40,6 +43,7 @@ const (
 	ErrorReadInternal        = "read.internal.error"
 	ErrorWriteEntry          = "write.entry.failed"
 	RepeatErrorUploadContent = "upload.content.repeat.failed"
+	RepeatErrorUploadData    = "upload.data.repeat.failed"
 	ErrorChunkAssign         = "chunkAssign.failed"
 	ErrorReadChunk           = "read.chunk.failed"
 	ErrorReadCache           = "read.cache.failed"
