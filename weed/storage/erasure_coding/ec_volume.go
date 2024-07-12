@@ -216,14 +216,14 @@ func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.
 		return types.Offset{}, 0, nil, fmt.Errorf("FindNeedleFromEcx: %v", err)
 	}
 
-	intervals = ev.LocateEcShardNeedleInterval(version, offset.ToActualOffset(), types.Size(needle.GetActualSize(size, version)))
+	intervals = ev.LocateEcShardNeedleInterval(offset.ToActualOffset(), types.Size(needle.GetActualSize(size, version)))
 	return
 }
 
-func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset int64, size types.Size) (intervals []Interval) {
+func (ev *EcVolume) LocateEcShardNeedleInterval(actualOffset int64, actualSize types.Size) (intervals []Interval) {
 	shard := ev.Shards[0]
 	// calculate the locations in the ec shards
-	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, DataShardsCount*shard.ecdFileSize, offset, types.Size(needle.GetActualSize(size, version)))
+	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, DataShardsCount*shard.ecdFileSize, actualOffset, actualSize)
 
 	return
 }
