@@ -66,6 +66,7 @@ var (
 	volumeMinFreeSpacePercent = cmdServer.Flag.String("volume.minFreeSpacePercent", "1", "minimum free disk space (default to 1%). Low disk space will mark all volumes as ReadOnly (deprecated, use minFreeSpace instead).")
 	volumeMinFreeSpace        = cmdServer.Flag.String("volume.minFreeSpace", "", "min free disk space (value<=100 as percentage like 1, other as human readable bytes, like 10GiB). Low disk space will mark all volumes as ReadOnly.")
 	serverMetricsHttpPort     = cmdServer.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	serverMetricsHttpIp       = cmdServer.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 
 	// pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	isStartingMasterServer = cmdServer.Flag.Bool("master", true, "whether to start master server")
@@ -206,6 +207,10 @@ func runServer(cmd *Command, args []string) bool {
 		serverBindIp = serverIp
 	}
 
+	if *serverMetricsHttpIp == "" {
+		*serverMetricsHttpIp = *serverBindIp
+	}
+
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
@@ -244,7 +249,7 @@ func runServer(cmd *Command, args []string) bool {
 	webdavOptions.filer = &filerAddress
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 
-	go stats_collect.StartMetricsServer(*serverBindIp, *serverMetricsHttpPort)
+	go stats_collect.StartMetricsServer(*serverMetricsHttpIp, *serverMetricsHttpPort)
 
 	folders := strings.Split(*volumeDataFolders, ",")
 
