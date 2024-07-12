@@ -286,7 +286,7 @@ func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 }
 
 func (t *Topology) DataCenterExists(dcName string) bool {
-	return dcName != "" && t.GetOrCreateDataCenter(dcName) != nil
+	return dcName == "" || t.GetOrCreateDataCenter(dcName) != nil
 }
 
 func (t *Topology) GetDataCenter(dcName string) (dc *DataCenter) {
