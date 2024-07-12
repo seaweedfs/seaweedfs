@@ -46,7 +46,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
 			// not atomic but it's okay
-			if !found && !ms.Topo.DataCenterExists(option.DataCenter) && vl.ShouldGrowVolumes(option) {
+			if !found && vl.ShouldGrowVolumes(option) {
 				filter.Store(req, nil)
 				// we have lock called inside vg
 				go func() {
