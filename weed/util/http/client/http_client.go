@@ -95,22 +95,22 @@ func (httpClient *HTTPClient) NormalizeHttpScheme(rawURL string) (string, error)
 
 func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, error) {
 	httpClient := HTTPClient{}
-	httpClient.expectHttpsScheme = CheckIsHttpsClientEnabled(clientName)
+	httpClient.expectHttpsScheme = checkIsHttpsClientEnabled(clientName)
 	var tlsConfig *tls.Config = nil
 
 	if httpClient.expectHttpsScheme {
-		clientCertPair, err := GetClientCertPair(clientName)
+		clientCertPair, err := getClientCertPair(clientName)
 		if err != nil {
 			return nil, err
 		}
 
-		clientCaCert, clientCaCertName, err := GetClientCaCert(clientName)
+		clientCaCert, clientCaCertName, err := getClientCaCert(clientName)
 		if err != nil {
 			return nil, err
 		}
 
 		if clientCertPair != nil || len(clientCaCert) != 0 {
-			caCertPool, err := CreateHTTPClientCertPool(clientCaCert, clientCaCertName)
+			caCertPool, err := createHTTPClientCertPool(clientCaCert, clientCaCertName)
 			if err != nil {
 				return nil, err
 			}
@@ -142,26 +142,26 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 	return &httpClient, nil
 }
 
-func GetStringOptionFromSecurityConfiguration(clientName ClientName, stringOptionName string) string {
+func getStringOptionFromSecurityConfiguration(clientName ClientName, stringOptionName string) string {
 	onceLoadSecurityConfiguration.Do(func() {
 		util.LoadConfiguration("security", false)
 	})
 	return viper.GetString(fmt.Sprintf("https.%s.%s", clientName.LowerCaseString(), stringOptionName))
 }
 
-func GetBoolOptionFromSecurityConfiguration(clientName ClientName, boolOptionName string) bool {
+func getBoolOptionFromSecurityConfiguration(clientName ClientName, boolOptionName string) bool {
 	onceLoadSecurityConfiguration.Do(func() {
 		util.LoadConfiguration("security", false)
 	})
 	return viper.GetBool(fmt.Sprintf("https.%s.%s", clientName.LowerCaseString(), boolOptionName))
 }
 
-func CheckIsHttpsClientEnabled(clientName ClientName) bool {
-	return GetBoolOptionFromSecurityConfiguration(clientName, "enabled")
+func checkIsHttpsClientEnabled(clientName ClientName) bool {
+	return getBoolOptionFromSecurityConfiguration(clientName, "enabled")
 }
 
-func GetFileContentFromSecurityConfiguration(clientName ClientName, fileType string) ([]byte, string, error) {
-	if fileName := GetStringOptionFromSecurityConfiguration(clientName, fileType); fileName != "" {
+func getFileContentFromSecurityConfiguration(clientName ClientName, fileType string) ([]byte, string, error) {
+	if fileName := getStringOptionFromSecurityConfiguration(clientName, fileType); fileName != "" {
 		fileContent, err := os.ReadFile(fileName)
 		if err != nil {
 			return nil, fileName, err
@@ -171,9 +171,9 @@ func GetFileContentFromSecurityConfiguration(clientName ClientName, fileType str
 	return nil, "", nil
 }
 
-func GetClientCertPair(clientName ClientName) (*tls.Certificate, error) {
-	certFileName := GetStringOptionFromSecurityConfiguration(clientName, "cert")
-	keyFileName := GetStringOptionFromSecurityConfiguration(clientName, "key")
+func getClientCertPair(clientName ClientName) (*tls.Certificate, error) {
+	certFileName := getStringOptionFromSecurityConfiguration(clientName, "cert")
+	keyFileName := getStringOptionFromSecurityConfiguration(clientName, "key")
 	if certFileName == "" && keyFileName == "" {
 		return nil, nil
 	}
@@ -187,11 +187,11 @@ func GetClientCertPair(clientName ClientName) (*tls.Certificate, error) {
 	return nil, fmt.Errorf("error loading key pair: key `%s` and certificate `%s`", keyFileName, certFileName)
 }
 
-func GetClientCaCert(clientName ClientName) ([]byte, string, error) {
-	return GetFileContentFromSecurityConfiguration(clientName, "ca")
+func getClientCaCert(clientName ClientName) ([]byte, string, error) {
+	return getFileContentFromSecurityConfiguration(clientName, "ca")
 }
 
-func CreateHTTPClientCertPool(certContent []byte, fileName string) (*x509.CertPool, error) {
+func createHTTPClientCertPool(certContent []byte, fileName string) (*x509.CertPool, error) {
 	certPool := x509.NewCertPool()
 	if len(certContent) == 0 {
 		return certPool, nil
