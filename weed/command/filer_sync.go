@@ -296,12 +296,17 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 		return setOffset(grpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature, offsetTsNs)
 	})
 
+	prefix := sourcePath
+	if !strings.HasSuffix(prefix, "/") {
+		prefix = prefix + "/"
+	}
+
 	metadataFollowOption := &pb.MetadataFollowOption{
 		ClientName:             clientName,
 		ClientId:               clientId,
 		ClientEpoch:            clientEpoch,
 		SelfSignature:          targetFilerSignature,
-		PathPrefix:             sourcePath,
+		PathPrefix:             prefix,
 		AdditionalPathPrefixes: nil,
 		DirectoriesToWatch:     nil,
 		StartTsNs:              sourceFilerOffsetTsNs,

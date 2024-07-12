@@ -55,7 +55,7 @@ func (option *RemoteGatewayOptions) followBucketUpdatesAndUploadToRemote(filerSo
 		ClientId:               option.clientId,
 		ClientEpoch:            option.clientEpoch,
 		SelfSignature:          0,
-		PathPrefix:             option.bucketsDir,
+		PathPrefix:             option.bucketsDir + "/",
 		AdditionalPathPrefixes: []string{filer.DirectoryEtcRemote},
 		DirectoriesToWatch:     nil,
 		StartTsNs:              lastOffsetTs.UnixNano(),

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -197,12 +198,16 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 
 	metaBackup.clientEpoch++
 
+	prefix := *metaBackup.filerDirectory
+	if !strings.HasSuffix(prefix, "/") {
+		prefix = prefix + "/"
+	}
 	metadataFollowOption := &pb.MetadataFollowOption{
 		ClientName:             "meta_backup",
 		ClientId:               metaBackup.clientId,
 		ClientEpoch:            metaBackup.clientEpoch,
 		SelfSignature:          0,
-		PathPrefix:             *metaBackup.filerDirectory,
+		PathPrefix:             prefix,
 		AdditionalPathPrefixes: nil,
 		DirectoriesToWatch:     nil,
 		StartTsNs:              startTime.UnixNano(),
