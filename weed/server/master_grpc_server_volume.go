@@ -27,9 +27,13 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				break
 			}
 
+			option := req.Option
+			vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+
 			if !ms.Topo.IsLeader() {
 				//discard buffered requests
 				time.Sleep(time.Second * 1)
+				vl.DoneGrowRequest()
 				continue
 			}
 
@@ -41,9 +45,6 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				}
 				return !found
 			})
-
-			option := req.Option
-			vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
 			// not atomic but it's okay
 			if !found && vl.ShouldGrowVolumes(option) {
