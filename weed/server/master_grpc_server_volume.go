@@ -46,7 +46,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 					vl.AddGrowRequest()
 					ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 						Option: vl.ToGrowOption(),
-						Count:  0,
+						Count:  vl.GetLastGrowCount(),
 					}
 				}
 			}
