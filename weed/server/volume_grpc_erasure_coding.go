@@ -509,7 +509,7 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 			}
 		}
 		if fileName == "" {
-			glog.V(3).Infof("CopyFile ecx not found ec volume id %d %d", req.VolumeId)
+			glog.V(3).Infof("CopyFile ecx not found ec volume id %d", req.VolumeId)
 		} else {
 			if err := copyFile(fileName, indexBaseFileName+".ecx"); err != nil {
 				glog.V(3).Infof("copy ecx %s -> %s", fileName, indexBaseFileName+".ecx")
