@@ -89,7 +89,7 @@ func removeVolumeFiles(filename string) {
 	// basic
 	os.Remove(filename + ".dat")
 	os.Remove(filename + ".idx")
-	os.Remove(filename + ".vif")
+	//os.Remove(filename + ".vif")
 	// sorted index file
 	os.Remove(filename + ".sdx")
 	// compaction
