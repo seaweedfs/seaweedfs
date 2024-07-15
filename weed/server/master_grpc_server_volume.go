@@ -31,9 +31,6 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			option := req.Option
 			vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
-			option := req.Option
-			vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
-
 			if !ms.Topo.IsLeader() {
 				glog.V(3).Infoln("current ip is not leader, skip request: ", req)
 				//discard buffered requests
