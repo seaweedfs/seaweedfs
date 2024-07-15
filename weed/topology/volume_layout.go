@@ -539,6 +539,13 @@ func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
 	return
 }
 
+func (vl *VolumeLayout) ToGrowOption() (option *VolumeGrowOption) {
+	option.ReplicaPlacement = vl.rp
+	option.Ttl = vl.ttl
+	option.DiskType = vl.diskType
+	return
+}
+
 func (vl *VolumeLayout) Stats() *VolumeLayoutStats {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
