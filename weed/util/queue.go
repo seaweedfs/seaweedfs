@@ -61,3 +61,14 @@ func (q *Queue[T]) Dequeue() (result T) {
 
 	return n.data
 }
+
+func (q *Queue[T]) Peek() (result T) {
+	q.RLock()
+	defer q.RUnlock()
+
+	if q.head == nil {
+		return
+	}
+
+	return q.head.data
+}

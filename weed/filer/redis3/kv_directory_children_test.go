@@ -3,7 +3,7 @@ package redis3
 import (
 	"context"
 	"fmt"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/stvp/tempredis"
 	"strconv"
 	"testing"
@@ -116,7 +116,7 @@ func BenchmarkRedis(b *testing.B) {
 	})
 
 	for i := 0; i < b.N; i++ {
-		client.ZAddNX(context.Background(), "/yyy/bin", &redis.Z{Score: 0, Member: strconv.Itoa(i) + "namexxxxxxxxxxxxxxxxxxx"})
+		client.ZAddNX(context.Background(), "/yyy/bin", redis.Z{Score: 0, Member: strconv.Itoa(i) + "namexxxxxxxxxxxxxxxxxxx"})
 	}
 }
 
@@ -149,7 +149,7 @@ func xTestNameListAdd(t *testing.T) {
 	ts1 := time.Now()
 
 	for i := 0; i < N; i++ {
-		client.ZAddNX(context.Background(), "/x", &redis.Z{Score: 0, Member: fmt.Sprintf("name %8d", i)})
+		client.ZAddNX(context.Background(), "/x", redis.Z{Score: 0, Member: fmt.Sprintf("name %8d", i)})
 	}
 	ts2 := time.Now()
 
@@ -205,6 +205,6 @@ func xBenchmarkRedis(b *testing.B) {
 	})
 
 	for i := 0; i < b.N; i++ {
-		client.ZAddNX(context.Background(), "/xxx/bin", &redis.Z{Score: 0, Member: fmt.Sprintf("name %8d", i)})
+		client.ZAddNX(context.Background(), "/xxx/bin", redis.Z{Score: 0, Member: fmt.Sprintf("name %8d", i)})
 	}
 }

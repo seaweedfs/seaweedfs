@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -148,12 +149,17 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		}()
 	}
 
+	prefix := sourcePath
+	if !strings.HasSuffix(prefix, "/") {
+		prefix = prefix + "/"
+	}
+
 	metadataFollowOption := &pb.MetadataFollowOption{
 		ClientName:             "backup_" + dataSink.GetName(),
 		ClientId:               clientId,
 		ClientEpoch:            clientEpoch,
 		SelfSignature:          0,
-		PathPrefix:             sourcePath,
+		PathPrefix:             prefix,
 		AdditionalPathPrefixes: nil,
 		DirectoriesToWatch:     nil,
 		StartTsNs:              startFrom.UnixNano(),
