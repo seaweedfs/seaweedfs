@@ -334,7 +334,10 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 	entry, err = f.Store.FindEntry(ctx, p)
 	if entry != nil && entry.TtlSec > 0 {
 		if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-			f.Store.DeleteOneEntry(ctx, entry)
+			err = f.doDeleteEntryMetaAndData(ctx, entry, false, false, nil)
+			if err != nil {
+				return nil, err
+			}
 			return nil, filer_pb.ErrNotFound
 		}
 	}
@@ -350,7 +353,10 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 		default:
 			if entry.TtlSec > 0 {
 				if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-					f.Store.DeleteOneEntry(ctx, entry)
+					err = f.doDeleteEntryMetaAndData(ctx, entry, false, false, nil)
+					if err != nil {
+						return false
+					}
 					expiredCount++
 					return true
 				}
