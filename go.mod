@@ -120,7 +120,7 @@ require (
 	modernc.org/libc v1.52.1 // indirect
 	modernc.org/mathutil v1.6.0
 	modernc.org/memory v1.8.0 // indirect
-	modernc.org/sqlite v1.30.1
+	modernc.org/sqlite v1.30.2
 	modernc.org/strutil v1.2.0
 	modernc.org/token v1.1.0 // indirect
 )
