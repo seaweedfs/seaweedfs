@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"strings"
 	"sync"
@@ -140,6 +141,8 @@ func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.Full
 			}
 		}
 
+	} else {
+		err = fmt.Errorf("invalid bucket name %s", bucket)
 	}
 
 	return
@@ -340,6 +343,9 @@ func (store *AbstractSqlStore) Shutdown() {
 }
 
 func isValidBucket(bucket string) bool {
+	if s3bucket.VerifyS3BucketName(bucket) != nil {
+		return false
+	}
 	return bucket != DEFAULT_TABLE && bucket != ""
 }
 

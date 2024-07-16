@@ -69,6 +69,10 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
 	}
 
+	if !ms.Topo.DataCenterExists(option.DataCenter) {
+		return nil, fmt.Errorf("data center %v not found in topology", option.DataCenter)
+	}
+
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
 	var (

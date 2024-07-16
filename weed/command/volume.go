@@ -65,6 +65,7 @@ type VolumeServerOptions struct {
 	pprof                     *bool
 	preStopSeconds            *int
 	metricsHttpPort           *int
+	metricsHttpIp             *string
 	// pulseSeconds          *int
 	inflightUploadDataTimeout *time.Duration
 	hasSlowRead               *bool
@@ -99,6 +100,7 @@ func init() {
 	v.concurrentDownloadLimitMB = cmdVolume.Flag.Int("concurrentDownloadLimitMB", 256, "limit total concurrent download size")
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	v.metricsHttpIp = cmdVolume.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
 	v.inflightUploadDataTimeout = cmdVolume.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
 	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
@@ -131,7 +133,15 @@ func runVolume(cmd *Command, args []string) bool {
 		grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
 	}
 
-	go stats_collect.StartMetricsServer(*v.bindIp, *v.metricsHttpPort)
+	switch {
+	case *v.metricsHttpIp != "":
+		// noting to do, use v.metricsHttpIp
+	case *v.bindIp != "":
+		*v.metricsHttpIp = *v.bindIp
+	case *v.ip != "":
+		*v.metricsHttpIp = *v.ip
+	}
+	go stats_collect.StartMetricsServer(*v.metricsHttpIp, *v.metricsHttpPort)
 
 	minFreeSpaces := util.MustParseMinFreeSpace(*minFreeSpace, *minFreeSpacePercent)
 	v.masters = pb.ServerAddresses(*v.mastersString).ToAddresses()

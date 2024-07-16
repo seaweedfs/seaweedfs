@@ -227,9 +227,9 @@ spec:
             failureThreshold: {{ .Values.master.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.master.livenessProbe.timeoutSeconds }}
           {{- end }}
-          {{- if .Values.master.resources }}
+          {{- with .Values.master.resources }}
           resources:
-            {{ tpl .Values.master.resources . | nindent 12 | trim }}
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- if .Values.master.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.master.containerSecurityContext "enabled" | toYaml | nindent 12 }}

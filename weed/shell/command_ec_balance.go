@@ -455,16 +455,20 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 func pickOneEcNodeAndMoveOneShard(commandEnv *CommandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
 	sortEcNodesByFreeslotsDescending(possibleDestinationEcNodes)
-
+	skipReason := ""
 	for _, destEcNode := range possibleDestinationEcNodes {
+
 		if destEcNode.info.Id == existingLocation.info.Id {
 			continue
 		}
 
 		if destEcNode.freeEcSlot <= 0 {
+			skipReason += fmt.Sprintf("  Skipping %s because it has no free slots\n", destEcNode.info.Id)
 			continue
 		}
 		if findEcVolumeShards(destEcNode, vid).ShardIdCount() >= averageShardsPerEcNode {
+			skipReason += fmt.Sprintf("  Skipping %s because it %d >= avernageShards (%d)\n",
+				destEcNode.info.Id, findEcVolumeShards(destEcNode, vid).ShardIdCount(), averageShardsPerEcNode)
 			continue
 		}
 
@@ -477,7 +481,7 @@ func pickOneEcNodeAndMoveOneShard(commandEnv *CommandEnv, averageShardsPerEcNode
 
 		return nil
 	}
-
+	fmt.Printf("WARNING: Could not find suitable taget node for %d.%d:\n%s", vid, shardId, skipReason)
 	return nil
 }
 

@@ -29,9 +29,14 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	if isReplacing {
 		fs.filer.MetaAggregator.ListenersCond.Broadcast() // nudges the subscribers that are waiting
 	} else if alreadyKnown {
+		fs.filer.MetaAggregator.ListenersCond.Broadcast() // nudges the subscribers that are waiting
 		return fmt.Errorf("duplicated subscription detected for client %s id %d", clientName, req.ClientId)
 	}
-	defer fs.deleteClient("", clientName, req.ClientId, req.ClientEpoch)
+	defer func() {
+		glog.V(0).Infof("disconnect %v subscriber %s clientId:%d", clientName, req.PathPrefix, req.ClientId)
+		fs.deleteClient("", clientName, req.ClientId, req.ClientEpoch)
+		fs.filer.MetaAggregator.ListenersCond.Broadcast() // nudges the subscribers that are waiting
+	}()
 
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
@@ -112,6 +117,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	defer func() {
 		glog.V(0).Infof("disconnect %v local subscriber %s clientId:%d", clientName, req.PathPrefix, req.ClientId)
 		fs.deleteClient("local", clientName, req.ClientId, req.ClientEpoch)
+		fs.listenersCond.Broadcast() // nudges the subscribers that are waiting
 	}()
 
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)

@@ -32,18 +32,24 @@ spec:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: filer
-      {{ with .Values.podLabels }}
+      {{- with .Values.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.filer.podLabels }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
       annotations:
-      {{ with .Values.podAnnotations }}
+      {{- with .Values.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.filer.podAnnotations }}
       {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.filer.s3.existingConfigSecret }}
+        {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace .Values.filer.s3.existingConfigSecret) | default dict }}
+        checksum/s3config: {{ $configSecret | toYaml | sha256sum }}
+      {{- else }}
+        checksum/s3config: {{ include (print .Template.BasePath "/s3-secret.yaml") . | sha256sum }}
       {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.filer.restartPolicy }}
@@ -56,9 +62,7 @@ spec:
         {{ tpl .Values.filer.tolerations . | nindent 8 | trim }}
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
-      {{- if .Values.global.createClusterRole }}
       serviceAccountName: {{ .Values.filer.serviceAccountName | default .Values.global.serviceAccountName | quote }} # for deleting statefulset pods after migration
-      {{- end }}
       terminationGracePeriodSeconds: 60
       {{- if .Values.filer.priorityClassName }}
       priorityClassName: {{ .Values.filer.priorityClassName | quote }}
@@ -269,9 +273,9 @@ spec:
             failureThreshold: {{ .Values.filer.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.filer.livenessProbe.timeoutSeconds }}
           {{- end }}
-          {{- if .Values.filer.resources }}
+          {{- with .Values.filer.resources }}
           resources:
-            {{ tpl .Values.filer.resources . | nindent 12 | trim }}
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- if .Values.filer.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}

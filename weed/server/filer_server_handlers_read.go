@@ -71,14 +71,14 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	ifModifiedSinceHeader := r.Header.Get("If-Modified-Since")
 	if ifNoneMatchETagHeader != "" {
 		if util.CanonicalizeETag(etag) == util.CanonicalizeETag(ifNoneMatchETagHeader) {
-			setEtag(w, etag)
+			SetEtag(w, etag)
 			w.WriteHeader(http.StatusNotModified)
 			return true
 		}
 	} else if ifModifiedSinceHeader != "" {
 		if t, parseError := time.Parse(http.TimeFormat, ifModifiedSinceHeader); parseError == nil {
 			if !t.Before(entry.Attr.Mtime) {
-				setEtag(w, etag)
+				SetEtag(w, etag)
 				w.WriteHeader(http.StatusNotModified)
 				return true
 			}
@@ -220,13 +220,13 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(s3_constants.AmzTagCount, strconv.Itoa(tagCount))
 	}
 
-	setEtag(w, etag)
+	SetEtag(w, etag)
 
 	filename := entry.Name()
-	adjustPassthroughHeaders(w, r, filename)
+	AdjustPassthroughHeaders(w, r, filename)
 	totalSize := int64(entry.Size())
 
-	if r.Method == "HEAD" {
+	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
 	}
@@ -252,7 +252,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	processRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
+	ProcessRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
 		if offset+size <= int64(len(entry.Content)) {
 			return func(writer io.Writer) error {
 				_, err := writer.Write(entry.Content[offset : offset+size])

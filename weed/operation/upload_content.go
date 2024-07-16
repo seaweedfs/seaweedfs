@@ -325,7 +325,7 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	} else {
 		reqReader = bytes.NewReader(option.BytesBuffer.Bytes())
 	}
-	req, postErr := http.NewRequest("POST", option.UploadUrl, reqReader)
+	req, postErr := http.NewRequest(http.MethodPost, option.UploadUrl, reqReader)
 	if postErr != nil {
 		glog.V(1).Infof("create upload request %s: %v", option.UploadUrl, postErr)
 		return nil, fmt.Errorf("create upload request %s: %v", option.UploadUrl, postErr)

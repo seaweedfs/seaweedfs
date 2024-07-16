@@ -85,7 +85,7 @@ func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, storeId string, 
 
 func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerStore) {
 	store = fsw.defaultStore
-	if path == "/" {
+	if path == "/" || path == "//" {
 		return
 	}
 	var storeId string
@@ -182,7 +182,7 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	}()
 
 	existingEntry, findErr := fsw.FindEntry(ctx, fp)
-	if findErr == filer_pb.ErrNotFound {
+	if findErr == filer_pb.ErrNotFound || existingEntry == nil {
 		return nil
 	}
 	if len(existingEntry.HardLinkId) != 0 {

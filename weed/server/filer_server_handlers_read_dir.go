@@ -31,8 +31,8 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		path = path[:len(path)-1]
 	}
 
-	limit, limit_err := strconv.Atoi(r.FormValue("limit"))
-	if limit_err != nil {
+	limit, limitErr := strconv.Atoi(r.FormValue("limit"))
+	if limitErr != nil {
 		limit = fs.option.DirListingLimit
 	}
 

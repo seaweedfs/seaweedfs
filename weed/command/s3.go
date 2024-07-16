@@ -49,6 +49,7 @@ type S3Options struct {
 	tlsCACertificate          *string
 	tlsVerifyClientCert       *bool
 	metricsHttpPort           *int
+	metricsHttpIp             *string
 	allowEmptyFolder          *bool
 	allowDeleteBucketNotEmpty *bool
 	auditLogConfig            *string
@@ -75,6 +76,7 @@ func init() {
 	s3StandaloneOptions.tlsCACertificate = cmdS3.Flag.String("cacert.file", "", "path to the TLS CA certificate file")
 	s3StandaloneOptions.tlsVerifyClientCert = cmdS3.Flag.Bool("tlsVerifyClientCert", false, "whether to verify the client's certificate")
 	s3StandaloneOptions.metricsHttpPort = cmdS3.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	s3StandaloneOptions.metricsHttpIp = cmdS3.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
@@ -165,7 +167,13 @@ func runS3(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
-	go stats_collect.StartMetricsServer(*s3StandaloneOptions.bindIp, *s3StandaloneOptions.metricsHttpPort)
+	switch {
+	case *s3StandaloneOptions.metricsHttpIp != "":
+		// noting to do, use s3StandaloneOptions.metricsHttpIp
+	case *s3StandaloneOptions.bindIp != "":
+		*s3StandaloneOptions.metricsHttpIp = *s3StandaloneOptions.bindIp
+	}
+	go stats_collect.StartMetricsServer(*s3StandaloneOptions.metricsHttpIp, *s3StandaloneOptions.metricsHttpPort)
 
 	return s3StandaloneOptions.startS3Server()
 

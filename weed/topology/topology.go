@@ -285,6 +285,22 @@ func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	}
 }
 
+func (t *Topology) DataCenterExists(dcName string) bool {
+	return dcName == "" || t.GetOrCreateDataCenter(dcName) != nil
+}
+
+func (t *Topology) GetDataCenter(dcName string) (dc *DataCenter) {
+	t.RLock()
+	defer t.RUnlock()
+	for _, c := range t.children {
+		dc = c.(*DataCenter)
+		if string(dc.Id()) == dcName {
+			return dc
+		}
+	}
+	return dc
+}
+
 func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
 	t.Lock()
 	defer t.Unlock()

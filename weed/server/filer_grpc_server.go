@@ -363,12 +363,7 @@ func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.Delet
 
 	glog.V(4).Infof("DeleteCollection %v", req)
 
-	err = fs.filer.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
-			Name: req.GetCollection(),
-		})
-		return err
-	})
+	err = fs.filer.DoDeleteCollection(req.GetCollection())
 
 	return &filer_pb.DeleteCollectionResponse{}, err
 }

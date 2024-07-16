@@ -132,7 +132,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	wg.Wait()
 
 	if uploadErr != nil {
-		fs.filer.DeleteChunks(fileChunks)
+		fs.filer.DeleteUncommittedChunks(fileChunks)
 		return nil, md5Hash, 0, uploadErr, nil
 	}
 	slices.SortFunc(fileChunks, func(a, b *filer_pb.FileChunk) int {

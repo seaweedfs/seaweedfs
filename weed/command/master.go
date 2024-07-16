@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -52,6 +53,7 @@ type MasterOptions struct {
 	metricsIntervalSec *int
 	raftResumeState    *bool
 	metricsHttpPort    *int
+	metricsHttpIp      *string
 	heartbeatInterval  *time.Duration
 	electionTimeout    *time.Duration
 	raftHashicorp      *bool
@@ -76,6 +78,7 @@ func init() {
 	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address <host>:<port>")
 	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 	m.metricsHttpPort = cmdMaster.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	m.metricsHttpIp = cmdMaster.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
 	m.heartbeatInterval = cmdMaster.Flag.Duration("heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
@@ -120,7 +123,15 @@ func runMaster(cmd *Command, args []string) bool {
 		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
 
-	go stats_collect.StartMetricsServer(*m.ipBind, *m.metricsHttpPort)
+	switch {
+	case *m.metricsHttpIp != "":
+		// noting to do, use m.metricsHttpIp
+	case *m.ipBind != "":
+		*m.metricsHttpIp = *m.ipBind
+	case *m.ip != "":
+		*m.metricsHttpIp = *m.ip
+	}
+	go stats_collect.StartMetricsServer(*m.metricsHttpIp, *m.metricsHttpPort)
 	startMaster(m, masterWhiteList)
 
 	return true
@@ -179,10 +190,10 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		}
 	}
 	ms.SetRaftServer(raftServer)
-	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
-	r.HandleFunc("/cluster/healthz", raftServer.HealthzHandler).Methods("GET", "HEAD")
+	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods(http.MethodGet)
+	r.HandleFunc("/cluster/healthz", raftServer.HealthzHandler).Methods(http.MethodGet, http.MethodHead)
 	if *masterOption.raftHashicorp {
-		r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods("GET")
+		r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods(http.MethodGet)
 	}
 	// starting grpc server
 	grpcPort := *masterOption.portGrpc
@@ -218,7 +229,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		}()
 	}
 
-	go ms.MasterClient.KeepConnectedToMaster()
+	go ms.MasterClient.KeepConnectedToMaster(context.Background())
 
 	// start http server
 	var (

@@ -55,7 +55,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 
 	if isDeleteCollection {
 		collectionName := entry.Name()
-		f.doDeleteCollection(collectionName)
+		f.DoDeleteCollection(collectionName)
 	}
 
 	return nil
@@ -114,7 +114,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	}
 
 	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
-	f.DeleteChunks(chunksToDelete)
+	f.DeleteChunks(entry.FullPath, chunksToDelete)
 
 	return nil
 }
@@ -133,7 +133,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	return nil
 }
 
-func (f *Filer) doDeleteCollection(collectionName string) (err error) {
+func (f *Filer) DoDeleteCollection(collectionName string) (err error) {
 
 	return f.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{

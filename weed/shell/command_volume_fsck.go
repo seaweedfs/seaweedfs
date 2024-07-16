@@ -651,9 +651,12 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 	}
 
 	eachDataNode(topologyInfo, func(dc string, rack RackId, t *master_pb.DataNodeInfo) {
+		var volumeCount, ecShardCount int
+		dataNodeId := t.GetId()
 		for _, diskInfo := range t.DiskInfos {
-			dataNodeId := t.GetId()
-			volumeIdToServer[dataNodeId] = make(map[uint32]VInfo)
+			if _, ok := volumeIdToServer[dataNodeId]; !ok {
+				volumeIdToServer[dataNodeId] = make(map[uint32]VInfo)
+			}
 			for _, vi := range diskInfo.VolumeInfos {
 				volumeIdToServer[dataNodeId][vi.Id] = VInfo{
 					server:     pb.NewServerAddressFromDataNode(t),
@@ -661,6 +664,7 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 					isEcVolume: false,
 					isReadOnly: vi.ReadOnly,
 				}
+				volumeCount += 1
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
 				volumeIdToServer[dataNodeId][ecShardInfo.Id] = VInfo{
@@ -669,10 +673,11 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 					isEcVolume: true,
 					isReadOnly: true,
 				}
+				ecShardCount += 1
 			}
-			if *c.verbose {
-				fmt.Fprintf(c.writer, "dn %+v collected %d volumes and locations.\n", dataNodeId, len(volumeIdToServer[dataNodeId]))
-			}
+		}
+		if *c.verbose {
+			fmt.Fprintf(c.writer, "dn %+v collected %d volumes and %d ec shards.\n", dataNodeId, volumeCount, ecShardCount)
 		}
 	})
 	return

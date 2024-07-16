@@ -19,6 +19,7 @@ global:
       filerRead: false
   # we will use this serviceAccountName for all ClusterRoles/ClusterRoleBindings
   serviceAccountName: "seaweedfs"
+  automountServiceAccountToken: true
   certificates:
     alphacrds: false
   monitoring:
@@ -48,9 +49,6 @@ image:
 
 master:
   enabled: true
-  repository: null
-  imageName: null
-  imageTag: null
   imageOverride: null
   restartPolicy: null
   replicas: 1
@@ -140,7 +138,7 @@ master:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # updatePartition is used to control a careful rolling update of SeaweedFS
   # masters.
@@ -256,9 +254,6 @@ master:
 
 volume:
   enabled: true
-  repository: null
-  imageName: null
-  imageTag: null
   imageOverride: null
   restartPolicy: null
   port: 8080
@@ -401,7 +396,7 @@ volume:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
@@ -473,9 +468,6 @@ volume:
 
 filer:
   enabled: true
-  repository: null
-  imageName: null
-  imageTag: null
   imageOverride: null
   restartPolicy: null
   replicas: 1
@@ -593,7 +585,7 @@ filer:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
@@ -740,9 +732,7 @@ filer:
 
 s3:
   enabled: false
-  repository: null
-  imageName: null
-  imageTag: null
+  imageOverride: null
   restartPolicy: null
   replicas: 1
   bindAddress: 0.0.0.0
@@ -789,7 +779,7 @@ s3:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
