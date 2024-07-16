@@ -8,7 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 )
 
@@ -82,20 +81,18 @@ func (v *Volume) Destroy(onlyEmpty bool) (err error) {
 	}
 	v.doClose()
 
-	skipVif := util.FileExists(VolumeFileName(v.dir, v.Collection, int(v.Id)) + ".ecx") //如果目录下面有ec的文件，不要删除vif
-	removeVolumeFiles(v.DataFileName(), skipVif)
-	removeVolumeFiles(v.IndexFileName(), skipVif)
+	//skipVif := util.FileExists(VolumeFileName(v.dir, v.Collection, int(v.Id)) + ".ecx") //如果目录下面有ec的文件，不要删除vif
+	removeVolumeFiles(v.DataFileName())
+	removeVolumeFiles(v.IndexFileName())
 	return
 }
 
-func removeVolumeFiles(filename string, skipVif bool) {
+func removeVolumeFiles(filename string) {
 	// basic
 	os.Remove(filename + ".dat")
 	os.Remove(filename + ".idx")
 
-	if !skipVif {
-		os.Remove(filename + ".vif")
-	}
+	os.Remove(filename + ".vif")
 	// sorted index file
 	os.Remove(filename + ".sdx")
 	// compaction

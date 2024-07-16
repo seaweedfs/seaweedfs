@@ -140,9 +140,10 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	}
 
 	// skip if ec volumes exists
-	hasEcVolume := util.FileExists(l.IdxDirectory + "/" + volumeName + ".ecx")
-	if skipIfEcVolumesExists && hasEcVolume {
-		return false
+	if skipIfEcVolumesExists {
+		if util.FileExists(l.IdxDirectory + "/" + volumeName + ".ecx") {
+			return false
+		}
 	}
 
 	// check for incomplete volume
@@ -150,8 +151,8 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if util.FileExists(noteFile) {
 		note, _ := os.ReadFile(noteFile)
 		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
-		removeVolumeFiles(l.Directory+"/"+volumeName, hasEcVolume)
-		removeVolumeFiles(l.IdxDirectory+"/"+volumeName, hasEcVolume)
+		removeVolumeFiles(l.Directory + "/" + volumeName)
+		removeVolumeFiles(l.IdxDirectory + "/" + volumeName)
 		return false
 	}
 
