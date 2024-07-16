@@ -178,7 +178,7 @@ func runFiler(cmd *Command, args []string) bool {
 		go http.ListenAndServe(fmt.Sprintf(":%d", *f.debugPort), nil)
 	}
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 
 	switch {
 	case *f.metricsHttpIp != "":

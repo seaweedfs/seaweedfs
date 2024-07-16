@@ -24,7 +24,7 @@ var (
 func main() {
 	flag.Parse()
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	vid := uint32(*volumeId)

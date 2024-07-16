@@ -179,7 +179,7 @@ func runServer(cmd *Command, args []string) bool {
 		go http.ListenAndServe(fmt.Sprintf(":%d", *serverOptions.debugPort), nil)
 	}
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 
 	grace.SetupProfiling(*serverOptions.cpuprofile, *serverOptions.memprofile)

@@ -165,7 +165,7 @@ var cmdS3 = &Command{
 
 func runS3(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 
 	switch {
 	case *s3StandaloneOptions.metricsHttpIp != "":
