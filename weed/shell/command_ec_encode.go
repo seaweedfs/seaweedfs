@@ -202,12 +202,14 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 	// ask the data nodes to copy from the source volume server
 	copiedShardIds, err := parallelCopyEcShardsFromSource(commandEnv.option.GrpcDialOption, allocatedDataNodes, allocatedEcIds, volumeId, collection, existingLocations[0], parallelCopy, isDifferentDiskType)
 	if err != nil {
+		clean(commandEnv.option.GrpcDialOption, allocatedDataNodes, allocatedEcIds, copiedShardIds, volumeId, collection, existingLocations[0])
 		return err
 	}
 
 	// unmount the to be deleted shards
 	err = unmountEcShards(commandEnv.option.GrpcDialOption, volumeId, existingLocations[0].ServerAddress(), copiedShardIds)
 	if err != nil {
+		clean(commandEnv.option.GrpcDialOption, allocatedDataNodes, allocatedEcIds, copiedShardIds, volumeId, collection, existingLocations[0])
 		return err
 	}
 
@@ -230,6 +232,30 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 
 }
 
+func clean(grpcDialOption grpc.DialOption, targetServers []*EcNode, allocatedEcIds [][]uint32, actuallyCopied []uint32, volumeId needle.VolumeId, collection string, existingLocation wdclient.Location) {
+	cleanupFunc := func(server *EcNode, allocatedEcShardIds []uint32) {
+		if err := unmountEcShards(grpcDialOption, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
+			fmt.Printf("unmount aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
+		}
+		if err := sourceServerDeleteEcShards(grpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
+			fmt.Printf("remove aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
+		}
+	}
+	for i, server := range targetServers {
+		if len(allocatedEcIds[i]) <= 0 {
+			continue
+		}
+		cleanupFunc(server, allocatedEcIds[i])
+	}
+	// 删除本地已经生成的ec shard
+	if err := unmountEcShards(grpcDialOption, volumeId, existingLocation.ServerAddress(), actuallyCopied); err != nil {
+		fmt.Printf("unmount copied shards %d.%v on %s: %v\n", volumeId, actuallyCopied, existingLocation.ServerAddress().String(), err)
+	}
+	if err := sourceServerDeleteEcShards(grpcDialOption, collection, volumeId, existingLocation.ServerAddress(), actuallyCopied); err != nil {
+		fmt.Printf("remove copied shards %d.%v on %s: %v\n", volumeId, actuallyCopied, existingLocation.ServerAddress().String(), err)
+	}
+}
+
 func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServers []*EcNode, allocatedEcIds [][]uint32, volumeId needle.VolumeId, collection string, existingLocation wdclient.Location, parallelCopy bool, isDifferentDiskType bool) (actuallyCopied []uint32, err error) {
 
 	fmt.Printf("parallelCopyEcShardsFromSource %d %s\n", volumeId, existingLocation.Url)
@@ -242,19 +268,20 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 			allocatedEcShardIds, volumeId, collection, existingLocation.ServerAddress(), isDifferentDiskType)
 		if copyErr != nil {
 			err = copyErr
+			shardIdChan <- copiedShardIds
 		} else {
 			shardIdChan <- copiedShardIds
 			server.addEcVolumeShards(volumeId, collection, copiedShardIds)
 		}
 	}
-	cleanupFunc := func(server *EcNode, allocatedEcShardIds []uint32) {
-		if err := unmountEcShards(grpcDialOption, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
-			fmt.Printf("unmount aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
-		}
-		if err := sourceServerDeleteEcShards(grpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
-			fmt.Printf("remove aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
-		}
-	}
+	//cleanupFunc := func(server *EcNode, allocatedEcShardIds []uint32) {
+	//	if err := unmountEcShards(grpcDialOption, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
+	//		fmt.Printf("unmount aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
+	//	}
+	//	if err := sourceServerDeleteEcShards(grpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
+	//		fmt.Printf("remove aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
+	//	}
+	//}
 
 	// maybe parallelize
 	for i, server := range targetServers {
@@ -272,15 +299,26 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 	wg.Wait()
 	close(shardIdChan)
 
-	if err != nil {
-		for i, server := range targetServers {
-			if len(allocatedEcIds[i]) <= 0 {
-				continue
-			}
-			cleanupFunc(server, allocatedEcIds[i])
-		}
-		return nil, err
-	}
+	//if err != nil {
+	//	for i, server := range targetServers {
+	//		if len(allocatedEcIds[i]) <= 0 {
+	//			continue
+	//		}
+	//		cleanupFunc(server, allocatedEcIds[i])
+	//	}
+	//	// 删除本地已经生成的ec shard
+	//	var allocatedEcShardIds []uint32
+	//	for shardIds := range shardIdChan {
+	//		allocatedEcShardIds = append(allocatedEcShardIds, shardIds...)
+	//	}
+	//	if err := unmountEcShards(grpcDialOption, volumeId, existingLocation.ServerAddress(), allocatedEcShardIds); err != nil {
+	//		fmt.Printf("unmount aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, existingLocation.ServerAddress().String(), err)
+	//	}
+	//	if err := sourceServerDeleteEcShards(grpcDialOption, collection, volumeId, existingLocation.ServerAddress(), allocatedEcShardIds); err != nil {
+	//		fmt.Printf("remove copied shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, existingLocation.ServerAddress().String(), err)
+	//	}
+	//	return nil, err
+	//}
 
 	for shardIds := range shardIdChan {
 		actuallyCopied = append(actuallyCopied, shardIds...)
