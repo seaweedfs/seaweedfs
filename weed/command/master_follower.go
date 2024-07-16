@@ -68,7 +68,7 @@ var cmdMasterFollower = &Command{
 
 func runMasterFollower(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 
 	if *mf.portGrpc == 0 {

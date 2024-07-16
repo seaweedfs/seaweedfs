@@ -83,7 +83,7 @@ var cmdFilerCopy = &Command{
 
 func runCopy(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 
 	if len(args) <= 1 {
 		return false

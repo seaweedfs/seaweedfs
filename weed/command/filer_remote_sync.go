@@ -73,7 +73,7 @@ var cmdFilerRemoteSynchronize = &Command{
 
 func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	remoteSyncOptions.grpcDialOption = grpcDialOption
 

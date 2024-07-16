@@ -56,7 +56,7 @@ The backup writes to another filer store specified in a backup_filer.toml.
 
 func runFilerMetaBackup(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	metaBackup.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	// load backup_filer.toml

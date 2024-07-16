@@ -111,7 +111,7 @@ var (
 
 func runBenchmark(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	b.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)

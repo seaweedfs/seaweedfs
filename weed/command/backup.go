@@ -66,7 +66,7 @@ var cmdBackup = &Command{
 
 func runBackup(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	if *s.volumeId == -1 {

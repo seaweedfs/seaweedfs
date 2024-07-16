@@ -66,7 +66,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// try to connect to filer
 	filerAddresses := pb.ServerAddresses(*option.filer).ToAddresses()
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
 	var err error

@@ -125,7 +125,7 @@ var (
 
 func runVolume(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 
 	// If --pprof is set we assume the caller wants to be able to collect
 	// cpu and memory profiles via go tool pprof
