@@ -107,7 +107,8 @@ func (v *volumesBinaryState) copyState(list *VolumeLocationList) copyState {
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
 	growRequest      atomic.Bool
-	rp               *super_block.ReplicaPlacement
+	lastGrowCount    atomic.Uint32
+  rp               *super_block.ReplicaPlacement
 	ttl              *needle.TTL
 	diskType         types.DiskType
 	vid2location     map[needle.VolumeId]*VolumeLocationList
@@ -354,6 +355,16 @@ func (vl *VolumeLayout) DoneGrowRequest() {
 	vl.growRequest.Store(false)
 }
 
+func (vl *VolumeLayout) SetLastGrowCount(count uint32) {
+	if vl.lastGrowCount.Load() != count {
+		vl.lastGrowCount.Store(count)
+	}
+}
+
+func (vl *VolumeLayout) GetLastGrowCount() uint32 {
+	return vl.lastGrowCount.Load()
+}
+
 func (vl *VolumeLayout) ShouldGrowVolumes(option *VolumeGrowOption) bool {
 	total, active, crowded := vl.GetActiveVolumeCount(option)
 	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.DataCenter, "total").Set(float64(total))
@@ -536,6 +547,13 @@ func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
 	info.Writables = vl.writables
 	info.DiskType = vl.diskType.ReadableString()
 	//m["locations"] = vl.vid2location
+	return
+}
+
+func (vl *VolumeLayout) ToGrowOption() (option *VolumeGrowOption) {
+	option.ReplicaPlacement = vl.rp
+	option.Ttl = vl.ttl
+	option.DiskType = vl.diskType
 	return
 }
 

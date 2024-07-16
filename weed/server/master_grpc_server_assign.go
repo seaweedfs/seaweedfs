@@ -74,6 +74,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+	vl.SetLastGrowCount(req.WritableVolumeCount)
 
 	var (
 		lastErr    error
@@ -91,7 +92,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			vl.AddGrowRequest()
 			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 				Option: option,
-				Count:  int(req.WritableVolumeCount),
+				Count:  req.WritableVolumeCount,
 			}
 		}
 		if err != nil {

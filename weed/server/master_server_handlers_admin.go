@@ -70,7 +70,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request) {
-	count := 0
+	count := uint64(0)
 	option, err := ms.getVolumeGrowOption(r)
 	if err != nil {
 		writeJsonError(w, r, http.StatusNotAcceptable, err)
@@ -78,15 +78,16 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 	}
 	glog.V(0).Infof("volumeGrowHandler received %v from %v", option.String(), r.RemoteAddr)
 
-	if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
-		if ms.Topo.AvailableSpaceFor(option) < int64(count*option.ReplicaPlacement.GetCopyCount()) {
-			err = fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.AvailableSpaceFor(option), count*option.ReplicaPlacement.GetCopyCount())
+	if count, err = strconv.ParseUint(r.FormValue("count"), 10, 32); err == nil {
+		replicaCount := int64(count * uint64(option.ReplicaPlacement.GetCopyCount()))
+		if ms.Topo.AvailableSpaceFor(option) < replicaCount {
+			err = fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.AvailableSpaceFor(option), replicaCount)
 		} else if !ms.Topo.DataCenterExists(option.DataCenter) {
 			err = fmt.Errorf("data center %v not found in topology", option.DataCenter)
 		} else {
 			var newVidLocations []*master_pb.VolumeLocation
-			newVidLocations, err = ms.vg.GrowByCountAndType(ms.grpcDialOption, count, option, ms.Topo)
-			count = len(newVidLocations)
+			newVidLocations, err = ms.vg.GrowByCountAndType(ms.grpcDialOption, uint32(count), option, ms.Topo)
+			count = uint64(len(newVidLocations))
 		}
 	} else {
 		err = fmt.Errorf("can not parse parameter count %s", r.FormValue("count"))
