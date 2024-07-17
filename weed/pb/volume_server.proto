@@ -496,6 +496,7 @@ message VolumeInfo {
     uint32 version = 2;
     string replication = 3;
     uint32 BytesOffset = 4;
+    uint64 DestroyTime = 5;
 }
 
 // tiered storage

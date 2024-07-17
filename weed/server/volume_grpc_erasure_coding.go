@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -71,7 +72,20 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	}
 
 	// write .vif files
-	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}); err != nil {
+	var destroyTime uint64
+	if v.Ttl != nil {
+		ttlMills := v.Ttl.ToSeconds()
+		if ttlMills > 0 {
+			destroyTime = uint64(time.Now().Unix()) + v.Ttl.ToSeconds() //生成ec文件开始计算失效时间
+		}
+	}
+	volumeInfo := &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}
+	if destroyTime == 0 {
+		glog.Warningf("gen ec volume,cal ec volume destory time fail,set time to 0,ttl:%v", v.Ttl)
+	} else {
+		volumeInfo.DestroyTime = destroyTime
+	}
+	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
 		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
 	}
 
@@ -152,7 +166,6 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecx", false, false, nil); err != nil {
 				return err
 			}
-			return nil
 		}
 
 		if req.CopyEcjFile {
@@ -496,7 +509,7 @@ func (vs *VolumeServer) VolumeEcShardsMove(ctx context.Context, req *volume_serv
 			}
 		}
 		if fileName == "" {
-			glog.V(3).Infof("CopyFile ecx not found ec volume id %d %d", req.VolumeId)
+			glog.V(3).Infof("CopyFile ecx not found ec volume id %d", req.VolumeId)
 		} else {
 			if err := copyFile(fileName, indexBaseFileName+".ecx"); err != nil {
 				glog.V(3).Infof("copy ecx %s -> %s", fileName, indexBaseFileName+".ecx")

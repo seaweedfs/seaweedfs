@@ -67,6 +67,11 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	err = operation.WithVolumeServerClient(false, targetAddress, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 		if targetAddress != existingLocation {
+			copiedShardIds = shardIdsToCopy
+			glog.V(0).Infof("%s ec volume %d deletes shards %+v", existingLocation, volumeId, copiedShardIds)
+		}
+
+		if targetAddress != existingLocation {
 
 			fmt.Printf("copy %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 			_, copyErr := volumeServerClient.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
@@ -103,11 +108,6 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 		})
 		if mountErr != nil {
 			return fmt.Errorf("mount %d.%v on %s : %v\n", volumeId, shardIdsToCopy, targetServer.info.Id, mountErr)
-		}
-
-		if targetAddress != existingLocation {
-			copiedShardIds = shardIdsToCopy
-			glog.V(0).Infof("%s ec volume %d deletes shards %+v", existingLocation, volumeId, copiedShardIds)
 		}
 
 		return nil

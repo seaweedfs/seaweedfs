@@ -103,6 +103,26 @@ func (t *TTL) String() string {
 	return ""
 }
 
+func (t *TTL) ToSeconds() uint64 {
+	switch t.Unit {
+	case Empty:
+		return 0
+	case Minute:
+		return uint64(t.Count) * 60
+	case Hour:
+		return uint64(t.Count) * 60 * 60
+	case Day:
+		return uint64(t.Count) * 60 * 24 * 60
+	case Week:
+		return uint64(t.Count) * 60 * 24 * 7 * 60
+	case Month:
+		return uint64(t.Count) * 60 * 24 * 30 * 60
+	case Year:
+		return uint64(t.Count) * 60 * 24 * 365 * 60
+	}
+	return 0
+}
+
 func toStoredByte(readableUnitByte byte) byte {
 	switch readableUnitByte {
 	case 'm':

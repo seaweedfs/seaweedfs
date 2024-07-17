@@ -3,6 +3,7 @@ package erasure_coding
 import (
 	"errors"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"math"
 	"os"
 	"sync"
@@ -20,7 +21,8 @@ import (
 )
 
 var (
-	NotFoundError = errors.New("needle not found")
+	NotFoundError             = errors.New("needle not found")
+	destroyDelaySeconds int64 = 0
 )
 
 type EcVolume struct {
@@ -42,6 +44,7 @@ type EcVolume struct {
 	diskType                  types.DiskType
 	lastReadAt                time.Time
 	expireTime                int64
+	DestroyTime               uint64 //ec volume删除时间
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId, ecVolumeExpireClose int64) (ev *EcVolume, err error) {
@@ -71,7 +74,9 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	ev.Version = needle.Version3
 	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(dataBaseFileName + ".vif"); found {
 		ev.Version = needle.Version(volumeInfo.Version)
+		ev.DestroyTime = volumeInfo.DestroyTime
 	} else {
+		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, dataBaseFileName)
 		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
 	}
 
@@ -205,9 +210,10 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.V
 	for _, s := range ev.Shards {
 		if s.VolumeId != prevVolumeId {
 			m = &master_pb.VolumeEcShardInformationMessage{
-				Id:         uint32(s.VolumeId),
-				Collection: s.Collection,
-				DiskType:   string(ev.diskType),
+				Id:          uint32(s.VolumeId),
+				Collection:  s.Collection,
+				DiskType:    string(ev.diskType),
+				DestroyTime: ev.DestroyTime,
 			}
 			messages = append(messages, m)
 		}
@@ -303,4 +309,8 @@ func (ev *EcVolume) IsExpire() bool {
 		return true
 	}
 	return false
+}
+
+func (ev *EcVolume) IsTimeToDestroy() bool {
+	return ev.DestroyTime > 0 && time.Now().Unix() > (int64(ev.DestroyTime)+destroyDelaySeconds)
 }
