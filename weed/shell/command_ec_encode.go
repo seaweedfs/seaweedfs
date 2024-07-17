@@ -92,6 +92,9 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			glog.V(0).Infof("skip erasure coding with %d nodes, less than recommended %d nodes", nodeCount, erasure_coding.ParityShardsCount)
 			return nil
 		}
+		if erasure_coding.TotalShardsCount/nodeCount > erasure_coding.ParityShardsCount {
+			return fmt.Errorf("data node is too less. must ensure >= %d", erasure_coding.TotalShardsCount/erasure_coding.ParityShardsCount)
+		}
 	}
 
 	vid := needle.VolumeId(*volumeId)
