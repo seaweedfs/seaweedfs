@@ -80,7 +80,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
 			}
 			for _, s := range dn.GetEcShards() {
-				message.DeletedVids = append(message.DeletedVids, uint32(s.VolumeId))
+				message.DeletedEcVids = append(message.DeletedEcVids, uint32(s.VolumeId))
 			}
 
 			// if the volume server disconnects and reconnects quickly
@@ -89,7 +89,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			glog.V(0).Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
 			ms.UnRegisterUuids(dn.Ip, dn.Port)
 
-			if len(message.DeletedVids) > 0 {
+			if len(message.DeletedVids) > 0 || len(message.DeletedEcVids) > 0 {
 				ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
 			}
 		}
