@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -45,6 +46,7 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 
 func main() {
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
 
 	config := &pub_client.PublisherConfiguration{
 		Topic:          topic.NewTopic(*namespace, *t),

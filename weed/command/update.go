@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/net/context/ctxhttp"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 //copied from https://github.com/restic/restic/tree/master/internal/selfupdate
@@ -198,7 +199,7 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 	if err != nil {
 		return Release{}, err
 	}
-	defer util.CloseResponse(res)
+	defer util_http.CloseResponse(res)
 
 	if res.StatusCode != http.StatusOK {
 		content := res.Header.Get("Content-Type")
@@ -258,7 +259,7 @@ func getGithubData(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer util.CloseResponse(res)
+	defer util_http.CloseResponse(res)
 
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %v (%v) returned", res.StatusCode, res.Status)

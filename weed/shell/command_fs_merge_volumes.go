@@ -19,14 +19,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-)
-
-var (
-	client *http.Client
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func init() {
-	client = &http.Client{}
 	Commands = append(Commands, &commandFsMergeVolumes{})
 }
 
@@ -104,7 +100,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 		return nil
 	}
 
-	defer client.CloseIdleConnections()
+	defer util_http.GetGlobalHttpClient().CloseIdleConnections()
 
 	return commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 		return filer_pb.TraverseBfs(commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) {
@@ -304,7 +300,7 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 	if err != nil {
 		return err
 	}
-	defer util.CloseResponse(resp)
+	defer util_http.CloseResponse(resp)
 	defer reader.Close()
 
 	var filename string
@@ -322,7 +318,12 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 	isCompressed := resp.Header.Get("Content-Encoding") == "gzip"
 	md5 := resp.Header.Get("Content-MD5")
 
-	_, err, _ = operation.Upload(reader, &operation.UploadOption{
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return err
+	}
+	
+	_, err, _ = uploader.Upload(reader, &operation.UploadOption{
 		UploadUrl:         uploadURL,
 		Filename:          filename,
 		IsInputCompressed: isCompressed,
@@ -348,12 +349,12 @@ func readUrl(fileUrl string) (*http.Response, io.ReadCloser, error) {
 	}
 	req.Header.Add("Accept-Encoding", "gzip")
 
-	r, err := client.Do(req)
+	r, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
 	if r.StatusCode >= 400 {
-		util.CloseResponse(r)
+		util_http.CloseResponse(r)
 		return nil, nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 

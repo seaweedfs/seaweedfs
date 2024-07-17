@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -86,6 +87,7 @@ func (r *MyRecord) ToRecordValue() *schema_pb.RecordValue {
 
 func main() {
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
 
 	recordType := schema.RecordTypeBegin().
 		WithField("key", schema.TypeBytes).

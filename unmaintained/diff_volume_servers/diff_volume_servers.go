@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -40,7 +41,8 @@ var (
 */
 func main() {
 	flag.Parse()
-
+	util_http.InitGlobalHttpClient()
+	
 	util.LoadSecurityConfiguration()
 	grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 

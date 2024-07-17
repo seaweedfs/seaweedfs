@@ -55,7 +55,13 @@ func (b *MessageQueueBroker) appendToFile(targetFile string, data []byte) error 
 func (b *MessageQueueBroker) assignAndUpload(targetFile string, data []byte) (fileId string, uploadResult *operation.UploadResult, err error) {
 
 	reader := util.NewBytesReader(data)
-	fileId, uploadResult, err, _ = operation.UploadWithRetry(
+
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return
+	}
+
+	fileId, uploadResult, err, _ = uploader.UploadWithRetry(
 		b,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,

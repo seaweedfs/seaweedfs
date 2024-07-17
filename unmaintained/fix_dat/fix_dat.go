@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -36,6 +37,8 @@ The .idx has all correct offsets.
 */
 func main() {
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
+
 	fileName := strconv.Itoa(*fixVolumeId)
 	if *fixVolumeCollection != "" {
 		fileName = *fixVolumeCollection + "_" + fileName

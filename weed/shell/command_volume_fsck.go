@@ -31,6 +31,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func init() {
@@ -552,9 +553,7 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
 	}
 
-	client := &http.Client{}
-
-	resp, err := client.Do(req)
+	resp, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		fmt.Fprintf(c.writer, "DELETE fetch error: %v\n", err)
 	}

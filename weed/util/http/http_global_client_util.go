@@ -1,4 +1,4 @@
-package util
+package http
 
 import (
 	"compress/gzip"
@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,23 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
-var (
-	client    *http.Client
-	Transport *http.Transport
-)
-
-func init() {
-	Transport = &http.Transport{
-		MaxIdleConns:        1024,
-		MaxIdleConnsPerHost: 1024,
-	}
-	client = &http.Client{
-		Transport: Transport,
-	}
-}
-
 func Post(url string, values url.Values) ([]byte, error) {
-	r, err := client.PostForm(url, values)
+	r, err := GetGlobalHttpClient().PostForm(url, values)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +50,7 @@ func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
 	maybeAddAuth(request, jwt)
 	request.Header.Add("Accept-Encoding", "gzip")
 
-	response, err := client.Do(request)
+	response, err := GetGlobalHttpClient().Do(request)
 	if err != nil {
 		return nil, true, err
 	}
@@ -94,7 +80,7 @@ func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
 }
 
 func Head(url string) (http.Header, error) {
-	r, err := client.Head(url)
+	r, err := GetGlobalHttpClient().Head(url)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +103,7 @@ func Delete(url string, jwt string) error {
 	if err != nil {
 		return err
 	}
-	resp, e := client.Do(req)
+	resp, e := GetGlobalHttpClient().Do(req)
 	if e != nil {
 		return e
 	}
@@ -145,7 +131,7 @@ func DeleteProxied(url string, jwt string) (body []byte, httpStatus int, err err
 	if err != nil {
 		return
 	}
-	resp, err := client.Do(req)
+	resp, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return
 	}
@@ -159,7 +145,7 @@ func DeleteProxied(url string, jwt string) (body []byte, httpStatus int, err err
 }
 
 func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
-	r, err := client.PostForm(url, values)
+	r, err := GetGlobalHttpClient().PostForm(url, values)
 	if err != nil {
 		return err
 	}
@@ -182,7 +168,7 @@ func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachB
 }
 
 func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) error {
-	r, err := client.PostForm(url, values)
+	r, err := GetGlobalHttpClient().PostForm(url, values)
 	if err != nil {
 		return err
 	}
@@ -201,7 +187,7 @@ func DownloadFile(fileUrl string, jwt string) (filename string, header http.Head
 
 	maybeAddAuth(req, jwt)
 
-	response, err := client.Do(req)
+	response, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -219,14 +205,11 @@ func DownloadFile(fileUrl string, jwt string) (filename string, header http.Head
 }
 
 func Do(req *http.Request) (resp *http.Response, err error) {
-	return client.Do(req)
+	return GetGlobalHttpClient().Do(req)
 }
 
-func NormalizeUrl(url string) string {
-	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
-		return url
-	}
-	return "http://" + url
+func NormalizeUrl(url string) (string, error) {
+	return GetGlobalHttpClient().NormalizeHttpScheme(url)
 }
 
 func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
@@ -249,7 +232,7 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 		req.Header.Set("Accept-Encoding", "gzip")
 	}
 
-	r, err := client.Do(req)
+	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -322,7 +305,7 @@ func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isConte
 		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 	}
 
-	r, err := client.Do(req)
+	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return true, err
 	}
@@ -368,12 +351,12 @@ func readEncryptedUrl(fileUrl, jwt string, cipherKey []byte, isContentCompressed
 	if err != nil {
 		return retryable, fmt.Errorf("fetch %s: %v", fileUrl, err)
 	}
-	decryptedData, err := Decrypt(encryptedData, CipherKey(cipherKey))
+	decryptedData, err := util.Decrypt(encryptedData, util.CipherKey(cipherKey))
 	if err != nil {
 		return false, fmt.Errorf("decrypt %s: %v", fileUrl, err)
 	}
 	if isContentCompressed {
-		decryptedData, err = DecompressData(decryptedData)
+		decryptedData, err = util.DecompressData(decryptedData)
 		if err != nil {
 			glog.V(0).Infof("unzip decrypt %s: %v", fileUrl, err)
 		}
@@ -403,7 +386,7 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 
 	maybeAddAuth(req, jwt)
 
-	r, err := client.Do(req)
+	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -463,7 +446,7 @@ func RetriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte,
 
 	var shouldRetry bool
 
-	for waitTime := time.Second; waitTime < RetryWaitTime; waitTime += waitTime / 2 {
+	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
 		for _, urlString := range urlStrings {
 			n = 0
 			if strings.Contains(urlString, "%") {

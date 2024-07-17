@@ -20,6 +20,7 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var IsDebug *bool
@@ -86,6 +87,7 @@ func main() {
 		return
 	}
 
+	util_http.InitGlobalHttpClient()
 	for _, cmd := range commands {
 		if cmd.Name() == args[0] && cmd.Run != nil {
 			cmd.Flag.Usage = func() { cmd.Usage() }

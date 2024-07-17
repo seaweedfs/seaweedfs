@@ -16,7 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
@@ -171,7 +171,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	defer util.CloseResponse(resp)
+	defer util_http.CloseResponse(resp)
 
 	if resp.StatusCode == http.StatusPreconditionFailed {
 		s3err.WriteErrorResponse(w, r, s3err.ErrPreconditionFailed)
