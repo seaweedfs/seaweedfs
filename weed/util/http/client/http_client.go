@@ -142,19 +142,13 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 	return &httpClient, nil
 }
 
-func loadSecurityConfig(){
-	loadSecurityConfigOnce.Do(func() {
-		util.LoadConfiguration("security", false)
-	})
-}
-
 func getStringOptionFromSecurityConfiguration(clientName ClientName, stringOptionName string) string {
-	loadSecurityConfig()
+	util.LoadSecurityConfiguration()
 	return viper.GetString(fmt.Sprintf("https.%s.%s", clientName.LowerCaseString(), stringOptionName))
 }
 
 func getBoolOptionFromSecurityConfiguration(clientName ClientName, boolOptionName string) bool {
-	loadSecurityConfig()
+	util.LoadSecurityConfiguration()
 	return viper.GetBool(fmt.Sprintf("https.%s.%s", clientName.LowerCaseString(), boolOptionName))
 }
 
