@@ -50,7 +50,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	}
 
 	if shouldDeleteChunks && !isDeleteCollection {
-		f.DirectDeleteChunks(entry.GetChunks())
+		f.DeleteChunks(p, entry.GetChunks())
 	}
 
 	if isDeleteCollection {
