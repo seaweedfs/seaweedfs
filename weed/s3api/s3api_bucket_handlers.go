@@ -455,7 +455,11 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 	for prefix, ttl := range collectionTtls {
 		bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
 		if strings.HasPrefix(prefix, bucketPrefix) && strings.HasSuffix(ttl, "d") {
-			fc.DeleteLocationConf(prefix)
+			pathConf, found := fc.GetLocationConf(prefix)
+			if found {
+				pathConf.Ttl = ""
+				fc.SetLocationConf(pathConf)
+			}
 			changed = true
 		}
 	}
