@@ -551,6 +551,7 @@ func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
 }
 
 func (vl *VolumeLayout) ToGrowOption() (option *VolumeGrowOption) {
+	option = &VolumeGrowOption{}
 	option.ReplicaPlacement = vl.rp
 	option.Ttl = vl.ttl
 	option.DiskType = vl.diskType
