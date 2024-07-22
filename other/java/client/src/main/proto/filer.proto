@@ -344,6 +344,8 @@ message GetFilerConfigurationResponse {
     string version = 11;
     string cluster_id = 12;
     string filer_group = 13;
+    int32 major_version = 14;
+    int32 minor_version = 15;
 }
 
 message SubscribeMetadataRequest {
