@@ -41,7 +41,7 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 	fh.entryLock.RLock()
 	defer fh.entryLock.RUnlock()
 
-	fileSize := int64(filer.FileSize(fh.GetEntry()))
+	fileSize := int64(filer.FileSize(fh.GetEntry().GetEntry()))
 	offset := max(int64(in.Offset), 0)
 
 	glog.V(4).Infof(

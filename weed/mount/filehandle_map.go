@@ -50,7 +50,7 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 	} else {
 		fh.counter++
 	}
-	if fh.GetEntry() != entry {
+	if fh.GetEntry().GetEntry() != entry {
 		fh.SetEntry(entry)
 	}
 	return fh

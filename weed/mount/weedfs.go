@@ -122,7 +122,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 					// Update handle entry
 					newentry, status := wfs.maybeLoadEntry(filePath)
 					if status == fuse.OK {
-						if fh.GetEntry() != newentry {
+						if fh.GetEntry().GetEntry() != newentry {
 							fh.SetEntry(newentry)
 						}
 					}

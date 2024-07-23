@@ -66,8 +66,8 @@ func (fh *FileHandle) FullPath() util.FullPath {
 	return fp
 }
 
-func (fh *FileHandle) GetEntry() *filer_pb.Entry {
-	return fh.entry.GetEntry()
+func (fh *FileHandle) GetEntry() *LockedEntry {
+	return fh.entry
 }
 
 func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
