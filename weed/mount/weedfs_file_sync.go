@@ -116,8 +116,6 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		fh.entryLock.Lock()
-		defer fh.entryLock.Unlock()
 
 		entry := fh.GetEntry()
 		entry.Name = name // this flush may be just after a rename operation

@@ -38,8 +38,6 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 	// lock the file until the proper offset was calculated
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("Lseek", fh.fh, util.SharedLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-	fh.entryLock.RLock()
-	defer fh.entryLock.RUnlock()
 
 	fileSize := int64(filer.FileSize(fh.GetEntry().GetEntry()))
 	offset := max(int64(in.Offset), 0)
