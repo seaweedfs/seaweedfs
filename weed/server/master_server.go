@@ -186,22 +186,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())
 	} else if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
-		leaderCh := raftServer.RaftHashicorp.LeaderCh()
-		prevLeader, _ := ms.Topo.HashicorpRaft.LeaderWithID()
 		raftServerName = ms.Topo.HashicorpRaft.String()
-		go func() {
-			for {
-				select {
-				case isLeader := <-leaderCh:
-					ms.Topo.RaftServerAccessLock.RLock()
-					leader, _ := ms.Topo.HashicorpRaft.LeaderWithID()
-					ms.Topo.RaftServerAccessLock.RUnlock()
-					glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
-					stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
-					prevLeader = leader
-				}
-			}
-		}()
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
 

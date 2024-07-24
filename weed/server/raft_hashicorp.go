@@ -5,6 +5,14 @@ package weed_server
 
 import (
 	"fmt"
+	"math/rand"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
 	transport "github.com/Jille/raft-grpc-transport"
 	"github.com/armon/go-metrics"
 	"github.com/armon/go-metrics/prometheus"
@@ -14,13 +22,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"google.golang.org/grpc"
-	"math/rand"
-	"os"
-	"path"
-	"path/filepath"
-	"sort"
-	"strings"
-	"time"
 )
 
 const (
@@ -56,43 +57,64 @@ func (s *RaftServer) AddPeersConfiguration() (cfg raft.Configuration) {
 	return cfg
 }
 
-func (s *RaftServer) UpdatePeers() {
+func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 	for {
+		prevLeader, _ := s.RaftHashicorp.LeaderWithID()
 		select {
 		case isLeader := <-s.RaftHashicorp.LeaderCh():
+			leader, _ := s.RaftHashicorp.LeaderWithID()
 			if isLeader {
-				peerLeader := string(s.serverAddr)
-				existsPeerName := make(map[string]bool)
-				for _, server := range s.RaftHashicorp.GetConfiguration().Configuration().Servers {
-					if string(server.ID) == peerLeader {
-						continue
-					}
-					existsPeerName[string(server.ID)] = true
+
+				if updatePeers {
+					s.updatePeers()
+					updatePeers = false
 				}
-				for _, peer := range s.peers {
-					peerName := string(peer)
-					if peerName == peerLeader || existsPeerName[peerName] {
-						continue
-					}
-					glog.V(0).Infof("adding new peer: %s", peerName)
-					s.RaftHashicorp.AddVoter(
-						raft.ServerID(peerName), raft.ServerAddress(peer.ToGrpcAddress()), 0, 0)
+
+				glog.V(0).Infof("raft do barrier")
+				barrier := s.RaftHashicorp.Barrier(2 * time.Minute)
+				if err := barrier.Error(); err != nil {
+					glog.Fatalf("failed to wait for barrier, error %s", err)
 				}
-				for peer := range existsPeerName {
-					if _, found := s.peers[peer]; !found {
-						glog.V(0).Infof("removing old peer: %s", peer)
-						s.RaftHashicorp.RemoveServer(raft.ServerID(peer), 0, 0)
-					}
-				}
-				if _, found := s.peers[peerLeader]; !found {
-					glog.V(0).Infof("removing old leader peer: %s", peerLeader)
-					s.RaftHashicorp.RemoveServer(raft.ServerID(peerLeader), 0, 0)
-				}
+				glog.V(0).Infof("raft do barrier done")
+				s.topo.HashicorpRaftBarrierDone = true
+
+				stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
+			} else {
+				s.topo.HashicorpRaftBarrierDone = false
 			}
-			return
-		case <-time.After(updatePeersTimeout):
-			return
+			glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
+			prevLeader = leader
 		}
+	}
+}
+
+func (s *RaftServer) updatePeers() {
+	peerLeader := string(s.serverAddr)
+	existsPeerName := make(map[string]bool)
+	for _, server := range s.RaftHashicorp.GetConfiguration().Configuration().Servers {
+		if string(server.ID) == peerLeader {
+			continue
+		}
+		existsPeerName[string(server.ID)] = true
+	}
+	for _, peer := range s.peers {
+		peerName := string(peer)
+		if peerName == peerLeader || existsPeerName[peerName] {
+			continue
+		}
+		glog.V(0).Infof("adding new peer: %s", peerName)
+		s.RaftHashicorp.AddVoter(
+			raft.ServerID(peerName), raft.ServerAddress(peer.ToGrpcAddress()), 0, 0)
+	}
+	for peer := range existsPeerName {
+		if _, found := s.peers[peer]; !found {
+			glog.V(0).Infof("removing old peer: %s", peer)
+			s.RaftHashicorp.RemoveServer(raft.ServerID(peer), 0, 0)
+		}
+	}
+	if _, found := s.peers[peerLeader]; !found {
+		glog.V(0).Infof("removing old leader peer: %s", peerLeader)
+		s.RaftHashicorp.RemoveServer(raft.ServerID(peerLeader), 0, 0)
 	}
 }
 
@@ -157,6 +179,8 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("raft.NewRaft: %v", err)
 	}
+
+	updatePeers := false
 	if option.RaftBootstrap || len(s.RaftHashicorp.GetConfiguration().Configuration().Servers) == 0 {
 		cfg := s.AddPeersConfiguration()
 		// Need to get lock, in case all servers do this at the same time.
@@ -169,8 +193,10 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 			return nil, fmt.Errorf("raft.Raft.BootstrapCluster: %v", err)
 		}
 	} else {
-		go s.UpdatePeers()
+		updatePeers = true
 	}
+
+	go s.monitorLeaderLoop(updatePeers)
 
 	ticker := time.NewTicker(c.HeartbeatTimeout * 10)
 	if glog.V(4) {

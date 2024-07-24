@@ -47,11 +47,12 @@ type Topology struct {
 
 	Configuration *Configuration
 
-	RaftServer           raft.Server
-	RaftServerAccessLock sync.RWMutex
-	HashicorpRaft        *hashicorpRaft.Raft
-	UuidAccessLock       sync.RWMutex
-	UuidMap              map[string][]string
+	RaftServer               raft.Server
+	RaftServerAccessLock     sync.RWMutex
+	HashicorpRaft            *hashicorpRaft.Raft
+	HashicorpRaftBarrierDone bool
+	UuidAccessLock           sync.RWMutex
+	UuidMap                  map[string][]string
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -113,7 +114,7 @@ func (t *Topology) IsLeader() bool {
 			}
 		}
 	} else if t.HashicorpRaft != nil {
-		if t.HashicorpRaft.State() == hashicorpRaft.Leader {
+		if t.HashicorpRaft.State() == hashicorpRaft.Leader && t.HashicorpRaftBarrierDone {
 			return true
 		}
 	}
