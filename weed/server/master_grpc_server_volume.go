@@ -3,12 +3,13 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"math/rand"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 
 	"github.com/seaweedfs/raft"
 

@@ -70,17 +70,11 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 					updatePeers = false
 				}
 
-				glog.V(0).Infof("raft do barrier")
-				barrier := s.RaftHashicorp.Barrier(2 * time.Minute)
-				if err := barrier.Error(); err != nil {
-					glog.Fatalf("failed to wait for barrier, error %s", err)
-				}
-				glog.V(0).Infof("raft do barrier done")
-				s.topo.HashicorpRaftBarrierDone = true
+				s.topo.DoBarrier()
 
 				stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
 			} else {
-				s.topo.HashicorpRaftBarrierDone = false
+				s.topo.BarrierReset()
 			}
 			glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
 			prevLeader = leader
