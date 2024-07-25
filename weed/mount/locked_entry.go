@@ -16,6 +16,8 @@ func (le *LockedEntry) GetEntry() *filer_pb.Entry {
 	return le.Entry
 }
 
+// SetEntry sets the entry of the LockedEntry
+// entry should never be nil
 func (le *LockedEntry) SetEntry(entry *filer_pb.Entry) {
 	le.Lock()
 	defer le.Unlock()

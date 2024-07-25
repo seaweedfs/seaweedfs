@@ -116,13 +116,8 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		fh.entryLock.Lock()
-		defer fh.entryLock.Unlock()
 
 		entry := fh.GetEntry()
-		if entry == nil {
-			return nil
-		}
 		entry.Name = name // this flush may be just after a rename operation
 
 		if entry.Attributes != nil {
@@ -141,7 +136,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 
 		request := &filer_pb.CreateEntryRequest{
 			Directory:                string(dir),
-			Entry:                    entry,
+			Entry:                    entry.GetEntry(),
 			Signatures:               []int32{wfs.signature},
 			SkipCheckParentDirectory: true,
 		}
