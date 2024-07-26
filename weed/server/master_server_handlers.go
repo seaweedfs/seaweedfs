@@ -2,11 +2,12 @@ package weed_server
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -74,7 +75,10 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 			machines := ms.Topo.Lookup(collection, volumeId)
 			for _, loc := range machines {
 				locations = append(locations, operation.Location{
-					Url: loc.Url(), PublicUrl: loc.PublicUrl, DataCenter: loc.GetDataCenterId(),
+					Url:        loc.Url(),
+					PublicUrl:  loc.PublicUrl,
+					DataCenter: loc.GetDataCenterId(),
+					GrpcPort:   loc.GrpcPort,
 				})
 			}
 		}
@@ -82,7 +86,10 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		machines, getVidLocationsErr := ms.MasterClient.GetVidLocations(vid)
 		for _, loc := range machines {
 			locations = append(locations, operation.Location{
-				Url: loc.Url, PublicUrl: loc.PublicUrl, DataCenter: loc.DataCenter,
+				Url:        loc.Url,
+				PublicUrl:  loc.PublicUrl,
+				DataCenter: loc.DataCenter,
+				GrpcPort:   loc.GrpcPort,
 			})
 		}
 		err = getVidLocationsErr
