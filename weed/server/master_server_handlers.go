@@ -142,7 +142,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl)
-		if shouldGrow && !vl.HasGrowRequest() && vl.ShouldGrowVolumes(option) {
+		if shouldGrow && !vl.HasGrowRequest() {
 			// if picked volume is almost full, trigger a volume-grow request
 			glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
 			if ms.Topo.AvailableSpaceFor(option) <= 0 {
