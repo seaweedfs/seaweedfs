@@ -1,10 +1,11 @@
 package filer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/storage"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -22,6 +23,7 @@ func LookupByMasterClientFn(masterClient *wdclient.MasterClient) func(vids []str
 				locations = append(locations, operation.Location{
 					Url:       loc.Url,
 					PublicUrl: loc.PublicUrl,
+					GrpcPort:  loc.GrpcPort,
 				})
 			}
 			m[vid] = &operation.LookupResult{

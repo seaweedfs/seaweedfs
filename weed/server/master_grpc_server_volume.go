@@ -3,12 +3,13 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"math/rand"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 
 	"github.com/seaweedfs/raft"
 
@@ -115,6 +116,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 					Url:        loc.Url,
 					PublicUrl:  loc.PublicUrl,
 					DataCenter: loc.DataCenter,
+					GrpcPort:   uint32(loc.GrpcPort),
 				})
 			}
 			var auth string
