@@ -84,7 +84,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(req.Count, option, vl)
-		if shouldGrow && !vl.HasGrowRequest() {
+		if shouldGrow && !vl.HasGrowRequest() && vl.ShouldGrowVolumes(option) {
 			// if picked volume is almost full, trigger a volume-grow request
 			if ms.Topo.AvailableSpaceFor(option) <= 0 {
 				return nil, fmt.Errorf("no free volumes left for " + option.String())
