@@ -143,11 +143,9 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl)
 		if shouldGrow && !vl.HasGrowRequest() {
-			// if picked volume is almost full, trigger a volume-grow request
 			glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
-			if ms.Topo.AvailableSpaceFor(option) <= 0 {
-				writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
-				return
+			if err != nil && ms.Topo.AvailableSpaceFor(option) <= 0 {
+				err = fmt.Errorf("%s and no free volumes left for %s", err.Error(), option.String())
 			}
 			vl.AddGrowRequest()
 			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
@@ -156,7 +154,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 		if err != nil {
-			// glog.Warningf("PickForWrite %+v: %v", req, err)
+			stats.MasterPickForWriteErrorCounter.Inc()
 			lastErr = err
 			time.Sleep(200 * time.Millisecond)
 			continue
