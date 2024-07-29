@@ -352,6 +352,8 @@ spec:
       nodeSelector:
         {{ tpl .Values.filer.nodeSelector . | indent 8 | trim }}
       {{- end }}
+  {{- $pvc_exists := include "filer.pvc_exists" . -}}
+  {{- if not $pvc_exists }}
   {{- if and (.Values.filer.enablePVC) (eq .Values.filer.data.type "persistentVolumeClaim") }}
   # DEPRECATION: Deprecate in favor of filer.data section below
   volumeClaimTemplates:
@@ -367,8 +369,7 @@ spec:
       storageClassName: {{ .Values.filer.storageClass }}
       {{- end }}
   {{- end }}
-  {{- $pvc_exists := include "filer.pvc_exists" . -}}
-  {{- if $pvc_exists }}
+  {{- else }}
   volumeClaimTemplates:
     {{- if eq .Values.filer.data.type "persistentVolumeClaim" }}
     - metadata:
