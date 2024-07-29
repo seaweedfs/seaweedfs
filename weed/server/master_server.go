@@ -39,6 +39,7 @@ const (
 )
 
 type MasterOption struct {
+	UIContextPath     string
 	Master            pb.ServerAddress
 	MetaFolder        string
 	VolumeSizeLimitMB uint32
@@ -80,6 +81,7 @@ type MasterServer struct {
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.ServerAddress) *MasterServer {
+	r = routerWithContextPathPrefix(option.UIContextPath, r)
 
 	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")

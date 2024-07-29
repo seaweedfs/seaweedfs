@@ -45,6 +45,7 @@ type VolumeServerOptions struct {
 	idxFolder                 *string
 	ip                        *string
 	publicUrl                 *string
+	uiContextPath             *string
 	bindIp                    *string
 	mastersString             *string
 	masters                   []pb.ServerAddress
@@ -80,6 +81,7 @@ func init() {
 	v.publicPort = cmdVolume.Flag.Int("port.public", 0, "port opened to public")
 	v.ip = cmdVolume.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
+	v.uiContextPath = cmdVolume.Flag.String("ui.contextPath", "", "volume server http context path")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	v.mastersString = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
 	v.preStopSeconds = cmdVolume.Flag.Int("preStopSeconds", 10, "number of seconds between stop send heartbeats and stop volume server")
@@ -248,7 +250,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
-		*v.ip, *v.port, *v.portGrpc, *v.publicUrl,
+		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, *v.uiContextPath,
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes,
 		*v.idxFolder,
 		volumeNeedleMapKind,
