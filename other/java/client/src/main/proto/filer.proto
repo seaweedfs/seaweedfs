@@ -221,6 +221,7 @@ message DeleteEntryRequest {
     bool ignore_recursive_error = 6;
     bool is_from_other_cluster = 7;
     repeated int32 signatures = 8;
+    int64 if_not_modified_after = 9;
 }
 
 message DeleteEntryResponse {
