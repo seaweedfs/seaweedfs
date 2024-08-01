@@ -42,9 +42,12 @@ rules:
     - "events"
   verbs:
     - "get"
-    - "delete"
+    - "list"
+    - "watch"
     - "update"
     - "create"
+    - "delete"
+    - "patch"
 ---
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
