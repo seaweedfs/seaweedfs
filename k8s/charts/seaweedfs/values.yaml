@@ -872,7 +872,7 @@ s3:
 # For more information, visit: https://container-object-storage-interface.github.io/docs/deployment-guide
 cosi:
   enabled: false
-  image: "ghcr.io/seaweedfs/seaweedfs-cosi-driver:v0.1.0"
+  image: "ghcr.io/seaweedfs/seaweedfs-cosi-driver:v0.1.1"
   driverName: "seaweedfs.objectstorage.k8s.io"
   endpoint: ""
   region: ""

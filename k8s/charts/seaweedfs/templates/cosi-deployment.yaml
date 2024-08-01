@@ -145,6 +145,11 @@ spec:
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
           args:
             - {{ printf "--v=%s" (default "5" .Values.cosi.sidecar.logLevel) }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           volumeMounts:
             - mountPath: /var/lib/cosi
               name: socket
