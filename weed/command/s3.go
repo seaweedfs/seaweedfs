@@ -328,6 +328,10 @@ func (s3opt *S3Options) startS3Server() bool {
 			ClientAuth:     clientAuth,
 			ClientCAs:      caCertPool,
 		}
+		err = security.FixTlsConfig(util.GetViper(), httpS.TLSConfig)
+		if err != nil {
+			glog.Fatalf("error with tls config: %v", err)
+		}
 		if *s3opt.portHttps == 0 {
 			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
 			if s3ApiLocalListener != nil {
