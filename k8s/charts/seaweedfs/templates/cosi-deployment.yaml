@@ -173,7 +173,7 @@ spec:
             {{- if .Values.cosi.existingConfigSecret }}
             secretName: {{ .Values.cosi.existingConfigSecret }}
             {{- else }}
-            secretName: seaweedfs-cosi-secret
+            secretName: seaweedfs-client-cert
             {{- end }}
         {{- end }}
         {{- if .Values.global.enableSecurity }}
