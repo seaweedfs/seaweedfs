@@ -55,7 +55,7 @@ func (f *Filer) loopProcessingDeletion() {
 					fileIds = fileIds[:0]
 				}
 				deletionCount = len(toDeleteFileIds)
-				_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
+				_, err := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
 				if err != nil {
 					if !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
 						glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
