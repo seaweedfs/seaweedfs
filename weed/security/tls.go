@@ -199,6 +199,8 @@ func FixTlsConfig(viper *util.ViperProxy, config *tls.Config) error {
 
 func TlsVersionByName(name string) (uint16, error) {
 	switch name {
+	case "":
+		return 0, nil
 	case "SSLv3":
 		return tls.VersionSSL30, nil
 	case "TLS 1.0":
