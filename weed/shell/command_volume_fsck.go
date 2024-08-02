@@ -694,7 +694,7 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 		go func(server pb.ServerAddress, fidList []string) {
 			defer wg.Done()
 
-			if deleteResults, deleteErr := operation.DeleteFilesAtOneVolumeServer(server, c.env.option.GrpcDialOption, fidList, false); deleteErr != nil {
+			if deleteResults, deleteErr := operation.DeleteFileIdsAtOneVolumeServer(server, c.env.option.GrpcDialOption, fidList, false); deleteErr != nil {
 				err = deleteErr
 			} else if deleteResults != nil {
 				resultChan <- deleteResults
