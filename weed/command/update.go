@@ -20,8 +20,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"golang.org/x/net/context/ctxhttp"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"golang.org/x/net/context/ctxhttp"
 )
 
 //copied from https://github.com/restic/restic/tree/master/internal/selfupdate
@@ -309,7 +309,12 @@ func extractToFile(buf []byte, filename, target string) error {
 		trd := tar.NewReader(gr)
 		hdr, terr := trd.Next()
 		if terr != nil {
-			glog.Errorf("uncompress file(%s) failed:%s", hdr.Name, terr)
+			if hdr != nil {
+				glog.Errorf("uncompress file(%s) failed:%s", hdr.Name, terr)
+			} else {
+				glog.Errorf("uncompress file is nil, failed:%s", terr)
+			}
+
 			return terr
 		}
 		rd = trd
