@@ -240,6 +240,9 @@ func runFiler(cmd *Command, args []string) bool {
 // GetCertificateWithUpdate Auto refreshing TSL certificate
 func (fo *FilerOptions) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	certs, err := fo.certProvider.KeyMaterial(context.Background())
+	if certs == nil {
+		return nil, err
+	}
 	return &certs.Certs[0], err
 }
 
