@@ -180,8 +180,11 @@ func runS3(cmd *Command, args []string) bool {
 }
 
 // GetCertificateWithUpdate Auto refreshing TSL certificate
-func (S3opt *S3Options) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-	certs, err := S3opt.certProvider.KeyMaterial(context.Background())
+func (s3opt *S3Options) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	certs, err := s3opt.certProvider.KeyMaterial(context.Background())
+	if certs == nil {
+		return nil, err
+	}
 	return &certs.Certs[0], err
 }
 
