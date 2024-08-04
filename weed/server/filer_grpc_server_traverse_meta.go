@@ -63,7 +63,7 @@ func (fs *FilerServer) iterateDirectory(ctx context.Context, dirPath util.FullPa
 	var listErr error
 	for {
 		var hasEntries bool
-		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(ctx, dirPath, lastFileName, false, 1024, "", "", "", func(entry *filer.Entry) bool {
+		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(ctx, dirPath, lastFileName, false, false, false, 1024, "", "", "", func(entry *filer.Entry) bool {
 			hasEntries = true
 			if fnErr := fn(entry); fnErr != nil {
 				err = fnErr

@@ -6,7 +6,7 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-    command: "master -ip=master"
+    command: "master -ip=master -volumeSizeLimitMB 100"
   volume:
     image: chrislusf/seaweedfs:local
     ports:
@@ -20,7 +20,7 @@ services:
     ports:
       - 3306:3306
     volumes:
-      - ./seaweedfs.sql:/docker-entrypoint-initdb.d/seaweedfs.sql
+      - ./initdb.d:/docker-entrypoint-initdb.d
     environment:
       - MYSQL_ROOT_PASSWORD=secret
       - MYSQL_DATABASE=seaweedfs
@@ -50,18 +50,11 @@ services:
       - master
       - volume
       - mysql
-  ingress:
-    image: jwilder/nginx-proxy:alpine
-    ports:
-      - "80:80"
-    volumes:
-      - /var/run/docker.sock:/tmp/docker.sock:ro
-      - ./nginx/proxy.conf:/etc/nginx/proxy.conf
   s3:
     image: chrislusf/seaweedfs:local
     ports:
       - 8333:8333
-    command: '-v 9 s3 -filer="filer:8888"'
+    command: '-v 9 s3 -ip.bind=0.0.0.0 -filer="filer:8888" -allowEmptyFolder=false -allowDeleteBucketNotEmpty=true -allowListRecursive=true'
     depends_on:
       - master
       - volume
@@ -76,7 +69,7 @@ services:
       REGISTRY_LOG_LEVEL: "debug"
       REGISTRY_STORAGE: "s3"
       REGISTRY_STORAGE_S3_REGION: "us-east-1"
-      REGISTRY_STORAGE_S3_REGIONENDPOINT: "http://ingress"
+      REGISTRY_STORAGE_S3_REGIONENDPOINT: "http://s3:8333"
       REGISTRY_STORAGE_S3_BUCKET: "registry"
       REGISTRY_STORAGE_S3_ACCESSKEY: "some_access_key1"
       REGISTRY_STORAGE_S3_SECRETKEY: "some_secret_key1"
@@ -91,4 +84,3 @@ services:
       - 5001:5001
     depends_on:
       - s3
-      - ingress
