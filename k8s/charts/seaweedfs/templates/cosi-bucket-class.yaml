@@ -1,0 +1,16 @@
+{{- if and .Values.cosi.enabled .Values.cosi.bucketClassName }}
+---
+kind: BucketClass
+apiVersion: objectstorage.k8s.io/v1alpha1
+metadata:
+  name: {{ .Values.cosi.bucketClassName }}
+driverName: {{ .Values.cosi.driverName }}
+deletionPolicy: Delete
+---
+kind: BucketAccessClass
+apiVersion: objectstorage.k8s.io/v1alpha1
+metadata:
+  name: {{ .Values.cosi.bucketClassName }}
+driverName: {{ .Values.cosi.driverName }}
+authenticationType: KEY
+{{- end }}
