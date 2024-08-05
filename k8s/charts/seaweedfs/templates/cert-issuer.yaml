@@ -1,8 +1,8 @@
 {{- if and .Values.global.enableSecurity (not .Values.certificates.externalCertificates.enabled)}}
 apiVersion: cert-manager.io/v1{{ if .Values.global.certificates.alphacrds }}alpha1{{ end }}
-kind: ClusterIssuer
+kind: Issuer
 metadata:
-  name: {{ template "seaweedfs.name" . }}-clusterissuer
+  name: {{ template "seaweedfs.name" . }}-issuer
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
