@@ -154,7 +154,7 @@ require (
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.76.0
 	go.etcd.io/etcd/client/pkg/v3 v3.5.15
 	go.uber.org/atomic v1.11.0
-	golang.org/x/sync v0.7.0
+	golang.org/x/sync v0.8.0
 	google.golang.org/grpc/security/advancedtls v1.0.0
 )
 
