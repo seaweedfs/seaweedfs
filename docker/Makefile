@@ -39,6 +39,9 @@ build_rocksdb_local: build_rocksdb_dev_env
 build_rocksdb:
 	docker build --no-cache -t chrislusf/seaweedfs:rocksdb -f Dockerfile.rocksdb_large .
 
+build_mysql:
+	docker build --no-cache -t jibutech-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.68.1-dev -f Dockerfile.mysql .
+
 s3tests_build:
 	docker build --no-cache -t chrislusf/ceph-s3-tests:local -f Dockerfile.s3tests .
 

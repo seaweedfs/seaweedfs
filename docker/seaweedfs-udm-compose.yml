@@ -1,0 +1,54 @@
+version: '3.9'
+
+services:
+  master:
+    image: jibutech-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.68.7-dev
+    network_mode: "host"
+    ports:
+      - 9333:9333
+      - 19333:19333
+    command: "master -ip=192.168.4.249 -volumeSizeLimitMB=4096 -defaultReplication=000"
+    restart: unless-stopped
+  volume1:
+    image: jibutech-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.68.7-dev
+    network_mode: "host"
+    ports:
+      - 7455:8080
+      - 9325:9325
+    volumes:
+      - /mnt/weed1:/mnt/weed1
+      - /var/log/udm:/var/log/udm
+    command: 'volume -dir=/mnt/weed1 -mserver="localhost:9333" -max=0 -port=8080 -metricsPort=9325 -preStopSeconds=1'
+    depends_on:
+      - master
+    restart: unless-stopped
+  volume2:
+    image: jibutech-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.68.7-dev
+    network_mode: "host"
+    ports:
+      - 7456:8081
+      - 9326:9326
+    volumes:
+      - /mnt/weed2:/mnt/weed2
+      - /var/log/udm:/var/log/udm
+    command: 'volume -dir=/mnt/weed2 -mserver="localhost:9333" -max=0 -port=8081 -metricsPort=9326 -preStopSeconds=1'
+    depends_on:
+      - master
+    restart: unless-stopped
+  filer:
+    image: jibutech-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.68.7-dev
+    network_mode: "host"
+    ports:
+      - 8888:8888
+      - 18888:18888
+      - 9328:9328
+    volumes:
+      - /var/log/udm:/var/log/udm
+    command: '-logdir=/var/log/udm filer -defaultReplicaPlacement=000 -master="localhost:9333" -metricsPort=9328 -maxMB=128'
+    tty: true
+    stdin_open: true
+    depends_on:
+      - master
+      - volume1
+      - volume2
+    restart: unless-stopped

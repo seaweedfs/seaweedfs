@@ -1,0 +1,47 @@
+FROM jibutech-registry.cn-hangzhou.cr.aliyuncs.com/ys1000/golang:1.22.3-bullseye AS builder
+
+RUN sed -i -E "s/[a-zA-Z0-9]+.debian.org/mirrors.aliyun.com/g" /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends git g++ fuse
+
+RUN mkdir -p /go/src/github.com/jibudata/
+RUN git clone https://github.com/jibudata/seaweedfs /go/src/github.com/jibudata/seaweedfs
+ARG BRANCH=3.68-udm
+ARG TAGS
+
+RUN cd /go/src/github.com/jibudata/seaweedfs && git checkout $BRANCH
+RUN cd /go/src/github.com/jibudata/seaweedfs/weed \
+  && export LDFLAGS="-X github.com/jibudata/seaweedfs/weed/util.COMMIT=$(git rev-parse --short HEAD)" \
+  && CGO_ENABLED=0 go build -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}" -o /weed
+
+FROM registry.cn-shanghai.aliyuncs.com/jibutech/alpine:3.18.4 AS final
+COPY --from=builder ./weed /usr/bin/
+#COPY --from=builder ./weed_pub* /usr/bin/
+#COPY --from=builder ./weed_sub* /usr/bin/
+RUN mkdir -p /etc/seaweedfs
+COPY ./filer_mysql.toml /etc/seaweedfs/filer.toml
+COPY ./master-udm.toml /etc/seaweedfs/master.toml
+COPY ./entrypoint.udm.sh /entrypoint.udm.sh
+RUN apk add fuse # for weed mount
+RUN apk add curl # for health checks
+
+# volume server grpc port
+EXPOSE 18080
+# volume server http port
+EXPOSE 8080
+# filer server grpc port
+EXPOSE 18888
+# filer server http port
+EXPOSE 8888
+# master server shared grpc port
+EXPOSE 19333
+# master server shared http port
+EXPOSE 9333
+# s3 server http port
+EXPOSE 8333
+# webdav server http port
+EXPOSE 7333
+
+RUN chmod +x /entrypoint.udm.sh
+
+ENTRYPOINT ["/entrypoint.udm.sh"]

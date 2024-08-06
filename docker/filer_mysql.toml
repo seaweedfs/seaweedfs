@@ -1,0 +1,23 @@
+[mysql2]
+enabled = true
+createTable = """
+  CREATE TABLE IF NOT EXISTS `%s` (
+    `dirhash`   BIGINT NOT NULL,
+    `name`      VARCHAR(766) NOT NULL,
+    `directory` TEXT NOT NULL,
+    `meta`      LONGBLOB,
+    PRIMARY KEY (`dirhash`, `name`)
+  ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+"""
+hostname = "127.0.0.1"
+port = 3306
+username = "root"
+password = "My_root_passw0rd"
+database = "seaweedfs"              # create or use an existing database
+connection_max_idle = 2
+connection_max_open = 100
+connection_max_lifetime_seconds = 0
+interpolateParams = false
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
