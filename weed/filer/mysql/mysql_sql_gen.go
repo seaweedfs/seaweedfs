@@ -49,6 +49,10 @@ func (gen *SqlGenMysql) GetSqlListInclusive(tableName string) string {
 	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND `name` >= ? AND `directory` = ? AND `name` LIKE ? ORDER BY `name` ASC LIMIT ?", tableName)
 }
 
+func (gen *SqlGenMysql) GetSqlListRecursive(tableName string) string {
+	return fmt.Sprintf("SELECT `directory`, `name`, `meta` FROM `%s` WHERE CONCAT(`directory`, `name`) > ? AND ((`dirhash` = ? AND `name` like ?) OR CONCAT(`directory`, `name`) like ?) ORDER BY CONCAT(`directory`, `name`) ASC LIMIT ?", tableName)
+}
+
 func (gen *SqlGenMysql) GetSqlCreateTable(tableName string) string {
 	return fmt.Sprintf(gen.CreateTableSqlTemplate, tableName)
 }

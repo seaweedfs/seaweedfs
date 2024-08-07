@@ -183,6 +183,10 @@ func (store *CassandraStore) ListDirectoryPrefixedEntries(ctx context.Context, d
 	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
+func (store *CassandraStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return lastFileName, filer.ErrUnsupportedRecursivePrefixed
+}
+
 func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	if _, ok := store.isSuperLargeDirectory(string(dirPath)); ok {

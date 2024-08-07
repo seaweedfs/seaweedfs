@@ -289,6 +289,10 @@ func (store *YdbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath
 	return lastFileName, nil
 }
 
+func (store *YdbStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return lastFileName, filer.ErrUnsupportedRecursivePrefixed
+}
+
 func (store *YdbStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	session, err := store.DB.Table().CreateSession(ctx)
 	if err != nil {

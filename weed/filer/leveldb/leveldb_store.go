@@ -174,6 +174,10 @@ func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, dirPath wee
 	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", eachEntryFunc)
 }
 
+func (store *LevelDBStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return lastFileName, filer.ErrUnsupportedRecursivePrefixed
+}
+
 func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	directoryPrefix := genDirectoryKeyPrefix(dirPath, prefix)
