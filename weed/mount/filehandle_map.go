@@ -9,7 +9,6 @@ import (
 
 type FileHandleToInode struct {
 	sync.RWMutex
-	nextFh   FileHandleId
 	inode2fh map[uint64]*FileHandle
 	fh2inode map[FileHandleId]uint64
 }
@@ -18,7 +17,6 @@ func NewFileHandleToInode() *FileHandleToInode {
 	return &FileHandleToInode{
 		inode2fh: make(map[uint64]*FileHandle),
 		fh2inode: make(map[FileHandleId]uint64),
-		nextFh:   FileHandleId(util.RandomUint64()),
 	}
 }
 
@@ -44,8 +42,7 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
 	if !found {
-		fh = newFileHandle(wfs, i.nextFh, inode, entry)
-		i.nextFh = FileHandleId(util.RandomUint64())
+		fh = newFileHandle(wfs, FileHandleId(util.RandomUint64()), inode, entry)
 		i.inode2fh[inode] = fh
 		i.fh2inode[fh.fh] = inode
 	} else {

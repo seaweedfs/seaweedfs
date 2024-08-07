@@ -44,10 +44,7 @@ func NewDirectoryHandleToInode() *DirectoryHandleToInode {
 }
 
 func (wfs *WFS) AcquireDirectoryHandle() (DirectoryHandleId, *DirectoryHandle) {
-	wfs.fhmap.Lock()
-	fh := wfs.fhmap.nextFh
-	wfs.fhmap.nextFh = FileHandleId(util.RandomUint64())
-	wfs.fhmap.Unlock()
+	fh := FileHandleId(util.RandomUint64())
 
 	wfs.dhmap.Lock()
 	defer wfs.dhmap.Unlock()
