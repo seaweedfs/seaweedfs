@@ -305,6 +305,11 @@ volume:
    #   size: "800Gi"
    #   maxVolumes: 0
 
+  # This will automatically create a job for patching Kubernetes resources if the dataDirs type is 'persistentVolumeClaim' and the size has changed.
+  resizeHook:
+    enabled: true
+    image: bitnami/kubectl
+
   # idx can be defined by:
   #
   # idx:
