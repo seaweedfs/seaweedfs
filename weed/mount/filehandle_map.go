@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -17,7 +18,7 @@ func NewFileHandleToInode() *FileHandleToInode {
 	return &FileHandleToInode{
 		inode2fh: make(map[uint64]*FileHandle),
 		fh2inode: make(map[FileHandleId]uint64),
-		nextFh:   0,
+		nextFh:   FileHandleId(util.RandomUint64()),
 	}
 }
 
@@ -44,7 +45,7 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 	fh, found := i.inode2fh[inode]
 	if !found {
 		fh = newFileHandle(wfs, i.nextFh, inode, entry)
-		i.nextFh++
+		i.nextFh = FileHandleId(util.RandomUint64())
 		i.inode2fh[inode] = fh
 		i.fh2inode[fh.fh] = inode
 	} else {
