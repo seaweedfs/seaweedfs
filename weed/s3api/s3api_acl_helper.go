@@ -9,9 +9,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/http"
 	"strings"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type AccountManager interface {
@@ -32,7 +32,7 @@ func GetAccountId(r *http.Request) string {
 // ExtractAcl extracts the acl from the request body, or from the header if request body is empty
 func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucketOwnerId, ownerId, accountId string) (grants []*s3.Grant, errCode s3err.ErrorCode) {
 	if r.Body != nil && r.Body != http.NoBody {
-		defer util.CloseRequest(r)
+		defer util_http.CloseRequest(r)
 
 		var acp s3.AccessControlPolicy
 		err := xmlutil.UnmarshalXML(&acp, xml.NewDecoder(r.Body), "")

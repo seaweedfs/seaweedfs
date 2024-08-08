@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -19,7 +20,7 @@ var (
 	concurrency    = flag.Int("c", 4, "concurrent publishers")
 	partitionCount = flag.Int("p", 6, "partition count")
 
-	clientName   = flag.String("client", "c1", "client name")
+	clientName = flag.String("client", "c1", "client name")
 
 	namespace   = flag.String("ns", "test", "namespace")
 	t           = flag.String("t", "test", "t")
@@ -86,6 +87,7 @@ func (r *MyRecord) ToRecordValue() *schema_pb.RecordValue {
 
 func main() {
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
 
 	recordType := schema.RecordTypeBegin().
 		WithField("key", schema.TypeBytes).

@@ -16,17 +16,17 @@ import (
 )
 
 type LocalPartition struct {
-	ListenersWaits   int64
-	AckTsNs		  	 int64
+	ListenersWaits int64
+	AckTsNs        int64
 
 	// notifying clients
 	ListenersLock sync.Mutex
 	ListenersCond *sync.Cond
 
 	Partition
-	LogBuffer       *log_buffer.LogBuffer
-	Publishers      *LocalPartitionPublishers
-	Subscribers     *LocalPartitionSubscribers
+	LogBuffer   *log_buffer.LogBuffer
+	Publishers  *LocalPartitionPublishers
+	Subscribers *LocalPartitionSubscribers
 
 	followerStream         mq_pb.SeaweedMessaging_PublishFollowMeClient
 	followerGrpcConnection *grpc.ClientConn
@@ -37,7 +37,7 @@ var TIME_FORMAT = "2006-01-02-15-04-05"
 
 func NewLocalPartition(partition Partition, logFlushFn log_buffer.LogFlushFuncType, readFromDiskFn log_buffer.LogReadFromDiskFuncType) *LocalPartition {
 	lp := &LocalPartition{
-		Partition:       partition,
+		Partition:   partition,
 		Publishers:  NewLocalPartitionPublishers(),
 		Subscribers: NewLocalPartitionSubscribers(),
 	}
@@ -155,8 +155,8 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 	if err = p.followerStream.Send(&mq_pb.PublishFollowMeRequest{
 		Message: &mq_pb.PublishFollowMeRequest_Init{
 			Init: &mq_pb.PublishFollowMeRequest_InitMessage{
-				Topic:      initMessage.Topic,
-				Partition:  initMessage.Partition,
+				Topic:     initMessage.Topic,
+				Partition: initMessage.Partition,
 			},
 		},
 	}); err != nil {

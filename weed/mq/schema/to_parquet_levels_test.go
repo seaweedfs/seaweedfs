@@ -11,9 +11,9 @@ func TestToParquetLevels(t *testing.T) {
 		recordType *schema_pb.RecordType
 	}
 	tests := []struct {
-		name    string
-		args    args
-		want    *ParquetLevels
+		name string
+		args args
+		want *ParquetLevels
 	}{
 		{
 			name: "nested type",
@@ -25,13 +25,13 @@ func TestToParquetLevels(t *testing.T) {
 						RecordTypeBegin().
 							WithField("zName", TypeString).
 							WithField("emails", ListOf(TypeString)).
-						RecordTypeEnd()).
+							RecordTypeEnd()).
 					WithField("Company", TypeString).
 					WithRecordField("Address",
 						RecordTypeBegin().
 							WithField("Street", TypeString).
 							WithField("City", TypeString).
-						RecordTypeEnd()).
+							RecordTypeEnd()).
 					RecordTypeEnd(),
 			},
 			want: &ParquetLevels{

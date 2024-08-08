@@ -118,7 +118,7 @@ var cmdFilerSynchronize = &Command{
 
 func runFilerSynchronize(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	grace.SetupProfiling(*syncCpuProfile, *syncMemProfile)
@@ -296,12 +296,17 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 		return setOffset(grpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature, offsetTsNs)
 	})
 
+	prefix := sourcePath
+	if !strings.HasSuffix(prefix, "/") {
+		prefix = prefix + "/"
+	}
+
 	metadataFollowOption := &pb.MetadataFollowOption{
 		ClientName:             clientName,
 		ClientId:               clientId,
 		ClientEpoch:            clientEpoch,
 		SelfSignature:          targetFilerSignature,
-		PathPrefix:             sourcePath,
+		PathPrefix:             prefix,
 		AdditionalPathPrefixes: nil,
 		DirectoriesToWatch:     nil,
 		StartTsNs:              sourceFilerOffsetTsNs,
@@ -469,14 +474,14 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				}
 
 			} else {
-				// new key is outside of the watched directory
+				// new key is outside the watched directory
 				if doDeleteFiles {
 					key := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
 					return dataSink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
 				}
 			}
 		} else {
-			// old key is outside of the watched directory
+			// old key is outside the watched directory
 			if strings.HasPrefix(string(sourceNewKey), sourcePath) {
 				// new key is in the watched directory
 				key := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
@@ -486,7 +491,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 					return nil
 				}
 			} else {
-				// new key is also outside of the watched directory
+				// new key is also outside the watched directory
 				// skip
 			}
 		}

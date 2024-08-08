@@ -6,17 +6,17 @@ import (
 
 type Schema struct {
 	RecordType *schema_pb.RecordType
-	fieldMap map[string]*schema_pb.Field
+	fieldMap   map[string]*schema_pb.Field
 }
 
 func NewSchema(recordType *schema_pb.RecordType) (*Schema, error) {
-	fieldMap := make( map[string]*schema_pb.Field)
+	fieldMap := make(map[string]*schema_pb.Field)
 	for _, field := range recordType.Fields {
 		fieldMap[field.Name] = field
 	}
 	return &Schema{
 		RecordType: recordType,
-		fieldMap: fieldMap,
+		fieldMap:   fieldMap,
 	}, nil
 }
 

@@ -27,24 +27,24 @@ This package is created to resolve these replica placement issues:
 
 type VolumeGrowRequest struct {
 	Option *VolumeGrowOption
-	Count  int
+	Count  uint32
 }
 
 type volumeGrowthStrategy struct {
-	Copy1Count int
-	Copy2Count int
-	Copy3Count int
-	CopyOtherCount int
-	Threshold float64
+	Copy1Count     uint32
+	Copy2Count     uint32
+	Copy3Count     uint32
+	CopyOtherCount uint32
+	Threshold      float64
 }
 
 var (
 	VolumeGrowStrategy = volumeGrowthStrategy{
-		Copy1Count: 7,
-		Copy2Count: 6,
-		Copy3Count: 3,
+		Copy1Count:     7,
+		Copy2Count:     6,
+		Copy3Count:     3,
 		CopyOtherCount: 1,
-		Threshold: 0.9,
+		Threshold:      0.9,
 	}
 )
 
@@ -75,9 +75,10 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 
 // one replication type may need rp.GetCopyCount() actual volumes
 // given copyCount, how many logical volumes to create
-func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
+func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count uint32) {
 	switch copyCount {
-	case 1: count = VolumeGrowStrategy.Copy1Count
+	case 1:
+		count = VolumeGrowStrategy.Copy1Count
 	case 2:
 		count = VolumeGrowStrategy.Copy2Count
 	case 3:
@@ -88,7 +89,7 @@ func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
 	return
 }
 
-func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology, targetCount int) (result []*master_pb.VolumeLocation, err error) {
+func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology, targetCount uint32) (result []*master_pb.VolumeLocation, err error) {
 	if targetCount == 0 {
 		targetCount = vg.findVolumeCount(option.ReplicaPlacement.GetCopyCount())
 	}
@@ -98,11 +99,11 @@ func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOp
 	}
 	return result, err
 }
-func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targetCount int, option *VolumeGrowOption, topo *Topology) (result []*master_pb.VolumeLocation, err error) {
+func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targetCount uint32, option *VolumeGrowOption, topo *Topology) (result []*master_pb.VolumeLocation, err error) {
 	vg.accessLock.Lock()
 	defer vg.accessLock.Unlock()
 
-	for i := 0; i < targetCount; i++ {
+	for i := uint32(0); i < targetCount; i++ {
 		if res, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			result = append(result, res...)
 		} else {
@@ -128,6 +129,7 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 				Url:        server.Url(),
 				PublicUrl:  server.PublicUrl,
 				DataCenter: server.GetDataCenterId(),
+				GrpcPort:   uint32(server.GrpcPort),
 				NewVids:    []uint32{uint32(vid)},
 			})
 		}

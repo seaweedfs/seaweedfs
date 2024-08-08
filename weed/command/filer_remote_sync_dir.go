@@ -64,17 +64,22 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 
 	option.clientEpoch++
 
+	prefix := mountedDir
+	if !strings.HasSuffix(prefix, "/") {
+		prefix = prefix + "/"
+	}
+
 	metadataFollowOption := &pb.MetadataFollowOption{
 		ClientName:             "filer.remote.sync",
 		ClientId:               option.clientId,
 		ClientEpoch:            option.clientEpoch,
 		SelfSignature:          0,
-		PathPrefix:             mountedDir,
+		PathPrefix:             prefix,
 		AdditionalPathPrefixes: []string{filer.DirectoryEtcRemote},
 		DirectoriesToWatch:     nil,
 		StartTsNs:              lastOffsetTs.UnixNano(),
 		StopTsNs:               0,
-		EventErrorType:         pb.TrivialOnError,
+		EventErrorType:         pb.RetryForeverOnError,
 	}
 
 	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)

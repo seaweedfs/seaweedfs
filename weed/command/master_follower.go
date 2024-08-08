@@ -68,7 +68,7 @@ var cmdMasterFollower = &Command{
 
 func runMasterFollower(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
 
 	if *mf.portGrpc == 0 {
@@ -140,7 +140,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	}
 	go grpcS.Serve(grpcL)
 
-	go ms.MasterClient.KeepConnectedToMaster()
+	go ms.MasterClient.KeepConnectedToMaster(context.Background())
 
 	// start http server
 	httpS := &http.Server{Handler: r}

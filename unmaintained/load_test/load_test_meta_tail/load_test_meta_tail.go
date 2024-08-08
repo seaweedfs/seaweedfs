@@ -10,7 +10,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"strconv"
+	"strings"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -22,8 +24,8 @@ var (
 )
 
 func main() {
-
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
 
 	if *isWrite {
 		startGenerateMetadata()
@@ -79,12 +81,17 @@ func startGenerateMetadata() {
 
 func startSubscribeMetadata(eachEntryFunc func(event *filer_pb.SubscribeMetadataResponse) error) {
 
+	prefix := *dir
+	if !strings.HasSuffix(prefix, "/") {
+		prefix = prefix + "/"
+	}
+
 	metadataFollowOption := &pb.MetadataFollowOption{
 		ClientName:             "tail",
 		ClientId:               0,
 		ClientEpoch:            0,
 		SelfSignature:          0,
-		PathPrefix:             *dir,
+		PathPrefix:             prefix,
 		AdditionalPathPrefixes: nil,
 		DirectoriesToWatch:     nil,
 		StartTsNs:              0,

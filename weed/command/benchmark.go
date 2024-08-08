@@ -2,6 +2,7 @@ package command
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type BenchmarkOptions struct {
@@ -110,7 +112,7 @@ var (
 
 func runBenchmark(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	b.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
@@ -128,8 +130,9 @@ func runBenchmark(cmd *Command, args []string) bool {
 	}
 
 	b.masterClient = wdclient.NewMasterClient(b.grpcDialOption, "", "client", "", "", "", *pb.ServerAddresses(*b.masters).ToServiceDiscovery())
-	go b.masterClient.KeepConnectedToMaster()
-	b.masterClient.WaitUntilConnected()
+	ctx := context.Background()
+	go b.masterClient.KeepConnectedToMaster(ctx)
+	b.masterClient.WaitUntilConnected(ctx)
 
 	if *b.write {
 		benchWrite()
@@ -210,9 +213,9 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				}
 				var jwtAuthorization security.EncodedJwt
 				if isSecure {
-					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(), b.grpcDialOption, df.fp.Fid)
+					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(context.Background()), b.grpcDialOption, df.fp.Fid)
 				}
-				if e := util.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
+				if e := util_http.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
 					s.completed++
 				} else {
 					s.failed++
@@ -293,7 +296,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		}
 		var bytes []byte
 		for _, url := range urls {
-			bytes, _, err = util.Get(url)
+			bytes, _, err = util_http.Get(url)
 			if err == nil {
 				break
 			}

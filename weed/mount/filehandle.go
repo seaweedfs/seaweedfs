@@ -66,8 +66,8 @@ func (fh *FileHandle) FullPath() util.FullPath {
 	return fp
 }
 
-func (fh *FileHandle) GetEntry() *filer_pb.Entry {
-	return fh.entry.GetEntry()
+func (fh *FileHandle) GetEntry() *LockedEntry {
+	return fh.entry
 }
 
 func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
@@ -90,13 +90,6 @@ func (fh *FileHandle) UpdateEntry(fn func(entry *filer_pb.Entry)) *filer_pb.Entr
 }
 
 func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
-
-	if fh.entry == nil {
-		return
-	}
-
 	fh.entry.AppendChunks(chunks)
 }
 
@@ -104,9 +97,6 @@ func (fh *FileHandle) ReleaseHandle() {
 
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("ReleaseHandle", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
 
 	fh.dirtyPages.Destroy()
 	if IsDebugFileReadWrite {

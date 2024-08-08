@@ -53,7 +53,13 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		PairMap:           pu.PairMap,
 		Jwt:               auth,
 	}
-	uploadResult, uploadError := operation.UploadData(uncompressedData, uploadOption)
+	
+	uploader, uploaderErr := operation.NewUploader()
+	if uploaderErr != nil {
+		return nil, fmt.Errorf("uploader initialization error: %v", uploaderErr)
+	}
+
+	uploadResult, uploadError := uploader.UploadData(uncompressedData, uploadOption)
 	if uploadError != nil {
 		return nil, fmt.Errorf("upload to volume server: %v", uploadError)
 	}
@@ -91,7 +97,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 
 	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil, false, so.MaxFileNameLength); dbErr != nil {
-		fs.filer.DeleteChunks(entry.GetChunks())
+		fs.filer.DeleteUncommittedChunks(entry.GetChunks())
 		err = dbErr
 		filerResult.Error = dbErr.Error()
 		return

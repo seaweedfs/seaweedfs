@@ -35,7 +35,7 @@ var cmdShell = &Command{
 
 func runShell(command *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	shellOptions.GrpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 	shellOptions.Directory = "/"
 

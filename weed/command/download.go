@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -46,11 +48,11 @@ var cmdDownload = &Command{
 }
 
 func runDownload(cmd *Command, args []string) bool {
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	for _, fid := range args {
-		if e := downloadToFile(func() pb.ServerAddress { return pb.ServerAddress(*d.server) }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
+		if e := downloadToFile(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*d.server) }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
 			fmt.Println("Download Error: ", fid, e)
 		}
 	}
@@ -62,11 +64,11 @@ func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpti
 	if lookupError != nil {
 		return lookupError
 	}
-	filename, _, rc, err := util.DownloadFile(fileUrl, jwt)
+	filename, _, rc, err := util_http.DownloadFile(fileUrl, jwt)
 	if err != nil {
 		return err
 	}
-	defer util.CloseResponse(rc)
+	defer util_http.CloseResponse(rc)
 	if filename == "" {
 		filename = fileId
 	}
@@ -115,10 +117,10 @@ func fetchContent(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption
 		return "", nil, lookupError
 	}
 	var rc *http.Response
-	if filename, _, rc, e = util.DownloadFile(fileUrl, jwt); e != nil {
+	if filename, _, rc, e = util_http.DownloadFile(fileUrl, jwt); e != nil {
 		return "", nil, e
 	}
-	defer util.CloseResponse(rc)
+	defer util_http.CloseResponse(rc)
 	content, e = io.ReadAll(rc.Body)
 	return
 }

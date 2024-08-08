@@ -132,7 +132,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	wg.Wait()
 
 	if uploadErr != nil {
-		fs.filer.DeleteChunks(fileChunks)
+		fs.filer.DeleteUncommittedChunks(fileChunks)
 		return nil, md5Hash, 0, uploadErr, nil
 	}
 	slices.SortFunc(fileChunks, func(a, b *filer_pb.FileChunk) int {
@@ -158,7 +158,13 @@ func (fs *FilerServer) doUpload(urlLocation string, limitedReader io.Reader, fil
 		PairMap:           pairMap,
 		Jwt:               auth,
 	}
-	uploadResult, err, data := operation.Upload(limitedReader, uploadOption)
+
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return nil, err, []byte{}
+	}
+
+	uploadResult, err, data := uploader.Upload(limitedReader, uploadOption)
 	if uploadResult != nil && uploadResult.RetryCount > 0 {
 		stats.FilerHandlerCounter.WithLabelValues(stats.ChunkUploadRetry).Add(float64(uploadResult.RetryCount))
 	}

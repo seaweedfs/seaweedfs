@@ -67,7 +67,7 @@ func (mc *MemChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) 
 			maxStop = max(maxStop, logicStop)
 
 			if t.TsNs >= tsNs {
-				println("read new data1", t.TsNs - tsNs, "ns")
+				println("read new data1", t.TsNs-tsNs, "ns")
 			}
 		}
 	}

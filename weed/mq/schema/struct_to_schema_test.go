@@ -76,7 +76,7 @@ func TestStructToSchema(t *testing.T) {
 					RecordTypeBegin().
 						WithField("Field3", TypeString).
 						WithField("Field4", TypeInt32).
-					RecordTypeEnd(),
+						RecordTypeEnd(),
 				).
 				RecordTypeEnd(),
 		},
@@ -104,7 +104,7 @@ func TestStructToSchema(t *testing.T) {
 						RecordTypeBegin().
 							WithField("Field6", TypeString).
 							WithField("Field7", TypeBytes).
-						RecordTypeEnd(),
+							RecordTypeEnd(),
 					).RecordTypeEnd(),
 				).
 				RecordTypeEnd(),

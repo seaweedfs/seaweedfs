@@ -1,10 +1,11 @@
 package filer
 
 import (
+	"sync"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	"sync"
 )
 
 type ChunkGroup struct {
@@ -54,9 +55,11 @@ func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (
 		section, found := group.sections[si]
 		rangeStart, rangeStop := max(offset, int64(si*SectionSize)), min(offset+int64(len(buff)), int64((si+1)*SectionSize))
 		if !found {
+			rangeStop = min(rangeStop, fileSize)
 			for i := rangeStart; i < rangeStop; i++ {
 				buff[i-offset] = 0
 			}
+			n = int(int64(n) + rangeStop - rangeStart)
 			continue
 		}
 		xn, xTsNs, xErr := section.readDataAt(group, fileSize, buff[rangeStart-offset:rangeStop-offset], rangeStart)

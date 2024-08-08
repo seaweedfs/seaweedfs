@@ -22,6 +22,9 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name | quote }}
     spec:
       restartPolicy: Never
+      {{- if .Values.filer.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.filer.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
       containers:
       - name: post-install-job
         image: {{ template "master.image" . }}
@@ -80,6 +83,9 @@ spec:
           {{- end }}
           - containerPort: {{ .Values.master.grpcPort }}
             #name: swfs-master-grpc
+        {{- if .Values.filer.containerSecurityContext.enabled }}
+        securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+        {{- end }}
     {{- if .Values.filer.s3.enableAuth }}
       volumes:
         - name: config-users

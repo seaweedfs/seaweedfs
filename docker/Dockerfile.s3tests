@@ -25,7 +25,7 @@ ENV \
     NOSETESTS_EXCLUDE="" \
     NOSETESTS_ATTR="" \
     NOSETESTS_OPTIONS="" \
-    S3TEST_CONF="/s3test.conf"
+    S3TEST_CONF="/s3tests.conf"
 
 ENTRYPOINT ["/bin/bash", "-c"]
 CMD ["sleep 30 && exec ./virtualenv/bin/nosetests ${NOSETESTS_OPTIONS-} ${NOSETESTS_ATTR:+-a $NOSETESTS_ATTR} ${NOSETESTS_EXCLUDE:+-e $NOSETESTS_EXCLUDE}"]

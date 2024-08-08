@@ -39,9 +39,7 @@ func fillInDiskStatus(disk *volume_server_pb.DiskStatus) {
 
 		return
 	}
-	disk.Used = disk.All - disk.Free
-	disk.PercentFree = float32((float64(disk.Free) / float64(disk.All)) * 100)
-	disk.PercentUsed = float32((float64(disk.Used) / float64(disk.All)) * 100)
+	calculateDiskRemaining(disk)
 
 	return
 }

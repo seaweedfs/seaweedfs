@@ -31,8 +31,8 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		path = path[:len(path)-1]
 	}
 
-	limit, limit_err := strconv.Atoi(r.FormValue("limit"))
-	if limit_err != nil {
+	limit, limitErr := strconv.Atoi(r.FormValue("limit"))
+	if limitErr != nil {
 		limit = fs.option.DirListingLimit
 	}
 
@@ -62,6 +62,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 
 	if r.Header.Get("Accept") == "application/json" {
 		writeJsonQuiet(w, r, http.StatusOK, struct {
+			Version               string
 			Path                  string
 			Entries               interface{}
 			Limit                 int
@@ -69,6 +70,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 			ShouldDisplayLoadMore bool
 			EmptyFolder           bool
 		}{
+			util.Version(),
 			path,
 			entries,
 			limit,
@@ -80,6 +82,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	err = ui.StatusTpl.Execute(w, struct {
+		Version               string
 		Path                  string
 		Breadcrumbs           []ui.Breadcrumb
 		Entries               interface{}
@@ -89,6 +92,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		EmptyFolder           bool
 		ShowDirectoryDelete   bool
 	}{
+		util.Version(),
 		path,
 		ui.ToBreadcrumb(path),
 		entries,

@@ -60,6 +60,7 @@ func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 }
 
 func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
+	glog.V(4).Infof("Added new Disk %s: maxVolumes=%d", dir, maxVolumeCount)
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
 		idxDir = dir
@@ -138,7 +139,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 
 	// skip if ec volumes exists
 	if skipIfEcVolumesExists {
-		if util.FileExists(l.Directory + "/" + volumeName + ".ecx") {
+		if util.FileExists(l.IdxDirectory + "/" + volumeName + ".ecx") {
 			return false
 		}
 	}
@@ -417,7 +418,6 @@ func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.DirEntry, bool) {
 }
 
 func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) {
-
 	l.volumesLock.RLock()
 	defer l.volumesLock.RUnlock()
 
@@ -426,7 +426,11 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 			continue
 		}
 		datSize, idxSize, _ := vol.FileStat()
-		unUsedSpace += volumeSizeLimit - (datSize + idxSize)
+		unUsedSpaceVolume := int64(volumeSizeLimit) - int64(datSize+idxSize)
+		glog.V(4).Infof("Volume stats for %d: volumeSizeLimit=%d, datSize=%d idxSize=%d unused=%d", vol.Id, volumeSizeLimit, datSize, idxSize, unUsedSpaceVolume)
+		if unUsedSpaceVolume >= 0 {
+			unUsedSpace += uint64(unUsedSpaceVolume)
+		}
 	}
 
 	return

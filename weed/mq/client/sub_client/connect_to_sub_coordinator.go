@@ -122,7 +122,7 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 						StartTsNs: sub.alreadyProcessedTsNs,
 						StartType: mq_pb.PartitionOffsetStartType_EARLIEST_IN_MEMORY,
 					},
-					Filter: sub.ContentConfig.Filter,
+					Filter:          sub.ContentConfig.Filter,
 					FollowerBrokers: assigned.FollowerBrokers,
 				},
 			},

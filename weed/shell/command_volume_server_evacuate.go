@@ -3,14 +3,15 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"io"
+	"os"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
-	"io"
-	"os"
 )
 
 func init() {
@@ -219,7 +220,7 @@ func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][
 	})
 	for i := 0; i < len(otherNodes); i++ {
 		emptyNode := otherNodes[i]
-		if freeVolumeCountfn(emptyNode.info) < 0 {
+		if freeVolumeCountfn(emptyNode.info) <= 0 {
 			continue
 		}
 		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, thisNode, vol, emptyNode, applyChange)

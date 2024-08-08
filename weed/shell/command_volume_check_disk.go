@@ -279,7 +279,7 @@ func doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *Vo
 				fmt.Fprintf(writer, "delete %s %s => %s\n", needleValue.Key.FileId(source.info.Id), source.location.dataNode.Id, target.location.dataNode.Id)
 			}
 		}
-		deleteResults, deleteErr := operation.DeleteFilesAtOneVolumeServer(
+		deleteResults, deleteErr := operation.DeleteFileIdsAtOneVolumeServer(
 			pb.NewServerAddressFromDataNode(target.location.dataNode),
 			grpcDialOption, fidList, false)
 		if deleteErr != nil {

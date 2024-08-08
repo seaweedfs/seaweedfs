@@ -48,7 +48,7 @@ func (p *TopicPublisher) FinishPublish() error {
 	if inputBuffers, found := p.partition2Buffer.AllIntersections(0, pub_balancer.MaxPartitionCount); found {
 		for _, inputBuffer := range inputBuffers {
 			inputBuffer.Enqueue(&mq_pb.DataMessage{
-				TsNs:  time.Now().UnixNano(),
+				TsNs: time.Now().UnixNano(),
 				Ctrl: &mq_pb.ControlMessage{
 					IsClose: true,
 				},

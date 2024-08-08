@@ -19,13 +19,13 @@ func TestWriteReadParquet(t *testing.T) {
 			RecordTypeBegin().
 				WithField("zName", TypeString).
 				WithField("emails", ListOf(TypeString)).
-			RecordTypeEnd()).
+				RecordTypeEnd()).
 		WithField("Company", TypeString).
 		WithRecordField("Address",
 			RecordTypeBegin().
 				WithField("Street", TypeString).
 				WithField("City", TypeString).
-			RecordTypeEnd()).
+				RecordTypeEnd()).
 		RecordTypeEnd()
 	fmt.Printf("RecordType: %v\n", recordType)
 
@@ -85,9 +85,9 @@ func testWritingParquetFile(t *testing.T, count int, filename string, parquetSch
 						fmt.Sprintf("john_%d@c.com", i),
 						fmt.Sprintf("john_%d@d.com", i),
 						fmt.Sprintf("john_%d@e.com", i)).
-				RecordEnd()).
+					RecordEnd()).
 			SetString("Company", fmt.Sprintf("company_%d", i)).
-		RecordEnd()
+			RecordEnd()
 		AddRecordValue(rowBuilder, recordType, parquetLevels, recordValue)
 
 		if count < 10 {

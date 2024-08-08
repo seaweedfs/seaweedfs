@@ -77,7 +77,13 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		PairMap:           nil,
 		Jwt:               assignResult.Auth,
 	}
-	uploadResult, err := operation.UploadData(data, uploadOption)
+
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
+	}
+
+	uploadResult, err := uploader.UploadData(data, uploadOption)
 	if err != nil {
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}

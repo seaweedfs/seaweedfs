@@ -90,6 +90,11 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 		vl.SetVolumeUnavailable(dn, v.Id)
 	}
 
+	// unregister ec shards when volume server disconnected
+	for _, s := range dn.GetEcShards() {
+		t.UnRegisterEcShards(s, dn)
+	}
+
 	negativeUsages := dn.GetDiskUsages().negative()
 	dn.UpAdjustDiskUsageDelta(negativeUsages)
 	dn.DeltaUpdateVolumes([]storage.VolumeInfo{}, dn.GetVolumes())

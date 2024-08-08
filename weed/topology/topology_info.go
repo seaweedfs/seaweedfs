@@ -42,6 +42,15 @@ func (t *Topology) ToInfo() (info TopologyInfo) {
 	return
 }
 
+func (t *Topology) ListVolumeLyauts() (volumeLayouts []*VolumeLayout) {
+	for _, col := range t.collectionMap.Items() {
+		for _, volumeLayout := range col.(*Collection).storageType2VolumeLayout.Items() {
+			volumeLayouts = append(volumeLayouts, volumeLayout.(*VolumeLayout))
+		}
+	}
+	return volumeLayouts
+}
+
 func (t *Topology) ToVolumeMap() interface{} {
 	m := make(map[string]interface{})
 	m["Max"] = t.diskUsages.GetMaxVolumeCount()
@@ -80,6 +89,7 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 					Url:        dn.Url(),
 					PublicUrl:  dn.PublicUrl,
 					DataCenter: dn.GetDataCenterId(),
+					GrpcPort:   uint32(dn.GrpcPort),
 				}
 				for _, v := range dn.GetVolumes() {
 					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(v.Id))
