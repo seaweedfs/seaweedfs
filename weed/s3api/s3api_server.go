@@ -112,7 +112,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// Readiness Probe
 	apiRouter.Methods(http.MethodGet).Path("/status").HandlerFunc(s3a.StatusHandler)
 
-	apiRouter.Methods(http.MethodOptions, http.MethodPut).HandlerFunc(
+	apiRouter.Methods(http.MethodOptions).HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 			if origin != "" {
