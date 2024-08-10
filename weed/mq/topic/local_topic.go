@@ -37,6 +37,12 @@ func (localTopic *LocalTopic) removePartition(partition Partition) bool {
 	localTopic.Partitions = append(localTopic.Partitions[:foundPartitionIndex], localTopic.Partitions[foundPartitionIndex+1:]...)
 	return true
 }
+func (localTopic *LocalTopic) AddPartition(localPartition *LocalPartition) {
+	if localTopic.findPartition(localPartition.Partition) != nil {
+		return
+	}
+	localTopic.Partitions = append(localTopic.Partitions, localPartition)
+}
 
 func (localTopic *LocalTopic) closePartitionPublishers(unixTsNs int64) bool {
 	var wg sync.WaitGroup

@@ -28,10 +28,7 @@ func (manager *LocalTopicManager) AddLocalPartition(topic Topic, localPartition 
 	if !manager.topics.SetIfAbsent(topic.String(), localTopic) {
 		localTopic, _ = manager.topics.Get(topic.String())
 	}
-	if localTopic.findPartition(localPartition.Partition) != nil {
-		return
-	}
-	localTopic.Partitions = append(localTopic.Partitions, localPartition)
+	localTopic.AddPartition(localPartition)
 }
 
 // GetLocalPartition gets a topic from the local topic manager
