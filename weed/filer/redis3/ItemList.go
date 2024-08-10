@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/util/skiplist"
 )
 
@@ -399,9 +399,9 @@ func (nl *ItemList) NodeSize(node *skiplist.SkipListElementReference) int {
 
 func (nl *ItemList) NodeAddMember(node *skiplist.SkipListElementReference, names ...string) error {
 	key := fmt.Sprintf("%s%dm", nl.prefix, node.ElementPointer)
-	var members []*redis.Z
+	var members []redis.Z
 	for _, name := range names {
-		members = append(members, &redis.Z{
+		members = append(members, redis.Z{
 			Score:  0,
 			Member: name,
 		})

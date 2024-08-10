@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 const (
@@ -120,7 +121,7 @@ func fetchChunkRange(buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunction
 		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
 		return 0, err
 	}
-	return util.RetriedFetchChunkData(buffer, urlStrings, cipherKey, isGzipped, false, offset)
+	return util_http.RetriedFetchChunkData(buffer, urlStrings, cipherKey, isGzipped, false, offset)
 }
 
 func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, jwt string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) (err error) {
@@ -132,7 +133,7 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, jwt stri
 		for _, urlString := range urlStrings {
 			var localProcessed int
 			var writeErr error
-			shouldRetry, err = util.ReadUrlAsStreamAuthenticated(urlString+"?readDeleted=true", jwt, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
+			shouldRetry, err = util_http.ReadUrlAsStreamAuthenticated(urlString+"?readDeleted=true", jwt, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
 				if totalWritten > localProcessed {
 					toBeSkipped := totalWritten - localProcessed
 					if len(data) <= toBeSkipped {

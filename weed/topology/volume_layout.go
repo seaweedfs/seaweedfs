@@ -1,7 +1,6 @@
 package topology
 
 import (
-	"errors"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math/rand"
@@ -28,9 +27,10 @@ const (
 type volumeState string
 
 const (
-	readOnlyState  volumeState = "ReadOnly"
-	oversizedState             = "Oversized"
-	crowdedState               = "Crowded"
+	readOnlyState     volumeState = "ReadOnly"
+	oversizedState                = "Oversized"
+	crowdedState                  = "Crowded"
+	noWritableVolumes             = "No writable volumes"
 )
 
 type stateIndicator func(copyState) bool
@@ -106,7 +106,8 @@ func (v *volumesBinaryState) copyState(list *VolumeLocationList) copyState {
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
-	growRequestCount int32
+	growRequest      atomic.Bool
+	lastGrowCount    atomic.Uint32
 	rp               *super_block.ReplicaPlacement
 	ttl              *needle.TTL
 	diskType         types.DiskType
@@ -292,23 +293,15 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 
 	lenWriters := len(vl.writables)
 	if lenWriters <= 0 {
-		//glog.V(0).Infoln("No more writable volumes!")
-		shouldGrow = true
-		return 0, 0, nil, shouldGrow, errors.New("No more writable volumes!")
+		return 0, 0, nil, true, fmt.Errorf("%s in volume layout", noWritableVolumes)
 	}
 	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
 		vid := vl.writables[rand.Intn(lenWriters)]
 		locationList = vl.vid2location[vid]
-		if locationList != nil && locationList.Length() > 0 {
-			// check whether picked file is close to full
-			dn := locationList.Head()
-			info, _ := dn.GetVolumesById(vid)
-			if float64(info.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
-				shouldGrow = true
-			}
-			return vid, count, locationList.Copy(), shouldGrow, nil
+		if locationList == nil || len(locationList.list) == 0 {
+			return 0, 0, nil, false, fmt.Errorf("Strangely vid %s is on no machine!", vid.String())
 		}
-		return 0, 0, nil, shouldGrow, errors.New("Strangely vid " + vid.String() + " is on no machine!")
+		return vid, count, locationList.Copy(), false, nil
 	}
 
 	// clone vl.writables
@@ -331,34 +324,38 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 			if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
 				continue
 			}
-			vid, locationList = writableVolumeId, volumeLocationList.Copy()
-			// check whether picked file is close to full
-			info, _ := dn.GetVolumesById(writableVolumeId)
-			if float64(info.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
-				shouldGrow = true
-			}
-			counter = count
+			vid, locationList, counter = writableVolumeId, volumeLocationList.Copy(), count
 			return
 		}
 	}
-	return vid, count, locationList, true, fmt.Errorf("No writable volumes in DataCenter:%v Rack:%v DataNode:%v", option.DataCenter, option.Rack, option.DataNode)
+	return vid, count, locationList, true, fmt.Errorf("%s in DataCenter:%v Rack:%v DataNode:%v", noWritableVolumes, option.DataCenter, option.Rack, option.DataNode)
 }
 
 func (vl *VolumeLayout) HasGrowRequest() bool {
-	return atomic.LoadInt32(&vl.growRequestCount) > 0
+	return vl.growRequest.Load()
 }
 func (vl *VolumeLayout) AddGrowRequest() {
-	atomic.AddInt32(&vl.growRequestCount, 1)
+	vl.growRequest.Store(true)
 }
 func (vl *VolumeLayout) DoneGrowRequest() {
-	atomic.AddInt32(&vl.growRequestCount, -1)
+	vl.growRequest.Store(false)
+}
+
+func (vl *VolumeLayout) SetLastGrowCount(count uint32) {
+	if vl.lastGrowCount.Load() != count {
+		vl.lastGrowCount.Store(count)
+	}
+}
+
+func (vl *VolumeLayout) GetLastGrowCount() uint32 {
+	return vl.lastGrowCount.Load()
 }
 
 func (vl *VolumeLayout) ShouldGrowVolumes(option *VolumeGrowOption) bool {
 	total, active, crowded := vl.GetActiveVolumeCount(option)
-	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "total").Set(float64(total))
-	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "active").Set(float64(active))
-	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "crowded").Set(float64(crowded))
+	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.DataCenter, "total").Set(float64(total))
+	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.DataCenter, "active").Set(float64(active))
+	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.DataCenter, "crowded").Set(float64(crowded))
 	//glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, high)
 	return active <= crowded
 }
@@ -536,6 +533,14 @@ func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
 	info.Writables = vl.writables
 	info.DiskType = vl.diskType.ReadableString()
 	//m["locations"] = vl.vid2location
+	return
+}
+
+func (vl *VolumeLayout) ToGrowOption() (option *VolumeGrowOption) {
+	option = &VolumeGrowOption{}
+	option.ReplicaPlacement = vl.rp
+	option.Ttl = vl.ttl
+	option.DiskType = vl.diskType
 	return
 }
 

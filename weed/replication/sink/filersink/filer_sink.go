@@ -120,6 +120,10 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				glog.V(3).Infof("already replicated %s", key)
 				return nil
 			}
+			if resp.Entry.Attributes != nil && resp.Entry.Attributes.Mtime >= entry.Attributes.Mtime {
+				glog.V(3).Infof("skip overwriting %s", key)
+				return nil
+			}
 		}
 
 		replicatedChunks, err := fs.replicateChunks(entry.GetChunks(), key)

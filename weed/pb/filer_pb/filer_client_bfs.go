@@ -1,7 +1,10 @@
 package filer_pb
 
 import (
+	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"io"
 	"sync"
 	"time"
 
@@ -12,7 +15,7 @@ func TraverseBfs(filerClient FilerClient, parentPath util.FullPath, fn func(pare
 	K := 5
 
 	var jobQueueWg sync.WaitGroup
-	queue := util.NewQueue()
+	queue := util.NewQueue[util.FullPath]()
 	jobQueueWg.Add(1)
 	queue.Enqueue(parentPath)
 	terminates := make([]chan bool, K)
@@ -26,11 +29,11 @@ func TraverseBfs(filerClient FilerClient, parentPath util.FullPath, fn func(pare
 					return
 				default:
 					t := queue.Dequeue()
-					if t == nil {
+					if t == "" {
 						time.Sleep(329 * time.Millisecond)
 						continue
 					}
-					dir := t.(util.FullPath)
+					dir := t
 					processErr := processOneDirectory(filerClient, dir, queue, &jobQueueWg, fn)
 					if processErr != nil {
 						err = processErr
@@ -47,7 +50,7 @@ func TraverseBfs(filerClient FilerClient, parentPath util.FullPath, fn func(pare
 	return
 }
 
-func processOneDirectory(filerClient FilerClient, parentPath util.FullPath, queue *util.Queue, jobQueueWg *sync.WaitGroup, fn func(parentPath util.FullPath, entry *Entry)) (err error) {
+func processOneDirectory(filerClient FilerClient, parentPath util.FullPath, queue *util.Queue[util.FullPath], jobQueueWg *sync.WaitGroup, fn func(parentPath util.FullPath, entry *Entry)) (err error) {
 
 	return ReadDirAllEntries(filerClient, parentPath, "", func(entry *Entry, isLast bool) error {
 
@@ -64,4 +67,29 @@ func processOneDirectory(filerClient FilerClient, parentPath util.FullPath, queu
 		return nil
 	})
 
+}
+
+func StreamBfs(client SeaweedFilerClient, dir util.FullPath, olderThanTsNs int64, fn func(parentPath util.FullPath, entry *Entry)error) (err error) {
+	glog.V(0).Infof("TraverseBfsMetadata %v if before %v", dir, time.Unix(0, olderThanTsNs))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.TraverseBfsMetadata(ctx, &TraverseBfsMetadataRequest{
+		Directory: string(dir),
+	})
+	if err != nil {
+		return fmt.Errorf("traverse bfs metadata: %v", err)
+	}
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("traverse bfs metadata: %v", err)
+		}
+		if err := fn(util.FullPath(resp.Directory),  resp.Entry); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"golang.org/x/net/context/ctxhttp"
 )
 
@@ -198,7 +199,7 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 	if err != nil {
 		return Release{}, err
 	}
-	defer util.CloseResponse(res)
+	defer util_http.CloseResponse(res)
 
 	if res.StatusCode != http.StatusOK {
 		content := res.Header.Get("Content-Type")
@@ -258,7 +259,7 @@ func getGithubData(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer util.CloseResponse(res)
+	defer util_http.CloseResponse(res)
 
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %v (%v) returned", res.StatusCode, res.Status)
@@ -308,7 +309,12 @@ func extractToFile(buf []byte, filename, target string) error {
 		trd := tar.NewReader(gr)
 		hdr, terr := trd.Next()
 		if terr != nil {
-			glog.Errorf("uncompress file(%s) failed:%s", hdr.Name, terr)
+			if hdr != nil {
+				glog.Errorf("uncompress file(%s) failed:%s", hdr.Name, terr)
+			} else {
+				glog.Errorf("uncompress file is nil, failed:%s", terr)
+			}
+
 			return terr
 		}
 		rd = trd

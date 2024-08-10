@@ -1,35 +1,37 @@
 package util
 
-import "sync"
+import (
+	"sync"
+)
 
-type node struct {
-	data interface{}
-	next *node
+type node[T any]struct {
+	data T
+	next *node[T]
 }
 
-type Queue struct {
-	head  *node
-	tail  *node
+type Queue[T any] struct {
+	head  *node[T]
+	tail  *node[T]
 	count int
 	sync.RWMutex
 }
 
-func NewQueue() *Queue {
-	q := &Queue{}
+func NewQueue[T any]() *Queue[T] {
+	q := &Queue[T]{}
 	return q
 }
 
-func (q *Queue) Len() int {
+func (q *Queue[T]) Len() int {
 	q.RLock()
 	defer q.RUnlock()
 	return q.count
 }
 
-func (q *Queue) Enqueue(item interface{}) {
+func (q *Queue[T]) Enqueue(item T) {
 	q.Lock()
 	defer q.Unlock()
 
-	n := &node{data: item}
+	n := &node[T]{data: item}
 
 	if q.tail == nil {
 		q.tail = n
@@ -41,12 +43,12 @@ func (q *Queue) Enqueue(item interface{}) {
 	q.count++
 }
 
-func (q *Queue) Dequeue() interface{} {
+func (q *Queue[T]) Dequeue() (result T) {
 	q.Lock()
 	defer q.Unlock()
 
 	if q.head == nil {
-		return nil
+		return
 	}
 
 	n := q.head
@@ -58,4 +60,15 @@ func (q *Queue) Dequeue() interface{} {
 	q.count--
 
 	return n.data
+}
+
+func (q *Queue[T]) Peek() (result T) {
+	q.RLock()
+	defer q.RUnlock()
+
+	if q.head == nil {
+		return
+	}
+
+	return q.head.data
 }

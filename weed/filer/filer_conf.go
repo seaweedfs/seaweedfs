@@ -102,7 +102,7 @@ func (fc *FilerConf) LoadFromBytes(data []byte) (err error) {
 
 func (fc *FilerConf) doLoadConf(conf *filer_pb.FilerConf) (err error) {
 	for _, location := range conf.Locations {
-		err = fc.AddLocationConf(location)
+		err = fc.SetLocationConf(location)
 		if err != nil {
 			// this is not recoverable
 			return nil
@@ -111,7 +111,24 @@ func (fc *FilerConf) doLoadConf(conf *filer_pb.FilerConf) (err error) {
 	return nil
 }
 
+func (fc *FilerConf) GetLocationConf(locationPrefix string)(locConf *filer_pb.FilerConf_PathConf, found bool) {
+	return fc.rules.Get([]byte(locationPrefix))
+}
+
+func (fc *FilerConf) SetLocationConf(locConf *filer_pb.FilerConf_PathConf) (err error) {
+	err = fc.rules.Put([]byte(locConf.LocationPrefix), locConf)
+	if err != nil {
+		glog.Errorf("put location prefix: %v", err)
+	}
+	return
+}
+
 func (fc *FilerConf) AddLocationConf(locConf *filer_pb.FilerConf_PathConf) (err error) {
+	existingConf, found := fc.rules.Get([]byte(locConf.LocationPrefix))
+	if found {
+		mergePathConf(existingConf, locConf)
+		locConf = existingConf
+	}
 	err = fc.rules.Put([]byte(locConf.LocationPrefix), locConf)
 	if err != nil {
 		glog.Errorf("put location prefix: %v", err)
@@ -170,6 +187,7 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.DataCenter = util.Nvl(b.DataCenter, a.DataCenter)
 	a.Rack = util.Nvl(b.Rack, a.Rack)
 	a.DataNode = util.Nvl(b.DataNode, a.DataNode)
+	a.DisableChunkDeletion = b.DisableChunkDeletion || a.DisableChunkDeletion
 }
 
 func (fc *FilerConf) ToProto() *filer_pb.FilerConf {

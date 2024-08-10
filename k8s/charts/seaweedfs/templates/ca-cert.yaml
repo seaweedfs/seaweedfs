@@ -14,6 +14,6 @@ spec:
   commonName: "{{ template "seaweedfs.name" . }}-root-ca"
   isCA: true
   issuerRef:
-    name: {{ template "seaweedfs.name" . }}-clusterissuer
-    kind: ClusterIssuer
+    name: {{ template "seaweedfs.name" . }}-issuer
+    kind: Issuer
 {{- end }}

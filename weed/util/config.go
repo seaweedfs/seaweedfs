@@ -11,6 +11,7 @@ import (
 
 var (
 	ConfigurationFileDirectory DirectoryValueType
+	loadSecurityConfigOnce sync.Once
 )
 
 type DirectoryValueType string
@@ -29,6 +30,12 @@ type Configuration interface {
 	GetInt(key string) int
 	GetStringSlice(key string) []string
 	SetDefault(key string, value interface{})
+}
+
+func LoadSecurityConfiguration(){
+	loadSecurityConfigOnce.Do(func() {
+		LoadConfiguration("security", false)
+	})
 }
 
 func LoadConfiguration(configFileName string, required bool) (loaded bool) {

@@ -1,0 +1,114 @@
+{{- if and .Values.volume.enabled .Values.volume.resizeHook.enabled }}
+{{- $seaweedfsName := include "seaweedfs.name" $ }}
+{{- $replicas := int .Values.volume.replicas -}}
+{{- $statefulsetName := printf "%s-volume" $seaweedfsName -}}
+{{- $statefulset := (lookup "apps/v1" "StatefulSet" .Release.Namespace $statefulsetName) -}}
+
+{{/* Check for changes in volumeClaimTemplates */}}
+{{- $templateChangesRequired := false -}}
+{{- if $statefulset -}}
+  {{- range $dir := .Values.volume.dataDirs -}}
+    {{- if eq .type "persistentVolumeClaim" -}}
+      {{- $desiredSize := .size -}}
+      {{- range $statefulset.spec.volumeClaimTemplates -}}
+        {{- if and (eq .metadata.name $dir.name) (ne .spec.resources.requests.storage $desiredSize) -}}
+          {{- $templateChangesRequired = true -}}
+        {{- end -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
+{{/* Check for the need for patching existing PVCs */}}
+{{- $pvcChangesRequired := false -}}
+{{- range $dir := .Values.volume.dataDirs -}}
+  {{- if eq .type "persistentVolumeClaim" -}}
+    {{- $desiredSize := .size -}}
+    {{- range $i, $e := until $replicas }}
+      {{- $pvcName := printf "%s-%s-volume-%d" $dir.name $seaweedfsName $e -}}
+      {{- $currentPVC := (lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $pvcName) -}}
+      {{- if and $currentPVC (ne ($currentPVC.spec.resources.requests.storage | toString) $desiredSize) -}}
+        {{- $pvcChangesRequired = true -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if or $templateChangesRequired $pvcChangesRequired }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ $seaweedfsName }}-volume-resize-hook"
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+spec:
+  template:
+    spec:
+      serviceAccountName: {{ $seaweedfsName }}-volume-resize-hook
+      restartPolicy: Never
+      backoffLimit: 1
+      containers:
+        - name: resize
+          image: {{ .Values.volume.resizeHook.image }}
+          command: ["sh", "-xec"]
+          args:
+            - |
+              {{- if $pvcChangesRequired -}}
+              {{- range $dir := .Values.volume.dataDirs -}}
+              {{- if eq .type "persistentVolumeClaim" -}}
+              {{- $desiredSize := .size -}}
+              {{- range $i, $e := until $replicas }}
+              kubectl patch pvc {{ printf "%s-%s-volume-%d" $dir.name $seaweedfsName $e }} -p '{"spec":{"resources":{"requests":{"storage":"{{ $desiredSize }}"}}}}'
+              {{- end }}
+              {{- end }}
+              {{- end }}
+              {{- end -}}
+
+              {{- if $templateChangesRequired }}
+              kubectl delete statefulset {{ $statefulsetName }} --cascade=orphan
+              {{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $seaweedfsName }}-volume-resize-hook
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $seaweedfsName }}-volume-resize-hook
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["delete", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["patch", "get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $seaweedfsName }}-volume-resize-hook
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+subjects:
+  - kind: ServiceAccount
+    name: {{ $seaweedfsName }}-volume-resize-hook
+roleRef:
+  kind: Role
+  name: {{ $seaweedfsName }}-volume-resize-hook
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

@@ -13,7 +13,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -26,13 +25,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
-
-type ListAllMyBucketsResult struct {
-	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResult"`
-	Owner   *s3.Owner
-	Buckets []*s3.Bucket `xml:"Buckets>Bucket"`
-}
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -59,25 +53,25 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	identityId := r.Header.Get(s3_constants.AmzIdentityId)
 
-	var buckets []*s3.Bucket
+	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
 			if identity != nil && !identity.canDo(s3_constants.ACTION_LIST, entry.Name, "") {
 				continue
 			}
-			buckets = append(buckets, &s3.Bucket{
-				Name:         aws.String(entry.Name),
-				CreationDate: aws.Time(time.Unix(entry.Attributes.Crtime, 0).UTC()),
+			listBuckets.Bucket = append(listBuckets.Bucket, ListAllMyBucketsEntry{
+				Name:         entry.Name,
+				CreationDate: time.Unix(entry.Attributes.Crtime, 0).UTC(),
 			})
 		}
 	}
 
 	response = ListAllMyBucketsResult{
-		Owner: &s3.Owner{
-			ID:          aws.String(identityId),
-			DisplayName: aws.String(identityId),
+		Owner: CanonicalUser{
+			ID:          identityId,
+			DisplayName: identityId,
 		},
-		Buckets: buckets,
+		Buckets: listBuckets,
 	}
 
 	writeSuccessResponseXML(w, r, response)
@@ -461,7 +455,11 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 	for prefix, ttl := range collectionTtls {
 		bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
 		if strings.HasPrefix(prefix, bucketPrefix) && strings.HasSuffix(ttl, "d") {
-			fc.DeleteLocationConf(prefix)
+			pathConf, found := fc.GetLocationConf(prefix)
+			if found {
+				pathConf.Ttl = ""
+				fc.SetLocationConf(pathConf)
+			}
 			changed = true
 		}
 	}
@@ -487,7 +485,7 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 // GetBucketLocationHandler Get bucket location
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLocation.html
 func (s3a *S3ApiServer) GetBucketLocationHandler(w http.ResponseWriter, r *http.Request) {
-	writeSuccessResponseXML(w, r, LocationConstraint{})
+	writeSuccessResponseXML(w, r, CreateBucketConfiguration{})
 }
 
 // GetBucketRequestPaymentHandler Get bucket location
@@ -513,7 +511,7 @@ func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *htt
 	}
 
 	var v s3.OwnershipControls
-	defer util.CloseRequest(r)
+	defer util_http.CloseRequest(r)
 
 	err := xmlutil.UnmarshalXML(&v, xml.NewDecoder(r.Body), "")
 	if err != nil {

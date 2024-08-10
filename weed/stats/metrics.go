@@ -76,7 +76,15 @@ var (
 			Subsystem: "master",
 			Name:      "volume_layout_total",
 			Help:      "Number of volumes in volume layouts",
-		}, []string{"collection", "replica", "type"})
+		}, []string{"collection", "dataCenter", "type"})
+
+	MasterPickForWriteErrorCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "pick_for_write_error",
+			Help:      "Counter of master pick for write error",
+		})
 
 	MasterLeaderChangeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{

@@ -2,12 +2,13 @@ package weed_server
 
 import (
 	"encoding/json"
-	transport "github.com/Jille/raft-grpc-transport"
 	"io"
 	"math/rand"
 	"os"
 	"path"
 	"time"
+
+	transport "github.com/Jille/raft-grpc-transport"
 
 	"google.golang.org/grpc"
 

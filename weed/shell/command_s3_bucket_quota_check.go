@@ -130,7 +130,7 @@ func (c *commandS3BucketQuotaEnforce) processEachBucket(fc *filer.FilerConf, fil
 		} else {
 			fmt.Fprintf(writer, "    changing bucket %s to writable.\n", entry.Name)
 		}
-		fc.AddLocationConf(locConf)
+		fc.SetLocationConf(locConf)
 	}
 
 	return

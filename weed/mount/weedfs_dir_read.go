@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"sync"
 )
@@ -43,10 +44,7 @@ func NewDirectoryHandleToInode() *DirectoryHandleToInode {
 }
 
 func (wfs *WFS) AcquireDirectoryHandle() (DirectoryHandleId, *DirectoryHandle) {
-	wfs.fhmap.Lock()
-	fh := wfs.fhmap.nextFh
-	wfs.fhmap.nextFh++
-	wfs.fhmap.Unlock()
+	fh := FileHandleId(util.RandomUint64())
 
 	wfs.dhmap.Lock()
 	defer wfs.dhmap.Unlock()
@@ -173,7 +171,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 			}
 			if fh, found := wfs.fhmap.FindFileHandle(inode); found {
 				glog.V(4).Infof("readdir opened file %s", dirPath.Child(dirEntry.Name))
-				entry = filer.FromPbEntry(string(dirPath), fh.GetEntry())
+				entry = filer.FromPbEntry(string(dirPath), fh.GetEntry().GetEntry())
 			}
 			wfs.outputFilerEntry(entryOut, inode, entry)
 		}

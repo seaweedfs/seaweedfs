@@ -54,7 +54,7 @@ var cmdMqBroker = &Command{
 
 func runMqBroker(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 
 	mqBrokerStandaloneOptions.masters = pb.ServerAddresses(*mqBrokerStandaloneOptions.mastersString).ToAddressMap()
 

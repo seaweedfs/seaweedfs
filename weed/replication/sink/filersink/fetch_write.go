@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func (fs *FilerSink) replicateChunks(sourceChunks []*filer_pb.FileChunk, path string) (replicatedChunks []*filer_pb.FileChunk, err error) {
@@ -88,9 +89,15 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 	if err != nil {
 		return "", fmt.Errorf("read part %s: %v", sourceChunk.GetFileIdString(), err)
 	}
-	defer util.CloseResponse(resp)
+	defer util_http.CloseResponse(resp)
 
-	fileId, uploadResult, err, _ := operation.UploadWithRetry(
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		glog.V(0).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), err)
+		return "", fmt.Errorf("upload data: %v", err)
+	}
+
+	fileId, uploadResult, err, _ := uploader.UploadWithRetry(
 		fs,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,

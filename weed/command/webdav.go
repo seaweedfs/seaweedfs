@@ -60,7 +60,7 @@ var cmdWebDav = &Command{
 
 func runWebDav(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 
 	glog.V(0).Infof("Starting Seaweed WebDav Server %s at https port %d", util.Version(), *webDavStandaloneOptions.port)
 

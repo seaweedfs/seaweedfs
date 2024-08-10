@@ -30,7 +30,7 @@ var cmdFilerReplicate = &Command{
 
 func runFilerReplicate(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("replication", true)
 	util.LoadConfiguration("notification", true)
 	config := util.GetViper()

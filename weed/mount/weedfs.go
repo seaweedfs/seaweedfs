@@ -112,9 +112,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 					fhActiveLock := fh.wfs.fhLockTable.AcquireLock("invalidateFunc", fh.fh, util.ExclusiveLock)
 					defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
-					fh.entryLock.Lock()
-					defer fh.entryLock.Unlock()
-
 					// Recreate dirty pages
 					fh.dirtyPages.Destroy()
 					fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
@@ -122,7 +119,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 					// Update handle entry
 					newentry, status := wfs.maybeLoadEntry(filePath)
 					if status == fuse.OK {
-						if fh.GetEntry() != newentry {
+						if fh.GetEntry().GetEntry() != newentry {
 							fh.SetEntry(newentry)
 						}
 					}

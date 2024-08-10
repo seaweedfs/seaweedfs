@@ -2,11 +2,12 @@ package weed_server
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -74,7 +75,10 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 			machines := ms.Topo.Lookup(collection, volumeId)
 			for _, loc := range machines {
 				locations = append(locations, operation.Location{
-					Url: loc.Url(), PublicUrl: loc.PublicUrl, DataCenter: loc.GetDataCenterId(),
+					Url:        loc.Url(),
+					PublicUrl:  loc.PublicUrl,
+					DataCenter: loc.GetDataCenterId(),
+					GrpcPort:   loc.GrpcPort,
 				})
 			}
 		}
@@ -82,7 +86,10 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		machines, getVidLocationsErr := ms.MasterClient.GetVidLocations(vid)
 		for _, loc := range machines {
 			locations = append(locations, operation.Location{
-				Url: loc.Url, PublicUrl: loc.PublicUrl, DataCenter: loc.DataCenter,
+				Url:        loc.Url,
+				PublicUrl:  loc.PublicUrl,
+				DataCenter: loc.DataCenter,
+				GrpcPort:   loc.GrpcPort,
 			})
 		}
 		err = getVidLocationsErr
@@ -107,7 +114,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		requestedCount = 1
 	}
 
-	writableVolumeCount, e := strconv.Atoi(r.FormValue("writableVolumeCount"))
+	writableVolumeCount, e := strconv.ParseUint(r.FormValue("writableVolumeCount"), 10, 32)
 	if e != nil {
 		writableVolumeCount = 0
 	}
@@ -126,23 +133,28 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		startTime  = time.Now()
 	)
 
+	if !ms.Topo.DataCenterExists(option.DataCenter) {
+		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{
+			Error: fmt.Sprintf("data center %v not found in topology", option.DataCenter),
+		})
+		return
+	}
+
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl)
 		if shouldGrow && !vl.HasGrowRequest() {
-			// if picked volume is almost full, trigger a volume-grow request
 			glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
-			if ms.Topo.AvailableSpaceFor(option) <= 0 {
-				writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
-				return
+			if err != nil && ms.Topo.AvailableSpaceFor(option) <= 0 {
+				err = fmt.Errorf("%s and no free volumes left for %s", err.Error(), option.String())
 			}
 			vl.AddGrowRequest()
 			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 				Option: option,
-				Count:  writableVolumeCount,
+				Count:  uint32(writableVolumeCount),
 			}
 		}
 		if err != nil {
-			// glog.Warningf("PickForWrite %+v: %v", req, err)
+			stats.MasterPickForWriteErrorCounter.Inc()
 			lastErr = err
 			time.Sleep(200 * time.Millisecond)
 			continue

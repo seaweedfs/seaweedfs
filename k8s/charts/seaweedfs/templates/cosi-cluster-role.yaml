@@ -1,0 +1,69 @@
+{{- if .Values.cosi.enabled }}
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ .Values.global.serviceAccountName }}-objectstorage-provisioner
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+rules:
+- apiGroups: ["objectstorage.k8s.io"]
+  resources:
+    - "buckets"
+    - "bucketaccesses"
+    - "bucketclaims"
+    - "bucketaccessclasses"
+    - "buckets/status"
+    - "bucketaccesses/status"
+    - "bucketclaims/status"
+    - "bucketaccessclasses/status"
+  verbs:
+    - "get"
+    - "list"
+    - "watch"
+    - "update"
+    - "create"
+    - "delete"
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs:
+    - "get"
+    - "watch"
+    - "list"
+    - "delete"
+    - "update"
+    - "create"
+- apiGroups: [""]
+  resources:
+    - "secrets"
+    - "events"
+  verbs:
+    - "get"
+    - "list"
+    - "watch"
+    - "update"
+    - "create"
+    - "delete"
+    - "patch"
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ .Values.global.serviceAccountName }}-objectstorage-provisioner
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.global.serviceAccountName }}-objectstorage-provisioner
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Values.global.serviceAccountName }}-objectstorage-provisioner
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

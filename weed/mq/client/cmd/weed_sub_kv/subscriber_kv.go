@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"strings"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -25,6 +26,7 @@ var (
 
 func main() {
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
 
 	subscriberConfig := &sub_client.SubscriberConfiguration{
 		ConsumerGroup:           "test",

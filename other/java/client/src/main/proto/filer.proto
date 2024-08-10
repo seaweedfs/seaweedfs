@@ -54,6 +54,9 @@ service SeaweedFiler {
     rpc GetFilerConfiguration (GetFilerConfigurationRequest) returns (GetFilerConfigurationResponse) {
     }
 
+    rpc TraverseBfsMetadata (TraverseBfsMetadataRequest) returns (stream TraverseBfsMetadataResponse) {
+    }
+
     rpc SubscribeMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
     }
 
@@ -218,6 +221,7 @@ message DeleteEntryRequest {
     bool ignore_recursive_error = 6;
     bool is_from_other_cluster = 7;
     repeated int32 signatures = 8;
+    int64 if_not_modified_after = 9;
 }
 
 message DeleteEntryResponse {
@@ -341,6 +345,8 @@ message GetFilerConfigurationResponse {
     string version = 11;
     string cluster_id = 12;
     string filer_group = 13;
+    int32 major_version = 14;
+    int32 minor_version = 15;
 }
 
 message SubscribeMetadataRequest {
@@ -358,6 +364,15 @@ message SubscribeMetadataResponse {
     string directory = 1;
     EventNotification event_notification = 2;
     int64 ts_ns = 3;
+}
+
+message TraverseBfsMetadataRequest {
+    string directory = 1;
+    repeated string excluded_prefixes = 2;
+}
+message TraverseBfsMetadataResponse {
+    string directory = 1;
+    Entry entry = 2;
 }
 
 message LogEntry {

@@ -291,7 +291,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	glog.V(4).Infof("DeleteEntry %v", req)
 
-	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures)
+	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
@@ -363,12 +363,7 @@ func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.Delet
 
 	glog.V(4).Infof("DeleteCollection %v", req)
 
-	err = fs.filer.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
-			Name: req.GetCollection(),
-		})
-		return err
-	})
+	err = fs.filer.DoDeleteCollection(req.GetCollection())
 
 	return &filer_pb.DeleteCollectionResponse{}, err
 }

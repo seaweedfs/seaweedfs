@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type BenchmarkOptions struct {
@@ -111,7 +112,7 @@ var (
 
 func runBenchmark(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	b.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
@@ -214,7 +215,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				if isSecure {
 					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(context.Background()), b.grpcDialOption, df.fp.Fid)
 				}
-				if e := util.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
+				if e := util_http.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
 					s.completed++
 				} else {
 					s.failed++
@@ -295,7 +296,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		}
 		var bytes []byte
 		for _, url := range urls {
-			bytes, _, err = util.Get(url)
+			bytes, _, err = util_http.Get(url)
 			if err == nil {
 				break
 			}

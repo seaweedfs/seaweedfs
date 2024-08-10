@@ -70,10 +70,15 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 					PairMap:           nil,
 					Jwt:               security.EncodedJwt(req.Auth),
 				}
-				if _, replicaWriteErr := operation.UploadData(data, uploadOption); replicaWriteErr != nil {
-					if err == nil {
-						err = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, err)
-					}
+
+				uploader, uploaderErr := operation.NewUploader()
+				if uploaderErr != nil && err == nil {
+					err = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, uploaderErr)
+					return
+				}
+
+				if _, replicaWriteErr := uploader.UploadData(data, uploadOption); replicaWriteErr != nil && err == nil {
+					err = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, replicaWriteErr)
 				}
 			}(replica.Url)
 		}

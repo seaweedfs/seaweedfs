@@ -83,7 +83,7 @@ var cmdFilerCopy = &Command{
 
 func runCopy(cmd *Command, args []string) bool {
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 
 	if len(args) <= 1 {
 		return false
@@ -344,7 +344,12 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 			return err
 		}
 
-		finalFileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
+		uploader, uploaderErr := operation.NewUploader()
+		if uploaderErr != nil {
+			return uploaderErr
+		}
+
+		finalFileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
 			worker,
 			&filer_pb.AssignVolumeRequest{
 				Count:       1,
@@ -423,7 +428,13 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				<-concurrentChunks
 			}()
 
-			fileId, uploadResult, err, _ := operation.UploadWithRetry(
+			uploader, err := operation.NewUploader()
+			if err != nil {
+				uploadError = fmt.Errorf("upload data %v: %v\n", fileName, err)
+				return
+			}
+
+			fileId, uploadResult, err, _ := uploader.UploadWithRetry(
 				worker,
 				&filer_pb.AssignVolumeRequest{
 					Count:       1,
@@ -472,7 +483,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 		for _, chunk := range chunks {
 			fileIds = append(fileIds, chunk.FileId)
 		}
-		operation.DeleteFiles(func(_ context.Context) pb.ServerAddress {
+		operation.DeleteFileIds(func(_ context.Context) pb.ServerAddress {
 			return pb.ServerAddress(copy.masters[0])
 		}, false, worker.options.grpcDialOption, fileIds)
 		return uploadError
@@ -535,8 +546,12 @@ func detectMimeType(f *os.File) string {
 }
 
 func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
+	uploader, uploaderErr := operation.NewUploader()
+	if uploaderErr != nil {
+		return nil, fmt.Errorf("upload data: %v", uploaderErr)
+	}
 
-	finalFileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
+	finalFileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
 		worker,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,

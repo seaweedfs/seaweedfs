@@ -99,6 +99,7 @@ type FileInfo struct {
 	modifiedTime time.Time
 	etag         string
 	isDirectory  bool
+	err          error
 }
 
 func (fi *FileInfo) Name() string       { return fi.name }
@@ -109,6 +110,9 @@ func (fi *FileInfo) IsDir() bool        { return fi.isDirectory }
 func (fi *FileInfo) Sys() interface{}   { return nil }
 
 func (fi *FileInfo) ETag(ctx context.Context) (string, error) {
+	if fi.err != nil {
+		return "", fi.err
+	}
 	return fi.etag, nil
 }
 
@@ -269,7 +273,10 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 
 	fi, err := fs.stat(ctx, fullFilePath)
 	if err != nil {
-		return nil, os.ErrNotExist
+		if err == os.ErrNotExist {
+			return nil, err
+		}
+		return &WebDavFile{fs: fs}, nil
 	}
 	if !strings.HasSuffix(fullFilePath, "/") && fi.IsDir() {
 		fullFilePath += "/"
@@ -365,11 +372,15 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 
 	var fi FileInfo
 	entry, err := filer_pb.GetEntry(fs, fullpath)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			return nil, os.ErrNotExist
+		}
+		fi.err = err
+		return &fi, nil
+	}
 	if entry == nil {
 		return nil, os.ErrNotExist
-	}
-	if err != nil {
-		return nil, err
 	}
 	fi.size = int64(filer.FileSize(entry))
 	fi.name = string(fullpath)
@@ -392,8 +403,13 @@ func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo,
 }
 
 func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
+	uploader, uploaderErr := operation.NewUploader()
+	if uploaderErr != nil {
+		glog.V(0).Infof("upload data %v: %v", f.name, uploaderErr)
+		return nil, fmt.Errorf("upload data: %v", uploaderErr)
+	}
 
-	fileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
+	fileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
 		f.fs,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,
@@ -509,7 +525,9 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 func (f *WebDavFile) Close() error {
 
 	glog.V(2).Infof("WebDavFileSystem.Close %v", f.name)
-
+	if f.bufWriter == nil {
+		return nil
+	}
 	err := f.bufWriter.Close()
 
 	if f.entry != nil {

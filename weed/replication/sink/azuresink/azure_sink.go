@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -109,7 +111,16 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	// Azure Storage account's container.
 	appendBlobURL := g.containerURL.NewAppendBlobURL(key)
 
-	_, err := appendBlobURL.Create(context.Background(), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{}, azblob.BlobTagsMap{}, azblob.ClientProvidedKeyOptions{}, azblob.ImmutabilityPolicyOptions{})
+	accessCondition := azblob.BlobAccessConditions{}
+	if entry.Attributes!=nil && entry.Attributes.Mtime>0 {
+		accessCondition.ModifiedAccessConditions.IfUnmodifiedSince = time.Unix(entry.Attributes.Mtime, 0)
+	}
+
+	res, err := appendBlobURL.Create(context.Background(), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, accessCondition, azblob.BlobTagsMap{}, azblob.ClientProvidedKeyOptions{}, azblob.ImmutabilityPolicyOptions{})
+	if res != nil && res.StatusCode() == http.StatusPreconditionFailed {
+		glog.V(0).Infof("skip overwriting %s/%s: %v", g.container, key, err)
+		return nil
+	}
 	if err != nil {
 		return err
 	}

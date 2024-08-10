@@ -47,7 +47,7 @@ func runIam(cmd *Command, args []string) bool {
 func (iamopt *IamOptions) startIamServer() bool {
 	filerAddress := pb.ServerAddress(*iamopt.filer)
 
-	util.LoadConfiguration("security", false)
+	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	for {
 		err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {

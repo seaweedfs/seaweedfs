@@ -17,7 +17,7 @@ const (
 type OnChunksFunc func([]*filer_pb.FileChunk) error
 type OnHardLinkIdsFunc func([]HardLinkId) error
 
-func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32) (err error) {
+func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, ifNotModifiedAfter int64) (err error) {
 	if p == "/" {
 		return nil
 	}
@@ -25,6 +25,9 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	entry, findErr := f.FindEntry(ctx, p)
 	if findErr != nil {
 		return findErr
+	}
+	if ifNotModifiedAfter > 0 && entry.Attr.Mtime.Unix() > ifNotModifiedAfter {
+		return nil
 	}
 	isDeleteCollection := f.isBucket(entry)
 	if entry.IsDirectory() {
@@ -50,12 +53,12 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	}
 
 	if shouldDeleteChunks && !isDeleteCollection {
-		f.DirectDeleteChunks(entry.GetChunks())
+		f.DeleteChunks(p, entry.GetChunks())
 	}
 
 	if isDeleteCollection {
 		collectionName := entry.Name()
-		f.doDeleteCollection(collectionName)
+		f.DoDeleteCollection(collectionName)
 	}
 
 	return nil
@@ -133,7 +136,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	return nil
 }
 
-func (f *Filer) doDeleteCollection(collectionName string) (err error) {
+func (f *Filer) DoDeleteCollection(collectionName string) (err error) {
 
 	return f.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{

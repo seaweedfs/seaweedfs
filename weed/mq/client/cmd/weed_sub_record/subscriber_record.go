@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"strings"
 	"time"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -51,6 +52,7 @@ func FromSchemaRecordValue(recordValue *schema_pb.RecordValue) *MyRecord {
 
 func main() {
 	flag.Parse()
+	util_http.InitGlobalHttpClient()
 
 	subscriberConfig := &sub_client.SubscriberConfiguration{
 		ConsumerGroup:           "test",

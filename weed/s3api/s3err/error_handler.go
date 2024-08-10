@@ -79,6 +79,7 @@ func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Accept-Ranges", "bytes")
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 }
