@@ -3,13 +3,14 @@ package s3api
 import (
 	"bytes"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -149,6 +150,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
+	querys := url.Values{}
 	for k, v := range r.URL.Query() {
 		if _, ok := s3_constants.PassThroughHeaders[strings.ToLower(k)]; ok {
 			proxyReq.Header[k] = v
@@ -156,7 +158,12 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		if k == "partNumber" {
 			proxyReq.Header[s3_constants.SeaweedFSPartNumber] = v
 		}
+		if k == "mode" || k == "width" || k == "height" {
+			querys.Add(k, v[0])
+		}
 	}
+	proxyReq.URL.RawQuery = querys.Encode()
+
 	for header, values := range r.Header {
 		proxyReq.Header[header] = values
 	}

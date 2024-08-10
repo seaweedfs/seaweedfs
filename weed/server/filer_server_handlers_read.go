@@ -247,6 +247,21 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			rs, _, _ := images.Resized(ext, bytes.NewReader(data), width, height, mode)
+
+			// 获取文件长度
+			length, err := rs.Seek(0, io.SeekEnd)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			// 重置读取位置到文件开头
+			_, err = rs.Seek(0, io.SeekStart)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+
 			io.Copy(w, rs)
 			return
 		}
