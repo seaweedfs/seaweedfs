@@ -36,9 +36,6 @@ import (
 // Each subscription may not get data. It can act as a backup.
 
 func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_PublishMessageServer) error {
-	// 1. write to the volume server
-	// 2. find the topic metadata owning filer
-	// 3. write to the filer
 
 	req, err := stream.Recv()
 	if err != nil {
