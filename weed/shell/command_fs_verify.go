@@ -119,6 +119,13 @@ func (c *commandFsVerify) collectVolumeIds() error {
 					c.volumeServers = append(c.volumeServers, volumeServer)
 				}
 			}
+			for _, vi := range diskInfo.EcShardInfos {
+				volumeServer := pb.NewServerAddressFromDataNode(nodeInfo)
+				c.volumeIds[vi.Id] = append(c.volumeIds[vi.Id], volumeServer)
+				if !slices.Contains(c.volumeServers, volumeServer) {
+					c.volumeServers = append(c.volumeServers, volumeServer)
+				}
+			}
 		}
 	})
 	return nil
