@@ -98,7 +98,7 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 			switch m := resp.Message.(type) {
 			case *mq_pb.SubscribeMessageResponse_Data:
 				if m.Data.Ctrl != nil {
-					glog.V(2).Infof("subscriber %s received control from producer:%s isClose:%v", sub.SubscriberConfig.ConsumerGroup, m.Data.Ctrl.IsClose)
+					glog.V(2).Infof("subscriber %s received control from producer:%s isClose:%v", sub.SubscriberConfig.ConsumerGroup, m.Data.Ctrl.PublisherName, m.Data.Ctrl.IsClose)
 					continue
 				}
 				executors.Execute(func() {
