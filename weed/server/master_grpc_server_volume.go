@@ -43,7 +43,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				continue
 			}
 			for _, vl := range ms.Topo.ListVolumeLyauts() {
-				if !vl.HasGrowRequest() && vl.ShouldGrowVolumes(&topology.VolumeGrowOption{}) {
+				if !vl.HasGrowRequest() && vl.ShouldGrowVolumes() {
 					vl.AddGrowRequest()
 					ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 						Option: vl.ToGrowOption(),
@@ -81,7 +81,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			})
 
 			// not atomic but it's okay
-			if !found && vl.ShouldGrowVolumes(option) {
+			if !found && vl.ShouldGrowVolumes() {
 				filter.Store(req, nil)
 				// we have lock called inside vg
 				go func(req *topology.VolumeGrowRequest, vl *topology.VolumeLayout) {

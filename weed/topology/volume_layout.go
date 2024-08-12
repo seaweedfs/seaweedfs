@@ -2,7 +2,6 @@ package topology
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -218,16 +217,20 @@ func (vl *VolumeLayout) EnsureCorrectWritables(v *storage.VolumeInfo) {
 }
 
 func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
-	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
-		if !vl.oversizedVolumes.IsTrue(vid) {
-			vl.setVolumeWritable(vid)
-		}
+	isEnoughCopies := vl.enoughCopies(vid)
+	isAllWritable := vl.isAllWritable(vid)
+	isOversizedVolume := vl.oversizedVolumes.IsTrue(vid)
+	if isEnoughCopies && isAllWritable && !isOversizedVolume {
+		vl.setVolumeWritable(vid)
 	} else {
-		if !vl.enoughCopies(vid) {
+		if !isEnoughCopies {
 			glog.V(0).Infof("volume %d does not have enough copies", vid)
 		}
-		if !vl.isAllWritable(vid) {
+		if !isAllWritable {
 			glog.V(0).Infof("volume %d are not all writable", vid)
+		}
+		if isOversizedVolume {
+			glog.V(1).Infof("volume %d are oversized", vid)
 		}
 		glog.V(0).Infof("volume %d remove from writable", vid)
 		vl.removeFromWritable(vid)
@@ -351,40 +354,15 @@ func (vl *VolumeLayout) GetLastGrowCount() uint32 {
 	return vl.lastGrowCount.Load()
 }
 
-func (vl *VolumeLayout) ShouldGrowVolumes(option *VolumeGrowOption) bool {
-	total, active, crowded := vl.GetActiveVolumeCount(option)
-	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.DataCenter, "total").Set(float64(total))
-	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.DataCenter, "active").Set(float64(active))
-	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.DataCenter, "crowded").Set(float64(crowded))
-	//glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, high)
-	return active <= crowded
+func (vl *VolumeLayout) ShouldGrowVolumes() bool {
+	writable, crowded := vl.GetWritableVolumeCount()
+	return writable <= crowded
 }
 
-func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (total, active, crowded int) {
+func (vl *VolumeLayout) GetWritableVolumeCount() (active, crowded int) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
-	if option.DataCenter == "" {
-		return len(vl.writables), len(vl.writables), len(vl.crowded)
-	}
-	total = len(vl.writables)
-	for _, v := range vl.writables {
-		for _, dn := range vl.vid2location[v].list {
-			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
-				if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
-					continue
-				}
-				if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
-					continue
-				}
-				active++
-				info, _ := dn.GetVolumesById(v)
-				if float64(info.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
-					crowded++
-				}
-			}
-		}
-	}
-	return
+	return len(vl.writables), len(vl.crowded)
 }
 
 func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
