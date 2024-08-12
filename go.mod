@@ -13,7 +13,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/cespare/xxhash/v2 v2.2.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -113,7 +113,7 @@ require (
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/api v0.189.0
 	google.golang.org/genproto v0.0.0-20240722135656-d784300faade // indirect
-	google.golang.org/grpc v1.64.1
+	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.34.2
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
