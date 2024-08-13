@@ -71,7 +71,11 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	}
 
 	// write .vif files
-	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}); err != nil {
+	datSize, _, _ := v.FileStat()
+	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{
+		Version:  uint32(v.Version()),
+		FileSize: int64(datSize),
+	}); err != nil {
 		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
 	}
 

@@ -12,8 +12,8 @@ type Interval struct {
 	LargeBlockRowsCount int
 }
 
-func LocateData(largeBlockLength, smallBlockLength int64, datSize int64, offset int64, size types.Size) (intervals []Interval) {
-	blockIndex, isLargeBlock, nLargeBlockRows, innerBlockOffset := locateOffset(largeBlockLength, smallBlockLength, datSize, offset)
+func LocateData(largeBlockLength, smallBlockLength int64, shardDatSize int64, offset int64, size types.Size) (intervals []Interval) {
+	blockIndex, isLargeBlock, nLargeBlockRows, innerBlockOffset := locateOffset(largeBlockLength, smallBlockLength, shardDatSize, offset)
 
 	for size > 0 {
 		interval := Interval{
@@ -48,9 +48,9 @@ func LocateData(largeBlockLength, smallBlockLength int64, datSize int64, offset 
 	return
 }
 
-func locateOffset(largeBlockLength, smallBlockLength int64, datSize int64, offset int64) (blockIndex int, isLargeBlock bool, nLargeBlockRows int64, innerBlockOffset int64) {
+func locateOffset(largeBlockLength, smallBlockLength int64, shardDatSize int64, offset int64) (blockIndex int, isLargeBlock bool, nLargeBlockRows int64, innerBlockOffset int64) {
 	largeRowSize := largeBlockLength * DataShardsCount
-	nLargeBlockRows = datSize / (largeBlockLength * DataShardsCount)
+	nLargeBlockRows = (shardDatSize-1)/ largeBlockLength
 
 	// if offset is within the large block area
 	if offset < nLargeBlockRows*largeRowSize {

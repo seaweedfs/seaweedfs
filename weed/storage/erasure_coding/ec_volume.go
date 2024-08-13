@@ -39,6 +39,7 @@ type EcVolume struct {
 	ecjFile                   *os.File
 	ecjFileAccessLock         sync.Mutex
 	diskType                  types.DiskType
+	datFileSize               int64
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
@@ -68,6 +69,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	ev.Version = needle.Version3
 	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(dataBaseFileName + ".vif"); found {
 		ev.Version = needle.Version(volumeInfo.Version)
+		ev.datFileSize = volumeInfo.FileSize
 	} else {
 		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
 	}
@@ -222,8 +224,17 @@ func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.
 
 func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset int64, size types.Size) (intervals []Interval) {
 	shard := ev.Shards[0]
+	// Usually shard will be padded to round of ErasureCodingSmallBlockSize.
+	// So in most cases, if shardSize equals to n * ErasureCodingLargeBlockSize,
+	// the data would be in small blocks.
+	shardSize := shard.ecdFileSize - 1
+	if ev.datFileSize > 0 {
+		// To get the correct LargeBlockRowsCount
+		// use datFileSize to calculate the shardSize to match the EC encoding logic.
+		shardSize = ev.datFileSize / DataShardsCount
+	}
 	// calculate the locations in the ec shards
-	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, DataShardsCount*shard.ecdFileSize, offset, types.Size(needle.GetActualSize(size, version)))
+	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, shardSize, offset, types.Size(needle.GetActualSize(size, version)))
 
 	return
 }
