@@ -49,7 +49,7 @@
             <version>1.1.1</version>
         </dependency>
         <dependency>
-            <groupId>com.github.chrislusf</groupId>
+            <groupId>com.seaweedfs</groupId>
             <artifactId>seaweedfs-hadoop3-client</artifactId>
             <version>1.6.2</version>
         </dependency>
