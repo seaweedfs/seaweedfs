@@ -3,6 +3,7 @@ package erasure_coding
 import (
 	"bytes"
 	"fmt"
+	"github.com/stretchr/testify/assert"
 	"math/rand"
 	"os"
 	"testing"
@@ -207,4 +208,15 @@ func (this Interval) sameAs(that Interval) bool {
 		this.InnerBlockOffset == that.InnerBlockOffset &&
 		this.BlockIndex == that.BlockIndex &&
 		this.Size == that.Size
+}
+
+func TestLocateData2(t *testing.T) {
+	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, 32205678320, 21479557912, 4194339)
+	assert.Equal(t, intervals, []Interval{
+		{BlockIndex: 4, InnerBlockOffset: 527128, Size: 521448, IsLargeBlock: false, LargeBlockRowsCount: 2},
+		{BlockIndex: 5, InnerBlockOffset: 0, Size: 1048576, IsLargeBlock: false, LargeBlockRowsCount: 2},
+		{BlockIndex: 6, InnerBlockOffset: 0, Size: 1048576, IsLargeBlock: false, LargeBlockRowsCount: 2},
+		{BlockIndex: 7, InnerBlockOffset: 0, Size: 1048576, IsLargeBlock: false, LargeBlockRowsCount: 2},
+		{BlockIndex: 8, InnerBlockOffset: 0, Size: 527163, IsLargeBlock: false, LargeBlockRowsCount: 2},
+	})
 }
