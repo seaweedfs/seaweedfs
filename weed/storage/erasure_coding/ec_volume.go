@@ -42,7 +42,7 @@ type EcVolume struct {
 	ecjFileAccessLock         sync.Mutex
 	diskType                  types.DiskType
 	datFileSize               int64
-	destroyTime               uint64 //ec volume删除时间
+	DestroyTime               uint64 //ec volume删除时间
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
@@ -73,7 +73,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(dataBaseFileName + ".vif"); found {
 		ev.Version = needle.Version(volumeInfo.Version)
 		ev.datFileSize = volumeInfo.DatFileSize
-		ev.destroyTime = volumeInfo.DestroyTime
+		ev.DestroyTime = volumeInfo.DestroyTime
 	} else {
 		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, dataBaseFileName)
 		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
@@ -203,9 +203,10 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.V
 	for _, s := range ev.Shards {
 		if s.VolumeId != prevVolumeId {
 			m = &master_pb.VolumeEcShardInformationMessage{
-				Id:         uint32(s.VolumeId),
-				Collection: s.Collection,
-				DiskType:   string(ev.diskType),
+				Id:          uint32(s.VolumeId),
+				Collection:  s.Collection,
+				DiskType:    string(ev.diskType),
+				DestroyTime: ev.DestroyTime,
 			}
 			messages = append(messages, m)
 		}
@@ -276,5 +277,5 @@ func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId t
 }
 
 func (ev *EcVolume) IsTimeToDestroy() bool {
-	return ev.destroyTime > 0 && time.Now().Unix() > (int64(ev.destroyTime)+destroyDelaySeconds)
+	return ev.DestroyTime > 0 && time.Now().Unix() > (int64(ev.DestroyTime)+destroyDelaySeconds)
 }
