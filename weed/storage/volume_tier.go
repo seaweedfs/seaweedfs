@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
+	"time"
 )
 
 func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
@@ -72,6 +73,12 @@ func (v *Volume) LoadRemoteFile() error {
 func (v *Volume) SaveVolumeInfo() error {
 
 	tierFileName := v.FileName(".vif")
+	if v.Ttl != nil {
+		ttlMills := v.Ttl.ToSeconds()
+		if ttlMills > 0 {
+			v.volumeInfo.DestroyTime = uint64(time.Now().Unix()) + v.Ttl.ToSeconds() //生成ec文件开始计算失效时间
+		}
+	}
 
 	return volume_info.SaveVolumeInfo(tierFileName, v.volumeInfo)
 
