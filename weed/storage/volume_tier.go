@@ -74,9 +74,9 @@ func (v *Volume) SaveVolumeInfo() error {
 
 	tierFileName := v.FileName(".vif")
 	if v.Ttl != nil {
-		ttlMills := v.Ttl.ToSeconds()
-		if ttlMills > 0 {
-			v.volumeInfo.DestroyTime = uint64(time.Now().Unix()) + v.Ttl.ToSeconds() //生成ec文件开始计算失效时间
+		ttlSeconds := v.Ttl.ToSeconds()
+		if ttlSeconds > 0 {
+			v.volumeInfo.DestroyTime = uint64(time.Now().Unix()) + ttlSeconds //calculated destroy time from the ec volume was created
 		}
 	}
 
