@@ -122,6 +122,7 @@ message VolumeEcShardInformationMessage {
   string collection = 2;
   uint32 ec_index_bits = 3;
   string disk_type = 4;
+  uint64 destroy_time = 5; // used to record the destruction time of ec volume
 }
 
 message StorageBackend {
