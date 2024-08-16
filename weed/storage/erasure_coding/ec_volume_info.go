@@ -11,7 +11,7 @@ type EcVolumeInfo struct {
 	Collection  string
 	ShardBits   ShardBits
 	DiskType    string
-	DestroyTime uint64 //ec volume删除时间
+	DestroyTime uint64 //ec volume destroy time, calculated from the ec volume was created
 }
 
 func NewEcVolumeInfo(diskType string, collection string, vid needle.VolumeId, shardBits ShardBits, destroyTime uint64) *EcVolumeInfo {

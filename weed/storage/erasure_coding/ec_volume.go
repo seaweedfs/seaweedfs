@@ -42,7 +42,7 @@ type EcVolume struct {
 	ecjFileAccessLock         sync.Mutex
 	diskType                  types.DiskType
 	datFileSize               int64
-	DestroyTime               uint64 //ec volume删除时间
+	DestroyTime               uint64 //ec volume destroy time, calculated from the ec volume was created
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
