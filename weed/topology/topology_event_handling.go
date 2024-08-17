@@ -27,7 +27,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 		for {
 			if t.IsLeader() {
 				if !t.isDisableVacuum {
-					t.Vacuum(grpcDialOption, garbageThreshold, 0, "", preallocate)
+					t.Vacuum(grpcDialOption, garbageThreshold, 0, "", preallocate, false)
 				}
 			} else {
 				stats.MasterReplicaPlacementMismatch.Reset()

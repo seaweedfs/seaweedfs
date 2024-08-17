@@ -213,7 +213,7 @@ func (t *Topology) batchVacuumVolumeCleanup(grpcDialOption grpc.DialOption, vl *
 	}
 }
 
-func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float64, volumeId uint32, collection string, preallocate int64) {
+func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float64, volumeId uint32, collection string, preallocate int64, force bool) {
 
 	// if there is vacuum going on, return immediately
 	swapped := atomic.CompareAndSwapInt64(&t.vacuumLockCounter, 0, 1)
@@ -232,6 +232,9 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 			continue
 		}
 		for _, vl := range c.storageType2VolumeLayout.Items() {
+			if !force && t.isDisableVacuum {
+				return
+			}
 			if vl != nil {
 				volumeLayout := vl.(*VolumeLayout)
 				if volumeId > 0 {
@@ -243,14 +246,14 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 						t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate)
 					}
 				} else {
-					t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, preallocate)
+					t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, preallocate, force)
 				}
 			}
 		}
 	}
 }
 
-func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, preallocate int64) {
+func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, preallocate int64, force bool) {
 
 	volumeLayout.accessLock.RLock()
 	tmpMap := make(map[needle.VolumeId]*VolumeLocationList)
@@ -260,11 +263,16 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 	volumeLayout.accessLock.RUnlock()
 
 	for vid, locationList := range tmpMap {
+		if !force && t.isDisableVacuum {
+			return
+		}
+
 		t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate)
 	}
 }
 
 func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, locationList *VolumeLocationList, vid needle.VolumeId, preallocate int64) {
+
 	volumeLayout.accessLock.RLock()
 	isReadOnly := volumeLayout.readonlyVolumes.IsTrue(vid)
 	isEnoughCopies := volumeLayout.enoughCopies(vid)
