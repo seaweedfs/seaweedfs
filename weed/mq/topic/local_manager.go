@@ -28,10 +28,7 @@ func (manager *LocalTopicManager) AddLocalPartition(topic Topic, localPartition 
 	if !manager.topics.SetIfAbsent(topic.String(), localTopic) {
 		localTopic, _ = manager.topics.Get(topic.String())
 	}
-	if localTopic.findPartition(localPartition.Partition) != nil {
-		return
-	}
-	localTopic.Partitions = append(localTopic.Partitions, localPartition)
+	localTopic.addPartition(localPartition)
 }
 
 // GetLocalPartition gets a topic from the local topic manager
@@ -99,6 +96,7 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 				Partition:       localPartition.Partition.ToPbPartition(),
 				PublisherCount:  int32(localPartition.Publishers.Size()),
 				SubscriberCount: int32(localPartition.Subscribers.Size()),
+				Follower:        localPartition.Follower,
 			}
 			// fmt.Printf("collect topic %+v partition %+v\n", topicPartition, localPartition.Partition)
 		}

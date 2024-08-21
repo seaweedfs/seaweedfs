@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
@@ -44,16 +45,17 @@ type MessageQueueBroker struct {
 	filers            map[pb.ServerAddress]struct{}
 	currentFiler      pb.ServerAddress
 	localTopicManager *topic.LocalTopicManager
-	Balancer          *pub_balancer.Balancer
+	PubBalancer       *pub_balancer.PubBalancer
 	lockAsBalancer    *cluster.LiveLock
-	Coordinator       *sub_coordinator.Coordinator
+	SubCoordinator    *sub_coordinator.SubCoordinator
 	accessLock        sync.Mutex
+	fca               *filer_client.FilerClientAccessor
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
 
-	pub_broker_balancer := pub_balancer.NewBalancer()
-	coordinator := sub_coordinator.NewCoordinator(pub_broker_balancer)
+	pubBalancer := pub_balancer.NewPubBalancer()
+	subCoordinator := sub_coordinator.NewSubCoordinator()
 
 	mqBroker = &MessageQueueBroker{
 		option:            option,
@@ -61,13 +63,18 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		MasterClient:      wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, option.BrokerAddress(), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
 		filers:            make(map[pb.ServerAddress]struct{}),
 		localTopicManager: topic.NewLocalTopicManager(),
-		Balancer:          pub_broker_balancer,
-		Coordinator:       coordinator,
+		PubBalancer:       pubBalancer,
+		SubCoordinator:    subCoordinator,
 	}
+	fca := &filer_client.FilerClientAccessor{
+		GetFiler:          mqBroker.GetFiler,
+		GetGrpcDialOption: mqBroker.GetGrpcDialOption,
+	}
+	mqBroker.fca = fca
+	subCoordinator.FilerClientAccessor = fca
+
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
-	pub_broker_balancer.OnPartitionChange = mqBroker.Coordinator.OnPartitionChange
-	pub_broker_balancer.OnAddBroker = mqBroker.Coordinator.OnSubAddBroker
-	pub_broker_balancer.OnRemoveBroker = mqBroker.Coordinator.OnSubRemoveBroker
+	pubBalancer.OnPartitionChange = mqBroker.SubCoordinator.OnPartitionChange
 
 	go mqBroker.MasterClient.KeepConnectedToMaster(context.Background())
 
@@ -117,6 +124,10 @@ func (b *MessageQueueBroker) OnBrokerUpdate(update *master_pb.ClusterNodeUpdate,
 		}
 	}
 
+}
+
+func (b *MessageQueueBroker) GetGrpcDialOption() grpc.DialOption {
+	return b.grpcDialOption
 }
 
 func (b *MessageQueueBroker) GetFiler() pb.ServerAddress {

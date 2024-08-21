@@ -50,8 +50,7 @@ func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, partition *mq_pb.Par
 			localPartition.NotifyLogFlushed(logBuffer.LastFlushTsNs)
 		}
 
-		println("flushing at", logBuffer.LastFlushTsNs, "to", targetFile, "size", len(buf))
-
+		glog.V(0).Infof("flushing at %d to %s size %d", logBuffer.LastFlushTsNs, targetFile, len(buf))
 	}
 }
 
@@ -105,7 +104,7 @@ func (b *MessageQueueBroker) genLogOnDiskReadFunc(t topic.Topic, partition *mq_p
 
 	eachFileFn := func(entry *filer_pb.Entry, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64) (processedTsNs int64, err error) {
 		if len(entry.Content) > 0 {
-			glog.Warningf("this should not happen. unexpected content in %s/%s", partitionDir, entry.Name)
+			// skip .offset files
 			return
 		}
 		var urlStrings []string

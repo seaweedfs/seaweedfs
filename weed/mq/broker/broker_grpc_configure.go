@@ -37,7 +37,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 
 	t := topic.FromPbTopic(request.Topic)
 	var readErr, assignErr error
-	resp, readErr = b.readTopicConfFromFiler(t)
+	resp, readErr = b.fca.ReadTopicConfFromFiler(t)
 	if readErr != nil {
 		glog.V(0).Infof("read topic %s conf: %v", request.Topic, readErr)
 	}
@@ -60,18 +60,18 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		}
 	}
 	resp = &mq_pb.ConfigureTopicResponse{}
-	if b.Balancer.Brokers.IsEmpty() {
+	if b.PubBalancer.Brokers.IsEmpty() {
 		return nil, status.Errorf(codes.Unavailable, pub_balancer.ErrNoBroker.Error())
 	}
-	resp.BrokerPartitionAssignments = pub_balancer.AllocateTopicPartitions(b.Balancer.Brokers, request.PartitionCount)
+	resp.BrokerPartitionAssignments = pub_balancer.AllocateTopicPartitions(b.PubBalancer.Brokers, request.PartitionCount)
 	resp.RecordType = request.RecordType
 
 	// save the topic configuration on filer
-	if err := b.saveTopicConfToFiler(request.Topic, resp); err != nil {
+	if err := b.fca.SaveTopicConfToFiler(request.Topic, resp); err != nil {
 		return nil, fmt.Errorf("configure topic: %v", err)
 	}
 
-	b.Balancer.OnPartitionChange(request.Topic, resp.BrokerPartitionAssignments)
+	b.PubBalancer.OnPartitionChange(request.Topic, resp.BrokerPartitionAssignments)
 
 	glog.V(0).Infof("ConfigureTopic: topic %s partition assignments: %v", request.Topic, resp.BrokerPartitionAssignments)
 

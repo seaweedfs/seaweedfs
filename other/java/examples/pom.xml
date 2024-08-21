@@ -9,15 +9,15 @@
     <version>1.0-SNAPSHOT</version>
     <dependencies>
         <dependency>
-            <groupId>com.github.chrislusf</groupId>
+            <groupId>com.seaweedfs</groupId>
             <artifactId>seaweedfs-client</artifactId>
-            <version>3.59</version>
+            <version>3.71</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
-            <groupId>com.github.chrislusf</groupId>
+            <groupId>com.seaweedfs</groupId>
             <artifactId>seaweedfs-hadoop2-client</artifactId>
-            <version>3.59</version>
+            <version>3.71</version>
             <scope>compile</scope>
         </dependency>
         <dependency>

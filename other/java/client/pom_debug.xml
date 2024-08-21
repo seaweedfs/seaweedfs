@@ -3,9 +3,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.github.chrislusf</groupId>
+    <groupId>com.seaweedfs</groupId>
     <artifactId>seaweedfs-client</artifactId>
-    <version>3.59</version>
+    <version>3.71</version>
 
     <parent>
         <groupId>org.sonatype.oss</groupId>

@@ -7,7 +7,8 @@ type PartitionSlotToConsumerInstance struct {
 	RangeStop          int32
 	UnixTimeNs         int64
 	Broker             string
-	AssignedInstanceId string
+	AssignedInstanceId ConsumerGroupInstanceId
+	FollowerBroker     string
 }
 
 type PartitionSlotToConsumerInstanceList struct {

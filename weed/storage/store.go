@@ -336,6 +336,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
+	// delete expired ec volumes
+	ecVolumeMessages, deletedEcVolumes := s.deleteExpiredEcVolumes()
+
 	var uuidList []string
 	for _, loc := range s.Locations {
 		uuidList = append(uuidList, loc.DirectoryUuid)
@@ -365,10 +368,32 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		DataCenter:      s.dataCenter,
 		Rack:            s.rack,
 		Volumes:         volumeMessages,
+		DeletedEcShards: deletedEcVolumes,
 		HasNoVolumes:    len(volumeMessages) == 0,
+		HasNoEcShards:   len(ecVolumeMessages) == 0,
 		LocationUuids:   uuidList,
 	}
 
+}
+
+func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeEcShardInformationMessage) {
+	for _, location := range s.Locations {
+		for _, ev := range location.ecVolumes {
+			messages := ev.ToVolumeEcShardInformationMessage()
+			if ev.IsTimeToDestroy() {
+				err := location.deleteEcVolumeById(ev.VolumeId)
+				if err != nil {
+					ecShards = append(ecShards, messages...)
+					glog.Errorf("delete EcVolume err %d: %v", ev.VolumeId, err)
+					continue
+				}
+				deleted = append(deleted, messages...)
+			} else {
+				ecShards = append(ecShards, messages...)
+			}
+		}
+	}
+	return
 }
 
 func (s *Store) SetStopping() {

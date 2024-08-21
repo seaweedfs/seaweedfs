@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
@@ -118,6 +119,9 @@ func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *fi
 	if err != nil {
 		return nil, err
 	}
+	if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)).Before(time.Now()) {
+		return nil, filer_pb.ErrNotFound
+	}
 	mc.mapIdFromFilerToLocal(entry)
 	return
 }
@@ -143,6 +147,9 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 	}
 
 	_, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *filer.Entry) bool {
+		if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)).Before(time.Now()) {
+			return true
+		}
 		mc.mapIdFromFilerToLocal(entry)
 		return eachEntryFunc(entry)
 	})

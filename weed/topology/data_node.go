@@ -2,6 +2,8 @@ package topology
 
 import (
 	"fmt"
+	"sync/atomic"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -9,7 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"sync/atomic"
 )
 
 type DataNode struct {
@@ -79,7 +80,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 		if _, ok := actualVolumeMap[vid]; !ok {
 			glog.V(0).Infoln("Deleting volume id:", vid)
 			disk := dn.getOrCreateDisk(v.DiskType)
-			delete(disk.volumes, vid)
+			disk.DeleteVolumeById(vid)
 			deletedVolumes = append(deletedVolumes, v)
 
 			deltaDiskUsages := newDiskUsages()
@@ -112,10 +113,12 @@ func (dn *DataNode) DeltaUpdateVolumes(newVolumes, deletedVolumes []storage.Volu
 
 	for _, v := range deletedVolumes {
 		disk := dn.getOrCreateDisk(v.DiskType)
-		if _, found := disk.volumes[v.Id]; !found {
+
+		_, err := disk.GetVolumesById(v.Id)
+		if err != nil {
 			continue
 		}
-		delete(disk.volumes, v.Id)
+		disk.DeleteVolumeById(v.Id)
 
 		deltaDiskUsages := newDiskUsages()
 		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(v.DiskType))
@@ -170,8 +173,9 @@ func (dn *DataNode) GetVolumesById(id needle.VolumeId) (vInfo storage.VolumeInfo
 	found := false
 	for _, c := range dn.children {
 		disk := c.(*Disk)
-		vInfo, found = disk.volumes[id]
-		if found {
+		vInfo, err = disk.GetVolumesById(id)
+		if err == nil {
+			found = true
 			break
 		}
 	}

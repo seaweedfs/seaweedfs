@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -21,39 +20,40 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 	}
 
 	var cgi *sub_coordinator.ConsumerGroupInstance
+	var cg *sub_coordinator.ConsumerGroup
 	// process init message
 	initMessage := req.GetInit()
 	if initMessage != nil {
-		cgi = b.Coordinator.AddSubscriber(initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic)
+		cg, cgi, err = b.SubCoordinator.AddSubscriber(initMessage)
+		if err != nil {
+			return status.Errorf(codes.InvalidArgument, err.Error())
+		}
 		glog.V(0).Infof("subscriber %s/%s/%s connected", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic)
 	} else {
 		return status.Errorf(codes.InvalidArgument, "subscriber init message is empty")
 	}
 	defer func() {
-		b.Coordinator.RemoveSubscriber(initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic)
+		b.SubCoordinator.RemoveSubscriber(initMessage)
 		glog.V(0).Infof("subscriber %s/%s/%s disconnected: %v", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic, err)
 	}()
 
 	ctx := stream.Context()
 
 	go func() {
-		// try to load the partition assignment from filer
-		if conf, err := b.readTopicConfFromFiler(topic.FromPbTopic(initMessage.Topic)); err == nil {
-			// send partition assignment to subscriber
-			cgi.ResponseChan <- &mq_pb.SubscriberToSubCoordinatorResponse{
-				Message: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment_{
-					Assignment: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment{
-						PartitionAssignments: conf.BrokerPartitionAssignments,
-					},
-				},
-			}
-		}
-
 		// process ack messages
 		for {
-			_, err := stream.Recv()
+			req, err := stream.Recv()
 			if err != nil {
 				glog.V(0).Infof("subscriber %s/%s/%s receive: %v", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic, err)
+			}
+
+			if ackUnAssignment := req.GetAckUnAssignment(); ackUnAssignment != nil {
+				glog.V(0).Infof("subscriber %s/%s/%s ack close of %v", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic, ackUnAssignment)
+				cg.AckUnAssignment(cgi, ackUnAssignment)
+			}
+			if ackAssignment := req.GetAckAssignment(); ackAssignment != nil {
+				glog.V(0).Infof("subscriber %s/%s/%s ack assignment %v", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic, ackAssignment)
+				cg.AckAssignment(cgi, ackAssignment)
 			}
 
 			select {

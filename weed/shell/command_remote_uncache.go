@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -164,12 +165,12 @@ func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
 		}
 	}
 	if *ff.minAge != -1 {
-		if entry.Attributes.Crtime < *ff.minAge {
+		if entry.Attributes.Crtime + *ff.minAge > time.Now().Unix() {
 			return false
 		}
 	}
 	if *ff.maxAge != -1 {
-		if entry.Attributes.Crtime > *ff.maxAge {
+		if entry.Attributes.Crtime + *ff.maxAge < time.Now().Unix() {
 			return false
 		}
 	}

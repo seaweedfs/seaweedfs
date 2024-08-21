@@ -10,6 +10,7 @@ type PartitionSlotToBroker struct {
 	RangeStop      int32
 	UnixTimeNs     int64
 	AssignedBroker string
+	FollowerBroker string
 }
 
 type PartitionSlotToBrokerList struct {
@@ -23,16 +24,18 @@ func NewPartitionSlotToBrokerList(ringSize int32) *PartitionSlotToBrokerList {
 	}
 }
 
-func (ps *PartitionSlotToBrokerList) AddBroker(partition *mq_pb.Partition, broker string) {
+func (ps *PartitionSlotToBrokerList) AddBroker(partition *mq_pb.Partition, broker string, follower string) {
 	for _, partitionSlot := range ps.PartitionSlots {
 		if partitionSlot.RangeStart == partition.RangeStart && partitionSlot.RangeStop == partition.RangeStop {
-			if partitionSlot.AssignedBroker == broker {
-				return
-			}
-			if partitionSlot.AssignedBroker != "" {
+			if partitionSlot.AssignedBroker != "" && partitionSlot.AssignedBroker != broker {
 				glog.V(0).Infof("partition %s broker change: %s => %s", partition, partitionSlot.AssignedBroker, broker)
+				partitionSlot.AssignedBroker = broker
 			}
-			partitionSlot.AssignedBroker = broker
+			if partitionSlot.FollowerBroker != "" && partitionSlot.FollowerBroker != follower {
+				glog.V(0).Infof("partition %s follower change: %s => %s", partition, partitionSlot.FollowerBroker, follower)
+				partitionSlot.FollowerBroker = follower
+			}
+
 			return
 		}
 	}
@@ -41,6 +44,7 @@ func (ps *PartitionSlotToBrokerList) AddBroker(partition *mq_pb.Partition, broke
 		RangeStop:      partition.RangeStop,
 		UnixTimeNs:     partition.UnixTimeNs,
 		AssignedBroker: broker,
+		FollowerBroker: follower,
 	})
 }
 func (ps *PartitionSlotToBrokerList) RemoveBroker(broker string) {

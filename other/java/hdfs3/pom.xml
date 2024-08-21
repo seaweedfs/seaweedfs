@@ -5,26 +5,37 @@
     <modelVersion>4.0.0</modelVersion>
 
     <properties>
-        <seaweedfs.client.version>3.59</seaweedfs.client.version>
+        <seaweedfs.client.version>3.71</seaweedfs.client.version>
         <hadoop.version>3.2.4</hadoop.version>
     </properties>
 
-    <groupId>com.github.chrislusf</groupId>
+    <groupId>com.seaweedfs</groupId>
     <artifactId>seaweedfs-hadoop3-client</artifactId>
     <version>${seaweedfs.client.version}</version>
 
-    <parent>
-        <groupId>org.sonatype.oss</groupId>
-        <artifactId>oss-parent</artifactId>
-        <version>9</version>
-    </parent>
+    <name>SeaweedFS HDFS3 Client</name>
+    <description>A java client for SeaweedFS.</description>
+    <url>https://github.com/seaweedfs/seaweedfs</url>
+    <licenses>
+        <license>
+            <name>The Apache License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+        </license>
+    </licenses>
+    <developers>
+        <developer>
+            <name>Chris Lu</name>
+            <email>chris.lu@gmail.com</email>
+            <organization>SeaweedFS</organization>
+            <organizationUrl>https://seaweedfs.com</organizationUrl>
+        </developer>
+    </developers>
+    <scm>
+        <connection>scm:git:git://github.com/seaweedfs/seaweedfs.git</connection>
+        <developerConnection>scm:git:ssh://github.com:seaweedfs/seaweedfs.git</developerConnection>
+        <url>https://github.com/seaweedfs/seaweedfs/tree/master</url>
+    </scm>
 
-    <distributionManagement>
-        <snapshotRepository>
-            <id>ossrh</id>
-            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
-        </snapshotRepository>
-    </distributionManagement>
     <build>
         <plugins>
             <plugin>
@@ -104,14 +115,13 @@
                 </executions>
             </plugin>
             <plugin>
-                <groupId>org.sonatype.plugins</groupId>
-                <artifactId>nexus-staging-maven-plugin</artifactId>
-                <version>1.6.8</version>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.5.0</version>
                 <extensions>true</extensions>
                 <configuration>
-                    <serverId>ossrh</serverId>
-                    <nexusUrl>https://oss.sonatype.org/</nexusUrl>
-                    <autoReleaseAfterClose>true</autoReleaseAfterClose>
+                    <publishingServerId>central</publishingServerId>
+                    <autoPublish>true</autoPublish>
                 </configuration>
             </plugin>
             <plugin>
@@ -151,7 +161,7 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>com.github.chrislusf</groupId>
+            <groupId>com.seaweedfs</groupId>
             <artifactId>seaweedfs-client</artifactId>
             <version>${seaweedfs.client.version}</version>
         </dependency>

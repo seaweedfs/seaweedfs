@@ -270,7 +270,11 @@ func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayou
 	isEnoughCopies := volumeLayout.enoughCopies(vid)
 	volumeLayout.accessLock.RUnlock()
 
-	if isReadOnly || !isEnoughCopies {
+	if isReadOnly {
+		return
+	}
+	if !isEnoughCopies {
+		glog.Warningf("skip vacuuming: not enough copies for volume:%d", vid)
 		return
 	}
 

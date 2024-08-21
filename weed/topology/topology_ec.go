@@ -22,7 +22,8 @@ func (t *Topology) SyncDataNodeEcShards(shardInfos []*master_pb.VolumeEcShardInf
 				shardInfo.DiskType,
 				shardInfo.Collection,
 				needle.VolumeId(shardInfo.Id),
-				erasure_coding.ShardBits(shardInfo.EcIndexBits)))
+				erasure_coding.ShardBits(shardInfo.EcIndexBits),
+				shardInfo.DestroyTime))
 	}
 	// find out the delta volumes
 	newShards, deletedShards = dn.UpdateEcShards(shards)
@@ -44,7 +45,7 @@ func (t *Topology) IncrementalSyncDataNodeEcShards(newEcShards, deletedEcShards 
 				shardInfo.DiskType,
 				shardInfo.Collection,
 				needle.VolumeId(shardInfo.Id),
-				erasure_coding.ShardBits(shardInfo.EcIndexBits)))
+				erasure_coding.ShardBits(shardInfo.EcIndexBits), shardInfo.DestroyTime))
 	}
 	for _, shardInfo := range deletedEcShards {
 		deletedShards = append(deletedShards,
@@ -52,7 +53,7 @@ func (t *Topology) IncrementalSyncDataNodeEcShards(newEcShards, deletedEcShards 
 				shardInfo.DiskType,
 				shardInfo.Collection,
 				needle.VolumeId(shardInfo.Id),
-				erasure_coding.ShardBits(shardInfo.EcIndexBits)))
+				erasure_coding.ShardBits(shardInfo.EcIndexBits), shardInfo.DestroyTime))
 	}
 
 	dn.DeltaUpdateEcShards(newShards, deletedShards)

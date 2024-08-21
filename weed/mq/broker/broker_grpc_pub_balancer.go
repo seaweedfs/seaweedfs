@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
@@ -14,32 +15,32 @@ func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessagin
 	}
 	req, err := stream.Recv()
 	if err != nil {
-		return err
+		return fmt.Errorf("receive init message: %v", err)
 	}
 
 	// process init message
 	initMessage := req.GetInit()
 	var brokerStats *pub_balancer.BrokerStats
 	if initMessage != nil {
-		brokerStats = b.Balancer.AddBroker(initMessage.Broker)
+		brokerStats = b.PubBalancer.AddBroker(initMessage.Broker)
 	} else {
 		return status.Errorf(codes.InvalidArgument, "balancer init message is empty")
 	}
 	defer func() {
-		b.Balancer.RemoveBroker(initMessage.Broker, brokerStats)
+		b.PubBalancer.RemoveBroker(initMessage.Broker, brokerStats)
 	}()
 
 	// process stats message
 	for {
 		req, err := stream.Recv()
 		if err != nil {
-			return err
+			return fmt.Errorf("receive stats message from %s: %v", initMessage.Broker, err)
 		}
 		if !b.isLockOwner() {
 			return status.Errorf(codes.Unavailable, "not current broker balancer")
 		}
 		if receivedStats := req.GetStats(); receivedStats != nil {
-			b.Balancer.OnBrokerStatsUpdated(initMessage.Broker, brokerStats, receivedStats)
+			b.PubBalancer.OnBrokerStatsUpdated(initMessage.Broker, brokerStats, receivedStats)
 			// glog.V(4).Infof("received from %v: %+v", initMessage.Broker, receivedStats)
 		}
 	}

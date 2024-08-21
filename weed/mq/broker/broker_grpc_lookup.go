@@ -26,7 +26,7 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 	ret := &mq_pb.LookupTopicBrokersResponse{}
 	conf := &mq_pb.ConfigureTopicResponse{}
 	ret.Topic = request.Topic
-	if conf, err = b.readTopicConfFromFiler(t); err != nil {
+	if conf, err = b.fca.ReadTopicConfFromFiler(t); err != nil {
 		glog.V(0).Infof("lookup topic %s conf: %v", request.Topic, err)
 	} else {
 		err = b.ensureTopicActiveAssignments(t, conf)
@@ -50,7 +50,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 
 	ret := &mq_pb.ListTopicsResponse{}
 	knownTopics := make(map[string]struct{})
-	for brokerStatsItem := range b.Balancer.Brokers.IterBuffered() {
+	for brokerStatsItem := range b.PubBalancer.Brokers.IterBuffered() {
 		_, brokerStats := brokerStatsItem.Key, brokerStatsItem.Val
 		for topicPartitionStatsItem := range brokerStats.TopicPartitionStats.IterBuffered() {
 			topicPartitionStat := topicPartitionStatsItem.Val

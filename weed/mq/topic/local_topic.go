@@ -5,6 +5,7 @@ import "sync"
 type LocalTopic struct {
 	Topic
 	Partitions []*LocalPartition
+	partitionLock sync.RWMutex
 }
 
 func NewLocalTopic(topic Topic) *LocalTopic {
@@ -15,6 +16,9 @@ func NewLocalTopic(topic Topic) *LocalTopic {
 }
 
 func (localTopic *LocalTopic) findPartition(partition Partition) *LocalPartition {
+	localTopic.partitionLock.RLock()
+	defer localTopic.partitionLock.RUnlock()
+
 	for _, localPartition := range localTopic.Partitions {
 		if localPartition.Partition.Equals(partition) {
 			return localPartition
@@ -23,6 +27,9 @@ func (localTopic *LocalTopic) findPartition(partition Partition) *LocalPartition
 	return nil
 }
 func (localTopic *LocalTopic) removePartition(partition Partition) bool {
+	localTopic.partitionLock.Lock()
+	defer localTopic.partitionLock.Unlock()
+
 	foundPartitionIndex := -1
 	for i, localPartition := range localTopic.Partitions {
 		if localPartition.Partition.Equals(partition) {
@@ -36,6 +43,16 @@ func (localTopic *LocalTopic) removePartition(partition Partition) bool {
 	}
 	localTopic.Partitions = append(localTopic.Partitions[:foundPartitionIndex], localTopic.Partitions[foundPartitionIndex+1:]...)
 	return true
+}
+func (localTopic *LocalTopic) addPartition(localPartition *LocalPartition) {
+	localTopic.partitionLock.Lock()
+	defer localTopic.partitionLock.Unlock()
+	for _, partition := range localTopic.Partitions {
+		if localPartition.Partition.Equals(partition.Partition) {
+			return
+		}
+	}
+	localTopic.Partitions = append(localTopic.Partitions, localPartition)
 }
 
 func (localTopic *LocalTopic) closePartitionPublishers(unixTsNs int64) bool {

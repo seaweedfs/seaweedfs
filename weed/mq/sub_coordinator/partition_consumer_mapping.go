@@ -23,8 +23,8 @@ func NewPartitionConsumerMapping(ringSize int32) *PartitionConsumerMapping {
 // 2. allow one consumer instance to be down unexpectedly
 //    without affecting the processing power utilization
 
-func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitionSlotToBrokerList *pub_balancer.PartitionSlotToBrokerList, consumerInstanceIds []string) {
-	if len(partitionSlotToBrokerList.PartitionSlots) == 0 || len(consumerInstanceIds) == 0 {
+func (pcm *PartitionConsumerMapping) BalanceToConsumerInstances(partitionSlotToBrokerList *pub_balancer.PartitionSlotToBrokerList, consumerInstances []*ConsumerGroupInstance) {
+	if len(partitionSlotToBrokerList.PartitionSlots) == 0 || len(consumerInstances) == 0 {
 		return
 	}
 	newVersion := time.Now().UnixNano()
@@ -35,7 +35,7 @@ func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitionSlotT
 	} else {
 		prevMapping = nil
 	}
-	newMapping.PartitionSlots = doBalanceSticky(partitionSlotToBrokerList.PartitionSlots, consumerInstanceIds, prevMapping)
+	newMapping.PartitionSlots = doBalanceSticky(partitionSlotToBrokerList.PartitionSlots, consumerInstances, prevMapping)
 	if pcm.currentMapping != nil {
 		pcm.prevMappings = append(pcm.prevMappings, pcm.currentMapping)
 		if len(pcm.prevMappings) > 10 {
@@ -45,9 +45,9 @@ func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitionSlotT
 	pcm.currentMapping = newMapping
 }
 
-func doBalanceSticky(partitions []*pub_balancer.PartitionSlotToBroker, consumerInstanceIds []string, prevMapping *PartitionSlotToConsumerInstanceList) (partitionSlots []*PartitionSlotToConsumerInstance) {
+func doBalanceSticky(partitions []*pub_balancer.PartitionSlotToBroker, consumerInstances []*ConsumerGroupInstance, prevMapping *PartitionSlotToConsumerInstanceList) (partitionSlots []*PartitionSlotToConsumerInstance) {
 	// collect previous consumer instance ids
-	prevConsumerInstanceIds := make(map[string]struct{})
+	prevConsumerInstanceIds := make(map[ConsumerGroupInstanceId]struct{})
 	if prevMapping != nil {
 		for _, prevPartitionSlot := range prevMapping.PartitionSlots {
 			if prevPartitionSlot.AssignedInstanceId != "" {
@@ -56,13 +56,13 @@ func doBalanceSticky(partitions []*pub_balancer.PartitionSlotToBroker, consumerI
 		}
 	}
 	// collect current consumer instance ids
-	currConsumerInstanceIds := make(map[string]struct{})
-	for _, consumerInstanceId := range consumerInstanceIds {
-		currConsumerInstanceIds[consumerInstanceId] = struct{}{}
+	currConsumerInstanceIds := make(map[ConsumerGroupInstanceId]struct{})
+	for _, consumerInstance := range consumerInstances {
+		currConsumerInstanceIds[consumerInstance.InstanceId] = struct{}{}
 	}
 
 	// check deleted consumer instances
-	deletedConsumerInstanceIds := make(map[string]struct{})
+	deletedConsumerInstanceIds := make(map[ConsumerGroupInstanceId]struct{})
 	for consumerInstanceId := range prevConsumerInstanceIds {
 		if _, ok := currConsumerInstanceIds[consumerInstanceId]; !ok {
 			deletedConsumerInstanceIds[consumerInstanceId] = struct{}{}
@@ -82,10 +82,11 @@ func doBalanceSticky(partitions []*pub_balancer.PartitionSlotToBroker, consumerI
 	newPartitionSlots := make([]*PartitionSlotToConsumerInstance, 0, len(partitions))
 	for _, partition := range partitions {
 		newPartitionSlots = append(newPartitionSlots, &PartitionSlotToConsumerInstance{
-			RangeStart: partition.RangeStart,
-			RangeStop:  partition.RangeStop,
-			UnixTimeNs: partition.UnixTimeNs,
-			Broker:     partition.AssignedBroker,
+			RangeStart:     partition.RangeStart,
+			RangeStop:      partition.RangeStop,
+			UnixTimeNs:     partition.UnixTimeNs,
+			Broker:         partition.AssignedBroker,
+			FollowerBroker: partition.FollowerBroker,
 		})
 	}
 	for _, newPartitionSlot := range newPartitionSlots {
@@ -99,32 +100,32 @@ func doBalanceSticky(partitions []*pub_balancer.PartitionSlotToBroker, consumerI
 
 	// for all consumer instances, count the average number of partitions
 	// that are assigned to them
-	consumerInstancePartitionCount := make(map[string]int)
+	consumerInstancePartitionCount := make(map[ConsumerGroupInstanceId]int)
 	for _, newPartitionSlot := range newPartitionSlots {
 		if newPartitionSlot.AssignedInstanceId != "" {
 			consumerInstancePartitionCount[newPartitionSlot.AssignedInstanceId]++
 		}
 	}
 	// average number of partitions that are assigned to each consumer instance
-	averageConsumerInstanceLoad := float32(len(partitions)) / float32(len(consumerInstanceIds))
+	averageConsumerInstanceLoad := float32(len(partitions)) / float32(len(consumerInstances))
 
 	// assign unassigned partition slots to consumer instances that is underloaded
 	consumerInstanceIdsIndex := 0
 	for _, newPartitionSlot := range newPartitionSlots {
 		if newPartitionSlot.AssignedInstanceId == "" {
-			for avoidDeadLoop := len(consumerInstanceIds); avoidDeadLoop > 0; avoidDeadLoop-- {
-				consumerInstanceId := consumerInstanceIds[consumerInstanceIdsIndex]
-				if float32(consumerInstancePartitionCount[consumerInstanceId]) < averageConsumerInstanceLoad {
-					newPartitionSlot.AssignedInstanceId = consumerInstanceId
-					consumerInstancePartitionCount[consumerInstanceId]++
+			for avoidDeadLoop := len(consumerInstances); avoidDeadLoop > 0; avoidDeadLoop-- {
+				consumerInstance := consumerInstances[consumerInstanceIdsIndex]
+				if float32(consumerInstancePartitionCount[consumerInstance.InstanceId]) < averageConsumerInstanceLoad {
+					newPartitionSlot.AssignedInstanceId = consumerInstance.InstanceId
+					consumerInstancePartitionCount[consumerInstance.InstanceId]++
 					consumerInstanceIdsIndex++
-					if consumerInstanceIdsIndex >= len(consumerInstanceIds) {
+					if consumerInstanceIdsIndex >= len(consumerInstances) {
 						consumerInstanceIdsIndex = 0
 					}
 					break
 				} else {
 					consumerInstanceIdsIndex++
-					if consumerInstanceIdsIndex >= len(consumerInstanceIds) {
+					if consumerInstanceIdsIndex >= len(consumerInstances) {
 						consumerInstanceIdsIndex = 0
 					}
 				}

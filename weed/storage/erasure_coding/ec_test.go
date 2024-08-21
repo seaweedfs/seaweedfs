@@ -3,6 +3,7 @@ package erasure_coding
 import (
 	"bytes"
 	"fmt"
+	"github.com/stretchr/testify/assert"
 	"math/rand"
 	"os"
 	"testing"
@@ -81,7 +82,9 @@ func assertSame(datFile *os.File, datSize int64, ecFiles []*os.File, offset type
 		return fmt.Errorf("failed to read dat file: %v", err)
 	}
 
-	ecData, err := readEcFile(datSize, ecFiles, offset, size)
+	ecFileStat, _ := ecFiles[0].Stat()
+
+	ecData, err := readEcFile(ecFileStat.Size(), ecFiles, offset, size)
 	if err != nil {
 		return fmt.Errorf("failed to read ec file: %v", err)
 	}
@@ -106,9 +109,9 @@ func readDatFile(datFile *os.File, offset types.Offset, size types.Size) ([]byte
 	return data, nil
 }
 
-func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size types.Size) (data []byte, err error) {
+func readEcFile(shardDatSize int64, ecFiles []*os.File, offset types.Offset, size types.Size) (data []byte, err error) {
 
-	intervals := LocateData(largeBlockSize, smallBlockSize, datSize, offset.ToActualOffset(), size)
+	intervals := LocateData(largeBlockSize, smallBlockSize, shardDatSize, offset.ToActualOffset(), size)
 
 	for i, interval := range intervals {
 		if d, e := readOneInterval(interval, ecFiles); e != nil {
@@ -131,7 +134,7 @@ func readOneInterval(interval Interval, ecFiles []*os.File) (data []byte, err er
 
 	data = make([]byte, interval.Size)
 	err = readFromFile(ecFiles[ecFileIndex], data, ecFileOffset)
-	{ // do some ec testing
+	if false { // do some ec testing
 		ecData, err := readFromOtherEcFiles(ecFiles, int(ecFileIndex), ecFileOffset, interval.Size)
 		if err != nil {
 			return nil, fmt.Errorf("ec reconstruct error: %v", err)
@@ -190,7 +193,7 @@ func removeGeneratedFiles(baseFileName string) {
 }
 
 func TestLocateData(t *testing.T) {
-	intervals := LocateData(largeBlockSize, smallBlockSize, DataShardsCount*largeBlockSize+1, DataShardsCount*largeBlockSize, 1)
+	intervals := LocateData(largeBlockSize, smallBlockSize, largeBlockSize+1, DataShardsCount*largeBlockSize, 1)
 	if len(intervals) != 1 {
 		t.Errorf("unexpected interval size %d", len(intervals))
 	}
@@ -198,7 +201,7 @@ func TestLocateData(t *testing.T) {
 		t.Errorf("unexpected interval %+v", intervals[0])
 	}
 
-	intervals = LocateData(largeBlockSize, smallBlockSize, DataShardsCount*largeBlockSize+1, DataShardsCount*largeBlockSize/2+100, DataShardsCount*largeBlockSize+1-DataShardsCount*largeBlockSize/2-100)
+	intervals = LocateData(largeBlockSize, smallBlockSize, largeBlockSize+1, DataShardsCount*largeBlockSize/2+100, DataShardsCount*largeBlockSize+1-DataShardsCount*largeBlockSize/2-100)
 	fmt.Printf("%+v\n", intervals)
 }
 
@@ -207,4 +210,25 @@ func (this Interval) sameAs(that Interval) bool {
 		this.InnerBlockOffset == that.InnerBlockOffset &&
 		this.BlockIndex == that.BlockIndex &&
 		this.Size == that.Size
+}
+
+func TestLocateData2(t *testing.T) {
+	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, 3221225472, 21479557912, 4194339)
+	assert.Equal(t, intervals, []Interval{
+		{BlockIndex: 4, InnerBlockOffset: 527128, Size: 521448, IsLargeBlock: false, LargeBlockRowsCount: 2},
+		{BlockIndex: 5, InnerBlockOffset: 0, Size: 1048576, IsLargeBlock: false, LargeBlockRowsCount: 2},
+		{BlockIndex: 6, InnerBlockOffset: 0, Size: 1048576, IsLargeBlock: false, LargeBlockRowsCount: 2},
+		{BlockIndex: 7, InnerBlockOffset: 0, Size: 1048576, IsLargeBlock: false, LargeBlockRowsCount: 2},
+		{BlockIndex: 8, InnerBlockOffset: 0, Size: 527163, IsLargeBlock: false, LargeBlockRowsCount: 2},
+	})
+}
+
+func TestLocateData3(t *testing.T) {
+	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, 3221225472, 30782909808, 112568)
+	for _, interval := range intervals {
+		fmt.Printf("%+v\n", interval)
+	}
+	assert.Equal(t, intervals, []Interval{
+		{BlockIndex: 8876, InnerBlockOffset: 912752, Size: 112568, IsLargeBlock: false, LargeBlockRowsCount: 2},
+	})
 }

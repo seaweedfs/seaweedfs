@@ -71,3 +71,13 @@ func (partition Partition) ToPbPartition() *mq_pb.Partition {
 		UnixTimeNs: partition.UnixTimeNs,
 	}
 }
+
+func (partition Partition) Overlaps(partition2 Partition) bool {
+	if partition.RangeStart >= partition2.RangeStop {
+		return false
+	}
+	if partition.RangeStop <= partition2.RangeStart {
+		return false
+	}
+	return true
+}

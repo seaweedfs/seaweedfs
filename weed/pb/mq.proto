@@ -45,10 +45,12 @@ service SeaweedMessaging {
     // data plane for each topic partition
     rpc PublishMessage (stream PublishMessageRequest) returns (stream PublishMessageResponse) {
     }
-    rpc SubscribeMessage (SubscribeMessageRequest) returns (stream SubscribeMessageResponse) {
+    rpc SubscribeMessage (stream SubscribeMessageRequest) returns (stream SubscribeMessageResponse) {
     }
     // The lead broker asks a follower broker to follow itself
     rpc PublishFollowMe (stream PublishFollowMeRequest) returns (stream PublishFollowMeResponse) {
+    }
+    rpc SubscribeFollowMe (stream SubscribeFollowMeRequest) returns (SubscribeFollowMeResponse) {
     }
 }
 
@@ -101,6 +103,7 @@ message TopicPartitionStats {
     Partition partition = 2;
     int32 publisher_count = 3;
     int32 subscriber_count = 4;
+    string follower = 5;
 }
 
 
@@ -146,7 +149,7 @@ message LookupTopicBrokersResponse {
 message BrokerPartitionAssignment {
     Partition partition = 1;
     string leader_broker = 2;
-    repeated string follower_brokers = 3;
+    string follower_broker = 3;
 }
 
 message AssignTopicPartitionsRequest {
@@ -163,29 +166,46 @@ message SubscriberToSubCoordinatorRequest {
         string consumer_group = 1;
         string consumer_group_instance_id = 2;
         Topic topic = 3;
+        // The consumer group instance will be assigned at most max_partition_count partitions.
+        // If the number of partitions is less than the sum of max_partition_count,
+        // the consumer group instance may be assigned partitions less than max_partition_count.
+        // Default is 1.
+        int32 max_partition_count = 4;
+        // If consumer group instance changes, wait for rebalance_seconds before reassigning partitions
+        // Exception: if adding a new consumer group instance and sum of max_partition_count equals the number of partitions,
+        // the rebalance will happen immediately.
+        // Default is 10 seconds.
+        int32 rebalance_seconds = 5;
     }
-    message AckMessage {
+    message AckUnAssignmentMessage {
         Partition partition = 1;
-        int64 ts_ns = 2;
+    }
+    message AckAssignmentMessage {
+        Partition partition = 1;
     }
     oneof message {
         InitMessage init = 1;
-        AckMessage ack = 2;
+        AckAssignmentMessage ack_assignment = 2;
+        AckUnAssignmentMessage ack_un_assignment = 3;
     }
 }
 message SubscriberToSubCoordinatorResponse {
     message Assignment {
-        int64 generation = 1;
-        repeated BrokerPartitionAssignment partition_assignments = 2;
+        BrokerPartitionAssignment partition_assignment = 1;
+    }
+    message UnAssignment {
+        Partition partition = 1;
     }
     oneof message {
         Assignment assignment = 1;
+        UnAssignment un_assignment = 2;
     }
 }
 
 //////////////////////////////////////////////////
 message ControlMessage {
     bool is_close = 1;
+    string publisher_name = 2;
 }
 message DataMessage {
     bytes key = 1;
@@ -198,14 +218,13 @@ message PublishMessageRequest {
         Topic topic = 1;
         Partition partition = 2;
         int32 ack_interval = 3;
-        repeated string follower_brokers = 4;
+        string follower_broker = 4;
         string publisher_name = 5; // for debugging
     }
     oneof message {
         InitMessage init = 1;
         DataMessage data = 2;
     }
-    int64 sequence = 3;
 }
 message PublishMessageResponse {
     int64 ack_sequence = 1;
@@ -240,10 +259,12 @@ message SubscribeMessageRequest {
         Topic topic = 4;
         PartitionOffset partition_offset = 5;
         string filter = 6;
-        repeated string follower_brokers = 7;
+        string follower_broker = 7;
+        int32 concurrency = 8;
     }
     message AckMessage {
         int64 sequence = 1;
+        bytes key = 2;
     }
     oneof message {
         InitMessage init = 1;
@@ -260,6 +281,26 @@ message SubscribeMessageResponse {
         SubscribeCtrlMessage ctrl = 1;
         DataMessage data = 2;
     }
+}
+message SubscribeFollowMeRequest {
+    message InitMessage {
+        Topic topic = 1;
+        Partition partition = 2;
+        string consumer_group = 3;
+    }
+    message AckMessage {
+        int64 ts_ns = 1;
+    }
+    message CloseMessage {
+    }
+    oneof message {
+        InitMessage init = 1;
+        AckMessage ack = 2;
+        CloseMessage close = 3;
+    }
+}
+message SubscribeFollowMeResponse {
+    int64 ack_ts_ns = 1;
 }
 message ClosePublishersRequest {
     Topic topic = 1;

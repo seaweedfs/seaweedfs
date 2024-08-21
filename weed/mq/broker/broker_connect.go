@@ -55,9 +55,9 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string, stop
 			})
 			if err != nil {
 				if err == io.EOF {
-					return err
+					// return err
 				}
-				return fmt.Errorf("send stats message: %v", err)
+				return fmt.Errorf("send stats message to balancer %s: %v", brokerBalancer, err)
 			}
 			// glog.V(3).Infof("sent stats: %+v", stats)
 

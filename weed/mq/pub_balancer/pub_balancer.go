@@ -11,7 +11,7 @@ const (
 	LockBrokerBalancer = "broker_balancer"
 )
 
-// Balancer collects stats from all brokers.
+// PubBalancer collects stats from all brokers.
 //
 //	When publishers wants to create topics, it picks brokers to assign the topic partitions.
 //	When consumers wants to subscribe topics, it tells which brokers are serving the topic partitions.
@@ -28,23 +28,21 @@ const (
 //
 //	When a consumer instance is down, the broker will notice this and inform the balancer.
 //	The balancer will then tell the broker to send the partition to another standby consumer instance.
-type Balancer struct {
+type PubBalancer struct {
 	Brokers cmap.ConcurrentMap[string, *BrokerStats] // key: broker address
 	// Collected from all brokers when they connect to the broker leader
 	TopicToBrokers    cmap.ConcurrentMap[string, *PartitionSlotToBrokerList] // key: topic name
 	OnPartitionChange func(topic *mq_pb.Topic, assignments []*mq_pb.BrokerPartitionAssignment)
-	OnAddBroker       func(broker string, brokerStats *BrokerStats)
-	OnRemoveBroker    func(broker string, brokerStats *BrokerStats)
 }
 
-func NewBalancer() *Balancer {
-	return &Balancer{
+func NewPubBalancer() *PubBalancer {
+	return &PubBalancer{
 		Brokers:        cmap.New[*BrokerStats](),
 		TopicToBrokers: cmap.New[*PartitionSlotToBrokerList](),
 	}
 }
 
-func (balancer *Balancer) AddBroker(broker string) (brokerStats *BrokerStats) {
+func (balancer *PubBalancer) AddBroker(broker string) (brokerStats *BrokerStats) {
 	var found bool
 	brokerStats, found = balancer.Brokers.Get(broker)
 	if !found {
@@ -54,11 +52,10 @@ func (balancer *Balancer) AddBroker(broker string) (brokerStats *BrokerStats) {
 		}
 	}
 	balancer.onPubAddBroker(broker, brokerStats)
-	balancer.OnAddBroker(broker, brokerStats)
 	return brokerStats
 }
 
-func (balancer *Balancer) RemoveBroker(broker string, stats *BrokerStats) {
+func (balancer *PubBalancer) RemoveBroker(broker string, stats *BrokerStats) {
 	balancer.Brokers.Remove(broker)
 
 	// update TopicToBrokers
@@ -75,10 +72,9 @@ func (balancer *Balancer) RemoveBroker(broker string, stats *BrokerStats) {
 		}
 	}
 	balancer.onPubRemoveBroker(broker, stats)
-	balancer.OnRemoveBroker(broker, stats)
 }
 
-func (balancer *Balancer) OnBrokerStatsUpdated(broker string, brokerStats *BrokerStats, receivedStats *mq_pb.BrokerStats) {
+func (balancer *PubBalancer) OnBrokerStatsUpdated(broker string, brokerStats *BrokerStats, receivedStats *mq_pb.BrokerStats) {
 	brokerStats.UpdateStats(receivedStats)
 
 	// update TopicToBrokers
@@ -92,14 +88,14 @@ func (balancer *Balancer) OnBrokerStatsUpdated(broker string, brokerStats *Broke
 				partitionSlotToBrokerList, _ = balancer.TopicToBrokers.Get(topicKey)
 			}
 		}
-		partitionSlotToBrokerList.AddBroker(partition, broker)
+		partitionSlotToBrokerList.AddBroker(partition, broker, topicPartitionStats.Follower)
 	}
 }
 
 // OnPubAddBroker is called when a broker is added for a publisher coordinator
-func (balancer *Balancer) onPubAddBroker(broker string, brokerStats *BrokerStats) {
+func (balancer *PubBalancer) onPubAddBroker(broker string, brokerStats *BrokerStats) {
 }
 
 // OnPubRemoveBroker is called when a broker is removed for a publisher coordinator
-func (balancer *Balancer) onPubRemoveBroker(broker string, brokerStats *BrokerStats) {
+func (balancer *PubBalancer) onPubRemoveBroker(broker string, brokerStats *BrokerStats) {
 }
