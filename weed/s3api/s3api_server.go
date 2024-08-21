@@ -19,9 +19,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"google.golang.org/grpc"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
+	"google.golang.org/grpc"
 )
 
 type S3ApiServerOption struct {
@@ -162,19 +162,19 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// objects with query
 
 		// CopyObjectPart
-		bucket.Methods(http.MethodPut).Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", `.*?(\/|%2F).*?`).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
+		bucket.Methods("PUT").Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", `.*?(\/|%2F).*?`).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
 		// PutObjectPart
-		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
+		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.PutObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
 		// CompleteMultipartUpload
-		bucket.Methods(http.MethodPost).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CompleteMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.CompleteMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploadId", "{uploadId:.*}")
 		// NewMultipartUpload
-		bucket.Methods(http.MethodPost).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.NewMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploads", "")
+		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.NewMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploads", "")
 		// AbortMultipartUpload
-		bucket.Methods(http.MethodDelete).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.AbortMultipartUploadHandler, ACTION_WRITE)), "DELETE")).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.AbortMultipartUploadHandler, ACTION_WRITE)), "DELETE")).Queries("uploadId", "{uploadId:.*}")
 		// ListObjectParts
-		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectPartsHandler, ACTION_READ)), "GET")).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.ListObjectPartsHandler, ACTION_READ)), "GET")).Queries("uploadId", "{uploadId:.*}")
 		// ListMultipartUploads
-		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListMultipartUploadsHandler, ACTION_READ)), "GET")).Queries("uploads", "")
+		bucket.Methods("GET").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.ListMultipartUploadsHandler, ACTION_READ)), "GET")).Queries("uploads", "")
 
 		// GetObjectTagging
 		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectTaggingHandler, ACTION_READ)), "GET")).Queries("tagging", "")
@@ -184,7 +184,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods(http.MethodDelete).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteObjectTaggingHandler, ACTION_TAGGING)), "DELETE")).Queries("tagging", "")
 
 		// PutObjectACL
-		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectAclHandler, ACTION_WRITE_ACP)), "PUT")).Queries("acl", "")
+		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.PutObjectAclHandler, ACTION_WRITE_ACP)), "PUT")).Queries("acl", "")
 		// PutObjectRetention
 		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectRetentionHandler, ACTION_WRITE)), "PUT")).Queries("retention", "")
 		// PutObjectLegalHold
@@ -193,22 +193,22 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectLockConfigurationHandler, ACTION_WRITE)), "PUT")).Queries("object-lock", "")
 
 		// GetObjectACL
-		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectAclHandler, ACTION_READ_ACP)), "GET")).Queries("acl", "")
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.GetObjectAclHandler, ACTION_READ_ACP)), "GET")).Queries("acl", "")
 
 		// objects with query
 
 		// raw objects
 
 		// HeadObject
-		bucket.Methods(http.MethodHead).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.HeadObjectHandler, ACTION_READ)), "GET"))
+		bucket.Methods("HEAD").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.HeadObjectHandler, ACTION_READ)), "GET"))
 
 		// GetObject, but directory listing is not supported
-		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectHandler, ACTION_READ)), "GET"))
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.GetObjectHandler, ACTION_READ)), "GET"))
 
 		// CopyObject
 		bucket.Methods(http.MethodPut).Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectHandler, ACTION_WRITE)), "COPY"))
 		// PutObject
-		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectHandler, ACTION_WRITE)), "PUT"))
+		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.PutObjectHandler, ACTION_WRITE)), "PUT"))
 		// DeleteObject
 		bucket.Methods(http.MethodDelete).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteObjectHandler, ACTION_WRITE)), "DELETE"))
 
@@ -220,9 +220,9 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods(http.MethodPost).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteMultipleObjectsHandler, ACTION_WRITE)), "DELETE")).Queries("delete", "")
 
 		// GetBucketACL
-		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketAclHandler, ACTION_READ_ACP)), "GET")).Queries("acl", "")
+		bucket.Methods("GET").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.GetBucketAclHandler, ACTION_READ_ACP)), "GET")).Queries("acl", "")
 		// PutBucketACL
-		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketAclHandler, ACTION_WRITE_ACP)), "PUT")).Queries("acl", "")
+		bucket.Methods("PUT").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.PutBucketAclHandler, ACTION_WRITE_ACP)), "PUT")).Queries("acl", "")
 
 		// GetBucketPolicy
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketPolicyHandler, ACTION_READ)), "GET")).Queries("policy", "")
@@ -256,17 +256,17 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketVersioningHandler, ACTION_WRITE)), "PUT")).Queries("versioning", "")
 
 		// ListObjectsV2
-		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectsV2Handler, ACTION_LIST)), "LIST")).Queries("list-type", "2")
+		bucket.Methods("GET").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.ListObjectsV2Handler, ACTION_LIST)), "LIST")).Queries("list-type", "2")
 
 		// buckets with query
 		// PutBucketOwnershipControls
-		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.PutBucketOwnershipControls, ACTION_ADMIN), "PUT")).Queries("ownershipControls", "")
+		bucket.Methods("PUT").HandlerFunc(track(s3a.Auth(s3a.PutBucketOwnershipControls, ACTION_ADMIN, true), "PUT")).Queries("ownershipControls", "")
 
 		//GetBucketOwnershipControls
-		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.GetBucketOwnershipControls, ACTION_READ), "GET")).Queries("ownershipControls", "")
+		bucket.Methods("GET").HandlerFunc(track(s3a.Auth(s3a.GetBucketOwnershipControls, ACTION_READ, true), "GET")).Queries("ownershipControls", "")
 
 		//DeleteBucketOwnershipControls
-		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.iam.Auth(s3a.DeleteBucketOwnershipControls, ACTION_ADMIN), "DELETE")).Queries("ownershipControls", "")
+		bucket.Methods("DELETE").HandlerFunc(track(s3a.Auth(s3a.DeleteBucketOwnershipControls, ACTION_ADMIN, true), "DELETE")).Queries("ownershipControls", "")
 
 		// raw buckets
 
@@ -280,10 +280,10 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketHandler, ACTION_ADMIN)), "PUT"))
 
 		// DeleteBucket
-		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketHandler, ACTION_DELETE_BUCKET)), "DELETE"))
+		bucket.Methods("DELETE").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketHandler, ACTION_DELETE_BUCKET)), "DELETE"))
 
 		// ListObjectsV1 (Legacy)
-		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectsV1Handler, ACTION_LIST)), "LIST"))
+		bucket.Methods("GET").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.ListObjectsV1Handler, ACTION_LIST)), "LIST"))
 
 		// raw buckets
 

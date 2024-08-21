@@ -42,6 +42,9 @@ const (
 	SeaweedFSPartNumber     = "X-Seaweedfs-Part-Number"
 	SeaweedFSUploadId       = "X-Seaweedfs-Upload-Id"
 
+	XAmzBucketOwnerId      = "x-seaweedfs-amz-bucket-owner-id"
+	XAmzBucketAccessDenied = "x-seaweedfs-amz-bucket-access-denied"
+
 	// S3 ACL headers
 	AmzCannedAcl      = "X-Amz-Acl"
 	AmzAclFullControl = "X-Amz-Grant-Full-Control"

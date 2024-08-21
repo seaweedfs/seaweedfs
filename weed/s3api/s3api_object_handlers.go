@@ -3,19 +3,21 @@ package s3api
 import (
 	"bytes"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -115,6 +117,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
+	errCode := s3a.checkBucketAccessForReadObject(r, bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	if strings.HasSuffix(r.URL.Path, "/") {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 		return
@@ -125,13 +133,56 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
 }
 
-func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
+// PutObjectAclHandler Put object ACL
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjecthtml
+func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, object := s3_constants.GetBucketAndObject(r)
 
+	objectEntry, ownerId, grants, errCode := s3a.checkAccessForWriteObjectAcl(r, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	errCode = s3acl.AssembleEntryWithAcp(objectEntry, ownerId, grants)
+	if errCode != s3err.ErrNone {
+		return
+	}
+
+	err := updateObjectEntry(s3a, bucket, object, objectEntry)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// GetObjectAclHandler Put object ACL
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjecthtml
+func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	acp, errCode := s3a.checkAccessForReadObjectAcl(r, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	result := &s3.PutBucketAclInput{
+		AccessControlPolicy: acp,
+	}
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, &result)
+}
+
+func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
-	destUrl := s3a.toFilerUrl(bucket, object)
+	errCode := s3a.checkBucketAccessForReadObject(r, bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
+	destUrl := s3a.toFilerUrl(bucket, object)
 	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
 }
 
@@ -167,6 +218,13 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	s3a.maybeAddFilerJwtAuthorization(proxyReq, isWrite)
 	resp, postErr := s3a.client.Do(proxyReq)
 
+	if resp.Uncompressed && r.Header.Get("Accept-Encoding") == "" {
+		r.Header.Set("Accept-Encoding", "gzip")
+		util_http.CloseResponse(resp)
+		s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
+		return
+	}
+
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -174,14 +232,17 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 	defer util_http.CloseResponse(resp)
 
-	if resp.StatusCode == http.StatusPreconditionFailed {
+	switch resp.StatusCode {
+	case http.StatusPreconditionFailed:
 		s3err.WriteErrorResponse(w, r, s3err.ErrPreconditionFailed)
 		return
-	}
-
-	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+	case http.StatusRequestedRangeNotSatisfiable:
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 		return
+	case http.StatusForbidden:
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	default:
 	}
 
 	if r.Method == http.MethodDelete {

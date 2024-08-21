@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	Commands = append(Commands, &commandFsMv{})
+	//Commands = append(Commands, &commandFsMv{})
 }
 
 type commandFsMv struct {

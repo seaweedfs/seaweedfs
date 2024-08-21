@@ -86,7 +86,7 @@ var tcs = []*BucketMetadataTestCase{
 	{
 		badEntry, &BucketMetaData{
 			Name:            badEntry.Name,
-			ObjectOwnership: s3_constants.DefaultOwnershipForExists,
+			ObjectOwnership: s3_constants.DefaultObjectOwnership,
 			Owner: &s3.Owner{
 				DisplayName: &AccountAdmin.DisplayName,
 				ID:          &AccountAdmin.Id,
@@ -108,12 +108,20 @@ var tcs = []*BucketMetadataTestCase{
 	{
 		ownershipEmptyStr, &BucketMetaData{
 			Name:            ownershipEmptyStr.Name,
-			ObjectOwnership: s3_constants.DefaultOwnershipForExists,
+			ObjectOwnership: s3_constants.DefaultObjectOwnership,
 			Owner: &s3.Owner{
 				DisplayName: &AccountAdmin.DisplayName,
 				ID:          &AccountAdmin.Id,
 			},
-			Acl: nil,
+			Acl: []*s3.Grant{
+				{
+					Permission: &s3_constants.PermissionFullControl,
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &AccountAdmin.Id,
+					},
+				},
+			},
 		},
 	},
 	{
@@ -124,35 +132,59 @@ var tcs = []*BucketMetadataTestCase{
 				DisplayName: &AccountAdmin.DisplayName,
 				ID:          &AccountAdmin.Id,
 			},
-			Acl: nil,
+			Acl: []*s3.Grant{
+				{
+					Permission: &s3_constants.PermissionFullControl,
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &AccountAdmin.Id,
+					},
+				},
+			},
 		},
 	},
 	{
 		acpEmptyStr, &BucketMetaData{
 			Name:            acpEmptyStr.Name,
-			ObjectOwnership: s3_constants.DefaultOwnershipForExists,
+			ObjectOwnership: s3_constants.DefaultObjectOwnership,
 			Owner: &s3.Owner{
 				DisplayName: &AccountAdmin.DisplayName,
 				ID:          &AccountAdmin.Id,
 			},
-			Acl: nil,
+			Acl: []*s3.Grant{
+				{
+					Permission: &s3_constants.PermissionFullControl,
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &AccountAdmin.Id,
+					},
+				},
+			},
 		},
 	},
 	{
 		acpEmptyObject, &BucketMetaData{
 			Name:            acpEmptyObject.Name,
-			ObjectOwnership: s3_constants.DefaultOwnershipForExists,
+			ObjectOwnership: s3_constants.DefaultObjectOwnership,
 			Owner: &s3.Owner{
 				DisplayName: &AccountAdmin.DisplayName,
 				ID:          &AccountAdmin.Id,
 			},
-			Acl: nil,
+			Acl: []*s3.Grant{
+				{
+					Permission: &s3_constants.PermissionFullControl,
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &AccountAdmin.Id,
+					},
+				},
+			},
 		},
 	},
 	{
 		acpOwnerNil, &BucketMetaData{
 			Name:            acpOwnerNil.Name,
-			ObjectOwnership: s3_constants.DefaultOwnershipForExists,
+			ObjectOwnership: s3_constants.DefaultObjectOwnership,
 			Owner: &s3.Owner{
 				DisplayName: &AccountAdmin.DisplayName,
 				ID:          &AccountAdmin.Id,
@@ -164,7 +196,7 @@ var tcs = []*BucketMetadataTestCase{
 
 func TestBuildBucketMetadata(t *testing.T) {
 	iam := &IdentityAccessManagement{}
-	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{})
+	_ = iam.LoadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{})
 	for _, tc := range tcs {
 		resultBucketMetadata := buildBucketMetadata(iam, tc.filerEntry)
 		if !reflect.DeepEqual(resultBucketMetadata, tc.expectBucketMetadata) {

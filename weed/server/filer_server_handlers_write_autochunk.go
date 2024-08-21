@@ -261,7 +261,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	for k, v := range r.Header {
 		if len(v) > 0 && len(v[0]) > 0 {
-			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
+			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" || k == "Content-Encoding" || (k == "Content-Type" && v[0] != "application/octet-stream") {
 				entry.Extended[k] = []byte(v[0])
 			}
 			if k == "Response-Content-Disposition" {
@@ -413,6 +413,10 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 				metadata[header] = []byte(value)
 			}
 		}
+	}
+
+	if ce := r.Header.Get("Content-Encoding"); ce != "" {
+		metadata["Content-Encoding"] = []byte(ce)
 	}
 
 	//acp-owner
