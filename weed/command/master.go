@@ -36,14 +36,15 @@ var (
 )
 
 type MasterOptions struct {
-	port              *int
-	portGrpc          *int
-	ip                *string
-	ipBind            *string
-	metaFolder        *string
-	peers             *string
-	volumeSizeLimitMB *uint
-	volumePreallocate *bool
+	port                       *int
+	portGrpc                   *int
+	ip                         *string
+	ipBind                     *string
+	metaFolder                 *string
+	peers                      *string
+	volumeSizeLimitMB          *uint
+	volumePreallocate          *bool
+	maxParallelVacuumPerServer *int
 	// pulseSeconds       *int
 	defaultReplication *string
 	garbageThreshold   *float64
@@ -70,6 +71,7 @@ func init() {
 	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
+	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server")
 	// m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	m.defaultReplication = cmdMaster.Flag.String("defaultReplication", "", "Default replication type if not specified.")
 	m.garbageThreshold = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
@@ -311,10 +313,11 @@ func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
 	masterAddress := pb.NewServerAddress(*m.ip, *m.port, *m.portGrpc)
 	return &weed_server.MasterOption{
-		Master:            masterAddress,
-		MetaFolder:        *m.metaFolder,
-		VolumeSizeLimitMB: uint32(*m.volumeSizeLimitMB),
-		VolumePreallocate: *m.volumePreallocate,
+		Master:                     masterAddress,
+		MetaFolder:                 *m.metaFolder,
+		VolumeSizeLimitMB:          uint32(*m.volumeSizeLimitMB),
+		VolumePreallocate:          *m.volumePreallocate,
+		MaxParallelVacuumPerServer: *m.maxParallelVacuumPerServer,
 		// PulseSeconds:            *m.pulseSeconds,
 		DefaultReplicaPlacement: *m.defaultReplication,
 		GarbageThreshold:        *m.garbageThreshold,

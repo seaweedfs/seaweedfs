@@ -29,8 +29,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/shell"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 const (
@@ -39,10 +39,11 @@ const (
 )
 
 type MasterOption struct {
-	Master            pb.ServerAddress
-	MetaFolder        string
-	VolumeSizeLimitMB uint32
-	VolumePreallocate bool
+	Master                     pb.ServerAddress
+	MetaFolder                 string
+	VolumeSizeLimitMB          uint32
+	VolumePreallocate          bool
+	MaxParallelVacuumPerServer int
 	// PulseSeconds            int
 	DefaultReplicaPlacement string
 	GarbageThreshold        float64
@@ -158,6 +159,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	ms.Topo.StartRefreshWritableVolumes(
 		ms.grpcDialOption,
 		ms.option.GarbageThreshold,
+		ms.option.MaxParallelVacuumPerServer,
 		topology.VolumeGrowStrategy.Threshold,
 		ms.preallocateSize,
 	)
