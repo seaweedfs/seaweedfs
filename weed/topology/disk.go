@@ -294,11 +294,13 @@ func (d *Disk) ToRackInfoByEcQuery(request *master_pb.EcVolumeListByJavaRequest)
 	for _, v := range d.GetVolumes() {
 		if uint32(v.Id) == request.VolumeId {
 			m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
+			break
 		}
 	}
 	for _, ecv := range d.GetEcShards() {
 		if uint32(ecv.VolumeId) == request.VolumeId {
 			m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
+			break
 		}
 	}
 	return m
