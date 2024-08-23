@@ -56,8 +56,8 @@ func (dc *DataCenter) ToInfo() (info DataCenterInfo) {
 
 func (dc *DataCenter) ToDataCenterInfoByEcQuery(request *master_pb.EcVolumeListByJavaRequest) *master_pb.DataCenterInfo {
 	m := &master_pb.DataCenterInfo{
-		Id:        string(dc.Id()),
-		DiskInfos: dc.diskUsages.ToDiskInfo(),
+		Id: string(dc.Id()),
+		//DiskInfos: dc.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range dc.Children() {
 		rack := c.(*Rack)
@@ -79,8 +79,8 @@ func (dc *DataCenter) ToDataCenterInfo() *master_pb.DataCenterInfo {
 }
 func (dc *DataCenter) ToDataCenterInfoByQuery(request *master_pb.VolumeListByJavaRequest) *master_pb.DataCenterInfo {
 	m := &master_pb.DataCenterInfo{
-		Id:        string(dc.Id()),
-		DiskInfos: dc.diskUsages.ToDiskInfo(),
+		Id: string(dc.Id()),
+		//DiskInfos: dc.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range dc.Children() {
 		rack := c.(*Rack)

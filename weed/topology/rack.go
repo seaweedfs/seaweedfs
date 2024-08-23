@@ -92,8 +92,8 @@ func (r *Rack) ToRackInfo() *master_pb.RackInfo {
 
 func (r *Rack) ToRackInfoByQuery(request *master_pb.VolumeListByJavaRequest) *master_pb.RackInfo {
 	m := &master_pb.RackInfo{
-		Id:        string(r.Id()),
-		DiskInfos: r.diskUsages.ToDiskInfo(),
+		Id: string(r.Id()),
+		//DiskInfos: r.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)
@@ -104,8 +104,8 @@ func (r *Rack) ToRackInfoByQuery(request *master_pb.VolumeListByJavaRequest) *ma
 
 func (r *Rack) ToRackInfoByEcQuery(request *master_pb.EcVolumeListByJavaRequest) *master_pb.RackInfo {
 	m := &master_pb.RackInfo{
-		Id:        string(r.Id()),
-		DiskInfos: r.diskUsages.ToDiskInfo(),
+		Id: string(r.Id()),
+		//DiskInfos: r.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)

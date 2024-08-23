@@ -128,8 +128,8 @@ func (t *Topology) ToTopologyInfo() *master_pb.TopologyInfo {
 
 func (t *Topology) ToTopologyInfoByQuery(request *master_pb.VolumeListByJavaRequest) *master_pb.TopologyInfo {
 	m := &master_pb.TopologyInfo{
-		Id:        string(t.Id()),
-		DiskInfos: t.diskUsages.ToDiskInfo(),
+		Id: string(t.Id()),
+		//DiskInfos: t.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
@@ -140,8 +140,8 @@ func (t *Topology) ToTopologyInfoByQuery(request *master_pb.VolumeListByJavaRequ
 
 func (t *Topology) ToTopologyInfoByEcQuery(request *master_pb.EcVolumeListByJavaRequest) *master_pb.TopologyInfo {
 	m := &master_pb.TopologyInfo{
-		Id:        string(t.Id()),
-		DiskInfos: t.diskUsages.ToDiskInfo(),
+		Id: string(t.Id()),
+		//DiskInfos: t.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
