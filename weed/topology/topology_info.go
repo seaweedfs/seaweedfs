@@ -2,6 +2,7 @@ package topology
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
 	"strings"
 )
@@ -123,4 +124,32 @@ func (t *Topology) ToTopologyInfo() *master_pb.TopologyInfo {
 		m.DataCenterInfos = append(m.DataCenterInfos, dc.ToDataCenterInfo())
 	}
 	return m
+}
+
+func (t *Topology) ToTopologyInfoByQuery(request *master_pb.VolumeListByJavaRequest) *master_pb.TopologyInfo {
+	m := &master_pb.TopologyInfo{
+		Id:        string(t.Id()),
+		DiskInfos: t.diskUsages.ToDiskInfo(),
+	}
+	for _, c := range t.Children() {
+		dc := c.(*DataCenter)
+		m.DataCenterInfos = append(m.DataCenterInfos, dc.ToDataCenterInfoByQuery(request))
+	}
+	return m
+}
+
+func (t *Topology) ToTopologyInfoByEcQuery(request *master_pb.EcVolumeListByJavaRequest) *master_pb.TopologyInfo {
+	m := &master_pb.TopologyInfo{
+		Id:        string(t.Id()),
+		DiskInfos: t.diskUsages.ToDiskInfo(),
+	}
+	for _, c := range t.Children() {
+		dc := c.(*DataCenter)
+		m.DataCenterInfos = append(m.DataCenterInfos, dc.ToDataCenterInfoByEcQuery(request))
+	}
+	return m
+}
+
+func (t *Topology) ToEcCollectInfo(top *master_pb.TopologyInfo, req *master_pb.EcCollectRequest) []*master_pb.EcNodeInfo {
+	return MasterCollectEcVolumeServersByDc(top, req.DataCenter, types.ToDiskType(req.DiskType))
 }

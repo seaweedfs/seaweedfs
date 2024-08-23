@@ -139,7 +139,6 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 		UsedSize:  stats.UsedSize,
 		FileCount: stats.FileCount,
 	}
-
 	return resp, nil
 }
 
@@ -154,6 +153,45 @@ func (ms *MasterServer) VolumeList(ctx context.Context, req *master_pb.VolumeLis
 		VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
 	}
 
+	return resp, nil
+}
+
+func (ms *MasterServer) VolumeListByJava(ctx context.Context, req *master_pb.VolumeListByJavaRequest) (*master_pb.VolumeListResponse, error) {
+
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+
+	resp := &master_pb.VolumeListResponse{
+		TopologyInfo:      ms.Topo.ToTopologyInfoByQuery(req),
+		VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
+	}
+
+	return resp, nil
+}
+func (ms *MasterServer) EcVolumeListByJava(ctx context.Context, req *master_pb.EcVolumeListByJavaRequest) (*master_pb.VolumeListResponse, error) {
+
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+
+	resp := &master_pb.VolumeListResponse{
+		TopologyInfo:      ms.Topo.ToTopologyInfoByEcQuery(req),
+		VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
+	}
+
+	return resp, nil
+}
+
+func (ms *MasterServer) EcCollectList(ctx context.Context, req *master_pb.EcCollectRequest) (*master_pb.EcCollectResponse, error) {
+	volumeListResponse, err := ms.VolumeList(ctx, &master_pb.VolumeListRequest{})
+	if err != nil {
+		return nil, err
+	}
+	resp := &master_pb.EcCollectResponse{
+		EcNodeInfo:        ms.Topo.ToEcCollectInfo(volumeListResponse.TopologyInfo, req),
+		VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
+	}
 	return resp, nil
 }
 
