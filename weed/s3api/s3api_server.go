@@ -201,7 +201,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// raw objects
 
 		// HeadObject
-		bucket.Methods("HEAD").Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.HeadObjectHandler, ACTION_READ)), http.MethodGet))
+		bucket.Methods(http.MethodHead).Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.HeadObjectHandler, ACTION_READ)), http.MethodGet))
 
 		// GetObject, but directory listing is not supported
 		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithAcl(s3a.cb.Limit(s3a.GetObjectHandler, ACTION_READ)), http.MethodGet))
