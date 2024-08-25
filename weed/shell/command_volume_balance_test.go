@@ -252,7 +252,7 @@ func TestIsGoodMove(t *testing.T) {
 func TestBalance(t *testing.T) {
 	topologyInfo := parseOutput(topoData)
 	volumeServers := collectVolumeServersByDc(topologyInfo, "")
-	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo, nil)
+	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
 
 	if err := balanceVolumeServers(nil, diskTypes, volumeReplicas, volumeServers, "ALL_COLLECTIONS", false); err != nil {

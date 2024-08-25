@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	//Commands = append(Commands, &commandS3BucketDelete{})
+	Commands = append(Commands, &commandS3BucketDelete{})
 }
 
 type commandS3BucketDelete struct {

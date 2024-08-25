@@ -9,7 +9,7 @@ import (
 )
 
 func init() {
-	//Commands = append(Commands, &commandVolumeDelete{})
+	Commands = append(Commands, &commandVolumeDelete{})
 }
 
 type commandVolumeDelete struct {

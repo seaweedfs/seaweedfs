@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	//Commands = append(Commands, &commandFsRm{})
+	Commands = append(Commands, &commandFsRm{})
 }
 
 type commandFsRm struct {
