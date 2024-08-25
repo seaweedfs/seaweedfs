@@ -33,7 +33,7 @@ func (c *commandRemoteMountBuckets) Help() string {
 	remote.mount.buckets -remote=cloud1
 
 	# after mount, start a separate process to write updates to remote storage
-	weed filer.remote.sync -filer=<filerHost>:<filerPort> -createBucketAt=cloud1
+	weed filer.remote.gateway -filer=<filerHost>:<filerPort> -createBucketAt=cloud1
 
 `
 }

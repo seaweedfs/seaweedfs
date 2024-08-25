@@ -111,6 +111,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 	// Readiness Probe
 	apiRouter.Methods(http.MethodGet).Path("/status").HandlerFunc(s3a.StatusHandler)
+	apiRouter.Methods(http.MethodGet).Path("/healthz").HandlerFunc(s3a.StatusHandler)
 
 	apiRouter.Methods(http.MethodOptions).HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
