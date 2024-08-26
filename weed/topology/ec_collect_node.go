@@ -20,6 +20,8 @@ func MasterCollectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedData
 			Id:            dn.Id,
 			GrpcPort:      dn.GrpcPort,
 			FreeShardSlot: int64(freeEcSlots),
+			DataCenter:    dc,
+			RackInfo:      string(rack),
 		}
 		ecNodes = append(ecNodes, node)
 	})
