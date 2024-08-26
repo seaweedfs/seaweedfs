@@ -267,13 +267,17 @@ func (d *Disk) ToDiskInfoByQuery(request *master_pb.VolumeListWithoutECVolumeReq
 		ActiveVolumeCount: diskUsage.activeVolumeCount,
 		RemoteVolumeCount: diskUsage.remoteVolumeCount,
 	}
-	collection := request.Collection
-	modifiedAtSecond := request.ModifiedAtSecond
+	volumeIds := request.VolumeIds
+	modifiedAtSecondBegin := request.ModifiedAtSecondBegin
+	modifiedAtSecondEnd := request.ModifiedAtSecondEnd
 	for _, v := range d.GetVolumes() {
-		if collection != "" && collection != v.Collection {
+		if modifiedAtSecondBegin != 0 && v.ModifiedAtSecond < modifiedAtSecondBegin {
 			continue
 		}
-		if modifiedAtSecond != 0 && v.ModifiedAtSecond < modifiedAtSecond {
+		if modifiedAtSecondEnd != 0 && v.ModifiedAtSecond > modifiedAtSecondEnd {
+			continue
+		}
+		if len(volumeIds) != 0 && !contains(volumeIds, uint32(v.Id)) {
 			continue
 		}
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
@@ -292,4 +296,13 @@ func (d *Disk) GetVolumeIds() string {
 	}
 
 	return util.HumanReadableIntsMax(100, ids...)
+}
+
+func contains(slice []uint32, vid uint32) bool {
+	for _, v := range slice {
+		if v == vid {
+			return true
+		}
+	}
+	return false
 }

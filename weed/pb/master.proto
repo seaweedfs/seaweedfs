@@ -295,8 +295,7 @@ message VolumeListResponse {
   uint64 volume_size_limit_mb = 2;
 }
 message EcCollectRequest{
-  string data_center=2;
-  string disk_type = 3;
+  string data_center = 1;
 }
 message EcCollectResponse{
   uint64 volume_size_limit_mb = 1;
@@ -305,13 +304,25 @@ message EcCollectResponse{
 message EcNodeInfo{
   string id = 1;
   uint32 grpc_port = 2;
-  int64  free_shard_slot = 3;
-  string data_center=4;
-  string rack_info=5;
+  map<string, EcNodeDiskInfo> ecNodeDiskInfos = 3;
+  string data_center = 4;
+  string rack_info = 5;
 }
+
+message EcNodeDiskInfo {
+  string type = 1;
+  int64 volume_count = 2;
+  int64 max_volume_count = 3;
+  int64 free_volume_count = 4;
+  int64 active_volume_count = 5;
+  int64 remote_volume_count = 6;
+  int64 count_ec_shards = 7;
+}
+
 message  VolumeListWithoutECVolumeRequest{
-  string collection=1;
-  int64 modified_at_second = 2;
+  repeated uint32 volume_ids = 1;
+  int64 modified_at_second_begin = 2;
+  int64 modified_at_second_end = 3;
 }
 message LookupEcVolumeRequest {
   uint32 volume_id = 1;

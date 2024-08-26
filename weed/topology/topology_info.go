@@ -2,7 +2,6 @@ package topology
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
 	"strings"
 )
@@ -139,5 +138,5 @@ func (t *Topology) ToTopologyInfoByQuery(request *master_pb.VolumeListWithoutECV
 }
 
 func (t *Topology) ToEcCollectInfo(top *master_pb.TopologyInfo, req *master_pb.EcCollectRequest) []*master_pb.EcNodeInfo {
-	return MasterCollectEcVolumeServersByDc(top, req.DataCenter, types.ToDiskType(req.DiskType))
+	return MasterCollectEcVolumeServersByDc(top, req.DataCenter)
 }
