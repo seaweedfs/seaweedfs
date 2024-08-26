@@ -261,13 +261,13 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 		// buckets with query
 		// PutBucketOwnershipControls
-		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.Auth(s3a.PutBucketOwnershipControls, ACTION_ADMIN, true), http.MethodPut)).Queries("ownershipControls", "")
+		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.AuthWithAcl(s3a.PutBucketOwnershipControls, ACTION_ADMIN), http.MethodPut)).Queries("ownershipControls", "")
 
 		//GetBucketOwnershipControls
-		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.Auth(s3a.GetBucketOwnershipControls, ACTION_READ, true), http.MethodGet)).Queries("ownershipControls", "")
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.AuthWithAcl(s3a.GetBucketOwnershipControls, ACTION_READ), http.MethodGet)).Queries("ownershipControls", "")
 
 		//DeleteBucketOwnershipControls
-		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.Auth(s3a.DeleteBucketOwnershipControls, ACTION_ADMIN, true), http.MethodDelete)).Queries("ownershipControls", "")
+		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.AuthWithAcl(s3a.DeleteBucketOwnershipControls, ACTION_ADMIN), http.MethodDelete)).Queries("ownershipControls", "")
 
 		// raw buckets
 
