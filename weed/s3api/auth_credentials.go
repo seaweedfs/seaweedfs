@@ -319,8 +319,8 @@ func (s3a *S3ApiServer) AuthWithAcl(f http.HandlerFunc, action Action) http.Hand
 	return Auth(s3a.iam, s3a.bucketRegistry, f, action, true)
 }
 
-func (s3a *S3ApiServer) Auth(f http.HandlerFunc, action Action, supportAcl bool) http.HandlerFunc {
-	return Auth(s3a.iam, s3a.bucketRegistry, f, action, supportAcl)
+func (s3a *S3ApiServer) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
+	return Auth(s3a.iam, s3a.bucketRegistry, f, action, false)
 }
 
 func Auth(iam *IdentityAccessManagement, br *BucketRegistry, f http.HandlerFunc, action Action, supportAcl bool) http.HandlerFunc {
