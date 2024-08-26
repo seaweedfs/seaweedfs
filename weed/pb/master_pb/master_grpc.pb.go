@@ -19,31 +19,30 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Seaweed_SendHeartbeat_FullMethodName          = "/master_pb.Seaweed/SendHeartbeat"
-	Seaweed_KeepConnected_FullMethodName          = "/master_pb.Seaweed/KeepConnected"
-	Seaweed_LookupVolume_FullMethodName           = "/master_pb.Seaweed/LookupVolume"
-	Seaweed_Assign_FullMethodName                 = "/master_pb.Seaweed/Assign"
-	Seaweed_StreamAssign_FullMethodName           = "/master_pb.Seaweed/StreamAssign"
-	Seaweed_Statistics_FullMethodName             = "/master_pb.Seaweed/Statistics"
-	Seaweed_CollectionList_FullMethodName         = "/master_pb.Seaweed/CollectionList"
-	Seaweed_CollectionDelete_FullMethodName       = "/master_pb.Seaweed/CollectionDelete"
-	Seaweed_VolumeList_FullMethodName             = "/master_pb.Seaweed/VolumeList"
-	Seaweed_EcCollectList_FullMethodName          = "/master_pb.Seaweed/EcCollectList"
-	Seaweed_VolumeListByJava_FullMethodName       = "/master_pb.Seaweed/VolumeListByJava"
-	Seaweed_EcVolumeListByJava_FullMethodName     = "/master_pb.Seaweed/EcVolumeListByJava"
-	Seaweed_LookupEcVolume_FullMethodName         = "/master_pb.Seaweed/LookupEcVolume"
-	Seaweed_VacuumVolume_FullMethodName           = "/master_pb.Seaweed/VacuumVolume"
-	Seaweed_DisableVacuum_FullMethodName          = "/master_pb.Seaweed/DisableVacuum"
-	Seaweed_EnableVacuum_FullMethodName           = "/master_pb.Seaweed/EnableVacuum"
-	Seaweed_VolumeMarkReadonly_FullMethodName     = "/master_pb.Seaweed/VolumeMarkReadonly"
-	Seaweed_GetMasterConfiguration_FullMethodName = "/master_pb.Seaweed/GetMasterConfiguration"
-	Seaweed_ListClusterNodes_FullMethodName       = "/master_pb.Seaweed/ListClusterNodes"
-	Seaweed_LeaseAdminToken_FullMethodName        = "/master_pb.Seaweed/LeaseAdminToken"
-	Seaweed_ReleaseAdminToken_FullMethodName      = "/master_pb.Seaweed/ReleaseAdminToken"
-	Seaweed_Ping_FullMethodName                   = "/master_pb.Seaweed/Ping"
-	Seaweed_RaftListClusterServers_FullMethodName = "/master_pb.Seaweed/RaftListClusterServers"
-	Seaweed_RaftAddServer_FullMethodName          = "/master_pb.Seaweed/RaftAddServer"
-	Seaweed_RaftRemoveServer_FullMethodName       = "/master_pb.Seaweed/RaftRemoveServer"
+	Seaweed_SendHeartbeat_FullMethodName             = "/master_pb.Seaweed/SendHeartbeat"
+	Seaweed_KeepConnected_FullMethodName             = "/master_pb.Seaweed/KeepConnected"
+	Seaweed_LookupVolume_FullMethodName              = "/master_pb.Seaweed/LookupVolume"
+	Seaweed_Assign_FullMethodName                    = "/master_pb.Seaweed/Assign"
+	Seaweed_StreamAssign_FullMethodName              = "/master_pb.Seaweed/StreamAssign"
+	Seaweed_Statistics_FullMethodName                = "/master_pb.Seaweed/Statistics"
+	Seaweed_CollectionList_FullMethodName            = "/master_pb.Seaweed/CollectionList"
+	Seaweed_CollectionDelete_FullMethodName          = "/master_pb.Seaweed/CollectionDelete"
+	Seaweed_VolumeList_FullMethodName                = "/master_pb.Seaweed/VolumeList"
+	Seaweed_EcCollectList_FullMethodName             = "/master_pb.Seaweed/EcCollectList"
+	Seaweed_VolumeListWithoutECVolume_FullMethodName = "/master_pb.Seaweed/VolumeListWithoutECVolume"
+	Seaweed_LookupEcVolume_FullMethodName            = "/master_pb.Seaweed/LookupEcVolume"
+	Seaweed_VacuumVolume_FullMethodName              = "/master_pb.Seaweed/VacuumVolume"
+	Seaweed_DisableVacuum_FullMethodName             = "/master_pb.Seaweed/DisableVacuum"
+	Seaweed_EnableVacuum_FullMethodName              = "/master_pb.Seaweed/EnableVacuum"
+	Seaweed_VolumeMarkReadonly_FullMethodName        = "/master_pb.Seaweed/VolumeMarkReadonly"
+	Seaweed_GetMasterConfiguration_FullMethodName    = "/master_pb.Seaweed/GetMasterConfiguration"
+	Seaweed_ListClusterNodes_FullMethodName          = "/master_pb.Seaweed/ListClusterNodes"
+	Seaweed_LeaseAdminToken_FullMethodName           = "/master_pb.Seaweed/LeaseAdminToken"
+	Seaweed_ReleaseAdminToken_FullMethodName         = "/master_pb.Seaweed/ReleaseAdminToken"
+	Seaweed_Ping_FullMethodName                      = "/master_pb.Seaweed/Ping"
+	Seaweed_RaftListClusterServers_FullMethodName    = "/master_pb.Seaweed/RaftListClusterServers"
+	Seaweed_RaftAddServer_FullMethodName             = "/master_pb.Seaweed/RaftAddServer"
+	Seaweed_RaftRemoveServer_FullMethodName          = "/master_pb.Seaweed/RaftRemoveServer"
 )
 
 // SeaweedClient is the client API for Seaweed service.
@@ -60,8 +59,7 @@ type SeaweedClient interface {
 	CollectionDelete(ctx context.Context, in *CollectionDeleteRequest, opts ...grpc.CallOption) (*CollectionDeleteResponse, error)
 	VolumeList(ctx context.Context, in *VolumeListRequest, opts ...grpc.CallOption) (*VolumeListResponse, error)
 	EcCollectList(ctx context.Context, in *EcCollectRequest, opts ...grpc.CallOption) (*EcCollectResponse, error)
-	VolumeListByJava(ctx context.Context, in *VolumeListByJavaRequest, opts ...grpc.CallOption) (*VolumeListResponse, error)
-	EcVolumeListByJava(ctx context.Context, in *EcVolumeListByJavaRequest, opts ...grpc.CallOption) (*VolumeListResponse, error)
+	VolumeListWithoutECVolume(ctx context.Context, in *VolumeListWithoutECVolumeRequest, opts ...grpc.CallOption) (*VolumeListResponse, error)
 	LookupEcVolume(ctx context.Context, in *LookupEcVolumeRequest, opts ...grpc.CallOption) (*LookupEcVolumeResponse, error)
 	VacuumVolume(ctx context.Context, in *VacuumVolumeRequest, opts ...grpc.CallOption) (*VacuumVolumeResponse, error)
 	DisableVacuum(ctx context.Context, in *DisableVacuumRequest, opts ...grpc.CallOption) (*DisableVacuumResponse, error)
@@ -194,20 +192,10 @@ func (c *seaweedClient) EcCollectList(ctx context.Context, in *EcCollectRequest,
 	return out, nil
 }
 
-func (c *seaweedClient) VolumeListByJava(ctx context.Context, in *VolumeListByJavaRequest, opts ...grpc.CallOption) (*VolumeListResponse, error) {
+func (c *seaweedClient) VolumeListWithoutECVolume(ctx context.Context, in *VolumeListWithoutECVolumeRequest, opts ...grpc.CallOption) (*VolumeListResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeListResponse)
-	err := c.cc.Invoke(ctx, Seaweed_VolumeListByJava_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *seaweedClient) EcVolumeListByJava(ctx context.Context, in *EcVolumeListByJavaRequest, opts ...grpc.CallOption) (*VolumeListResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(VolumeListResponse)
-	err := c.cc.Invoke(ctx, Seaweed_EcVolumeListByJava_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Seaweed_VolumeListWithoutECVolume_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -358,8 +346,7 @@ type SeaweedServer interface {
 	CollectionDelete(context.Context, *CollectionDeleteRequest) (*CollectionDeleteResponse, error)
 	VolumeList(context.Context, *VolumeListRequest) (*VolumeListResponse, error)
 	EcCollectList(context.Context, *EcCollectRequest) (*EcCollectResponse, error)
-	VolumeListByJava(context.Context, *VolumeListByJavaRequest) (*VolumeListResponse, error)
-	EcVolumeListByJava(context.Context, *EcVolumeListByJavaRequest) (*VolumeListResponse, error)
+	VolumeListWithoutECVolume(context.Context, *VolumeListWithoutECVolumeRequest) (*VolumeListResponse, error)
 	LookupEcVolume(context.Context, *LookupEcVolumeRequest) (*LookupEcVolumeResponse, error)
 	VacuumVolume(context.Context, *VacuumVolumeRequest) (*VacuumVolumeResponse, error)
 	DisableVacuum(context.Context, *DisableVacuumRequest) (*DisableVacuumResponse, error)
@@ -413,11 +400,8 @@ func (UnimplementedSeaweedServer) VolumeList(context.Context, *VolumeListRequest
 func (UnimplementedSeaweedServer) EcCollectList(context.Context, *EcCollectRequest) (*EcCollectResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EcCollectList not implemented")
 }
-func (UnimplementedSeaweedServer) VolumeListByJava(context.Context, *VolumeListByJavaRequest) (*VolumeListResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method VolumeListByJava not implemented")
-}
-func (UnimplementedSeaweedServer) EcVolumeListByJava(context.Context, *EcVolumeListByJavaRequest) (*VolumeListResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method EcVolumeListByJava not implemented")
+func (UnimplementedSeaweedServer) VolumeListWithoutECVolume(context.Context, *VolumeListWithoutECVolumeRequest) (*VolumeListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method VolumeListWithoutECVolume not implemented")
 }
 func (UnimplementedSeaweedServer) LookupEcVolume(context.Context, *LookupEcVolumeRequest) (*LookupEcVolumeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LookupEcVolume not implemented")
@@ -626,38 +610,20 @@ func _Seaweed_EcCollectList_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Seaweed_VolumeListByJava_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(VolumeListByJavaRequest)
+func _Seaweed_VolumeListWithoutECVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeListWithoutECVolumeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SeaweedServer).VolumeListByJava(ctx, in)
+		return srv.(SeaweedServer).VolumeListWithoutECVolume(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Seaweed_VolumeListByJava_FullMethodName,
+		FullMethod: Seaweed_VolumeListWithoutECVolume_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedServer).VolumeListByJava(ctx, req.(*VolumeListByJavaRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Seaweed_EcVolumeListByJava_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EcVolumeListByJavaRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedServer).EcVolumeListByJava(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Seaweed_EcVolumeListByJava_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedServer).EcVolumeListByJava(ctx, req.(*EcVolumeListByJavaRequest))
+		return srv.(SeaweedServer).VolumeListWithoutECVolume(ctx, req.(*VolumeListWithoutECVolumeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -932,12 +898,8 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Seaweed_EcCollectList_Handler,
 		},
 		{
-			MethodName: "VolumeListByJava",
-			Handler:    _Seaweed_VolumeListByJava_Handler,
-		},
-		{
-			MethodName: "EcVolumeListByJava",
-			Handler:    _Seaweed_EcVolumeListByJava_Handler,
+			MethodName: "VolumeListWithoutECVolume",
+			Handler:    _Seaweed_VolumeListWithoutECVolume_Handler,
 		},
 		{
 			MethodName: "LookupEcVolume",

@@ -257,7 +257,7 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 	return m
 }
 
-func (d *Disk) ToDiskInfoByQuery(request *master_pb.VolumeListByJavaRequest) *master_pb.DiskInfo {
+func (d *Disk) ToDiskInfoByQuery(request *master_pb.VolumeListWithoutECVolumeRequest) *master_pb.DiskInfo {
 	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
 	m := &master_pb.DiskInfo{
 		Type:              string(d.Id()),
@@ -277,31 +277,6 @@ func (d *Disk) ToDiskInfoByQuery(request *master_pb.VolumeListByJavaRequest) *ma
 			continue
 		}
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
-	}
-	return m
-}
-
-func (d *Disk) ToRackInfoByEcQuery(request *master_pb.EcVolumeListByJavaRequest) *master_pb.DiskInfo {
-	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
-	m := &master_pb.DiskInfo{
-		Type:              string(d.Id()),
-		VolumeCount:       diskUsage.volumeCount,
-		MaxVolumeCount:    diskUsage.maxVolumeCount,
-		FreeVolumeCount:   diskUsage.maxVolumeCount - diskUsage.volumeCount,
-		ActiveVolumeCount: diskUsage.activeVolumeCount,
-		RemoteVolumeCount: diskUsage.remoteVolumeCount,
-	}
-	for _, v := range d.GetVolumes() {
-		if uint32(v.Id) == request.VolumeId {
-			m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
-			break
-		}
-	}
-	for _, ecv := range d.GetEcShards() {
-		if uint32(ecv.VolumeId) == request.VolumeId {
-			m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
-			break
-		}
 	}
 	return m
 }

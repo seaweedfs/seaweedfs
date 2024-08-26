@@ -27,9 +27,7 @@ service Seaweed {
   }
   rpc EcCollectList(EcCollectRequest) returns (EcCollectResponse){
   }
-  rpc VolumeListByJava(VolumeListByJavaRequest) returns (VolumeListResponse){
-  }
-  rpc EcVolumeListByJava(EcVolumeListByJavaRequest) returns (VolumeListResponse){
+  rpc VolumeListWithoutECVolume(VolumeListWithoutECVolumeRequest) returns (VolumeListResponse){
   }
   rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
   }
@@ -297,7 +295,6 @@ message VolumeListResponse {
   uint64 volume_size_limit_mb = 2;
 }
 message EcCollectRequest{
-  uint32 volume_id = 1;
   string data_center=2;
   string disk_type = 3;
 }
@@ -312,12 +309,9 @@ message EcNodeInfo{
   string data_center=4;
   string rack_info=5;
 }
-message  VolumeListByJavaRequest{
+message  VolumeListWithoutECVolumeRequest{
   string collection=1;
   int64 modified_at_second = 2;
-}
-message EcVolumeListByJavaRequest{
-  uint32 volumeId=1;
 }
 message LookupEcVolumeRequest {
   uint32 volume_id = 1;

@@ -156,7 +156,7 @@ func (ms *MasterServer) VolumeList(ctx context.Context, req *master_pb.VolumeLis
 	return resp, nil
 }
 
-func (ms *MasterServer) VolumeListByJava(ctx context.Context, req *master_pb.VolumeListByJavaRequest) (*master_pb.VolumeListResponse, error) {
+func (ms *MasterServer) VolumeListWithoutECVolume(ctx context.Context, req *master_pb.VolumeListWithoutECVolumeRequest) (*master_pb.VolumeListResponse, error) {
 
 	if !ms.Topo.IsLeader() {
 		return nil, raft.NotLeaderError
@@ -164,19 +164,6 @@ func (ms *MasterServer) VolumeListByJava(ctx context.Context, req *master_pb.Vol
 
 	resp := &master_pb.VolumeListResponse{
 		TopologyInfo:      ms.Topo.ToTopologyInfoByQuery(req),
-		VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
-	}
-
-	return resp, nil
-}
-func (ms *MasterServer) EcVolumeListByJava(ctx context.Context, req *master_pb.EcVolumeListByJavaRequest) (*master_pb.VolumeListResponse, error) {
-
-	if !ms.Topo.IsLeader() {
-		return nil, raft.NotLeaderError
-	}
-
-	resp := &master_pb.VolumeListResponse{
-		TopologyInfo:      ms.Topo.ToTopologyInfoByEcQuery(req),
 		VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
 	}
 
