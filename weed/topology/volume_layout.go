@@ -342,7 +342,7 @@ func (vl *VolumeLayout) DoneGrowRequest() {
 }
 
 func (vl *VolumeLayout) SetLastGrowCount(count uint32) {
-	if vl.lastGrowCount.Load() != count {
+	if vl.lastGrowCount.Load() != count && count != 0 {
 		vl.lastGrowCount.Store(count)
 	}
 }
