@@ -282,6 +282,14 @@ func (d *Disk) ToDiskInfoByQuery(request *master_pb.VolumeListWithoutECVolumeReq
 		}
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
 	}
+	needEc := request.NeedEc
+	if needEc && len(volumeIds) != 0 {
+		for _, ecv := range d.GetEcShards() {
+			if contains(volumeIds, uint32(ecv.VolumeId)) {
+				m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
+			}
+		}
+	}
 	return m
 }
 

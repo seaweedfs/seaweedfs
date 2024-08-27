@@ -323,6 +323,7 @@ message  VolumeListWithoutECVolumeRequest{
   repeated uint32 volume_ids = 1;
   int64 modified_at_second_begin = 2;
   int64 modified_at_second_end = 3;
+  bool need_ec = 4;
 }
 message LookupEcVolumeRequest {
   uint32 volume_id = 1;
