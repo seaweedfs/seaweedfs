@@ -207,7 +207,7 @@ message AssignRequest {
   string rack = 6;
   string data_node = 7;
   uint32 memory_map_max_size_mb = 8;
-  uint32 Writable_volume_count = 9;
+  uint32 writable_volume_count = 9;
   string disk_type = 10;
 }
 message AssignResponse {
