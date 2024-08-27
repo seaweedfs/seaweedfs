@@ -274,6 +274,18 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 	}
 	return m
 }
+func (dn *DataNode) ToDataNodeInfoByQuery(request *master_pb.VolumeListWithoutECVolumeRequest) *master_pb.DataNodeInfo {
+	m := &master_pb.DataNodeInfo{
+		Id:        string(dn.Id()),
+		DiskInfos: make(map[string]*master_pb.DiskInfo),
+		GrpcPort:  uint32(dn.GrpcPort),
+	}
+	for _, c := range dn.Children() {
+		disk := c.(*Disk)
+		m.DiskInfos[string(disk.Id())] = disk.ToDiskInfoByQuery(request)
+	}
+	return m
+}
 
 // GetVolumeIds returns the human readable volume ids limited to count of max 100.
 func (dn *DataNode) GetVolumeIds() string {

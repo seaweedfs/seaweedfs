@@ -257,6 +257,42 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 	return m
 }
 
+func (d *Disk) ToDiskInfoByQuery(request *master_pb.VolumeListWithoutECVolumeRequest) *master_pb.DiskInfo {
+	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
+	m := &master_pb.DiskInfo{
+		Type:              string(d.Id()),
+		VolumeCount:       diskUsage.volumeCount,
+		MaxVolumeCount:    diskUsage.maxVolumeCount,
+		FreeVolumeCount:   diskUsage.maxVolumeCount - diskUsage.volumeCount,
+		ActiveVolumeCount: diskUsage.activeVolumeCount,
+		RemoteVolumeCount: diskUsage.remoteVolumeCount,
+	}
+	volumeIds := request.VolumeIds
+	modifiedAtSecondBegin := request.ModifiedAtSecondBegin
+	modifiedAtSecondEnd := request.ModifiedAtSecondEnd
+	for _, v := range d.GetVolumes() {
+		if modifiedAtSecondBegin != 0 && v.ModifiedAtSecond < modifiedAtSecondBegin {
+			continue
+		}
+		if modifiedAtSecondEnd != 0 && v.ModifiedAtSecond > modifiedAtSecondEnd {
+			continue
+		}
+		if len(volumeIds) != 0 && !contains(volumeIds, uint32(v.Id)) {
+			continue
+		}
+		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
+	}
+	needEc := request.NeedEc
+	if needEc && len(volumeIds) != 0 {
+		for _, ecv := range d.GetEcShards() {
+			if contains(volumeIds, uint32(ecv.VolumeId)) {
+				m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
+			}
+		}
+	}
+	return m
+}
+
 // GetVolumeIds returns the human readable volume ids limited to count of max 100.
 func (d *Disk) GetVolumeIds() string {
 	d.RLock()
@@ -268,4 +304,13 @@ func (d *Disk) GetVolumeIds() string {
 	}
 
 	return util.HumanReadableIntsMax(100, ids...)
+}
+
+func contains(slice []uint32, vid uint32) bool {
+	for _, v := range slice {
+		if v == vid {
+			return true
+		}
+	}
+	return false
 }

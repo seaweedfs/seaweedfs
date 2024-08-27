@@ -65,3 +65,14 @@ func (dc *DataCenter) ToDataCenterInfo() *master_pb.DataCenterInfo {
 	}
 	return m
 }
+func (dc *DataCenter) ToDataCenterInfoByQuery(request *master_pb.VolumeListWithoutECVolumeRequest) *master_pb.DataCenterInfo {
+	m := &master_pb.DataCenterInfo{
+		Id: string(dc.Id()),
+		//DiskInfos: dc.diskUsages.ToDiskInfo(),
+	}
+	for _, c := range dc.Children() {
+		rack := c.(*Rack)
+		m.RackInfos = append(m.RackInfos, rack.ToRackInfoByQuery(request))
+	}
+	return m
+}

@@ -25,6 +25,10 @@ service Seaweed {
   }
   rpc VolumeList (VolumeListRequest) returns (VolumeListResponse) {
   }
+  rpc EcCollectList(EcCollectRequest) returns (EcCollectResponse){
+  }
+  rpc VolumeListWithoutECVolume(VolumeListWithoutECVolumeRequest) returns (VolumeListResponse){
+  }
   rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
   }
   rpc VacuumVolume (VacuumVolumeRequest) returns (VacuumVolumeResponse) {
@@ -290,7 +294,37 @@ message VolumeListResponse {
   TopologyInfo topology_info = 1;
   uint64 volume_size_limit_mb = 2;
 }
+message EcCollectRequest{
+  string data_center = 1;
+}
+message EcCollectResponse{
+  uint64 volume_size_limit_mb = 1;
+  repeated EcNodeInfo ecNodeInfo = 2;
+}
+message EcNodeInfo{
+  string id = 1;
+  uint32 grpc_port = 2;
+  map<string, EcNodeDiskInfo> ecNodeDiskInfos = 3;
+  string data_center = 4;
+  string rack_info = 5;
+}
 
+message EcNodeDiskInfo {
+  string type = 1;
+  int64 volume_count = 2;
+  int64 max_volume_count = 3;
+  int64 free_volume_count = 4;
+  int64 active_volume_count = 5;
+  int64 remote_volume_count = 6;
+  int64 count_ec_shards = 7;
+}
+
+message  VolumeListWithoutECVolumeRequest{
+  repeated uint32 volume_ids = 1;
+  int64 modified_at_second_begin = 2;
+  int64 modified_at_second_end = 3;
+  bool need_ec = 4;
+}
 message LookupEcVolumeRequest {
   uint32 volume_id = 1;
 }

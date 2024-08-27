@@ -124,3 +124,19 @@ func (t *Topology) ToTopologyInfo() *master_pb.TopologyInfo {
 	}
 	return m
 }
+
+func (t *Topology) ToTopologyInfoByQuery(request *master_pb.VolumeListWithoutECVolumeRequest) *master_pb.TopologyInfo {
+	m := &master_pb.TopologyInfo{
+		Id: string(t.Id()),
+		//DiskInfos: t.diskUsages.ToDiskInfo(),
+	}
+	for _, c := range t.Children() {
+		dc := c.(*DataCenter)
+		m.DataCenterInfos = append(m.DataCenterInfos, dc.ToDataCenterInfoByQuery(request))
+	}
+	return m
+}
+
+func (t *Topology) ToEcCollectInfo(top *master_pb.TopologyInfo, req *master_pb.EcCollectRequest) []*master_pb.EcNodeInfo {
+	return MasterCollectEcVolumeServersByDc(top, req.DataCenter)
+}
