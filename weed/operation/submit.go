@@ -77,7 +77,7 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []F
 		file.DataCenter = dataCenter
 		file.Ttl = ttl
 		file.DiskType = diskType
-		results[index].Size, err = file.Upload(maxMB, masterFn, usePublicUrl, ret.Auth, grpcDialOption)
+		results[index].Size, err = file.Upload(maxMB, masterFn, usePublicUrl, ret.Auth, "", grpcDialOption)
 		if err != nil {
 			results[index].Error = err.Error()
 		}
@@ -120,7 +120,7 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	return ret, nil
 }
 
-func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jwt security.EncodedJwt, grpcDialOption grpc.DialOption) (retSize uint32, err error) {
+func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jwt security.EncodedJwt, authHeader string, grpcDialOption grpc.DialOption) (retSize uint32, err error) {
 	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
@@ -215,6 +215,7 @@ func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jw
 			IsInputCompressed: false,
 			MimeType:          fi.MimeType,
 			PairMap:           nil,
+			AuthHeader:        authHeader,
 			Jwt:               jwt,
 		}
 		ret, e, _ := Upload(fi.Reader, uploadOption)

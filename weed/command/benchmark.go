@@ -3,6 +3,7 @@ package command
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
@@ -42,6 +43,8 @@ type BenchmarkOptions struct {
 	grpcDialOption   grpc.DialOption
 	masterClient     *wdclient.MasterClient
 	fsync            *bool
+	username         *string
+	password         *string
 }
 
 var (
@@ -68,6 +71,8 @@ func init() {
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	b.fsync = cmdBenchmark.Flag.Bool("fsync", false, "flush data to disk after write")
+	b.username = cmdBenchmark.Flag.String("username", "", "basic auth username")
+	b.password = cmdBenchmark.Flag.String("password", "", "basic auth password")
 	sharedBytes = make([]byte, 1024)
 }
 
@@ -224,7 +229,8 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 	}
 
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
-
+	auth := *b.username + ":" + *b.password
+	authHeader := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
 	for id := range idChan {
 		start := time.Now()
 		fileSize := int64(*b.fileSize + random.Intn(64))
@@ -245,7 +251,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			if !isSecure && assignResult.Auth != "" {
 				isSecure = true
 			}
-			if _, err := fp.Upload(0, b.masterClient.GetMaster, false, assignResult.Auth, b.grpcDialOption); err == nil {
+			if _, err := fp.Upload(0, b.masterClient.GetMaster, false, assignResult.Auth, authHeader, b.grpcDialOption); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}
