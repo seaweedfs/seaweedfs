@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"mime"
 	"net/url"
 	"os"
@@ -236,7 +236,7 @@ func genFileUrl(ret *AssignResult, id string, usePublicUrl bool) string {
 		fileUrl = "http://" + ret.PublicUrl + "/" + id
 	}
 	for _, replica := range ret.Replicas {
-		if rand.Intn(len(ret.Replicas)+1) == 0 {
+		if rand.IntN(len(ret.Replicas)+1) == 0 {
 			fileUrl = "http://" + replica.Url + "/" + id
 			if usePublicUrl {
 				fileUrl = "http://" + replica.PublicUrl + "/" + id

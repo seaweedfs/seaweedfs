@@ -2,7 +2,7 @@ package topology
 
 import (
 	"errors"
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -83,7 +83,7 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption
 	//pick nodes randomly by weights, the node picked earlier has higher final weights
 	sortedCandidates := make([]Node, 0, len(candidates))
 	for i := 0; i < len(candidates); i++ {
-		weightsInterval := rand.Int63n(totalWeights)
+		weightsInterval := rand.Int64N(totalWeights)
 		lastWeights := int64(0)
 		for k, weights := range candidatesWeights {
 			if (weightsInterval >= lastWeights) && (weightsInterval < lastWeights+weights) {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 
@@ -113,7 +113,7 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 	collection := r.FormValue("collection")
 	location := ms.findVolumeLocation(collection, vid)
 	if location.Error == "" {
-		loc := location.Locations[rand.Intn(len(location.Locations))]
+		loc := location.Locations[rand.IntN(len(location.Locations))]
 		url, _ := util_http.NormalizeUrl(loc.PublicUrl)
 		if r.URL.RawQuery != "" {
 			url = url + r.URL.Path + "?" + r.URL.RawQuery

@@ -3,7 +3,7 @@ package weed_server
 import (
 	"encoding/json"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"path"
 	"time"

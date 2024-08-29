@@ -3,7 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"reflect"
 	"strings"
 	"sync"

@@ -1,7 +1,7 @@
 package topology
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
