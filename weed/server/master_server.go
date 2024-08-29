@@ -49,6 +49,7 @@ type MasterOption struct {
 	GarbageThreshold        float64
 	WhiteList               []string
 	DisableHttp             bool
+	DisableVacuum           bool
 	MetricsAddress          string
 	MetricsIntervalSec      int
 	IsFollower              bool
@@ -129,7 +130,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	if nil == seq {
 		glog.Fatalf("create sequencer failed.")
 	}
-	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, 5, replicationAsMin)
+	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, 5, replicationAsMin, ms.option.DisableVacuum)
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
 
