@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	BucketPathTpl = "/{object:[a-z0-9][a-z0-9-]+[a-z0-9]}"
+	BucketPathTpl = "/{object:[a-z0-9].+[a-z0-9]}"
 )
 
 type S3ApiServerOption struct {
