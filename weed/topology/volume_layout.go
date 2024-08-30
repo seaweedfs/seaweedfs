@@ -511,12 +511,7 @@ func (vl *VolumeLayout) SetVolumeCrowded(vid needle.VolumeId) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
-	for _, v := range vl.writables {
-		if v == vid {
-			vl.setVolumeCrowded(vid)
-			break
-		}
-	}
+	vl.setVolumeCrowded(vid)
 }
 
 type VolumeLayoutInfo struct {
