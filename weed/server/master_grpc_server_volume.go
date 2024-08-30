@@ -27,7 +27,7 @@ func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
 	newVidLocations, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
 	glog.V(1).Infoln("finished automatic volume grow, cost ", time.Now().Sub(start))
 	if err != nil {
-		glog.V(1).Infof("automatic volume grow failed: %+v", err)
+		glog.Warningf("automatic volume grow %s: %+v", req.Option, err)
 		return
 	}
 	for _, newVidLocation := range newVidLocations {
