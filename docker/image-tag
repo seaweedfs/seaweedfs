@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+OUTPUT=--quiet
+if [ "${1:-}" = '--show-diff' ]; then
+    OUTPUT=
+fi
+
+# If a tagged version, just print that tag
+HEAD_TAG=$(git tag --points-at HEAD | head -n1)
+if [ -n "${HEAD_TAG}" ] ; then
+    # remove `v` prefix from release name
+    if echo "${HEAD_TAG}" | grep -Eq "^v[0-9]+(\.[0-9]+)*(-[a-z0-9]+)?$"; then
+      HEAD_TAG=$(echo "$HEAD_TAG" | cut -c 2-)
+    fi
+	echo "${HEAD_TAG}"
+	exit 0
+fi
+
+WORKING_SUFFIX=$(if ! git diff --exit-code "${OUTPUT}" HEAD >&2; \
+                 then echo "-wip"; \
+                 else echo ""; \
+                 fi)
+BRANCH_PREFIX=$(git rev-parse --abbrev-ref HEAD)
+
+# replace spaces with dash
+BRANCH_PREFIX=${BRANCH_PREFIX// /-}
+# next, replace slashes with dash
+BRANCH_PREFIX=${BRANCH_PREFIX//[\/\\]/-}
+# now, clean out anything that's not alphanumeric or an dash or '.'
+BRANCH_PREFIX=${BRANCH_PREFIX//[^a-zA-Z0-9-.]/}
+# finally, lowercase with TR
+BRANCH_PREFIX=`echo -n "$BRANCH_PREFIX" | tr A-Z a-z`
+DATE=$(date +'%Y%m%d%H%M%S')
+
+echo "$BRANCH_PREFIX-$(git rev-parse --short HEAD)-${DATE}$WORKING_SUFFIX"
