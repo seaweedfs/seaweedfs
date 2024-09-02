@@ -217,8 +217,8 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 				if *c.concurrency == 0 {
 					if err := c.verifyChunk(volumeServer, chunk.Fid); err != nil {
 						if !(*c.metadataFromLog && strings.HasSuffix(err.Error(), "not found")) {
-							fmt.Fprintf(c.writer, "%s failed verify fileId %s: %+v\n",
-								fileMsg, chunk.GetFileIdString(), err)
+							fmt.Fprintf(c.writer, "%s failed verify fileId %s: %+v, at volume server %v\n",
+								fileMsg, chunk.GetFileIdString(), err, volumeServer)
 						}
 						if itemIsVerifed.Load() {
 							itemIsVerifed.Store(false)
@@ -245,8 +245,8 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 					defer wg.Done()
 					if err := c.verifyChunk(volumeServer, fChunk.Fid); err != nil {
 						if !(*c.metadataFromLog && strings.HasSuffix(err.Error(), "not found")) {
-							fmt.Fprintf(c.writer, "%s failed verify fileId %s: %+v\n",
-								msg, fChunk.GetFileIdString(), err)
+							fmt.Fprintf(c.writer, "%s failed verify fileId %s: %+v, at volume server %v\n",
+								msg, fChunk.GetFileIdString(), err, volumeServer)
 						}
 						if itemIsVerifed.Load() {
 							itemIsVerifed.Store(false)
