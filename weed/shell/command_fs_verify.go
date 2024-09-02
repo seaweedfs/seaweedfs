@@ -246,7 +246,7 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 					if err := c.verifyChunk(volumeServer, fChunk.Fid); err != nil {
 						if !(*c.metadataFromLog && strings.HasSuffix(err.Error(), "not found")) {
 							fmt.Fprintf(c.writer, "%s failed verify fileId %s: %+v, at volume server %v\n",
-								fileMsg, chunk.GetFileIdString(), err, volumeServer)
+								msg, fChunk.GetFileIdString(), err, volumeServer)
 						}
 						if itemIsVerifed.Load() {
 							itemIsVerifed.Store(false)
