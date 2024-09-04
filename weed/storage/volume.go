@@ -48,8 +48,9 @@ type Volume struct {
 	isCompacting       bool
 	isCommitCompacting bool
 
-	volumeInfo *volume_server_pb.VolumeInfo
-	location   *DiskLocation
+	volumeInfoRWLock sync.RWMutex
+	volumeInfo       *volume_server_pb.VolumeInfo
+	location         *DiskLocation
 
 	lastIoError error
 }
@@ -357,4 +358,11 @@ func (v *Volume) IsReadOnly() bool {
 	v.noWriteLock.RLock()
 	defer v.noWriteLock.RUnlock()
 	return v.noWriteOrDelete || v.noWriteCanDelete || v.location.isDiskSpaceLow
+}
+
+func (v *Volume) PersistReadOnly(readOnly bool) {
+	v.volumeInfoRWLock.RLock()
+	defer v.volumeInfoRWLock.RUnlock()
+	v.volumeInfo.ReadOnly = readOnly
+	v.SaveVolumeInfo()
 }
