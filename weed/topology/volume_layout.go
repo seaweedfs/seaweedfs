@@ -257,6 +257,10 @@ func (vl *VolumeLayout) isOversized(v *storage.VolumeInfo) bool {
 	return uint64(v.Size) >= vl.volumeSizeLimit
 }
 
+func (vl *VolumeLayout) isCrowdedVolume(v *storage.VolumeInfo) bool {
+	return float64(v.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold
+}
+
 func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
 	return !vl.isOversized(v) &&
 		v.Version == needle.CurrentVersion &&
@@ -357,6 +361,34 @@ func (vl *VolumeLayout) GetLastGrowCount() uint32 {
 func (vl *VolumeLayout) ShouldGrowVolumes() bool {
 	writable, crowded := vl.GetWritableVolumeCount()
 	return writable <= crowded
+}
+
+func (vl *VolumeLayout) ShouldGrowVolumesByDataNode(nodeType string, dataNode string) bool {
+	vl.accessLock.RLock()
+	writables := make([]needle.VolumeId, len(vl.writables))
+	copy(writables, vl.writables)
+	vl.accessLock.RUnlock()
+
+	dataNodeId := NodeId(dataNode)
+	for _, v := range writables {
+		for _, dn := range vl.vid2location[v].list {
+			dataNodeFound := false
+			switch nodeType {
+			case "DataCenter":
+				dataNodeFound = dn.GetDataCenter().Id() == dataNodeId
+			case "Rack":
+				dataNodeFound = dn.GetRack().Id() == dataNodeId
+			case "DataNode":
+				dataNodeFound = dn.Id() == dataNodeId
+			}
+			if dataNodeFound {
+				if info, err := dn.GetVolumesById(v); err == nil && !vl.isCrowdedVolume(&info) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func (vl *VolumeLayout) GetWritableVolumeCount() (active, crowded int) {
