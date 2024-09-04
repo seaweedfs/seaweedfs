@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -358,8 +359,10 @@ func (vl *VolumeLayout) GetLastGrowCount() uint32 {
 	return vl.lastGrowCount.Load()
 }
 
-func (vl *VolumeLayout) ShouldGrowVolumes() bool {
+func (vl *VolumeLayout) ShouldGrowVolumes(collection string) bool {
 	writable, crowded := vl.GetWritableVolumeCount()
+	stats.MasterVolumeLayoutWritable.WithLabelValues(collection, vl.diskType.String(), vl.rp.String(), vl.ttl.String()).Set(float64(writable))
+	stats.MasterVolumeLayoutCrowded.WithLabelValues(collection, vl.diskType.String(), vl.rp.String(), vl.ttl.String()).Set(float64(crowded))
 	return writable <= crowded
 }
 
@@ -541,12 +544,13 @@ func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
 	return
 }
 
-func (vl *VolumeLayout) ToGrowOption() (option *VolumeGrowOption) {
-	option = &VolumeGrowOption{}
-	option.ReplicaPlacement = vl.rp
-	option.Ttl = vl.ttl
-	option.DiskType = vl.diskType
-	return
+func (vlc *VolumeLayoutCollection) ToGrowOption() (option *VolumeGrowOption) {
+	return &VolumeGrowOption{
+		Collection:       vlc.Collection,
+		ReplicaPlacement: vlc.VolumeLayout.rp,
+		Ttl:              vlc.VolumeLayout.ttl,
+		DiskType:         vlc.VolumeLayout.diskType,
+	}
 }
 
 func (vl *VolumeLayout) Stats() *VolumeLayoutStats {

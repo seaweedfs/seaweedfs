@@ -42,21 +42,22 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				continue
 			}
 			dcs := ms.Topo.ListDataCenters()
-			for _, vl := range ms.Topo.ListVolumeLayouts() {
+			for _, vlc := range ms.Topo.ListVolumeLayoutCollections() {
+				vl := vlc.VolumeLayout
 				if vl.HasGrowRequest() {
 					continue
 				}
-				if vl.ShouldGrowVolumes() {
+				if vl.ShouldGrowVolumes(vlc.Collection) {
 					vl.AddGrowRequest()
 					ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
-						Option: vl.ToGrowOption(),
+						Option: vlc.ToGrowOption(),
 						Count:  vl.GetLastGrowCount(),
 					}
 				} else {
 					for _, dc := range dcs {
 						if vl.ShouldGrowVolumesByDataNode("DataCenter", dc) {
 							vl.AddGrowRequest()
-							volumeGrowOption := vl.ToGrowOption()
+							volumeGrowOption := vlc.ToGrowOption()
 							volumeGrowOption.DataCenter = dc
 							ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 								Option: volumeGrowOption,
@@ -98,7 +99,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			})
 
 			// not atomic but it's okay
-			if found || (!req.Force && !vl.ShouldGrowVolumes()) {
+			if found || (!req.Force && !vl.ShouldGrowVolumes(req.Option.Collection)) {
 				glog.V(4).Infoln("discard volume grow request")
 				time.Sleep(time.Millisecond * 211)
 				vl.DoneGrowRequest()
