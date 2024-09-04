@@ -216,6 +216,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		mountRoot = mountRoot[0 : len(mountRoot)-1]
 	}
 
+	cacheDirForWrite := *option.cacheDirForWrite
+	if cacheDirForWrite == "" {
+		cacheDirForWrite = *option.cacheDirForRead
+	}
+
 	seaweedFileSystem := mount.NewSeaweedFileSystem(&mount.Option{
 		MountDirectory:     dir,
 		FilerAddresses:     filerAddresses,
@@ -229,7 +234,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		ConcurrentWriters:  *option.concurrentWriters,
 		CacheDirForRead:    *option.cacheDirForRead,
 		CacheSizeMBForRead: *option.cacheSizeMBForRead,
-		CacheDirForWrite:   *option.cacheDirForWrite,
+		CacheDirForWrite:   cacheDirForWrite,
 		DataCenter:         *option.dataCenter,
 		Quota:              int64(*option.collectionQuota) * 1024 * 1024,
 		MountUid:           uid,
