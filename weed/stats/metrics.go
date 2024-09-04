@@ -70,13 +70,21 @@ var (
 			Help:      "replica placement mismatch",
 		}, []string{"collection", "id"})
 
-	MasterVolumeLayout = prometheus.NewGaugeVec(
+	MasterVolumeLayoutWritable = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
 			Subsystem: "master",
-			Name:      "volume_layout_total",
-			Help:      "Number of volumes in volume layouts",
-		}, []string{"collection", "dataCenter", "type"})
+			Name:      "volume_layout_writable",
+			Help:      "Number of writable volumes in volume layouts",
+		}, []string{"collection", "disk", "rp", "ttl"})
+
+	MasterVolumeLayoutCrowded = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "volume_layout_crowded",
+			Help:      "Number of crowded volumes in volume layouts",
+		}, []string{"collection", "disk", "rp", "ttl"})
 
 	MasterPickForWriteErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -281,7 +289,8 @@ func init() {
 	Gather.MustRegister(MasterReceivedHeartbeatCounter)
 	Gather.MustRegister(MasterLeaderChangeCounter)
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
-	Gather.MustRegister(MasterVolumeLayout)
+	Gather.MustRegister(MasterVolumeLayoutWritable)
+	Gather.MustRegister(MasterVolumeLayoutCrowded)
 
 	Gather.MustRegister(FilerRequestCounter)
 	Gather.MustRegister(FilerHandlerCounter)

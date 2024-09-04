@@ -28,6 +28,7 @@ This package is created to resolve these replica placement issues:
 type VolumeGrowRequest struct {
 	Option *VolumeGrowOption
 	Count  uint32
+	Force  bool
 }
 
 type volumeGrowthStrategy struct {
