@@ -46,6 +46,8 @@ type Option struct {
 	Quota              int64
 	DisableXAttr       bool
 
+	WriteOnceReadMany bool
+
 	MountUid         uint32
 	MountGid         uint32
 	MountMode        os.FileMode
