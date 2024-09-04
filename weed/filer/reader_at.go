@@ -19,6 +19,7 @@ type ChunkReadAt struct {
 	fileSize      int64
 	readerCache   *ReaderCache
 	readerPattern *ReaderPattern
+	forceCache    bool
 	lastChunkFid  string
 }
 
@@ -196,7 +197,9 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 		if n > 0 {
 			return n, err
 		}
-		return fetchChunkRange(buffer, c.readerCache.lookupFileIdFn, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset))
+		if !c.forceCache {
+			return fetchChunkRange(buffer, c.readerCache.lookupFileIdFn, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset))
+		}
 	}
 
 	n, err = c.readerCache.ReadChunkAt(buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), chunkView.ViewOffset == 0)

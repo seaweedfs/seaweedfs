@@ -38,6 +38,7 @@ type WebDavOption struct {
 	Cipher         bool
 	CacheDir       string
 	CacheSizeMB    int64
+	ForceCache     bool
 	MaxMB          int
 }
 
@@ -133,7 +134,7 @@ func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 
 	os.MkdirAll(cacheDir, os.FileMode(0755))
-	chunkCache := chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB, 1024*1024)
+	chunkCache := chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB, 1024*1024, option.ForceCache)
 	t := &WebDavFileSystem{
 		option:     option,
 		chunkCache: chunkCache,
