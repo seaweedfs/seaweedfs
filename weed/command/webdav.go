@@ -32,7 +32,6 @@ type WebDavOption struct {
 	tlsCertificate *string
 	cacheDir       *string
 	cacheSizeMB    *int64
-	forceCache     *bool
 	maxMB          *int
 }
 
@@ -47,7 +46,6 @@ func init() {
 	webDavStandaloneOptions.tlsCertificate = cmdWebDav.Flag.String("cert.file", "", "path to the TLS certificate file")
 	webDavStandaloneOptions.cacheDir = cmdWebDav.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks")
 	webDavStandaloneOptions.cacheSizeMB = cmdWebDav.Flag.Int64("cacheCapacityMB", 0, "local cache capacity in MB")
-	webDavStandaloneOptions.forceCache = cmdWebDav.Flag.Bool("forceCache", false, "force to cache reads to local disk")
 	webDavStandaloneOptions.maxMB = cmdWebDav.Flag.Int("maxMB", 4, "split files larger than the limit")
 	webDavStandaloneOptions.filerRootPath = cmdWebDav.Flag.String("filer.path", "/", "use this remote path from filer server")
 }
@@ -120,7 +118,6 @@ func (wo *WebDavOption) startWebDav() bool {
 		Cipher:         cipher,
 		CacheDir:       util.ResolvePath(*wo.cacheDir),
 		CacheSizeMB:    *wo.cacheSizeMB,
-		ForceCache:     *wo.forceCache,
 		MaxMB:          *wo.maxMB,
 	})
 	if webdavServer_err != nil {

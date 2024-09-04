@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type ReaderCache struct {
@@ -69,7 +69,7 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 
 		// glog.V(4).Infof("prefetch %s offset %d", chunkView.FileId, chunkView.ViewOffset)
 		// cache this chunk if not yet
-		cacher := newSingleChunkCacher(rc, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int(chunkView.ChunkSize), chunkView.ViewOffset == 0)
+		cacher := newSingleChunkCacher(rc, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int(chunkView.ChunkSize), false)
 		go cacher.startCaching()
 		<-cacher.cacheStartedCh
 		rc.downloaders[chunkView.FileId] = cacher

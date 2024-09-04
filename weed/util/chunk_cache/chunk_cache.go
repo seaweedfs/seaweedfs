@@ -23,16 +23,14 @@ type TieredChunkCache struct {
 	onDiskCacheSizeLimit0 uint64
 	onDiskCacheSizeLimit1 uint64
 	onDiskCacheSizeLimit2 uint64
-	forceCache            bool
 }
 
 var _ ChunkCache = &TieredChunkCache{}
 
-func NewTieredChunkCache(maxEntries int64, dir string, diskSizeInUnit int64, unitSize int64, forceCache bool) *TieredChunkCache {
+func NewTieredChunkCache(maxEntries int64, dir string, diskSizeInUnit int64, unitSize int64) *TieredChunkCache {
 
 	c := &TieredChunkCache{
-		memCache:   NewChunkCacheInMemory(maxEntries),
-		forceCache: forceCache,
+		memCache: NewChunkCacheInMemory(maxEntries),
 	}
 	c.diskCaches = make([]*OnDiskCacheLayer, 3)
 	c.onDiskCacheSizeLimit0 = uint64(unitSize)

@@ -41,7 +41,6 @@ type Option struct {
 	CacheDirForRead    string
 	CacheSizeMBForRead int64
 	CacheDirForWrite   string
-	ForceCache         bool
 	DataCenter         string
 	Umask              os.FileMode
 	Quota              int64
@@ -96,7 +95,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs.option.filerIndex = int32(rand.Intn(len(option.FilerAddresses)))
 	wfs.option.setupUniqueCacheDirectory()
 	if option.CacheSizeMBForRead > 0 {
-		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDirForRead(), option.CacheSizeMBForRead, 1024*1024, option.ForceCache)
+		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDirForRead(), option.CacheSizeMBForRead, 1024*1024)
 	}
 
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
