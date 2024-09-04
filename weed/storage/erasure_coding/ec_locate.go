@@ -5,25 +5,22 @@ import (
 )
 
 type Interval struct {
-	BlockIndex          int
+	BlockIndex          int  // the index of the block in either the large blocks or the small blocks
 	InnerBlockOffset    int64
 	Size                types.Size
-	IsLargeBlock        bool
+	IsLargeBlock        bool // whether the block is a large block or a small block
 	LargeBlockRowsCount int
 }
 
-func LocateData(largeBlockLength, smallBlockLength int64, datSize int64, offset int64, size types.Size) (intervals []Interval) {
-	blockIndex, isLargeBlock, innerBlockOffset := locateOffset(largeBlockLength, smallBlockLength, datSize, offset)
-
-	// adding DataShardsCount*smallBlockLength to ensure we can derive the number of large block size from a shard size
-	nLargeBlockRows := int((datSize + DataShardsCount*smallBlockLength) / (largeBlockLength * DataShardsCount))
+func LocateData(largeBlockLength, smallBlockLength int64, shardDatSize int64, offset int64, size types.Size) (intervals []Interval) {
+	blockIndex, isLargeBlock, nLargeBlockRows, innerBlockOffset := locateOffset(largeBlockLength, smallBlockLength, shardDatSize, offset)
 
 	for size > 0 {
 		interval := Interval{
 			BlockIndex:          blockIndex,
 			InnerBlockOffset:    innerBlockOffset,
 			IsLargeBlock:        isLargeBlock,
-			LargeBlockRowsCount: nLargeBlockRows,
+			LargeBlockRowsCount: int(nLargeBlockRows),
 		}
 
 		blockRemaining := largeBlockLength - innerBlockOffset
@@ -41,7 +38,7 @@ func LocateData(largeBlockLength, smallBlockLength int64, datSize int64, offset 
 
 		size -= interval.Size
 		blockIndex += 1
-		if isLargeBlock && blockIndex == nLargeBlockRows*DataShardsCount {
+		if isLargeBlock && blockIndex == interval.LargeBlockRowsCount*DataShardsCount {
 			isLargeBlock = false
 			blockIndex = 0
 		}
@@ -51,9 +48,9 @@ func LocateData(largeBlockLength, smallBlockLength int64, datSize int64, offset 
 	return
 }
 
-func locateOffset(largeBlockLength, smallBlockLength int64, datSize int64, offset int64) (blockIndex int, isLargeBlock bool, innerBlockOffset int64) {
+func locateOffset(largeBlockLength, smallBlockLength int64, shardDatSize int64, offset int64) (blockIndex int, isLargeBlock bool, nLargeBlockRows int64, innerBlockOffset int64) {
 	largeRowSize := largeBlockLength * DataShardsCount
-	nLargeBlockRows := datSize / (largeBlockLength * DataShardsCount)
+	nLargeBlockRows = (shardDatSize-1)/ largeBlockLength
 
 	// if offset is within the large block area
 	if offset < nLargeBlockRows*largeRowSize {

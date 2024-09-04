@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"google.golang.org/grpc"
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -51,7 +51,7 @@ func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId s
 	if len(lookup.Locations) == 0 {
 		return "", jwt, errors.New("File Not Found")
 	}
-	return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].Url + "/" + fileId, lookup.Jwt, nil
+	return "http://" + lookup.Locations[rand.IntN(len(lookup.Locations))].Url + "/" + fileId, lookup.Jwt, nil
 }
 
 func LookupVolumeId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid string) (*LookupResult, error) {

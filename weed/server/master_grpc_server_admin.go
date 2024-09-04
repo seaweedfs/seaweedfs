@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -108,7 +108,7 @@ func (locks *AdminLocks) generateToken(lockName string, clientName string) (ts t
 	locks.Lock()
 	defer locks.Unlock()
 	lock := &AdminLock{
-		accessSecret:   rand.Int63(),
+		accessSecret:   rand.Int64(),
 		accessLockTime: time.Now(),
 		lastClient:     clientName,
 	}

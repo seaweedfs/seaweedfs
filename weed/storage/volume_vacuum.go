@@ -46,6 +46,10 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
 	//glog.V(3).Infof("Got Compaction lock...")
+	if v.isCompacting || v.isCommitCompacting {
+		glog.V(0).Infof("Volume %d is already compacting...", v.Id)
+		return nil
+	}
 	v.isCompacting = true
 	defer func() {
 		v.isCompacting = false
@@ -71,6 +75,10 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64, prog
 	}
 	glog.V(3).Infof("Compact2 volume %d ...", v.Id)
 
+	if v.isCompacting || v.isCommitCompacting {
+		glog.V(0).Infof("Volume %d is already compacting2 ...", v.Id)
+		return nil
+	}
 	v.isCompacting = true
 	defer func() {
 		v.isCompacting = false
@@ -105,6 +113,10 @@ func (v *Volume) CommitCompact() error {
 	}
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
+	if v.isCommitCompacting {
+		glog.V(0).Infof("Volume %d is already commit compacting ...", v.Id)
+		return nil
+	}
 	v.isCommitCompacting = true
 	defer func() {
 		v.isCommitCompacting = false

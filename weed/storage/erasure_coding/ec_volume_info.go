@@ -7,18 +7,20 @@ import (
 
 // data structure used in master
 type EcVolumeInfo struct {
-	VolumeId   needle.VolumeId
-	Collection string
-	ShardBits  ShardBits
-	DiskType   string
+	VolumeId    needle.VolumeId
+	Collection  string
+	ShardBits   ShardBits
+	DiskType    string
+	DestroyTime uint64 //ec volume destroy time, calculated from the ec volume was created
 }
 
-func NewEcVolumeInfo(diskType string, collection string, vid needle.VolumeId, shardBits ShardBits) *EcVolumeInfo {
+func NewEcVolumeInfo(diskType string, collection string, vid needle.VolumeId, shardBits ShardBits, destroyTime uint64) *EcVolumeInfo {
 	return &EcVolumeInfo{
-		Collection: collection,
-		VolumeId:   vid,
-		ShardBits:  shardBits,
-		DiskType:   diskType,
+		Collection:  collection,
+		VolumeId:    vid,
+		ShardBits:   shardBits,
+		DiskType:    diskType,
+		DestroyTime: destroyTime,
 	}
 }
 
@@ -59,6 +61,7 @@ func (ecInfo *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret *master_pb.
 		EcIndexBits: uint32(ecInfo.ShardBits),
 		Collection:  ecInfo.Collection,
 		DiskType:    ecInfo.DiskType,
+		DestroyTime: ecInfo.DestroyTime,
 	}
 }
 

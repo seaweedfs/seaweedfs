@@ -478,6 +478,8 @@ message VolumeInfo {
     uint32 version = 2;
     string replication = 3;
     uint32 BytesOffset = 4;
+    int64 dat_file_size = 5; // used for EC encoded volumes to store the original file size
+    uint64 DestroyTime = 6; // used to record the destruction time of ec volume
 }
 
 // tiered storage

@@ -42,7 +42,7 @@ func (t *Topology) ToInfo() (info TopologyInfo) {
 	return
 }
 
-func (t *Topology) ListVolumeLyauts() (volumeLayouts []*VolumeLayout) {
+func (t *Topology) ListVolumeLayouts() (volumeLayouts []*VolumeLayout) {
 	for _, col := range t.collectionMap.Items() {
 		for _, volumeLayout := range col.(*Collection).storageType2VolumeLayout.Items() {
 			volumeLayouts = append(volumeLayouts, volumeLayout.(*VolumeLayout))

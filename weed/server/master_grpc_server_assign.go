@@ -96,6 +96,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			}
 		}
 		if err != nil {
+			glog.V(0).Infof("assign %v %v: %v", req, option.String(), err)
 			stats.MasterPickForWriteErrorCounter.Inc()
 			lastErr = err
 			time.Sleep(200 * time.Millisecond)

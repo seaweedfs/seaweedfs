@@ -138,10 +138,10 @@ func (s *Store) findVolume(vid needle.VolumeId) *Volume {
 	}
 	return nil
 }
-func (s *Store) FindFreeLocation(diskType DiskType) (ret *DiskLocation) {
+func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (ret *DiskLocation) {
 	max := int32(0)
 	for _, location := range s.Locations {
-		if diskType != location.DiskType {
+		if filterFn != nil && !filterFn(location) {
 			continue
 		}
 		if location.isDiskSpaceLow {
@@ -162,7 +162,9 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
-	if location := s.FindFreeLocation(diskType); location != nil {
+	if location := s.FindFreeLocation(func(location *DiskLocation) bool {
+		return location.DiskType == diskType
+	}); location != nil {
 		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
 		if volume, err := NewVolume(location.Directory, location.IdxDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb, ldbTimeout); err == nil {
@@ -336,6 +338,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
+	// delete expired ec volumes
+	ecVolumeMessages, deletedEcVolumes := s.deleteExpiredEcVolumes()
+
 	var uuidList []string
 	for _, loc := range s.Locations {
 		uuidList = append(uuidList, loc.DirectoryUuid)
@@ -365,10 +370,32 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		DataCenter:      s.dataCenter,
 		Rack:            s.rack,
 		Volumes:         volumeMessages,
+		DeletedEcShards: deletedEcVolumes,
 		HasNoVolumes:    len(volumeMessages) == 0,
+		HasNoEcShards:   len(ecVolumeMessages) == 0,
 		LocationUuids:   uuidList,
 	}
 
+}
+
+func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeEcShardInformationMessage) {
+	for _, location := range s.Locations {
+		for _, ev := range location.ecVolumes {
+			messages := ev.ToVolumeEcShardInformationMessage()
+			if ev.IsTimeToDestroy() {
+				err := location.deleteEcVolumeById(ev.VolumeId)
+				if err != nil {
+					ecShards = append(ecShards, messages...)
+					glog.Errorf("delete EcVolume err %d: %v", ev.VolumeId, err)
+					continue
+				}
+				deleted = append(deleted, messages...)
+			} else {
+				ecShards = append(ecShards, messages...)
+			}
+		}
+	}
+	return
 }
 
 func (s *Store) SetStopping() {

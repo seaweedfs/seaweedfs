@@ -149,6 +149,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
+	proxyReq.Header.Set("Accept-Encoding", "identity")
 	for k, v := range r.URL.Query() {
 		if _, ok := s3_constants.PassThroughHeaders[strings.ToLower(k)]; ok {
 			proxyReq.Header[k] = v

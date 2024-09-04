@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 
@@ -66,7 +66,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	// glog.Infoln("garbageThreshold =", gcThreshold)
-	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, 0, "", ms.preallocateSize)
+	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.option.MaxParallelVacuumPerServer, 0, "", ms.preallocateSize)
 	ms.dirStatusHandler(w, r)
 }
 
@@ -113,7 +113,7 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 	collection := r.FormValue("collection")
 	location := ms.findVolumeLocation(collection, vid)
 	if location.Error == "" {
-		loc := location.Locations[rand.Intn(len(location.Locations))]
+		loc := location.Locations[rand.IntN(len(location.Locations))]
 		url, _ := util_http.NormalizeUrl(loc.PublicUrl)
 		if r.URL.RawQuery != "" {
 			url = url + r.URL.Path + "?" + r.URL.RawQuery
@@ -177,4 +177,59 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
 	}
 	return volumeGrowOption, nil
+}
+
+func (ms *MasterServer) collectionInfoHandler(w http.ResponseWriter, r *http.Request) {
+	//get collection from request
+	collectionName := r.FormValue("collection")
+	if collectionName == "" {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection is required"))
+		return
+	}
+	//output details of the volumes?
+	detail := r.FormValue("detail") == "true"
+	//collect collection info
+	collection, ok := ms.Topo.FindCollection(collectionName)
+	if !ok {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", collectionName))
+		return
+	}
+
+	volumeLayouts := collection.GetAllVolumeLayouts()
+
+	if detail {
+		//prepare the json response
+		all_stats := make([]map[string]interface{}, len(volumeLayouts))
+		for i, volumeLayout := range volumeLayouts {
+			volumeLayoutStats := volumeLayout.Stats()
+			m := make(map[string]interface{})
+			m["Version"] = util.Version()
+			m["Collection"] = collectionName
+			m["TotalSize"] = volumeLayoutStats.TotalSize
+			m["FileCount"] = volumeLayoutStats.FileCount
+			m["UsedSize"] = volumeLayoutStats.UsedSize
+			all_stats[i] = m
+		}
+		//write it
+		writeJsonQuiet(w, r, http.StatusOK, all_stats)
+	} else {
+		//prepare the json response
+		collectionStats := map[string]interface{}{
+			"Version":     util.Version(),
+			"Collection":  collectionName,
+			"TotalSize":   uint64(0),
+			"FileCount":   uint64(0),
+			"UsedSize":    uint64(0),
+			"VolumeCount": uint64(0),
+		}
+		for _, volumeLayout := range volumeLayouts {
+			volumeLayoutStats := volumeLayout.Stats()
+			collectionStats["TotalSize"] = collectionStats["TotalSize"].(uint64) + volumeLayoutStats.TotalSize
+			collectionStats["FileCount"] = collectionStats["FileCount"].(uint64) + volumeLayoutStats.FileCount
+			collectionStats["UsedSize"] = collectionStats["UsedSize"].(uint64) + volumeLayoutStats.UsedSize
+			collectionStats["VolumeCount"] = collectionStats["VolumeCount"].(uint64) + 1
+		}
+		//write it
+		writeJsonQuiet(w, r, http.StatusOK, collectionStats)
+	}
 }

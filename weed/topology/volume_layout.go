@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -299,7 +300,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 		return 0, 0, nil, true, fmt.Errorf("%s in volume layout", noWritableVolumes)
 	}
 	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
-		vid := vl.writables[rand.Intn(lenWriters)]
+		vid := vl.writables[rand.IntN(lenWriters)]
 		locationList = vl.vid2location[vid]
 		if locationList == nil || len(locationList.list) == 0 {
 			return 0, 0, nil, false, fmt.Errorf("Strangely vid %s is on no machine!", vid.String())
@@ -345,7 +346,7 @@ func (vl *VolumeLayout) DoneGrowRequest() {
 }
 
 func (vl *VolumeLayout) SetLastGrowCount(count uint32) {
-	if vl.lastGrowCount.Load() != count {
+	if vl.lastGrowCount.Load() != count && count != 0 {
 		vl.lastGrowCount.Store(count)
 	}
 }
@@ -489,12 +490,7 @@ func (vl *VolumeLayout) SetVolumeCrowded(vid needle.VolumeId) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
-	for _, v := range vl.writables {
-		if v == vid {
-			vl.setVolumeCrowded(vid)
-			break
-		}
-	}
+	vl.setVolumeCrowded(vid)
 }
 
 type VolumeLayoutInfo struct {

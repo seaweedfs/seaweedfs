@@ -3,11 +3,11 @@ package weed_server
 import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func (fs *FilerServer) maybeAddVolumeJwtAuthorization(r *http.Request, fileId string, isWrite bool) {
@@ -44,7 +44,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	proxyReq, err := http.NewRequest(r.Method, urlStrings[rand.Intn(len(urlStrings))], r.Body)
+	proxyReq, err := http.NewRequest(r.Method, urlStrings[rand.IntN(len(urlStrings))], r.Body)
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", urlStrings[0], err)
 		w.WriteHeader(http.StatusInternalServerError)

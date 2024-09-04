@@ -100,6 +100,15 @@ master:
     storageClass: ""
     hostPathPrefix: /ssd
 
+  # You may use ANY storage-class, example with local-path-provisioner
+  # Annotations are optional.
+  # logs:
+  #   type: "persistentVolumeClaim"
+  #   size: "24Ti"
+  #   storageClass: "local-path-provisioner"
+  #   annotations:
+  #     "key": "value"
+
   # You can also use emptyDir storage:
   #  logs:
   #    type: "emptyDir"
@@ -534,6 +543,15 @@ filer:
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
+
+  # You may use ANY storage-class, example with local-path-provisioner
+  # Annotations are optional.
+  # logs:
+  #   type: "persistentVolumeClaim"
+  #   size: "24Ti"
+  #   storageClass: "local-path-provisioner"
+  #   annotations:
+  #     "key": "value"
 
   # You can also use emptyDir storage:
   #  logs:

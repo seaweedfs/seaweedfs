@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -71,7 +72,22 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	}
 
 	// write .vif files
-	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}); err != nil {
+	var destroyTime uint64
+	if v.Ttl != nil {
+		ttlMills := v.Ttl.ToSeconds()
+		if ttlMills > 0 {
+			destroyTime = uint64(time.Now().Unix()) + v.Ttl.ToSeconds() //calculated destroy time from the ec volume was created
+		}
+	}
+	volumeInfo := &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}
+	if destroyTime == 0 {
+		glog.Warningf("gen ec volume,cal ec volume destory time fail,set time to 0,ttl:%v", v.Ttl)
+	} else {
+		volumeInfo.DestroyTime = destroyTime
+	}
+	datSize, _, _ := v.FileStat()
+	volumeInfo.DatFileSize = int64(datSize)
+	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
 		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
 	}
 
@@ -127,7 +143,17 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
 
-	location := vs.store.FindFreeLocation(types.HardDriveType)
+	var location *storage.DiskLocation
+	if req.CopyEcxFile {
+		location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
+			return location.DiskType == types.HardDriveType
+		})
+	} else {
+		location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
+			_, found := location.FindEcVolume(needle.VolumeId(req.VolumeId))
+			return found
+		})
+	}
 	if location == nil {
 		return nil, fmt.Errorf("no space left")
 	}
@@ -150,7 +176,6 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecx", false, false, nil); err != nil {
 				return err
 			}
-			return nil
 		}
 
 		if req.CopyEcjFile {
