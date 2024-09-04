@@ -42,7 +42,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			if !ms.Topo.IsLeader() {
 				continue
 			}
-			for _, vl := range ms.Topo.ListVolumeLyauts() {
+			for _, vl := range ms.Topo.ListVolumeLayouts() {
 				if !vl.HasGrowRequest() && vl.ShouldGrowVolumes() {
 					vl.AddGrowRequest()
 					ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
