@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -110,6 +111,8 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 
 }
 
+var swapFileNameRegexp = regexp.MustCompile(`^\.([a-zA-Z0-9._-]+)\.swp$`)
+
 /** Remove a file */
 func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) (code fuse.Status) {
 
@@ -128,6 +131,14 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 			return fuse.OK
 		}
 		return code
+	}
+
+	// you can't delete a frozen file
+	if entry != nil && entry.HardLinkCounter <= 1 && entry.Frozen {
+		// a workaround for vi swap file
+		if !swapFileNameRegexp.MatchString(name) {
+			return fuse.EPERM
+		}
 	}
 
 	// first, ensure the filer store can correctly delete

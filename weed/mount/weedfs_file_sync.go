@@ -3,13 +3,14 @@ package mount
 import (
 	"context"
 	"fmt"
+	"syscall"
+	"time"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"syscall"
-	"time"
 )
 
 /**
@@ -119,6 +120,11 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 
 		entry := fh.GetEntry()
 		entry.Name = name // this flush may be just after a rename operation
+
+		// if worm enabled, mark the file as frozen on close
+		if wfs.option.WriteOnceReadMany {
+			entry.Frozen = true
+		}
 
 		if entry.Attributes != nil {
 			entry.Attributes.Mime = fh.contentType

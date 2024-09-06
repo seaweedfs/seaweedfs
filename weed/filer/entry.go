@@ -43,6 +43,7 @@ type Entry struct {
 	Content         []byte
 	Remote          *filer_pb.RemoteEntry
 	Quota           int64
+	Frozen          bool
 }
 
 func (entry *Entry) Size() uint64 {
@@ -71,6 +72,7 @@ func (entry *Entry) ShallowClone() *Entry {
 	newEntry.Content = entry.Content
 	newEntry.Remote = entry.Remote
 	newEntry.Quota = entry.Quota
+	newEntry.Frozen = entry.Frozen
 
 	return newEntry
 }
@@ -98,6 +100,7 @@ func (entry *Entry) ToExistingProtoEntry(message *filer_pb.Entry) {
 	message.Content = entry.Content
 	message.RemoteEntry = entry.Remote
 	message.Quota = entry.Quota
+	message.Frozen = entry.Frozen
 }
 
 func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
@@ -110,6 +113,7 @@ func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
 	fsEntry.Remote = message.RemoteEntry
 	fsEntry.Quota = message.Quota
 	fsEntry.FileSize = FileSize(message)
+	fsEntry.Frozen = message.Frozen
 }
 
 func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {
