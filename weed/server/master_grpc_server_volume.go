@@ -51,6 +51,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 					ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 						Option: vlc.ToGrowOption(),
 						Count:  vl.GetLastGrowCount(),
+						Reason: "collection autogrow",
 					}
 				} else {
 					for _, dc := range dcs {
@@ -62,6 +63,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 								Option: volumeGrowOption,
 								Count:  vl.GetLastGrowCount(),
 								Force:  true,
+								Reason: "per-dc autogrow",
 							}
 						}
 					}
@@ -108,6 +110,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 
 			filter.Store(req, nil)
 			// we have lock called inside vg
+			glog.V(0).Infof("volume grow %+v", req)
 			go func(req *topology.VolumeGrowRequest, vl *topology.VolumeLayout) {
 				ms.DoAutomaticVolumeGrow(req)
 				vl.DoneGrowRequest()

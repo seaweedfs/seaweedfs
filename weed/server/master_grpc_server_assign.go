@@ -93,10 +93,11 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 				Option: option,
 				Count:  req.WritableVolumeCount,
+				Reason: "grpc assign",
 			}
 		}
 		if err != nil {
-			glog.V(0).Infof("assign %v %v: %v", req, option.String(), err)
+			glog.V(1).Infof("assign %v %v: %v", req, option.String(), err)
 			stats.MasterPickForWriteErrorCounter.Inc()
 			lastErr = err
 			time.Sleep(200 * time.Millisecond)
@@ -127,6 +128,9 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
 			Replicas: replicas,
 		}, nil
+	}
+	if lastErr != nil {
+		glog.V(0).Infof("assign %v %v: %v", req, option.String(), lastErr)
 	}
 	return nil, lastErr
 }

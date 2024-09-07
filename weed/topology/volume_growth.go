@@ -34,7 +34,7 @@ type VolumeGrowRequest struct {
 }
 
 func (vg *VolumeGrowRequest) Equals(req *VolumeGrowRequest) bool {
-	return reflect.DeepEqual(existingReq.Option, req.Option) && vg.Count == req.Count
+	return reflect.DeepEqual(vg.Option, req.Option) && vg.Count == req.Count && vg.Force == req.Force
 }
 
 type volumeGrowthStrategy struct {
