@@ -74,6 +74,7 @@ type FilerOption struct {
 	DiskType              string
 	AllowedOrigins        []string
 	ExposeDirectoryData   bool
+	WORM                  bool
 }
 
 type FilerServer struct {

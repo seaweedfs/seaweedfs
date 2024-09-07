@@ -122,7 +122,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		entry.Name = name // this flush may be just after a rename operation
 
 		// if worm enabled, mark the file as frozen on close
-		if wfs.option.WriteOnceReadMany {
+		if wfs.option.WORM {
 			entry.Frozen = true
 		}
 

@@ -70,7 +70,6 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 }
 
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, contentLength int64) {
-
 	ctx := context.Background()
 
 	destination := r.RequestURI
@@ -197,6 +196,10 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 // curl -X DELETE http://localhost:8888/path/to?recursive=true&ignoreRecursiveError=true
 // curl -X DELETE http://localhost:8888/path/to?recursive=true&skipChunkDeletion=true
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
+	if fs.option.WORM {
+		writeJsonError(w, r, http.StatusForbidden, errors.New("operation not permitted"))
+		return
+	}
 
 	isRecursive := r.FormValue("recursive") == "true"
 	if !isRecursive && fs.option.recursiveDelete {

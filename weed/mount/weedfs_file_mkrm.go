@@ -133,8 +133,8 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return code
 	}
 
-	// you can't delete a frozen file
-	if entry != nil && entry.HardLinkCounter <= 1 && entry.Frozen {
+	// you can't delete a frozen file in worm mode
+	if wfs.option.WORM && entry != nil && entry.HardLinkCounter <= 1 && entry.Frozen {
 		// a workaround for vi swap file
 		if !swapFileNameRegexp.MatchString(name) {
 			return fuse.EPERM
