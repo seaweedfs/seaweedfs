@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -92,7 +91,8 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			// filter out identical requests being processed
 			found := false
 			filter.Range(func(k, v interface{}) bool {
-				if reflect.DeepEqual(k, req) {
+				existingReq := k.(*topology.VolumeGrowRequest)
+				if existingReq.Equals(req) {
 					found = true
 				}
 				return !found
