@@ -286,3 +286,50 @@ func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.V
 
 	return resp, nil
 }
+
+func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGrowRequest) (*master_pb.VolumeGrowResponse, error) {
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+	if req.Replication == "" {
+		req.Replication = ms.option.DefaultReplicaPlacement
+	}
+	replicaPlacement, err := super_block.NewReplicaPlacementFromString(req.Replication)
+	if err != nil {
+		return nil, err
+	}
+	ttl, err := needle.ReadTTL(req.Ttl)
+	if err != nil {
+		return nil, err
+	}
+	volumeGrowOption := topology.VolumeGrowOption{
+		Collection:         req.Collection,
+		ReplicaPlacement:   replicaPlacement,
+		Ttl:                ttl,
+		DiskType:           types.ToDiskType(req.DiskType),
+		Preallocate:        ms.preallocateSize,
+		DataCenter:         req.DataCenter,
+		Rack:               req.Rack,
+		DataNode:           req.DataNode,
+		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
+	}
+	volumeGrowRequest := topology.VolumeGrowRequest{
+		Option: &volumeGrowOption,
+		Count:  req.WritableVolumeCount,
+		Force:  true,
+		Reason: "grpc volume grow",
+	}
+	replicaCount := int64(req.WritableVolumeCount * uint32(replicaPlacement.GetCopyCount()))
+
+	if ms.Topo.AvailableSpaceFor(&volumeGrowOption) < replicaCount {
+		return nil, fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.AvailableSpaceFor(&volumeGrowOption), replicaCount)
+	}
+
+	if !ms.Topo.DataCenterExists(volumeGrowOption.DataCenter) {
+		err = fmt.Errorf("data center %v not found in topology", volumeGrowOption.DataCenter)
+	}
+
+	ms.DoAutomaticVolumeGrow(&volumeGrowRequest)
+
+	return &master_pb.VolumeGrowResponse{}, nil
+}
