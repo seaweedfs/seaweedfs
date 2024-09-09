@@ -196,7 +196,8 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 // curl -X DELETE http://localhost:8888/path/to?recursive=true&ignoreRecursiveError=true
 // curl -X DELETE http://localhost:8888/path/to?recursive=true&skipChunkDeletion=true
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
-	if fs.option.WORM {
+	force := r.URL.Query().Get("force") == "true"
+	if !force && fs.option.WORM {
 		writeJsonError(w, r, http.StatusForbidden, errors.New("operation not permitted"))
 		return
 	}
