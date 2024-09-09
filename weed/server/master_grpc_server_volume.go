@@ -286,3 +286,39 @@ func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.V
 
 	return resp, nil
 }
+
+func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.AssignRequest) (*master_pb.VolumeGrowResponse, error) {
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+	if req.Replication == "" {
+		req.Replication = ms.option.DefaultReplicaPlacement
+	}
+	replicaPlacement, err := super_block.NewReplicaPlacementFromString(req.Replication)
+	if err != nil {
+		return nil, err
+	}
+	ttl, err := needle.ReadTTL(req.Ttl)
+	if err != nil {
+		return nil, err
+	}
+	volumeGrowRequest := topology.VolumeGrowRequest{
+		Option: &topology.VolumeGrowOption{
+			Collection:         req.Collection,
+			ReplicaPlacement:   replicaPlacement,
+			Ttl:                ttl,
+			DiskType:           types.ToDiskType(req.DiskType),
+			Preallocate:        ms.preallocateSize,
+			DataCenter:         req.DataCenter,
+			Rack:               req.Rack,
+			DataNode:           req.DataNode,
+			MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
+		},
+		Count:  req.WritableVolumeCount,
+		Force:  true,
+		Reason: "grpc volume grow",
+	}
+
+	ms.DoAutomaticVolumeGrow(&volumeGrowRequest)
+	return &master_pb.VolumeGrowResponse{}, nil
+}

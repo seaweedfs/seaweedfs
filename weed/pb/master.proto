@@ -51,6 +51,8 @@ service Seaweed {
   }
   rpc RaftRemoveServer (RaftRemoveServerRequest) returns (RaftRemoveServerResponse) {
   }
+  rpc VolumeGrow (AssignRequest) returns (VolumeGrowResponse) {
+  }
 }
 
 //////////////////////////////////////////////////
@@ -210,6 +212,7 @@ message AssignRequest {
   uint32 writable_volume_count = 9;
   string disk_type = 10;
 }
+
 message AssignResponse {
   string fid = 1;
   uint64 count = 4;
@@ -418,4 +421,7 @@ message RaftListClusterServersResponse {
     bool   isLeader = 4;
   }
   repeated ClusterServers cluster_servers = 1;
+}
+
+message VolumeGrowResponse {
 }
