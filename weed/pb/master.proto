@@ -51,7 +51,7 @@ service Seaweed {
   }
   rpc RaftRemoveServer (RaftRemoveServerRequest) returns (RaftRemoveServerResponse) {
   }
-  rpc VolumeGrow (AssignRequest) returns (VolumeGrowResponse) {
+  rpc VolumeGrow (VolumeGrowRequest) returns (VolumeGrowResponse) {
   }
 }
 
@@ -211,6 +211,18 @@ message AssignRequest {
   uint32 memory_map_max_size_mb = 8;
   uint32 writable_volume_count = 9;
   string disk_type = 10;
+}
+
+message VolumeGrowRequest {
+  uint32 writable_volume_count = 1;
+  string replication = 2;
+  string collection = 3;
+  string ttl = 4;
+  string data_center = 5;
+  string rack = 6;
+  string data_node = 7;
+  uint32 memory_map_max_size_mb = 8;
+  string disk_type = 9;
 }
 
 message AssignResponse {

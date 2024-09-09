@@ -287,7 +287,7 @@ func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.V
 	return resp, nil
 }
 
-func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.AssignRequest) (*master_pb.VolumeGrowResponse, error) {
+func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGrowRequest) (*master_pb.VolumeGrowResponse, error) {
 	if !ms.Topo.IsLeader() {
 		return nil, raft.NotLeaderError
 	}

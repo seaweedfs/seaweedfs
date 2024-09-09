@@ -70,7 +70,7 @@ type SeaweedClient interface {
 	RaftListClusterServers(ctx context.Context, in *RaftListClusterServersRequest, opts ...grpc.CallOption) (*RaftListClusterServersResponse, error)
 	RaftAddServer(ctx context.Context, in *RaftAddServerRequest, opts ...grpc.CallOption) (*RaftAddServerResponse, error)
 	RaftRemoveServer(ctx context.Context, in *RaftRemoveServerRequest, opts ...grpc.CallOption) (*RaftRemoveServerResponse, error)
-	VolumeGrow(ctx context.Context, in *AssignRequest, opts ...grpc.CallOption) (*VolumeGrowResponse, error)
+	VolumeGrow(ctx context.Context, in *VolumeGrowRequest, opts ...grpc.CallOption) (*VolumeGrowResponse, error)
 }
 
 type seaweedClient struct {
@@ -345,7 +345,7 @@ func (c *seaweedClient) RaftRemoveServer(ctx context.Context, in *RaftRemoveServ
 	return out, nil
 }
 
-func (c *seaweedClient) VolumeGrow(ctx context.Context, in *AssignRequest, opts ...grpc.CallOption) (*VolumeGrowResponse, error) {
+func (c *seaweedClient) VolumeGrow(ctx context.Context, in *VolumeGrowRequest, opts ...grpc.CallOption) (*VolumeGrowResponse, error) {
 	out := new(VolumeGrowResponse)
 	err := c.cc.Invoke(ctx, Seaweed_VolumeGrow_FullMethodName, in, out, opts...)
 	if err != nil {
@@ -380,7 +380,7 @@ type SeaweedServer interface {
 	RaftListClusterServers(context.Context, *RaftListClusterServersRequest) (*RaftListClusterServersResponse, error)
 	RaftAddServer(context.Context, *RaftAddServerRequest) (*RaftAddServerResponse, error)
 	RaftRemoveServer(context.Context, *RaftRemoveServerRequest) (*RaftRemoveServerResponse, error)
-	VolumeGrow(context.Context, *AssignRequest) (*VolumeGrowResponse, error)
+	VolumeGrow(context.Context, *VolumeGrowRequest) (*VolumeGrowResponse, error)
 	mustEmbedUnimplementedSeaweedServer()
 }
 
@@ -454,7 +454,7 @@ func (UnimplementedSeaweedServer) RaftAddServer(context.Context, *RaftAddServerR
 func (UnimplementedSeaweedServer) RaftRemoveServer(context.Context, *RaftRemoveServerRequest) (*RaftRemoveServerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RaftRemoveServer not implemented")
 }
-func (UnimplementedSeaweedServer) VolumeGrow(context.Context, *AssignRequest) (*VolumeGrowResponse, error) {
+func (UnimplementedSeaweedServer) VolumeGrow(context.Context, *VolumeGrowRequest) (*VolumeGrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeGrow not implemented")
 }
 func (UnimplementedSeaweedServer) mustEmbedUnimplementedSeaweedServer() {}
@@ -891,7 +891,7 @@ func _Seaweed_RaftRemoveServer_Handler(srv interface{}, ctx context.Context, dec
 }
 
 func _Seaweed_VolumeGrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AssignRequest)
+	in := new(VolumeGrowRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -903,7 +903,7 @@ func _Seaweed_VolumeGrow_Handler(srv interface{}, ctx context.Context, dec func(
 		FullMethod: Seaweed_VolumeGrow_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedServer).VolumeGrow(ctx, req.(*AssignRequest))
+		return srv.(SeaweedServer).VolumeGrow(ctx, req.(*VolumeGrowRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

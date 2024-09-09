@@ -50,8 +50,7 @@ func (c *commandGrow) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 	if err != nil {
 		return err
 	}
-	assignRequest := &master_pb.AssignRequest{
-		Count:               0,
+	volumeGrowRequest := &master_pb.VolumeGrowRequest{
 		Collection:          *collection,
 		DataCenter:          *dataCenter,
 		Rack:                *rack,
@@ -83,9 +82,9 @@ func (c *commandGrow) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 					for _, vi := range di.VolumeInfos {
 						if !collectionFound && vi.Collection == *collection {
 							replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(vi.ReplicaPlacement))
-							assignRequest.Ttl = needle.LoadTTLFromUint32(vi.Ttl).String()
-							assignRequest.DiskType = vi.DiskType
-							assignRequest.Replication = replicaPlacement.String()
+							volumeGrowRequest.Ttl = needle.LoadTTLFromUint32(vi.Ttl).String()
+							volumeGrowRequest.DiskType = vi.DiskType
+							volumeGrowRequest.Replication = replicaPlacement.String()
 							collectionFound = true
 						}
 						if collectionFound && dataCenterFound && rackFound && dataNodeFound && diskTypeFound {
@@ -112,7 +111,7 @@ func (c *commandGrow) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 		return fmt.Errorf("collection not found")
 	}
 	if err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		if _, err := client.VolumeGrow(context.Background(), assignRequest); err != nil {
+		if _, err := client.VolumeGrow(context.Background(), volumeGrowRequest); err != nil {
 			return err
 		}
 		return nil
