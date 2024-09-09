@@ -22,7 +22,6 @@ type VolumeAssignRequest struct {
 	Rack                string
 	DataNode            string
 	WritableVolumeCount uint32
-	Async               bool
 }
 
 type AssignResult struct {
