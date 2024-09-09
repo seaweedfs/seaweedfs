@@ -459,7 +459,7 @@ volume:
   livenessProbe:
     enabled: true
     httpGet:
-      path: /status
+      path: /healthz
       scheme: HTTP
     initialDelaySeconds: 20
     periodSeconds: 90
@@ -472,7 +472,7 @@ volume:
   readinessProbe:
     enabled: true
     httpGet:
-      path: /status
+      path: /healthz
       scheme: HTTP
     initialDelaySeconds: 15
     periodSeconds: 15
