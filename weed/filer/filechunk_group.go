@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"io"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -46,6 +47,9 @@ func (group *ChunkGroup) AddChunk(chunk *filer_pb.FileChunk) error {
 }
 
 func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
+	if offset >= fileSize {
+		return 0, 0, io.EOF
+	}
 
 	group.sectionsLock.RLock()
 	defer group.sectionsLock.RUnlock()
