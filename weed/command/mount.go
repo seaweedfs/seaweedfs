@@ -71,7 +71,7 @@ func init() {
 	mountOptions.debugPort = cmdMount.Flag.Int("debug.port", 6061, "http port for debugging")
 	mountOptions.localSocket = cmdMount.Flag.String("localSocket", "", "default to /tmp/seaweedfs-mount-<mount_dir_hash>.sock")
 	mountOptions.disableXAttr = cmdMount.Flag.Bool("disableXAttr", false, "disable xattr")
-	mountOptions.worm = cmdMount.Flag.Bool("worm", false, "wrom mode, if true, you can change a file only once, and then it is readonly and undeletable, see https://en.wikipedia.org/wiki/Write_once_read_many")
+	mountOptions.worm = cmdMount.Flag.Bool("worm", false, "worm mode, if true, a file can only be changed once, after which it becomes readonly and undeletable, see https://en.wikipedia.org/wiki/Write_once_read_many")
 
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
