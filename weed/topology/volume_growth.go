@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"math/rand/v2"
+	"reflect"
 	"sync"
 	"time"
 
@@ -29,6 +30,11 @@ type VolumeGrowRequest struct {
 	Option *VolumeGrowOption
 	Count  uint32
 	Force  bool
+	Reason string
+}
+
+func (vg *VolumeGrowRequest) Equals(req *VolumeGrowRequest) bool {
+	return reflect.DeepEqual(vg.Option, req.Option) && vg.Count == req.Count && vg.Force == req.Force
 }
 
 type volumeGrowthStrategy struct {
