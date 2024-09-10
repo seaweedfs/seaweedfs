@@ -46,7 +46,7 @@ type Option struct {
 	Quota              int64
 	DisableXAttr       bool
 
-	WORM bool
+	Worm bool
 
 	MountUid         uint32
 	MountGid         uint32

@@ -177,7 +177,7 @@ func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fi
 		return err
 	}
 
-	// you cannot change an existing file in WORM mode
+	// you cannot change an existing file in Worm mode
 	return errors.New("operation not permitted")
 }
 

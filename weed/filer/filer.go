@@ -311,8 +311,8 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 		}
 
 		// if an entry is already worm, you cannot change it
-		if oldEntry.WORM {
-			entry.WORM = true
+		if oldEntry.Worm {
+			entry.Worm = true
 		}
 	}
 	return f.Store.UpdateEntry(ctx, entry)

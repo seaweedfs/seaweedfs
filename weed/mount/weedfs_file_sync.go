@@ -122,7 +122,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		entry.Name = name // this flush may be just after a rename operation
 
 		// if worm enabled, mark the file as worm on close
-		if wfs.option.WORM {
+		if wfs.option.Worm {
 			entry.Worm = true
 		}
 
