@@ -57,7 +57,7 @@ func (c *TieredChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64
 		if err != nil {
 			glog.Errorf("failed to read from memcache: %s", err)
 		}
-		if n >= int(minSize) {
+		if n == int(len(data)) {
 			return n, nil
 		}
 	}
@@ -65,24 +65,24 @@ func (c *TieredChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64
 	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {
 		glog.Errorf("failed to parse file id %s", fileId)
-		return n, nil
+		return 0, nil
 	}
 
 	if minSize <= c.onDiskCacheSizeLimit0 {
 		n, err = c.diskCaches[0].readChunkAt(data, fid.Key, offset)
-		if n >= int(minSize) {
+		if n == int(len(data)) {
 			return
 		}
 	}
 	if minSize <= c.onDiskCacheSizeLimit1 {
 		n, err = c.diskCaches[1].readChunkAt(data, fid.Key, offset)
-		if n >= int(minSize) {
+		if n == int(len(data)) {
 			return
 		}
 	}
 	{
 		n, err = c.diskCaches[2].readChunkAt(data, fid.Key, offset)
-		if n >= int(minSize) {
+		if n == int(len(data)) {
 			return
 		}
 	}
