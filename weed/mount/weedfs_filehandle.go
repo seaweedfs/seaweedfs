@@ -9,7 +9,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	var entry *filer_pb.Entry
 	_, _, entry, status = wfs.maybeReadEntry(inode)
 	if status == fuse.OK {
-		if entry != nil && entry.Frozen && flags&fuse.O_ANYWRITE != 0 {
+		if entry != nil && entry.Worm && flags&fuse.O_ANYWRITE != 0 {
 			return nil, fuse.EPERM
 		}
 		// need to AcquireFileHandle again to ensure correct handle counter

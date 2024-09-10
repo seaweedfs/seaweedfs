@@ -73,6 +73,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			Extended:        oldEntry.Extended,
 			HardLinkId:      oldEntry.HardLinkId,
 			HardLinkCounter: oldEntry.HardLinkCounter,
+			Worm:            oldEntry.Worm,
 		},
 		Signatures:               []int32{wfs.signature},
 		SkipCheckParentDirectory: true,

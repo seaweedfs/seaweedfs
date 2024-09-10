@@ -310,9 +310,9 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 			return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
 		}
 
-		// if an entry is already frozen, you cannot unfreeze it
-		if oldEntry.Frozen {
-			entry.Frozen = true
+		// if an entry is already worm, you cannot change it
+		if oldEntry.WORM {
+			entry.WORM = true
 		}
 	}
 	return f.Store.UpdateEntry(ctx, entry)
