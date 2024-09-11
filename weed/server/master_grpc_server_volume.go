@@ -3,11 +3,12 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math/rand/v2"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 
@@ -42,7 +43,13 @@ func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
 func (ms *MasterServer) ProcessGrowRequest() {
 	go func() {
 		ctx := context.Background()
+		firstRun := true // 标记是否为首次进入循环
 		for {
+			if firstRun {
+				firstRun = false // 首次进入后将标记设为false
+			} else {
+				time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
+			}
 			if !ms.Topo.IsLeader() {
 				continue
 			}
@@ -84,7 +91,6 @@ func (ms *MasterServer) ProcessGrowRequest() {
 					glog.V(0).Infof("volume grow request failed: %+v", err)
 				}
 			}
-			time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
 		}
 	}()
 	go func() {
