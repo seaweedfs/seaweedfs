@@ -43,10 +43,10 @@ func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
 func (ms *MasterServer) ProcessGrowRequest() {
 	go func() {
 		ctx := context.Background()
-		firstRun := true // 标记是否为首次进入循环
+		firstRun := true 
 		for {
 			if firstRun {
-				firstRun = false // 首次进入后将标记设为false
+				firstRun = false 
 			} else {
 				time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
 			}
