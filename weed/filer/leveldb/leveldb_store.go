@@ -44,7 +44,7 @@ func (store *LevelDBStore) Initialize(configuration weed_util.Configuration, pre
 }
 
 func (store *LevelDBStore) initialize(dir string) (err error) {
-	glog.Infof("filer store dir: %s", dir)
+	glog.V(0).Infof("filer store dir: %s", dir)
 	os.MkdirAll(dir, 0755)
 	if err := weed_util.TestFolderWritable(dir); err != nil {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)

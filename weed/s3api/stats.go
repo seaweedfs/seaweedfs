@@ -3,6 +3,7 @@ package s3api
 import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/http"
 	"strconv"
 	"time"
@@ -11,7 +12,7 @@ import (
 func track(f http.HandlerFunc, action string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bucket, _ := s3_constants.GetBucketAndObject(r)
-		w.Header().Set("Server", "SeaweedFS S3")
+		w.Header().Set("Server", "SeaweedFS "+util.VERSION)
 		recorder := stats_collect.NewStatusResponseWriter(w)
 		start := time.Now()
 		f(recorder, r)

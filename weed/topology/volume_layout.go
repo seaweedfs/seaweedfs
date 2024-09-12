@@ -2,11 +2,12 @@ package topology
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
@@ -304,7 +305,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 		return 0, 0, nil, true, fmt.Errorf("%s", noWritableVolumes)
 	}
 	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
-		vid := vl.writables[rand.Intn(lenWriters)]
+		vid := vl.writables[rand.IntN(lenWriters)]
 		locationList = vl.vid2location[vid]
 		if locationList == nil || len(locationList.list) == 0 {
 			return 0, 0, nil, false, fmt.Errorf("Strangely vid %s is on no machine!", vid.String())
@@ -359,10 +360,8 @@ func (vl *VolumeLayout) GetLastGrowCount() uint32 {
 	return vl.lastGrowCount.Load()
 }
 
-func (vl *VolumeLayout) ShouldGrowVolumes(collection string) bool {
+func (vl *VolumeLayout) ShouldGrowVolumes() bool {
 	writable, crowded := vl.GetWritableVolumeCount()
-	stats.MasterVolumeLayoutWritable.WithLabelValues(collection, vl.diskType.String(), vl.rp.String(), vl.ttl.String()).Set(float64(writable))
-	stats.MasterVolumeLayoutCrowded.WithLabelValues(collection, vl.diskType.String(), vl.rp.String(), vl.ttl.String()).Set(float64(crowded))
 	return writable <= crowded
 }
 
@@ -544,12 +543,12 @@ func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
 	return
 }
 
-func (vlc *VolumeLayoutCollection) ToGrowOption() (option *VolumeGrowOption) {
-	return &VolumeGrowOption{
-		Collection:       vlc.Collection,
-		ReplicaPlacement: vlc.VolumeLayout.rp,
-		Ttl:              vlc.VolumeLayout.ttl,
-		DiskType:         vlc.VolumeLayout.diskType,
+func (vlc *VolumeLayoutCollection) ToVolumeGrowRequest() *master_pb.VolumeGrowRequest {
+	return &master_pb.VolumeGrowRequest{
+		Collection:  vlc.Collection,
+		Replication: vlc.VolumeLayout.rp.String(),
+		Ttl:         vlc.VolumeLayout.ttl.String(),
+		DiskType:    vlc.VolumeLayout.diskType.String(),
 	}
 }
 
