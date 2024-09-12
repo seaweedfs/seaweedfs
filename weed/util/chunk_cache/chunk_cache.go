@@ -13,6 +13,7 @@ var ErrorOutOfBounds = errors.New("attempt to read out of bounds")
 type ChunkCache interface {
 	ReadChunkAt(data []byte, fileId string, offset uint64) (n int, err error)
 	SetChunk(fileId string, data []byte)
+	IsInCache(fileId string, lockNeeded bool) (answer bool)
 }
 
 // a global cache for recently accessed file chunks
@@ -41,6 +42,40 @@ func NewTieredChunkCache(maxEntries int64, dir string, diskSizeInUnit int64, uni
 	c.diskCaches[2] = NewOnDiskCacheLayer(dir, "c2_2", diskSizeInUnit*unitSize/2, 2)
 
 	return c
+}
+
+func (c *TieredChunkCache) IsInCache(fileId string, lockNeeded bool) (answer bool) {
+	if c == nil {
+		return false
+	}
+
+	if lockNeeded {
+		c.RLock()
+		defer c.RUnlock()
+	}
+
+	item := c.memCache.cache.Get(fileId)
+	if item != nil {
+		glog.V(4).Infof("fileId %s is in memcache", fileId)
+		return true
+	}
+
+	fid, err := needle.ParseFileIdFromString(fileId)
+	if err != nil {
+		glog.V(4).Infof("failed to parse file id %s", fileId)
+		return false
+	}
+
+	for i, diskCacheLayer := range c.diskCaches {
+		for k, v := range diskCacheLayer.diskCaches {
+			_, ok := v.nm.Get(fid.Key)
+			if ok {
+				glog.V(4).Infof("fileId %s is in diskCaches[%d].volume[%d]", fileId, i, k)
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *TieredChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64) (n int, err error) {
@@ -99,6 +134,10 @@ func (c *TieredChunkCache) SetChunk(fileId string, data []byte) {
 	defer c.Unlock()
 
 	glog.V(4).Infof("SetChunk %s size %d\n", fileId, len(data))
+	if c.IsInCache(fileId, false) {
+		glog.V(4).Infof("fileId %s is already in cache", fileId)
+		return
+	}
 
 	c.doSetChunk(fileId, data)
 }
