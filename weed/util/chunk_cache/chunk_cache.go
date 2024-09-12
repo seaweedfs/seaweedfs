@@ -14,6 +14,7 @@ type ChunkCache interface {
 	ReadChunkAt(data []byte, fileId string, offset uint64) (n int, err error)
 	SetChunk(fileId string, data []byte)
 	IsInCache(fileId string, lockNeeded bool) (answer bool)
+	GetMaxFilePartSizeInCache() (answer uint64)
 }
 
 // a global cache for recently accessed file chunks
@@ -24,6 +25,7 @@ type TieredChunkCache struct {
 	onDiskCacheSizeLimit0 uint64
 	onDiskCacheSizeLimit1 uint64
 	onDiskCacheSizeLimit2 uint64
+	maxFilePartSizeInCache uint64
 }
 
 var _ ChunkCache = &TieredChunkCache{}
@@ -40,8 +42,13 @@ func NewTieredChunkCache(maxEntries int64, dir string, diskSizeInUnit int64, uni
 	c.diskCaches[0] = NewOnDiskCacheLayer(dir, "c0_2", diskSizeInUnit*unitSize/8, 2)
 	c.diskCaches[1] = NewOnDiskCacheLayer(dir, "c1_3", diskSizeInUnit*unitSize/4+diskSizeInUnit*unitSize/8, 3)
 	c.diskCaches[2] = NewOnDiskCacheLayer(dir, "c2_2", diskSizeInUnit*unitSize/2, 2)
+	c.maxFilePartSizeInCache = uint64(unitSize*diskSizeInUnit)/4
 
 	return c
+}
+
+func (c *TieredChunkCache) GetMaxFilePartSizeInCache() (answer uint64) {
+	return c.maxFilePartSizeInCache
 }
 
 func (c *TieredChunkCache) IsInCache(fileId string, lockNeeded bool) (answer bool) {
