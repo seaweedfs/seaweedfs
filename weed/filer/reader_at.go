@@ -199,7 +199,7 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 		return fetchChunkRange(buffer, c.readerCache.lookupFileIdFn, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset))
 	}
 
-	n, err = c.readerCache.ReadChunkAt(buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), chunkView.ViewOffset == 0)
+	n, err = c.readerCache.ReadChunkAt(buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), (uint64(chunkView.ViewOffset)+chunkView.ChunkSize) <= c.readerCache.chunkCache.GetMaxFilePartSizeInCache())
 	if c.lastChunkFid != chunkView.FileId {
 		if chunkView.OffsetInChunk == 0 { // start of a new chunk
 			if c.lastChunkFid != "" {
