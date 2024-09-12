@@ -61,6 +61,10 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 		if _, found := rc.downloaders[chunkView.FileId]; found {
 			continue
 		}
+		if rc.chunkCache.IsInCache(chunkView.FileId, true) {
+			glog.V(4).Infof("%s is in cache", chunkView.FileId)
+			continue
+		}
 
 		if len(rc.downloaders) >= rc.limit {
 			// abort when slots are filled
