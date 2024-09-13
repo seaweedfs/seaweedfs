@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"os"
 	"path"
@@ -76,8 +77,8 @@ type WFS struct {
 	signature         int32
 	concurrentWriters *util.LimitedConcurrentExecutor
 	inodeToPath       *InodeToPath
-	fhmap             *FileHandleToInode
-	dhmap             *DirectoryHandleToInode
+	fhMap             *FileHandleToInode
+	dhMap             *DirectoryHandleToInode
 	fuseServer        *fuse.Server
 	IsOverQuota       bool
 	fhLockTable       *util.LockTable[FileHandleId]
@@ -89,8 +90,8 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		option:        option,
 		signature:     util.RandomInt32(),
 		inodeToPath:   NewInodeToPath(util.FullPath(option.FilerMountRootPath)),
-		fhmap:         NewFileHandleToInode(),
-		dhmap:         NewDirectoryHandleToInode(),
+		fhMap:         NewFileHandleToInode(),
+		dhMap:         NewDirectoryHandleToInode(),
 		fhLockTable:   util.NewLockTable[FileHandleId](),
 	}
 
@@ -108,9 +109,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			return wfs.inodeToPath.IsChildrenCached(path)
 		}, func(filePath util.FullPath, entry *filer_pb.Entry) {
 			// Find inode if it is not a deleted path
-			if inode, inode_found := wfs.inodeToPath.GetInode(filePath); inode_found {
+			if inode, inodeFound := wfs.inodeToPath.GetInode(filePath); inodeFound {
 				// Find open file handle
-				if fh, fh_found := wfs.fhmap.FindFileHandle(inode); fh_found {
+				if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
 					fhActiveLock := fh.wfs.fhLockTable.AcquireLock("invalidateFunc", fh.fh, util.ExclusiveLock)
 					defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
@@ -119,10 +120,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 					fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
 
 					// Update handle entry
-					newentry, status := wfs.maybeLoadEntry(filePath)
+					newEntry, status := wfs.maybeLoadEntry(filePath)
 					if status == fuse.OK {
-						if fh.GetEntry().GetEntry() != newentry {
-							fh.SetEntry(newentry)
+						if fh.GetEntry().GetEntry() != newEntry {
+							fh.SetEntry(newEntry)
 						}
 					}
 				}
@@ -160,7 +161,7 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 		return
 	}
 	var found bool
-	if fh, found = wfs.fhmap.FindFileHandle(inode); found {
+	if fh, found = wfs.fhMap.FindFileHandle(inode); found {
 		entry = fh.UpdateEntry(func(entry *filer_pb.Entry) {
 			if entry != nil && fh.entry.Attributes == nil {
 				entry.Attributes = &filer_pb.FuseAttributes{}
@@ -195,7 +196,7 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 	// read from async meta cache
 	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
 	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
-	if cacheErr == filer_pb.ErrNotFound {
+	if errors.Is(cacheErr, filer_pb.ErrNotFound) {
 		return nil, fuse.ENOENT
 	}
 	return cachedEntry.ToProtoEntry(), fuse.OK
