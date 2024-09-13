@@ -248,7 +248,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Cipher:             cipher,
 		UidGidMapper:       uidGidMapper,
 		DisableXAttr:       *option.disableXAttr,
-		Worm:               *option.worm,
 	})
 
 	// create mount root
@@ -272,7 +271,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	reflection.Register(grpcS)
 	go grpcS.Serve(montSocketListener)
 
-	seaweedFileSystem.StartBackgroundTasks()
+	err = seaweedFileSystem.StartBackgroundTasks()
+	if err != nil {
+		fmt.Printf("failed to start background tasks: %v\n", err)
+		return false
+	}
 
 	glog.V(0).Infof("mounted %s%s to %v", *option.filer, mountRoot, dir)
 	glog.V(0).Infof("This is SeaweedFS version %s %s %s", util.Version(), runtime.GOOS, runtime.GOARCH)

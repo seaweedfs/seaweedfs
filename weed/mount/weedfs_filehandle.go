@@ -3,13 +3,15 @@ package mount
 import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, status fuse.Status) {
 	var entry *filer_pb.Entry
-	_, _, entry, status = wfs.maybeReadEntry(inode)
+	var path util.FullPath
+	path, _, entry, status = wfs.maybeReadEntry(inode)
 	if status == fuse.OK {
-		if entry != nil && entry.Worm && flags&fuse.O_ANYWRITE != 0 {
+		if wfs.wormEnabledForEntry(path, entry) && flags&fuse.O_ANYWRITE != 0 {
 			return nil, fuse.EPERM
 		}
 		// need to AcquireFileHandle again to ensure correct handle counter

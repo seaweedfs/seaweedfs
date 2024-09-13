@@ -309,11 +309,6 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 			glog.Errorf("existing %s is a file", oldEntry.FullPath)
 			return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
 		}
-
-		// if an entry is already worm, you cannot change it
-		if oldEntry.Worm {
-			entry.Worm = true
-		}
 	}
 	return f.Store.UpdateEntry(ctx, entry)
 }

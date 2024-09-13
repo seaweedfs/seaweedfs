@@ -121,11 +121,6 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		entry := fh.GetEntry()
 		entry.Name = name // this flush may be just after a rename operation
 
-		// if worm enabled, mark the file as worm on close
-		if wfs.option.Worm {
-			entry.Worm = true
-		}
-
 		if entry.Attributes != nil {
 			entry.Attributes.Mime = fh.contentType
 			if entry.Attributes.Uid == 0 {
@@ -133,9 +128,6 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 			}
 			if entry.Attributes.Gid == 0 {
 				entry.Attributes.Gid = gid
-			}
-			if entry.Attributes.Crtime == 0 {
-				entry.Attributes.Crtime = time.Now().Unix()
 			}
 			entry.Attributes.Mtime = time.Now().Unix()
 		}
