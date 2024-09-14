@@ -46,30 +46,30 @@ func NewDirectoryHandleToInode() *DirectoryHandleToInode {
 func (wfs *WFS) AcquireDirectoryHandle() (DirectoryHandleId, *DirectoryHandle) {
 	fh := FileHandleId(util.RandomUint64())
 
-	wfs.dhmap.Lock()
-	defer wfs.dhmap.Unlock()
+	wfs.dhMap.Lock()
+	defer wfs.dhMap.Unlock()
 	dh := new(DirectoryHandle)
 	dh.reset()
-	wfs.dhmap.dir2inode[DirectoryHandleId(fh)] = dh
+	wfs.dhMap.dir2inode[DirectoryHandleId(fh)] = dh
 	return DirectoryHandleId(fh), dh
 }
 
 func (wfs *WFS) GetDirectoryHandle(dhid DirectoryHandleId) *DirectoryHandle {
-	wfs.dhmap.Lock()
-	defer wfs.dhmap.Unlock()
-	if dh, found := wfs.dhmap.dir2inode[dhid]; found {
+	wfs.dhMap.Lock()
+	defer wfs.dhMap.Unlock()
+	if dh, found := wfs.dhMap.dir2inode[dhid]; found {
 		return dh
 	}
 	dh := new(DirectoryHandle)
 	dh.reset()
-	wfs.dhmap.dir2inode[dhid] = dh
+	wfs.dhMap.dir2inode[dhid] = dh
 	return dh
 }
 
 func (wfs *WFS) ReleaseDirectoryHandle(dhid DirectoryHandleId) {
-	wfs.dhmap.Lock()
-	defer wfs.dhmap.Unlock()
-	delete(wfs.dhmap.dir2inode, dhid)
+	wfs.dhMap.Lock()
+	defer wfs.dhMap.Unlock()
+	delete(wfs.dhMap.dir2inode, dhid)
 }
 
 // Directory handling
@@ -169,7 +169,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 				isEarlyTerminated = true
 				return false
 			}
-			if fh, found := wfs.fhmap.FindFileHandle(inode); found {
+			if fh, found := wfs.fhMap.FindFileHandle(inode); found {
 				glog.V(4).Infof("readdir opened file %s", dirPath.Child(dirEntry.Name))
 				entry = filer.FromPbEntry(string(dirPath), fh.GetEntry().GetEntry())
 			}

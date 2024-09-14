@@ -18,15 +18,15 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 			}
 		}
 		// need to AcquireFileHandle again to ensure correct handle counter
-		fileHandle = wfs.fhmap.AcquireFileHandle(wfs, inode, entry)
+		fileHandle = wfs.fhMap.AcquireFileHandle(wfs, inode, entry)
 	}
 	return
 }
 
 func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
-	wfs.fhmap.ReleaseByHandle(handleId)
+	wfs.fhMap.ReleaseByHandle(handleId)
 }
 
 func (wfs *WFS) GetHandle(handleId FileHandleId) *FileHandle {
-	return wfs.fhmap.GetFileHandle(handleId)
+	return wfs.fhMap.GetFileHandle(handleId)
 }
