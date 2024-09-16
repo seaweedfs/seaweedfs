@@ -96,7 +96,7 @@ require (
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20201027041543-1326539a0a0a // indirect
-	go.etcd.io/etcd/client/v3 v3.5.15
+	go.etcd.io/etcd/client/v3 v3.5.16
 	go.mongodb.org/mongo-driver v1.16.0
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.39.0
@@ -151,7 +151,7 @@ require (
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.77.1
-	go.etcd.io/etcd/client/pkg/v3 v3.5.15
+	go.etcd.io/etcd/client/pkg/v3 v3.5.16
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.8.0
 	google.golang.org/grpc/security/advancedtls v1.0.0
@@ -326,7 +326,7 @@ require (
 	github.com/zeebo/blake3 v0.2.3 // indirect
 	github.com/zeebo/errs v1.3.0 // indirect
 	go.etcd.io/bbolt v1.3.10 // indirect
-	go.etcd.io/etcd/api/v3 v3.5.15 // indirect
+	go.etcd.io/etcd/api/v3 v3.5.16 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.53.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.53.0 // indirect
 	go.opentelemetry.io/otel v1.28.0 // indirect
