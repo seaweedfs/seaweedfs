@@ -6,10 +6,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type ReaderCache struct {
@@ -61,6 +62,10 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 		if _, found := rc.downloaders[chunkView.FileId]; found {
 			continue
 		}
+		if rc.chunkCache.IsInCache(chunkView.FileId, true) {
+			glog.V(4).Infof("%s is in cache", chunkView.FileId)
+			continue
+		}
 
 		if len(rc.downloaders) >= rc.limit {
 			// abort when slots are filled
@@ -69,7 +74,8 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 
 		// glog.V(4).Infof("prefetch %s offset %d", chunkView.FileId, chunkView.ViewOffset)
 		// cache this chunk if not yet
-		cacher := newSingleChunkCacher(rc, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int(chunkView.ChunkSize), false)
+		shouldCache := (uint64(chunkView.ViewOffset) + chunkView.ChunkSize) <= rc.chunkCache.GetMaxFilePartSizeInCache()
+		cacher := newSingleChunkCacher(rc, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int(chunkView.ChunkSize), shouldCache)
 		go cacher.startCaching()
 		<-cacher.cacheStartedCh
 		rc.downloaders[chunkView.FileId] = cacher

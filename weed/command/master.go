@@ -134,8 +134,8 @@ func runMaster(cmd *Command, args []string) bool {
 		*m.metricsHttpIp = *m.ip
 	}
 	go stats_collect.StartMetricsServer(*m.metricsHttpIp, *m.metricsHttpPort)
+	go stats_collect.LoopPushingMetric("masterServer", util.JoinHostPort(*m.ip, *m.port), *m.metricsAddress, *m.metricsIntervalSec)
 	startMaster(m, masterWhiteList)
-
 	return true
 }
 

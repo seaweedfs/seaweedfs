@@ -235,7 +235,7 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 
 		sourceInode, targetInode := wfs.inodeToPath.MovePath(oldPath, newPath)
 		if sourceInode != 0 {
-			fh, foundFh := wfs.fhmap.FindFileHandle(sourceInode)
+			fh, foundFh := wfs.fhMap.FindFileHandle(sourceInode)
 			if foundFh {
 				if entry := fh.GetEntry(); entry != nil {
 					entry.Name = newName

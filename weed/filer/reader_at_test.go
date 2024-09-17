@@ -31,6 +31,14 @@ func (m *mockChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64) 
 func (m *mockChunkCache) SetChunk(fileId string, data []byte) {
 }
 
+func (m *mockChunkCache) GetMaxFilePartSizeInCache() (uint64) {
+	return 0
+}
+
+func (m *mockChunkCache) IsInCache(fileId string, lockNeeded bool) (answer bool) {
+	return false
+}
+
 func TestReaderAt(t *testing.T) {
 
 	visibles := NewIntervalList[*VisibleInterval]()

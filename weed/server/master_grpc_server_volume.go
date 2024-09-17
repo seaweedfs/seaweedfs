@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 
 	"github.com/seaweedfs/raft"
@@ -18,6 +20,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+)
+
+const (
+	volumeGrowStepCount = 2
 )
 
 func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
@@ -36,40 +42,55 @@ func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
 
 func (ms *MasterServer) ProcessGrowRequest() {
 	go func() {
+		ctx := context.Background()
+		firstRun := true 
 		for {
+			if firstRun {
+				firstRun = false 
+			} else {
+				time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
+			}
 			if !ms.Topo.IsLeader() {
 				continue
 			}
 			dcs := ms.Topo.ListDataCenters()
+			var err error
 			for _, vlc := range ms.Topo.ListVolumeLayoutCollections() {
 				vl := vlc.VolumeLayout
+				lastGrowCount := vl.GetLastGrowCount()
 				if vl.HasGrowRequest() {
 					continue
 				}
-				if vl.ShouldGrowVolumes(vlc.Collection) {
-					vl.AddGrowRequest()
-					ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
-						Option: vlc.ToGrowOption(),
-						Count:  vl.GetLastGrowCount(),
-						Reason: "collection autogrow",
-					}
-				} else {
+				writable, crowded := vl.GetWritableVolumeCount()
+				mustGrow := int(lastGrowCount) - writable
+				vgr := vlc.ToVolumeGrowRequest()
+				stats.MasterVolumeLayoutWritable.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(writable))
+				stats.MasterVolumeLayoutCrowded.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(crowded))
+
+				switch {
+				case mustGrow > 0:
+					vgr.WritableVolumeCount = uint32(mustGrow)
+					_, err = ms.VolumeGrow(ctx, vgr)
+				case crowded+volumeGrowStepCount >= writable:
+					vgr.WritableVolumeCount = volumeGrowStepCount
+					_, err = ms.VolumeGrow(ctx, vgr)
+				default:
 					for _, dc := range dcs {
 						if vl.ShouldGrowVolumesByDataNode("DataCenter", dc) {
-							vl.AddGrowRequest()
-							volumeGrowOption := vlc.ToGrowOption()
-							volumeGrowOption.DataCenter = dc
-							ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
-								Option: volumeGrowOption,
-								Count:  vl.GetLastGrowCount(),
-								Force:  true,
-								Reason: "per-dc autogrow",
+							vgr.DataCenter = dc
+							if lastGrowCount > 0 {
+								vgr.WritableVolumeCount = uint32(int(lastGrowCount) / len(dcs))
+							} else {
+								vgr.WritableVolumeCount = volumeGrowStepCount
 							}
+							_, err = ms.VolumeGrow(ctx, vgr)
 						}
 					}
 				}
+				if err != nil {
+					glog.V(0).Infof("volume grow request failed: %+v", err)
+				}
 			}
-			time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
 		}
 	}()
 	go func() {
@@ -101,7 +122,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			})
 
 			// not atomic but it's okay
-			if found || (!req.Force && !vl.ShouldGrowVolumes(req.Option.Collection)) {
+			if found || (!req.Force && !vl.ShouldGrowVolumes()) {
 				glog.V(4).Infoln("discard volume grow request")
 				time.Sleep(time.Millisecond * 211)
 				vl.DoneGrowRequest()
@@ -301,6 +322,9 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 	ttl, err := needle.ReadTTL(req.Ttl)
 	if err != nil {
 		return nil, err
+	}
+	if req.DataCenter != "" && !ms.Topo.DataCenterExists(req.DataCenter) {
+		return nil, fmt.Errorf("data center not exists")
 	}
 	volumeGrowOption := topology.VolumeGrowOption{
 		Collection:         req.Collection,
