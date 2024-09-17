@@ -108,6 +108,9 @@ func (wfs *WFS) wormEnabledForEntry(path util.FullPath, entry *filer_pb.Entry) b
 	if entry == nil || entry.Attributes == nil {
 		return false
 	}
+	if wfs.FilerConf == nil {
+		return false
+	}
 
 	rule := wfs.FilerConf.MatchStorageRule(string(path))
 	if !rule.Worm {
