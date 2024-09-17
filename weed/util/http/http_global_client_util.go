@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,6 +12,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 )
 
 func Post(url string, values url.Values) ([]byte, error) {
@@ -312,7 +312,7 @@ func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isConte
 	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
 		retryable = r.StatusCode == http.StatusNotFound || r.StatusCode >= 499
-		return retryable, fmt.Errorf("%s: %s", fileUrl, r.Status)
+		return retryable, fmt.Errorf("%s: %s, detail error: %s", fileUrl, r.Status, getHttpErrorMessage(r))
 	}
 
 	var reader io.ReadCloser
@@ -392,7 +392,7 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 	}
 	if r.StatusCode >= 400 {
 		CloseResponse(r)
-		return nil, nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
+		return nil, nil, fmt.Errorf("%s: %s, detail error: %s", fileUrl, r.Status, getHttpErrorMessage(r))
 	}
 
 	var reader io.ReadCloser
@@ -477,4 +477,17 @@ func RetriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte,
 
 	return n, err
 
+}
+
+func getHttpErrorMessage(resp *http.Response) string {
+	body, _ := io.ReadAll(resp.Body)
+
+	var errMsg string
+	if len(body) > 0 {
+		errMsg = string(body)
+	} else {
+		errMsg = resp.Status
+	}
+
+	return errMsg
 }
