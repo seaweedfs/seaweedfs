@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	//"github.com/seaweedfs/seaweedfs/weed/s3api"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/http"
 	"os"
@@ -19,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -49,7 +48,9 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		reply, md5bytes, err = fs.doPutAutoChunk(ctx, w, r, chunkSize, contentLength, so)
 	}
 	if err != nil {
-		if strings.HasPrefix(err.Error(), "read input:") || err.Error() == io.ErrUnexpectedEOF.Error() {
+		if err.Error() == "operation not permitted" {
+			writeJsonError(w, r, http.StatusForbidden, err)
+		} else if strings.HasPrefix(err.Error(), "read input:") || err.Error() == io.ErrUnexpectedEOF.Error() {
 			writeJsonError(w, r, util.HttpStatusCancelled, err)
 		} else if strings.HasSuffix(err.Error(), "is a file") || strings.HasSuffix(err.Error(), "already exists") {
 			writeJsonError(w, r, http.StatusConflict, err)
@@ -83,6 +84,10 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 	contentType := part1.Header.Get("Content-Type")
 	if contentType == "application/octet-stream" {
 		contentType = ""
+	}
+
+	if err := fs.checkPermissions(ctx, r, fileName); err != nil {
+		return nil, nil, err
 	}
 
 	if so.SaveInside {
@@ -121,6 +126,10 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 		contentType = ""
 	}
 
+	if err := fs.checkPermissions(ctx, r, ""); err != nil {
+		return nil, nil, err
+	}
+
 	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadReaderToChunks(w, r, r.Body, chunkSize, fileName, contentType, contentLength, so)
 	if err != nil {
 		return nil, nil, err
@@ -152,6 +161,46 @@ func isS3Request(r *http.Request) bool {
 	return r.Header.Get(s3_constants.AmzAuthType) != "" || r.Header.Get("X-Amz-Date") != ""
 }
 
+func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fileName string) error {
+	fullPath := fs.fixFilePath(ctx, r, fileName)
+	rule := fs.filer.FilerConf.MatchStorageRule(fullPath)
+	if !rule.Worm {
+		return nil
+	}
+
+	_, err := fs.filer.FindEntry(ctx, util.FullPath(fullPath))
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+
+		return err
+	}
+
+	// you cannot change an existing file in Worm mode
+	return errors.New("operation not permitted")
+}
+
+func (fs *FilerServer) fixFilePath(ctx context.Context, r *http.Request, fileName string) string {
+	// fix the path
+	fullPath := r.URL.Path
+	if strings.HasSuffix(fullPath, "/") {
+		if fileName != "" {
+			fullPath += fileName
+		}
+	} else {
+		if fileName != "" {
+			if possibleDirEntry, findDirErr := fs.filer.FindEntry(ctx, util.FullPath(fullPath)); findDirErr == nil {
+				if possibleDirEntry.IsDirectory() {
+					fullPath += "/" + fileName
+				}
+			}
+		}
+	}
+
+	return fullPath
+}
+
 func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error) {
 
 	// detect file mode
@@ -166,20 +215,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 
 	// fix the path
-	path := r.URL.Path
-	if strings.HasSuffix(path, "/") {
-		if fileName != "" {
-			path += fileName
-		}
-	} else {
-		if fileName != "" {
-			if possibleDirEntry, findDirErr := fs.filer.FindEntry(ctx, util.FullPath(path)); findDirErr == nil {
-				if possibleDirEntry.IsDirectory() {
-					path += "/" + fileName
-				}
-			}
-		}
-	}
+	path := fs.fixFilePath(ctx, r, fileName)
 
 	var entry *filer.Entry
 	var newChunks []*filer_pb.FileChunk

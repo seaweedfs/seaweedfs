@@ -33,7 +33,6 @@ type MountOptions struct {
 	localSocket        *string
 	disableXAttr       *bool
 	extraOptions       []string
-	writeOnceReadMany  *bool
 }
 
 var (
@@ -71,7 +70,6 @@ func init() {
 	mountOptions.debugPort = cmdMount.Flag.Int("debug.port", 6061, "http port for debugging")
 	mountOptions.localSocket = cmdMount.Flag.String("localSocket", "", "default to /tmp/seaweedfs-mount-<mount_dir_hash>.sock")
 	mountOptions.disableXAttr = cmdMount.Flag.Bool("disableXAttr", false, "disable xattr")
-	mountOptions.writeOnceReadMany = cmdMount.Flag.Bool("writeOnceReadMany", false, "write once, read many times")
 
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
