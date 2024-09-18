@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -28,6 +29,8 @@ type LocalPartition struct {
 	Publishers  *LocalPartitionPublishers
 	Subscribers *LocalPartitionSubscribers
 
+	RecordType *schema_pb.RecordType
+
 	publishFollowMeStream  mq_pb.SeaweedMessaging_PublishFollowMeClient
 	followerGrpcConnection *grpc.ClientConn
 	Follower               string
@@ -35,11 +38,12 @@ type LocalPartition struct {
 
 var TIME_FORMAT = "2006-01-02-15-04-05"
 
-func NewLocalPartition(partition Partition, logFlushFn log_buffer.LogFlushFuncType, readFromDiskFn log_buffer.LogReadFromDiskFuncType) *LocalPartition {
+func NewLocalPartition(partition Partition, logFlushFn log_buffer.LogFlushFuncType, readFromDiskFn log_buffer.LogReadFromDiskFuncType, recordType *schema_pb.RecordType) *LocalPartition {
 	lp := &LocalPartition{
 		Partition:   partition,
 		Publishers:  NewLocalPartitionPublishers(),
 		Subscribers: NewLocalPartitionSubscribers(),
+		RecordType:  recordType,
 	}
 	lp.ListenersCond = sync.NewCond(&lp.ListenersLock)
 	lp.LogBuffer = log_buffer.NewLogBuffer(fmt.Sprintf("%d/%04d-%04d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
