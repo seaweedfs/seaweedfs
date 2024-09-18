@@ -135,6 +135,14 @@ var (
 			Help:      "The last send timestamp of the filer subscription.",
 		}, []string{"sourceFiler", "clientName", "path"})
 
+	FilerInFlightDataSizeGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "in_flight_data_size",
+			Help:      "",
+		})
+
 	FilerStoreCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -299,6 +307,7 @@ func init() {
 	Gather.MustRegister(FilerStoreHistogram)
 	Gather.MustRegister(FilerSyncOffsetGauge)
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
+	Gather.MustRegister(FilerInFlightDataSizeGauge)
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
