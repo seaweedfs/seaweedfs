@@ -142,17 +142,23 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 		if *volumeId > 0 && replicas[0].info.Id != uint32(*volumeId) {
 			continue
 		}
-		slices.SortFunc(replicas, func(a, b *VolumeReplica) int {
+		// filter readonly replica
+		var writableReplicas []*VolumeReplica
+		for _, replica := range replicas {
+			if replica.info.ReadOnly {
+				fmt.Fprintf(writer, "skipping readonly volume %d on %s\n", replica.info.Id, replica.location.dataNode.Id)
+			} else {
+				writableReplicas = append(writableReplicas, replica)
+			}
+
+		}
+		slices.SortFunc(writableReplicas, func(a, b *VolumeReplica) int {
 			return int(b.info.FileCount - a.info.FileCount)
 		})
-		for len(replicas) >= 2 {
-			a, b := replicas[0], replicas[1]
-			if a.info.ReadOnly || b.info.ReadOnly {
-				fmt.Fprintf(writer, "skipping readonly volume %d on %s and %s\n",
-					a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id)
-				continue
-			}
+		for len(writableReplicas) >= 2 {
+			a, b := writableReplicas[0], writableReplicas[1]
 			if !*slowMode && c.shouldSkipVolume(a, b, pulseTimeAtSecond, *syncDeletions, *verbose) {
+				writableReplicas = append(replicas[:1], writableReplicas[2:]...)
 				continue
 			}
 			if err := c.syncTwoReplicas(a, b, *applyChanges, *syncDeletions, *nonRepairThreshold, *verbose); err != nil {
@@ -160,9 +166,9 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 			}
 			// always choose the larger volume to be the source
 			if a.info.FileCount > b.info.FileCount {
-				replicas = append(replicas[:1], replicas[2:]...)
+				writableReplicas = append(writableReplicas[:1], writableReplicas[2:]...)
 			} else {
-				replicas = replicas[1:]
+				writableReplicas = writableReplicas[1:]
 			}
 		}
 	}
