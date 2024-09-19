@@ -35,11 +35,7 @@ func CheckAndFixVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAt
 		}
 	}
 	if healthyIndexSize < indexSize {
-		glog.Warningf("CheckAndFixVolumeDataIntegrity truncate idx file %s from %d to %d", indexFile.Name(), indexSize, healthyIndexSize)
-		err = indexFile.Truncate(healthyIndexSize)
-		if err != nil {
-			glog.Warningf("CheckAndFixVolumeDataIntegrity truncate idx file %s from %d to %d: %v", indexFile.Name(), indexSize, healthyIndexSize, err)
-		}
+		return 0, fmt.Errorf("verifyIndexFileIntegrity %s failed: index size %d differs from healthy size %d", indexFile.Name(), indexSize, healthyIndexSize)
 	}
 	return
 }
