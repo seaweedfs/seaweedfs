@@ -14,7 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func CheckAndFixVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uint64, err error) {
+func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uint64, err error) {
 	var indexSize int64
 	if indexSize, err = verifyIndexFileIntegrity(indexFile); err != nil {
 		return 0, fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", indexFile.Name(), err)
@@ -35,7 +35,7 @@ func CheckAndFixVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAt
 		}
 	}
 	if healthyIndexSize < indexSize {
-		return 0, fmt.Errorf("verifyIndexFileIntegrity %s failed: index size %d differs from healthy size %d", indexFile.Name(), indexSize, healthyIndexSize)
+		return 0, fmt.Errorf("CheckVolumeDataIntegrity %s failed: index size %d differs from healthy size %d", indexFile.Name(), indexSize, healthyIndexSize)
 	}
 	return
 }
