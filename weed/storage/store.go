@@ -620,7 +620,8 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 			unusedSpace := diskLocation.UnUsedSpace(volumeSizeLimit)
 			unclaimedSpaces := int64(diskStatus.Free) - int64(unusedSpace)
 			volCount := diskLocation.VolumesLen()
-			maxVolumeCount := int32(volCount)
+			ecShardCount := diskLocation.EcShardCount()
+			maxVolumeCount := int32(volCount) + int32((ecShardCount+erasure_coding.DataShardsCount)/erasure_coding.DataShardsCount)
 			if unclaimedSpaces > int64(volumeSizeLimit) {
 				maxVolumeCount += int32(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
 			}
