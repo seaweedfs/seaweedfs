@@ -150,14 +150,15 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 			} else {
 				writableReplicas = append(writableReplicas, replica)
 			}
-
 		}
+
 		slices.SortFunc(writableReplicas, func(a, b *VolumeReplica) int {
 			return int(b.info.FileCount - a.info.FileCount)
 		})
 		for len(writableReplicas) >= 2 {
 			a, b := writableReplicas[0], writableReplicas[1]
 			if !*slowMode && c.shouldSkipVolume(a, b, pulseTimeAtSecond, *syncDeletions, *verbose) {
+				// always choose the larger volume to be the source
 				writableReplicas = append(replicas[:1], writableReplicas[2:]...)
 				continue
 			}
