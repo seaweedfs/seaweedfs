@@ -130,6 +130,10 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return code
 	}
 
+	if wfs.wormEnabledForEntry(entryFullPath, entry) {
+		return fuse.EPERM
+	}
+
 	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", entryFullPath)
 	isDeleteData := entry != nil && entry.HardLinkCounter <= 1

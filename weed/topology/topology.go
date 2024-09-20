@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -329,7 +329,7 @@ func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 }
 
 func (t *Topology) DataCenterExists(dcName string) bool {
-	return dcName == "" || t.GetOrCreateDataCenter(dcName) != nil
+	return dcName == "" || t.GetDataCenter(dcName) != nil
 }
 
 func (t *Topology) GetDataCenter(dcName string) (dc *DataCenter) {
@@ -356,6 +356,15 @@ func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
 	dc := NewDataCenter(dcName)
 	t.doLinkChildNode(dc)
 	return dc
+}
+
+func (t *Topology) ListDataCenters() (dcs []string) {
+	t.RLock()
+	defer t.RUnlock()
+	for _, c := range t.children {
+		dcs = append(dcs, string(c.(*DataCenter).Id()))
+	}
+	return dcs
 }
 
 func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes, deletedVolumes []storage.VolumeInfo) {

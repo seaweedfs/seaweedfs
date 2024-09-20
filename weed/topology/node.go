@@ -2,7 +2,7 @@ package topology
 
 import (
 	"errors"
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -83,7 +83,7 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption
 	//pick nodes randomly by weights, the node picked earlier has higher final weights
 	sortedCandidates := make([]Node, 0, len(candidates))
 	for i := 0; i < len(candidates); i++ {
-		weightsInterval := rand.Int63n(totalWeights)
+		weightsInterval := rand.Int64N(totalWeights)
 		lastWeights := int64(0)
 		for k, weights := range candidatesWeights {
 			if (weightsInterval >= lastWeights) && (weightsInterval < lastWeights+weights) {
@@ -263,7 +263,7 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 	}
 }
 
-func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSizeLimit uint64, growThreshold float64) {
+func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHoldUnixTime int64, volumeSizeLimit uint64, growThreshold float64) {
 	if n.IsRack() {
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
@@ -299,7 +299,7 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 		}
 	} else {
 		for _, c := range n.Children() {
-			c.CollectDeadNodeAndFullVolumes(freshThreshHold, volumeSizeLimit, growThreshold)
+			c.CollectDeadNodeAndFullVolumes(freshThreshHoldUnixTime, volumeSizeLimit, growThreshold)
 		}
 	}
 }

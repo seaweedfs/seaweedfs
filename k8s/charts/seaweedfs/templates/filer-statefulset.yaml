@@ -249,6 +249,14 @@ spec:
               name: metrics
             - containerPort: {{ .Values.filer.grpcPort }}
               #name: swfs-filer-grpc
+            {{- if .Values.filer.s3.enabled }}
+            - containerPort: {{ .Values.filer.s3.port }}
+              name: swfs-s3
+            {{- if .Values.filer.s3.httpsPort }}
+            - containerPort: {{ .Values.filer.s3.httpsPort }}
+              name: swfs-s3-tls
+            {{- end }}
+            {{- end }}
           {{- if .Values.filer.readinessProbe.enabled }}
           readinessProbe:
             httpGet:

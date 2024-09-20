@@ -5,7 +5,7 @@ package weed_server
 
 import (
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"path"
 	"path/filepath"

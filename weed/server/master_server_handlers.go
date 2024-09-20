@@ -151,6 +151,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 				Option: option,
 				Count:  uint32(writableVolumeCount),
+				Reason: "http assign",
 			}
 		}
 		if err != nil {

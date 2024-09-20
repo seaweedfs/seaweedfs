@@ -1,7 +1,7 @@
 package topology
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -13,7 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 )
 
-func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, growThreshold float64, preallocate int64) {
+func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, concurrentVacuumLimitPerVolumeServer int, growThreshold float64, preallocate int64) {
 	go func() {
 		for {
 			if t.IsLeader() {
@@ -27,7 +27,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 		for {
 			if t.IsLeader() {
 				if !t.isDisableVacuum {
-					t.Vacuum(grpcDialOption, garbageThreshold, 0, "", preallocate)
+					t.Vacuum(grpcDialOption, garbageThreshold, concurrentVacuumLimitPerVolumeServer, 0, "", preallocate)
 				}
 			} else {
 				stats.MasterReplicaPlacementMismatch.Reset()

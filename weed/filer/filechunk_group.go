@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"io"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -10,7 +11,6 @@ import (
 
 type ChunkGroup struct {
 	lookupFn     wdclient.LookupFileIdFunctionType
-	chunkCache   chunk_cache.ChunkCache
 	sections     map[SectionIndex]*FileChunkSection
 	sectionsLock sync.RWMutex
 	readerCache  *ReaderCache
@@ -19,7 +19,6 @@ type ChunkGroup struct {
 func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk) (*ChunkGroup, error) {
 	group := &ChunkGroup{
 		lookupFn:    lookupFn,
-		chunkCache:  chunkCache,
 		sections:    make(map[SectionIndex]*FileChunkSection),
 		readerCache: NewReaderCache(32, chunkCache, lookupFn),
 	}
@@ -46,6 +45,9 @@ func (group *ChunkGroup) AddChunk(chunk *filer_pb.FileChunk) error {
 }
 
 func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
+	if offset >= fileSize {
+		return 0, 0, io.EOF
+	}
 
 	group.sectionsLock.RLock()
 	defer group.sectionsLock.RUnlock()

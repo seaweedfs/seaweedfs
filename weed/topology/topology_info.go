@@ -13,6 +13,11 @@ type TopologyInfo struct {
 	Layouts     []VolumeLayoutInfo `json:"Layouts"`
 }
 
+type VolumeLayoutCollection struct {
+	Collection   string
+	VolumeLayout *VolumeLayout
+}
+
 func (t *Topology) ToInfo() (info TopologyInfo) {
 	info.Max = t.diskUsages.GetMaxVolumeCount()
 	info.Free = t.diskUsages.FreeSpace()
@@ -42,10 +47,12 @@ func (t *Topology) ToInfo() (info TopologyInfo) {
 	return
 }
 
-func (t *Topology) ListVolumeLyauts() (volumeLayouts []*VolumeLayout) {
+func (t *Topology) ListVolumeLayoutCollections() (volumeLayouts []*VolumeLayoutCollection) {
 	for _, col := range t.collectionMap.Items() {
 		for _, volumeLayout := range col.(*Collection).storageType2VolumeLayout.Items() {
-			volumeLayouts = append(volumeLayouts, volumeLayout.(*VolumeLayout))
+			volumeLayouts = append(volumeLayouts,
+				&VolumeLayoutCollection{col.(*Collection).Name, volumeLayout.(*VolumeLayout)},
+			)
 		}
 	}
 	return volumeLayouts

@@ -5,7 +5,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"math/rand"
+	"math/rand/v2"
 )
 
 func (ms *MasterServer) ListClusterNodes(ctx context.Context, req *master_pb.ListClusterNodesRequest) (*master_pb.ListClusterNodesResponse, error) {
@@ -31,7 +31,7 @@ func (ms *MasterServer) GetOneFiler(filerGroup cluster.FilerGroupName) pb.Server
 	filers := ms.Cluster.ListClusterNode(filerGroup, cluster.FilerType)
 
 	if len(filers) > 0 {
-		return filers[rand.Intn(len(filers))].Address
+		return filers[rand.IntN(len(filers))].Address
 	}
 	return "localhost:8888"
 }
@@ -42,7 +42,7 @@ func limitTo(nodes []*cluster.ClusterNode, limit int32) (selected []*cluster.Clu
 	}
 	selectedSet := make(map[pb.ServerAddress]*cluster.ClusterNode)
 	for i := 0; i < int(limit)*3; i++ {
-		x := rand.Intn(len(nodes))
+		x := rand.IntN(len(nodes))
 		if _, found := selectedSet[nodes[x].Address]; found {
 			continue
 		}

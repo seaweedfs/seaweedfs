@@ -138,10 +138,10 @@ func (s *Store) findVolume(vid needle.VolumeId) *Volume {
 	}
 	return nil
 }
-func (s *Store) FindFreeLocation(diskType DiskType) (ret *DiskLocation) {
+func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (ret *DiskLocation) {
 	max := int32(0)
 	for _, location := range s.Locations {
-		if diskType != location.DiskType {
+		if filterFn != nil && !filterFn(location) {
 			continue
 		}
 		if location.isDiskSpaceLow {
@@ -162,7 +162,9 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
-	if location := s.FindFreeLocation(diskType); location != nil {
+	if location := s.FindFreeLocation(func(location *DiskLocation) bool {
+		return location.DiskType == diskType
+	}); location != nil {
 		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
 		if volume, err := NewVolume(location.Directory, location.IdxDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb, ldbTimeout); err == nil {
@@ -475,6 +477,7 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId) error {
 	}
 	v.noWriteLock.Lock()
 	v.noWriteOrDelete = true
+	v.PersistReadOnly(true)
 	v.noWriteLock.Unlock()
 	return nil
 }
@@ -486,6 +489,7 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	}
 	v.noWriteLock.Lock()
 	v.noWriteOrDelete = false
+	v.PersistReadOnly(false)
 	v.noWriteLock.Unlock()
 	return nil
 }
@@ -616,7 +620,8 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 			unusedSpace := diskLocation.UnUsedSpace(volumeSizeLimit)
 			unclaimedSpaces := int64(diskStatus.Free) - int64(unusedSpace)
 			volCount := diskLocation.VolumesLen()
-			maxVolumeCount := int32(volCount)
+			ecShardCount := diskLocation.EcShardCount()
+			maxVolumeCount := int32(volCount) + int32((ecShardCount+erasure_coding.DataShardsCount)/erasure_coding.DataShardsCount)
 			if unclaimedSpaces > int64(volumeSizeLimit) {
 				maxVolumeCount += int32(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
 			}

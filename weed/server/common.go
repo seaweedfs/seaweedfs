@@ -303,11 +303,13 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		writeFn, err := prepareWriteFn(0, totalSize)
 		if err != nil {
 			glog.Errorf("ProcessRangeRequest: %v", err)
+			w.Header().Del("Content-Length")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return fmt.Errorf("ProcessRangeRequest: %v", err)
 		}
 		if err = writeFn(bufferedWriter); err != nil {
 			glog.Errorf("ProcessRangeRequest: %v", err)
+			w.Header().Del("Content-Length")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return fmt.Errorf("ProcessRangeRequest: %v", err)
 		}
@@ -351,6 +353,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		writeFn, err := prepareWriteFn(ra.start, ra.length)
 		if err != nil {
 			glog.Errorf("ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
+			w.Header().Del("Content-Length")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return fmt.Errorf("ProcessRangeRequest: %v", err)
 		}
@@ -358,6 +361,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		err = writeFn(bufferedWriter)
 		if err != nil {
 			glog.Errorf("ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
+			w.Header().Del("Content-Length")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return fmt.Errorf("ProcessRangeRequest range[0]: %v", err)
 		}

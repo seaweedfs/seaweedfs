@@ -159,8 +159,16 @@ func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.Ful
 func (store *ElasticStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	index := getIndex(fullpath, false)
 	id := weed_util.Md5String([]byte(fullpath))
-	if strings.Count(string(fullpath), "/") == 1 {
-		return store.deleteIndex(ctx, index)
+	strFullpath := string(fullpath)
+
+	// A top-level subdirectory refers to an Elasticsearch index.
+	// If we delete an entry at the top level, we should attempt to delete the corresponding Elasticsearch index.
+	if strings.Count(strFullpath, "/") == 1 {
+		entry, err2 := store.FindEntry(ctx, fullpath)
+		if err2 == nil && entry.IsDirectory() {
+			bucketIndex := indexPrefix + strFullpath[1:]
+			store.deleteIndex(ctx, bucketIndex)
+		}
 	}
 	return store.deleteEntry(ctx, index, id)
 }

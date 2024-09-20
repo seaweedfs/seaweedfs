@@ -176,9 +176,13 @@ spec:
           ports:
             - containerPort: {{ .Values.s3.port }}
               name: swfs-s3
+            {{- if .Values.s3.httpsPort }}
+            - containerPort: {{ .Values.s3.httpsPort }}
+              name: swfs-s3-tls
+            {{- end }}
             {{- if .Values.s3.metricsPort }}
             - containerPort: {{ .Values.s3.metricsPort }}
-              name: "metrics"
+              name: metrics
             {{- end }}
           {{- if .Values.s3.readinessProbe.enabled }}
           readinessProbe:

@@ -221,7 +221,7 @@ func (uploader *Uploader) doUploadData(data []byte, option *UploadOption) (uploa
 	// this could be double copying
 	clearDataLen = len(data)
 	clearData := data
-	if shouldGzipNow && !option.Cipher {
+	if shouldGzipNow {
 		compressed, compressErr := util.GzipData(data)
 		// fmt.Printf("data is compressed from %d ==> %d\n", len(data), len(compressed))
 		if compressErr == nil {
@@ -241,7 +241,7 @@ func (uploader *Uploader) doUploadData(data []byte, option *UploadOption) (uploa
 
 		// encrypt
 		cipherKey := util.GenCipherKey()
-		encryptedData, encryptionErr := util.Encrypt(clearData, cipherKey)
+		encryptedData, encryptionErr := util.Encrypt(data, cipherKey)
 		if encryptionErr != nil {
 			err = fmt.Errorf("encrypt input: %v", encryptionErr)
 			return
@@ -267,6 +267,9 @@ func (uploader *Uploader) doUploadData(data []byte, option *UploadOption) (uploa
 		uploadResult.Mime = option.MimeType
 		uploadResult.CipherKey = cipherKey
 		uploadResult.Size = uint32(clearDataLen)
+		if contentIsGzipped {
+			uploadResult.Gzip = 1
+		}
 	} else {
 		// upload data
 		uploadResult, err = uploader.upload_content(func(w io.Writer) (err error) {

@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
-	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -111,7 +112,7 @@ func (fc *FilerConf) doLoadConf(conf *filer_pb.FilerConf) (err error) {
 	return nil
 }
 
-func (fc *FilerConf) GetLocationConf(locationPrefix string)(locConf *filer_pb.FilerConf_PathConf, found bool) {
+func (fc *FilerConf) GetLocationConf(locationPrefix string) (locConf *filer_pb.FilerConf_PathConf, found bool) {
 	return fc.rules.Get([]byte(locationPrefix))
 }
 
@@ -188,6 +189,7 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.Rack = util.Nvl(b.Rack, a.Rack)
 	a.DataNode = util.Nvl(b.DataNode, a.DataNode)
 	a.DisableChunkDeletion = b.DisableChunkDeletion || a.DisableChunkDeletion
+	a.Worm = b.Worm || a.Worm
 }
 
 func (fc *FilerConf) ToProto() *filer_pb.FilerConf {
