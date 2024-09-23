@@ -4,7 +4,7 @@ go 1.22.0
 
 require (
 	cloud.google.com/go v0.115.1 // indirect
-	cloud.google.com/go/pubsub v1.42.0
+	cloud.google.com/go/pubsub v1.43.0
 	cloud.google.com/go/storage v1.43.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
@@ -337,7 +337,7 @@ require (
 	golang.org/x/mod v0.21.0 // indirect
 	golang.org/x/term v0.24.0 // indirect
 	golang.org/x/time v0.6.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20240827150818-7e3bb234dfed // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20240903143218-8af14fe29dc1 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
