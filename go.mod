@@ -53,7 +53,7 @@ require (
 	github.com/json-iterator/go v1.1.12
 	github.com/karlseguin/ccache/v2 v2.0.8
 	github.com/klauspost/compress v1.17.9 // indirect
-	github.com/klauspost/reedsolomon v1.12.3
+	github.com/klauspost/reedsolomon v1.12.4
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.9
 	github.com/linxGnu/grocksdb v1.9.3
