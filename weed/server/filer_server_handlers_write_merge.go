@@ -10,7 +10,7 @@ import (
 	"math"
 )
 
-const MergeChunkMinCount int = 10
+const MergeChunkMinCount int = 1000
 
 func (fs *FilerServer) maybeMergeChunks(so *operation.StorageOption, inputChunks []*filer_pb.FileChunk) (mergedChunks []*filer_pb.FileChunk, err error) {
 	// Only merge small chunks more than half of the file
