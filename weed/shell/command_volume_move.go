@@ -204,7 +204,6 @@ func markVolumeWritable(grpcDialOption grpc.DialOption, volumeId needle.VolumeId
 		if writable {
 			_, err = volumeServerClient.VolumeMarkWritable(context.Background(), &volume_server_pb.VolumeMarkWritableRequest{
 				VolumeId: uint32(volumeId),
-				Persist:  persist,
 			})
 		} else {
 			_, err = volumeServerClient.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{

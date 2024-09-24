@@ -484,16 +484,14 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, persist bool) error {
 	return nil
 }
 
-func (s *Store) MarkVolumeWritable(i needle.VolumeId, persist bool) error {
+func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	v := s.findVolume(i)
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
 	v.noWriteLock.Lock()
 	v.noWriteOrDelete = false
-	if persist {
-		v.PersistReadOnly(false)
-	}
+	v.PersistReadOnly(false)
 	v.noWriteLock.Unlock()
 	return nil
 }

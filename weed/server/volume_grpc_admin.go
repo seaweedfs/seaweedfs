@@ -212,7 +212,7 @@ func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_serv
 		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
 	}
 
-	err := vs.store.MarkVolumeWritable(needle.VolumeId(req.VolumeId), req.GetPersist())
+	err := vs.store.MarkVolumeWritable(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("volume mark writable %v: %v", req, err)
