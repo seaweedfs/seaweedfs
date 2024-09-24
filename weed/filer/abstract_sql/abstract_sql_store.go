@@ -95,7 +95,7 @@ func (store *AbstractSqlStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
 
-func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.FullPath, isForChildren bool) (txOrDB TxOrDB, bucket string, shortPath util.FullPath, err error) {
+func (store *AbstractSqlStore) GetTxOrDB(ctx context.Context, fullpath util.FullPath, isForChildren bool) (txOrDB TxOrDB, bucket string, shortPath util.FullPath, err error) {
 
 	shortPath = fullpath
 	bucket = DEFAULT_TABLE
@@ -150,7 +150,7 @@ func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.Full
 
 func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
-	db, bucket, shortPath, err := store.getTxOrDB(ctx, entry.FullPath, false)
+	db, bucket, shortPath, err := store.GetTxOrDB(ctx, entry.FullPath, false)
 	if err != nil {
 		return fmt.Errorf("findDB %s : %v", entry.FullPath, err)
 	}
@@ -186,7 +186,7 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 
 func (store *AbstractSqlStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
-	db, bucket, shortPath, err := store.getTxOrDB(ctx, entry.FullPath, false)
+	db, bucket, shortPath, err := store.GetTxOrDB(ctx, entry.FullPath, false)
 	if err != nil {
 		return fmt.Errorf("findDB %s : %v", entry.FullPath, err)
 	}
@@ -211,7 +211,7 @@ func (store *AbstractSqlStore) UpdateEntry(ctx context.Context, entry *filer.Ent
 
 func (store *AbstractSqlStore) FindEntry(ctx context.Context, fullpath util.FullPath) (*filer.Entry, error) {
 
-	db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, false)
+	db, bucket, shortPath, err := store.GetTxOrDB(ctx, fullpath, false)
 	if err != nil {
 		return nil, fmt.Errorf("findDB %s : %v", fullpath, err)
 	}
@@ -239,7 +239,7 @@ func (store *AbstractSqlStore) FindEntry(ctx context.Context, fullpath util.Full
 
 func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 
-	db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, false)
+	db, bucket, shortPath, err := store.GetTxOrDB(ctx, fullpath, false)
 	if err != nil {
 		return fmt.Errorf("findDB %s : %v", fullpath, err)
 	}
@@ -261,7 +261,7 @@ func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath util.Fu
 
 func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
 
-	db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, true)
+	db, bucket, shortPath, err := store.GetTxOrDB(ctx, fullpath, true)
 	if err != nil {
 		return fmt.Errorf("findDB %s : %v", fullpath, err)
 	}
@@ -292,7 +292,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 
 func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
-	db, bucket, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
+	db, bucket, shortPath, err := store.GetTxOrDB(ctx, dirPath, true)
 	if err != nil {
 		return lastFileName, fmt.Errorf("findDB %s : %v", dirPath, err)
 	}

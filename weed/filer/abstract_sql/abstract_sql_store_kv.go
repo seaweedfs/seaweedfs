@@ -13,7 +13,7 @@ import (
 
 func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
 
-	db, _, _, err := store.getTxOrDB(ctx, "", false)
+	db, _, _, err := store.GetTxOrDB(ctx, "", false)
 	if err != nil {
 		return fmt.Errorf("findDB: %v", err)
 	}
@@ -48,7 +48,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 
 func (store *AbstractSqlStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
 
-	db, _, _, err := store.getTxOrDB(ctx, "", false)
+	db, _, _, err := store.GetTxOrDB(ctx, "", false)
 	if err != nil {
 		return nil, fmt.Errorf("findDB: %v", err)
 	}
@@ -71,7 +71,7 @@ func (store *AbstractSqlStore) KvGet(ctx context.Context, key []byte) (value []b
 
 func (store *AbstractSqlStore) KvDelete(ctx context.Context, key []byte) (err error) {
 
-	db, _, _, err := store.getTxOrDB(ctx, "", false)
+	db, _, _, err := store.GetTxOrDB(ctx, "", false)
 	if err != nil {
 		return fmt.Errorf("findDB: %v", err)
 	}
