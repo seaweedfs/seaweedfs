@@ -164,7 +164,7 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 	// rare case 1.5: it will be unlucky if heartbeat happened between step 1 and 2.
 
 	// step 2: mark local volume as readonly
-	err := vs.store.MarkVolumeReadonly(needle.VolumeId(req.VolumeId))
+	err := vs.store.MarkVolumeReadonly(needle.VolumeId(req.VolumeId), req.GetPersist())
 
 	if err != nil {
 		glog.Errorf("volume mark readonly %v: %v", req, err)
@@ -212,7 +212,7 @@ func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_serv
 		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
 	}
 
-	err := vs.store.MarkVolumeWritable(needle.VolumeId(req.VolumeId))
+	err := vs.store.MarkVolumeWritable(needle.VolumeId(req.VolumeId), req.GetPersist())
 
 	if err != nil {
 		glog.Errorf("volume mark writable %v: %v", req, err)

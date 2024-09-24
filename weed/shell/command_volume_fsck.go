@@ -359,12 +359,12 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 				needleVID := needle.VolumeId(volumeId)
 
 				if isReadOnlyReplicas[volumeId] {
-					err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true)
+					err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true, false)
 					if err != nil {
 						return fmt.Errorf("mark volume %d read/write: %v", volumeId, err)
 					}
 					fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
-					defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false)
+					defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false, false)
 
 					fmt.Fprintf(c.writer, "marked %d on server %v writable for forced purge\n", volumeId, server)
 				}
