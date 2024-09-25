@@ -57,7 +57,8 @@ type ReadOption struct {
 type Store struct {
 	MasterAddress       pb.ServerAddress
 	grpcDialOption      grpc.DialOption
-	volumeSizeLimit     uint64 // read from the master
+	volumeSizeLimit     uint64      // read from the master
+	preallocate         atomic.Bool // read from the master
 	Ip                  string
 	Port                int
 	GrpcPort            int
@@ -609,6 +610,14 @@ func (s *Store) GetVolumeSizeLimit() uint64 {
 	return atomic.LoadUint64(&s.volumeSizeLimit)
 }
 
+func (s *Store) SetPreallocate(x bool) {
+	s.preallocate.Store(x)
+}
+
+func (s *Store) GetPreallocate() bool {
+	return s.preallocate.Load()
+}
+
 func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 	volumeSizeLimit := s.GetVolumeSizeLimit()
 	if volumeSizeLimit == 0 {
@@ -619,8 +628,12 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 		if diskLocation.OriginalMaxVolumeCount == 0 {
 			currentMaxVolumeCount := atomic.LoadInt32(&diskLocation.MaxVolumeCount)
 			diskStatus := stats.NewDiskStatus(diskLocation.Directory)
-			unusedSpace := diskLocation.UnUsedSpace(volumeSizeLimit)
-			unclaimedSpaces := int64(diskStatus.Free) - int64(unusedSpace)
+			var unusedSpace uint64 = 0
+			unclaimedSpaces := int64(diskStatus.Free)
+			if !s.GetPreallocate() {
+				unusedSpace = diskLocation.UnUsedSpace(volumeSizeLimit)
+				unclaimedSpaces -= int64(unusedSpace)
+			}
 			volCount := diskLocation.VolumesLen()
 			ecShardCount := diskLocation.EcShardCount()
 			maxVolumeCount := int32(volCount) + int32((ecShardCount+erasure_coding.DataShardsCount)/erasure_coding.DataShardsCount)
