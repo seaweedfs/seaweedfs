@@ -94,17 +94,13 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		}
 
 		// find all under replicated volumes
-		var underReplicatedVolumeIds, overReplicatedVolumeIds, misplacedVolumeIds, misplacedAndUnderReplicatedIds []uint32
+		var underReplicatedVolumeIds, overReplicatedVolumeIds, misplacedVolumeIds []uint32
 		for vid, replicas := range volumeReplicas {
 			replica := replicas[0]
 			replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
 			switch {
-			case replicaPlacement.GetCopyCount() > len(replicas):
+			case replicaPlacement.GetCopyCount() > len(replicas) || !satisfyReplicaCurrentLocation(replicaPlacement, replicas):
 				underReplicatedVolumeIds = append(underReplicatedVolumeIds, vid)
-			case isMisplaced(replicas, replicaPlacement) && !satisfyReplicaCurrentLocation(replicaPlacement, replicas):
-				// if one of replicas is misplaced and current replicas do not satisfy replicaPlacement, misplaced removal is unsafe, replicate and delete misplaced
-				misplacedAndUnderReplicatedIds = append(misplacedAndUnderReplicatedIds, vid)
-				fmt.Fprintf(writer, "volume %d replication %s is not well placed %s, but current replicas do not satisfy replication\n", replica.info.Id, replicaPlacement, replica.location.dataNode.Id)
 			case isMisplaced(replicas, replicaPlacement):
 				misplacedVolumeIds = append(misplacedVolumeIds, vid)
 				fmt.Fprintf(writer, "volume %d replication %s is not well placed %s\n", replica.info.Id, replicaPlacement, replica.location.dataNode.Id)
@@ -127,22 +123,6 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		if len(misplacedVolumeIds) > 0 && *doDelete {
 			if err := c.deleteOneVolume(commandEnv, writer, takeAction, *doCheck, misplacedVolumeIds, volumeReplicas, allLocations, pickOneMisplacedVolume); err != nil {
 				return err
-			}
-		}
-
-		if len(misplacedAndUnderReplicatedIds) > 0 {
-			// find the most under populated data nodes
-			fixedVolumeReplicas, err = c.fixUnderReplicatedVolumes(commandEnv, writer, takeAction, misplacedAndUnderReplicatedIds, volumeReplicas, allLocations, *retryCount, *volumesPerStep)
-			if err != nil {
-				return err
-			}
-			if *doDelete {
-				if err := c.deleteOneVolume(commandEnv, writer, takeAction, *doCheck, misplacedAndUnderReplicatedIds, volumeReplicas, allLocations, pickOneMisplacedVolume); err != nil {
-					return err
-				}
-				for k := range fixedVolumeReplicas {
-					fixedVolumeReplicas[k] = fixedVolumeReplicas[k] - 1
-				}
 			}
 		}
 
