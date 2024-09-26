@@ -99,7 +99,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 			replica := replicas[0]
 			replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
 			switch {
-			case replicaPlacement.GetCopyCount() > len(replicas):
+			case replicaPlacement.GetCopyCount() > len(replicas) || !satisfyReplicaCurrentLocation(replicaPlacement, replicas):
 				underReplicatedVolumeIds = append(underReplicatedVolumeIds, vid)
 			case isMisplaced(replicas, replicaPlacement):
 				misplacedVolumeIds = append(misplacedVolumeIds, vid)
@@ -375,6 +375,27 @@ func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {
 	slices.SortFunc(dataNodes, func(a, b location) int {
 		return int(fn(b.dataNode) - fn(a.dataNode))
 	})
+}
+
+func satisfyReplicaCurrentLocation(replicaPlacement *super_block.ReplicaPlacement, replicas []*VolumeReplica) bool {
+	existingDataCenters, existingRacks, _ := countReplicas(replicas)
+
+	if replicaPlacement.DiffDataCenterCount+1 > len(existingDataCenters) {
+		return false
+	}
+	if replicaPlacement.DiffRackCount+1 > len(existingRacks) {
+		return false
+	}
+	if replicaPlacement.SameRackCount > 0 {
+		foundSatisfyRack := false
+		for _, rackCount := range existingRacks {
+			if rackCount >= replicaPlacement.SameRackCount+1 {
+				foundSatisfyRack = true
+			}
+		}
+		return foundSatisfyRack
+	}
+	return true
 }
 
 /*
