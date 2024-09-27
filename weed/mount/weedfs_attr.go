@@ -23,7 +23,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 		return status
 	} else {
-		if fh, found := wfs.fhmap.FindFileHandle(inode); found {
+		if fh, found := wfs.fhMap.FindFileHandle(inode); found {
 			out.AttrValid = 1
 			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry.GetEntry(), true)
 			out.Nlink = 0
