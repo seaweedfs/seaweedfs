@@ -150,8 +150,10 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		})
 	} else {
 		location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
-			_, found := location.FindEcVolume(needle.VolumeId(req.VolumeId))
-			return found
+			//(location.FindEcVolume) This method is error, will cause location is nil, redundant judgment
+			// _, found := location.FindEcVolume(needle.VolumeId(req.VolumeId))
+			// return found
+			return true
 		})
 	}
 	if location == nil {
@@ -191,12 +193,6 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 				return err
 			}
 		}
-
-		if req.CopyEcxFile { //when location no volume before copy
-			glog.V(0).Infof("Re LoadNewVolumes: %v", req)
-			vs.store.LoadNewVolumes()
-		}
-
 		return nil
 	})
 	if err != nil {
