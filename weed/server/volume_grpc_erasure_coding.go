@@ -192,6 +192,11 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			}
 		}
 
+		if req.CopyEcxFile { //when location no volume before copy
+			glog.V(0).Infof("Re LoadNewVolumes: %v", req)
+			vs.store.LoadNewVolumes()
+		}
+
 		return nil
 	})
 	if err != nil {
