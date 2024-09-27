@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -93,6 +94,17 @@ func (c *Collection) ListVolumeServers() (nodes []*DataNode) {
 		if vl != nil {
 			if list := vl.(*VolumeLayout).ListVolumeServers(); list != nil {
 				nodes = append(nodes, list...)
+			}
+		}
+	}
+	return
+}
+
+func (c *Collection) ListVolumeId2VolumeServers() (pairs []*VolumeId2VolumeServers) {
+	for _, vl := range c.storageType2VolumeLayout.Items() {
+		if vl != nil {
+			if list := vl.(*VolumeLayout).ListVolumeId2VolumeServers(); list != nil {
+				pairs = append(pairs, list...)
 			}
 		}
 	}

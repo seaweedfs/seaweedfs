@@ -296,6 +296,24 @@ func (vl *VolumeLayout) ListVolumeServers() (nodes []*DataNode) {
 	return
 }
 
+type VolumeId2VolumeServers struct {
+	VolumeId needle.VolumeId
+	Nodes    []*DataNode
+}
+
+func (vl *VolumeLayout) ListVolumeId2VolumeServers() (pairs []*VolumeId2VolumeServers) {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+
+	for vid, location := range vl.vid2location {
+		pairs = append(pairs, &VolumeId2VolumeServers{
+			VolumeId: vid,
+			Nodes:    location.list,
+		})
+	}
+	return
+}
+
 func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vid needle.VolumeId, counter uint64, locationList *VolumeLocationList, shouldGrow bool, err error) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()

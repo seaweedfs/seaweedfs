@@ -3,11 +3,12 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -43,6 +44,46 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 	ms.Topo.DeleteCollection(collectionName)
 
 	w.WriteHeader(http.StatusNoContent)
+	return
+}
+
+func (ms *MasterServer) collectionMarkHandler(w http.ResponseWriter, r *http.Request) {
+	collectionName := r.FormValue("collection")
+	flag := r.FormValue("flag")
+	collection, ok := ms.Topo.FindCollection(collectionName)
+	if !ok {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", collectionName))
+		return
+	}
+	if flag != "readonly" && flag != "writable" {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("invalid flag %s, should be readonly OR writable", flag))
+		return
+	}
+
+	for _, pair := range collection.ListVolumeId2VolumeServers() {
+		for _, server := range pair.Nodes {
+			glog.V(1).Infof("marking volume %s: collection %s volumeId %d volumeServer %s:%d", flag, collectionName, uint32(pair.VolumeId), server.Ip, server.Port)
+			err := operation.WithVolumeServerClient(false, server.ServerAddress(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) (err error) {
+				if flag == "readonly" {
+					_, err = client.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{
+						VolumeId: uint32(pair.VolumeId),
+					})
+				} else if flag == "writable" {
+					_, err = client.VolumeMarkWritable(context.Background(), &volume_server_pb.VolumeMarkWritableRequest{
+						VolumeId: uint32(pair.VolumeId),
+					})
+				}
+				return
+			})
+
+			if err != nil {
+				writeJsonError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
 	return
 }
 
