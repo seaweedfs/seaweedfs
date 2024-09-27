@@ -226,6 +226,7 @@ message VolumeDeleteResponse {
 
 message VolumeMarkReadonlyRequest {
     uint32 volume_id = 1;
+    bool persist = 2;
 }
 message VolumeMarkReadonlyResponse {
 }

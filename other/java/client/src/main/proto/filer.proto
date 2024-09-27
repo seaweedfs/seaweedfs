@@ -442,6 +442,7 @@ message FilerConf {
         string data_node = 11;
         uint32 max_file_name_length = 12;
         bool disable_chunk_deletion = 13;
+        bool worm = 14;
     }
     repeated PathConf locations = 2;
 }

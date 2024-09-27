@@ -3,13 +3,14 @@ package mount
 import (
 	"context"
 	"fmt"
+	"syscall"
+	"time"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"syscall"
-	"time"
 )
 
 /**
@@ -127,9 +128,6 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 			}
 			if entry.Attributes.Gid == 0 {
 				entry.Attributes.Gid = gid
-			}
-			if entry.Attributes.Crtime == 0 {
-				entry.Attributes.Crtime = time.Now().Unix()
 			}
 			entry.Attributes.Mtime = time.Now().Unix()
 		}
