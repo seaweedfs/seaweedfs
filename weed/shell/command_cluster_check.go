@@ -32,7 +32,7 @@ func (c *commandClusterCheck) Help() string {
 `
 }
 
-func (c *commandClusterCheck) IsResourceHeavy() bool {
+func (c *commandClusterCheck) HasTag(CommandTag) bool {
 	return false
 }
 

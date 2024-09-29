@@ -51,7 +51,7 @@ func (c *commandFsVerify) Help() string {
 `
 }
 
-func (c *commandFsVerify) IsResourceHeavy() bool {
+func (c *commandFsVerify) HasTag(CommandTag) bool {
 	return false
 }
 

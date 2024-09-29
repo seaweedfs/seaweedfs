@@ -56,7 +56,7 @@ func (c *commandEcEncode) Help() string {
 `
 }
 
-func (c *commandEcEncode) IsResourceHeavy() bool {
+func (c *commandEcEncode) HasTag(CommandTag) bool {
 	return false
 }
 

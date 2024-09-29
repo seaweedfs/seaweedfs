@@ -25,7 +25,7 @@ func (c *commandMqTopicList) Help() string {
 	return `print out all topics`
 }
 
-func (c *commandMqTopicList) IsResourceHeavy() bool {
+func (c *commandMqTopicList) HasTag(CommandTag) bool {
 	return false
 }
 

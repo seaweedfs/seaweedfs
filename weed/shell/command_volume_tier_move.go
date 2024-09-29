@@ -53,7 +53,7 @@ func (c *commandVolumeTierMove) Help() string {
 `
 }
 
-func (c *commandVolumeTierMove) IsResourceHeavy() bool {
+func (c *commandVolumeTierMove) HasTag(CommandTag) bool {
 	return false
 }
 

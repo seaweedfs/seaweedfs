@@ -44,7 +44,7 @@ func (c *commandFsMetaSave) Help() string {
 `
 }
 
-func (c *commandFsMetaSave) IsResourceHeavy() bool {
+func (c *commandFsMetaSave) HasTag(CommandTag) bool {
 	return false
 }
 

@@ -25,7 +25,7 @@ func (c *commandMqBalanceTopics) Help() string {
 `
 }
 
-func (c *commandMqBalanceTopics) IsResourceHeavy() bool {
+func (c *commandMqBalanceTopics) HasTag(CommandTag) bool {
 	return false
 }
 

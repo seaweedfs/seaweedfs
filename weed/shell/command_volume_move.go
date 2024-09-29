@@ -49,7 +49,7 @@ func (c *commandVolumeMove) Help() string {
 `
 }
 
-func (c *commandVolumeMove) IsResourceHeavy() bool {
+func (c *commandVolumeMove) HasTag(CommandTag) bool {
 	return false
 }
 

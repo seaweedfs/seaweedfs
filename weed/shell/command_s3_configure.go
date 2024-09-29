@@ -33,7 +33,7 @@ func (c *commandS3Configure) Help() string {
 	`
 }
 
-func (c *commandS3Configure) IsResourceHeavy() bool {
+func (c *commandS3Configure) HasTag(CommandTag) bool {
 	return false
 }
 

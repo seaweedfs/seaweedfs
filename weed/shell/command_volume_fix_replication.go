@@ -55,7 +55,7 @@ func (c *commandVolumeFixReplication) Help() string {
 `
 }
 
-func (c *commandVolumeFixReplication) IsResourceHeavy() bool {
+func (c *commandVolumeFixReplication) HasTag(CommandTag) bool {
 	return false
 }
 

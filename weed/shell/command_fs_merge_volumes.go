@@ -44,7 +44,7 @@ func (c *commandFsMergeVolumes) Help() string {
 `
 }
 
-func (c *commandFsMergeVolumes) IsResourceHeavy() bool {
+func (c *commandFsMergeVolumes) HasTag(CommandTag) bool {
 	return false
 }
 
@@ -326,7 +326,7 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 	if err != nil {
 		return err
 	}
-	
+
 	_, err, _ = uploader.Upload(reader, &operation.UploadOption{
 		UploadUrl:         uploadURL,
 		Filename:          filename,

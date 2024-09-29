@@ -48,7 +48,7 @@ func (c *commandVolumeCheckDisk) Help() string {
 `
 }
 
-func (c *commandVolumeCheckDisk) IsResourceHeavy() bool {
+func (c *commandVolumeCheckDisk) HasTag(CommandTag) bool {
 	return false
 }
 

@@ -28,7 +28,7 @@ func (c *commandS3BucketDelete) Help() string {
 `
 }
 
-func (c *commandS3BucketDelete) IsResourceHeavy() bool {
+func (c *commandS3BucketDelete) HasTag(CommandTag) bool {
 	return false
 }
 

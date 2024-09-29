@@ -34,7 +34,7 @@ func (c *commandS3CleanUploads) Help() string {
 `
 }
 
-func (c *commandS3CleanUploads) IsResourceHeavy() bool {
+func (c *commandS3CleanUploads) HasTag(CommandTag) bool {
 	return false
 }
 

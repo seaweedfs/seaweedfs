@@ -46,7 +46,7 @@ func (c *commandFsConfigure) Help() string {
 `
 }
 
-func (c *commandFsConfigure) IsResourceHeavy() bool {
+func (c *commandFsConfigure) HasTag(CommandTag) bool {
 	return false
 }
 

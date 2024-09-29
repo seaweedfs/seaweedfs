@@ -33,7 +33,7 @@ func (c *commandFsLs) Help() string {
 `
 }
 
-func (c *commandFsLs) IsResourceHeavy() bool {
+func (c *commandFsLs) HasTag(CommandTag) bool {
 	return false
 }
 

@@ -33,7 +33,7 @@ func (c *commandVolumeMount) Help() string {
 `
 }
 
-func (c *commandVolumeMount) IsResourceHeavy() bool {
+func (c *commandVolumeMount) HasTag(CommandTag) bool {
 	return false
 }
 

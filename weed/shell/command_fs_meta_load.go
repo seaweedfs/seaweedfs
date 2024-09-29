@@ -38,7 +38,7 @@ func (c *commandFsMetaLoad) Help() string {
 `
 }
 
-func (c *commandFsMetaLoad) IsResourceHeavy() bool {
+func (c *commandFsMetaLoad) HasTag(CommandTag) bool {
 	return false
 }
 

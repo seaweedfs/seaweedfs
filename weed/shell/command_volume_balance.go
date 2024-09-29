@@ -64,7 +64,7 @@ func (c *commandVolumeBalance) Help() string {
 `
 }
 
-func (c *commandVolumeBalance) IsResourceHeavy() bool {
+func (c *commandVolumeBalance) HasTag(CommandTag) bool {
 	return false
 }
 

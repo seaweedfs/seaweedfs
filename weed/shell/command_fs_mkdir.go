@@ -27,7 +27,7 @@ func (c *commandFsMkdir) Help() string {
 `
 }
 
-func (c *commandFsMkdir) IsResourceHeavy() bool {
+func (c *commandFsMkdir) HasTag(CommandTag) bool {
 	return false
 }
 

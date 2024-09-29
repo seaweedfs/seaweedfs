@@ -30,7 +30,7 @@ func (c *commandGrow) Help() string {
 `
 }
 
-func (c *commandGrow) IsResourceHeavy() bool {
+func (c *commandGrow) HasTag(CommandTag) bool {
 	return false
 }
 

@@ -25,7 +25,7 @@ func (c *commandLock) Help() string {
 `
 }
 
-func (c *commandLock) IsResourceHeavy() bool {
+func (c *commandLock) HasTag(CommandTag) bool {
 	return false
 }
 
@@ -51,7 +51,7 @@ func (c *commandUnlock) Help() string {
 `
 }
 
-func (c *commandUnlock) IsResourceHeavy() bool {
+func (c *commandUnlock) HasTag(CommandTag) bool {
 	return false
 }
 

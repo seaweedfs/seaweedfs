@@ -29,7 +29,7 @@ func (c *commandFsDu) Help() string {
 `
 }
 
-func (c *commandFsDu) IsResourceHeavy() bool {
+func (c *commandFsDu) HasTag(CommandTag) bool {
 	return false
 }
 

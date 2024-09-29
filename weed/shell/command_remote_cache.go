@@ -46,7 +46,7 @@ func (c *commandRemoteCache) Help() string {
 `
 }
 
-func (c *commandRemoteCache) IsResourceHeavy() bool {
+func (c *commandRemoteCache) HasTag(CommandTag) bool {
 	return false
 }
 

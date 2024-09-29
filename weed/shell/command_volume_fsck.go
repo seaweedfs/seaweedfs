@@ -79,7 +79,7 @@ func (c *commandVolumeFsck) Help() string {
 `
 }
 
-func (c *commandVolumeFsck) IsResourceHeavy() bool {
+func (c *commandVolumeFsck) HasTag(CommandTag) bool {
 	return false
 }
 

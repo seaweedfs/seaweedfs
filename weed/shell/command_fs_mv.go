@@ -34,7 +34,7 @@ func (c *commandFsMv) Help() string {
 `
 }
 
-func (c *commandFsMv) IsResourceHeavy() bool {
+func (c *commandFsMv) HasTag(CommandTag) bool {
 	return false
 }
 

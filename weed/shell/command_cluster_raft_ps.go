@@ -26,7 +26,7 @@ func (c *commandRaftClusterPs) Help() string {
 `
 }
 
-func (c *commandRaftClusterPs) IsResourceHeavy() bool {
+func (c *commandRaftClusterPs) HasTag(CommandTag) bool {
 	return false
 }
 

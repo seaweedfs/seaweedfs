@@ -35,7 +35,7 @@ func (c *commandVolumeServerLeave) Help() string {
 `
 }
 
-func (c *commandVolumeServerLeave) IsResourceHeavy() bool {
+func (c *commandVolumeServerLeave) HasTag(CommandTag) bool {
 	return false
 }
 

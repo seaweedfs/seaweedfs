@@ -27,7 +27,7 @@ func (c *commandRaftServerRemove) Help() string {
 `
 }
 
-func (c *commandRaftServerRemove) IsResourceHeavy() bool {
+func (c *commandRaftServerRemove) HasTag(CommandTag) bool {
 	return false
 }
 

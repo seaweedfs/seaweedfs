@@ -48,7 +48,7 @@ func (c *commandRemoteConfigure) Help() string {
 `
 }
 
-func (c *commandRemoteConfigure) IsResourceHeavy() bool {
+func (c *commandRemoteConfigure) HasTag(CommandTag) bool {
 	return false
 }
 

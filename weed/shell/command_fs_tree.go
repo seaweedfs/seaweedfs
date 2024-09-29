@@ -28,7 +28,7 @@ func (c *commandFsTree) Help() string {
 `
 }
 
-func (c *commandFsTree) IsResourceHeavy() bool {
+func (c *commandFsTree) HasTag(CommandTag) bool {
 	return false
 }
 

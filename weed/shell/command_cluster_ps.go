@@ -35,7 +35,7 @@ func (c *commandClusterPs) Help() string {
 `
 }
 
-func (c *commandClusterPs) IsResourceHeavy() bool {
+func (c *commandClusterPs) HasTag(CommandTag) bool {
 	return false
 }
 

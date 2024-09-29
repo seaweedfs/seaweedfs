@@ -44,7 +44,7 @@ func (c *commandRemoteMetaSync) Help() string {
 `
 }
 
-func (c *commandRemoteMetaSync) IsResourceHeavy() bool {
+func (c *commandRemoteMetaSync) HasTag(CommandTag) bool {
 	return false
 }
 

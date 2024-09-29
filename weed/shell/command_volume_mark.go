@@ -28,7 +28,7 @@ func (c *commandVolumeMark) Help() string {
 `
 }
 
-func (c *commandVolumeMark) IsResourceHeavy() bool {
+func (c *commandVolumeMark) HasTag(CommandTag) bool {
 	return false
 }
 

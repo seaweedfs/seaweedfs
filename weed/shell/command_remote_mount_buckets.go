@@ -38,7 +38,7 @@ func (c *commandRemoteMountBuckets) Help() string {
 `
 }
 
-func (c *commandRemoteMountBuckets) IsResourceHeavy() bool {
+func (c *commandRemoteMountBuckets) HasTag(CommandTag) bool {
 	return false
 }
 

@@ -24,7 +24,7 @@ func (c *commandMqTopicDescribe) Help() string {
 	return `describe a topic`
 }
 
-func (c *commandMqTopicDescribe) IsResourceHeavy() bool {
+func (c *commandMqTopicDescribe) HasTag(CommandTag) bool {
 	return false
 }
 

@@ -28,7 +28,7 @@ func (c *commandCollectionDelete) Help() string {
 `
 }
 
-func (c *commandCollectionDelete) IsResourceHeavy() bool {
+func (c *commandCollectionDelete) HasTag(CommandTag) bool {
 	return false
 }
 

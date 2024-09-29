@@ -34,7 +34,7 @@ func (c *commandMountConfigure) Help() string {
 `
 }
 
-func (c *commandMountConfigure) IsResourceHeavy() bool {
+func (c *commandMountConfigure) HasTag(CommandTag) bool {
 	return false
 }
 

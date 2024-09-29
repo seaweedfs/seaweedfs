@@ -30,7 +30,7 @@ func (c *commandS3BucketCreate) Help() string {
 `
 }
 
-func (c *commandS3BucketCreate) IsResourceHeavy() bool {
+func (c *commandS3BucketCreate) HasTag(CommandTag) bool {
 	return false
 }
 

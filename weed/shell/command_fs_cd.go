@@ -28,7 +28,7 @@ func (c *commandFsCd) Help() string {
 `
 }
 
-func (c *commandFsCd) IsResourceHeavy() bool {
+func (c *commandFsCd) HasTag(CommandTag) bool {
 	return false
 }
 

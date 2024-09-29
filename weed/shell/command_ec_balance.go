@@ -98,7 +98,7 @@ func (c *commandEcBalance) Help() string {
 `
 }
 
-func (c *commandEcBalance) IsResourceHeavy() bool {
+func (c *commandEcBalance) HasTag(CommandTag) bool {
 	return false
 }
 

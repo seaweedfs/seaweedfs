@@ -55,7 +55,7 @@ func (c *commandEcRebuild) Help() string {
 `
 }
 
-func (c *commandEcRebuild) IsResourceHeavy() bool {
+func (c *commandEcRebuild) HasTag(CommandTag) bool {
 	return false
 }
 

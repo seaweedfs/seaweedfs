@@ -35,7 +35,7 @@ func (c *commandVolumeConfigureReplication) Help() string {
 `
 }
 
-func (c *commandVolumeConfigureReplication) IsResourceHeavy() bool {
+func (c *commandVolumeConfigureReplication) HasTag(CommandTag) bool {
 	return false
 }
 

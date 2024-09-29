@@ -51,7 +51,7 @@ func (c *commandS3CircuitBreaker) Help() string {
 	`
 }
 
-func (c *commandS3CircuitBreaker) IsResourceHeavy() bool {
+func (c *commandS3CircuitBreaker) HasTag(CommandTag) bool {
 	return false
 }
 

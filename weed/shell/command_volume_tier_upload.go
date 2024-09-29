@@ -56,7 +56,7 @@ func (c *commandVolumeTierUpload) Help() string {
 `
 }
 
-func (c *commandVolumeTierUpload) IsResourceHeavy() bool {
+func (c *commandVolumeTierUpload) HasTag(CommandTag) bool {
 	return false
 }
 

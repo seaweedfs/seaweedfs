@@ -27,7 +27,7 @@ func (c *commandFsLogPurge) Help() string {
 `
 }
 
-func (c *commandFsLogPurge) IsResourceHeavy() bool {
+func (c *commandFsLogPurge) HasTag(CommandTag) bool {
 	return false
 }
 

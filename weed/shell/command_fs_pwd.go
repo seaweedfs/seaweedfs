@@ -20,7 +20,7 @@ func (c *commandFsPwd) Help() string {
 	return `print out current directory`
 }
 
-func (c *commandFsPwd) IsResourceHeavy() bool {
+func (c *commandFsPwd) HasTag(CommandTag) bool {
 	return false
 }
 

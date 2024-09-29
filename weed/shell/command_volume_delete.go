@@ -29,7 +29,7 @@ func (c *commandVolumeDelete) Help() string {
 `
 }
 
-func (c *commandVolumeDelete) IsResourceHeavy() bool {
+func (c *commandVolumeDelete) HasTag(CommandTag) bool {
 	return false
 }
 

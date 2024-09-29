@@ -28,7 +28,7 @@ func (c *commandS3BucketQuota) Help() string {
 `
 }
 
-func (c *commandS3BucketQuota) IsResourceHeavy() bool {
+func (c *commandS3BucketQuota) HasTag(CommandTag) bool {
 	return false
 }
 

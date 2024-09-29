@@ -23,7 +23,7 @@ func (c *commandCollectionList) Help() string {
 	return `list all collections`
 }
 
-func (c *commandCollectionList) IsResourceHeavy() bool {
+func (c *commandCollectionList) HasTag(CommandTag) bool {
 	return false
 }
 

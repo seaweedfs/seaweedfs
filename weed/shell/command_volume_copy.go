@@ -31,7 +31,7 @@ func (c *commandVolumeCopy) Help() string {
 `
 }
 
-func (c *commandVolumeCopy) IsResourceHeavy() bool {
+func (c *commandVolumeCopy) HasTag(CommandTag) bool {
 	return false
 }
 

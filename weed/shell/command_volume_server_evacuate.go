@@ -46,7 +46,7 @@ func (c *commandVolumeServerEvacuate) Help() string {
 `
 }
 
-func (c *commandVolumeServerEvacuate) IsResourceHeavy() bool {
+func (c *commandVolumeServerEvacuate) HasTag(CommandTag) bool {
 	return false
 }
 

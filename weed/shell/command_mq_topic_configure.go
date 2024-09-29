@@ -29,7 +29,7 @@ func (c *commandMqTopicConfigure) Help() string {
 `
 }
 
-func (c *commandMqTopicConfigure) IsResourceHeavy() bool {
+func (c *commandMqTopicConfigure) HasTag(CommandTag) bool {
 	return false
 }
 

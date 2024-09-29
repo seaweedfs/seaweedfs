@@ -37,7 +37,7 @@ func (c *commandFsMetaChangeVolumeId) Help() string {
 `
 }
 
-func (c *commandFsMetaChangeVolumeId) IsResourceHeavy() bool {
+func (c *commandFsMetaChangeVolumeId) HasTag(CommandTag) bool {
 	return false
 }
 

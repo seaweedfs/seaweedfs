@@ -34,7 +34,7 @@ func (c *commandVolumeUnmount) Help() string {
 `
 }
 
-func (c *commandVolumeUnmount) IsResourceHeavy() bool {
+func (c *commandVolumeUnmount) HasTag(CommandTag) bool {
 	return false
 }
 

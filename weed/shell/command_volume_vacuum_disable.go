@@ -26,7 +26,7 @@ func (c *commandDisableVacuum) Help() string {
 `
 }
 
-func (c *commandDisableVacuum) IsResourceHeavy() bool {
+func (c *commandDisableVacuum) HasTag(CommandTag) bool {
 	return false
 }
 

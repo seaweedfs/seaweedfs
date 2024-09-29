@@ -30,7 +30,7 @@ func (c *commandFsMetaCat) Help() string {
 `
 }
 
-func (c *commandFsMetaCat) IsResourceHeavy() bool {
+func (c *commandFsMetaCat) HasTag(CommandTag) bool {
 	return false
 }
 
