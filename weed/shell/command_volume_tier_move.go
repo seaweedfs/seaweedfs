@@ -234,14 +234,14 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	}
 
 	// mark all replicas as read only
-	if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false); err != nil {
+	if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false, false); err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 	newAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
 
 	if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond, true); err != nil {
 		// mark all replicas as writable
-		if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, true); err != nil {
+		if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, true, false); err != nil {
 			glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
 		}
 

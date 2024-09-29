@@ -3,8 +3,9 @@ package shell
 import (
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -52,5 +53,5 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 
-	return markVolumeWritable(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, markWritable)
+	return markVolumeWritable(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, markWritable, true)
 }

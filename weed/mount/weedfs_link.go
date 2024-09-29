@@ -25,7 +25,6 @@ When creating a link:
 
 /** Create a hard link to a file */
 func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *fuse.EntryOut) (code fuse.Status) {
-
 	if wfs.IsOverQuota {
 		return fuse.Status(syscall.ENOSPC)
 	}
@@ -47,6 +46,11 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	oldEntry, status := wfs.maybeLoadEntry(oldEntryPath)
 	if status != fuse.OK {
 		return status
+	}
+
+	// hardlink is not allowed in WORM mode
+	if wfs.wormEnabledForEntry(oldEntryPath, oldEntry) {
+		return fuse.EPERM
 	}
 
 	// update old file to hardlink mode

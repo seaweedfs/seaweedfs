@@ -47,8 +47,6 @@ type Option struct {
 	Quota              int64
 	DisableXAttr       bool
 
-	WriteOnceReadMany bool
-
 	MountUid         uint32
 	MountGid         uint32
 	MountMode        os.FileMode
@@ -82,6 +80,7 @@ type WFS struct {
 	fuseServer        *fuse.Server
 	IsOverQuota       bool
 	fhLockTable       *util.LockTable[FileHandleId]
+	FilerConf         *filer.FilerConf
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -141,10 +140,19 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	return wfs
 }
 
-func (wfs *WFS) StartBackgroundTasks() {
+func (wfs *WFS) StartBackgroundTasks() error {
+	fn, err := wfs.subscribeFilerConfEvents()
+	if err != nil {
+		return err
+	}
+
+	go fn()
+
 	startTime := time.Now()
 	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 	go wfs.loopCheckQuota()
+
+	return nil
 }
 
 func (wfs *WFS) String() string {

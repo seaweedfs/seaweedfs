@@ -4,9 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -102,7 +103,7 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
-	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, existingLocations, false)
+	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, existingLocations, false, false)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, existingLocations[0].Url, err)
 	}

@@ -3,4 +3,4 @@ description: SeaweedFS
 name: seaweedfs
 appVersion: "3.73"
 # Dev note: Trigger a helm chart release by `git tag -a helm-<version>`
-version: 4.0.0
+version: 4.0.1

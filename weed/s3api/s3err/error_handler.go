@@ -49,8 +49,7 @@ func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorC
 
 	apiError := GetAPIError(errorCode)
 	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object)
-	encodedErrorResponse := EncodeXMLResponse(errorResponse)
-	WriteResponse(w, r, apiError.HTTPStatusCode, encodedErrorResponse, MimeXML)
+	WriteXMLResponse(w, r, apiError.HTTPStatusCode, errorResponse)
 	PostLog(r, apiError.HTTPStatusCode, errorCode)
 }
 
