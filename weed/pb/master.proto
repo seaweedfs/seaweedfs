@@ -23,6 +23,8 @@ service Seaweed {
   }
   rpc CollectionDelete (CollectionDeleteRequest) returns (CollectionDeleteResponse) {
   }
+  rpc CollectionMark (CollectionMarkRequest) returns (CollectionMarkResponse) {
+  }
   rpc VolumeList (VolumeListRequest) returns (VolumeListResponse) {
   }
   rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
@@ -264,6 +266,13 @@ message CollectionDeleteRequest {
   string name = 1;
 }
 message CollectionDeleteResponse {
+}
+
+message CollectionMarkRequest {
+  string name = 1;
+  string flag = 2; // writable, readonly
+}
+message CollectionMarkResponse {
 }
 
 //
