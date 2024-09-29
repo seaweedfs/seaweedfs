@@ -79,8 +79,8 @@ func (c *commandVolumeFsck) Help() string {
 `
 }
 
-func (c *commandVolumeFsck) HasTag(CommandTag) bool {
-	return false
+func (c *commandVolumeFsck) HasTag(tag CommandTag) bool {
+	return tag == ResourceHeavy
 }
 
 func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {

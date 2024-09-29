@@ -55,8 +55,8 @@ func (c *commandVolumeFixReplication) Help() string {
 `
 }
 
-func (c *commandVolumeFixReplication) HasTag(CommandTag) bool {
-	return false
+func (c *commandVolumeFixReplication) HasTag(tag CommandTag) bool {
+	return tag == ResourceHeavy
 }
 
 func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {

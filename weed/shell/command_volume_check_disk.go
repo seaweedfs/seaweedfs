@@ -48,8 +48,8 @@ func (c *commandVolumeCheckDisk) Help() string {
 `
 }
 
-func (c *commandVolumeCheckDisk) HasTag(CommandTag) bool {
-	return false
+func (c *commandVolumeCheckDisk) HasTag(tag CommandTag) bool {
+	return tag == ResourceHeavy
 }
 
 func (c *commandVolumeCheckDisk) getVolumeStatusFileCount(vid uint32, dn *master_pb.DataNodeInfo) (totalFileCount, deletedFileCount uint64) {
