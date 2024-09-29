@@ -6,7 +6,7 @@ debug ?= 0
 all: install
 
 install:
-	cd weed; go install
+	cd weed; go install -tags "sqlite"
 
 warp_install:
 	go install github.com/minio/warp@v0.7.6
@@ -15,7 +15,8 @@ full_install:
 	cd weed; go install -tags "elastic gocdk sqlite ydb tikv rclone"
 
 server: install
-	weed -v 0 server -s3 -filer -filer.maxMB=64 -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1 -s3.port=8000 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=./docker/compose/s3.json -metricsPort=9324
+	export WEED_LEVELDB2_ENABLED="false";export WEED_SQLITE_ENABLED="true"; export WEED_SQLITE_DBFILE="/tmp/filer.db"; \
+	weed -v 0 server -s3.allowListRecursive=true -dir /tmp -master.volumeSizeLimitMB=1024 -s3 -filer -filer.maxMB=64 -filer.port.public=7777 -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=./docker/compose/s3.json -metricsPort=9324
 
 benchmark: install warp_install
 	pkill weed || true
