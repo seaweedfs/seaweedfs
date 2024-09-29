@@ -23,6 +23,10 @@ func (c *commandCollectionList) Help() string {
 	return `list all collections`
 }
 
+func (c *commandCollectionList) IsResourceHeavy() bool {
+	return false
+}
+
 type CollectionInfo struct {
 	FileCount        float64
 	DeleteCount      float64

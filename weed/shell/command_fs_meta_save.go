@@ -44,6 +44,10 @@ func (c *commandFsMetaSave) Help() string {
 `
 }
 
+func (c *commandFsMetaSave) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fsMetaSaveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

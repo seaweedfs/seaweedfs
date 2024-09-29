@@ -25,6 +25,10 @@ func (c *commandMqBalanceTopics) Help() string {
 `
 }
 
+func (c *commandMqBalanceTopics) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandMqBalanceTopics) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
 
 	// find the broker balancer

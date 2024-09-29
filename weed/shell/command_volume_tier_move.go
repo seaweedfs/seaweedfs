@@ -53,6 +53,10 @@ func (c *commandVolumeTierMove) Help() string {
 `
 }
 
+func (c *commandVolumeTierMove) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

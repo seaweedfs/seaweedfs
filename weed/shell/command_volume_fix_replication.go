@@ -55,6 +55,10 @@ func (c *commandVolumeFixReplication) Help() string {
 `
 }
 
+func (c *commandVolumeFixReplication) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volFixReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

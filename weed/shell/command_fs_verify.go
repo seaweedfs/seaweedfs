@@ -51,6 +51,10 @@ func (c *commandFsVerify) Help() string {
 `
 }
 
+func (c *commandFsVerify) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	c.env = commandEnv
 	c.writer = writer

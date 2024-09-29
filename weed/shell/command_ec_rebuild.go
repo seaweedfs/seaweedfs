@@ -55,6 +55,10 @@ func (c *commandEcRebuild) Help() string {
 `
 }
 
+func (c *commandEcRebuild) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fixCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

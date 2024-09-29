@@ -28,6 +28,10 @@ func (c *commandVolumeMark) Help() string {
 `
 }
 
+func (c *commandVolumeMark) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volMarkCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

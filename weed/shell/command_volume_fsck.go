@@ -79,6 +79,10 @@ func (c *commandVolumeFsck) Help() string {
 `
 }
 
+func (c *commandVolumeFsck) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

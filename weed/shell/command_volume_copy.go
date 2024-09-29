@@ -31,6 +31,10 @@ func (c *commandVolumeCopy) Help() string {
 `
 }
 
+func (c *commandVolumeCopy) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandVolumeCopy) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volCopyCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

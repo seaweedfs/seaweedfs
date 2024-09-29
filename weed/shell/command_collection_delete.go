@@ -28,6 +28,10 @@ func (c *commandCollectionDelete) Help() string {
 `
 }
 
+func (c *commandCollectionDelete) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	colDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

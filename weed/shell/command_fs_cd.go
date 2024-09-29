@@ -28,6 +28,10 @@ func (c *commandFsCd) Help() string {
 `
 }
 
+func (c *commandFsCd) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandFsCd) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	path, err := commandEnv.parseUrl(findInputDirectory(args))

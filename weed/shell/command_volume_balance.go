@@ -64,6 +64,10 @@ func (c *commandVolumeBalance) Help() string {
 `
 }
 
+func (c *commandVolumeBalance) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

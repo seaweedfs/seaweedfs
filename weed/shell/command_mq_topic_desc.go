@@ -24,6 +24,10 @@ func (c *commandMqTopicDescribe) Help() string {
 	return `describe a topic`
 }
 
+func (c *commandMqTopicDescribe) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandMqTopicDescribe) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
 	// parse parameters
 	mqCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

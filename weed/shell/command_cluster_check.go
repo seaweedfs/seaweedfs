@@ -32,6 +32,10 @@ func (c *commandClusterCheck) Help() string {
 `
 }
 
+func (c *commandClusterCheck) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	clusterPsCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

@@ -27,6 +27,10 @@ func (c *commandFsLogPurge) Help() string {
 `
 }
 
+func (c *commandFsLogPurge) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandFsLogPurge) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	fsLogPurgeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	daysAgo := fsLogPurgeCommand.Uint("daysAgo", 365, "purge logs older than N days")

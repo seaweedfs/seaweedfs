@@ -46,6 +46,10 @@ func (c *commandFsConfigure) Help() string {
 `
 }
 
+func (c *commandFsConfigure) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fsConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

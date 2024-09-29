@@ -34,6 +34,10 @@ func (c *commandMountConfigure) Help() string {
 `
 }
 
+func (c *commandMountConfigure) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandMountConfigure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	mountConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

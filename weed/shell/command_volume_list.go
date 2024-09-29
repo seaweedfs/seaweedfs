@@ -39,6 +39,10 @@ func (c *commandVolumeList) Help() string {
 `
 }
 
+func (c *commandVolumeList) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volumeListCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

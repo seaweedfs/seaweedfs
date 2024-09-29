@@ -34,6 +34,10 @@ func (c *commandS3CleanUploads) Help() string {
 `
 }
 
+func (c *commandS3CleanUploads) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	uploadedTimeAgo := bucketCommand.Duration("timeAgo", 24*time.Hour, "created time before now. \"1.5h\" or \"2h45m\". Valid time units are \"m\", \"h\"")

@@ -25,6 +25,10 @@ func (c *commandLock) Help() string {
 `
 }
 
+func (c *commandLock) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandLock) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	commandEnv.locker.RequestLock(util.DetectedHostAddress())
@@ -45,6 +49,10 @@ func (c *commandUnlock) Help() string {
 	return `unlock the cluster-wide lock
 
 `
+}
+
+func (c *commandUnlock) IsResourceHeavy() bool {
+	return false
 }
 
 func (c *commandUnlock) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {

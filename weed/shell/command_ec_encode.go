@@ -56,6 +56,10 @@ func (c *commandEcEncode) Help() string {
 `
 }
 
+func (c *commandEcEncode) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

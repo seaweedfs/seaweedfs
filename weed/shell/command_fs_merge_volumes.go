@@ -44,6 +44,10 @@ func (c *commandFsMergeVolumes) Help() string {
 `
 }
 
+func (c *commandFsMergeVolumes) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fsMergeVolumesCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

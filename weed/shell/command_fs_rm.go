@@ -34,6 +34,10 @@ func (c *commandFsRm) Help() string {
 `
 }
 
+func (c *commandFsRm) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandFsRm) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	isRecursive := false
 	ignoreRecursiveError := false

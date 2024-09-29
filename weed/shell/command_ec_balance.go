@@ -98,6 +98,10 @@ func (c *commandEcBalance) Help() string {
 `
 }
 
+func (c *commandEcBalance) IsResourceHeavy() bool {
+	return false
+}
+
 func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
