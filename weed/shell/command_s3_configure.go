@@ -33,6 +33,10 @@ func (c *commandS3Configure) Help() string {
 	`
 }
 
+func (c *commandS3Configure) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	s3ConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

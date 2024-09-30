@@ -46,6 +46,10 @@ func (c *commandVolumeServerEvacuate) Help() string {
 `
 }
 
+func (c *commandVolumeServerEvacuate) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	vsEvacuateCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

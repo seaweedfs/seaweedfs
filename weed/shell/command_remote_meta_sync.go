@@ -44,6 +44,10 @@ func (c *commandRemoteMetaSync) Help() string {
 `
 }
 
+func (c *commandRemoteMetaSync) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	remoteMetaSyncCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

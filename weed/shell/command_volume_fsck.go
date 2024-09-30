@@ -60,7 +60,7 @@ func (c *commandVolumeFsck) Name() string {
 }
 
 func (c *commandVolumeFsck) Help() string {
-	return `check all volumes to find entries not used by the filer
+	return `check all volumes to find entries not used by the filer. It is optional and resource intensive.
 
 	Important assumption!!!
 		the system is all used by one filer.
@@ -77,6 +77,10 @@ func (c *commandVolumeFsck) Help() string {
 	3. find out the set B subtract A
 
 `
+}
+
+func (c *commandVolumeFsck) HasTag(tag CommandTag) bool {
+	return tag == ResourceHeavy
 }
 
 func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
@@ -359,12 +363,12 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 				needleVID := needle.VolumeId(volumeId)
 
 				if isReadOnlyReplicas[volumeId] {
-					err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true)
+					err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true, false)
 					if err != nil {
 						return fmt.Errorf("mark volume %d read/write: %v", volumeId, err)
 					}
 					fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
-					defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false)
+					defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false, false)
 
 					fmt.Fprintf(c.writer, "marked %d on server %v writable for forced purge\n", volumeId, server)
 				}

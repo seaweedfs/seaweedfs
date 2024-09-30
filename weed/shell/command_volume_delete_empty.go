@@ -32,6 +32,10 @@ func (c *commandVolumeDeleteEmpty) Help() string {
 `
 }
 
+func (c *commandVolumeDeleteEmpty) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

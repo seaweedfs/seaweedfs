@@ -33,6 +33,10 @@ func (c *commandVolumeMount) Help() string {
 `
 }
 
+func (c *commandVolumeMount) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandVolumeMount) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

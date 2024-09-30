@@ -28,6 +28,10 @@ func (c *commandFsTree) Help() string {
 `
 }
 
+func (c *commandFsTree) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandFsTree) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	path, err := commandEnv.parseUrl(findInputDirectory(args))

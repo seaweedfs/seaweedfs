@@ -37,6 +37,10 @@ func (c *commandEcDecode) Help() string {
 `
 }
 
+func (c *commandEcDecode) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	decodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := decodeCommand.Int("volumeId", 0, "the volume id")

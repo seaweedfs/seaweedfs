@@ -46,6 +46,10 @@ func (c *commandRemoteCache) Help() string {
 `
 }
 
+func (c *commandRemoteCache) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	remoteMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

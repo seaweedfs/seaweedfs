@@ -35,6 +35,10 @@ func (c *commandVolumeConfigureReplication) Help() string {
 `
 }
 
+func (c *commandVolumeConfigureReplication) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *CommandEnv, _ io.Writer) (err error) {
 
 	configureReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
