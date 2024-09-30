@@ -215,6 +215,11 @@ func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTaggin
 		}
 	}
 
+	// content-encoding
+	if contentEncoding, ok := existing["Content-Encoding"]; ok {
+		reqHeader["Content-Encoding"] = contentEncoding
+	}
+
 	if !replaceMeta {
 		for header, _ := range reqHeader {
 			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {

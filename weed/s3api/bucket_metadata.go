@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
@@ -78,7 +79,7 @@ func (r *BucketRegistry) LoadBucketMetadata(entry *filer_pb.Entry) {
 	r.metadataCache[entry.Name] = bucketMetadata
 }
 
-func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *BucketMetaData {
+func buildBucketMetadata(accountManager s3acl.AccountManager, entry *filer_pb.Entry) *BucketMetaData {
 	entryJson, _ := json.Marshal(entry)
 	glog.V(3).Infof("build bucket metadata,entry=%s", entryJson)
 	bucketMetadata := &BucketMetaData{
@@ -106,7 +107,6 @@ func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *
 			}
 		}
 
-		//access control policy
 		//owner
 		acpOwnerBytes, ok := entry.Extended[s3_constants.ExtAmzOwnerKey]
 		if ok && len(acpOwnerBytes) > 0 {
@@ -121,17 +121,31 @@ func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *
 				}
 			}
 		}
+
 		//grants
 		acpGrantsBytes, ok := entry.Extended[s3_constants.ExtAmzAclKey]
-		if ok && len(acpGrantsBytes) > 0 {
-			var grants []*s3.Grant
-			err := json.Unmarshal(acpGrantsBytes, &grants)
-			if err == nil {
-				bucketMetadata.Acl = grants
-			} else {
-				glog.Warningf("Unmarshal ACP grants: %s(%v), bucket: %s", string(acpGrantsBytes), err, bucketMetadata.Name)
+		if ok {
+			if len(acpGrantsBytes) > 0 {
+				var grants []*s3.Grant
+				err := json.Unmarshal(acpGrantsBytes, &grants)
+				if err == nil {
+					bucketMetadata.Acl = grants
+				} else {
+					glog.Warningf("Unmarshal ACP grants: %s(%v), bucket: %s", string(acpGrantsBytes), err, bucketMetadata.Name)
+				}
+			}
+		} else {
+			bucketMetadata.Acl = []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   bucketMetadata.Owner.ID,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
 			}
 		}
+
 	}
 	return bucketMetadata
 }
@@ -142,17 +156,12 @@ func (r *BucketRegistry) RemoveBucketMetadata(entry *filer_pb.Entry) {
 }
 
 func (r *BucketRegistry) GetBucketMetadata(bucketName string) (*BucketMetaData, s3err.ErrorCode) {
-	r.metadataCacheLock.RLock()
-	bucketMetadata, ok := r.metadataCache[bucketName]
-	r.metadataCacheLock.RUnlock()
-	if ok {
+	bucketMetadata := r.getMetadataCache(bucketName)
+	if bucketMetadata != nil {
 		return bucketMetadata, s3err.ErrNone
 	}
 
-	r.notFoundLock.RLock()
-	_, ok = r.notFound[bucketName]
-	r.notFoundLock.RUnlock()
-	if ok {
+	if r.isNotFound(bucketName) {
 		return nil, s3err.ErrNoSuchBucket
 	}
 
@@ -171,10 +180,8 @@ func (r *BucketRegistry) LoadBucketMetadataFromFiler(bucketName string) (*Bucket
 	defer r.notFoundLock.Unlock()
 
 	//check if already exists
-	r.metadataCacheLock.RLock()
-	bucketMetaData, ok := r.metadataCache[bucketName]
-	r.metadataCacheLock.RUnlock()
-	if ok {
+	bucketMetaData := r.getMetadataCache(bucketName)
+	if bucketMetaData != nil {
 		return bucketMetaData, s3err.ErrNone
 	}
 
@@ -183,12 +190,22 @@ func (r *BucketRegistry) LoadBucketMetadataFromFiler(bucketName string) (*Bucket
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			// The bucket doesn't actually exist and should no longer loaded from the filer
+			glog.V(4).Info("bucket not found in filer: ", bucketName)
 			r.notFound[bucketName] = struct{}{}
 			return nil, s3err.ErrNoSuchBucket
 		}
 		return nil, s3err.ErrInternalError
 	}
 	return bucketMetadata, s3err.ErrNone
+}
+
+func (r *BucketRegistry) getMetadataCache(bucket string) *BucketMetaData {
+	r.metadataCacheLock.RLock()
+	defer r.metadataCacheLock.RUnlock()
+	if cache, ok := r.metadataCache[bucket]; ok {
+		return cache
+	}
+	return nil
 }
 
 func (r *BucketRegistry) setMetadataCache(metadata *BucketMetaData) {
@@ -203,14 +220,20 @@ func (r *BucketRegistry) removeMetadataCache(bucket string) {
 	delete(r.metadataCache, bucket)
 }
 
-func (r *BucketRegistry) markNotFound(bucket string) {
-	r.notFoundLock.Lock()
-	defer r.notFoundLock.Unlock()
-	r.notFound[bucket] = struct{}{}
+func (r *BucketRegistry) isNotFound(bucket string) bool {
+	r.notFoundLock.RLock()
+	defer r.notFoundLock.RUnlock()
+	_, ok := r.notFound[bucket]
+	return ok
 }
 
 func (r *BucketRegistry) unMarkNotFound(bucket string) {
 	r.notFoundLock.Lock()
 	defer r.notFoundLock.Unlock()
 	delete(r.notFound, bucket)
+}
+
+func (r *BucketRegistry) ClearCache(bucket string) {
+	r.removeMetadataCache(bucket)
+	r.unMarkNotFound(bucket)
 }

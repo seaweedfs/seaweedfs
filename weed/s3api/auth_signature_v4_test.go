@@ -64,7 +64,7 @@ func TestIsReqAuthenticated(t *testing.T) {
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
-	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+	_ = iam.LoadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{
 				Name: "someone",
@@ -104,7 +104,7 @@ func TestCheckaAnonymousRequestAuthType(t *testing.T) {
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
-	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+	_ = iam.LoadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{
 				Name:    "anonymous",
@@ -137,7 +137,7 @@ func TestCheckAdminRequestAuthType(t *testing.T) {
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
-	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+	_ = iam.LoadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{
 				Name: "someone",

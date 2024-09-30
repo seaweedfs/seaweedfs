@@ -23,7 +23,7 @@ message Identity {
     string name = 1;
     repeated Credential credentials = 2;
     repeated string actions = 3;
-    Account account = 4;
+    string AccountId = 4;
 }
 
 message Credential {

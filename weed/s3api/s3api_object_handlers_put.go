@@ -4,18 +4,17 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"github.com/pquerna/cachecontrol/cacheobject"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/pquerna/cachecontrol/cacheobject"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/security"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 )
 
@@ -50,17 +49,23 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	rAuthType := getRequestAuthType(r)
 	if s3a.iam.isEnabled() {
 		var s3ErrCode s3err.ErrorCode
+		var identity *Identity
 		switch rAuthType {
 		case authTypeStreamingSigned:
-			dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+			dataReader, identity, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
 		case authTypeSignedV2, authTypePresignedV2:
-			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
+			identity, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
 		case authTypePresigned, authTypeSigned:
-			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+			identity, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+		case authTypeAnonymous:
+			identity = s3a.iam.identityAnonymous
 		}
 		if s3ErrCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, s3ErrCode)
 			return
+		}
+		if identity != nil && identity.Account.Id != AccountAnonymous.Id {
+			r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
 		}
 	} else {
 		if authTypeStreamingSigned == rAuthType {
@@ -70,16 +75,19 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 	defer dataReader.Close()
 
+	errCode := s3a.CheckAccessForPutObject(r, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	objectContentType := r.Header.Get("Content-Type")
-	if strings.HasSuffix(object, "/") && r.ContentLength <= 1024 {
+	if strings.HasSuffix(object, "/") && r.ContentLength == 0 {
 		if err := s3a.mkdir(
 			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
 			func(entry *filer_pb.Entry) {
 				if objectContentType == "" {
-					objectContentType = s3_constants.FolderMimeType
-				}
-				if r.ContentLength > 0 {
-					entry.Content, _ = io.ReadAll(r.Body)
+					objectContentType = "httpd/unix-directory"
 				}
 				entry.Attributes.Mime = objectContentType
 			}); err != nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"math"
 	"net/http"
 	"strings"
@@ -120,13 +121,29 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	objectOwnership := r.Header.Get("X-Amz-Object-Ownership")
+	requestAccountId := s3acl.GetAccountId(r)
+	grants, errCode := s3acl.ExtractBucketAcl(r, s3a.iam, objectOwnership, requestAccountId, requestAccountId, true)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	fn := func(entry *filer_pb.Entry) {
 		if identityId := r.Header.Get(s3_constants.AmzIdentityId); identityId != "" {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(identityId)
+			s3a.bucketRegistry.LoadBucketMetadata(entry)
 		}
+		if objectOwnership != "" {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			entry.Extended[s3_constants.ExtOwnershipKey] = []byte(objectOwnership)
+		}
+		s3acl.AssembleEntryWithAcp(entry, requestAccountId, grants)
 	}
 
 	// create the folder for bucket, but lazily create actual collection
@@ -135,6 +152,10 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
+
+	// clear cache
+	s3a.bucketRegistry.ClearCache(bucket)
+
 	w.Header().Set("Location", "/"+bucket)
 	writeSuccessResponseEmpty(w, r)
 }
@@ -190,7 +211,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-
+	
+	// clear cache
+	s3a.bucketRegistry.ClearCache(bucket)
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 
@@ -199,6 +222,11 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
+	_, errorCode := s3a.checkAccessForReadBucket(r, bucket, s3_constants.PermissionRead)
+	if errorCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errorCode)
+		return
+	}
 	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || err == filer_pb.ErrNotFound {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		return
@@ -242,6 +270,48 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 	return true
 }
 
+// PutBucketAclHandler Put bucket ACL
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html
+func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketAclHandler %s", bucket)
+
+	accountId := s3acl.GetAccountId(r)
+	bucketMetadata, errorCode := s3a.checkAccessForPutBucketAcl(accountId, bucket)
+	if errorCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errorCode)
+		return
+	}
+
+	grants, errCode := s3acl.ExtractBucketAcl(r, s3a.iam, bucketMetadata.ObjectOwnership, *bucketMetadata.Owner.ID, accountId, false)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		glog.Warning(err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	errCode = s3acl.AssembleEntryWithAcp(bucketEntry, *bucketMetadata.Owner.ID, grants)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	err = updateBucketEntry(s3a, bucketEntry)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	//update local cache
+	bucketMetadata.Acl = grants
+	s3err.WriteEmptyResponse(w, r, http.StatusOK)
+}
+
 // GetBucketAclHandler Get Bucket ACL
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAcl.html
 func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Request) {
@@ -249,60 +319,19 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
 
-	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
+	bucketMetadata, errorCode := s3a.checkAccessForReadBucket(r, bucket, s3_constants.PermissionReadAcp)
+	if s3err.ErrNone != errorCode {
+		s3err.WriteErrorResponse(w, r, errorCode)
 		return
 	}
 
-	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
-	amzDisplayName := s3a.iam.GetAccountNameById(amzAccountId)
-	response := AccessControlPolicy{
-		Owner: CanonicalUser{
-			ID:          amzAccountId,
-			DisplayName: amzDisplayName,
+	acp := &s3.PutBucketAclInput{
+		AccessControlPolicy: &s3.AccessControlPolicy{
+			Grants: bucketMetadata.Acl,
+			Owner:  bucketMetadata.Owner,
 		},
 	}
-	response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
-		Grantee: Grantee{
-			ID:          amzAccountId,
-			DisplayName: amzDisplayName,
-			Type:        "CanonicalUser",
-			XMLXSI:      "CanonicalUser",
-			XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
-		Permission: s3.PermissionFullControl,
-	})
-	writeSuccessResponseXML(w, r, response)
-}
-
-// PutBucketAclHandler Put bucket ACL only responds success if the ACL is private.
-// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html //
-func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Request) {
-	// collect parameters
-	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("PutBucketAclHandler %s", bucket)
-
-	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
-		return
-	}
-	cannedAcl := r.Header.Get(s3_constants.AmzCannedAcl)
-	switch {
-	case cannedAcl == "":
-		acl := &s3.AccessControlPolicy{}
-		if err := xmlDecoder(r.Body, acl, r.ContentLength); err != nil {
-			glog.Errorf("PutBucketAclHandler: %s", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-			return
-		}
-		if len(acl.Grants) == 1 && acl.Grants[0].Permission != nil && *acl.Grants[0].Permission == s3_constants.PermissionFullControl {
-			writeSuccessResponseEmpty(w, r)
-			return
-		}
-	case cannedAcl == s3_constants.CannedAclPrivate:
-		writeSuccessResponseEmpty(w, r)
-		return
-	}
-	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, acp)
 }
 
 // GetBucketLifecycleConfigurationHandler Get Bucket Lifecycle configuration
@@ -510,9 +539,8 @@ func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *htt
 		return
 	}
 
-	var v s3.OwnershipControls
 	defer util_http.CloseRequest(r)
-
+	var v s3.OwnershipControls
 	err := xmlutil.UnmarshalXML(&v, xml.NewDecoder(r.Body), "")
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
@@ -525,12 +553,11 @@ func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *htt
 	}
 
 	printOwnership := true
-	ownership := *v.Rules[0].ObjectOwnership
-	switch ownership {
+	newObjectOwnership := *v.Rules[0].ObjectOwnership
+	switch newObjectOwnership {
 	case s3_constants.OwnershipObjectWriter:
 	case s3_constants.OwnershipBucketOwnerPreferred:
 	case s3_constants.OwnershipBucketOwnerEnforced:
-		printOwnership = false
 	default:
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
@@ -547,11 +574,34 @@ func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *htt
 	}
 
 	oldOwnership, ok := bucketEntry.Extended[s3_constants.ExtOwnershipKey]
-	if !ok || string(oldOwnership) != ownership {
+	if !ok || string(oldOwnership) != newObjectOwnership {
+
+		// must reset bucket acl to default(bucket owner with full control permission) before setting ownership
+		// to `OwnershipBucketOwnerEnforced` (bucket cannot have ACLs set with ObjectOwnership's BucketOwnerEnforced setting)
+		if newObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
+			acpGrants := s3acl.GetAcpGrants(nil, bucketEntry.Extended)
+			if len(acpGrants) > 1 {
+				s3err.WriteErrorResponse(w, r, s3err.InvalidBucketAclWithObjectOwnership)
+				return
+			} else if len(acpGrants) == 1 {
+				bucketOwner := s3acl.GetAcpOwner(bucketEntry.Extended, AccountAdmin.Id)
+				expectGrant := s3acl.GrantWithFullControl(bucketOwner)
+				if !s3acl.GrantEquals(acpGrants[0], expectGrant) {
+					s3err.WriteErrorResponse(w, r, s3err.InvalidBucketAclWithObjectOwnership)
+					return
+				}
+			}
+		}
+
 		if bucketEntry.Extended == nil {
 			bucketEntry.Extended = make(map[string][]byte)
 		}
-		bucketEntry.Extended[s3_constants.ExtOwnershipKey] = []byte(ownership)
+		//update local cache
+		bucketMetadata, eCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+		if eCode == s3err.ErrNone {
+			bucketMetadata.ObjectOwnership = newObjectOwnership
+		}
+		bucketEntry.Extended[s3_constants.ExtOwnershipKey] = []byte(newObjectOwnership)
 		err = s3a.updateEntry(s3a.option.BucketsPath, bucketEntry)
 		if err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)

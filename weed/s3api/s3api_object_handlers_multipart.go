@@ -31,6 +31,12 @@ const (
 func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, object := s3_constants.GetBucketAndObject(r)
 
+	errCode, initiatorId := s3a.CheckAccessForNewMultipartUpload(r, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	createMultipartUploadInput := &s3.CreateMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      objectKey(aws.String(object)),
@@ -46,7 +52,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 	if contentType != "" {
 		createMultipartUploadInput.ContentType = &contentType
 	}
-	response, errCode := s3a.createMultipartUpload(createMultipartUploadInput)
+	response, errCode := s3a.createMultipartUpload(initiatorId, createMultipartUploadInput)
 
 	glog.V(2).Info("NewMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)), errCode)
 
@@ -79,6 +85,12 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		return
 	}
 
+	errCode := s3a.CheckAccessForCompleteMultipartUpload(r, bucket, uploadID)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	response, errCode := s3a.completeMultipartUpload(&s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      objectKey(aws.String(object)),
@@ -104,6 +116,24 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
 	err := s3a.checkUploadId(object, uploadID)
 	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
+
+	errCode := s3a.CheckAccessForAbortMultipartUpload(r, bucket, uploadID)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadID, true)
+	if err != nil {
+		glog.V(1).Infof("list parts error: %v, request url: %s", err, r.RequestURI)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
+	if !exists {
+		glog.V(1).Infof("list parts not found, request url: %s", r.RequestURI)
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
 	}
@@ -144,7 +174,12 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		}
 	}
 
-	response, errCode := s3a.listMultipartUploads(&s3.ListMultipartUploadsInput{
+	bucketMetaData, errorCode := s3a.checkAccessForReadBucket(r, bucket, s3_constants.PermissionRead)
+	if errorCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errorCode)
+		return
+	}
+	response, errCode := s3a.listMultipartUploads(bucketMetaData, &s3.ListMultipartUploadsInput{
 		Bucket:         aws.String(bucket),
 		Delimiter:      aws.String(delimiter),
 		EncodingType:   aws.String(encodingType),
@@ -186,6 +221,23 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	errCode := s3a.CheckAccessForListMultipartUploadParts(r, bucket, uploadID)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadID, true)
+	if err != nil {
+		glog.V(1).Infof("list parts error: %v, request url: %s", err, r.RequestURI)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
+	if !exists {
+		glog.V(1).Infof("list parts not found, request url: %s", r.RequestURI)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
 	response, errCode := s3a.listObjectParts(&s3.ListPartsInput{
 		Bucket:           aws.String(bucket),
 		Key:              objectKey(aws.String(object)),
@@ -231,20 +283,30 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	if s3a.iam.isEnabled() {
 		rAuthType := getRequestAuthType(r)
 		var s3ErrCode s3err.ErrorCode
+		var identity *Identity
 		switch rAuthType {
 		case authTypeStreamingSigned:
-			dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+			dataReader, identity, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
 		case authTypeSignedV2, authTypePresignedV2:
-			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
+			identity, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
 		case authTypePresigned, authTypeSigned:
-			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+			identity, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
 		}
 		if s3ErrCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, s3ErrCode)
 			return
 		}
+		if identity != nil && identity.Account.Id != AccountAnonymous.Id {
+			r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
+		}
 	}
 	defer dataReader.Close()
+
+	errorCode := s3a.CheckAccessForPutObjectPartHandler(r, bucket)
+	if errorCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errorCode)
+		return
+	}
 
 	glog.V(2).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
 

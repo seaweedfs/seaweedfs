@@ -58,7 +58,8 @@ const (
 
 	// http Header "x-amz-content-sha256" == "UNSIGNED-PAYLOAD" indicates that the
 	// client did not calculate sha256 of the payload.
-	unsignedPayload = "UNSIGNED-PAYLOAD"
+	unsignedPayload   = "UNSIGNED-PAYLOAD"
+	expect100Continue = "100-contine"
 )
 
 // Returns SHA256 for calculating canonical-request.
@@ -661,7 +662,12 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 			// be sent, for the time being keep this work around.
 			// Adding a *TODO* to remove this later when Golang server
 			// doesn't filter out the 'Expect' header.
-			extractedSignedHeaders.Set(header, "100-continue")
+			expectHeaderValue := extractedSignedHeaders.Get(header)
+
+			// here in order to be compatible with the aws go sdk v1 version, it sets the expect header to '100-Continue'
+			if !strings.EqualFold(expectHeaderValue, expect100Continue) {
+				extractedSignedHeaders.Set(header, expect100Continue)
+			}
 		case "host":
 			// Go http server removes "host" from Request.Header
 			extractedSignedHeaders.Set(header, r.Host)

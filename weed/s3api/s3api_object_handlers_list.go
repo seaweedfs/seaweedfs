@@ -52,8 +52,13 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
 
-	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys := getListObjectsV2Args(r.URL.Query())
+	_, errCode := s3a.checkAccessForReadBucket(r, bucket, s3_constants.PermissionRead)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
+	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys := getListObjectsV2Args(r.URL.Query())
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
 		return
@@ -106,8 +111,13 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
 
-	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys := getListObjectsV1Args(r.URL.Query())
+	_, errCode := s3a.checkAccessForReadBucket(r, bucket, s3_constants.PermissionRead)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
+	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys := getListObjectsV1Args(r.URL.Query())
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
 		return

@@ -1,11 +1,10 @@
 package s3api
 
 import (
-	"reflect"
-	"testing"
-
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
+	"reflect"
+	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -205,7 +204,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			pbAccount: &pbSpecifiedAccount,
 			pbIdent: &iam_pb.Identity{
 				Name:    "specifiedAccountID",
-				Account: &pbSpecifiedAccount,
+				AccountId: pbSpecifiedAccount.Id,
 				Actions: []string{
 					"Read",
 					"Write",
@@ -250,7 +249,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 	}
 
 	iam := IdentityAccessManagement{}
-	err := iam.loadS3ApiConfiguration(config)
+	err := iam.LoadS3ApiConfiguration(config)
 	if err != nil {
 		return
 	}
