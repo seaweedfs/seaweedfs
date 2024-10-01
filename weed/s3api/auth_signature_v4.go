@@ -664,7 +664,11 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 			extractedSignedHeaders.Set(header, "100-continue")
 		case "host":
 			// Go http server removes "host" from Request.Header
-			extractedSignedHeaders.Set(header, r.Host)
+			if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+				extractedSignedHeaders.Set(header, forwardedFor)
+			} else {
+				extractedSignedHeaders.Set(header, r.Host)
+			}
 		case "transfer-encoding":
 			for _, enc := range r.TransferEncoding {
 				extractedSignedHeaders.Add(header, enc)
