@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
@@ -38,7 +39,11 @@ func (wfs *WFS) subscribeFilerConfEvents() (func(), error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			glog.V(0).Infof("fuse filer conf %s not found", confFullName)
+		} else {
+			return nil, err
+		}
 	}
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
