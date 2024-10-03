@@ -24,3 +24,30 @@ func (s *Schema) GetField(name string) (*schema_pb.Field, bool) {
 	field, ok := s.fieldMap[name]
 	return field, ok
 }
+
+func TypeToString(t *schema_pb.Type) string {
+	switch t.Kind.(type) {
+	case *schema_pb.Type_ScalarType:
+		switch t.GetScalarType() {
+		case schema_pb.ScalarType_BOOL:
+			return "bool"
+		case schema_pb.ScalarType_INT32:
+			return "int32"
+		case schema_pb.ScalarType_INT64:
+			return "int64"
+		case schema_pb.ScalarType_FLOAT:
+			return "float"
+		case schema_pb.ScalarType_DOUBLE:
+			return "double"
+		case schema_pb.ScalarType_BYTES:
+			return "bytes"
+		case schema_pb.ScalarType_STRING:
+			return "string"
+		}
+	case *schema_pb.Type_ListType:
+		return "list"
+	case *schema_pb.Type_RecordType:
+		return "record"
+	}
+	return "unknown"
+}

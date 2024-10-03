@@ -1,6 +1,9 @@
 package topic
 
-import "github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+import (
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+)
 
 const PartitionCount = 4096
 
@@ -80,4 +83,12 @@ func (partition Partition) Overlaps(partition2 Partition) bool {
 		return false
 	}
 	return true
+}
+
+func (partition Partition) String() string {
+	return fmt.Sprintf("%04d-%04d", partition.RangeStart, partition.RangeStop)
+}
+
+func ToString(partition *mq_pb.Partition) string {
+	return fmt.Sprintf("%04d-%04d", partition.RangeStart, partition.RangeStop)
 }
