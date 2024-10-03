@@ -47,3 +47,17 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *http.Request) {
 	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 }
+
+// GetBucketEncryptionHandler Returns the default encryption configuration
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketEncryption.html
+func (s3a *S3ApiServer) GetBucketEncryptionHandler(w http.ResponseWriter, r *http.Request) {
+	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+}
+
+func (s3a *S3ApiServer) PutBucketEncryptionHandler(w http.ResponseWriter, r *http.Request) {
+	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+}
+
+func (s3a *S3ApiServer) DeleteBucketEncryptionHandler(w http.ResponseWriter, r *http.Request) {
+	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+}
