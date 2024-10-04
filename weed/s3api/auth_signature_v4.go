@@ -149,11 +149,11 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	}
 
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
-		// Handling usage of reverse proxy at prefix. Note that it's an undefined behavior for AWS S3 and not supported in MinIO.
+		// Handling usage of reverse proxy at prefix.
 		// Trying with prefix before main path.
 
 		// Get canonical request.
-		canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, forwardedPrefix + req.URL.Path, req.Method)
+		canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, forwardedPrefix+req.URL.Path, req.Method)
 
 		errCode = iam.genAndCompareSignatureV4(canonicalRequest, cred.SecretKey, t, signV4Values)
 		if errCode == s3err.ErrNone {
@@ -686,7 +686,6 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 		case "host":
 			// Go http server removes "host" from Request.Header
 			if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
-				// Trying to use reverse proxy at prefix. Note that it's an undefined behavior for AWS S3 and not supported in MinIO.
 				extractedSignedHeaders.Set(header, forwardedHost)
 			} else if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
 				extractedSignedHeaders.Set(header, forwardedFor)
