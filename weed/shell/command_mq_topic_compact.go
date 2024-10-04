@@ -3,6 +3,8 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/compress/zstd"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
@@ -12,8 +14,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 	"io"
+	"os"
 	"strings"
 	"time"
 )
@@ -131,10 +137,10 @@ func compactTopicPartition(commandEnv *CommandEnv, namespace string, topicName s
 	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", topicDir, partitionVersion, partition.RangeStart, partition.RangeStop)
 
 	// compact the partition directory
-	return compactTopicPartitionDir(commandEnv, partitionDir, recordType)
+	return compactTopicPartitionDir(commandEnv, topicName, partitionDir, recordType)
 }
 
-func compactTopicPartitionDir(commandEnv *CommandEnv, partitionDir string, recordType *schema_pb.RecordType) error {
+func compactTopicPartitionDir(commandEnv *CommandEnv, topicName, partitionDir string, recordType *schema_pb.RecordType) error {
 	// read all log files
 	logFiles, err := readAllLogFiles(commandEnv, partitionDir)
 	if err != nil {
@@ -145,12 +151,24 @@ func compactTopicPartitionDir(commandEnv *CommandEnv, partitionDir string, recor
 	logFileGroups := groupFilesBySize(logFiles, 128*1024*1024)
 
 	// write to parquet file
+	parquetLevels, err := schema.ToParquetLevels(recordType)
+	if err != nil {
+		return fmt.Errorf("ToParquetLevels failed %+v: %v", recordType, err)
+	}
+
+	// create a parquet schema
+	parquetSchema, err := schema.ToParquetSchema(topicName, recordType)
+	if err != nil {
+		return fmt.Errorf("ToParquetSchema failed: %v", err)
+	}
+
 	// TODO parallelize the writing
 	for _, logFileGroup := range logFileGroups {
-		err = writeLogFilesToParquet(commandEnv, partitionDir, recordType, logFileGroup)
+		parquetFileName, err := writeLogFilesToParquet(commandEnv, partitionDir, recordType, logFileGroup, parquetSchema, parquetLevels)
 		if err != nil {
 			return err
 		}
+		fmt.Printf("write to parquet file %s\n", parquetFileName)
 	}
 	return nil
 }
@@ -184,11 +202,147 @@ func readAllLogFiles(commandEnv *CommandEnv, partitionDir string) (logFiles []*f
 	return
 }
 
-func writeLogFilesToParquet(commandEnv *CommandEnv, partitionDir string, recordType *schema_pb.RecordType, logFileGroups []*filer_pb.Entry) error {
+func writeLogFilesToParquet(commandEnv *CommandEnv, partitionDir string, recordType *schema_pb.RecordType, logFileGroups []*filer_pb.Entry, parquetSchema *parquet.Schema, parquetLevels *schema.ParquetLevels) (parquetFileName string, err error) {
+
+	tempFile, err := os.CreateTemp(".", "t*.parquet")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %v", err)
+	}
+	defer tempFile.Close()
+
+	writer := parquet.NewWriter(tempFile, parquetSchema, parquet.Compression(&zstd.Codec{Level: zstd.DefaultLevel}))
+	rowBuilder := parquet.NewRowBuilder(parquetSchema)
+
 	for _, logFile := range logFileGroups {
-		fmt.Printf("compact log file %s\n", logFile.Name)
+		fmt.Printf("compact log file %s/%s\n", partitionDir, logFile.Name)
+		var rows []parquet.Row
+		if err := iterateLogEntries(commandEnv, logFile, func(entry *filer_pb.LogEntry) error {
+
+			println("adding row", string(entry.Key))
+
+			// write to parquet file
+			rowBuilder.Reset()
+
+			record := &schema_pb.RecordValue{}
+			if err := proto.Unmarshal(entry.Data, record); err != nil {
+				return fmt.Errorf("unmarshal record value: %v", err)
+			}
+
+			if err := schema.AddRecordValue(rowBuilder, recordType, parquetLevels, record); err != nil {
+				return fmt.Errorf("add record value: %v", err)
+			}
+
+			rows = append(rows, rowBuilder.Row())
+
+			return nil
+
+		}); err != nil {
+			return "", fmt.Errorf("iterate log entry %v/%v: %v", partitionDir, logFile.Name, err)
+		}
+
+		println("writing rows", len(rows))
+
+		if _, err := writer.WriteRows(rows); err != nil {
+			return "", fmt.Errorf("write rows: %v", err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("close writer: %v", err)
 	}
 
 	// write to parquet file to partitionDir
-	return nil
+	return tempFile.Name(), nil
+}
+
+func iterateLogEntries(commandEnv *CommandEnv, logFile *filer_pb.Entry, eachLogEntryFn func(entry *filer_pb.LogEntry) error) error {
+
+	_, err := eachFile(logFile, func(fileId string) (targetUrls []string, err error) {
+		println("lookup file id", fileId)
+		return commandEnv.MasterClient.LookupFileId(fileId)
+	}, func(logEntry *filer_pb.LogEntry) (isDone bool, err error) {
+		if err := eachLogEntryFn(logEntry); err != nil {
+			return true, err
+		}
+		return false, nil
+	})
+	return err
+}
+
+func eachFile(entry *filer_pb.Entry, lookupFileIdFn func(fileId string) (targetUrls []string, err error), eachLogEntryFn log_buffer.EachLogEntryFuncType) (processedTsNs int64, err error) {
+	if len(entry.Content) > 0 {
+		// skip .offset files
+		return
+	}
+	var urlStrings []string
+	for _, chunk := range entry.Chunks {
+		if chunk.Size == 0 {
+			continue
+		}
+		if chunk.IsChunkManifest {
+			fmt.Printf("this should not happen. unexpected chunk manifest in %s", entry.Name)
+			return
+		}
+		urlStrings, err = lookupFileIdFn(chunk.FileId)
+		if err != nil {
+			err = fmt.Errorf("lookup %s: %v", chunk.FileId, err)
+			return
+		}
+		if len(urlStrings) == 0 {
+			err = fmt.Errorf("no url found for %s", chunk.FileId)
+			return
+		}
+
+		// try one of the urlString until util.Get(urlString) succeeds
+		var processed bool
+		for _, urlString := range urlStrings {
+			println("reading url", urlString)
+			var data []byte
+			if data, _, err = util_http.Get(urlString); err == nil {
+				processed = true
+				if processedTsNs, err = eachChunk(data, eachLogEntryFn); err != nil {
+					return
+				}
+				break
+			}
+			println("processed log data", len(data))
+		}
+		if !processed {
+			err = fmt.Errorf("no data processed for %s %s", entry.Name, chunk.FileId)
+			return
+		}
+
+	}
+	return
+}
+
+func eachChunk(buf []byte, eachLogEntryFn log_buffer.EachLogEntryFuncType) (processedTsNs int64, err error) {
+	for pos := 0; pos+4 < len(buf); {
+
+		size := util.BytesToUint32(buf[pos : pos+4])
+		if pos+4+int(size) > len(buf) {
+			err = fmt.Errorf("LogOnDiskReadFunc: read [%d,%d) from [0,%d)", pos, pos+int(size)+4, len(buf))
+			return
+		}
+		entryData := buf[pos+4 : pos+4+int(size)]
+
+		logEntry := &filer_pb.LogEntry{}
+		if err = proto.Unmarshal(entryData, logEntry); err != nil {
+			pos += 4 + int(size)
+			err = fmt.Errorf("unexpected unmarshal mq_pb.Message: %v", err)
+			return
+		}
+
+		if _, err = eachLogEntryFn(logEntry); err != nil {
+			err = fmt.Errorf("process log entry %v: %v", logEntry, err)
+			return
+		}
+
+		processedTsNs = logEntry.TsNs
+
+		pos += 4 + int(size)
+
+	}
+
+	return
 }
