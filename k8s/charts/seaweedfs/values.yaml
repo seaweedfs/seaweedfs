@@ -301,9 +301,9 @@ volume:
   #   - name: data
   #     type: "emptyDir"
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
-  # 
+  #
   # If these don't meet your needs, you can use "custom" here along with extraVolumes and extraVolumeMounts
-  # Particularly useful when using more than 1 for the volume server replicas. 
+  # Particularly useful when using more than 1 for the volume server replicas.
   #   - name: data
   #     type: "custom"
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
@@ -394,7 +394,7 @@ volume:
   #     subPathExpr: $(POD_NAME)
   # extraVolumes: |
   #   - name: drive
-  #     hostPath: 
+  #     hostPath:
   #       path: /var/mnt/
   extraVolumes: ""
   extraVolumeMounts: ""
