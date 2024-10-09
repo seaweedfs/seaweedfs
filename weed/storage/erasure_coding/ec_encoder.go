@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/klauspost/reedsolomon"
 
@@ -231,29 +232,38 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 		return err
 	}
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errors = make([]error, 0)
+	wg.Add(TotalShardsCount)
+
 	for i := 0; i < TotalShardsCount; i++ {
-		//_, err := outputs[i].Write(buffers[i])
-		//if err != nil {
-		//	return err
-		//}
-		client := clients[uint32(i)]
-		if !client.IsRun {
-			return fmt.Errorf("client is close:%s", client.Address)
-		}
-		//fmt.Println("start send :", client.Address)
-		clientErr := client.Client.Send(&volume_server_pb.UploadFileRequest{
-			Collection:  collection,
-			VolumeId:    volumeId,
-			Ext:         ToExt(i),
-			FileContent: buffers[i],
-		})
-		//fmt.Println("send end :", client.Address)
-		if clientErr != nil {
-			return err
-		}
-		//save to target volumes
+		go func(bytes []byte, index int, client volume_info.UploadFileClient, collection string, volumeId uint32) {
+			defer wg.Done()
+			if !client.IsRun {
+				mu.Lock()
+				errors = append(errors, fmt.Errorf("client is close:%s", client.Address))
+				mu.Unlock()
+				return
+			}
+			clientErr := client.Client.Send(&volume_server_pb.UploadFileRequest{
+				Collection:  collection,
+				VolumeId:    volumeId,
+				Ext:         ToExt(index),
+				FileContent: bytes,
+			})
+			if clientErr != nil {
+				mu.Lock()
+				errors = append(errors, clientErr)
+				mu.Unlock()
+			}
+		}(buffers[i], i, clients[uint32(i)], collection, volumeId)
 	}
 
+	wg.Wait()
+	if len(errors) > 0 {
+		return errors[0]
+	}
 	return nil
 }
 
@@ -273,9 +283,9 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 
 	//outputs, err := openEcClients(baseFileName, ecIds)
 	//defer closeEcFiles(outputs)
-	if err != nil {
-		return fmt.Errorf("failed to open ec files %s: %v", baseFileName, err)
-	}
+	//if err != nil {
+	//	return fmt.Errorf("failed to open ec files %s: %v", baseFileName, err)
+	//}
 
 	for remainingSize > largeBlockSize*DataShardsCount {
 		err = encodeData(file, enc, processedSize, largeBlockSize, buffers, clients, collection, volumeId)
