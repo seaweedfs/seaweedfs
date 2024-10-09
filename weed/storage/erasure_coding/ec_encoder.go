@@ -254,7 +254,7 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 			})
 			if clientErr != nil {
 				mu.Lock()
-				errors = append(errors, fmt.Errorf("client error:%v", clientErr))
+				errors = append(errors, fmt.Errorf("client error:%v, client:%s", clientErr, client.Address))
 				mu.Unlock()
 			}
 		}(buffers[i], i, clients[uint32(i)], collection, volumeId)
