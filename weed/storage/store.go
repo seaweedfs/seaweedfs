@@ -260,6 +260,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		var deleteVids []needle.VolumeId
 		maxVolumeCounts[string(location.DiskType)] += uint32(location.MaxVolumeCount)
 		location.volumesLock.RLock()
+		//if len(location.volumes) > 0 {
+		//	fmt.Printf("store location, directory:%s, volumes:%v \n", location.Directory, maps.Keys(location.volumes))
+		//}
 		for _, v := range location.volumes {
 			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
 			if volumeMessage == nil {
@@ -326,7 +329,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			// delete expired volumes.
 			location.volumesLock.Lock()
 			for _, vid := range deleteVids {
-				found, err := location.deleteVolumeById(vid, false)
+				found, err := location.deleteVolumeById(vid, false, false)
 				if err == nil {
 					if found {
 						glog.V(0).Infof("volume %d is deleted", vid)
@@ -348,6 +351,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	}
 
 	for col, size := range collectionVolumeSize {
+		//fmt.Printf("collectionVolumeSize collection:%s, size:%v \n", col, float64(size))
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
 	}
 
@@ -546,7 +550,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 	return fmt.Errorf("volume %d not found on disk", i)
 }
 
-func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool) error {
+func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, afterEc bool) error {
 	v := s.findVolume(i)
 	if v == nil {
 		return fmt.Errorf("delete volume %d not found on disk", i)
@@ -559,8 +563,9 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool) error {
 		Ttl:              v.Ttl.ToUint32(),
 		DiskType:         string(v.location.DiskType),
 	}
+
 	for _, location := range s.Locations {
-		err := location.DeleteVolume(i, onlyEmpty)
+		err := location.DeleteVolume(i, onlyEmpty, afterEc)
 		if err == nil {
 			glog.V(0).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message

@@ -53,6 +53,8 @@ service VolumeServer {
     }
     rpc CopyFile (CopyFileRequest) returns (stream CopyFileResponse) {
     }
+    rpc UploadFile (stream UploadFileRequest) returns (UploadFileResponse) {
+    }
 
     rpc ReadNeedleBlob (ReadNeedleBlobRequest) returns (ReadNeedleBlobResponse) {
     }
@@ -220,6 +222,7 @@ message VolumeUnmountResponse {
 message VolumeDeleteRequest {
     uint32 volume_id = 1;
     bool only_empty = 2;
+    bool after_ec = 3;
 }
 message VolumeDeleteResponse {
 }
@@ -281,6 +284,17 @@ message CopyFileRequest {
 message CopyFileResponse {
     bytes file_content = 1;
     int64 modified_ts_ns = 2;
+}
+
+message UploadFileRequest {
+    uint32 volume_id = 1;
+    string ext = 2;
+    string collection = 3;
+    string directory = 4;
+    bytes file_content = 5;
+}
+message UploadFileResponse {
+    string Message = 1;
 }
 
 message ReadNeedleBlobRequest {
@@ -350,9 +364,14 @@ message VolumeTailReceiverRequest {
 message VolumeTailReceiverResponse {
 }
 
+message EcIds {
+    repeated uint32 shardIds = 1;
+}
+
 message VolumeEcShardsGenerateRequest {
     uint32 volume_id = 1;
     string collection = 2;
+    map<string, EcIds> allocatedEcIds = 3;
 }
 message VolumeEcShardsGenerateResponse {
 }
@@ -376,6 +395,20 @@ message VolumeEcShardsCopyRequest {
 }
 message VolumeEcShardsCopyResponse {
 }
+
+message VolumeEcShardsUploadRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    repeated uint32 shard_ids = 3;
+    bool copy_ecx_file = 4;
+    string source_data_node = 5;
+    bool copy_ecj_file = 6;
+    bool copy_vif_file = 7;
+}
+message VolumeEcShardsUploadResponse {
+}
+
+
 
 message VolumeEcShardsDeleteRequest {
     uint32 volume_id = 1;

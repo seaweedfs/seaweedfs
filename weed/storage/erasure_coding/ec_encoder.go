@@ -2,6 +2,8 @@ package erasure_coding
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"io"
 	"os"
 
@@ -22,8 +24,52 @@ const (
 	ErasureCodingSmallBlockSize = 1024 * 1024        // 1MB
 )
 
-// WriteSortedFileFromIdx generates .ecx file from existing .idx file
+// UploadSortedFileFromIdx generates .ecx file from existing .idx file
 // all keys are sorted in ascending order
+func UploadSortedFileFromIdx(baseFileName string, collection string, volumeId uint32, ext string, clients []volume_info.UploadFileClient) (e error) {
+
+	nm, err := readNeedleMap(baseFileName)
+	if nm != nil {
+		defer nm.Close()
+	}
+	if err != nil {
+		return fmt.Errorf("readNeedleMap: %v", err)
+	}
+
+	//ecxFile, err := os.OpenFile(baseFileName+ext, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	//if err != nil {
+	//	return fmt.Errorf("failed to open ecx file: %v", err)
+	//}
+	//defer ecxFile.Close()
+
+	err = nm.AscendingVisit(func(value needle_map.NeedleValue) error {
+		bytes := value.ToBytes()
+
+		for _, client := range clients {
+			if !client.IsRun {
+				return fmt.Errorf("client is close:%s", client.Address)
+			}
+			//fmt.Printf("client:%s , volume:%d, ext:%s\n", client.Address, volumeId, ext)
+			clientErr := client.Client.Send(&volume_server_pb.UploadFileRequest{
+				Collection:  collection,
+				VolumeId:    volumeId,
+				Ext:         ext,
+				FileContent: bytes,
+			})
+			if clientErr != nil {
+				return clientErr
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to visit idx file: %v", err)
+	}
+
+	return nil
+}
+
 func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 
 	nm, err := readNeedleMap(baseFileName)
@@ -53,9 +99,9 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 	return nil
 }
 
-// WriteEcFiles generates .ec00 ~ .ec13 files
-func WriteEcFiles(baseFileName string) error {
-	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)
+// UploadEcFiles generates .ec00 ~ .ec13 files
+func UploadEcFiles(baseFileName string, clients map[uint32]volume_info.UploadFileClient, collection string, volumeId uint32) error {
+	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, clients, collection, volumeId)
 }
 
 func RebuildEcFiles(baseFileName string) ([]uint32, error) {
@@ -66,7 +112,7 @@ func ToExt(ecIndex int) string {
 	return fmt.Sprintf(".ec%02d", ecIndex)
 }
 
-func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64) error {
+func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, clients map[uint32]volume_info.UploadFileClient, collection string, volumeId uint32) error {
 	file, err := os.OpenFile(baseFileName+".dat", os.O_RDONLY, 0)
 	if err != nil {
 		return fmt.Errorf("failed to open dat file: %v", err)
@@ -79,7 +125,7 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 	}
 
 	glog.V(0).Infof("encodeDatFile %s.dat size:%d", baseFileName, fi.Size())
-	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize)
+	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize, clients, collection, volumeId)
 	if err != nil {
 		return fmt.Errorf("encodeDatFile: %v", err)
 	}
@@ -117,7 +163,7 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 	return
 }
 
-func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, outputs []*os.File) error {
+func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, clients map[uint32]volume_info.UploadFileClient, collection string, volumeId uint32) error {
 
 	bufferSize := int64(len(buffers[0]))
 	if bufferSize == 0 {
@@ -130,7 +176,7 @@ func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize i
 	}
 
 	for b := int64(0); b < batchCount; b++ {
-		err := encodeDataOneBatch(file, enc, startOffset+b*bufferSize, blockSize, buffers, outputs)
+		err := encodeDataOneBatch(file, enc, startOffset+b*bufferSize, blockSize, buffers, clients, collection, volumeId)
 		if err != nil {
 			return err
 		}
@@ -163,7 +209,7 @@ func closeEcFiles(files []*os.File) {
 	}
 }
 
-func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, outputs []*os.File) error {
+func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, clients map[uint32]volume_info.UploadFileClient, collection string, volumeId uint32) error {
 
 	// read data into buffers
 	for i := 0; i < DataShardsCount; i++ {
@@ -186,16 +232,32 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 	}
 
 	for i := 0; i < TotalShardsCount; i++ {
-		_, err := outputs[i].Write(buffers[i])
-		if err != nil {
+		//_, err := outputs[i].Write(buffers[i])
+		//if err != nil {
+		//	return err
+		//}
+		client := clients[uint32(i)]
+		if !client.IsRun {
+			return fmt.Errorf("client is close:%s", client.Address)
+		}
+		//fmt.Println("start send :", client.Address)
+		clientErr := client.Client.Send(&volume_server_pb.UploadFileRequest{
+			Collection:  collection,
+			VolumeId:    volumeId,
+			Ext:         ToExt(i),
+			FileContent: buffers[i],
+		})
+		//fmt.Println("send end :", client.Address)
+		if clientErr != nil {
 			return err
 		}
+		//save to target volumes
 	}
 
 	return nil
 }
 
-func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, largeBlockSize int64, file *os.File, smallBlockSize int64) error {
+func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, largeBlockSize int64, file *os.File, smallBlockSize int64, clients map[uint32]volume_info.UploadFileClient, collection string, volumeId uint32) error {
 
 	var processedSize int64
 
@@ -209,14 +271,14 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 		buffers[i] = make([]byte, bufferSize)
 	}
 
-	outputs, err := openEcFiles(baseFileName, false)
-	defer closeEcFiles(outputs)
+	//outputs, err := openEcClients(baseFileName, ecIds)
+	//defer closeEcFiles(outputs)
 	if err != nil {
 		return fmt.Errorf("failed to open ec files %s: %v", baseFileName, err)
 	}
 
 	for remainingSize > largeBlockSize*DataShardsCount {
-		err = encodeData(file, enc, processedSize, largeBlockSize, buffers, outputs)
+		err = encodeData(file, enc, processedSize, largeBlockSize, buffers, clients, collection, volumeId)
 		if err != nil {
 			return fmt.Errorf("failed to encode large chunk data: %v", err)
 		}
@@ -224,7 +286,7 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 		processedSize += largeBlockSize * DataShardsCount
 	}
 	for remainingSize > 0 {
-		err = encodeData(file, enc, processedSize, smallBlockSize, buffers, outputs)
+		err = encodeData(file, enc, processedSize, smallBlockSize, buffers, clients, collection, volumeId)
 		if err != nil {
 			return fmt.Errorf("failed to encode small chunk data: %v", err)
 		}

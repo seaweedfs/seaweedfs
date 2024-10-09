@@ -82,3 +82,48 @@ func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) er
 
 	return nil
 }
+
+func UploadVolumeInfo(fileName string, collection string, volumeId uint32, ext string, volumeInfo *volume_server_pb.VolumeInfo, clients []UploadFileClient) error {
+
+	if exists, _, canWrite, _, _ := util.CheckFile(fileName); exists && !canWrite {
+		return fmt.Errorf("failed to check %s not writable", fileName)
+	}
+
+	m := jsonpb.MarshalOptions{
+		AllowPartial:    true,
+		EmitUnpopulated: true,
+		Indent:          "  ",
+	}
+
+	text, marshalErr := m.Marshal(volumeInfo)
+	if marshalErr != nil {
+		return fmt.Errorf("failed to marshal %s: %v", fileName, marshalErr)
+	}
+	for _, client := range clients {
+		if !client.IsRun {
+			return fmt.Errorf("client is close:%s", client.Address)
+		}
+		fmt.Printf("vif send,client:%s, vid:%d, ext:%s \n", client.Address, volumeId, ext)
+		clientErr := client.Client.Send(&volume_server_pb.UploadFileRequest{
+			Collection:  collection,
+			VolumeId:    volumeId,
+			Ext:         ext,
+			FileContent: text,
+		})
+		if clientErr != nil {
+			return fmt.Errorf("client send error ext: %s: %v", ext, clientErr)
+		}
+	}
+	//if err := util.WriteFile(fileName, text, 0644); err != nil {
+	//	return fmt.Errorf("failed to write %s: %v", fileName, err)
+	//}
+
+	return nil
+}
+
+type UploadFileClient struct {
+	Client  volume_server_pb.VolumeServer_UploadFileClient
+	Address string
+	IsRun   bool
+	Close   chan bool
+}

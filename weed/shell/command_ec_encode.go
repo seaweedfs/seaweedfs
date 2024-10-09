@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,6 +71,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
 	parallelCopy := encodeCommand.Bool("parallelCopy", true, "copy shards in parallel")
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
+	concurrentNumber := encodeCommand.Int("concurrentNumber", 3, "limit total concurrent ec.encode volume number (default 3)")
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -98,7 +101,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// volumeId is provided
 	if vid != 0 {
-		return doEcEncode(commandEnv, *collection, vid, *parallelCopy)
+		return doEcEncode(commandEnv, *collection, vid, []wdclient.Location{}, wdclient.Location{}, *parallelCopy)
 	}
 
 	// apply to all volumes in the collection
@@ -106,67 +109,196 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	if err != nil {
 		return err
 	}
-	fmt.Printf("ec encode volumes: %v\n", volumeIds)
-	for _, vid := range volumeIds {
-		if err = doEcEncode(commandEnv, *collection, vid, *parallelCopy); err != nil {
-			return err
-		}
+	//A maximum of 3 volumes can be processed at one time
+	maxProcessNum := *concurrentNumber
+	fmt.Printf("ec encode volumes: %v, concurrent number:%d \n", volumeIds, maxProcessNum)
+	processVolumeIds := volumeIds
+	if len(volumeIds) > maxProcessNum {
+		processVolumeIds = volumeIds[0:maxProcessNum]
+	}
+	//load balancing for servers
+	volumeLocationsMap, volumeChooseLocationMap := chooseLocationForVolumes(commandEnv, processVolumeIds)
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errors = make([]error, 0)
+	wg.Add(len(processVolumeIds))
+
+	for _, vid := range processVolumeIds {
+		locations := volumeLocationsMap[vid]
+		chooseLoc := volumeChooseLocationMap[vid]
+		go func() {
+			defer wg.Done()
+			if err = doEcEncode(commandEnv, *collection, vid, locations, chooseLoc, *parallelCopy); err != nil {
+				mu.Lock()
+				errors = append(errors, err)
+				fmt.Printf("doEcEncode error:%v \n", err)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if len(errors) > 0 {
+		return errors[0]
 	}
 
 	return nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, parallelCopy bool) (err error) {
+// 递归函数用于获取数组的排列组合
+func permute(arr []int, n int, result *[][]int) {
+
+	if n == 1 {
+		// 输出单个元素的情况
+		//fmt.Println(arr)
+		temp := make([]int, len(arr))
+		copy(temp, arr)
+		*result = append(*result, temp)
+		return
+	} else {
+		// 对于每个元素，交换并递归
+		for i := 0; i < n; i++ {
+			permute(arr, n-1, result)
+			if n%2 == 1 {
+				// 对于奇数位置交换
+				arr[0], arr[n-1] = arr[n-1], arr[0]
+			} else {
+				// 对于偶数位置交换
+				arr[i], arr[n-1] = arr[n-1], arr[i]
+			}
+		}
+	}
+	return
+}
+
+// server IP display times in volumes. if times is more, The lower the priority
+func chooseLocationForVolumes(commandEnv *CommandEnv, volumeIds []needle.VolumeId) (map[needle.VolumeId][]wdclient.Location, map[needle.VolumeId]wdclient.Location) {
+	var serversDisplayTimesInVolumes = make(map[string]uint32)
+	var volumeLocationsMap = make(map[needle.VolumeId][]wdclient.Location)
+	var volumeChooseLocationMap = make(map[needle.VolumeId]wdclient.Location)
+	//1-192.168.3.74 = []
+	for _, vid := range volumeIds {
+		locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
+		if !found {
+			continue
+		}
+		volumeLocationsMap[vid] = locations
+		for _, loc := range locations {
+			serverIp := splitIP(loc.Url)
+			if len(serverIp) <= 0 {
+				fmt.Printf("loc url is err:%s", loc.Url)
+				continue
+			}
+			//init 1 times
+			serversDisplayTimesInVolumes[serverIp] = uint32(1)
+		}
+	}
+	var intVolumeIds = make([]int, 0)
+	for _, vid := range volumeIds {
+		intVolumeIds = append(intVolumeIds, int(vid))
+	}
+
+	sort.Ints(intVolumeIds)
+	//startIndex := rand.IntN(len(intVolumeIds) - 1)
+	var permuteResult [][]int
+	permute(intVolumeIds, len(intVolumeIds), &permuteResult)
+
+	for _, currentVolumeIds := range permuteResult {
+		volumeChooseLocationMap = make(map[needle.VolumeId]wdclient.Location)
+		for key, _ := range serversDisplayTimesInVolumes {
+			serversDisplayTimesInVolumes[key] = uint32(1)
+		}
+		for _, vid := range currentVolumeIds {
+			locations := volumeLocationsMap[needle.VolumeId(vid)]
+			if len(locations) == 0 {
+				continue
+			}
+			var times = uint32(1000)
+			var chooseLoc = wdclient.Location{}
+			for _, loc := range locations {
+				serverIp := splitIP(loc.Url)
+				if len(serverIp) <= 0 {
+					fmt.Printf("loc url is err:%s", loc.Url)
+					continue
+				}
+				locTimes := serversDisplayTimesInVolumes[serverIp]
+				if locTimes < times {
+					times = locTimes
+					chooseLoc = loc
+				}
+			}
+			volumeChooseLocationMap[needle.VolumeId(vid)] = chooseLoc
+			//////
+			serverIp := splitIP(chooseLoc.Url)
+			var newTimes = uint32(0)
+			if v, b := serversDisplayTimesInVolumes[serverIp]; b {
+				newTimes = v
+			}
+			newTimes++
+			serversDisplayTimesInVolumes[serverIp] = newTimes
+		}
+
+		if checkFillFullServers(volumeChooseLocationMap, len(serversDisplayTimesInVolumes)) {
+			break
+		}
+	}
+	return volumeLocationsMap, volumeChooseLocationMap
+}
+
+func checkFillFullServers(mapLocation map[needle.VolumeId]wdclient.Location, serverLength int) bool {
+	var servers = make(map[string]uint32)
+	for _, loc := range mapLocation {
+		serverIp := splitIP(loc.Url)
+		servers[serverIp] = uint32(1)
+	}
+
+	return len(servers) == serverLength
+}
+
+func splitIP(url string) string {
+	parts := strings.Split(url, ":")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[0]
+}
+
+func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []wdclient.Location, chooseLoc wdclient.Location, parallelCopy bool) (err error) {
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
-
-	// find volume location
-	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
-	if !found {
-		return fmt.Errorf("volume %d not found", vid)
+	if len(locations) == 0 {
+		var found = false
+		locations, found = commandEnv.MasterClient.GetLocationsClone(uint32(vid))
+		if !found {
+			return fmt.Errorf("volume %d not found", vid)
+		}
+		chooseLoc = locations[0]
 	}
-
-	// fmt.Printf("found ec %d shards on %v\n", vid, locations)
-
 	// mark the volume as readonly
 	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false, false)
 	if err != nil {
-		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
+		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, chooseLoc.Url, err)
 	}
 
 	// generate ec shards
-	err = generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].ServerAddress())
+	err = generateAndMountEcShards(commandEnv, vid, collection, chooseLoc.ServerAddress())
 	if err != nil {
-		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, locations[0].Url, err)
+		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, chooseLoc.Url, err)
 	}
 
 	// balance the ec shards to current cluster
-	err = spreadEcShards(commandEnv, vid, collection, locations, parallelCopy)
+	err = spreadEcShards(commandEnv, vid, collection, locations, chooseLoc, parallelCopy)
 	if err != nil {
-		return fmt.Errorf("spread ec shards for volume %d from %s: %v", vid, locations[0].Url, err)
+		return fmt.Errorf("spread ec shards for volume %d from %s: %v", vid, chooseLoc.Url, err)
 	}
 
 	return nil
 }
 
-func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {
+func generateAndMountEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {
 
 	fmt.Printf("generateEcShards %s %d on %s ...\n", collection, volumeId, sourceVolumeServer)
-
-	err := operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		_, genErr := volumeServerClient.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
-			VolumeId:   uint32(volumeId),
-			Collection: collection,
-		})
-		return genErr
-	})
-
-	return err
-
-}
-
-func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location, parallelCopy bool) (err error) {
 
 	allEcNodes, totalFreeEcSlots, err := collectEcNodes(commandEnv, "")
 	if err != nil {
@@ -176,36 +308,129 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 	if totalFreeEcSlots < erasure_coding.TotalShardsCount {
 		return fmt.Errorf("not enough free ec shard slots. only %d left", totalFreeEcSlots)
 	}
-	allocatedDataNodes := allEcNodes
+	//Ensure EcNodes come from different rack, Prevent uneven distribution
+	allocatedDataNodes := getEcNodesMustDifferentRacks(allEcNodes)
 	if len(allocatedDataNodes) > erasure_coding.TotalShardsCount {
 		allocatedDataNodes = allocatedDataNodes[:erasure_coding.TotalShardsCount]
 	}
 
 	// calculate how many shards to allocate for these servers
-	allocatedEcIds := balancedEcDistribution(allocatedDataNodes)
+	allocatedEcIds, allocatedNodes := balancedEcDistribution2(allocatedDataNodes)
+
+	err2 := operation.WithVolumeServerClient(false, sourceVolumeServer, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		_, genErr := volumeServerClient.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
+			VolumeId:       uint32(volumeId),
+			Collection:     collection,
+			AllocatedEcIds: allocatedEcIds,
+		})
+		return genErr
+	})
+
+	if err2 == nil {
+		//mount
+		for key, _ := range allocatedNodes {
+			mountErr := mountEcShards(commandEnv.option.GrpcDialOption, collection, volumeId, pb.ServerAddress(key), allocatedEcIds[key].GetShardIds())
+			if mountErr != nil {
+				err2 = fmt.Errorf("mount %d.%v on %s : %v\n", volumeId, allocatedEcIds[key].GetShardIds(), key, mountErr)
+			}
+		}
+		//add ec shards
+		for key, server := range allocatedNodes {
+			server.addEcVolumeShards(volumeId, collection, allocatedEcIds[key].GetShardIds())
+		}
+	}
+
+	cleanupFunc := func(server *EcNode, allocatedEcShardIds []uint32) {
+		if err := unmountEcShards(commandEnv.option.GrpcDialOption, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
+			fmt.Printf("unmount aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
+		}
+		if err := sourceServerDeleteEcShards(commandEnv.option.GrpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
+			fmt.Printf("remove aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
+		}
+	}
+
+	if err2 != nil {
+		for i, server := range allocatedNodes {
+			if len(allocatedEcIds[i].GetShardIds()) <= 0 {
+				continue
+			}
+			cleanupFunc(server, allocatedEcIds[i].GetShardIds())
+		}
+	}
+
+	return err2
+
+}
+
+func getEcNodesMustDifferentRacks(allEcNodes []*EcNode) []*EcNode {
+	racks := collectRacks(allEcNodes)
+	// calculate average number of shards an ec rack should have for one volume
+	averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
+	var rackEcNodes = make(map[string][]*EcNode)
+	for _, node := range allEcNodes {
+		if _, b := rackEcNodes[string(node.rack)]; !b {
+			arr := make([]*EcNode, 0)
+			rackEcNodes[string(node.rack)] = arr
+		}
+		if len(rackEcNodes[string(node.rack)]) >= averageShardsPerEcRack {
+			continue
+		}
+		rackEcNodes[string(node.rack)] = append(rackEcNodes[string(node.rack)], node)
+	}
+	rackNodesSlice := make([]*EcNode, 0)
+	for _, value := range rackEcNodes {
+		for _, node := range value {
+			rackNodesSlice = append(rackNodesSlice, node)
+		}
+	}
+
+	sortEcNodesByFreeslotsDescending(rackNodesSlice)
+
+	return rackNodesSlice
+}
+
+func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location, chooseLoc wdclient.Location, parallelCopy bool) (err error) {
+
+	//allEcNodes, totalFreeEcSlots, err := collectEcNodes(commandEnv, "")
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//if totalFreeEcSlots < erasure_coding.TotalShardsCount {
+	//	return fmt.Errorf("not enough free ec shard slots. only %d left", totalFreeEcSlots)
+	//}
+	//Ensure EcNodes come from different rack, Prevent uneven distribution
+	//allocatedDataNodes := getEcNodesMustDifferentRacks(allEcNodes)
+	//if len(allocatedDataNodes) > erasure_coding.TotalShardsCount {
+	//	allocatedDataNodes = allocatedDataNodes[:erasure_coding.TotalShardsCount]
+	//}
+
+	// calculate how many shards to allocate for these servers
+	//allocatedEcIds := balancedEcDistribution(allocatedDataNodes)
 
 	// ask the data nodes to copy from the source volume server
-	copiedShardIds, err := parallelCopyEcShardsFromSource(commandEnv.option.GrpcDialOption, allocatedDataNodes, allocatedEcIds, volumeId, collection, existingLocations[0], parallelCopy)
-	if err != nil {
-		return err
-	}
+	//copiedShardIds, err := parallelCopyEcShardsFromSource(commandEnv.option.GrpcDialOption, allocatedDataNodes, allocatedEcIds, volumeId, collection, chooseLoc, parallelCopy)
+	//if err != nil {
+	//	return err
+	//}
 
 	// unmount the to be deleted shards
-	err = unmountEcShards(commandEnv.option.GrpcDialOption, volumeId, existingLocations[0].ServerAddress(), copiedShardIds)
-	if err != nil {
-		return err
-	}
+	//err = unmountEcShards(commandEnv.option.GrpcDialOption, volumeId, chooseLoc.ServerAddress(), copiedShardIds)
+	//if err != nil {
+	//	return err
+	//}
 
 	// ask the source volume server to clean up copied ec shards
-	err = sourceServerDeleteEcShards(commandEnv.option.GrpcDialOption, collection, volumeId, existingLocations[0].ServerAddress(), copiedShardIds)
-	if err != nil {
-		return fmt.Errorf("source delete copied ecShards %s %d.%v: %v", existingLocations[0].Url, volumeId, copiedShardIds, err)
-	}
+	//err = sourceServerDeleteEcShards(commandEnv.option.GrpcDialOption, collection, volumeId, chooseLoc.ServerAddress(), copiedShardIds)
+	//if err != nil {
+	//	return fmt.Errorf("source delete copied ecShards %s %d.%v: %v", chooseLoc.Url, volumeId, copiedShardIds, err)
+	//}
 
 	// ask the source volume server to delete the original volume
 	for _, location := range existingLocations {
 		fmt.Printf("delete volume %d from %s\n", volumeId, location.Url)
-		err = deleteVolume(commandEnv.option.GrpcDialOption, volumeId, location.ServerAddress(), false)
+		//can't delete vif file after ec volume delete
+		err = deleteVolumeAfterEc(commandEnv.option.GrpcDialOption, volumeId, location.ServerAddress(), true)
 		if err != nil {
 			return fmt.Errorf("deleteVolume %s volume %d: %v", location.Url, volumeId, err)
 		}
@@ -217,7 +442,7 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 
 func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServers []*EcNode, allocatedEcIds [][]uint32, volumeId needle.VolumeId, collection string, existingLocation wdclient.Location, parallelCopy bool) (actuallyCopied []uint32, err error) {
 
-	fmt.Printf("parallelCopyEcShardsFromSource %d %s\n", volumeId, existingLocation.Url)
+	fmt.Printf("parallelCopyEcShardsFromSource, %d %s, targetServers: %+v, allocatedEcIds: %v\n", volumeId, existingLocation.Url, targetServers, allocatedEcIds)
 
 	var wg sync.WaitGroup
 	shardIdChan := make(chan []uint32, len(targetServers))
@@ -290,6 +515,32 @@ func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
 	}
 
 	return allocated
+}
+
+func balancedEcDistribution2(servers []*EcNode) (map[string]*volume_server_pb.EcIds, map[string]*EcNode) {
+	allocated := make(map[string]*volume_server_pb.EcIds, len(servers))
+	allocatedNodes := make(map[string]*EcNode, len(servers))
+	allocatedShardIdIndex := uint32(0)
+	serverIndex := rand.Intn(len(servers))
+	for allocatedShardIdIndex < erasure_coding.TotalShardsCount {
+		node := servers[serverIndex]
+		serverAddress := pb.NewServerAddressWithGrpcPort(node.info.Id, int(node.info.GrpcPort))
+		key := serverAddress.String()
+		if node.freeEcSlot > 0 {
+			if _, b := allocated[key]; !b {
+				allocated[key] = &volume_server_pb.EcIds{ShardIds: make([]uint32, 0)}
+			}
+			allocated[key].ShardIds = append(allocated[key].ShardIds, allocatedShardIdIndex)
+			allocatedNodes[key] = node
+			allocatedShardIdIndex++
+		}
+		serverIndex++
+		if serverIndex >= len(servers) {
+			serverIndex = 0
+		}
+	}
+
+	return allocated, allocatedNodes
 }
 
 func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {

@@ -32,7 +32,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 		glog.V(0).Infof("volume %d already exists. deleted before copying...", req.VolumeId)
 
-		err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false)
+		err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false)
 		if err != nil {
 			return fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, err)
 		}

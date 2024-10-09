@@ -68,41 +68,87 @@
     </div>
 
     <div class="row">
-        <h2>Topology</h2>
-        <table class="table table-striped">
-            <thead>
-            <tr>
-                <th>Data Center</th>
-                <th>Rack</th>
-                <th>RemoteAddr</th>
-                <th>#Volumes</th>
-                <th>Volume Ids</th>
-                <th>#ErasureCodingShards</th>
-                <th>Max</th>
-            </tr>
-            </thead>
-            <tbody>
-            {{ range $dc_index, $dc := .Topology.DataCenters }}
-            {{ range $rack_index, $rack := $dc.Racks }}
-            {{ range $dn_index, $dn := $rack.DataNodes }}
-            <tr>
-                <td><code>{{ $dc.Id }}</code></td>
-                <td>{{ $rack.Id }}</td>
-                <td><a href="http://{{ $dn.Url }}/ui/index.html">{{ $dn.Url }}</a>
-                    {{ if ne $dn.PublicUrl $dn.Url }}
-                    / <a href="http://{{ $dn.PublicUrl }}/ui/index.html">{{ $dn.PublicUrl }}</a>
-                    {{ end }}
-                </td>
-                <td>{{ $dn.Volumes }}</td>
-                <td>{{ $dn.VolumeIds}}</td>
-                <td>{{ $dn.EcShards }}</td>
-                <td>{{ $dn.Max }}</td>
-            </tr>
-            {{ end }}
-            {{ end }}
-            {{ end }}
-            </tbody>
-        </table>
+        <div class="col-sm-12">
+            <h2>Statistics</h2>
+            <table class="table table-striped">
+                <tr>
+                    <td>Disk Total: {{bytesToHumanReadable .Topology.Statistics.DiskTotal}}</td>
+                    <td>Disk Free: {{bytesToHumanReadable .Topology.Statistics.DiskFree}}</td>
+                    <td>Disk Used: {{bytesToHumanReadable .Topology.Statistics.DiskUsed}}</td>
+                    <td>Disk Usage: {{.Topology.Statistics.DiskUsages}}%</td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td>Data Center Count: {{.Topology.Statistics.Dc}}</td>
+                    <td>Rack Count: {{.Topology.Statistics.Rack}}</td>
+                    <td>Volume Node Count: {{.Topology.Statistics.VolumeNode}}</td>
+                    <td>Volume Count: {{.Topology.Statistics.VolumeCount}}</td>
+                    <td>ErasureCodingShards Count: {{.Topology.Statistics.ErasureCodingShardsCount}}</td>
+                </tr>
+            </table>
+        </div>
+        <div class="col-sm-12">
+            <h2>Rack Statistics</h2>
+            <table class="table table-striped">
+                <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Data Center</th>
+                    <th>Rack</th>
+                    <th>Volume Node Count</th>
+                    <th>Volume Count</th>
+                    <th>ErasureCodingShards Count</th>
+                </tr>
+                </thead>
+                {{ range $rack_index, $racks := .Topology.Statistics.RackStatistics }}
+                <tr>
+                    <td>{{$rack_index}}</td>
+                    <td>{{$racks.DcName}}</td>
+                    <td>{{$racks.Name}}</td>
+                    <td>{{$racks.VolumeNode}}</td>
+                    <td>{{$racks.VolumeCount}}</td>
+                    <td>{{$racks.ErasureCodingShardsCount}}</td>
+                </tr>
+                {{end}}
+            </table>
+        </div>
+        <div class="col-sm-12">
+            <h2>Topology</h2>
+            <table class="table table-striped">
+                <thead>
+                <tr>
+                    <th>Data Center</th>
+                    <th>Rack</th>
+                    <th>RemoteAddr</th>
+                    <th>#Volumes</th>
+                    <th>Volume Ids</th>
+                    <th>#ErasureCodingShards</th>
+                    <th>Max</th>
+                </tr>
+                </thead>
+                <tbody>
+                {{ range $dc_index, $dc := .Topology.DataCenters }}
+                {{ range $rack_index, $rack := $dc.Racks }}
+                {{ range $dn_index, $dn := $rack.DataNodes }}
+                <tr>
+                    <td><code>{{ $dc.Id }}</code></td>
+                    <td>{{ $rack.Id }}</td>
+                    <td><a href="http://{{ $dn.Url }}/ui/index.html">{{ $dn.Url }}</a>
+                        {{ if ne $dn.PublicUrl $dn.Url }}
+                        / <a href="http://{{ $dn.PublicUrl }}/ui/index.html">{{ $dn.PublicUrl }}</a>
+                        {{ end }}
+                    </td>
+                    <td>{{ $dn.Volumes }}</td>
+                    <td>{{ $dn.VolumeIds}}</td>
+                    <td>{{ $dn.EcShards }}</td>
+                    <td>{{ $dn.Max }}</td>
+                </tr>
+                {{ end }}
+                {{ end }}
+                {{ end }}
+                </tbody>
+            </table>
+        </div>
     </div>
 
 </div>
