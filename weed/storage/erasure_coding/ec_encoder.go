@@ -217,7 +217,7 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 		n, err := file.ReadAt(buffers[i], startOffset+blockSize*int64(i))
 		if err != nil {
 			if err != io.EOF {
-				return err
+				return fmt.Errorf("file read error:%v", err)
 			}
 		}
 		if n < len(buffers[i]) {
@@ -229,7 +229,7 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 
 	err := enc.Encode(buffers)
 	if err != nil {
-		return err
+		return fmt.Errorf("enc.Encode error:%v", err)
 	}
 
 	var wg sync.WaitGroup
@@ -254,7 +254,7 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 			})
 			if clientErr != nil {
 				mu.Lock()
-				errors = append(errors, clientErr)
+				errors = append(errors, fmt.Errorf("client error:%v", clientErr))
 				mu.Unlock()
 			}
 		}(buffers[i], i, clients[uint32(i)], collection, volumeId)
