@@ -15,7 +15,7 @@ type MetadataFollower struct {
 	ProcessEventFn    func(resp *filer_pb.SubscribeMetadataResponse) error
 }
 
-func mergeProceesors(mainProcessor func(resp *filer_pb.SubscribeMetadataResponse) error, followers ...*MetadataFollower) func(resp *filer_pb.SubscribeMetadataResponse) error {
+func mergeProcessors(mainProcessor func(resp *filer_pb.SubscribeMetadataResponse) error, followers ...*MetadataFollower) func(resp *filer_pb.SubscribeMetadataResponse) error {
 	return func(resp *filer_pb.SubscribeMetadataResponse) error {
 
 		// build the full path
@@ -23,16 +23,18 @@ func mergeProceesors(mainProcessor func(resp *filer_pb.SubscribeMetadataResponse
 		if entry == nil {
 			entry = resp.EventNotification.OldEntry
 		}
-		dir := resp.Directory
-		if resp.EventNotification.NewParentPath != "" {
-			dir = resp.EventNotification.NewParentPath
-		}
-		fp := util.NewFullPath(dir, entry.Name)
+		if entry != nil {
+			dir := resp.Directory
+			if resp.EventNotification.NewParentPath != "" {
+				dir = resp.EventNotification.NewParentPath
+			}
+			fp := util.NewFullPath(dir, entry.Name)
 
-		for _, follower := range followers {
-			if strings.HasPrefix(string(fp), follower.PathPrefixToWatch) {
-				if err := follower.ProcessEventFn(resp); err != nil {
-					return err
+			for _, follower := range followers {
+				if strings.HasPrefix(string(fp), follower.PathPrefixToWatch) {
+					if err := follower.ProcessEventFn(resp); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -112,7 +114,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 	}
 	util.RetryUntil("followMetaUpdates", func() error {
 		metadataFollowOption.ClientEpoch++
-		return pb.WithFilerClientFollowMetadata(client, metadataFollowOption, mergeProceesors(processEventFn, followers...))
+		return pb.WithFilerClientFollowMetadata(client, metadataFollowOption, mergeProcessors(processEventFn, followers...))
 	}, func(err error) bool {
 		glog.Errorf("follow metadata updates: %v", err)
 		return true
