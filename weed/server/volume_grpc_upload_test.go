@@ -8,7 +8,7 @@ import (
 
 func TestVolumeServer_UploadFile(t *testing.T) {
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	baseFileName := "/Users/ym/seaweedfs/test/t1.vif"
+	baseFileName := "~/t1.vif"
 
 	ext := ".ecj"
 
