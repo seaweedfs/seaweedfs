@@ -8,7 +8,7 @@ import (
 
 func TestVolumeServer_UploadFile(t *testing.T) {
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	baseFileName := "~/t1.vif"
+	baseFileName := "/tmp/test.vif"
 
 	ext := ".ecj"
 
