@@ -161,6 +161,9 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	for header, values := range r.Header {
 		proxyReq.Header[header] = values
 	}
+	if proxyReq.ContentLength == 0 && r.ContentLength != 0 {
+		proxyReq.ContentLength = r.ContentLength
+	}
 
 	// ensure that the Authorization header is overriding any previous
 	// Authorization header which might be already present in proxyReq
