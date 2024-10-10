@@ -149,8 +149,8 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if util.FileExists(noteFile) {
 		note, _ := os.ReadFile(noteFile)
 		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
-		removeVolumeFiles(l.Directory + "/" + volumeName)
-		removeVolumeFiles(l.IdxDirectory + "/" + volumeName)
+		removeVolumeFiles(l.Directory+"/"+volumeName, false)
+		removeVolumeFiles(l.IdxDirectory+"/"+volumeName, false)
 		return false
 	}
 
@@ -258,7 +258,7 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 	wg.Add(2)
 	go func() {
 		for _, v := range delVolsMap {
-			if err := v.Destroy(false); err != nil {
+			if err := v.Destroy(false, false); err != nil {
 				errChain <- err
 			}
 		}
@@ -289,12 +289,12 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 	return
 }
 
-func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool) (found bool, e error) {
+func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool, afterEc bool) (found bool, e error) {
 	v, ok := l.volumes[vid]
 	if !ok {
 		return
 	}
-	e = v.Destroy(onlyEmpty)
+	e = v.Destroy(onlyEmpty, afterEc)
 	if e != nil {
 		return
 	}
@@ -312,7 +312,7 @@ func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapKi
 
 var ErrVolumeNotFound = fmt.Errorf("volume not found")
 
-func (l *DiskLocation) DeleteVolume(vid needle.VolumeId, onlyEmpty bool) error {
+func (l *DiskLocation) DeleteVolume(vid needle.VolumeId, onlyEmpty bool, afterEc bool) error {
 	l.volumesLock.Lock()
 	defer l.volumesLock.Unlock()
 
@@ -320,7 +320,7 @@ func (l *DiskLocation) DeleteVolume(vid needle.VolumeId, onlyEmpty bool) error {
 	if !ok {
 		return ErrVolumeNotFound
 	}
-	_, err := l.deleteVolumeById(vid, onlyEmpty)
+	_, err := l.deleteVolumeById(vid, onlyEmpty, afterEc)
 	return err
 }
 

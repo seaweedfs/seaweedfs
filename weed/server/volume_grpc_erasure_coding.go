@@ -3,11 +3,13 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc"
 	"io"
 	"math"
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -28,7 +30,7 @@ Steps to apply erasure coding to .dat .idx files
 0. ensure the volume is readonly
 1. client call VolumeEcShardsGenerate to generate the .ecx and .ec00 ~ .ec13 files
 2. client ask master for possible servers to hold the ec files
-3. client call VolumeEcShardsCopy on above target servers to copy ec files from the source server
+3. client call UploadFile on above target servers to upload ec files from the source server
 4. target servers report the new ec files to the master
 5.   master stores vid -> [14]*DataNode
 6. client checks master. If all 14 slices are ready, delete the original .idx, .idx files
@@ -39,7 +41,6 @@ Steps to apply erasure coding to .dat .idx files
 func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_server_pb.VolumeEcShardsGenerateRequest) (*volume_server_pb.VolumeEcShardsGenerateResponse, error) {
 
 	glog.V(0).Infof("VolumeEcShardsGenerate: %v", req)
-
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
 		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
@@ -50,28 +51,30 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
 	}
 
-	shouldCleanup := true
-	defer func() {
-		if !shouldCleanup {
-			return
-		}
-		for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-			os.Remove(fmt.Sprintf("%s.ec%2d", baseFileName, i))
-		}
-		os.Remove(v.IndexFileName() + ".ecx")
-	}()
+	clientMap, clients, err := openEcUploadClients(req.AllocatedEcIds, vs.grpcDialOption)
 
-	// write .ec00 ~ .ec13 files
-	if err := erasure_coding.WriteEcFiles(baseFileName); err != nil {
+	defer func(clients []volume_info.UploadFileClient) {
+		err := closeEcUploadClients(clients)
+		if err != nil {
+			fmt.Println("close ec client error:", err)
+		}
+	}(clients)
+
+	if err != nil {
+		return nil, err
+	}
+
+	// upload .ec00 ~ .ec13 files
+	if err := erasure_coding.UploadEcFiles(baseFileName, clientMap, req.Collection, req.VolumeId); err != nil {
 		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
 	}
 
-	// write .ecx file
-	if err := erasure_coding.WriteSortedFileFromIdx(v.IndexFileName(), ".ecx"); err != nil {
+	// upload .ecx file
+	if err := erasure_coding.UploadSortedFileFromIdx(v.IndexFileName(), req.Collection, req.VolumeId, ".ecx", clients); err != nil {
 		return nil, fmt.Errorf("WriteSortedFileFromIdx %s: %v", v.IndexFileName(), err)
 	}
 
-	// write .vif files
+	// upload .vif files
 	var destroyTime uint64
 	if v.Ttl != nil {
 		ttlMills := v.Ttl.ToSeconds()
@@ -87,13 +90,77 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	}
 	datSize, _, _ := v.FileStat()
 	volumeInfo.DatFileSize = int64(datSize)
-	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
+	if err := volume_info.UploadVolumeInfo(baseFileName+".vif", req.Collection, req.VolumeId, ".vif", volumeInfo, clients); err != nil {
 		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
 	}
 
-	shouldCleanup = false
-
 	return &volume_server_pb.VolumeEcShardsGenerateResponse{}, nil
+}
+
+func openEcUploadClients(ecIds map[string]*volume_server_pb.EcIds, dialOption grpc.DialOption) (map[uint32]volume_info.UploadFileClient, []volume_info.UploadFileClient, error) {
+	var clientMap = make(map[uint32]volume_info.UploadFileClient, erasure_coding.TotalShardsCount)
+	var clients = make([]volume_info.UploadFileClient, 0)
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errors = make([]error, 0)
+	wg.Add(len(ecIds))
+
+	for key, ids := range ecIds {
+		go func() {
+			err := operation.WithVolumeServerClient(true, pb.ServerAddress(key), dialOption, func(client volume_server_pb.VolumeServerClient) error {
+				uploadClient, err := client.UploadFile(context.Background())
+				if err != nil {
+					return fmt.Errorf("failed to Upload File : %v", err)
+				}
+				ufClient := volume_info.UploadFileClient{Client: uploadClient, Address: key, IsRun: true, Close: make(chan bool)}
+				mu.Lock()
+				for _, id := range ids.ShardIds {
+					clientMap[id] = ufClient
+				}
+				clients = append(clients, ufClient)
+				mu.Unlock()
+
+				wg.Done()
+
+				<-ufClient.Close
+				//fmt.Printf("openEcClients client destroy, client: %s \n", ufClient.Address)
+				return nil
+			})
+			if err != nil {
+				wg.Done()
+			}
+			mu.Lock()
+			errors = append(errors, err)
+			mu.Unlock()
+		}()
+	}
+
+	wg.Wait()
+
+	if len(errors) > 0 {
+		return nil, clients, errors[0]
+	}
+
+	return clientMap, clients, nil
+}
+
+func closeEcUploadClients(clients []volume_info.UploadFileClient) error {
+	//fmt.Printf("clients:%v \n", clients)
+	if clients == nil {
+		return nil
+	}
+	for _, client := range clients {
+		reply, err := client.Client.CloseAndRecv()
+		if err != nil {
+			fmt.Printf("failed to recv: %v \n", err)
+		}
+
+		fmt.Printf("client replay,client:%s, reply:%v \n", client.Address, reply.String())
+		client.Close <- true
+		client.IsRun = false
+	}
+	return nil
 }
 
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files
@@ -227,15 +294,15 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	indexBaseFilename := path.Join(location.IdxDirectory, bName)
 	dataBaseFilename := path.Join(location.Directory, bName)
 
-	if util.FileExists(path.Join(location.IdxDirectory, bName+".ecx")) {
-		for _, shardId := range shardIds {
-			shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
-			if util.FileExists(shardFileName) {
-				found = true
-				os.Remove(shardFileName)
-			}
+	//if util.FileExists(path.Join(location.IdxDirectory, bName+".ecx")) {
+	for _, shardId := range shardIds {
+		shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
+		if util.FileExists(shardFileName) {
+			found = true
+			os.Remove(shardFileName)
 		}
 	}
+	//}
 
 	if !found {
 		return nil

@@ -53,7 +53,7 @@ func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 var ErrVolumeNotEmpty = fmt.Errorf("volume not empty")
 
 // Destroy removes everything related to this volume
-func (v *Volume) Destroy(onlyEmpty bool) (err error) {
+func (v *Volume) Destroy(onlyEmpty bool, afterEc bool) (err error) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
@@ -80,16 +80,18 @@ func (v *Volume) Destroy(onlyEmpty bool) (err error) {
 		}
 	}
 	v.doClose()
-	removeVolumeFiles(v.DataFileName())
-	removeVolumeFiles(v.IndexFileName())
+	removeVolumeFiles(v.DataFileName(), afterEc)
+	removeVolumeFiles(v.IndexFileName(), afterEc)
 	return
 }
 
-func removeVolumeFiles(filename string) {
+func removeVolumeFiles(filename string, afterEc bool) {
 	// basic
 	os.Remove(filename + ".dat")
 	os.Remove(filename + ".idx")
-	os.Remove(filename + ".vif")
+	if !afterEc {
+		os.Remove(filename + ".vif")
+	}
 	// sorted index file
 	os.Remove(filename + ".sdx")
 	// compaction

@@ -68,7 +68,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// apply to all volumes in the collection
 	volumeIds := collectEcShardIds(topologyInfo, *collection)
-	fmt.Printf("ec encode volumes: %v\n", volumeIds)
+	fmt.Printf("ec decode volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
 		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid); err != nil {
 			return err

@@ -92,6 +92,8 @@ docker/weed
 
 # test generated files
 weed/*/*.jpg
+weed/*/*.ldb
+weed/filerldb2
 docker/weed_sub
 docker/weed_pub
 weed/mq/schema/example.parquet

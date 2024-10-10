@@ -108,6 +108,32 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	return
 }
 
+func oneServerMountEcShards(grpcDialOption grpc.DialOption, targetServer *EcNode, shardIdsToCopy []uint32,
+	volumeId needle.VolumeId, collection string) (err error) {
+
+	fmt.Printf("allocate %d.%v => %s\n", volumeId, shardIdsToCopy, targetServer.info.Id)
+
+	targetAddress := pb.NewServerAddressFromDataNode(targetServer.info)
+	err = operation.WithVolumeServerClient(false, targetAddress, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		fmt.Printf("mount %d.%v on %s\n", volumeId, shardIdsToCopy, targetServer.info.Id)
+		_, mountErr := volumeServerClient.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
+			VolumeId:   uint32(volumeId),
+			Collection: collection,
+			ShardIds:   shardIdsToCopy,
+		})
+		if mountErr != nil {
+			return fmt.Errorf("mount %d.%v on %s : %v\n", volumeId, shardIdsToCopy, targetServer.info.Id, mountErr)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return
+	}
+
+	return
+}
+
 func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, dn *master_pb.DataNodeInfo)) {
 	for _, dc := range topo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
@@ -186,6 +212,10 @@ type EcNode struct {
 	dc         string
 	rack       RackId
 	freeEcSlot int
+}
+
+func (ecNode *EcNode) String() string {
+	return fmt.Sprintf("dc:%s, rack:%s, freeEcSlot:%d, info id:%+v", ecNode.dc, ecNode.rack, ecNode.freeEcSlot, ecNode.info.Id)
 }
 
 func (ecNode *EcNode) localShardIdCount(vid uint32) int {

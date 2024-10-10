@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"golang.org/x/exp/slices"
 	"strings"
@@ -11,6 +12,33 @@ type TopologyInfo struct {
 	Free        int64              `json:"Free"`
 	DataCenters []DataCenterInfo   `json:"DataCenters"`
 	Layouts     []VolumeLayoutInfo `json:"Layouts"`
+	Statistics  Statistics         `json:"Statistics"`
+}
+
+type Statistics struct {
+	Dc                       int64            `json:"Dc"`
+	Rack                     int64            `json:"Rack"`
+	VolumeNode               int64            `json:"VolumeNode"`
+	VolumeCount              int64            `json:"VolumeCount"`
+	ErasureCodingShardsCount int64            `json:"ErasureCodingShardsCount"`
+	DiskTotal                uint64           `json:"DiskTotal"`
+	DiskFree                 uint64           `json:"DiskFree"`
+	DiskUsed                 uint64           `json:"DiskUsed"`
+	DiskUsages               string           `json:"DiskUsages"`
+	RackStatistics           []RackStatistics `json:"RackStatistics"`
+}
+
+//type DataCenterStatistics struct {
+//	Name           string           `json:"Name"`
+//	RackStatistics []RackStatistics `json:"RackStatistics"`
+//}
+
+type RackStatistics struct {
+	DcName                   string `json:"DcName"`
+	Name                     string `json:"Name"`
+	VolumeNode               int64  `json:"VolumeNode"`
+	VolumeCount              int64  `json:"VolumeCount"`
+	ErasureCodingShardsCount int64  `json:"ErasureCodingShardsCount"`
 }
 
 type VolumeLayoutCollection struct {
@@ -44,6 +72,32 @@ func (t *Topology) ToInfo() (info TopologyInfo) {
 		}
 	}
 	info.Layouts = layouts
+	var statistics = Statistics{}
+	racksStatistics := make([]RackStatistics, 0)
+	for _, dc := range info.DataCenters {
+		statistics.Dc++
+		for _, rk := range dc.Racks {
+			rackStatistics := RackStatistics{DcName: string(dc.Id), Name: string(rk.Id)}
+			statistics.Rack++
+			for _, node := range rk.DataNodes {
+				statistics.VolumeNode++
+				statistics.VolumeCount += node.Volumes
+				statistics.ErasureCodingShardsCount += node.EcShards
+
+				rackStatistics.VolumeNode++
+				rackStatistics.VolumeCount += node.Volumes
+				rackStatistics.ErasureCodingShardsCount += node.EcShards
+			}
+			racksStatistics = append(racksStatistics, rackStatistics)
+		}
+	}
+	statistics.DiskTotal = uint64(info.Max) * t.volumeSizeLimit
+	statistics.DiskFree = uint64(info.Free) * t.volumeSizeLimit
+	statistics.DiskUsed = statistics.DiskTotal - statistics.DiskFree
+	result := float64(statistics.DiskUsed) / float64(statistics.DiskTotal) * float64(100)
+	statistics.DiskUsages = fmt.Sprintf("%.2f", result)
+	statistics.RackStatistics = racksStatistics
+	info.Statistics = statistics
 	return
 }
 
