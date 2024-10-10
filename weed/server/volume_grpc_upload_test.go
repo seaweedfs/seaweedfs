@@ -2,13 +2,14 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 	"testing"
 )
 
 func TestVolumeServer_UploadFile(t *testing.T) {
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	baseFileName := "/tmp/test.vif"
+	baseFileName := util.Join(os.TempDir(), "t1.vif")
 
 	ext := ".ecj"
 
