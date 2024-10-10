@@ -281,7 +281,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, chooseLoc.Url, err)
 	}
 
-	// generate ec shards
+	// generate and mount ec shards
 	err = generateAndMountEcShards(commandEnv, vid, collection, chooseLoc.ServerAddress())
 	if err != nil {
 		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, chooseLoc.Url, err)

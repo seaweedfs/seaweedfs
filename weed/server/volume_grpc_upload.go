@@ -11,11 +11,9 @@ import (
 	"os"
 )
 
-// UploadFile client pulls the volume related file from the source server.
-// if req.CompactionRevision != math.MaxUint32, it ensures the compact revision is as expected
-// The copying still stop at req.StopOffset, but you can set it to math.MaxUint64 in order to read all data.
+// UploadFile save stream to file
 func (vs *VolumeServer) UploadFile(stream volume_server_pb.VolumeServer_UploadFileServer) error {
-
+	wt := util.NewWriteThrottler(vs.compactionBytePerSecond)
 	location := vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
 		//(location.FindEcVolume) This method is error, will cause location is nil, redundant judgment
 		// _, found := location.FindEcVolume(needle.VolumeId(req.VolumeId))
@@ -36,9 +34,7 @@ func (vs *VolumeServer) UploadFile(stream volume_server_pb.VolumeServer_UploadFi
 			}
 		}
 	}()
-	//flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -50,9 +46,7 @@ func (vs *VolumeServer) UploadFile(stream volume_server_pb.VolumeServer_UploadFi
 			fmt.Println("UploadFile request is nil")
 			break
 		}
-
 		baseFileName := util.Join(location.Directory, erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))+req.Ext)
-
 		//fmt.Printf("writing file:%s \n", baseFileName)
 		var fileErr error
 		if _, b := destFiles[baseFileName]; !b {
@@ -68,6 +62,7 @@ func (vs *VolumeServer) UploadFile(stream volume_server_pb.VolumeServer_UploadFi
 			}
 		}
 		destFiles[baseFileName].Write(req.FileContent)
+		wt.MaybeSlowdown(int64(len(req.FileContent)))
 	}
 	return nil
 }

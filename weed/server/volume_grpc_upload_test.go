@@ -24,6 +24,6 @@ func TestVolumeServer_UploadFile(t *testing.T) {
 	fmt.Println(flags)
 	fmt.Println(file.Name())
 
-	//file.WriteString("111222")
+	file.WriteString("11122233")
 
 }

@@ -30,7 +30,7 @@ Steps to apply erasure coding to .dat .idx files
 0. ensure the volume is readonly
 1. client call VolumeEcShardsGenerate to generate the .ecx and .ec00 ~ .ec13 files
 2. client ask master for possible servers to hold the ec files
-3. client call VolumeEcShardsCopy on above target servers to copy ec files from the source server
+3. client call UploadFile on above target servers to upload ec files from the source server
 4. target servers report the new ec files to the master
 5.   master stores vid -> [14]*DataNode
 6. client checks master. If all 14 slices are ready, delete the original .idx, .idx files
@@ -51,28 +51,18 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
 	}
 
-	//shouldCleanup := true
-	//defer func() {
-	//	if !shouldCleanup {
-	//		return
-	//	}
-	//	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-	//		os.Remove(fmt.Sprintf("%s.ec%2d", baseFileName, i))
-	//	}
-	//	os.Remove(v.IndexFileName() + ".ecx")
-	//}()
+	clientMap, clients, err := openEcUploadClients(req.AllocatedEcIds, vs.grpcDialOption)
 
-	clientMap, clients, err := openEcClients(req.AllocatedEcIds, vs.grpcDialOption)
+	defer func(clients []volume_info.UploadFileClient) {
+		err := closeEcUploadClients(clients)
+		if err != nil {
+			fmt.Println("close ec client error:", err)
+		}
+	}(clients)
+
 	if err != nil {
 		return nil, err
 	}
-
-	defer func(clients []volume_info.UploadFileClient) {
-		err := CloseClient(clients)
-		if err != nil {
-			fmt.Println("close client error:", err)
-		}
-	}(clients)
 
 	// upload .ec00 ~ .ec13 files
 	if err := erasure_coding.UploadEcFiles(baseFileName, clientMap, req.Collection, req.VolumeId); err != nil {
@@ -104,12 +94,10 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
 	}
 
-	//shouldCleanup = false
-
 	return &volume_server_pb.VolumeEcShardsGenerateResponse{}, nil
 }
 
-func openEcClients(ecIds map[string]*volume_server_pb.EcIds, dialOption grpc.DialOption) (map[uint32]volume_info.UploadFileClient, []volume_info.UploadFileClient, error) {
+func openEcUploadClients(ecIds map[string]*volume_server_pb.EcIds, dialOption grpc.DialOption) (map[uint32]volume_info.UploadFileClient, []volume_info.UploadFileClient, error) {
 	var clientMap = make(map[uint32]volume_info.UploadFileClient, erasure_coding.TotalShardsCount)
 	var clients = make([]volume_info.UploadFileClient, 0)
 
@@ -121,11 +109,11 @@ func openEcClients(ecIds map[string]*volume_server_pb.EcIds, dialOption grpc.Dia
 	for key, ids := range ecIds {
 		go func() {
 			err := operation.WithVolumeServerClient(true, pb.ServerAddress(key), dialOption, func(client volume_server_pb.VolumeServerClient) error {
-				copyFileClient, err := client.UploadFile(context.Background())
+				uploadClient, err := client.UploadFile(context.Background())
 				if err != nil {
 					return fmt.Errorf("failed to Upload File : %v", err)
 				}
-				ufClient := volume_info.UploadFileClient{Client: copyFileClient, Address: key, IsRun: true, Close: make(chan bool)}
+				ufClient := volume_info.UploadFileClient{Client: uploadClient, Address: key, IsRun: true, Close: make(chan bool)}
 				mu.Lock()
 				for _, id := range ids.ShardIds {
 					clientMap[id] = ufClient
@@ -151,16 +139,18 @@ func openEcClients(ecIds map[string]*volume_server_pb.EcIds, dialOption grpc.Dia
 	wg.Wait()
 
 	if len(errors) > 0 {
-		return nil, nil, errors[0]
+		return nil, clients, errors[0]
 	}
 
 	return clientMap, clients, nil
 }
 
-func CloseClient(clients []volume_info.UploadFileClient) error {
+func closeEcUploadClients(clients []volume_info.UploadFileClient) error {
 	//fmt.Printf("clients:%v \n", clients)
+	if clients == nil {
+		return nil
+	}
 	for _, client := range clients {
-		//err := client.Client.CloseSend()
 		reply, err := client.Client.CloseAndRecv()
 		if err != nil {
 			fmt.Printf("failed to recv: %v \n", err)
@@ -169,9 +159,6 @@ func CloseClient(clients []volume_info.UploadFileClient) error {
 		fmt.Printf("client replay,client:%s, reply:%v \n", client.Address, reply.String())
 		client.Close <- true
 		client.IsRun = false
-		//if err != nil {
-		//	return err
-		//}
 	}
 	return nil
 }
