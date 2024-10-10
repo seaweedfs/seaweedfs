@@ -152,8 +152,7 @@ func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
 }
 
 func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
-	deltaDiskUsages := newDiskUsages()
-	deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(v.DiskType))
+	deltaDiskUsage := &DiskUsageCounts{}
 	if oldV, ok := d.volumes[v.Id]; !ok {
 		d.volumes[v.Id] = v
 		deltaDiskUsage.volumeCount = 1
@@ -164,7 +163,7 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool)
 			deltaDiskUsage.activeVolumeCount = 1
 		}
 		d.UpAdjustMaxVolumeId(v.Id)
-		d.UpAdjustDiskUsageDelta(deltaDiskUsages)
+		d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
 		isNew = true
 	} else {
 		if oldV.IsRemote() != v.IsRemote() {
@@ -174,7 +173,7 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool)
 			if oldV.IsRemote() {
 				deltaDiskUsage.remoteVolumeCount = -1
 			}
-			d.UpAdjustDiskUsageDelta(deltaDiskUsages)
+			d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
 		}
 		isChanged = d.volumes[v.Id].ReadOnly != v.ReadOnly
 		d.volumes[v.Id] = v
