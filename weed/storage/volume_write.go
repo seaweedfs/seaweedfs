@@ -85,11 +85,13 @@ func (v *Volume) Destroy(onlyEmpty bool, afterEc bool) (err error) {
 	return
 }
 
-func removeVolumeFiles(filename string, afterEc bool) {
+// I'm not sure if vif file is useful，Source code saved vif file after ec.encode，But remove volume will remove the vif file
+// So add the parameter （afterEcSuccess ）will not delete vif file
+func removeVolumeFiles(filename string, afterEcSuccess bool) {
 	// basic
 	os.Remove(filename + ".dat")
 	os.Remove(filename + ".idx")
-	if !afterEc {
+	if !afterEcSuccess {
 		os.Remove(filename + ".vif")
 	}
 	// sorted index file

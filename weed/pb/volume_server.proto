@@ -364,14 +364,14 @@ message VolumeTailReceiverRequest {
 message VolumeTailReceiverResponse {
 }
 
-message EcIds {
+message EcShardIds {
     repeated uint32 shardIds = 1;
 }
 
 message VolumeEcShardsGenerateRequest {
     uint32 volume_id = 1;
     string collection = 2;
-    map<string, EcIds> allocatedEcIds = 3;
+    map<string, EcShardIds> allocatedEcIds = 3;
 }
 message VolumeEcShardsGenerateResponse {
 }

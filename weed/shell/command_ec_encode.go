@@ -71,7 +71,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
 	parallelCopy := encodeCommand.Bool("parallelCopy", true, "copy shards in parallel")
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
-	concurrentNumber := encodeCommand.Int("concurrentNumber", 3, "limit total concurrent ec.encode volume number (default 3)")
+	concurrency := encodeCommand.Int("concurrency", 3, "limit total concurrent ec.encode volume number (default 3)")
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -110,7 +110,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return err
 	}
 	//A maximum of 3 volumes can be processed at one time
-	maxProcessNum := *concurrentNumber
+	maxProcessNum := *concurrency
 	fmt.Printf("ec encode volumes: %v, concurrent number:%d \n", volumeIds, maxProcessNum)
 	processVolumeIds := volumeIds
 	if len(volumeIds) > maxProcessNum {
@@ -145,25 +145,19 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	return nil
 }
 
-// 递归函数用于获取数组的排列组合
+// Recursive function is used to obtain the permutations and combinations of an array
 func permute(arr []int, n int, result *[][]int) {
-
 	if n == 1 {
-		// 输出单个元素的情况
-		//fmt.Println(arr)
 		temp := make([]int, len(arr))
 		copy(temp, arr)
 		*result = append(*result, temp)
 		return
 	} else {
-		// 对于每个元素，交换并递归
 		for i := 0; i < n; i++ {
 			permute(arr, n-1, result)
 			if n%2 == 1 {
-				// 对于奇数位置交换
 				arr[0], arr[n-1] = arr[n-1], arr[0]
 			} else {
-				// 对于偶数位置交换
 				arr[i], arr[n-1] = arr[n-1], arr[i]
 			}
 		}
@@ -267,6 +261,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
+	// If volumeId is provided -> (ec.encode -volumeId=<volume_id>)
 	if len(locations) == 0 {
 		var found = false
 		locations, found = commandEnv.MasterClient.GetLocationsClone(uint32(vid))

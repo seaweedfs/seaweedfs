@@ -114,9 +114,6 @@ func UploadVolumeInfo(fileName string, collection string, volumeId uint32, ext s
 			return fmt.Errorf("client send error ext: %s: %v", ext, clientErr)
 		}
 	}
-	//if err := util.WriteFile(fileName, text, 0644); err != nil {
-	//	return fmt.Errorf("failed to write %s: %v", fileName, err)
-	//}
 
 	return nil
 }

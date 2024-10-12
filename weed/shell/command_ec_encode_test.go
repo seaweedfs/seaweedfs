@@ -9,7 +9,6 @@ import (
 	"sort"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestEcDistribution(t *testing.T) {
@@ -60,7 +59,6 @@ func Test_getServerDisplayTimesInVolumes(t *testing.T) {
 
 	volumeLocationsMap, volumeChooseLocationMap := getServerDisplayTimesInVolumesTest(&commandEnv, volumeIds)
 
-	//fmt.Printf("serversDisplayTimesInVolumes: %v \n", serversDisplayTimesInVolumes)
 	fmt.Printf("volumeLocationsMap: %v \n", volumeLocationsMap)
 	fmt.Printf("volumeChooseLocationMap: %v \n", volumeChooseLocationMap)
 
@@ -71,7 +69,6 @@ func Test_getServerDisplayTimesInVolumes(t *testing.T) {
 		chooseLoc := volumeChooseLocationMap[vid]
 		go func() {
 			defer wg.Done()
-			time.Sleep(time.Second * 1)
 			fmt.Printf("locations:%v \n", locations)
 			fmt.Printf("location:%v \n", chooseLoc)
 		}()
