@@ -176,8 +176,10 @@ spec:
                 -mserver={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
           volumeMounts:
             {{- range $dir := .Values.volume.dataDirs }}
+            {{- if not ( eq $dir.type "custom" ) }}
             - name: {{ $dir.name }}
               mountPath: "/{{ $dir.name }}/"
+            {{- end }}
             {{- end }}
             {{- if .Values.volume.logs }}
             - name: logs
