@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/parquet-go/parquet-go"
@@ -9,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -55,8 +57,24 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 	namespace := mqCommand.String("namespace", "", "namespace name")
 	topicName := mqCommand.String("topic", "", "topic name")
 	timeAgo := mqCommand.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	replication := mqCommand.String("replication", "", "replication type")
+	collection := mqCommand.String("collection", "", "optional collection name")
+	dataCenter := mqCommand.String("dataCenter", "", "optional data center name")
+	diskType := mqCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	ttl := mqCommand.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
+	maxMB := mqCommand.Int("maxMB", 4, "split files larger than the limit")
+
 	if err := mqCommand.Parse(args); err != nil {
 		return err
+	}
+
+	storagePreference := &operation.StoragePreference{
+		Replication: *replication,
+		Collection:  *collection,
+		DataCenter:  *dataCenter,
+		DiskType:    *diskType,
+		Ttl:         *ttl,
+		MaxMB:       *maxMB,
 	}
 
 	// read topic configuration
@@ -96,7 +114,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 
 	// compact the topic partition versions
 	for _, partitionVersion := range partitionVersions {
-		err = compactTopicPartitions(commandEnv, *namespace, *topicName, partitionVersion, partitions, recordType)
+		err = compactTopicPartitions(commandEnv, *namespace, *topicName, partitionVersion, partitions, recordType, storagePreference)
 		if err != nil {
 			return fmt.Errorf("compact topic partition %s: %v", partitionVersion, err)
 		}
@@ -122,9 +140,9 @@ func collectTopicPartitionVersions(commandEnv *CommandEnv, namespace string, top
 	return
 }
 
-func compactTopicPartitions(commandEnv *CommandEnv, namespace string, topicName string, partitionVersion string, partitions []*mq_pb.Partition, recordType *schema_pb.RecordType) error {
+func compactTopicPartitions(commandEnv *CommandEnv, namespace string, topicName string, partitionVersion string, partitions []*mq_pb.Partition, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
 	for _, partition := range partitions {
-		err := compactTopicPartition(commandEnv, namespace, topicName, partitionVersion, recordType, partition)
+		err := compactTopicPartition(commandEnv, namespace, topicName, partitionVersion, recordType, partition, preference)
 		if err != nil {
 			return err
 		}
@@ -132,15 +150,15 @@ func compactTopicPartitions(commandEnv *CommandEnv, namespace string, topicName 
 	return nil
 }
 
-func compactTopicPartition(commandEnv *CommandEnv, namespace string, topicName string, partitionVersion string, recordType *schema_pb.RecordType, partition *mq_pb.Partition) error {
+func compactTopicPartition(commandEnv *CommandEnv, namespace string, topicName string, partitionVersion string, recordType *schema_pb.RecordType, partition *mq_pb.Partition, preference *operation.StoragePreference) error {
 	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, namespace, topicName)
 	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", topicDir, partitionVersion, partition.RangeStart, partition.RangeStop)
 
 	// compact the partition directory
-	return compactTopicPartitionDir(commandEnv, topicName, partitionDir, recordType)
+	return compactTopicPartitionDir(commandEnv, topicName, partitionDir, recordType, preference)
 }
 
-func compactTopicPartitionDir(commandEnv *CommandEnv, topicName, partitionDir string, recordType *schema_pb.RecordType) error {
+func compactTopicPartitionDir(commandEnv *CommandEnv, topicName, partitionDir string, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
 	// read all log files
 	logFiles, err := readAllLogFiles(commandEnv, partitionDir)
 	if err != nil {
@@ -163,12 +181,29 @@ func compactTopicPartitionDir(commandEnv *CommandEnv, topicName, partitionDir st
 	}
 
 	// TODO parallelize the writing
+	var parquetFileNames []string
 	for _, logFileGroup := range logFileGroups {
 		parquetFileName, err := writeLogFilesToParquet(commandEnv, partitionDir, recordType, logFileGroup, parquetSchema, parquetLevels)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("write to parquet file %s\n", parquetFileName)
+		parquetFileNames = append(parquetFileNames, parquetFileName)
+	}
+
+	// upload parquet files
+	parts, err := operation.NewFileParts(parquetFileNames)
+	if err != nil {
+		return err
+	}
+	results, err := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(commandEnv.option.FilerAddress) }, commandEnv.option.GrpcDialOption, parts, preference, false)
+	if err != nil {
+		return err
+	}
+	for _, result := range results {
+		if result.Error != "" {
+			return fmt.Errorf("upload parquet file %s: %v", result.FileName, result.Error)
+		}
 	}
 	return nil
 }
@@ -252,6 +287,8 @@ func writeLogFilesToParquet(commandEnv *CommandEnv, partitionDir string, recordT
 	}
 
 	// write to parquet file to partitionDir
+	parquetFileName = fmt.Sprintf("%s/%s.parquet", partitionDir, time.Now().Format("2006-01-02T15:04:05"))
+
 	return tempFile.Name(), nil
 }
 

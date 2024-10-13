@@ -42,20 +42,29 @@ type SubmitResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
+type StoragePreference struct {
+	Replication string
+	Collection  string
+	DataCenter  string
+	Ttl         string
+	DiskType    string
+	MaxMB       int
+}
+
 type GetMasterFn func(ctx context.Context) pb.ServerAddress
 
-func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []FilePart, replication string, collection string, dataCenter string, ttl string, diskType string, maxMB int, usePublicUrl bool) ([]SubmitResult, error) {
+func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []FilePart, pref *StoragePreference, usePublicUrl bool) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		results[index].FileName = file.FileName
 	}
 	ar := &VolumeAssignRequest{
 		Count:       uint64(len(files)),
-		Replication: replication,
-		Collection:  collection,
-		DataCenter:  dataCenter,
-		Ttl:         ttl,
-		DiskType:    diskType,
+		Replication: pref.Replication,
+		Collection:  pref.Collection,
+		DataCenter:  pref.DataCenter,
+		Ttl:         pref.Ttl,
+		DiskType:    pref.DiskType,
 	}
 	ret, err := Assign(masterFn, grpcDialOption, ar)
 	if err != nil {
@@ -73,12 +82,12 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []F
 		if usePublicUrl {
 			file.Server = ret.PublicUrl
 		}
-		file.Replication = replication
-		file.Collection = collection
-		file.DataCenter = dataCenter
-		file.Ttl = ttl
-		file.DiskType = diskType
-		results[index].Size, err = file.Upload(maxMB, masterFn, usePublicUrl, ret.Auth, grpcDialOption)
+		file.Replication = pref.Replication
+		file.Collection = pref.Collection
+		file.DataCenter = pref.DataCenter
+		file.Ttl = pref.Ttl
+		file.DiskType = pref.DiskType
+		results[index].Size, err = file.Upload(pref.MaxMB, masterFn, usePublicUrl, ret.Auth, grpcDialOption)
 		if err != nil {
 			results[index].Error = err.Error()
 		}
