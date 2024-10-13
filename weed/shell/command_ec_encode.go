@@ -109,39 +109,48 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	if err != nil {
 		return err
 	}
+
 	//A maximum of 3 volumes can be processed at one time
 	maxProcessNum := *concurrency
 	fmt.Printf("ec encode volumes: %v, concurrent number:%d \n", volumeIds, maxProcessNum)
-	processVolumeIds := volumeIds
-	if len(volumeIds) > maxProcessNum {
-		processVolumeIds = volumeIds[0:maxProcessNum]
-	}
-	//load balancing for servers
-	volumeLocationsMap, volumeChooseLocationMap := chooseLocationForVolumes(commandEnv, processVolumeIds)
 
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var errors = make([]error, 0)
-	wg.Add(len(processVolumeIds))
+	//Loop until encode completed all volumes
+	for len(volumeIds) > 0 {
+		processVolumeIds := volumeIds
+		if len(volumeIds) > maxProcessNum {
+			processVolumeIds = volumeIds[0:maxProcessNum]
+		}
+		//load balancing for servers
+		volumeLocationsMap, volumeChooseLocationMap := chooseLocationForVolumes(commandEnv, processVolumeIds)
 
-	for _, vid := range processVolumeIds {
-		locations := volumeLocationsMap[vid]
-		chooseLoc := volumeChooseLocationMap[vid]
-		go func() {
-			defer wg.Done()
-			if err = doEcEncode(commandEnv, *collection, vid, locations, chooseLoc, *parallelCopy); err != nil {
-				mu.Lock()
-				errors = append(errors, err)
-				fmt.Printf("doEcEncode error:%v \n", err)
-				mu.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
-	if len(errors) > 0 {
-		return errors[0]
-	}
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var errors = make([]error, 0)
+		wg.Add(len(processVolumeIds))
 
+		for _, vid := range processVolumeIds {
+			locations := volumeLocationsMap[vid]
+			chooseLoc := volumeChooseLocationMap[vid]
+			go func() {
+				defer wg.Done()
+				if err = doEcEncode(commandEnv, *collection, vid, locations, chooseLoc, *parallelCopy); err != nil {
+					mu.Lock()
+					errors = append(errors, err)
+					fmt.Printf("doEcEncode error:%v \n", err)
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+		if len(errors) > 0 {
+			return errors[0]
+		}
+
+		volumeIds, err = collectVolumeIdsForEcEncode(commandEnv, *collection, *fullPercentage, *quietPeriod)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
