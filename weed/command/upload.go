@@ -97,7 +97,7 @@ func runUpload(cmd *Command, args []string) bool {
 					if e != nil {
 						return e
 					}
-					results, e := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, &operation.StoragePreference{
+					results, e := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, operation.StoragePreference{
 						Replication: *upload.replication,
 						Collection:  *upload.collection,
 						DataCenter:  *upload.dataCenter,
@@ -126,7 +126,7 @@ func runUpload(cmd *Command, args []string) bool {
 			fmt.Println(e.Error())
 			return false
 		}
-		results, err := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, &operation.StoragePreference{
+		results, err := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, operation.StoragePreference{
 			Replication: *upload.replication,
 			Collection:  *upload.collection,
 			DataCenter:  *upload.dataCenter,

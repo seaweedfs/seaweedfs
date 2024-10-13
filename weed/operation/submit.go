@@ -19,19 +19,15 @@ import (
 )
 
 type FilePart struct {
-	Reader      io.Reader
-	FileName    string
-	FileSize    int64
-	MimeType    string
-	ModTime     int64 //in seconds
-	Replication string
-	Collection  string
-	DataCenter  string
-	Ttl         string
-	DiskType    string
-	Server      string //this comes from assign result
-	Fid         string //this comes from assign result, but customizable
-	Fsync       bool
+	Reader   io.Reader
+	FileName string
+	FileSize int64
+	MimeType string
+	ModTime  int64 //in seconds
+	Pref     StoragePreference
+	Server   string //this comes from assign result
+	Fid      string //this comes from assign result, but customizable
+	Fsync    bool
 }
 
 type SubmitResult struct {
@@ -53,7 +49,7 @@ type StoragePreference struct {
 
 type GetMasterFn func(ctx context.Context) pb.ServerAddress
 
-func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []FilePart, pref *StoragePreference, usePublicUrl bool) ([]SubmitResult, error) {
+func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []*FilePart, pref StoragePreference, usePublicUrl bool) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		results[index].FileName = file.FileName
@@ -82,11 +78,7 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []F
 		if usePublicUrl {
 			file.Server = ret.PublicUrl
 		}
-		file.Replication = pref.Replication
-		file.Collection = pref.Collection
-		file.DataCenter = pref.DataCenter
-		file.Ttl = pref.Ttl
-		file.DiskType = pref.DiskType
+		file.Pref = pref
 		results[index].Size, err = file.Upload(pref.MaxMB, masterFn, usePublicUrl, ret.Auth, grpcDialOption)
 		if err != nil {
 			results[index].Error = err.Error()
@@ -97,8 +89,8 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []F
 	return results, nil
 }
 
-func NewFileParts(fullPathFilenames []string) (ret []FilePart, err error) {
-	ret = make([]FilePart, len(fullPathFilenames))
+func NewFileParts(fullPathFilenames []string) (ret []*FilePart, err error) {
+	ret = make([]*FilePart, len(fullPathFilenames))
 	for index, file := range fullPathFilenames {
 		if ret[index], err = newFilePart(file); err != nil {
 			return
@@ -106,7 +98,8 @@ func NewFileParts(fullPathFilenames []string) (ret []FilePart, err error) {
 	}
 	return
 }
-func newFilePart(fullPathFilename string) (ret FilePart, err error) {
+func newFilePart(fullPathFilename string) (ret *FilePart, err error) {
+	ret = &FilePart{}
 	fh, openErr := os.Open(fullPathFilename)
 	if openErr != nil {
 		glog.V(0).Info("Failed to open file: ", fullPathFilename)
@@ -130,7 +123,7 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	return ret, nil
 }
 
-func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jwt security.EncodedJwt, grpcDialOption grpc.DialOption) (retSize uint32, err error) {
+func (fi *FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jwt security.EncodedJwt, grpcDialOption grpc.DialOption) (retSize uint32, err error) {
 	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
@@ -154,13 +147,13 @@ func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jw
 
 		var ret *AssignResult
 		var id string
-		if fi.DataCenter != "" {
+		if fi.Pref.DataCenter != "" {
 			ar := &VolumeAssignRequest{
 				Count:       uint64(chunks),
-				Replication: fi.Replication,
-				Collection:  fi.Collection,
-				Ttl:         fi.Ttl,
-				DiskType:    fi.DiskType,
+				Replication: fi.Pref.Replication,
+				Collection:  fi.Pref.Collection,
+				Ttl:         fi.Pref.Ttl,
+				DiskType:    fi.Pref.DiskType,
 			}
 			ret, err = Assign(masterFn, grpcDialOption, ar)
 			if err != nil {
@@ -168,13 +161,13 @@ func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jw
 			}
 		}
 		for i := int64(0); i < chunks; i++ {
-			if fi.DataCenter == "" {
+			if fi.Pref.DataCenter == "" {
 				ar := &VolumeAssignRequest{
 					Count:       1,
-					Replication: fi.Replication,
-					Collection:  fi.Collection,
-					Ttl:         fi.Ttl,
-					DiskType:    fi.DiskType,
+					Replication: fi.Pref.Replication,
+					Collection:  fi.Pref.Collection,
+					Ttl:         fi.Pref.Ttl,
+					DiskType:    fi.Pref.DiskType,
 				}
 				ret, err = Assign(masterFn, grpcDialOption, ar)
 				if err != nil {

@@ -196,7 +196,7 @@ func compactTopicPartitionDir(commandEnv *CommandEnv, topicName, partitionDir st
 	if err != nil {
 		return err
 	}
-	results, err := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(commandEnv.option.FilerAddress) }, commandEnv.option.GrpcDialOption, parts, preference, false)
+	results, err := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(commandEnv.option.FilerAddress) }, commandEnv.option.GrpcDialOption, parts, *preference, false)
 	if err != nil {
 		return err
 	}
