@@ -22,7 +22,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 var (
@@ -37,7 +36,6 @@ type CopyOptions struct {
 	ttl                *string
 	diskType           *string
 	maxMB              *int
-	masterClient       *wdclient.MasterClient
 	concurrentFiles    *int
 	concurrentChunks   *int
 	grpcDialOption     grpc.DialOption
