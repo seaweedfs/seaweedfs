@@ -568,6 +568,11 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, afterEc bool) er
 		err := location.DeleteVolume(i, onlyEmpty, afterEc)
 		if err == nil {
 			glog.V(0).Infof("DeleteVolume %d", i)
+			if len(location.volumes) == 0 { //If location.volumes change to empty after delete, Must notice to (VolumeServerDiskSizeGauge), Otherwise monitor will display error
+				stats.VolumeServerDiskSizeGauge.WithLabelValues(v.Collection, "normal").Set(float64(0))
+				stats.VolumeServerDiskSizeGauge.WithLabelValues(v.Collection, "deleted_bytes").Set(float64(0))
+			}
+			//notice
 			s.DeletedVolumesChan <- message
 			return nil
 		} else if err == ErrVolumeNotFound {
