@@ -146,7 +146,9 @@ spec:
                 {{- if .Values.volume.idx }}
                 -dir.idx=/idx \
                 {{- end }}
-                -max {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}{{$dir.maxVolumes}}{{end}} \
+                -max {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}
+                {{- if eq ($dir.maxVolumes | toString) "0" }}0{{ else if not $dir.maxVolumes }}7{{ else }}{{$dir.maxVolumes}}{{ end }}
+                {{- end }} \
                 {{- if .Values.volume.rack }}
                 -rack={{ .Values.volume.rack }} \
                 {{- end }}
