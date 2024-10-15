@@ -11,6 +11,10 @@ import (
 
 func track(f http.HandlerFunc, action string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		inFlightGauge := stats_collect.S3InFlightRequestsGauge.WithLabelValues(action)
+		inFlightGauge.Inc()
+		defer inFlightGauge.Dec()
+
 		bucket, _ := s3_constants.GetBucketAndObject(r)
 		w.Header().Set("Server", "SeaweedFS "+util.VERSION)
 		recorder := stats_collect.NewStatusResponseWriter(w)
