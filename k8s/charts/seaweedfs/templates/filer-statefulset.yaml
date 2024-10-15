@@ -57,6 +57,10 @@ spec:
       affinity:
         {{ tpl .Values.filer.affinity . | nindent 8 | trim }}
       {{- end }}
+      {{- with .Values.filer.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if .Values.filer.tolerations }}
       tolerations:
         {{ tpl .Values.filer.tolerations . | nindent 8 | trim }}

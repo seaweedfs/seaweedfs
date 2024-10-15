@@ -166,6 +166,11 @@ master:
               app.kubernetes.io/component: master
           topologyKey: kubernetes.io/hostname
 
+  # Topology Spread Constraints Settings
+  # This should map directly to the value of the topologySpreadConstraints
+  # for a PodSpec. By Default no constraints are set.
+  topologySpreadConstraints: {}
+
   # Toleration Settings for master pods
   # This should be a multi-line string matching the Toleration array
   # in a PodSpec.
@@ -421,6 +426,11 @@ volume:
               app.kubernetes.io/component: volume
           topologyKey: kubernetes.io/hostname
 
+  # Topology Spread Constraints Settings
+  # This should map directly to the value of the topologySpreadConstraints
+  # for a PodSpec. By Default no constraints are set.
+  topologySpreadConstraints: {}
+
   # Resource requests, limits, etc. for the server cluster placement. This
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
@@ -614,6 +624,11 @@ filer:
               app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/component: filer
           topologyKey: kubernetes.io/hostname
+
+  # Topology Spread Constraints Settings
+  # This should map directly to the value of the topologySpreadConstraints
+  # for a PodSpec. By Default no constraints are set.
+  topologySpreadConstraints: {}
 
   # updatePartition is used to control a careful rolling update of SeaweedFS
   # masters.

@@ -43,6 +43,10 @@ spec:
       affinity:
         {{ tpl .Values.volume.affinity . | nindent 8 | trim }}
       {{- end }}
+      {{- with .Values.volume.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       restartPolicy: {{ default .Values.global.restartPolicy .Values.volume.restartPolicy }}
       {{- if .Values.volume.tolerations }}
       tolerations:
