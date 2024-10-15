@@ -40,7 +40,7 @@ func (fca *FilerClientAccessor) SaveTopicConfToFiler(t *mq_pb.Topic, conf *mq_pb
 
 func (fca *FilerClientAccessor) ReadTopicConfFromFiler(t topic.Topic) (conf *mq_pb.ConfigureTopicResponse, err error) {
 
-	glog.V(0).Infof("load conf for topic %v from filer", t)
+	glog.V(1).Infof("load conf for topic %v from filer", t)
 
 	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
 	if err = fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
