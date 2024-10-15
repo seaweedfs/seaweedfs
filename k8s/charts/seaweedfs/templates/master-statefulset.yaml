@@ -50,6 +50,10 @@ spec:
       affinity:
         {{ tpl .Values.master.affinity . | nindent 8 | trim }}
       {{- end }}
+      {{- with .Values.master.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if .Values.master.tolerations }}
       tolerations:
         {{ tpl .Values.master.tolerations . | nindent 8 | trim }}
