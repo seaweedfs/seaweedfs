@@ -35,7 +35,7 @@ func CompactTopicPartitions(filerClient filer_pb.FilerClient, namespace string, 
 		for _, partition := range partitions {
 			err := compactTopicPartition(filerClient, namespace, topicName, partitionVersion, timeAgo, recordType, partition, preference)
 			if err != nil {
-				return err
+				return fmt.Errorf("compact partition %s/%s/%s/%s: %v", namespace, topicName, partitionVersion, partition, err)
 			}
 		}
 	}
@@ -76,6 +76,9 @@ func compactTopicPartitionDir(filerClient filer_pb.FilerClient, topicName, parti
 	logFiles, err := readAllLogFiles(filerClient, partitionDir, timeAgo, minTsNs, maxTsNs)
 	if err != nil {
 		return err
+	}
+	if len(logFiles) == 0 {
+		return nil
 	}
 
 	// divide log files into groups of 128MB
@@ -134,7 +137,7 @@ func readAllLogFiles(filerClient filer_pb.FilerClient, partitionDir string, time
 			glog.Warningf("parse log time %s: %v", entry.Name, err)
 			return nil
 		}
-		if logTime.UnixNano() <= maxTsNs {
+		if maxTsNs > 0 && logTime.UnixNano() <= maxTsNs {
 			return nil
 		}
 		logFiles = append(logFiles, entry)

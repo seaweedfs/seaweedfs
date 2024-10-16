@@ -2,7 +2,6 @@ package shell
 
 import (
 	"flag"
-	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/parquet_conv"
@@ -102,9 +101,8 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	// compact the topic partition versions
-	err = parquet_conv.CompactTopicPartitions(commandEnv, *namespace, *topicName, partitions, *timeAgo, recordType, storagePreference)
-	if err != nil {
-		return fmt.Errorf("compact topic partition %s: %v", partitionVersion, err)
+	if err = parquet_conv.CompactTopicPartitions(commandEnv, *namespace, *topicName, partitions, *timeAgo, recordType, storagePreference); err != nil {
+		return err
 	}
 
 	return nil
