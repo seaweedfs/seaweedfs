@@ -9,6 +9,10 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+{{- if .Values.master.annotations }}
+  annotations:
+    {{- toYaml .Values.master.annotations | nindent 4 }}
+{{- end }}
 data:
   master.toml: |-
     {{ .Values.master.config | nindent 4 }}
