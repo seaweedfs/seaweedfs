@@ -86,7 +86,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 		glog.V(1).Infof("field: %s, type: %s\n", field.GetName(), schema.TypeToString(field.GetType()))
 	}
 	recordType.Fields = append(recordType.Fields, &schema_pb.Field{
-		Name: "ts",
+		Name: parquet_conv.TS_COLUMN_NAME,
 		Type: &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{
 			ScalarType: schema_pb.ScalarType_INT64,
 		}},

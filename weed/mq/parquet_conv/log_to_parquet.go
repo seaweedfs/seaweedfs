@@ -23,6 +23,8 @@ import (
 	"time"
 )
 
+const TS_COLUMN_NAME = "_ts_ns"
+
 func CompactTopicPartitions(filerClient filer_pb.FilerClient, t topic.Topic, partitions []*mq_pb.Partition, timeAgo time.Duration, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
 	// list the topic partition versions
 	partitionVersions, err := collectTopicPartitionVersions(filerClient, t, timeAgo)
@@ -219,7 +221,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 				return fmt.Errorf("unmarshal record value: %v", err)
 			}
 
-			record.Fields["ts"] = &schema_pb.Value{
+			record.Fields[TS_COLUMN_NAME] = &schema_pb.Value{
 				Kind: &schema_pb.Value_Int64Value{
 					Int64Value: entry.TsNs,
 				},
