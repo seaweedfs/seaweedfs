@@ -101,18 +101,10 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 		partitions = append(partitions, assignment.Partition)
 	}
 
-	// list the topic partition versions
-	partitionVersions, err := parquet_conv.CollectTopicPartitionVersions(commandEnv, *namespace, *topicName, *timeAgo)
-	if err != nil {
-		return fmt.Errorf("list topic files: %v", err)
-	}
-
 	// compact the topic partition versions
-	for _, partitionVersion := range partitionVersions {
-		err = parquet_conv.CompactTopicPartitions(commandEnv, *namespace, *topicName, partitionVersion, partitions, *timeAgo, recordType, storagePreference)
-		if err != nil {
-			return fmt.Errorf("compact topic partition %s: %v", partitionVersion, err)
-		}
+	err = parquet_conv.CompactTopicPartitions(commandEnv, *namespace, *topicName, partitions, *timeAgo, recordType, storagePreference)
+	if err != nil {
+		return fmt.Errorf("compact topic partition %s: %v", partitionVersion, err)
 	}
 
 	return nil

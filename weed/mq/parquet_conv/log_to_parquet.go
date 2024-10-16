@@ -23,7 +23,26 @@ import (
 	"time"
 )
 
-func CollectTopicPartitionVersions(filerClient filer_pb.FilerClient, namespace string, topicName string, timeAgo time.Duration) (partitionVersions []string, err error) {
+func CompactTopicPartitions(filerClient filer_pb.FilerClient, namespace string, topicName string, partitions []*mq_pb.Partition, timeAgo time.Duration, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
+	// list the topic partition versions
+	partitionVersions, err := collectTopicPartitionVersions(commandEnv, namespace, topicName, timeAgo)
+	if err != nil {
+		return fmt.Errorf("list topic files: %v", err)
+	}
+
+	// compact the partitions
+	for _, partitionVersion := range partitionVersions {
+		for _, partition := range partitions {
+			err := compactTopicPartition(filerClient, namespace, topicName, partitionVersion, timeAgo, recordType, partition, preference)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func collectTopicPartitionVersions(filerClient filer_pb.FilerClient, namespace string, topicName string, timeAgo time.Duration) (partitionVersions []string, err error) {
 	err = filer_pb.ReadDirAllEntries(filerClient, util.FullPath(filer.TopicsDir+"/"+namespace+"/"+topicName), "", func(entry *filer_pb.Entry, isLast bool) error {
 		t, err := time.Parse(topic.TIME_FORMAT, entry.Name)
 		if err != nil {
@@ -36,16 +55,6 @@ func CollectTopicPartitionVersions(filerClient filer_pb.FilerClient, namespace s
 		return nil
 	})
 	return
-}
-
-func CompactTopicPartitions(filerClient filer_pb.FilerClient, namespace string, topicName string, partitionVersion string, partitions []*mq_pb.Partition, timeAgo time.Duration, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
-	for _, partition := range partitions {
-		err := compactTopicPartition(filerClient, namespace, topicName, partitionVersion, timeAgo, recordType, partition, preference)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func compactTopicPartition(filerClient filer_pb.FilerClient, namespace string, topicName string, partitionVersion string, timeAgo time.Duration, recordType *schema_pb.RecordType, partition *mq_pb.Partition, preference *operation.StoragePreference) error {
