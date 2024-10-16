@@ -25,7 +25,7 @@ import (
 
 func CompactTopicPartitions(filerClient filer_pb.FilerClient, namespace string, topicName string, partitions []*mq_pb.Partition, timeAgo time.Duration, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
 	// list the topic partition versions
-	partitionVersions, err := collectTopicPartitionVersions(commandEnv, namespace, topicName, timeAgo)
+	partitionVersions, err := collectTopicPartitionVersions(filerClient, namespace, topicName, timeAgo)
 	if err != nil {
 		return fmt.Errorf("list topic files: %v", err)
 	}
