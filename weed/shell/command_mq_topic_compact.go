@@ -74,10 +74,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 			return commandEnv.option.GrpcDialOption
 		},
 	}
-	t := topic.Topic{
-		Namespace: *namespace,
-		Name:      *topicName,
-	}
+	t := topic.NewTopic(*namespace, *topicName)
 	topicConf, err := fca.ReadTopicConfFromFiler(t)
 	if err != nil {
 		return err
@@ -101,7 +98,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	// compact the topic partition versions
-	if err = parquet_conv.CompactTopicPartitions(commandEnv, *namespace, *topicName, partitions, *timeAgo, recordType, storagePreference); err != nil {
+	if err = parquet_conv.CompactTopicPartitions(commandEnv, t, partitions, *timeAgo, recordType, storagePreference); err != nil {
 		return err
 	}
 
