@@ -140,6 +140,9 @@ master:
   # Annotations to be added to the master pods
   podAnnotations: {}
 
+  # Annotations to be added to the master resources
+  annotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -410,6 +413,9 @@ volume:
   # Annotations to be added to the volume pods
   podAnnotations: {}
 
+  # Annotations to be added to the volume resources
+  annotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -608,6 +614,9 @@ filer:
 
   # Annotations to be added to the filer pods
   podAnnotations: {}
+
+  # Annotations to be added to the filer resource
+  annotations: {}
 
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
@@ -827,6 +836,9 @@ s3:
 
   # Annotations to be added to the s3 pods
   podAnnotations: {}
+
+  # Annotations to be added to the s3 resources
+  annotations: {}
 
   # Resource requests, limits, etc. for the server cluster placement. This
   # should map directly to the value of the resources field for a PodSpec,

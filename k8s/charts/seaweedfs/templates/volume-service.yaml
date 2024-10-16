@@ -9,6 +9,10 @@ metadata:
     app.kubernetes.io/component: volume
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- if .Values.volume.annotations }}
+  annotations:
+    {{- toYaml .Values.volume.annotations | nindent 4 }}
+{{- end }}
 spec:
   clusterIP: None
   internalTrafficPolicy: {{ .Values.volume.internalTrafficPolicy | default "Cluster" }}
