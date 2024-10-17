@@ -1,4 +1,4 @@
-package parquet_conv
+package logstore
 
 import (
 	"encoding/binary"

@@ -4,7 +4,7 @@ import (
 	"flag"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/parquet_conv"
+	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -86,7 +86,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 		glog.V(1).Infof("field: %s, type: %s\n", field.GetName(), schema.TypeToString(field.GetType()))
 	}
 	recordType.Fields = append(recordType.Fields, &schema_pb.Field{
-		Name: parquet_conv.TS_COLUMN_NAME,
+		Name: logstore.TS_COLUMN_NAME,
 		Type: &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{
 			ScalarType: schema_pb.ScalarType_INT64,
 		}},
@@ -98,7 +98,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	// compact the topic partition versions
-	if err = parquet_conv.CompactTopicPartitions(commandEnv, t, partitions, *timeAgo, recordType, storagePreference); err != nil {
+	if err = logstore.CompactTopicPartitions(commandEnv, t, partitions, *timeAgo, recordType, storagePreference); err != nil {
 		return err
 	}
 
