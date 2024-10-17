@@ -152,6 +152,10 @@ func (store *HbaseStore) ListDirectoryEntries(ctx context.Context, dirPath util.
 	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", eachEntryFunc)
 }
 
+func (store *HbaseStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return lastFileName, filer.ErrUnsupportedRecursivePrefixed
+}
+
 func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	family := map[string][]string{store.cfMetaDir: {COLUMN_NAME}}
 	expectedPrefix := []byte(dirPath.Child(prefix))

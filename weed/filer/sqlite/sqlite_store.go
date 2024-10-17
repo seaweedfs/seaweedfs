@@ -61,7 +61,7 @@ func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (e
 	}
 
 	var dbErr error
-	store.DB, dbErr = sql.Open("sqlite", dbFile)
+	store.DB, dbErr = sql.Open("sqlite", "file:"+dbFile)
 	if dbErr != nil {
 		if store.DB != nil {
 			store.DB.Close()

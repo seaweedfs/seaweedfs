@@ -47,8 +47,12 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	}
 
 	paginationLimit := filer.PaginationSize
-	if limit < paginationLimit {
+	if paginationLimit > limit {
 		paginationLimit = limit
+		// for skipping parent folders
+		if req.Recursive && !req.Delimiter {
+			paginationLimit *= 2
+		}
 	}
 
 	lastFileName := req.StartFromFileName
@@ -56,14 +60,14 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	var listErr error
 	for limit > 0 {
 		var hasEntries bool
-		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) bool {
+		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, req.Recursive, req.Delimiter, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) bool {
 			hasEntries = true
 			if err = stream.Send(&filer_pb.ListEntriesResponse{
 				Entry: entry.ToProtoEntry(),
+				Path:  string(entry.FullPath),
 			}); err != nil {
 				return false
 			}
-
 			limit--
 			if limit == 0 {
 				return false
@@ -80,7 +84,6 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 		if !hasEntries {
 			return nil
 		}
-
 		includeLastFile = false
 
 	}
