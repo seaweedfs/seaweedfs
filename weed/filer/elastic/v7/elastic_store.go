@@ -103,6 +103,10 @@ func (store *ElasticStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
+func (store *ElasticStore) ListRecursivePrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, delimiter bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return lastFileName, filer.ErrUnsupportedRecursivePrefixed
+}
+
 func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	index := getIndex(entry.FullPath, false)
 	dir, _ := entry.FullPath.DirAndName()

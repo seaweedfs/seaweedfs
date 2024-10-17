@@ -49,6 +49,10 @@ func (gen *SqlGenPostgres) GetSqlListInclusive(tableName string) string {
 	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND name>=$2 AND directory=$3 AND name like $4 ORDER BY NAME ASC LIMIT $5`, tableName)
 }
 
+func (gen *SqlGenPostgres) GetSqlListRecursive(tableName string) string {
+	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash>$1 AND name>$2 AND directory like $3 AND name like $4 ORDER BY DIRECTORY,NAME ASC LIMIT $5`, tableName)
+}
+
 func (gen *SqlGenPostgres) GetSqlCreateTable(tableName string) string {
 	return fmt.Sprintf(gen.CreateTableSqlTemplate, tableName)
 }
