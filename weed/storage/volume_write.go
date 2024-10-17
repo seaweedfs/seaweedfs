@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"os"
 )
 
 var ErrorNotFound = errors.New("not found")
@@ -323,6 +324,19 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 		return fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())
 	}
 
+	nv, ok := v.nm.Get(needleId)
+	if ok && nv.Size == size {
+		oldNeedle := new(needle.Needle)
+		err := oldNeedle.ReadData(v.DataBackend, nv.Offset.ToActualOffset(), nv.Size, v.Version())
+		if err == nil {
+			newNeedle := new(needle.Needle)
+			err = newNeedle.ReadBytes(needleBlob, nv.Offset.ToActualOffset(), size, v.Version())
+			if err == nil && oldNeedle.Cookie == newNeedle.Cookie && oldNeedle.Checksum == newNeedle.Checksum && bytes.Equal(oldNeedle.Data, newNeedle.Data) {
+				glog.V(0).Infof("needle %v already exists", needleId)
+				return nil
+			}
+		}
+	}
 	appendAtNs := needle.GetAppendAtNs(v.lastAppendAtNs)
 	offset, err := needle.WriteNeedleBlob(v.DataBackend, needleBlob, size, appendAtNs, v.Version())
 
