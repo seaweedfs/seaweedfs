@@ -3,6 +3,7 @@ package broker
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -40,7 +41,7 @@ func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition
 	self := b.option.BrokerAddress()
 	for _, assignment := range conf.BrokerPartitionAssignments {
 		if assignment.LeaderBroker == string(self) && partition.Equals(topic.FromPbPartition(assignment.Partition)) {
-			localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, assignment.Partition), b.genLogOnDiskReadFunc(t, assignment.Partition))
+			localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, assignment.Partition), logstore.GenLogOnDiskReadFunc(b, t, assignment.Partition))
 			b.localTopicManager.AddLocalPartition(t, localPartition)
 			isGenerated = true
 			break
