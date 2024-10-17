@@ -27,7 +27,7 @@ func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *m
 		} else {
 			var localPartition *topic.LocalPartition
 			if localPartition = b.localTopicManager.GetLocalPartition(t, partition); localPartition == nil {
-				localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, assignment.Partition), logstore.GenLogOnDiskReadFunc(b, t, assignment.Partition))
+				localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, assignment.Partition), logstore.GenMergedReadFunc(b, t, assignment.Partition))
 				b.localTopicManager.AddLocalPartition(t, localPartition)
 			}
 		}
