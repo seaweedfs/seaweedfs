@@ -27,7 +27,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, parti
 
 			size := util.BytesToUint32(buf[pos : pos+4])
 			if pos+4+int(size) > len(buf) {
-				err = fmt.Errorf("LogOnDiskReadFunc: read [%d,%d) from [0,%d)", pos, pos+int(size)+4, len(buf))
+				err = fmt.Errorf("GenLogOnDiskReadFunc: read [%d,%d) from [0,%d)", pos, pos+int(size)+4, len(buf))
 				return
 			}
 			entryData := buf[pos+4 : pos+4+int(size)]
