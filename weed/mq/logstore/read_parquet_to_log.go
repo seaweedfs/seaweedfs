@@ -149,7 +149,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partiti
 				}
 				maxTsNs := int64(binary.BigEndian.Uint64(maxTsBytes))
 
-				if stopTsNs != 0 && minTsNs > stopTsNs {
+				if stopTsNs != 0 && stopTsNs <= minTsNs {
 					isDone = true
 					return nil
 				}
