@@ -24,6 +24,11 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 			perPartitionConcurrency = 1
 		}
 
+		var stopTsNs int64
+		if !sub.ContentConfig.StopTime.IsZero() {
+			stopTsNs = sub.ContentConfig.StopTime.UnixNano()
+		}
+
 		if err = subscribeClient.Send(&mq_pb.SubscribeMessageRequest{
 			Message: &mq_pb.SubscribeMessageRequest_Init{
 				Init: &mq_pb.SubscribeMessageRequest_InitMessage{
@@ -32,6 +37,8 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 					Topic:         sub.ContentConfig.Topic.ToPbTopic(),
 					PartitionOffset: &mq_pb.PartitionOffset{
 						Partition: assigned.Partition,
+						StartTsNs: sub.ContentConfig.StartTime.UnixNano(),
+						StopTsNs:  stopTsNs,
 						StartType: mq_pb.PartitionOffsetStartType_EARLIEST_IN_MEMORY,
 					},
 					Filter:         sub.ContentConfig.Filter,
