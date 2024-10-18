@@ -2,10 +2,9 @@ package storage
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"io"
 	"os"
-
-	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -27,11 +26,11 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	for i := 1; i <= 10 && indexSize >= int64(i)*NeedleMapEntrySize; i++ {
 		// check and fix last 10 entries
 		lastAppendAtNs, err = doCheckAndFixVolumeData(v, indexFile, indexSize-int64(i)*NeedleMapEntrySize)
-		if err != nil {
-			if err == io.EOF {
-				healthyIndexSize = indexSize - int64(i)*NeedleMapEntrySize
-				continue
-			}
+		if err == io.EOF {
+			healthyIndexSize = indexSize - int64(i)*NeedleMapEntrySize
+			continue
+		}
+		if err != ErrorSizeMismatch {
 			break
 		}
 	}

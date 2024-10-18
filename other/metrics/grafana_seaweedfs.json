@@ -105,7 +105,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_filer_request_seconds_bucket[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_filerStore_request_seconds_bucket[1m])) by (le))",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 2,
@@ -114,7 +114,7 @@
               "step": 60
             },
             {
-              "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_filer_request_seconds_bucket[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_filerStore_request_seconds_bucket[1m])) by (le, type))",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 2,
@@ -200,7 +200,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_filer_request_seconds_bucket[1m])) by (le))",
+              "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_filerStore_request_seconds_bucket[1m])) by (le))",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 2,
@@ -209,7 +209,7 @@
               "step": 60
             },
             {
-              "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_filer_request_seconds_bucket[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_filerStore_request_seconds_bucket[1m])) by (le, type))",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 2,
@@ -301,7 +301,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_filer_request_seconds_bucket[1m])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_filerStore_request_seconds_bucket[1m])) by (le))",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 2,
@@ -310,7 +310,7 @@
               "step": 60
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_filer_request_seconds_bucket[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_filerStore_request_seconds_bucket[1m])) by (le, type))",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 2,
@@ -415,7 +415,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(SeaweedFS_filer_request_total[1m])",
+              "expr": "rate(SeaweedFS_filerStore_request_total[1m])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
