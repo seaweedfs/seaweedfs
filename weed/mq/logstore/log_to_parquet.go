@@ -6,7 +6,6 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/compress/zstd"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -136,7 +135,7 @@ func readAllLogFiles(filerClient filer_pb.FilerClient, partitionDir string, time
 		}
 		logTime, err := time.Parse(topic.TIME_FORMAT, entry.Name)
 		if err != nil {
-			glog.Warningf("parse log time %s: %v", entry.Name, err)
+			// glog.Warningf("parse log time %s: %v", entry.Name, err)
 			return nil
 		}
 		if maxTsNs > 0 && logTime.UnixNano() <= maxTsNs {
