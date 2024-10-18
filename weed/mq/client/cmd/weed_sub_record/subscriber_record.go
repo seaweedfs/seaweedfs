@@ -78,7 +78,7 @@ func main() {
 		record := &schema_pb.RecordValue{}
 		proto.Unmarshal(value, record)
 		fmt.Printf("record: %v\n", record)
-		time.Sleep(1300 * time.Millisecond)
+		//time.Sleep(1300 * time.Millisecond)
 		return nil
 	})
 
