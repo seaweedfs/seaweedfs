@@ -521,6 +521,10 @@ filer:
   metricsPort: 9327
   loggingOverrideLevel: null
   filerGroup: ""
+  # prefer to read and write to volumes in this data center (not set by default)
+  dataCenter: null
+  # prefer to write to volumes in this rack (not set by default)
+  rack: null
   #  replication type is XYZ:
   # X number of replica in other data centers
   # Y number of replica in other racks in the same data center
