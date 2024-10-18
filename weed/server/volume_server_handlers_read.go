@@ -37,9 +37,12 @@ func NotFound(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func InternalError(w http.ResponseWriter) {
+func InternalError(w http.ResponseWriter, err error) {
 	stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorGetInternal).Inc()
 	w.WriteHeader(http.StatusInternalServerError)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": err.Error(),
+	})
 }
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +92,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			request, err := http.NewRequest(http.MethodGet, r.URL.String(), nil)
 			if err != nil {
 				glog.V(0).Infof("failed to instance http request of url %s: %v", r.URL.String(), err)
-				InternalError(w)
+				InternalError(w, err)
 				return
 			}
 			for k, vv := range r.Header {
@@ -101,7 +104,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			response, err := util_http.GetGlobalHttpClient().Do(request)
 			if err != nil {
 				glog.V(0).Infof("request remote url %s: %v", r.URL.String(), err)
-				InternalError(w)
+				InternalError(w, err)
 				return
 			}
 			defer util_http.CloseResponse(response)
@@ -165,7 +168,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		if err == storage.ErrorNotFound || err == storage.ErrorDeleted {
 			NotFound(w)
 		} else {
-			InternalError(w)
+			InternalError(w, err)
 		}
 		return
 	}
