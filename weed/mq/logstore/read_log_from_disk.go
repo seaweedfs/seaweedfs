@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/protobuf/proto"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -115,6 +116,9 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, parti
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			return filer_pb.SeaweedList(client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 				if entry.IsDirectory {
+					return nil
+				}
+				if strings.HasSuffix(entry.Name, ".parquet") {
 					return nil
 				}
 				if stopTsNs != 0 && entry.Name > stopTime.UTC().Format(topic.TIME_FORMAT) {
