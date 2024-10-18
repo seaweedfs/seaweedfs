@@ -400,7 +400,7 @@ func eachChunk(buf []byte, eachLogEntryFn log_buffer.EachLogEntryFuncType) (proc
 
 		size := util.BytesToUint32(buf[pos : pos+4])
 		if pos+4+int(size) > len(buf) {
-			err = fmt.Errorf("LogOnDiskReadFunc: read [%d,%d) from [0,%d)", pos, pos+int(size)+4, len(buf))
+			err = fmt.Errorf("reach each log chunk: read [%d,%d) from [0,%d)", pos, pos+int(size)+4, len(buf))
 			return
 		}
 		entryData := buf[pos+4 : pos+4+int(size)]
