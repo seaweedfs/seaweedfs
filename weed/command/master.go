@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"path"
 	"strings"
@@ -37,6 +38,8 @@ var (
 
 type MasterOptions struct {
 	port                       *int
+	debug                      *bool
+	debugPort                  *int
 	portGrpc                   *int
 	ip                         *string
 	ipBind                     *string
@@ -63,6 +66,8 @@ type MasterOptions struct {
 
 func init() {
 	cmdMaster.Run = runMaster // break init cycle
+	m.debug = cmdMaster.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:6060/debug/pprof/goroutine?debug=2")
+	m.debugPort = cmdMaster.Flag.Int("debug.port", 6060, "http port for debugging")
 	m.port = cmdMaster.Flag.Int("port", 9333, "http listen port")
 	m.portGrpc = cmdMaster.Flag.Int("port.grpc", 0, "grpc listen port")
 	m.ip = cmdMaster.Flag.String("ip", util.DetectedHostAddress(), "master <ip>|<server> address, also used as identifier")
@@ -275,6 +280,9 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 			ms.Topo.HashicorpRaft.LeadershipTransfer()
 		}
 	})
+	if *masterOption.debug {
+		go http.ListenAndServe(fmt.Sprintf(":%d", *masterOption.debugPort), nil)
+	}
 	select {}
 }
 
