@@ -9,6 +9,10 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+{{- if .Values.s3.annotations }}
+  annotations:
+    {{- toYaml .Values.s3.annotations | nindent 4 }}
+{{- end }}
 spec:
   replicas: {{ .Values.s3.replicas }}
   selector:
