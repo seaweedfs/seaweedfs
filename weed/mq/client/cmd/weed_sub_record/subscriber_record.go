@@ -76,8 +76,12 @@ func main() {
 	subscriber.SetEachMessageFunc(func(key, value []byte) error {
 		counter++
 		record := &schema_pb.RecordValue{}
-		proto.Unmarshal(value, record)
-		fmt.Printf("record: %v\n", record)
+		err := proto.Unmarshal(value, record)
+		if err != nil {
+			fmt.Printf("unmarshal record value: %v\n", err)
+		} else {
+			fmt.Printf("%s %d: %v\n", string(key), len(value), record)
+		}
 		//time.Sleep(1300 * time.Millisecond)
 		return nil
 	})
