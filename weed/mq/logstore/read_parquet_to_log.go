@@ -9,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -47,12 +46,8 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partiti
 		return nil
 	}
 	recordType := topicConf.GetRecordType()
-	recordType.Fields = append(recordType.Fields, &schema_pb.Field{
-		Name: TS_COLUMN_NAME,
-		Type: &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{
-			ScalarType: schema_pb.ScalarType_INT64,
-		}},
-	})
+	recordType = schema.NewRecordTypeBuilder(recordType).WithField(TS_COLUMN_NAME, schema.TypeInt64).RecordTypeEnd()
+
 	parquetSchema, err := schema.ToParquetSchema(t.Name, recordType)
 	if err != nil {
 		return nil
