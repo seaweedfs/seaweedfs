@@ -3,17 +3,14 @@ package shell
 import (
 	"flag"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/grpc"
 	"io"
-	"sort"
 	"time"
 )
 
@@ -83,18 +80,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 
 	// get record type
 	recordType := topicConf.GetRecordType()
-	for _, field := range recordType.GetFields() {
-		glog.V(1).Infof("field: %s, type: %s\n", field.GetName(), schema.TypeToString(field.GetType()))
-	}
-	recordType.Fields = append(recordType.Fields, &schema_pb.Field{
-		Name: logstore.TS_COLUMN_NAME,
-		Type: &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{
-			ScalarType: schema_pb.ScalarType_INT64,
-		}},
-	})
-	sort.Slice(recordType.Fields, func(i, j int) bool {
-		return recordType.Fields[i].Name < recordType.Fields[j].Name
-	})
+	recordType = schema.NewRecordTypeBuilder(recordType).WithField(logstore.TS_COLUMN_NAME, schema.TypeInt64).RecordTypeEnd()
 
 	var partitions []*mq_pb.Partition
 	for _, assignment := range topicConf.BrokerPartitionAssignments {
