@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/grpc"
 	"io"
+	"sort"
 	"time"
 )
 
@@ -90,6 +91,9 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 		Type: &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{
 			ScalarType: schema_pb.ScalarType_INT64,
 		}},
+	})
+	sort.Slice(recordType.Fields, func(i, j int) bool {
+		return recordType.Fields[i].Name < recordType.Fields[j].Name
 	})
 
 	var partitions []*mq_pb.Partition
