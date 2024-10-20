@@ -141,7 +141,7 @@ require (
 	github.com/hashicorp/raft v1.7.1
 	github.com/hashicorp/raft-boltdb/v2 v2.3.0
 	github.com/orcaman/concurrent-map/v2 v2.0.1
-	github.com/parquet-go/parquet-go v0.23.0
+	github.com/parquet-go/parquet-go v0.23.1-0.20241011155651-6446d1d0d2fe
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/rclone/rclone v1.68.1
 	github.com/rdleal/intervalst v1.4.0
