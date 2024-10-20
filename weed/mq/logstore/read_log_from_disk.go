@@ -121,6 +121,10 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, parti
 				if strings.HasSuffix(entry.Name, ".parquet") {
 					return nil
 				}
+				// FIXME: this is a hack to skip the .offset files
+				if strings.HasSuffix(entry.Name, ".offset") {
+					return nil
+				}
 				if stopTsNs != 0 && entry.Name > stopTime.UTC().Format(topic.TIME_FORMAT) {
 					isDone = true
 					return nil
