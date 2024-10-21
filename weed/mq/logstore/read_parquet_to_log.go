@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	chunkCache = chunk_cache.NewTieredChunkCache(256, ".", 1024, 1024*1024) // 1GB on disk cache
+	chunkCache = chunk_cache.NewChunkCacheInMemory(256) // 256 entries, 8MB max per entry
 )
 
 func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partition *mq_pb.Partition) log_buffer.LogReadFromDiskFuncType {
