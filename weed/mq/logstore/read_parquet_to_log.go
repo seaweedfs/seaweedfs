@@ -101,6 +101,8 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partiti
 					Data: data,
 				}
 
+				// fmt.Printf(" parquet entry %s ts %v\n", string(logEntry.Key), time.Unix(0, logEntry.TsNs).UTC())
+
 				if _, err = eachLogEntryFn(logEntry); err != nil {
 					return processedTsNs, fmt.Errorf("process log entry %v: %v", logEntry, err)
 				}

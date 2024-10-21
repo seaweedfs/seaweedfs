@@ -1,7 +1,6 @@
 package logstore
 
 import (
-	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -19,7 +18,9 @@ func mergeReadFuncs(fromParquetFn, readLogDirectFn log_buffer.LogReadFromDiskFun
 	var lastProcessedPosition log_buffer.MessagePosition
 	return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastReadPosition log_buffer.MessagePosition, isDone bool, err error) {
 		if !exhaustedParquet {
+			// glog.V(4).Infof("reading from parquet startPosition: %v\n", startPosition.UTC())
 			lastReadPosition, isDone, err = fromParquetFn(startPosition, stopTsNs, eachLogEntryFn)
+			// glog.V(4).Infof("read from parquet: %v %v %v %v\n", startPosition, lastReadPosition, isDone, err)
 			if isDone {
 				isDone = false
 			}
@@ -34,7 +35,7 @@ func mergeReadFuncs(fromParquetFn, readLogDirectFn log_buffer.LogReadFromDiskFun
 			startPosition = lastProcessedPosition
 		}
 
-		fmt.Printf("reading from direct log startPosition: %v\n", startPosition.UTC())
+		// glog.V(4).Infof("reading from direct log startPosition: %v\n", startPosition.UTC())
 		lastReadPosition, isDone, err = readLogDirectFn(startPosition, stopTsNs, eachLogEntryFn)
 		return
 	}

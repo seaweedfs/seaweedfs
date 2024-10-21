@@ -48,6 +48,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, parti
 				return
 			}
 
+			// fmt.Printf(" read logEntry: %v, ts %v\n", string(logEntry.Key), time.Unix(0, logEntry.TsNs).UTC())
 			if _, err = eachLogEntryFn(logEntry); err != nil {
 				err = fmt.Errorf("process log entry %v: %v", logEntry, err)
 				return
@@ -91,6 +92,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, parti
 			for _, urlString := range urlStrings {
 				// TODO optimization opportunity: reuse the buffer
 				var data []byte
+				// fmt.Printf("reading %s/%s %s\n", partitionDir, entry.Name, urlString)
 				if data, _, err = util_http.Get(urlString); err == nil {
 					processed = true
 					if processedTsNs, err = eachChunkFn(data, eachLogEntryFn, starTsNs, stopTsNs); err != nil {
