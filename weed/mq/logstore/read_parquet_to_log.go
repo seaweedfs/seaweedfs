@@ -46,7 +46,10 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partiti
 		return nil
 	}
 	recordType := topicConf.GetRecordType()
-	recordType = schema.NewRecordTypeBuilder(recordType).WithField(TS_COLUMN_NAME, schema.TypeInt64).RecordTypeEnd()
+	recordType = schema.NewRecordTypeBuilder(recordType).
+		WithField(SW_COLUMN_NAME_TS, schema.TypeInt64).
+		WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
+		RecordTypeEnd()
 
 	parquetSchema, err := schema.ToParquetSchema(t.Name, recordType)
 	if err != nil {
@@ -79,7 +82,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partiti
 				if err != nil {
 					return processedTsNs, fmt.Errorf("ToRecordValue failed: %v", err)
 				}
-				processedTsNs = recordValue.Fields[TS_COLUMN_NAME].GetInt64Value()
+				processedTsNs = recordValue.Fields[SW_COLUMN_NAME_TS].GetInt64Value()
 				if processedTsNs < starTsNs {
 					continue
 				}
@@ -93,6 +96,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partiti
 				}
 
 				logEntry := &filer_pb.LogEntry{
+					Key:  recordValue.Fields[SW_COLUMN_NAME_KEY].GetBytesValue(),
 					TsNs: processedTsNs,
 					Data: data,
 				}

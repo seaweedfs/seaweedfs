@@ -80,7 +80,10 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 
 	// get record type
 	recordType := topicConf.GetRecordType()
-	recordType = schema.NewRecordTypeBuilder(recordType).WithField(logstore.TS_COLUMN_NAME, schema.TypeInt64).RecordTypeEnd()
+	recordType = schema.NewRecordTypeBuilder(recordType).
+		WithField(logstore.SW_COLUMN_NAME_TS, schema.TypeInt64).
+		WithField(logstore.SW_COLUMN_NAME_KEY, schema.TypeBytes).
+		RecordTypeEnd()
 
 	var partitions []*mq_pb.Partition
 	for _, assignment := range topicConf.BrokerPartitionAssignments {
