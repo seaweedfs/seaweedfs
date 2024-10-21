@@ -126,7 +126,7 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 		contentType = ""
 	}
 
-	if err := fs.checkPermissions(ctx, r, ""); err != nil {
+	if err := fs.checkPermissions(ctx, r, fileName); err != nil {
 		return nil, nil, err
 	}
 
