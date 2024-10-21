@@ -210,8 +210,6 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 				return nil
 			}
 
-			// println("adding row", string(entry.Key))
-
 			// write to parquet file
 			rowBuilder.Reset()
 
@@ -250,7 +248,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 	}
 
 	// write to parquet file to partitionDir
-	parquetFileName := fmt.Sprintf("%s.parquet", time.Unix(0, startTsNs).Format("2006-01-02-15-04-05"))
+	parquetFileName := fmt.Sprintf("%s.parquet", time.Unix(0, startTsNs).UTC().Format("2006-01-02-15-04-05"))
 	if err := saveParquetFileToPartitionDir(filerClient, tempFile, partitionDir, parquetFileName, preference, startTsNs, stopTsNs); err != nil {
 		return fmt.Errorf("save parquet file %s: %v", parquetFileName, err)
 	}
