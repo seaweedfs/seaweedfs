@@ -1,6 +1,7 @@
 package logstore
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -15,18 +16,25 @@ func GenMergedReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partitio
 
 func mergeReadFuncs(fromParquetFn, readLogDirectFn log_buffer.LogReadFromDiskFuncType) log_buffer.LogReadFromDiskFuncType {
 	var exhaustedParquet bool
+	var lastProcessedPosition log_buffer.MessagePosition
 	return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastReadPosition log_buffer.MessagePosition, isDone bool, err error) {
 		if !exhaustedParquet {
 			lastReadPosition, isDone, err = fromParquetFn(startPosition, stopTsNs, eachLogEntryFn)
 			if isDone {
-				exhaustedParquet = true
 				isDone = false
 			}
 			if err != nil {
 				return
 			}
+			lastProcessedPosition = lastReadPosition
+		}
+		exhaustedParquet = true
+
+		if startPosition.Before(lastProcessedPosition.Time) {
+			startPosition = lastProcessedPosition
 		}
 
+		fmt.Printf("reading from direct log startPosition: %v\n", startPosition.UTC())
 		lastReadPosition, isDone, err = readLogDirectFn(startPosition, stopTsNs, eachLogEntryFn)
 		return
 	}
