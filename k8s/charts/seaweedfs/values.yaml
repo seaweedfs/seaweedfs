@@ -716,7 +716,7 @@ filer:
         sub_filter '/seaweedfsstatic' './seaweedfsstatic';
         sub_filter_once off;
 
-  # extraEnvVars is a list of extra enviroment variables to set with the stateful set.
+  # extraEnvVars is a list of extra environment variables to set with the stateful set.
   extraEnvironmentVars:
     WEED_MYSQL_ENABLED: "false"
     WEED_MYSQL_HOSTNAME: "mysql-db-host"
