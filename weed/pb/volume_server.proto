@@ -12,6 +12,9 @@ service VolumeServer {
     rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
     }
 
+    rpc WriteBlob (WriteBlobRequest) returns (WriteBlobResponse) {
+    }
+
     rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
     }
     rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (stream VacuumVolumeCompactResponse) {
@@ -134,6 +137,16 @@ message DeleteResult {
 }
 
 message Empty {
+}
+
+message WriteBlobRequest {
+    uint32 volume_id = 1;
+    string file_id = 2;
+    bytes data = 3;
+}
+
+message WriteBlobResponse {
+    uint32 size = 1;
 }
 
 message VacuumVolumeCheckRequest {

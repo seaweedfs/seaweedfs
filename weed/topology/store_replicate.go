@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"google.golang.org/grpc"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -23,16 +22,32 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5 string) (isUnchanged bool, err error) {
+type ReplicatedWriteParams struct {
+	VolumeId needle.VolumeId
+	Needle        *needle.Needle
+	Jwt 	 security.EncodedJwt
+	Replicate bool
+	Fsync    bool
+	ContentMd5 string
+}
+
+type ReplicatedDeleteParams struct {
+	VolumeId needle.VolumeId
+	Needle        *needle.Needle
+	Jwt 	 security.EncodedJwt
+	Replicate bool
+}
+
+func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, params ReplicatedWriteParams) (isUnchanged bool, err error) {
 
 	//check JWT
-	jwt := security.GetJwt(r)
+	jwt := params.Jwt
 
 	// check whether this is a replicated write request
 	var remoteLocations []operation.Location
-	if r.FormValue("type") != "replicate" {
+	if !params.Replicate {
 		// this is the initial request
-		remoteLocations, err = GetWritableRemoteReplications(s, grpcDialOption, volumeId, masterFn)
+		remoteLocations, err = GetWritableRemoteReplications(s, grpcDialOption, params.VolumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -40,19 +55,16 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	}
 
 	// read fsync value
-	fsync := false
-	if r.FormValue("fsync") == "true" {
-		fsync = true
-	}
+	fsync := params.Fsync
 
-	if s.GetVolume(volumeId) != nil {
+	if s.GetVolume(params.VolumeId) != nil {
 		start := time.Now()
 
 		inFlightGauge := stats.VolumeServerInFlightRequestsGauge.WithLabelValues(stats.WriteToLocalDisk)
 		inFlightGauge.Inc()
 		defer inFlightGauge.Dec()
 
-		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, true, fsync)
+		isUnchanged, err = s.WriteVolumeNeedle(params.VolumeId, params.Needle, true, fsync)
 		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToLocalDisk).Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
@@ -70,27 +82,29 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 		defer inFlightGauge.Dec()
 
 		err = DistributedOperation(remoteLocations, func(location operation.Location) error {
+			fileId := needle.NewFileIdFromNeedle(params.VolumeId, params.Needle)
+
 			u := url.URL{
 				Scheme: "http",
 				Host:   location.Url,
-				Path:   r.URL.Path,
+				Path:   fileId.String(),
 			}
 			q := url.Values{
 				"type": {"replicate"},
-				"ttl":  {n.Ttl.String()},
+				"ttl":  {params.Needle.Ttl.String()},
 			}
-			if n.LastModified > 0 {
-				q.Set("ts", strconv.FormatUint(n.LastModified, 10))
+			if params.Needle.LastModified > 0 {
+				q.Set("ts", strconv.FormatUint(params.Needle.LastModified, 10))
 			}
-			if n.IsChunkedManifest() {
+			if params.Needle.IsChunkedManifest() {
 				q.Set("cm", "true")
 			}
 			u.RawQuery = q.Encode()
 
 			pairMap := make(map[string]string)
-			if n.HasPairs() {
+			if params.Needle.HasPairs() {
 				tmpMap := make(map[string]string)
-				err := json.Unmarshal(n.Pairs, &tmpMap)
+				err := json.Unmarshal(params.Needle.Pairs, &tmpMap)
 				if err != nil {
 					stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorUnmarshalPairs).Inc()
 					glog.V(0).Infoln("Unmarshal pairs error:", err)
@@ -106,13 +120,13 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 			// TODO optimize here to compress data only once
 			uploadOption := &operation.UploadOption{
 				UploadUrl:         u.String(),
-				Filename:          string(n.Name),
+				Filename:          string(params.Needle.Name),
 				Cipher:            false,
-				IsInputCompressed: n.IsCompressed(),
-				MimeType:          string(n.Mime),
+				IsInputCompressed: params.Needle.IsCompressed(),
+				MimeType:          string(params.Needle.Mime),
 				PairMap:           pairMap,
 				Jwt:               jwt,
-				Md5:               contentMd5,
+				Md5:               params.ContentMd5,
 				BytesBuffer:       bytesBuffer,
 			}
 
@@ -121,7 +135,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
 				return err
 			}
-			_, err = uploader.UploadData(n.Data, uploadOption)
+			_, err = uploader.UploadData(params.Needle.Data, uploadOption)
 			if err != nil {
 				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
 			}
@@ -130,7 +144,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToReplicas).Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
-			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
+			err = fmt.Errorf("failed to write to replicas for volume %d: %v", params.VolumeId, err)
 			glog.V(0).Infoln(err)
 			return false, err
 		}
@@ -138,21 +152,21 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	return
 }
 
-func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (size types.Size, err error) {
+func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, params ReplicatedDeleteParams) (size types.Size, err error) {
 
 	//check JWT
-	jwt := security.GetJwt(r)
+	jwt := params.Jwt
 
 	var remoteLocations []operation.Location
-	if r.FormValue("type") != "replicate" {
-		remoteLocations, err = GetWritableRemoteReplications(store, grpcDialOption, volumeId, masterFn)
+	if params.Replicate {
+		remoteLocations, err = GetWritableRemoteReplications(store, grpcDialOption, params.VolumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
 		}
 	}
 
-	size, err = store.DeleteVolumeNeedle(volumeId, n)
+	size, err = store.DeleteVolumeNeedle(params.VolumeId, params.Needle)
 	if err != nil {
 		glog.V(0).Infoln("delete error:", err)
 		return
@@ -160,7 +174,20 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 
 	if len(remoteLocations) > 0 { //send to other replica locations
 		if err = DistributedOperation(remoteLocations, func(location operation.Location) error {
-			return util_http.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
+			fileId := needle.NewFileIdFromNeedle(params.VolumeId, params.Needle)
+
+			u := url.URL{
+				Scheme: "http",
+				Host:   location.Url,
+				Path:   fileId.String(),
+			}
+
+			q := url.Values{
+				"type": {"replicate"},
+			}
+			u.RawQuery = q.Encode()
+
+			return util_http.Delete(u.String(), string(jwt))
 		}); err != nil {
 			size = 0
 		}
