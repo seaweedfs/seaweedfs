@@ -546,6 +546,10 @@ filer:
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
 
+  notificationConfig: |-
+    # Enter any extra configuration for notification.toml here.
+    # It may be a multi-line string.
+
   # DEPRECATE: enablePVC, storage, storageClass
   # Consider replacing with filer.data section below instead.
 
