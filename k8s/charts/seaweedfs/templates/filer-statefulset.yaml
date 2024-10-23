@@ -234,6 +234,12 @@ spec:
             - name: data-filer
               mountPath: /data
             {{- end }}
+            {{- if .Values.filer.notificationConfig }}
+            - name: notification-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/notification.toml
+              subPath: notification.toml
+            {{- end }}
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
@@ -348,6 +354,11 @@ spec:
             {{- else }}
             secretName: seaweedfs-s3-secret
             {{- end }}
+        {{- end }}
+        {{- if .Values.filer.notificationConfig }}
+        - name: notification-config
+          configMap:
+            name: {{ template "seaweedfs.name" . }}-notification-config
         {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config

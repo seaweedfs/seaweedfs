@@ -1,0 +1,19 @@
+{{- if and .Values.filer.enabled .Values.filer.notificationConfig }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "seaweedfs.name" . }}-notification-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- if .Values.filer.annotations }}
+  annotations:
+    {{- toYaml .Values.filer.annotations | nindent 4 }}
+{{- end }}
+data:
+  notification.toml: |-
+    {{ .Values.filer.notificationConfig | nindent 4 }}
+{{- end }}
