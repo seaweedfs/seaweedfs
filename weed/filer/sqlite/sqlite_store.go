@@ -10,10 +10,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/filer/mysql"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
-	"github.com/seaweedfs/seaweedfs/weed/filer/mysql"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	_ "modernc.org/sqlite"
 )
@@ -54,10 +54,12 @@ func (store *SqliteStore) Initialize(configuration util.Configuration, prefix st
 func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (err error) {
 
 	store.SupportBucketTable = true
-	store.SqlGenerator = &mysql.SqlGenMysql{
-		CreateTableSqlTemplate: createTable,
-		DropTableSqlTemplate:   "drop table `%s`",
-		UpsertQueryTemplate:    upsertQuery,
+	store.SqlGenerator = &SqlGenSqlite{
+		SqlGenMysql: mysql.SqlGenMysql{
+			CreateTableSqlTemplate: createTable,
+			DropTableSqlTemplate:   "drop table `%s`",
+			UpsertQueryTemplate:    upsertQuery,
+		},
 	}
 
 	var dbErr error

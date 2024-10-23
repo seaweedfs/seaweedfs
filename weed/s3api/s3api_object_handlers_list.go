@@ -147,6 +147,78 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
 	}
 
+	if s3a.option.AllowListRecursive && (delimiter == "" || delimiter == "/") {
+		reqDir = bucketPrefix
+		if idx := strings.LastIndex(originalPrefix, "/"); idx > 0 {
+			reqDir += originalPrefix[:idx]
+			prefix = originalPrefix[idx+1:]
+		}
+		// This is necessary for SQL request with WHERE `directory` || `name` > originalMarker
+		if len(originalMarker) > 0 && originalMarker[0:1] != "/" {
+			marker = s3a.getStartFileFromKey(originalMarker)
+		} else {
+			marker = originalMarker
+		}
+		response = ListBucketResult{
+			Name:      bucket,
+			Prefix:    originalPrefix,
+			Marker:    originalMarker,
+			MaxKeys:   int(maxKeys),
+			Delimiter: delimiter,
+		}
+		if encodingTypeUrl {
+			response.EncodingType = s3.EncodingTypeUrl
+		}
+		if maxKeys == 0 {
+			return
+		}
+		err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			doErr = s3a.doListFilerRecursiveEntries(client, reqDir, prefix, cursor, marker, delimiter, false,
+				func(path string, entry *filer_pb.Entry) {
+					key := path[len(bucketPrefix):]
+					if cursor.isTruncated {
+						nextMarker = cursor.nextMarker
+						return
+					}
+					defer func() {
+						if cursor.maxKeys == 0 {
+							cursor.isTruncated = true
+							cursor.nextMarker = s3a.getStartFileFromKey(key)
+						}
+					}()
+					if delimiter == "/" {
+						if entry.IsDirectoryKeyObject() {
+							contents = append(contents, newListEntry(entry, key+"/", "", "", bucketPrefix, fetchOwner, false, encodingTypeUrl))
+							cursor.maxKeys--
+							return
+						}
+						if entry.IsDirectory {
+							var prefixKey string
+							if encodingTypeUrl {
+								prefixKey = urlPathEscape(key + "/")
+							} else {
+								prefixKey = key + "/"
+							}
+							commonPrefixes = append(commonPrefixes, PrefixEntry{
+								Prefix: prefixKey,
+							})
+							cursor.maxKeys--
+							return
+						}
+					}
+					contents = append(contents, newListEntry(entry, key, "", "", bucketPrefix, fetchOwner, false, encodingTypeUrl))
+					cursor.maxKeys--
+				},
+			)
+			return nil
+		})
+		response.NextMarker = nextMarker
+		response.IsTruncated = len(nextMarker) != 0
+		response.Contents = contents
+		response.CommonPrefixes = commonPrefixes
+		return
+	}
+
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for {
@@ -248,6 +320,16 @@ type ListingCursor struct {
 	maxKeys               uint16
 	isTruncated           bool
 	prefixEndsOnDelimiter bool
+	nextMarker            string
+}
+
+func (s3a *S3ApiServer) getStartFileFromKey(key string) string {
+	idx := strings.LastIndex(key, "/")
+	if idx == -1 {
+		return "/" + key
+	}
+
+	return fmt.Sprintf("/%s%s", key[0:idx], key[idx+1:len(key)])
 }
 
 // the prefix and marker may be in different directories
@@ -304,6 +386,39 @@ func toParentAndDescendants(dirAndName string) (dir, name string) {
 		dir, name = dirAndName[0:sepIndex], dirAndName[sepIndex+1:]
 	} else {
 		name = dirAndName
+	}
+	return
+}
+
+func (s3a *S3ApiServer) doListFilerRecursiveEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, eachEntryFn func(dir string, entry *filer_pb.Entry)) (err error) {
+	if prefix == "/" && delimiter == "/" {
+		return
+	}
+	request := &filer_pb.ListEntriesRequest{
+		Directory:          dir,
+		Prefix:             prefix,
+		Limit:              uint32(cursor.maxKeys) + 1,
+		StartFromFileName:  marker,
+		InclusiveStartFrom: inclusiveStartFrom,
+		Recursive:          true,
+		Delimiter:          delimiter == "/",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, listErr := client.ListEntries(ctx, request)
+	if listErr != nil {
+		return fmt.Errorf("list entires %+v: %v", request, listErr)
+	}
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			if recvErr == io.EOF {
+				break
+			} else {
+				return fmt.Errorf("iterating entires %+v: %v", request, recvErr)
+			}
+		}
+		eachEntryFn(resp.Path, resp.Entry)
 	}
 	return
 }
