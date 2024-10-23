@@ -546,9 +546,18 @@ filer:
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
 
-  notificationConfig: |-
-    # Enter any extra configuration for notification.toml here.
-    # It may be a multi-line string.
+  # Add a custom notification.toml to configure filer notifications
+  # Example:
+  # notificationConfig: |-
+  #   [notification.kafka]
+  #   enabled = false
+  #   hosts = [
+  #       "localhost:9092"
+  #   ]
+  #   topic = "seaweedfs_filer"
+  #   offsetFile = "./last.offset"
+  #   offsetSaveIntervalSeconds = 10
+  notificationConfig: ""
 
   # DEPRECATE: enablePVC, storage, storageClass
   # Consider replacing with filer.data section below instead.
