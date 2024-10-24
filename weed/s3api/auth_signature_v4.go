@@ -687,8 +687,6 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 			// Go http server removes "host" from Request.Header
 			if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
 				extractedSignedHeaders.Set(header, forwardedHost)
-			} else if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-				extractedSignedHeaders.Set(header, forwardedFor)
 			} else {
 				extractedSignedHeaders.Set(header, r.Host)
 			}
