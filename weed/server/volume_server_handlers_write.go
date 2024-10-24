@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
@@ -45,7 +46,15 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ret := operation.UploadResult{}
-	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, contentMd5)
+	params := topology.ReplicatedWriteParams{
+		VolumeId: volumeId,
+		Needle: reqNeedle,
+		Jwt: security.GetJwt(r),
+		Replicate: r.FormValue("type") == "replicate",
+		Fsync: r.FormValue("fsync") == "true",
+		ContentMd5: contentMd5,
+	}
+	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster, vs.grpcDialOption, vs.store, params)
 	if writeError != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, writeError)
 		return
@@ -131,7 +140,13 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err := topology.ReplicatedDelete(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, n, r)
+	params := topology.ReplicatedDeleteParams{
+		VolumeId: volumeId,
+		Needle: n,
+		Jwt: security.GetJwt(r),
+		Replicate: r.FormValue("type") == "replicate",
+	}
+	_, err := topology.ReplicatedDelete(vs.GetMaster, vs.grpcDialOption, vs.store, params)
 
 	writeDeleteResult(err, count, w, r)
 

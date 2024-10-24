@@ -2,6 +2,8 @@ package needle
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/images"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
+
 )
 
 const (
@@ -46,6 +49,29 @@ type Needle struct {
 
 func (n *Needle) String() (str string) {
 	str = fmt.Sprintf("%s Size:%d, DataSize:%d, Name:%s, Mime:%s Compressed:%v", formatNeedleIdCookie(n.Id, n.Cookie), n.Size, n.DataSize, n.Name, n.Mime, n.IsCompressed())
+	return
+}
+
+func CreateNeedleSimple(vid VolumeId, id NeedleId, cookie Cookie, data []byte) (n *Needle, contentMd5 string) {
+	n = new(Needle)
+
+	checksum := NewCRC(data)
+
+	n.Cookie = cookie
+	n.Id = id
+
+	n.Data = data
+	n.DataSize = uint32(len(data))
+	n.Checksum = checksum
+	n.Size = Size(len(data))
+
+	n.LastModified = uint64(time.Now().Unix())
+	n.SetHasLastModifiedDate()
+
+	h := md5.New()
+	h.Write(data)
+	contentMd5 = base64.StdEncoding.EncodeToString(h.Sum(nil))
+
 	return
 }
 
