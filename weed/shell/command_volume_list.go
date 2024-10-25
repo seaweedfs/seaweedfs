@@ -180,7 +180,7 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 		}
 
 		var destroyTimeDisplay string
-		destroyTime := ecShardInfo.DestroyTime
+		destroyTime := ecShardInfo.ExpireAtSec
 		if destroyTime > 0 {
 			destroyTimeDisplay = time.Unix(int64(destroyTime), 0).Format("2006-01-02 15:04:05")
 		}
