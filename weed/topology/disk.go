@@ -66,7 +66,7 @@ func (d *DiskUsages) ToDiskInfo() map[string]*master_pb.DiskInfo {
 		m := &master_pb.DiskInfo{
 			VolumeCount:       diskUsageCounts.volumeCount,
 			MaxVolumeCount:    diskUsageCounts.maxVolumeCount,
-			FreeVolumeCount:   diskUsageCounts.maxVolumeCount - diskUsageCounts.volumeCount,
+			FreeVolumeCount:   diskUsageCounts.maxVolumeCount - (diskUsageCounts.volumeCount - diskUsageCounts.remoteVolumeCount) - (diskUsageCounts.ecShardCount+1)/erasure_coding.DataShardsCount,
 			ActiveVolumeCount: diskUsageCounts.activeVolumeCount,
 			RemoteVolumeCount: diskUsageCounts.remoteVolumeCount,
 		}
@@ -250,7 +250,7 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 		Type:              string(d.Id()),
 		VolumeCount:       diskUsage.volumeCount,
 		MaxVolumeCount:    diskUsage.maxVolumeCount,
-		FreeVolumeCount:   diskUsage.maxVolumeCount - diskUsage.volumeCount,
+		FreeVolumeCount:   diskUsage.maxVolumeCount - (diskUsage.volumeCount - diskUsage.remoteVolumeCount) - (diskUsage.ecShardCount+1)/erasure_coding.DataShardsCount,
 		ActiveVolumeCount: diskUsage.activeVolumeCount,
 		RemoteVolumeCount: diskUsage.remoteVolumeCount,
 	}
