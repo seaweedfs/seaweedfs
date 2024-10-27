@@ -53,7 +53,7 @@ func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
 		}
 		publisherCount += topicPartitionStats.PublisherCount
 		subscriberCount += topicPartitionStats.SubscriberCount
-		key := tps.TopicPartition.String()
+		key := tps.TopicPartition.TopicPartitionId()
 		bs.TopicPartitionStats.Set(key, tps)
 		delete(currentTopicPartitions, key)
 	}
@@ -79,7 +79,7 @@ func (bs *BrokerStats) RegisterAssignment(t *mq_pb.Topic, partition *mq_pb.Parti
 		PublisherCount:  0,
 		SubscriberCount: 0,
 	}
-	key := tps.TopicPartition.String()
+	key := tps.TopicPartition.TopicPartitionId()
 	if isAdd {
 		bs.TopicPartitionStats.SetIfAbsent(key, tps)
 	} else {
