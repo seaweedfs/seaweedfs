@@ -51,7 +51,7 @@ func CompactTopicPartitions(filerClient filer_pb.FilerClient, t topic.Topic, tim
 
 func collectTopicVersions(filerClient filer_pb.FilerClient, t topic.Topic, timeAgo time.Duration) (partitionVersions []time.Time, err error) {
 	err = filer_pb.ReadDirAllEntries(filerClient, util.FullPath(t.Dir()), "", func(entry *filer_pb.Entry, isLast bool) error {
-		t, err := time.Parse(topic.TIME_FORMAT, entry.Name)
+		t, err := topic.ParseTopicVersion(entry.Name)
 		if err != nil {
 			// skip non-partition directories
 			return nil
@@ -70,7 +70,7 @@ func collectTopicVersionsPartitions(filerClient filer_pb.FilerClient, t topic.To
 		if !entry.IsDirectory {
 			return nil
 		}
-		start, stop := topic.ParsePartition(entry.Name)
+		start, stop := topic.ParsePartitionBoundary(entry.Name)
 		if start != stop {
 			partitions = append(partitions, topic.Partition{
 				RangeStart: start,

@@ -90,16 +90,16 @@ func (partition Partition) String() string {
 	return fmt.Sprintf("%04d-%04d", partition.RangeStart, partition.RangeStop)
 }
 
-func ParsePartition(name string) (start, stop int32) {
+func ParseTopicVersion(name string) (t time.Time, err error) {
+	return time.Parse(TIME_FORMAT, name)
+}
+
+func ParsePartitionBoundary(name string) (start, stop int32) {
 	_, err := fmt.Sscanf(name, "%04d-%04d", &start, &stop)
 	if err != nil {
 		return 0, 0
 	}
 	return start, stop
-}
-
-func ToString(partition *mq_pb.Partition) string {
-	return fmt.Sprintf("%04d-%04d", partition.RangeStart, partition.RangeStop)
 }
 
 func PartitionDir(t Topic, p Partition) string {
