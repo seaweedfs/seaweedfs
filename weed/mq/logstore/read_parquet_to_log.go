@@ -15,21 +15,20 @@ import (
 	"io"
 	"math"
 	"strings"
-	"time"
 )
 
 var (
 	chunkCache = chunk_cache.NewChunkCacheInMemory(256) // 256 entries, 8MB max per entry
 )
 
-func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partition *mq_pb.Partition) log_buffer.LogReadFromDiskFuncType {
-	partitionGeneration := time.Unix(0, partition.UnixTimeNs).UTC().Format(topic.TIME_FORMAT)
-	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", t.Dir(), partitionGeneration, partition.RangeStart, partition.RangeStop)
+func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic.Partition) log_buffer.LogReadFromDiskFuncType {
+	partitionDir := topic.PartitionDir(t, p)
 
 	lookupFileIdFn := filer.LookupFn(filerClient)
 
 	// read topic conf from filer
 	var topicConf *mq_pb.ConfigureTopicResponse
+	var err error
 	if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		topicConf, err = t.ReadConfFile(client)
 		return err

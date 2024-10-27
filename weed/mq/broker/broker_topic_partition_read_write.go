@@ -4,15 +4,13 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"sync/atomic"
 	"time"
 )
 
-func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, partition *mq_pb.Partition) log_buffer.LogFlushFuncType {
-	partitionGeneration := time.Unix(0, partition.UnixTimeNs).UTC().Format(topic.TIME_FORMAT)
-	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", t.Dir(), partitionGeneration, partition.RangeStart, partition.RangeStop)
+func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, p topic.Partition) log_buffer.LogFlushFuncType {
+	partitionDir := topic.PartitionDir(t, p)
 
 	return func(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
 		if len(buf) == 0 {
@@ -38,7 +36,6 @@ func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, partition *mq_pb.Par
 
 		b.accessLock.Lock()
 		defer b.accessLock.Unlock()
-		p := topic.FromPbPartition(partition)
 		if localPartition := b.localTopicManager.GetLocalPartition(t, p); localPartition != nil {
 			localPartition.NotifyLogFlushed(logBuffer.LastFlushTsNs)
 		}

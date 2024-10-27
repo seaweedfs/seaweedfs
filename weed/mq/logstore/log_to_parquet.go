@@ -10,7 +10,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
@@ -27,26 +26,30 @@ const (
 	SW_COLUMN_NAME_KEY = "_key"
 )
 
-func CompactTopicPartitions(filerClient filer_pb.FilerClient, t topic.Topic, partitions []*mq_pb.Partition, timeAgo time.Duration, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
+func CompactTopicPartitions(filerClient filer_pb.FilerClient, t topic.Topic, timeAgo time.Duration, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
 	// list the topic partition versions
-	partitionVersions, err := collectTopicPartitionVersions(filerClient, t, timeAgo)
+	topicVersions, err := collectTopicVersions(filerClient, t, timeAgo)
 	if err != nil {
 		return fmt.Errorf("list topic files: %v", err)
 	}
 
 	// compact the partitions
-	for _, partitionVersion := range partitionVersions {
+	for _, topicVersion := range topicVersions {
+		partitions, err := collectTopicVersionsPartitions(filerClient, t, topicVersion)
+		if err != nil {
+			return fmt.Errorf("list partitions %s/%s/%s: %v", t.Namespace, t.Name, topicVersion, err)
+		}
 		for _, partition := range partitions {
-			err := compactTopicPartition(filerClient, t, partitionVersion, timeAgo, recordType, partition, preference)
+			err := compactTopicPartition(filerClient, t, timeAgo, recordType, partition, preference)
 			if err != nil {
-				return fmt.Errorf("compact partition %s/%s/%s/%s: %v", t.Namespace, t.Name, partitionVersion, partition, err)
+				return fmt.Errorf("compact partition %s/%s/%s/%s: %v", t.Namespace, t.Name, topicVersion, partition, err)
 			}
 		}
 	}
 	return nil
 }
 
-func collectTopicPartitionVersions(filerClient filer_pb.FilerClient, t topic.Topic, timeAgo time.Duration) (partitionVersions []string, err error) {
+func collectTopicVersions(filerClient filer_pb.FilerClient, t topic.Topic, timeAgo time.Duration) (partitionVersions []time.Time, err error) {
 	err = filer_pb.ReadDirAllEntries(filerClient, util.FullPath(t.Dir()), "", func(entry *filer_pb.Entry, isLast bool) error {
 		t, err := time.Parse(topic.TIME_FORMAT, entry.Name)
 		if err != nil {
@@ -54,15 +57,35 @@ func collectTopicPartitionVersions(filerClient filer_pb.FilerClient, t topic.Top
 			return nil
 		}
 		if t.Unix() < time.Now().Unix()-int64(timeAgo/time.Second) {
-			partitionVersions = append(partitionVersions, entry.Name)
+			partitionVersions = append(partitionVersions, t)
 		}
 		return nil
 	})
 	return
 }
 
-func compactTopicPartition(filerClient filer_pb.FilerClient, t topic.Topic, partitionVersion string, timeAgo time.Duration, recordType *schema_pb.RecordType, partition *mq_pb.Partition, preference *operation.StoragePreference) error {
-	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", t.Dir(), partitionVersion, partition.RangeStart, partition.RangeStop)
+func collectTopicVersionsPartitions(filerClient filer_pb.FilerClient, t topic.Topic, topicVersion time.Time) (partitions []topic.Partition, err error) {
+	version := topicVersion.Format(topic.TIME_FORMAT)
+	err = filer_pb.ReadDirAllEntries(filerClient, util.FullPath(t.Dir()).Child(version), "", func(entry *filer_pb.Entry, isLast bool) error {
+		if !entry.IsDirectory {
+			return nil
+		}
+		start, stop := topic.ParsePartition(entry.Name)
+		if start != stop {
+			partitions = append(partitions, topic.Partition{
+				RangeStart: start,
+				RangeStop:  stop,
+				RingSize:   topic.PartitionCount,
+				UnixTimeNs: topicVersion.UnixNano(),
+			})
+		}
+		return nil
+	})
+	return
+}
+
+func compactTopicPartition(filerClient filer_pb.FilerClient, t topic.Topic, timeAgo time.Duration, recordType *schema_pb.RecordType, partition topic.Partition, preference *operation.StoragePreference) error {
+	partitionDir := topic.PartitionDir(t, partition)
 
 	// compact the partition directory
 	return compactTopicPartitionDir(filerClient, t.Name, partitionDir, timeAgo, recordType, preference)

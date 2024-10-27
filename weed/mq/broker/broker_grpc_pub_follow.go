@@ -92,8 +92,7 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 		time.Sleep(113 * time.Millisecond)
 	}
 
-	partitionGeneration := time.Unix(0, p.UnixTimeNs).UTC().Format(topic.TIME_FORMAT)
-	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", t.Dir(), partitionGeneration, p.RangeStart, p.RangeStop)
+	partitionDir := topic.PartitionDir(t, p)
 
 	// flush the remaining messages
 	inMemoryBuffers.CloseInput()

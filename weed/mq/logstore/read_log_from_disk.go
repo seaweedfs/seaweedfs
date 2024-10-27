@@ -6,7 +6,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
@@ -16,9 +15,8 @@ import (
 	"time"
 )
 
-func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partition *mq_pb.Partition) log_buffer.LogReadFromDiskFuncType {
-	partitionGeneration := time.Unix(0, partition.UnixTimeNs).UTC().Format(topic.TIME_FORMAT)
-	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", t.Dir(), partitionGeneration, partition.RangeStart, partition.RangeStop)
+func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic.Partition) log_buffer.LogReadFromDiskFuncType {
+	partitionDir := topic.PartitionDir(t, p)
 
 	lookupFileIdFn := filer.LookupFn(filerClient)
 

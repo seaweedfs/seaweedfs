@@ -3,13 +3,12 @@ package logstore
 import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
-func GenMergedReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partition *mq_pb.Partition) log_buffer.LogReadFromDiskFuncType {
-	fromParquetFn := GenParquetReadFunc(filerClient, t, partition)
-	readLogDirectFn := GenLogOnDiskReadFunc(filerClient, t, partition)
+func GenMergedReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic.Partition) log_buffer.LogReadFromDiskFuncType {
+	fromParquetFn := GenParquetReadFunc(filerClient, t, p)
+	readLogDirectFn := GenLogOnDiskReadFunc(filerClient, t, p)
 	return mergeReadFuncs(fromParquetFn, readLogDirectFn)
 }
 

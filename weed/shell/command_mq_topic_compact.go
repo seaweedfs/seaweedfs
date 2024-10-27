@@ -8,7 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc"
 	"io"
 	"time"
@@ -85,13 +84,8 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 		WithField(logstore.SW_COLUMN_NAME_KEY, schema.TypeBytes).
 		RecordTypeEnd()
 
-	var partitions []*mq_pb.Partition
-	for _, assignment := range topicConf.BrokerPartitionAssignments {
-		partitions = append(partitions, assignment.Partition)
-	}
-
 	// compact the topic partition versions
-	if err = logstore.CompactTopicPartitions(commandEnv, t, partitions, *timeAgo, recordType, storagePreference); err != nil {
+	if err = logstore.CompactTopicPartitions(commandEnv, t, *timeAgo, recordType, storagePreference); err != nil {
 		return err
 	}
 
