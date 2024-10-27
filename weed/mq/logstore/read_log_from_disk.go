@@ -17,9 +17,8 @@ import (
 )
 
 func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partition *mq_pb.Partition) log_buffer.LogReadFromDiskFuncType {
-	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
 	partitionGeneration := time.Unix(0, partition.UnixTimeNs).UTC().Format(topic.TIME_FORMAT)
-	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", topicDir, partitionGeneration, partition.RangeStart, partition.RangeStop)
+	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", t.Dir(), partitionGeneration, partition.RangeStart, partition.RangeStop)
 
 	lookupFileIdFn := filer.LookupFn(filerClient)
 

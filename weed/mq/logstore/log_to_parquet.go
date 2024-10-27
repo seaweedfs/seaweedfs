@@ -47,7 +47,7 @@ func CompactTopicPartitions(filerClient filer_pb.FilerClient, t topic.Topic, par
 }
 
 func collectTopicPartitionVersions(filerClient filer_pb.FilerClient, t topic.Topic, timeAgo time.Duration) (partitionVersions []string, err error) {
-	err = filer_pb.ReadDirAllEntries(filerClient, util.FullPath(filer.TopicsDir+"/"+t.Namespace+"/"+t.Name), "", func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.ReadDirAllEntries(filerClient, util.FullPath(t.Dir()), "", func(entry *filer_pb.Entry, isLast bool) error {
 		t, err := time.Parse(topic.TIME_FORMAT, entry.Name)
 		if err != nil {
 			// skip non-partition directories
@@ -62,8 +62,7 @@ func collectTopicPartitionVersions(filerClient filer_pb.FilerClient, t topic.Top
 }
 
 func compactTopicPartition(filerClient filer_pb.FilerClient, t topic.Topic, partitionVersion string, timeAgo time.Duration, recordType *schema_pb.RecordType, partition *mq_pb.Partition, preference *operation.StoragePreference) error {
-	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
-	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", topicDir, partitionVersion, partition.RangeStart, partition.RangeStop)
+	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", t.Dir(), partitionVersion, partition.RangeStart, partition.RangeStop)
 
 	// compact the partition directory
 	return compactTopicPartitionDir(filerClient, t.Name, partitionDir, timeAgo, recordType, preference)

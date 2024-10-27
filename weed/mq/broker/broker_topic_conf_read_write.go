@@ -56,7 +56,7 @@ func (b *MessageQueueBroker) ensureTopicActiveAssignments(t topic.Topic, conf *m
 	hasChanges := pub_balancer.EnsureAssignmentsToActiveBrokers(b.PubBalancer.Brokers, 1, conf.BrokerPartitionAssignments)
 	if hasChanges {
 		glog.V(0).Infof("topic %v partition updated assignments: %v", t, conf.BrokerPartitionAssignments)
-		if err = b.fca.SaveTopicConfToFiler(t.ToPbTopic(), conf); err != nil {
+		if err = b.fca.SaveTopicConfToFiler(t, conf); err != nil {
 			return err
 		}
 	}

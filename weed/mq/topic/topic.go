@@ -2,6 +2,7 @@ package topic
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
@@ -32,4 +33,8 @@ func (tp Topic) ToPbTopic() *mq_pb.Topic {
 
 func (tp Topic) String() string {
 	return fmt.Sprintf("%s.%s", tp.Namespace, tp.Name)
+}
+
+func (tp Topic) Dir() string {
+	return fmt.Sprintf("%s/%s/%s", filer.TopicsDir, tp.Namespace, tp.Name)
 }

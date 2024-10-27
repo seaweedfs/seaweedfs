@@ -22,18 +22,17 @@ func (fca *FilerClientAccessor) WithFilerClient(streamingMode bool, fn func(file
 	return pb.WithFilerClient(streamingMode, 0, fca.GetFiler(), fca.GetGrpcDialOption(), fn)
 }
 
-func (fca *FilerClientAccessor) SaveTopicConfToFiler(t *mq_pb.Topic, conf *mq_pb.ConfigureTopicResponse) error {
+func (fca *FilerClientAccessor) SaveTopicConfToFiler(t topic.Topic, conf *mq_pb.ConfigureTopicResponse) error {
 
 	glog.V(0).Infof("save conf for topic %v to filer", t)
 
 	// save the topic configuration on filer
-	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
 	if err := fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var buf bytes.Buffer
 		filer.ProtoToText(&buf, conf)
-		return filer.SaveInsideFiler(client, topicDir, "topic.conf", buf.Bytes())
+		return filer.SaveInsideFiler(client, t.Dir(), "topic.conf", buf.Bytes())
 	}); err != nil {
-		return fmt.Errorf("save topic to %s: %v", topicDir, err)
+		return fmt.Errorf("save topic to %s: %v", t.Dir(), err)
 	}
 	return nil
 }
@@ -42,9 +41,8 @@ func (fca *FilerClientAccessor) ReadTopicConfFromFiler(t topic.Topic) (conf *mq_
 
 	glog.V(1).Infof("load conf for topic %v from filer", t)
 
-	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
 	if err = fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, topicDir, "topic.conf")
+		data, err := filer.ReadInsideFiler(client, t.Dir(), "topic.conf")
 		if err == filer_pb.ErrNotFound {
 			return err
 		}

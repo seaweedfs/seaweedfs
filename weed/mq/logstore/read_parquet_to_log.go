@@ -24,16 +24,15 @@ var (
 )
 
 func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partition *mq_pb.Partition) log_buffer.LogReadFromDiskFuncType {
-	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
 	partitionGeneration := time.Unix(0, partition.UnixTimeNs).UTC().Format(topic.TIME_FORMAT)
-	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", topicDir, partitionGeneration, partition.RangeStart, partition.RangeStop)
+	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", t.Dir(), partitionGeneration, partition.RangeStart, partition.RangeStop)
 
 	lookupFileIdFn := filer.LookupFn(filerClient)
 
 	// read topic conf from filer
 	var topicConf *mq_pb.ConfigureTopicResponse
 	if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, topicDir, "topic.conf")
+		data, err := filer.ReadInsideFiler(client, t.Dir(), "topic.conf")
 		if err != nil {
 			return err
 		}
