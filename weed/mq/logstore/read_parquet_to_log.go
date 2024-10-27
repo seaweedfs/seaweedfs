@@ -11,7 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
-	jsonpb "google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"io"
 	"math"
@@ -32,15 +31,8 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, partiti
 	// read topic conf from filer
 	var topicConf *mq_pb.ConfigureTopicResponse
 	if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, t.Dir(), "topic.conf")
-		if err != nil {
-			return err
-		}
-		topicConf = &mq_pb.ConfigureTopicResponse{}
-		if err = jsonpb.Unmarshal(data, topicConf); err != nil {
-			return fmt.Errorf("unmarshal topic %v conf: %v", t, err)
-		}
-		return nil
+		topicConf, err = t.ReadConfFile(client)
+		return err
 	}); err != nil {
 		return nil
 	}

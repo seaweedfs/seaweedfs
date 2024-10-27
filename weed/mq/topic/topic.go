@@ -1,9 +1,13 @@
 package topic
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	jsonpb "google.golang.org/protobuf/encoding/protojson"
 )
 
 type Topic struct {
@@ -37,4 +41,29 @@ func (tp Topic) String() string {
 
 func (tp Topic) Dir() string {
 	return fmt.Sprintf("%s/%s/%s", filer.TopicsDir, tp.Namespace, tp.Name)
+}
+
+func (t Topic) ReadConfFile(client filer_pb.SeaweedFilerClient) (*mq_pb.ConfigureTopicResponse, error) {
+	data, err := filer.ReadInsideFiler(client, t.Dir(), filer.TopicConfFile)
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return nil, err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read topic.conf of %v: %v", t, err)
+	}
+	// parse into filer conf object
+	conf := &mq_pb.ConfigureTopicResponse{}
+	if err = jsonpb.Unmarshal(data, conf); err != nil {
+		return nil, fmt.Errorf("unmarshal topic %v conf: %v", t, err)
+	}
+	return conf, nil
+}
+
+func (t Topic) WriteConfFile(client filer_pb.SeaweedFilerClient, conf *mq_pb.ConfigureTopicResponse) error {
+	var buf bytes.Buffer
+	filer.ProtoToText(&buf, conf)
+	if err := filer.SaveInsideFiler(client, t.Dir(), filer.TopicConfFile, buf.Bytes()); err != nil {
+		return fmt.Errorf("save topic %v conf: %v", t, err)
+	}
+	return nil
 }
