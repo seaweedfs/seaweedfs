@@ -28,19 +28,19 @@ func FromPbTopic(topic *mq_pb.Topic) Topic {
 	}
 }
 
-func (tp Topic) ToPbTopic() *mq_pb.Topic {
+func (t Topic) ToPbTopic() *mq_pb.Topic {
 	return &mq_pb.Topic{
-		Namespace: tp.Namespace,
-		Name:      tp.Name,
+		Namespace: t.Namespace,
+		Name:      t.Name,
 	}
 }
 
-func (tp Topic) String() string {
-	return fmt.Sprintf("%s.%s", tp.Namespace, tp.Name)
+func (t Topic) String() string {
+	return fmt.Sprintf("%s.%s", t.Namespace, t.Name)
 }
 
-func (tp Topic) Dir() string {
-	return fmt.Sprintf("%s/%s/%s", filer.TopicsDir, tp.Namespace, tp.Name)
+func (t Topic) Dir() string {
+	return fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
 }
 
 func (t Topic) ReadConfFile(client filer_pb.SeaweedFilerClient) (*mq_pb.ConfigureTopicResponse, error) {
