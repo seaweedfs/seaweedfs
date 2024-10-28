@@ -546,6 +546,19 @@ filer:
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
 
+  # Add a custom notification.toml to configure filer notifications
+  # Example:
+  # notificationConfig: |-
+  #   [notification.kafka]
+  #   enabled = false
+  #   hosts = [
+  #       "localhost:9092"
+  #   ]
+  #   topic = "seaweedfs_filer"
+  #   offsetFile = "./last.offset"
+  #   offsetSaveIntervalSeconds = 10
+  notificationConfig: ""
+
   # DEPRECATE: enablePVC, storage, storageClass
   # Consider replacing with filer.data section below instead.
 
@@ -716,7 +729,7 @@ filer:
         sub_filter '/seaweedfsstatic' './seaweedfsstatic';
         sub_filter_once off;
 
-  # extraEnvVars is a list of extra enviroment variables to set with the stateful set.
+  # extraEnvVars is a list of extra environment variables to set with the stateful set.
   extraEnvironmentVars:
     WEED_MYSQL_ENABLED: "false"
     WEED_MYSQL_HOSTNAME: "mysql-db-host"

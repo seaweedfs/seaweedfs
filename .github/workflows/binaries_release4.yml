@@ -36,7 +36,7 @@ jobs:
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
           overwrite: true
-          build_flags: -tags elastic,gocdk,sqlite,ydb,tikv,rclone
+          build_flags: -tags elastic,gocdk,rclone,sqlite,tikv,ydb
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
           # build_flags: -tags 5BytesOffset # optional, default is
           ldflags: -s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
@@ -52,7 +52,7 @@ jobs:
           goarch: ${{ matrix.goarch }}
           overwrite: true
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
-          build_flags: -tags 5BytesOffset,elastic,gocdk,sqlite,ydb,tikv,rclone
+          build_flags: -tags 5BytesOffset,elastic,gocdk,rclone,sqlite,tikv,ydb
           ldflags: -s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed

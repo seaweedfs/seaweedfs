@@ -100,7 +100,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 
 func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Request) {
 
-	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketGET.html
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)

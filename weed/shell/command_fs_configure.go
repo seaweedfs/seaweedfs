@@ -60,7 +60,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
-	worm := fsConfigureCommand.Bool("worm", false, "worm mode, If true, a file can only be changed once, after which it becomes readonly and undeletable, see https://en.wikipedia.org/wiki/Write_once_read_many")
+	worm := fsConfigureCommand.Bool("worm", false, "write-once-read-many, written files are readonly")
 	maxFileNameLength := fsConfigureCommand.Uint("maxFileNameLength", 0, "file name length limits in bytes for compatibility with Unix-based systems")
 	dataCenter := fsConfigureCommand.String("dataCenter", "", "assign writes to this dataCenter")
 	rack := fsConfigureCommand.String("rack", "", "assign writes to this rack")

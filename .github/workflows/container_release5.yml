@@ -52,7 +52,7 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
-          build-args: TAGS=5BytesOffset,elastic,gocdk,sqlite,ydb,tikv,rclone
+          build-args: TAGS=5BytesOffset,elastic,gocdk,rclone,sqlite,tikv,ydb
           platforms: linux/amd64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}

@@ -76,7 +76,7 @@ func (v *Volume) SaveVolumeInfo() error {
 	if v.Ttl != nil {
 		ttlSeconds := v.Ttl.ToSeconds()
 		if ttlSeconds > 0 {
-			v.volumeInfo.DestroyTime = uint64(time.Now().Unix()) + ttlSeconds //calculated destroy time from the ec volume was created
+			v.volumeInfo.ExpireAtSec = uint64(time.Now().Unix()) + ttlSeconds //calculated destroy time from the ec volume was created
 		}
 	}
 
