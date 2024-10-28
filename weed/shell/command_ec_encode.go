@@ -318,13 +318,13 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 						if good, found := vidMap[v.Id]; found {
 							if good {
 								if diskInfo.FreeVolumeCount < 2 {
-									glog.V(0).Infof("skip %d.%d on %s, no free disk", v.Id, v.Collection, dn.Id)
+									glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
 									vidMap[v.Id] = false
 								}
 							}
 						} else {
 							if diskInfo.FreeVolumeCount < 2 {
-								glog.V(0).Infof("skip %d.%d on %s, no free disk", v.Id, v.Collection, dn.Id)
+								glog.V(0).Infof("skip %d %d on %s, no free disk", v.Collection, v.Id, dn.Id)
 								vidMap[v.Id] = false
 							} else {
 								vidMap[v.Id] = true
