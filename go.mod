@@ -119,7 +119,7 @@ require (
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/mathutil v1.6.0
 	modernc.org/memory v1.8.0 // indirect
-	modernc.org/sqlite v1.33.0
+	modernc.org/sqlite v1.33.1
 	modernc.org/strutil v1.2.0
 	modernc.org/token v1.1.0 // indirect
 )
@@ -345,6 +345,7 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/gc/v3 v3.0.0-20240107210532-573471604cb6 // indirect
+	modernc.org/libc v1.55.3 // indirect
 	moul.io/http2curl/v2 v2.3.0 // indirect
 	storj.io/common v0.0.0-20240812101423-26b53789c348 // indirect
 	storj.io/drpc v0.0.35-0.20240709171858-0075ac871661 // indirect
