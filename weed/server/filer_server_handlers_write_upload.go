@@ -100,7 +100,7 @@ func (fs *FilerServer) uploadReaderToChunks(reader io.Reader, startOffset int64,
 		}
 
 		wg.Add(1)
-		go func(offset int64) {
+		go func(offset int64, buf *bytes.Buffer) {
 			defer func() {
 				bufPool.Put(bytesBuffer)
 				<-bytesBufferLimitChan
@@ -124,7 +124,7 @@ func (fs *FilerServer) uploadReaderToChunks(reader io.Reader, startOffset int64,
 				}
 				fileChunksLock.Unlock()
 			}
-		}(chunkOffset)
+		}(chunkOffset, bytesBuffer)
 
 		// reset variables for the next chunk
 		chunkOffset = chunkOffset + dataSize
