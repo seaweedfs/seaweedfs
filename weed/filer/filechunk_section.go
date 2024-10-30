@@ -1,8 +1,9 @@
 package filer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"sync"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 const SectionSize = 2 * 1024 * 1024 * 32 // 64MiB
@@ -62,11 +63,6 @@ func removeGarbageChunks(section *FileChunkSection, garbageFileIds map[string]st
 }
 
 func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64) {
-	if section.isPrepared {
-		section.reader.fileSize = fileSize
-		return
-	}
-
 	section.lock.Lock()
 	defer section.lock.Unlock()
 
