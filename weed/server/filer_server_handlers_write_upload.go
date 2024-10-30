@@ -138,6 +138,10 @@ func (fs *FilerServer) uploadReaderToChunks(reader io.Reader, startOffset int64,
 	wg.Wait()
 
 	if uploadErr != nil {
+		glog.V(0).Infof("upload file %s error: %v", fileName, uploadErr)
+		for _, chunk := range fileChunks {
+			glog.V(4).Infof("purging failed uploaded %s chunk %s [%d,%d)", fileName, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+		}
 		fs.filer.DeleteUncommittedChunks(fileChunks)
 		return nil, md5Hash, 0, uploadErr, nil
 	}
