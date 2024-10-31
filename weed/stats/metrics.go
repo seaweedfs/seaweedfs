@@ -94,6 +94,14 @@ var (
 			Help:      "Counter of master pick for write error",
 		})
 
+	MasterBroadcastToFullErrorCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "broadcast_to_full",
+			Help:      "Counter of master broadcast send to full message channel err",
+		})
+
 	MasterLeaderChangeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -314,6 +322,7 @@ func init() {
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
 	Gather.MustRegister(MasterVolumeLayoutWritable)
 	Gather.MustRegister(MasterVolumeLayoutCrowded)
+	Gather.MustRegister(MasterBroadcastToFullErrorCounter)
 
 	Gather.MustRegister(FilerRequestCounter)
 	Gather.MustRegister(FilerHandlerCounter)
