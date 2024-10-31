@@ -102,12 +102,12 @@ func (fs *FilerServer) uploadReaderToChunks(reader io.Reader, startOffset int64,
 		wg.Add(1)
 		go func(offset int64, buf *bytes.Buffer) {
 			defer func() {
-				bufPool.Put(bytesBuffer)
+				bufPool.Put(buf)
 				<-bytesBufferLimitChan
 				wg.Done()
 			}()
 
-			chunks, toChunkErr := fs.dataToChunk(fileName, contentType, bytesBuffer.Bytes(), offset, so)
+			chunks, toChunkErr := fs.dataToChunk(fileName, contentType, buf.Bytes(), offset, so)
 			if toChunkErr != nil {
 				uploadErrLock.Lock()
 				if uploadErr == nil {
