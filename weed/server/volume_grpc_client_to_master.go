@@ -130,8 +130,16 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 				glog.Errorf("Shut down Volume Server due to duplicate volume directories: %v", duplicateDir)
 				os.Exit(1)
 			}
+			volumeOptsChanged := false
+			if vs.store.GetPreallocate() != in.GetPreallocate() {
+				vs.store.SetPreallocate(in.GetPreallocate())
+				volumeOptsChanged = true
+			}
 			if in.GetVolumeSizeLimit() != 0 && vs.store.GetVolumeSizeLimit() != in.GetVolumeSizeLimit() {
 				vs.store.SetVolumeSizeLimit(in.GetVolumeSizeLimit())
+				volumeOptsChanged = true
+			}
+			if volumeOptsChanged {
 				if vs.store.MaybeAdjustVolumeMax() {
 					if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs.currentMaster, err)

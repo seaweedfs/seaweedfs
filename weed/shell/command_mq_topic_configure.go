@@ -29,6 +29,10 @@ func (c *commandMqTopicConfigure) Help() string {
 `
 }
 
+func (c *commandMqTopicConfigure) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandMqTopicConfigure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
 
 	// parse parameters

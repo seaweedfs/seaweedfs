@@ -38,6 +38,10 @@ func (c *commandFsMetaLoad) Help() string {
 `
 }
 
+func (c *commandFsMetaLoad) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	if len(args) == 0 {

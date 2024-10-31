@@ -122,10 +122,9 @@ func setup(topologyLayout string) *Topology {
 				}
 
 				disk := server.getOrCreateDisk("")
-				deltaDiskUsages := newDiskUsages()
-				deltaDiskUsage := deltaDiskUsages.getOrCreateDisk("")
-				deltaDiskUsage.maxVolumeCount = int64(serverMap["limit"].(float64))
-				disk.UpAdjustDiskUsageDelta(deltaDiskUsages)
+				disk.UpAdjustDiskUsageDelta("", &DiskUsageCounts{
+					maxVolumeCount: int64(serverMap["limit"].(float64)),
+				})
 
 			}
 		}

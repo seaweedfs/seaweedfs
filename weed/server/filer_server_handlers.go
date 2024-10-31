@@ -21,6 +21,11 @@ import (
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
+	inFlightGauge := stats.FilerInFlightRequestsGauge.WithLabelValues(r.Method)
+	inFlightGauge.Inc()
+	defer inFlightGauge.Dec()
+
 	statusRecorder := stats.NewStatusResponseWriter(w)
 	w = statusRecorder
 	origin := r.Header.Get("Origin")

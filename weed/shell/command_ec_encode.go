@@ -4,12 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -53,6 +54,10 @@ func (c *commandEcEncode) Help() string {
 	have 4 corrupted shard files.
 
 `
+}
+
+func (c *commandEcEncode) HasTag(CommandTag) bool {
+	return false
 }
 
 func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
@@ -125,7 +130,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	// fmt.Printf("found ec %d shards on %v\n", vid, locations)
 
 	// mark the volume as readonly
-	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false)
+	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false, false)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
@@ -310,15 +315,31 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 				}
 				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
 					if float64(v.Size) > fullPercentage/100*float64(volumeSizeLimitMb)*1024*1024 {
-						vidMap[v.Id] = true
+						if good, found := vidMap[v.Id]; found {
+							if good {
+								if diskInfo.FreeVolumeCount < 2 {
+									glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
+									vidMap[v.Id] = false
+								}
+							}
+						} else {
+							if diskInfo.FreeVolumeCount < 2 {
+								glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
+								vidMap[v.Id] = false
+							} else {
+								vidMap[v.Id] = true
+							}
+						}
 					}
 				}
 			}
 		}
 	})
 
-	for vid := range vidMap {
-		vids = append(vids, needle.VolumeId(vid))
+	for vid, good := range vidMap {
+		if good {
+			vids = append(vids, needle.VolumeId(vid))
+		}
 	}
 
 	return

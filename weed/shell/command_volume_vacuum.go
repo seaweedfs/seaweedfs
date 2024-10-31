@@ -27,6 +27,10 @@ func (c *commandVacuum) Help() string {
 `
 }
 
+func (c *commandVacuum) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

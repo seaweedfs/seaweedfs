@@ -60,7 +60,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				Collection:  collection,
 				EcIndexBits: uint32(shardBits.AddShardId(shardId)),
 				DiskType:    string(location.DiskType),
-				DestroyTime: ecVolume.DestroyTime,
+				ExpireAtSec: ecVolume.ExpireAtSec,
 			}
 			return nil
 		} else if err == os.ErrNotExist {

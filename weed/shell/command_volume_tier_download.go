@@ -41,6 +41,10 @@ func (c *commandVolumeTierDownload) Help() string {
 `
 }
 
+func (c *commandVolumeTierDownload) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

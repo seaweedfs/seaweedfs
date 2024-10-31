@@ -33,6 +33,10 @@ func (c *commandFsLs) Help() string {
 `
 }
 
+func (c *commandFsLs) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	var isLongFormat, showHidden bool

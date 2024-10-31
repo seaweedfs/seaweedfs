@@ -38,6 +38,10 @@ func (c *commandRemoteMountBuckets) Help() string {
 `
 }
 
+func (c *commandRemoteMountBuckets) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandRemoteMountBuckets) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	remoteMountBucketsCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

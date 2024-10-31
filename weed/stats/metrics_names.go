@@ -27,12 +27,14 @@ const (
 	Failed                = "failed"
 
 	// filer handler
-	DirList                  = "dirList"
-	ContentSaveToFiler       = "contentSaveToFiler"
-	AutoChunk                = "autoChunk"
-	ChunkProxy               = "chunkProxy"
-	ChunkAssign              = "chunkAssign"
-	ChunkUpload              = "chunkUpload"
+	DirList            = "dirList"
+	ContentSaveToFiler = "contentSaveToFiler"
+	AutoChunk          = "autoChunk"
+	ChunkProxy         = "chunkProxy"
+	ChunkAssign        = "chunkAssign"
+	ChunkUpload        = "chunkUpload"
+	ChunkMerge         = "chunkMerge"
+
 	ChunkDoUploadRetry       = "chunkDoUploadRetry"
 	ChunkUploadRetry         = "chunkUploadRetry"
 	ChunkAssignRetry         = "chunkAssignRetry"

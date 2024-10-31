@@ -9,6 +9,10 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+{{- if .Values.master.annotations }}
+  annotations:
+    {{- toYaml .Values.master.annotations | nindent 4 }}
+{{- end }}
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-master
   podManagementPolicy: {{ .Values.master.podManagementPolicy }}
@@ -49,6 +53,10 @@ spec:
       {{- if .Values.master.affinity }}
       affinity:
         {{ tpl .Values.master.affinity . | nindent 8 | trim }}
+      {{- end }}
+      {{- with .Values.master.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- if .Values.master.tolerations }}
       tolerations:

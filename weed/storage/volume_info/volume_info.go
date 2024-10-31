@@ -2,9 +2,8 @@ package volume_info
 
 import (
 	"fmt"
-	"os"
-
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
+	"os"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -35,7 +34,7 @@ func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeIn
 	hasVolumeInfoFile = true
 
 	glog.V(1).Infof("maybeLoadVolumeInfo reads %s", fileName)
-	tierData, readErr := os.ReadFile(fileName)
+	fileData, readErr := os.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		err = fmt.Errorf("fail to read %s : %v", fileName, readErr)
@@ -44,10 +43,14 @@ func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeIn
 	}
 
 	glog.V(1).Infof("maybeLoadVolumeInfo Unmarshal volume info %v", fileName)
-	if err = jsonpb.Unmarshal(tierData, volumeInfo); err != nil {
-		glog.Warningf("unmarshal error: %v", err)
-		err = fmt.Errorf("unmarshal error: %v", err)
-		return
+	if err = jsonpb.Unmarshal(fileData, volumeInfo); err != nil {
+		if oldVersionErr := tryOldVersionVolumeInfo(fileData, volumeInfo); oldVersionErr != nil {
+			glog.Warningf("unmarshal error: %v oldFormat: %v", err, oldVersionErr)
+			err = fmt.Errorf("unmarshal error: %v oldFormat: %v", err, oldVersionErr)
+			return
+		} else {
+			err = nil
+		}
 	}
 
 	if len(volumeInfo.GetFiles()) == 0 {
@@ -79,6 +82,22 @@ func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) er
 	if err := util.WriteFile(fileName, text, 0644); err != nil {
 		return fmt.Errorf("failed to write %s: %v", fileName, err)
 	}
+
+	return nil
+}
+
+func tryOldVersionVolumeInfo(data []byte, volumeInfo *volume_server_pb.VolumeInfo) error {
+	oldVersionVolumeInfo := &volume_server_pb.OldVersionVolumeInfo{}
+	if err := jsonpb.Unmarshal(data, oldVersionVolumeInfo); err != nil {
+		return fmt.Errorf("failed to unmarshal old version volume info: %v", err)
+	}
+	volumeInfo.Files = oldVersionVolumeInfo.Files
+	volumeInfo.Version = oldVersionVolumeInfo.Version
+	volumeInfo.Replication = oldVersionVolumeInfo.Replication
+	volumeInfo.BytesOffset = oldVersionVolumeInfo.BytesOffset
+	volumeInfo.DatFileSize = oldVersionVolumeInfo.DatFileSize
+	volumeInfo.ExpireAtSec = oldVersionVolumeInfo.DestroyTime
+	volumeInfo.ReadOnly = oldVersionVolumeInfo.ReadOnly
 
 	return nil
 }

@@ -26,6 +26,10 @@ func (c *commandEnableVacuum) Help() string {
 `
 }
 
+func (c *commandEnableVacuum) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandEnableVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

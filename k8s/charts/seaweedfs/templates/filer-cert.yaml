@@ -10,6 +10,10 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: filer
+  {{- if .Values.filer.annotations }}
+  annotations:
+    {{- toYaml .Values.filer.annotations | nindent 4 }}
+  {{- end }}
 spec:
   secretName: {{ template "seaweedfs.name" . }}-filer-cert
   issuerRef:
