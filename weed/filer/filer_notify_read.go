@@ -42,7 +42,7 @@ func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePositi
 
 func (f *Filer) HasPersistedLogFiles(startPosition log_buffer.MessagePosition) (bool, error) {
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Year(), startPosition.Month(), startPosition.Day())
-	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, math.MaxInt32, "", "", "")
+	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, 1, "", "", "")
 
 	if listDayErr != nil {
 		return false, fmt.Errorf("fail to list log by day: %v", listDayErr)
