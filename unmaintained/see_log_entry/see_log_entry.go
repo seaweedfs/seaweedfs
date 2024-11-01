@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -70,8 +71,21 @@ func walkLogEntryFile(dst *os.File) error {
 			return nil
 		}
 
-		fmt.Printf("event: %+v\n", event)
+		// convert timestamp from nanoseconds to time.Time
+		timeStamp := time.Unix(0, int64(logEntry.TsNs))
+		timeStr := timeStamp.Format(time.RFC3339)
 
+		switch {
+		case event.EventNotification.NewEntry != nil && event.EventNotification.OldEntry == nil:
+			fmt.Printf("file create, dir: %s: file: %+s, ts: %d, time: %s\n", event.Directory, event.EventNotification.NewEntry.Name, event.TsNs, timeStr)
+		case event.EventNotification.NewEntry != nil && event.EventNotification.OldEntry != nil:
+			fmt.Printf("file update: dir: %s, file: %+s, ts: %d, time: %s\n", event.Directory, event.EventNotification.NewEntry.Name, event.TsNs, timeStr)
+		case event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry != nil:
+			fmt.Printf("file delete: dir: %s, file: %+s, ts: %d, time: %s\n", event.Directory, event.EventNotification.OldEntry.Name, event.TsNs, timeStr)
+		case event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry != nil:
+		default:
+			fmt.Printf("Unknown event: %v\n", event)
+		}
 	}
 
 }
