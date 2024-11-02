@@ -344,10 +344,6 @@ func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]
 
 func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolume *master_pb.VolumeInformationMessage, emptyNode *Node, applyChange bool) (hasMoved bool, err error) {
 
-	if !commandEnv.isLocked() {
-		return false, fmt.Errorf("lock is lost")
-	}
-
 	if candidateVolume.RemoteStorageName != "" {
 		return false, fmt.Errorf("does not move volume in remove storage")
 	}
