@@ -147,11 +147,11 @@ func collectVolumeServersByDcOrRack(t *master_pb.TopologyInfo, selectedDataCente
 			continue
 		}
 		for _, r := range dc.RackInfos {
-			if selectedRacks != "" && strings.Contains(selectedRacks, r.Id) {
+			if selectedRacks != "" && !strings.Contains(selectedRacks, r.Id) {
 				continue
 			}
 			for _, dn := range r.DataNodeInfos {
-				if selectedNodes != "" && strings.Contains(selectedNodes, dn.Id) {
+				if selectedNodes != "" && !strings.Contains(selectedNodes, dn.Id) {
 					continue
 				}
 				nodes = append(nodes, &Node{
