@@ -75,6 +75,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	collection := balanceCommand.String("collection", "ALL_COLLECTIONS", "collection name, or use \"ALL_COLLECTIONS\" across collections, \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	racks := balanceCommand.String("racks", "", "only apply the balancing for this racks")
+	nodes := balanceCommand.String("nodes", "", "only apply the balancing for this nodes")
 	applyBalancing := balanceCommand.Bool("force", false, "apply the balancing plan.")
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
@@ -87,7 +88,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 		return err
 	}
 
-	volumeServers := collectVolumeServersByDcOrRack(topologyInfo, *dc, *racks)
+	volumeServers := collectVolumeServersByDcOrRack(topologyInfo, *dc, *racks, *nodes)
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
 
@@ -140,7 +141,7 @@ func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType types.DiskT
 	return nil
 }
 
-func collectVolumeServersByDcOrRack(t *master_pb.TopologyInfo, selectedDataCenter string, selectedRacks string) (nodes []*Node) {
+func collectVolumeServersByDcOrRack(t *master_pb.TopologyInfo, selectedDataCenter string, selectedRacks string, selectedNodes string) (nodes []*Node) {
 	for _, dc := range t.DataCenterInfos {
 		if selectedDataCenter != "" && dc.Id != selectedDataCenter {
 			continue
@@ -150,6 +151,9 @@ func collectVolumeServersByDcOrRack(t *master_pb.TopologyInfo, selectedDataCente
 				continue
 			}
 			for _, dn := range r.DataNodeInfos {
+				if selectedNodes != "" && strings.Contains(selectedNodes, dn.Id) {
+					continue
+				}
 				nodes = append(nodes, &Node{
 					info: dn,
 					dc:   dc.Id,
