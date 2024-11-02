@@ -88,7 +88,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 		return err
 	}
 
-	volumeServers := collectVolumeServersByDcOrRack(topologyInfo, *dc, *racks, *nodes)
+	volumeServers := collectVolumeServersByDcRackNode(topologyInfo, *dc, *racks, *nodes)
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
 
@@ -141,7 +141,7 @@ func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType types.DiskT
 	return nil
 }
 
-func collectVolumeServersByDcOrRack(t *master_pb.TopologyInfo, selectedDataCenter string, selectedRacks string, selectedNodes string) (nodes []*Node) {
+func collectVolumeServersByDcRackNode(t *master_pb.TopologyInfo, selectedDataCenter string, selectedRacks string, selectedNodes string) (nodes []*Node) {
 	for _, dc := range t.DataCenterInfos {
 		if selectedDataCenter != "" && dc.Id != selectedDataCenter {
 			continue
@@ -154,24 +154,6 @@ func collectVolumeServersByDcOrRack(t *master_pb.TopologyInfo, selectedDataCente
 				if selectedNodes != "" && !strings.Contains(selectedNodes, dn.Id) {
 					continue
 				}
-				nodes = append(nodes, &Node{
-					info: dn,
-					dc:   dc.Id,
-					rack: r.Id,
-				})
-			}
-		}
-	}
-	return
-}
-
-func collectVolumeServersByDc(t *master_pb.TopologyInfo, selectedDataCenter string) (nodes []*Node) {
-	for _, dc := range t.DataCenterInfos {
-		if selectedDataCenter != "" && dc.Id != selectedDataCenter {
-			continue
-		}
-		for _, r := range dc.RackInfos {
-			for _, dn := range r.DataNodeInfos {
 				nodes = append(nodes, &Node{
 					info: dn,
 					dc:   dc.Id,
