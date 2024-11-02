@@ -35,6 +35,7 @@ type CommandEnv struct {
 	MasterClient *wdclient.MasterClient
 	option       *ShellOptions
 	locker       *exclusive_locks.ExclusiveLocker
+	noLock       bool
 }
 
 func NewCommandEnv(options *ShellOptions) *CommandEnv {

@@ -33,7 +33,7 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-force] [-dataCenter=<data_center_name>]
+	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-force] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080]
 
 	Algorithm:
 
@@ -76,11 +76,20 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	racks := balanceCommand.String("racks", "", "only apply the balancing for this racks")
 	nodes := balanceCommand.String("nodes", "", "only apply the balancing for this nodes")
+	noLock := balanceCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 	applyBalancing := balanceCommand.Bool("force", false, "apply the balancing plan.")
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
 	infoAboutSimulationMode(writer, *applyBalancing, "-force")
+
+	if *noLock {
+		commandEnv.noLock = true
+	} else {
+		if err = commandEnv.confirmIsLocked(args); err != nil {
+			return
+		}
+	}
 
 	// collect topology information
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 5*time.Second)
@@ -330,6 +339,9 @@ func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]
 }
 
 func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolume *master_pb.VolumeInformationMessage, emptyNode *Node, applyChange bool) (hasMoved bool, err error) {
+	if !commandEnv.noLock && !commandEnv.isLocked() {
+		return false, fmt.Errorf("lock is lost")
+	}
 
 	if candidateVolume.RemoteStorageName != "" {
 		return false, fmt.Errorf("does not move volume in remove storage")
