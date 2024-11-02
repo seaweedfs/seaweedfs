@@ -73,23 +73,20 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := balanceCommand.String("collection", "ALL_COLLECTIONS", "collection name, or use \"ALL_COLLECTIONS\" across collections, \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
+	rack := balanceCommand.String("rack", "", "only apply the balancing for this rack")
 	applyBalancing := balanceCommand.Bool("force", false, "apply the balancing plan.")
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
 	infoAboutSimulationMode(writer, *applyBalancing, "-force")
 
-	if err = commandEnv.confirmIsLocked(args); err != nil {
-		return
-	}
-
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv, 15*time.Second)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 5*time.Second)
 	if err != nil {
 		return err
 	}
 
-	volumeServers := collectVolumeServersByDc(topologyInfo, *dc)
+	volumeServers := collectVolumeServersByDcOrRack(topologyInfo, *dc, *rack)
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
 
@@ -140,6 +137,27 @@ func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType types.DiskT
 	}
 
 	return nil
+}
+
+func collectVolumeServersByDcOrRack(t *master_pb.TopologyInfo, selectedDataCenter string, selectedRack string) (nodes []*Node) {
+	for _, dc := range t.DataCenterInfos {
+		if selectedDataCenter != "" && dc.Id != selectedDataCenter {
+			continue
+		}
+		for _, r := range dc.RackInfos {
+			if selectedRack != "" && r.Id != selectedRack {
+				continue
+			}
+			for _, dn := range r.DataNodeInfos {
+				nodes = append(nodes, &Node{
+					info: dn,
+					dc:   dc.Id,
+					rack: r.Id,
+				})
+			}
+		}
+	}
+	return
 }
 
 func collectVolumeServersByDc(t *master_pb.TopologyInfo, selectedDataCenter string) (nodes []*Node) {
