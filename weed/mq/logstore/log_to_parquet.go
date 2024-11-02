@@ -65,7 +65,7 @@ func collectTopicVersions(filerClient filer_pb.FilerClient, t topic.Topic, timeA
 }
 
 func collectTopicVersionsPartitions(filerClient filer_pb.FilerClient, t topic.Topic, topicVersion time.Time) (partitions []topic.Partition, err error) {
-	version := topicVersion.Format(topic.TIME_FORMAT)
+	version := topicVersion.Format(topic.PartitionGenerationFormat)
 	err = filer_pb.ReadDirAllEntries(filerClient, util.FullPath(t.Dir()).Child(version), "", func(entry *filer_pb.Entry, isLast bool) error {
 		if !entry.IsDirectory {
 			return nil

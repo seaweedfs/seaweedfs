@@ -91,7 +91,7 @@ func (partition Partition) String() string {
 }
 
 func ParseTopicVersion(name string) (t time.Time, err error) {
-	return time.Parse(TIME_FORMAT, name)
+	return time.Parse(PartitionGenerationFormat, name)
 }
 
 func ParsePartitionBoundary(name string) (start, stop int32) {
@@ -103,6 +103,6 @@ func ParsePartitionBoundary(name string) (start, stop int32) {
 }
 
 func PartitionDir(t Topic, p Partition) string {
-	partitionGeneration := time.Unix(0, p.UnixTimeNs).UTC().Format(TIME_FORMAT)
+	partitionGeneration := time.Unix(0, p.UnixTimeNs).UTC().Format(PartitionGenerationFormat)
 	return fmt.Sprintf("%s/%s/%04d-%04d", t.Dir(), partitionGeneration, p.RangeStart, p.RangeStop)
 }
