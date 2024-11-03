@@ -251,7 +251,7 @@ func TestIsGoodMove(t *testing.T) {
 
 func TestBalance(t *testing.T) {
 	topologyInfo := parseOutput(topoData)
-	volumeServers := collectVolumeServersByDc(topologyInfo, "")
+	volumeServers := collectVolumeServersByDcRackNode(topologyInfo, "", "", "")
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
 
