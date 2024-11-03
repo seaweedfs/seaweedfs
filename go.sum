@@ -1107,8 +1107,12 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.7.0/go.mod h1:hgWBS7lorOAVIJEQMi4Zs
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.11.3/go.mod h1:o//XUCC/F+yRGJoPO/VU0GSB0f8Nhgmxx0VIRUvaC0w=
 github.com/hailocab/go-hostpool v0.0.0-20160125115350-e80d13ce29ed h1:5upAirOpQc1Q53c0bnx2ufif5kANL7bfZWcc6VJWJd8=
 github.com/hailocab/go-hostpool v0.0.0-20160125115350-e80d13ce29ed/go.mod h1:tMWxXQ9wFIaZeTI9F+hmhFiGpFmhOHzyShyFUhRm0H4=
+github.com/hanwen/go-fuse/v2 v2.6.1 h1:F3RUMbAuRhVTi3fvgf8HjMPvOm9xEv5wjuy/AXJtEwI=
+github.com/hanwen/go-fuse/v2 v2.6.1/go.mod h1:ugNaD/iv5JYyS1Rcvi57Wz7/vrLQJo10mmketmoef48=
 github.com/hanwen/go-fuse/v2 v2.6.2 h1:Lm0ZDfKYCvdh9pGSv+l4YpuMeR+Q87ArPWh6hWpRPPQ=
 github.com/hanwen/go-fuse/v2 v2.6.2/go.mod h1:ugNaD/iv5JYyS1Rcvi57Wz7/vrLQJo10mmketmoef48=
+github.com/hanwen/go-fuse/v2 v2.6.3 h1:tDcEkLRx93lXu4XyN1/j8Z74VWvhHDl6qU1kNnvFUqI=
+github.com/hanwen/go-fuse/v2 v2.6.3/go.mod h1:ugNaD/iv5JYyS1Rcvi57Wz7/vrLQJo10mmketmoef48=
 github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
 github.com/hashicorp/errwrap v1.1.0 h1:OxrOeh75EUXMY8TBjag2fzXGZ40LB6IKw45YeGUDY2I=
 github.com/hashicorp/errwrap v1.1.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
