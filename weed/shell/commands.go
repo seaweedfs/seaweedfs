@@ -43,6 +43,7 @@ func NewCommandEnv(options *ShellOptions) *CommandEnv {
 		env:          make(map[string]string),
 		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, *options.FilerGroup, pb.AdminShellClient, "", "", "", *pb.ServerAddresses(*options.Masters).ToServiceDiscovery()),
 		option:       options,
+		noLock:       false,
 	}
 	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, "shell")
 	return ce
@@ -79,6 +80,9 @@ func (ce *CommandEnv) confirmIsLocked(args []string) error {
 func (ce *CommandEnv) isLocked() bool {
 	if ce == nil {
 		return true
+	}
+	if ce.noLock {
+		return false
 	}
 	return ce.locker.IsLocked()
 }
