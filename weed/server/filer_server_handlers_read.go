@@ -125,6 +125,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			writeJsonQuiet(w, r, http.StatusOK, entry)
 			return
 		}
+		// The input `r.URL.Path` is like `abc`, while filer.FindEntry() returns an entry `abc/`,
+		// which doesn't match the input `abc`, then return `http.StatusNotFound` to follow the s3 standard.
+		if !isForDirectory {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		if entry.Attr.Mime == "" || (entry.Attr.Mime == s3_constants.FolderMimeType && r.Header.Get(s3_constants.AmzIdentityId) == "") {
 			// Don't return directory meta if config value is set to true
 			if fs.option.ExposeDirectoryData == false {
