@@ -7,11 +7,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -25,11 +26,17 @@ var (
 	namespace   = flag.String("ns", "test", "namespace")
 	t           = flag.String("t", "test", "t")
 	seedBrokers = flag.String("brokers", "localhost:17777", "seed brokers")
+
+	counter int32
 )
 
 func doPublish(publisher *pub_client.TopicPublisher, id int) {
 	startTime := time.Now()
-	for i := 0; i < *messageCount / *concurrency; i++ {
+	for {
+		i := atomic.AddInt32(&counter, 1)
+		if i > int32(*messageCount) {
+			break
+		}
 		// Simulate publishing a message
 		myRecord := genMyRecord(int32(i))
 		if err := publisher.PublishRecord(myRecord.Key, myRecord.ToRecordValue()); err != nil {
@@ -38,7 +45,7 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 		}
 		if *messageDelay > 0 {
 			time.Sleep(*messageDelay)
-			fmt.Printf("sent %+v\n", myRecord)
+			fmt.Printf("sent %+v\n", string(myRecord.Key))
 		}
 	}
 	if err := publisher.FinishPublish(); err != nil {

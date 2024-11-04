@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
+	"reflect"
 )
 
 func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssignment, stopCh chan struct{}) error {
@@ -24,6 +25,11 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 			perPartitionConcurrency = 1
 		}
 
+		var stopTsNs int64
+		if !sub.ContentConfig.StopTime.IsZero() {
+			stopTsNs = sub.ContentConfig.StopTime.UnixNano()
+		}
+
 		if err = subscribeClient.Send(&mq_pb.SubscribeMessageRequest{
 			Message: &mq_pb.SubscribeMessageRequest_Init{
 				Init: &mq_pb.SubscribeMessageRequest_InitMessage{
@@ -32,6 +38,8 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 					Topic:         sub.ContentConfig.Topic.ToPbTopic(),
 					PartitionOffset: &mq_pb.PartitionOffset{
 						Partition: assigned.Partition,
+						StartTsNs: sub.ContentConfig.StartTime.UnixNano(),
+						StopTsNs:  stopTsNs,
 						StartType: mq_pb.PartitionOffsetStartType_EARLIEST_IN_MEMORY,
 					},
 					Filter:         sub.ContentConfig.Filter,
@@ -99,6 +107,10 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 			case *mq_pb.SubscribeMessageResponse_Data:
 				if m.Data.Ctrl != nil {
 					glog.V(2).Infof("subscriber %s received control from producer:%s isClose:%v", sub.SubscriberConfig.ConsumerGroup, m.Data.Ctrl.PublisherName, m.Data.Ctrl.IsClose)
+					continue
+				}
+				if len(m.Data.Key) == 0 {
+					fmt.Printf("empty key %+v, type %v\n", m, reflect.TypeOf(m))
 					continue
 				}
 				executors.Execute(func() {

@@ -8,12 +8,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 	"strings"
 	"time"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -22,6 +22,7 @@ var (
 	seedBrokers             = flag.String("brokers", "localhost:17777", "seed brokers")
 	maxPartitionCount       = flag.Int("maxPartitionCount", 3, "max partition count")
 	perPartitionConcurrency = flag.Int("perPartitionConcurrency", 1, "per partition concurrency")
+	timeAgo                 = flag.Duration("timeAgo", 1*time.Hour, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 
 	clientId = flag.Uint("client_id", uint(util.RandomInt32()), "client id")
 )
@@ -65,7 +66,7 @@ func main() {
 	contentConfig := &sub_client.ContentConfiguration{
 		Topic:     topic.NewTopic(*namespace, *t),
 		Filter:    "",
-		StartTime: time.Unix(1, 1),
+		StartTime: time.Now().Add(-*timeAgo),
 	}
 
 	brokers := strings.Split(*seedBrokers, ",")
@@ -75,9 +76,13 @@ func main() {
 	subscriber.SetEachMessageFunc(func(key, value []byte) error {
 		counter++
 		record := &schema_pb.RecordValue{}
-		proto.Unmarshal(value, record)
-		fmt.Printf("record: %v\n", record)
-		time.Sleep(1300 * time.Millisecond)
+		err := proto.Unmarshal(value, record)
+		if err != nil {
+			fmt.Printf("unmarshal record value: %v\n", err)
+		} else {
+			fmt.Printf("%s %d: %v\n", string(key), len(value), record)
+		}
+		//time.Sleep(1300 * time.Millisecond)
 		return nil
 	})
 

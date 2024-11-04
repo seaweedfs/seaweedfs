@@ -97,6 +97,10 @@ func NewChunkReaderAtFromClient(readerCache *ReaderCache, chunkViews *IntervalLi
 	}
 }
 
+func (c *ChunkReadAt) Size() int64 {
+	return c.fileSize
+}
+
 func (c *ChunkReadAt) Close() error {
 	c.readerCache.destroy()
 	return nil
