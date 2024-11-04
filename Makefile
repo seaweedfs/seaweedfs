@@ -1,3 +1,5 @@
+.PHONY: test
+
 BINARY = weed
 
 SOURCE_DIR = .

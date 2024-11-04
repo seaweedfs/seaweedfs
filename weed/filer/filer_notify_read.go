@@ -4,14 +4,15 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	"google.golang.org/protobuf/proto"
 	"io"
 	"math"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -37,6 +38,19 @@ func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePositi
 
 	return NewOrderedLogVisitor(f, startPosition, stopTsNs, dayEntries)
 
+}
+
+func (f *Filer) HasPersistedLogFiles(startPosition log_buffer.MessagePosition) (bool, error) {
+	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Year(), startPosition.Month(), startPosition.Day())
+	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, 1, "", "", "")
+
+	if listDayErr != nil {
+		return false, fmt.Errorf("fail to list log by day: %v", listDayErr)
+	}
+	if len(dayEntries) == 0 {
+		return false, nil
+	}
+	return true, nil
 }
 
 // ----------
@@ -103,7 +117,7 @@ func (o *OrderedLogVisitor) GetNext() (logEntry *filer_pb.LogEntry, err error) {
 	if nextErr != nil {
 		if nextErr == io.EOF {
 			// do nothing since the filer has no more log entries
-		}else {
+		} else {
 			return nil, fmt.Errorf("failed to get next log entry: %v", nextErr)
 		}
 	} else {
@@ -230,7 +244,7 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 		if nextErr != nil {
 			if nextErr == io.EOF {
 				// do nothing since the filer has no more log entries
-			}else {
+			} else {
 				return fmt.Errorf("failed to get next log entry for %v: %v", entryName, err)
 			}
 		} else {
