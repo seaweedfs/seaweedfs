@@ -121,5 +121,5 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	}
 	fmt.Printf("balanceEcVolumes collections %+v\n", len(collections))
 
-	return Balance(commandEnv, collections, *dc, *applyBalancing)
+	return EcBalance(commandEnv, collections, *dc, *applyBalancing)
 }

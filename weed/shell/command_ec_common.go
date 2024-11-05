@@ -772,7 +772,7 @@ func collectVolumeIdToEcNodes(allEcNodes []*EcNode, collection string) map[needl
 	return vidLocations
 }
 
-func Balance(commandEnv *CommandEnv, collections []string, dc string, applyBalancing bool) (err error) {
+func EcBalance(commandEnv *CommandEnv, collections []string, dc string, applyBalancing bool) (err error) {
 	if len(collections) == 0 {
 		return fmt.Errorf("no collections to balance")
 	}
