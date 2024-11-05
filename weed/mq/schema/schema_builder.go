@@ -19,16 +19,23 @@ type RecordTypeBuilder struct {
 	recordType *schema_pb.RecordType
 }
 
+// RecordTypeBegin creates a new RecordTypeBuilder, it should be followed by a series of WithField methods and RecordTypeEnd
 func RecordTypeBegin() *RecordTypeBuilder {
 	return &RecordTypeBuilder{recordType: &schema_pb.RecordType{}}
 }
 
+// RecordTypeEnd finishes the building of a RecordValue
 func (rtb *RecordTypeBuilder) RecordTypeEnd() *schema_pb.RecordType {
 	// be consistent with parquet.node.go `func (g Group) Fields() []Field`
 	sort.Slice(rtb.recordType.Fields, func(i, j int) bool {
 		return rtb.recordType.Fields[i].Name < rtb.recordType.Fields[j].Name
 	})
 	return rtb.recordType
+}
+
+// NewRecordTypeBuilder creates a new RecordTypeBuilder from an existing RecordType, it should be followed by a series of WithField methods and RecordTypeEnd
+func NewRecordTypeBuilder(recordType *schema_pb.RecordType) (rtb *RecordTypeBuilder) {
+	return &RecordTypeBuilder{recordType: recordType}
 }
 
 func (rtb *RecordTypeBuilder) WithField(name string, scalarType *schema_pb.Type) *RecordTypeBuilder {

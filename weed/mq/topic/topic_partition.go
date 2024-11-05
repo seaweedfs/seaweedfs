@@ -7,6 +7,6 @@ type TopicPartition struct {
 	Partition
 }
 
-func (tp *TopicPartition) String() string {
+func (tp *TopicPartition) TopicPartitionId() string {
 	return fmt.Sprintf("%v.%v-%04d-%04d", tp.Namespace, tp.Topic, tp.RangeStart, tp.RangeStop)
 }
