@@ -3,12 +3,13 @@ package mount
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"path/filepath"
 )
 
 func (wfs *WFS) subscribeFilerConfEvents() (*meta_cache.MetadataFollower, error) {
@@ -82,7 +83,7 @@ func (wfs *WFS) wormEnabledForEntry(path util.FullPath, entry *filer_pb.Entry) b
 	}
 
 	rule := wfs.FilerConf.MatchStorageRule(string(path))
-	if !rule.Worm {
+	if rule.Worm == nil || !rule.Worm.GetValue() {
 		return false
 	}
 

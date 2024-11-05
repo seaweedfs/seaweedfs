@@ -163,7 +163,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 	if wfs.FilerConf != nil {
 		rule := wfs.FilerConf.MatchStorageRule(string(oldPath))
-		if rule.Worm {
+		if rule.Worm != nil && rule.Worm.GetValue() {
 			return fuse.EPERM
 		}
 	}

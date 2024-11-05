@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package filer_pb;
 
+import "google/protobuf/wrappers.proto";
+
 option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb";
 option java_package = "seaweedfs.client";
 option java_outer_classname = "FilerProto";
@@ -442,7 +444,7 @@ message FilerConf {
         string data_node = 11;
         uint32 max_file_name_length = 12;
         bool disable_chunk_deletion = 13;
-        bool worm = 14;
+        google.protobuf.BoolValue worm = 14;
     }
     repeated PathConf locations = 2;
 }
