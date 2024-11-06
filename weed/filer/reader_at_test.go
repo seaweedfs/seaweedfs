@@ -31,7 +31,7 @@ func (m *mockChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64) 
 func (m *mockChunkCache) SetChunk(fileId string, data []byte) {
 }
 
-func (m *mockChunkCache) GetMaxFilePartSizeInCache() (uint64) {
+func (m *mockChunkCache) GetMaxFilePartSizeInCache() uint64 {
 	return 0
 }
 
@@ -81,7 +81,7 @@ func TestReaderAt(t *testing.T) {
 	}
 
 	testReadAt(t, readerAt, 0, 10, 10, io.EOF, nil, nil)
-	testReadAt(t, readerAt, 0, 12, 12, io.EOF, nil, nil)
+	testReadAt(t, readerAt, 0, 12, 10, io.EOF, nil, nil)
 	testReadAt(t, readerAt, 2, 8, 8, io.EOF, nil, nil)
 	testReadAt(t, readerAt, 3, 6, 6, nil, nil, nil)
 
@@ -131,8 +131,8 @@ func TestReaderAt0(t *testing.T) {
 	testReadAt(t, readerAt, 3, 16, 7, io.EOF, nil, nil)
 	testReadAt(t, readerAt, 3, 5, 5, nil, nil, nil)
 
-	testReadAt(t, readerAt, 11, 5, 5, io.EOF, nil, nil)
-	testReadAt(t, readerAt, 10, 5, 5, io.EOF, nil, nil)
+	testReadAt(t, readerAt, 11, 5, 0, io.EOF, nil, nil)
+	testReadAt(t, readerAt, 10, 5, 0, io.EOF, nil, nil)
 
 }
 
