@@ -1,12 +1,16 @@
+//go:build dameng
+// +build dameng
+
 package dameng
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 
 	_ "gitee.com/chunanyong/dm"
 	"github.com/seaweedfs/seaweedfs/weed/filer"

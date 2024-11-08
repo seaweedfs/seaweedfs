@@ -1,3 +1,6 @@
+//go:build dameng
+// +build dameng
+
 package dameng
 
 import (
