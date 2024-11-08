@@ -34,6 +34,10 @@ func (c *commandFsMv) Help() string {
 `
 }
 
+func (c *commandFsMv) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	if len(args) != 2 {

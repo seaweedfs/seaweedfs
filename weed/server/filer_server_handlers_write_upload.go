@@ -100,14 +100,14 @@ func (fs *FilerServer) uploadReaderToChunks(reader io.Reader, startOffset int64,
 		}
 
 		wg.Add(1)
-		go func(offset int64) {
+		go func(offset int64, buf *bytes.Buffer) {
 			defer func() {
-				bufPool.Put(bytesBuffer)
+				bufPool.Put(buf)
 				<-bytesBufferLimitChan
 				wg.Done()
 			}()
 
-			chunks, toChunkErr := fs.dataToChunk(fileName, contentType, bytesBuffer.Bytes(), offset, so)
+			chunks, toChunkErr := fs.dataToChunk(fileName, contentType, buf.Bytes(), offset, so)
 			if toChunkErr != nil {
 				uploadErrLock.Lock()
 				if uploadErr == nil {
@@ -124,7 +124,7 @@ func (fs *FilerServer) uploadReaderToChunks(reader io.Reader, startOffset int64,
 				}
 				fileChunksLock.Unlock()
 			}
-		}(chunkOffset)
+		}(chunkOffset, bytesBuffer)
 
 		// reset variables for the next chunk
 		chunkOffset = chunkOffset + dataSize
@@ -138,6 +138,10 @@ func (fs *FilerServer) uploadReaderToChunks(reader io.Reader, startOffset int64,
 	wg.Wait()
 
 	if uploadErr != nil {
+		glog.V(0).Infof("upload file %s error: %v", fileName, uploadErr)
+		for _, chunk := range fileChunks {
+			glog.V(4).Infof("purging failed uploaded %s chunk %s [%d,%d)", fileName, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+		}
 		fs.filer.DeleteUncommittedChunks(fileChunks)
 		return nil, md5Hash, 0, uploadErr, nil
 	}

@@ -30,6 +30,10 @@ func (c *commandFsMetaNotify) Help() string {
 `
 }
 
+func (c *commandFsMetaNotify) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	path, err := commandEnv.parseUrl(findInputDirectory(args))

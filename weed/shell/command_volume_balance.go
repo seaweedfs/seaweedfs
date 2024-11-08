@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -32,7 +33,7 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-force] [-dataCenter=<data_center_name>]
+	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-force] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080]
 
 	Algorithm:
 
@@ -64,28 +65,39 @@ func (c *commandVolumeBalance) Help() string {
 `
 }
 
+func (c *commandVolumeBalance) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := balanceCommand.String("collection", "ALL_COLLECTIONS", "collection name, or use \"ALL_COLLECTIONS\" across collections, \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
+	racks := balanceCommand.String("racks", "", "only apply the balancing for this racks")
+	nodes := balanceCommand.String("nodes", "", "only apply the balancing for this nodes")
+	noLock := balanceCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 	applyBalancing := balanceCommand.Bool("force", false, "apply the balancing plan.")
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
 	infoAboutSimulationMode(writer, *applyBalancing, "-force")
 
-	if err = commandEnv.confirmIsLocked(args); err != nil {
-		return
+	if *noLock {
+		commandEnv.noLock = true
+	} else {
+		if err = commandEnv.confirmIsLocked(args); err != nil {
+			return
+		}
 	}
 
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv, 15*time.Second)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 5*time.Second)
 	if err != nil {
 		return err
 	}
 
-	volumeServers := collectVolumeServersByDc(topologyInfo, *dc)
+	volumeServers := collectVolumeServersByDcRackNode(topologyInfo, *dc, *racks, *nodes)
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
 
@@ -138,13 +150,19 @@ func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType types.DiskT
 	return nil
 }
 
-func collectVolumeServersByDc(t *master_pb.TopologyInfo, selectedDataCenter string) (nodes []*Node) {
+func collectVolumeServersByDcRackNode(t *master_pb.TopologyInfo, selectedDataCenter string, selectedRacks string, selectedNodes string) (nodes []*Node) {
 	for _, dc := range t.DataCenterInfos {
 		if selectedDataCenter != "" && dc.Id != selectedDataCenter {
 			continue
 		}
 		for _, r := range dc.RackInfos {
+			if selectedRacks != "" && !strings.Contains(selectedRacks, r.Id) {
+				continue
+			}
 			for _, dn := range r.DataNodeInfos {
+				if selectedNodes != "" && !strings.Contains(selectedNodes, dn.Id) {
+					continue
+				}
 				nodes = append(nodes, &Node{
 					info: dn,
 					dc:   dc.Id,
@@ -321,7 +339,6 @@ func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]
 }
 
 func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolume *master_pb.VolumeInformationMessage, emptyNode *Node, applyChange bool) (hasMoved bool, err error) {
-
 	if !commandEnv.isLocked() {
 		return false, fmt.Errorf("lock is lost")
 	}

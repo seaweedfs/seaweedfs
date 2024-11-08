@@ -11,6 +11,9 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
   annotations:
     service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+{{- if .Values.master.annotations }}
+    {{- toYaml .Values.master.annotations | nindent 4 }}
+{{- end }}
 spec:
   clusterIP: None
   publishNotReadyAddresses: true

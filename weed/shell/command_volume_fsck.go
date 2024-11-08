@@ -60,7 +60,7 @@ func (c *commandVolumeFsck) Name() string {
 }
 
 func (c *commandVolumeFsck) Help() string {
-	return `check all volumes to find entries not used by the filer
+	return `check all volumes to find entries not used by the filer. It is optional and resource intensive.
 
 	Important assumption!!!
 		the system is all used by one filer.
@@ -77,6 +77,10 @@ func (c *commandVolumeFsck) Help() string {
 	3. find out the set B subtract A
 
 `
+}
+
+func (c *commandVolumeFsck) HasTag(tag CommandTag) bool {
+	return tag == ResourceHeavy
 }
 
 func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {

@@ -535,7 +535,6 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 		err := location.UnloadVolume(i)
 		if err == nil {
 			glog.V(0).Infof("UnmountVolume %d", i)
-			stats.DeleteCollectionMetrics(v.Collection)
 			s.DeletedVolumesChan <- message
 			return nil
 		} else if err == ErrVolumeNotFound {

@@ -11,6 +11,7 @@ import (
 )
 
 func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) (code fuse.Status) {
+	glog.V(4).Infof("GetAttr %v", input.NodeId)
 	if input.NodeId == 1 {
 		wfs.setRootAttr(out)
 		return fuse.OK

@@ -26,6 +26,10 @@ func (c *commandRaftClusterPs) Help() string {
 `
 }
 
+func (c *commandRaftClusterPs) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandRaftClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	raftClusterPsCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

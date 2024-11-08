@@ -83,8 +83,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 			disk.DeleteVolumeById(vid)
 			deletedVolumes = append(deletedVolumes, v)
 
-			deltaDiskUsages := newDiskUsages()
-			deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(v.DiskType))
+			deltaDiskUsage := &DiskUsageCounts{}
 			deltaDiskUsage.volumeCount = -1
 			if v.IsRemote() {
 				deltaDiskUsage.remoteVolumeCount = -1
@@ -92,7 +91,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 			if !v.ReadOnly {
 				deltaDiskUsage.activeVolumeCount = -1
 			}
-			disk.UpAdjustDiskUsageDelta(deltaDiskUsages)
+			disk.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
 		}
 	}
 	for _, v := range actualVolumes {
@@ -120,8 +119,7 @@ func (dn *DataNode) DeltaUpdateVolumes(newVolumes, deletedVolumes []storage.Volu
 		}
 		disk.DeleteVolumeById(v.Id)
 
-		deltaDiskUsages := newDiskUsages()
-		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(v.DiskType))
+		deltaDiskUsage := &DiskUsageCounts{}
 		deltaDiskUsage.volumeCount = -1
 		if v.IsRemote() {
 			deltaDiskUsage.remoteVolumeCount = -1
@@ -129,7 +127,7 @@ func (dn *DataNode) DeltaUpdateVolumes(newVolumes, deletedVolumes []storage.Volu
 		if !v.ReadOnly {
 			deltaDiskUsage.activeVolumeCount = -1
 		}
-		disk.UpAdjustDiskUsageDelta(deltaDiskUsages)
+		disk.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
 	}
 	for _, v := range newVolumes {
 		dn.doAddOrUpdateVolume(v)
@@ -143,7 +141,6 @@ func (dn *DataNode) AdjustMaxVolumeCounts(maxVolumeCounts map[string]uint32) {
 			// the volume server may have set the max to zero
 			continue
 		}
-		deltaDiskUsages := newDiskUsages()
 		dt := types.ToDiskType(diskType)
 		currentDiskUsage := dn.diskUsages.getOrCreateDisk(dt)
 		currentDiskUsageMaxVolumeCount := atomic.LoadInt64(&currentDiskUsage.maxVolumeCount)
@@ -151,9 +148,9 @@ func (dn *DataNode) AdjustMaxVolumeCounts(maxVolumeCounts map[string]uint32) {
 			continue
 		}
 		disk := dn.getOrCreateDisk(dt.String())
-		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(dt)
-		deltaDiskUsage.maxVolumeCount = int64(maxVolumeCount) - currentDiskUsageMaxVolumeCount
-		disk.UpAdjustDiskUsageDelta(deltaDiskUsages)
+		disk.UpAdjustDiskUsageDelta(dt, &DiskUsageCounts{
+			maxVolumeCount: int64(maxVolumeCount) - currentDiskUsageMaxVolumeCount,
+		})
 	}
 }
 

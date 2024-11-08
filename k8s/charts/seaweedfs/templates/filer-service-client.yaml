@@ -13,6 +13,10 @@ metadata:
 {{- if .Values.filer.metricsPort }}
     monitoring: "true"
 {{- end }}
+{{- if .Values.filer.annotations }}
+  annotations:
+    {{- toYaml .Values.filer.annotations | nindent 4 }}
+{{- end }}
 spec:
   clusterIP: None
   ports:

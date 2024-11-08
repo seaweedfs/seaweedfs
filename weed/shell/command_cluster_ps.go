@@ -35,6 +35,10 @@ func (c *commandClusterPs) Help() string {
 `
 }
 
+func (c *commandClusterPs) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	clusterPsCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

@@ -49,6 +49,10 @@ func (c *commandVolumeMove) Help() string {
 `
 }
 
+func (c *commandVolumeMove) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volMoveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

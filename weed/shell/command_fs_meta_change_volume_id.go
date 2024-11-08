@@ -37,6 +37,10 @@ func (c *commandFsMetaChangeVolumeId) Help() string {
 `
 }
 
+func (c *commandFsMetaChangeVolumeId) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fsMetaChangeVolumeIdCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

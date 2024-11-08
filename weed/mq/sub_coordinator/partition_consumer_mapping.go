@@ -11,13 +11,6 @@ type PartitionConsumerMapping struct {
 	prevMappings   []*PartitionSlotToConsumerInstanceList
 }
 
-func NewPartitionConsumerMapping(ringSize int32) *PartitionConsumerMapping {
-	newVersion := time.Now().UnixNano()
-	return &PartitionConsumerMapping{
-		currentMapping: NewPartitionSlotToConsumerInstanceList(ringSize, newVersion),
-	}
-}
-
 // Balance goal:
 // 1. max processing power utilization
 // 2. allow one consumer instance to be down unexpectedly
@@ -27,8 +20,7 @@ func (pcm *PartitionConsumerMapping) BalanceToConsumerInstances(partitionSlotToB
 	if len(partitionSlotToBrokerList.PartitionSlots) == 0 || len(consumerInstances) == 0 {
 		return
 	}
-	newVersion := time.Now().UnixNano()
-	newMapping := NewPartitionSlotToConsumerInstanceList(partitionSlotToBrokerList.RingSize, newVersion)
+	newMapping := NewPartitionSlotToConsumerInstanceList(partitionSlotToBrokerList.RingSize, time.Now())
 	var prevMapping *PartitionSlotToConsumerInstanceList
 	if len(pcm.prevMappings) > 0 {
 		prevMapping = pcm.prevMappings[len(pcm.prevMappings)-1]

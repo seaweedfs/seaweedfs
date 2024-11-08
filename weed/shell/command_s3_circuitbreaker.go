@@ -51,6 +51,10 @@ func (c *commandS3CircuitBreaker) Help() string {
 	`
 }
 
+func (c *commandS3CircuitBreaker) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	dir := s3_constants.CircuitBreakerConfigDir
 	file := s3_constants.CircuitBreakerConfigFile

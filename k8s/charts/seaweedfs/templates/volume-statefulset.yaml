@@ -9,6 +9,10 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+{{- if .Values.volume.annotations }}
+  annotations:
+    {{- toYaml .Values.volume.annotations | nindent 4 }}
+{{- end }}
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-volume
   replicas: {{ .Values.volume.replicas }}
@@ -42,6 +46,10 @@ spec:
       {{- if .Values.volume.affinity }}
       affinity:
         {{ tpl .Values.volume.affinity . | nindent 8 | trim }}
+      {{- end }}
+      {{- with .Values.volume.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       restartPolicy: {{ default .Values.global.restartPolicy .Values.volume.restartPolicy }}
       {{- if .Values.volume.tolerations }}
@@ -146,7 +154,9 @@ spec:
                 {{- if .Values.volume.idx }}
                 -dir.idx=/idx \
                 {{- end }}
-                -max {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}{{$dir.maxVolumes}}{{end}} \
+                -max {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}
+                {{- if eq ($dir.maxVolumes | toString) "0" }}0{{ else if not $dir.maxVolumes }}7{{ else }}{{$dir.maxVolumes}}{{ end }}
+                {{- end }} \
                 {{- if .Values.volume.rack }}
                 -rack={{ .Values.volume.rack }} \
                 {{- end }}
@@ -176,8 +186,10 @@ spec:
                 -mserver={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
           volumeMounts:
             {{- range $dir := .Values.volume.dataDirs }}
+            {{- if not ( eq $dir.type "custom" ) }}
             - name: {{ $dir.name }}
               mountPath: "/{{ $dir.name }}/"
+            {{- end }}
             {{- end }}
             {{- if .Values.volume.logs }}
             - name: logs

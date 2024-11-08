@@ -72,19 +72,16 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	}
 
 	// write .vif files
-	var destroyTime uint64
+	var expireAtSec uint64
 	if v.Ttl != nil {
-		ttlMills := v.Ttl.ToSeconds()
-		if ttlMills > 0 {
-			destroyTime = uint64(time.Now().Unix()) + v.Ttl.ToSeconds() //calculated destroy time from the ec volume was created
+		ttlSecond := v.Ttl.ToSeconds()
+		if ttlSecond > 0 {
+			expireAtSec = uint64(time.Now().Unix()) + ttlSecond //calculated expiration time
 		}
 	}
 	volumeInfo := &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}
-	if destroyTime == 0 {
-		glog.Warningf("gen ec volume,cal ec volume destory time fail,set time to 0,ttl:%v", v.Ttl)
-	} else {
-		volumeInfo.DestroyTime = destroyTime
-	}
+	volumeInfo.ExpireAtSec = expireAtSec
+
 	datSize, _, _ := v.FileStat()
 	volumeInfo.DatFileSize = int64(datSize)
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
@@ -150,8 +147,10 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		})
 	} else {
 		location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
-			_, found := location.FindEcVolume(needle.VolumeId(req.VolumeId))
-			return found
+			//(location.FindEcVolume) This method is error, will cause location is nil, redundant judgment
+			// _, found := location.FindEcVolume(needle.VolumeId(req.VolumeId))
+			// return found
+			return true
 		})
 	}
 	if location == nil {
@@ -191,7 +190,6 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 				return err
 			}
 		}
-
 		return nil
 	})
 	if err != nil {

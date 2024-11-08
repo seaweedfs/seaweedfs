@@ -21,6 +21,7 @@ type ContentConfiguration struct {
 	Topic     topic.Topic
 	Filter    string
 	StartTime time.Time
+	StopTime  time.Time
 }
 
 type OnEachMessageFunc func(key, value []byte) (err error)

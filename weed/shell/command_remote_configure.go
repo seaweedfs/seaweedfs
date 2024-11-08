@@ -48,6 +48,10 @@ func (c *commandRemoteConfigure) Help() string {
 `
 }
 
+func (c *commandRemoteConfigure) HasTag(CommandTag) bool {
+	return false
+}
+
 var (
 	isAlpha = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`).MatchString
 )

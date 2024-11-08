@@ -34,6 +34,10 @@ func (c *commandVolumeUnmount) Help() string {
 `
 }
 
+func (c *commandVolumeUnmount) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandVolumeUnmount) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volUnmountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

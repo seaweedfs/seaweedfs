@@ -2,7 +2,6 @@ package log_buffer
 
 import (
 	"bytes"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,11 +10,12 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-const BufferSize = 4 * 1024 * 1024
-const PreviousBufferCount = 3
+const BufferSize = 8 * 1024 * 1024
+const PreviousBufferCount = 32
 
 type dataToFlush struct {
 	startTime time.Time

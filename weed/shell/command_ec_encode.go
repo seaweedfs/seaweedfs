@@ -56,6 +56,10 @@ func (c *commandEcEncode) Help() string {
 `
 }
 
+func (c *commandEcEncode) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
@@ -311,15 +315,31 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 				}
 				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
 					if float64(v.Size) > fullPercentage/100*float64(volumeSizeLimitMb)*1024*1024 {
-						vidMap[v.Id] = true
+						if good, found := vidMap[v.Id]; found {
+							if good {
+								if diskInfo.FreeVolumeCount < 2 {
+									glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
+									vidMap[v.Id] = false
+								}
+							}
+						} else {
+							if diskInfo.FreeVolumeCount < 2 {
+								glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
+								vidMap[v.Id] = false
+							} else {
+								vidMap[v.Id] = true
+							}
+						}
 					}
 				}
 			}
 		}
 	})
 
-	for vid := range vidMap {
-		vids = append(vids, needle.VolumeId(vid))
+	for vid, good := range vidMap {
+		if good {
+			vids = append(vids, needle.VolumeId(vid))
+		}
 	}
 
 	return
