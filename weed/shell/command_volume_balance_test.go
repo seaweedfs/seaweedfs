@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -254,8 +255,18 @@ func TestBalance(t *testing.T) {
 	volumeServers := collectVolumeServersByDcRackNode(topologyInfo, "", "", "")
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
-
-	if err := balanceVolumeServers(nil, diskTypes, volumeReplicas, volumeServers, "ALL_COLLECTIONS", false); err != nil {
+	applyBalancing := false
+	parallelBalancing := false
+	c := commandVolumeBalance{
+		commandEnv:        nil,
+		lock:              sync.RWMutex{},
+		parallelBalancing: &parallelBalancing,
+		applyBalancing:    &applyBalancing,
+		diskTypes:         diskTypes,
+		volumeServers:     volumeServers,
+		volumeReplicas:    volumeReplicas,
+	}
+	if err := c.balanceVolumeServers("ALL_COLLECTIONS"); err != nil {
 		t.Errorf("balance: %v", err)
 	}
 
