@@ -93,7 +93,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
-	infoAboutSimulationMode(writer, *c.parallelBalancing, "-force")
+	infoAboutSimulationMode(writer, *c.applyBalancing, "-force")
 
 	if *noLock {
 		commandEnv.noLock = true
