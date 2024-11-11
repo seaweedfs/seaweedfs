@@ -1,20 +1,20 @@
-FROM jibutech-registry.cn-hangzhou.cr.aliyuncs.com/ys1000/golang:1.22.3-bullseye AS builder
+FROM vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/golang:1.23.2-bullseye AS builder
 
 RUN sed -i -E "s/[a-zA-Z0-9]+.debian.org/mirrors.aliyun.com/g" /etc/apt/sources.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends git g++ fuse
 
-RUN mkdir -p /go/src/github.com/jibudata/
-RUN git clone https://github.com/jibudata/seaweedfs /go/src/github.com/jibudata/seaweedfs
+RUN mkdir -p /go/src/github.com/hhy-data/
+RUN git clone https://github.com/hhy-data/seaweedfs /go/src/github.com/hhy-data/seaweedfs
 ARG BRANCH=3.68-udm
 ARG TAGS
 
-RUN cd /go/src/github.com/jibudata/seaweedfs && git checkout $BRANCH
-RUN cd /go/src/github.com/jibudata/seaweedfs/weed \
-  && export LDFLAGS="-X github.com/jibudata/seaweedfs/weed/util.COMMIT=$(git rev-parse --short HEAD)" \
+RUN cd /go/src/github.com/hhy-data/seaweedfs && git checkout $BRANCH
+RUN cd /go/src/github.com/hhy-data/seaweedfs/weed \
+  && export LDFLAGS="-X github.com/hhy-data/seaweedfs/weed/util.COMMIT=$(git rev-parse --short HEAD)" \
   && CGO_ENABLED=0 go build -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}" -o /weed
 
-FROM registry.cn-shanghai.aliyuncs.com/jibutech/alpine:3.18.4 AS final
+FROM vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/alpine:3.18.4 AS final
 COPY --from=builder ./weed /usr/bin/
 #COPY --from=builder ./weed_pub* /usr/bin/
 #COPY --from=builder ./weed_sub* /usr/bin/

@@ -36,7 +36,7 @@ test:
 
 GOPROXY ?= https://goproxy.cn,direct
 BUILD_LATEST ?= false
-IMAGE_PREFIX ?= jibutech-registry.cn-hangzhou.cr.aliyuncs.com/udm/
+IMAGE_PREFIX ?= vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/
 IMAGE_TAG:=$(shell ./docker/image-tag)
 TAG ?= ${IMAGE_TAG}
 SWCOMMIT=$(shell git rev-parse --short HEAD)

@@ -2,7 +2,7 @@ version: '3.9'
 
 services:
   master:
-    image: jibutech-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.68.7-dev
+    image: vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.77-dev
     network_mode: "host"
     ports:
       - 9333:9333
@@ -10,7 +10,7 @@ services:
     command: "master -ip=192.168.4.249 -volumeSizeLimitMB=4096 -defaultReplication=000"
     restart: unless-stopped
   volume1:
-    image: jibutech-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.68.7-dev
+    image: vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.77-dev
     network_mode: "host"
     ports:
       - 7455:8080
@@ -23,7 +23,7 @@ services:
       - master
     restart: unless-stopped
   volume2:
-    image: jibutech-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.68.7-dev
+    image: vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.77-dev
     network_mode: "host"
     ports:
       - 7456:8081
@@ -36,7 +36,7 @@ services:
       - master
     restart: unless-stopped
   filer:
-    image: jibutech-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.68.7-dev
+    image: vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.77-dev
     network_mode: "host"
     ports:
       - 8888:8888

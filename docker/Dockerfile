@@ -1,4 +1,4 @@
-FROM --platform=${BUILDPLATFORM} registry.cn-shanghai.aliyuncs.com/jibutech/golang:1.21.1-bullseye as builder
+FROM --platform=${BUILDPLATFORM} vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/golang:1.23.2-bullseye as builder
 ARG TARGETARCH
 ARG TARGETOS
 
@@ -31,7 +31,7 @@ RUN --mount=type=cache,target=/go/pkg,id=go-mod-cache,sharing=locked \
 RUN --mount=type=cache,target=/go/pkg,id=go-mod-cache,sharing=locked \
     go build -ldflags "$LDFLAGS" -o /weed_sub_record ./weed/mq/client/cmd/weed_sub_record
 
-FROM registry.cn-shanghai.aliyuncs.com/jibutech/alpine:3.18.4 AS final
+FROM vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/alpine:3.18.4 AS final
 
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
     # apk --no-cache add ca-certificates && \

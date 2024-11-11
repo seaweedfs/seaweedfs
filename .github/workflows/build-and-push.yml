@@ -18,9 +18,9 @@ jobs:
     - name: Login to Alicloud Docker registry
       uses: docker/login-action@v2
       with:
-        registry: jibutech-registry.cn-hangzhou.cr.aliyuncs.com
-        username: ${{ secrets.JIBUTECH_ALI_REGISTRY_USER }}
-        password: ${{ secrets.JIBUTECH_ALI_REGISTRY_PASS }}
+        registry: vdm-registry.cn-hangzhou.cr.aliyuncs.com
+        username: ${{ secrets.ALI_REGISTRY_USER }}
+        password: ${{ secrets.ALI_REGISTRY_PASS }}
     - name: Build and push Docker images
       run: |
         GOPROXY=https://proxy.golang.org,direct make container

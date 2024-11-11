@@ -1,4 +1,4 @@
-FROM registry.cn-shanghai.aliyuncs.com/jibutech/alpine:3.18.4 AS final
+FROM vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/alpine:3.18.4 AS final
 COPY  ./weed /usr/bin/
 COPY  ./weed_pub* /usr/bin/
 COPY  ./weed_sub* /usr/bin/
