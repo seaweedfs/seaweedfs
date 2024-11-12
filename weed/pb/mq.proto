@@ -26,6 +26,7 @@ service SeaweedMessaging {
     rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
     }
     rpc ConfigureTopic (ConfigureTopicRequest) returns (ConfigureTopicResponse) {
+        // implemented by message queue agent and broker
     }
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
@@ -44,8 +45,10 @@ service SeaweedMessaging {
 
     // data plane for each topic partition
     rpc PublishMessage (stream PublishMessageRequest) returns (stream PublishMessageResponse) {
+        // implemented by message queue agent and broker
     }
     rpc SubscribeMessage (stream SubscribeMessageRequest) returns (stream SubscribeMessageResponse) {
+        // implemented by message queue agent and broker
     }
     // The lead broker asks a follower broker to follow itself
     rpc PublishFollowMe (stream PublishFollowMeRequest) returns (stream PublishFollowMeResponse) {
