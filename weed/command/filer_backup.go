@@ -137,10 +137,11 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		*backupOption.proxyByFiler)
 	dataSink.SetSourceFiler(filerSource)
 
-	processEventFn := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, dataSink, *backupOption.doDeleteFiles, debug)
+	var processEventFn func(*filer_pb.SubscribeMetadataResponse) error
 	if backupOption.ignore404Error != nil && *backupOption.ignore404Error {
+		processEventFnGenerated := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, dataSink, *backupOption.doDeleteFiles, debug)
 		processEventFn = func(resp *filer_pb.SubscribeMetadataResponse) error {
-			err := processEventFn(resp)
+			err := processEventFnGenerated(resp)
 			if err == nil {
 				return nil
 			}
@@ -150,6 +151,8 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			}
 			return err
 		}
+	} else {
+		processEventFn = genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, dataSink, *backupOption.doDeleteFiles, debug)
 	}
 
 	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {
