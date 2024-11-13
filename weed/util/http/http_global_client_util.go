@@ -314,7 +314,7 @@ func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isConte
 	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
 		if r.StatusCode == http.StatusNotFound {
-			return true, fmt.Errorf("%s: %s: %w", fileUrl, r.Status, err)
+			return true, fmt.Errorf("%s: %s: %w", fileUrl, r.Status, ErrNotFound)
 		}
 		retryable = r.StatusCode >= 499
 		return retryable, fmt.Errorf("%s: %s", fileUrl, r.Status)
