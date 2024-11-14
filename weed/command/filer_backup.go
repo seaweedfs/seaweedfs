@@ -138,7 +138,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	dataSink.SetSourceFiler(filerSource)
 
 	var processEventFn func(*filer_pb.SubscribeMetadataResponse) error
-	if backupOption.ignore404Error != nil && *backupOption.ignore404Error {
+	if *backupOption.ignore404Error {
 		processEventFnGenerated := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, dataSink, *backupOption.doDeleteFiles, debug)
 		processEventFn = func(resp *filer_pb.SubscribeMetadataResponse) error {
 			err := processEventFnGenerated(resp)
