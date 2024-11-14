@@ -178,7 +178,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	}
 
 	eventErrorType := pb.RetryForeverOnError
-	if backupOption.disableErrorRetry != nil && *backupOption.disableErrorRetry {
+	if *backupOption.disableErrorRetry {
 		eventErrorType = pb.TrivialOnError
 	}
 
