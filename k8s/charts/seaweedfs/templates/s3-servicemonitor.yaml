@@ -26,8 +26,8 @@ spec:
       scrapeTimeout: 5s
   selector:
     matchLabels:
-      app: {{ template "seaweedfs.name" . }}
-      component: s3
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      app.kubernetes.io/component: s3
 {{- end }}
 {{- end }}
 {{- end }}
