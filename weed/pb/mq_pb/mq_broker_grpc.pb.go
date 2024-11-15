@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.28.1
-// source: mq.proto
+// source: mq_broker.proto
 
 package mq_pb
 
@@ -589,5 +589,5 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "mq.proto",
+	Metadata: "mq_broker.proto",
 }

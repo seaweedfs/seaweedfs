@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package messaging_pb;
 
-import "schema.proto";
+import "mq_schema.proto";
 
 option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/mq_pb";
 option java_package = "seaweedfs.mq";
@@ -26,7 +26,6 @@ service SeaweedMessaging {
     rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
     }
     rpc ConfigureTopic (ConfigureTopicRequest) returns (ConfigureTopicResponse) {
-        // implemented by message queue agent and broker
     }
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
@@ -45,10 +44,8 @@ service SeaweedMessaging {
 
     // data plane for each topic partition
     rpc PublishMessage (stream PublishMessageRequest) returns (stream PublishMessageResponse) {
-        // implemented by message queue agent and broker
     }
     rpc SubscribeMessage (stream SubscribeMessageRequest) returns (stream SubscribeMessageResponse) {
-        // implemented by message queue agent and broker
     }
     // The lead broker asks a follower broker to follow itself
     rpc PublishFollowMe (stream PublishFollowMeRequest) returns (stream PublishFollowMeResponse) {
