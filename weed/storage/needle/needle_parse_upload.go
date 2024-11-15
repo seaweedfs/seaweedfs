@@ -182,11 +182,24 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 	} else {
 		disposition := r.Header.Get("Content-Disposition")
 
-		if pu.FileName != "" && strings.Contains(disposition, "filename=") {
+		if strings.Contains(disposition, "name=") {
+
+			if !strings.HasPrefix(disposition, "inline") && !strings.HasPrefix(disposition, "attachment") {
+				disposition = "attachment; " + disposition
+			}
+
 			_, mediaTypeParams, err := mime.ParseMediaType(disposition)
 
 			if err == nil {
-				pu.FileName = mediaTypeParams["filename"]
+				dpFilename, hasFilename := mediaTypeParams["filename"]
+				dpName, hasName := mediaTypeParams["name"]
+
+				if hasFilename {
+					pu.FileName = dpFilename
+				} else if hasName {
+					pu.FileName = dpName
+				}
+
 			}
 
 		} else {
