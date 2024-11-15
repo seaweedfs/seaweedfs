@@ -32,9 +32,9 @@ spec:
           - name: WEED_CLUSTER_DEFAULT
             value: "sw"
           - name: WEED_CLUSTER_SW_MASTER
-            value: "{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}:9333"
+            value: "{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}:{{ .Values.master.port }}"
           - name: WEED_CLUSTER_SW_FILER
-            value: "{{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:8888"
+            value: "{{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}"
           - name: POD_IP
             valueFrom:
               fieldRef:
@@ -53,6 +53,26 @@ spec:
           - "/bin/sh"
           - "-ec"
           - |
+            wait_for_service() {
+              local url=$1
+              local max_attempts=60  # 5 minutes total (5s * 60)
+              local attempt=1
+              
+              echo "Waiting for service at $url..."
+              while [ $attempt -le $max_attempts ]; do
+                if wget -q --spider "$url" >/dev/null 2>&1; then
+                  echo "Service at $url is up!"
+                  return 0
+                fi
+                echo "Attempt $attempt: Service not ready yet, retrying in 5s..."
+                sleep 5
+                attempt=$((attempt + 1))
+              done
+              echo "Service at $url failed to become ready within 5 minutes"
+              exit 1
+            }
+            wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.master.readinessProbe.httpGet.path }}"
+            wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
           {{- range $reg, $props := $.Values.filer.s3.createBuckets }}
             exec /bin/echo \
             "s3.bucket.create --name {{ $props.name }}" |\
