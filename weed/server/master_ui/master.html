@@ -33,14 +33,14 @@
                 {{ with .RaftServer }}
                 <tr>
                     <th>Leader</th>
-                    <td><a href="http://{{ .Leader }}">{{ .Leader }}</a></td>
+                    <td><a href="{{ url .Leader }}">{{ .Leader }}</a></td>
                 </tr>
                 <tr>
                     <th>Other Masters</th>
                     <td class="col-sm-5">
                         <ul class="list-unstyled">
                             {{ range $k, $p := .Peers }}
-                            <li><a href="http://{{ $p.Name }}/ui/index.html">{{ $p.Name }}</a></li>
+                            <li><a href="{{ url $p.Name }}/ui/index.html">{{ $p.Name }}</a></li>
                             {{ end }}
                         </ul>
                     </td>
@@ -88,9 +88,9 @@
             <tr>
                 <td><code>{{ $dc.Id }}</code></td>
                 <td>{{ $rack.Id }}</td>
-                <td><a href="http://{{ $dn.Url }}/ui/index.html">{{ $dn.Url }}</a>
+                <td><a href="{{ url $dn.Url }}/ui/index.html">{{ $dn.Url }}</a>
                     {{ if ne $dn.PublicUrl $dn.Url }}
-                    / <a href="http://{{ $dn.PublicUrl }}/ui/index.html">{{ $dn.PublicUrl }}</a>
+                    / <a href="{{ url $dn.PublicUrl }}/ui/index.html">{{ $dn.PublicUrl }}</a>
                     {{ end }}
                 </td>
                 <td>{{ $dn.Volumes }}</td>
