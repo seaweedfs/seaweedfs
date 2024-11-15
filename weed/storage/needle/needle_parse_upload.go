@@ -243,7 +243,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 
 		if contentType != "" && contentType != "application/octet-stream" && mtype != contentType {
 			pu.MimeType = contentType // only return mime type if not deducible
-		} else if mtype != "" && pu.MimeType == "" {
+		} else if mtype != "" && pu.MimeType == "" && mtype != "application/octet-stream" {
 			pu.MimeType = mtype
 		}
 
