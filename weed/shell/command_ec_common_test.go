@@ -2,8 +2,9 @@ package shell
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 func TestEcDistribution(t *testing.T) {
@@ -16,7 +17,7 @@ func TestEcDistribution(t *testing.T) {
 	sortEcNodesByFreeslotsDescending(ecNodes)
 
 	if totalFreeEcSlots < erasure_coding.TotalShardsCount {
-		println("not enough free ec shard slots", totalFreeEcSlots)
+		t.Errorf("not enough free ec shard slots: %d", totalFreeEcSlots)
 	}
 	allocatedDataNodes := ecNodes
 	if len(allocatedDataNodes) > erasure_coding.TotalShardsCount {

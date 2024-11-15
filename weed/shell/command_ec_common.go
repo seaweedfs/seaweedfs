@@ -3,7 +3,6 @@ package shell
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -283,8 +282,12 @@ func mountEcShards(grpcDialOption grpc.DialOption, collection string, volumeId n
 	})
 }
 
-func ceilDivide(total, n int) int {
-	return int(math.Ceil(float64(total) / float64(n)))
+func ceilDivide(a, b int) int {
+	var r int
+	if (a % b) != 0 {
+		r = 1
+	}
+	return (a / b) + r
 }
 
 func findEcVolumeShards(ecNode *EcNode, vid needle.VolumeId) erasure_coding.ShardBits {
