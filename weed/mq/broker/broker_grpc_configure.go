@@ -30,7 +30,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 
 	// validate the schema
 	if request.RecordType != nil {
-		if _, err = schema.NewSchema(request.RecordType); err != nil {
+		if _, err = schema.NewSchema(request.Topic.Namespace, request.Topic.Name, request.RecordType); err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid record type %+v: %v", request.RecordType, err)
 		}
 	}
