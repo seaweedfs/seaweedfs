@@ -84,7 +84,6 @@ message PublishRecordRequest {
     int64 session_id = 1; // session_id is required for the first record
     bytes key = 2;
     schema_pb.RecordValue value = 3;
-    int64 ts_ns = 4;
 }
 message PublishRecordResponse {
     int64 ack_sequence = 1;
