@@ -11,10 +11,30 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 )
+
+type RackId string
+type EcNodeId string
+
+type EcNode struct {
+	info       *master_pb.DataNodeInfo
+	dc         string
+	rack       RackId
+	freeEcSlot int
+}
+type CandidateEcNode struct {
+	ecNode     *EcNode
+	shardCount int
+}
+
+type EcRack struct {
+	ecNodes    map[EcNodeId]*EcNode
+	freeEcSlot int
+}
 
 func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) (err error) {
 
@@ -67,7 +87,6 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	err = operation.WithVolumeServerClient(false, targetAddress, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 		if targetAddress != existingLocation {
-
 			fmt.Printf("copy %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 			_, copyErr := volumeServerClient.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
 				VolumeId:       uint32(volumeId),
@@ -130,11 +149,6 @@ func sortEcNodesByFreeslotsAscending(ecNodes []*EcNode) {
 	})
 }
 
-type CandidateEcNode struct {
-	ecNode     *EcNode
-	shardCount int
-}
-
 // if the index node changed the freeEcSlot, need to keep every EcNode still sorted
 func ensureSortedEcNodes(data []*CandidateEcNode, index int, lessThan func(i, j int) bool) {
 	for i := index - 1; i >= 0; i-- {
@@ -178,16 +192,6 @@ func countFreeShardSlots(dn *master_pb.DataNodeInfo, diskType types.DiskType) (c
 	return int(diskInfo.MaxVolumeCount-diskInfo.VolumeCount)*erasure_coding.DataShardsCount - countShards(diskInfo.EcShardInfos)
 }
 
-type RackId string
-type EcNodeId string
-
-type EcNode struct {
-	info       *master_pb.DataNodeInfo
-	dc         string
-	rack       RackId
-	freeEcSlot int
-}
-
 func (ecNode *EcNode) localShardIdCount(vid uint32) int {
 	for _, diskInfo := range ecNode.info.DiskInfos {
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
@@ -200,13 +204,7 @@ func (ecNode *EcNode) localShardIdCount(vid uint32) int {
 	return 0
 }
 
-type EcRack struct {
-	ecNodes    map[EcNodeId]*EcNode
-	freeEcSlot int
-}
-
 func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
-
 	// list all possible locations
 	// collect topology information
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
@@ -773,6 +771,21 @@ func collectVolumeIdToEcNodes(allEcNodes []*EcNode, collection string) map[needl
 		}
 	}
 	return vidLocations
+}
+
+func volumeIdToReplicaPlacement(vid needle.VolumeId, nodes []*EcNode) (*super_block.ReplicaPlacement, error) {
+	for _, ecNode := range nodes {
+		for _, diskInfo := range ecNode.info.DiskInfos {
+			for _, volumeInfo := range diskInfo.VolumeInfos {
+				if needle.VolumeId(volumeInfo.Id) != vid {
+					continue
+				}
+				return super_block.NewReplicaPlacementFromByte(byte(volumeInfo.ReplicaPlacement))
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("failed to resolve replica placement for volume ID %d", vid)
 }
 
 func EcBalance(commandEnv *CommandEnv, collections []string, dc string, applyBalancing bool) (err error) {
