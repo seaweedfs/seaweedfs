@@ -30,6 +30,10 @@ func (c *commandFsMetaCat) Help() string {
 `
 }
 
+func (c *commandFsMetaCat) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	path, err := commandEnv.parseUrl(findInputDirectory(args))

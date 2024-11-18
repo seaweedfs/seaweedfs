@@ -10,6 +10,10 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: filer
+{{- if .Values.filer.annotations }}
+  annotations:
+    {{- toYaml .Values.filer.annotations | nindent 4 }}
+{{- end }}
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-filer
   podManagementPolicy: {{ .Values.filer.podManagementPolicy }}
@@ -56,6 +60,10 @@ spec:
       {{- if .Values.filer.affinity }}
       affinity:
         {{ tpl .Values.filer.affinity . | nindent 8 | trim }}
+      {{- end }}
+      {{- with .Values.filer.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- if .Values.filer.tolerations }}
       tolerations:
@@ -182,6 +190,12 @@ spec:
               {{- if .Values.filer.filerGroup}}
               -filerGroup={{ .Values.filer.filerGroup}} \
               {{- end }}
+              {{- if .Values.filer.rack }}
+              -rack={{ .Values.filer.rack }} \
+              {{- end }}
+              {{- if .Values.filer.dataCenter }}
+              -dataCenter={{ .Values.filer.dataCenter }} \
+              {{- end }}
               {{- if .Values.filer.s3.enabled }}
               -s3 \
               -s3.port={{ .Values.filer.s3.port }} \
@@ -219,6 +233,12 @@ spec:
             {{- if (or .Values.filer.enablePVC (or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.data.type "persistentVolumeClaim") (eq .Values.filer.data.type "emptyDir"))) }}
             - name: data-filer
               mountPath: /data
+            {{- end }}
+            {{- if .Values.filer.notificationConfig }}
+            - name: notification-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/notification.toml
+              subPath: notification.toml
             {{- end }}
             {{- if .Values.global.enableSecurity }}
             - name: security-config
@@ -334,6 +354,11 @@ spec:
             {{- else }}
             secretName: seaweedfs-s3-secret
             {{- end }}
+        {{- end }}
+        {{- if .Values.filer.notificationConfig }}
+        - name: notification-config
+          configMap:
+            name: {{ template "seaweedfs.name" . }}-notification-config
         {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config

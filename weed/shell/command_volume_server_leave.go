@@ -35,6 +35,10 @@ func (c *commandVolumeServerLeave) Help() string {
 `
 }
 
+func (c *commandVolumeServerLeave) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandVolumeServerLeave) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	vsLeaveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

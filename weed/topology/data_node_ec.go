@@ -26,12 +26,10 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 	existingEcShards := dn.GetEcShards()
 
 	// find out the newShards and deletedShards
-	var newShardCount, deletedShardCount int
 	for _, ecShards := range existingEcShards {
 
+		var newShardCount, deletedShardCount int
 		disk := dn.getOrCreateDisk(ecShards.DiskType)
-		deltaDiskUsages := newDiskUsages()
-		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(ecShards.DiskType))
 
 		vid := ecShards.VolumeId
 		if actualEcShards, ok := actualEcShardMap[vid]; !ok {
@@ -52,8 +50,11 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 			}
 		}
 
-		deltaDiskUsage.ecShardCount = int64(newShardCount - deletedShardCount)
-		disk.UpAdjustDiskUsageDelta(deltaDiskUsages)
+		if (newShardCount - deletedShardCount) != 0 {
+			disk.UpAdjustDiskUsageDelta(types.ToDiskType(ecShards.DiskType), &DiskUsageCounts{
+				ecShardCount: int64(newShardCount - deletedShardCount),
+			})
+		}
 
 	}
 
@@ -65,10 +66,9 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 		newShards = append(newShards, ecShards)
 
 		disk := dn.getOrCreateDisk(ecShards.DiskType)
-		deltaDiskUsages := newDiskUsages()
-		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(ecShards.DiskType))
-		deltaDiskUsage.ecShardCount = int64(ecShards.ShardIdCount())
-		disk.UpAdjustDiskUsageDelta(deltaDiskUsages)
+		disk.UpAdjustDiskUsageDelta(types.ToDiskType(ecShards.DiskType), &DiskUsageCounts{
+			ecShardCount: int64(ecShards.ShardIdCount()),
+		})
 	}
 
 	if len(newShards) > 0 || len(deletedShards) > 0 {

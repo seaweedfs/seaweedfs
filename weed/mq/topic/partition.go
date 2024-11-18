@@ -1,6 +1,10 @@
 package topic
 
-import "github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+import (
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"time"
+)
 
 const PartitionCount = 4096
 
@@ -80,4 +84,25 @@ func (partition Partition) Overlaps(partition2 Partition) bool {
 		return false
 	}
 	return true
+}
+
+func (partition Partition) String() string {
+	return fmt.Sprintf("%04d-%04d", partition.RangeStart, partition.RangeStop)
+}
+
+func ParseTopicVersion(name string) (t time.Time, err error) {
+	return time.Parse(PartitionGenerationFormat, name)
+}
+
+func ParsePartitionBoundary(name string) (start, stop int32) {
+	_, err := fmt.Sscanf(name, "%04d-%04d", &start, &stop)
+	if err != nil {
+		return 0, 0
+	}
+	return start, stop
+}
+
+func PartitionDir(t Topic, p Partition) string {
+	partitionGeneration := time.Unix(0, p.UnixTimeNs).UTC().Format(PartitionGenerationFormat)
+	return fmt.Sprintf("%s/%s/%04d-%04d", t.Dir(), partitionGeneration, p.RangeStart, p.RangeStop)
 }

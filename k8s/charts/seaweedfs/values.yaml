@@ -140,6 +140,9 @@ master:
   # Annotations to be added to the master pods
   podAnnotations: {}
 
+  # Annotations to be added to the master resources
+  annotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -165,6 +168,11 @@ master:
               app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/component: master
           topologyKey: kubernetes.io/hostname
+
+  # Topology Spread Constraints Settings
+  # This should map directly to the value of the topologySpreadConstraints
+  # for a PodSpec. By Default no constraints are set.
+  topologySpreadConstraints: {}
 
   # Toleration Settings for master pods
   # This should be a multi-line string matching the Toleration array
@@ -301,6 +309,12 @@ volume:
   #   - name: data
   #     type: "emptyDir"
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
+  #
+  # If these don't meet your needs, you can use "custom" here along with extraVolumes and extraVolumeMounts
+  # Particularly useful when using more than 1 for the volume server replicas.
+  #   - name: data
+  #     type: "custom"
+  #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
 
   dataDirs:
   - name: data1
@@ -381,6 +395,15 @@ volume:
   sidecars: []
   initContainers: ""
 
+  # Example for use when using more than 1 volume server replica
+  # extraVolumeMounts: |
+  #   - name: drive
+  #     mountPath: /drive
+  #     subPathExpr: $(POD_NAME)
+  # extraVolumes: |
+  #   - name: drive
+  #     hostPath:
+  #       path: /var/mnt/
   extraVolumes: ""
   extraVolumeMounts: ""
 
@@ -389,6 +412,9 @@ volume:
 
   # Annotations to be added to the volume pods
   podAnnotations: {}
+
+  # Annotations to be added to the volume resources
+  annotations: {}
 
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
@@ -405,6 +431,11 @@ volume:
               app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/component: volume
           topologyKey: kubernetes.io/hostname
+
+  # Topology Spread Constraints Settings
+  # This should map directly to the value of the topologySpreadConstraints
+  # for a PodSpec. By Default no constraints are set.
+  topologySpreadConstraints: {}
 
   # Resource requests, limits, etc. for the server cluster placement. This
   # should map directly to the value of the resources field for a PodSpec,
@@ -490,6 +521,10 @@ filer:
   metricsPort: 9327
   loggingOverrideLevel: null
   filerGroup: ""
+  # prefer to read and write to volumes in this data center (not set by default)
+  dataCenter: null
+  # prefer to write to volumes in this rack (not set by default)
+  rack: null
   #  replication type is XYZ:
   # X number of replica in other data centers
   # Y number of replica in other racks in the same data center
@@ -510,6 +545,19 @@ filer:
 
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
+
+  # Add a custom notification.toml to configure filer notifications
+  # Example:
+  # notificationConfig: |-
+  #   [notification.kafka]
+  #   enabled = false
+  #   hosts = [
+  #       "localhost:9092"
+  #   ]
+  #   topic = "seaweedfs_filer"
+  #   offsetFile = "./last.offset"
+  #   offsetSaveIntervalSeconds = 10
+  notificationConfig: ""
 
   # DEPRECATE: enablePVC, storage, storageClass
   # Consider replacing with filer.data section below instead.
@@ -584,6 +632,9 @@ filer:
   # Annotations to be added to the filer pods
   podAnnotations: {}
 
+  # Annotations to be added to the filer resource
+  annotations: {}
+
   ## Set podManagementPolicy
   podManagementPolicy: Parallel
 
@@ -599,6 +650,11 @@ filer:
               app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/component: filer
           topologyKey: kubernetes.io/hostname
+
+  # Topology Spread Constraints Settings
+  # This should map directly to the value of the topologySpreadConstraints
+  # for a PodSpec. By Default no constraints are set.
+  topologySpreadConstraints: {}
 
   # updatePartition is used to control a careful rolling update of SeaweedFS
   # masters.
@@ -673,7 +729,7 @@ filer:
         sub_filter '/seaweedfsstatic' './seaweedfsstatic';
         sub_filter_once off;
 
-  # extraEnvVars is a list of extra enviroment variables to set with the stateful set.
+  # extraEnvVars is a list of extra environment variables to set with the stateful set.
   extraEnvironmentVars:
     WEED_MYSQL_ENABLED: "false"
     WEED_MYSQL_HOSTNAME: "mysql-db-host"
@@ -798,6 +854,9 @@ s3:
   # Annotations to be added to the s3 pods
   podAnnotations: {}
 
+  # Annotations to be added to the s3 resources
+  annotations: {}
+
   # Resource requests, limits, etc. for the server cluster placement. This
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
@@ -895,7 +954,7 @@ s3:
 # For more information, visit: https://container-object-storage-interface.github.io/docs/deployment-guide
 cosi:
   enabled: false
-  image: "ghcr.io/seaweedfs/seaweedfs-cosi-driver:v0.1.1"
+  image: "ghcr.io/seaweedfs/seaweedfs-cosi-driver:v0.1.2"
   driverName: "seaweedfs.objectstorage.k8s.io"
   bucketClassName: "seaweedfs"
   endpoint: ""

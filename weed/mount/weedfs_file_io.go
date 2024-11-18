@@ -2,6 +2,7 @@ package mount
 
 import (
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 /**
@@ -66,6 +67,14 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 	if status == fuse.OK {
 		out.Fh = uint64(fileHandle.fh)
 		out.OpenFlags = in.Flags
+		if wfs.option.IsMacOs {
+			// remove the direct_io flag, as it is not well-supported on macOS
+			// https://code.google.com/archive/p/macfuse/wikis/OPTIONS.wiki recommended to avoid the direct_io flag
+			if in.Flags&fuse.FOPEN_DIRECT_IO != 0 {
+				glog.V(4).Infof("macfuse direct_io mode %v => false\n", in.Flags&fuse.FOPEN_DIRECT_IO != 0)
+				out.OpenFlags &^= fuse.FOPEN_DIRECT_IO
+			}
+		}
 		// TODO https://github.com/libfuse/libfuse/blob/master/include/fuse_common.h#L64
 	}
 	return status

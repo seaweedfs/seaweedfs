@@ -15,6 +15,10 @@ metadata:
     {{- with .Values.global.monitoring.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- if .Values.s3.annotations }}
+  annotations:
+    {{- toYaml .Values.s3.annotations | nindent 4 }}
+{{- end }}
 spec:
   endpoints:
     - interval: 30s
@@ -22,8 +26,8 @@ spec:
       scrapeTimeout: 5s
   selector:
     matchLabels:
-      app: {{ template "seaweedfs.name" . }}
-      component: s3
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      app.kubernetes.io/component: s3
 {{- end }}
 {{- end }}
 {{- end }}

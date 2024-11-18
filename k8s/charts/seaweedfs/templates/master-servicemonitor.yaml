@@ -15,6 +15,10 @@ metadata:
     {{- with .Values.global.monitoring.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- if .Values.master.annotations }}
+  annotations:
+    {{- toYaml .Values.master.annotations | nindent 4 }}
+{{- end }}
 spec:
   endpoints:
     - interval: 30s

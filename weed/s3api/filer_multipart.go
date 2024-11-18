@@ -209,6 +209,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 					ModifiedTsNs: chunk.ModifiedTsNs,
 					CipherKey:    chunk.CipherKey,
 					ETag:         chunk.ETag,
+					IsCompressed: chunk.IsCompressed,
 				}
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)

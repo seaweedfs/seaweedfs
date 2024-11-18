@@ -29,6 +29,10 @@ func (c *commandS3BucketQuotaEnforce) Help() string {
 `
 }
 
+func (c *commandS3BucketQuotaEnforce) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandS3BucketQuotaEnforce) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

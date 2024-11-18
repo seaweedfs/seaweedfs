@@ -46,6 +46,7 @@ type Option struct {
 	Umask              os.FileMode
 	Quota              int64
 	DisableXAttr       bool
+	IsMacOs            bool
 
 	MountUid         uint32
 	MountGid         uint32
@@ -141,15 +142,13 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 }
 
 func (wfs *WFS) StartBackgroundTasks() error {
-	fn, err := wfs.subscribeFilerConfEvents()
+	follower, err := wfs.subscribeFilerConfEvents()
 	if err != nil {
 		return err
 	}
 
-	go fn()
-
 	startTime := time.Now()
-	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
+	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano(), follower)
 	go wfs.loopCheckQuota()
 
 	return nil

@@ -315,6 +315,6 @@ func errInvalidArgument(message string) error {
 		StatusCode: http.StatusBadRequest,
 		Code:       "InvalidArgument",
 		Message:    message,
-		RequestID:  "minio",
+		RequestID:  "client",
 	}
 }

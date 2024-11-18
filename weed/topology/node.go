@@ -21,7 +21,7 @@ type Node interface {
 	String() string
 	AvailableSpaceFor(option *VolumeGrowOption) int64
 	ReserveOneVolume(r int64, option *VolumeGrowOption) (*DataNode, error)
-	UpAdjustDiskUsageDelta(deltaDiskUsages *DiskUsages)
+	UpAdjustDiskUsageDelta(diskType types.DiskType, diskUsage *DiskUsageCounts)
 	UpAdjustMaxVolumeId(vid needle.VolumeId)
 	GetDiskUsages() *DiskUsages
 
@@ -214,13 +214,11 @@ func (n *NodeImpl) ReserveOneVolume(r int64, option *VolumeGrowOption) (assigned
 	return nil, errors.New("No free volume slot found!")
 }
 
-func (n *NodeImpl) UpAdjustDiskUsageDelta(deltaDiskUsages *DiskUsages) { //can be negative
-	for diskType, diskUsage := range deltaDiskUsages.usages {
-		existingDisk := n.getOrCreateDisk(diskType)
-		existingDisk.addDiskUsageCounts(diskUsage)
-	}
+func (n *NodeImpl) UpAdjustDiskUsageDelta(diskType types.DiskType, diskUsage *DiskUsageCounts) { //can be negative
+	existingDisk := n.getOrCreateDisk(diskType)
+	existingDisk.addDiskUsageCounts(diskUsage)
 	if n.parent != nil {
-		n.parent.UpAdjustDiskUsageDelta(deltaDiskUsages)
+		n.parent.UpAdjustDiskUsageDelta(diskType, diskUsage)
 	}
 }
 func (n *NodeImpl) UpAdjustMaxVolumeId(vid needle.VolumeId) { //can be negative
@@ -244,7 +242,9 @@ func (n *NodeImpl) LinkChildNode(node Node) {
 func (n *NodeImpl) doLinkChildNode(node Node) {
 	if n.children[node.Id()] == nil {
 		n.children[node.Id()] = node
-		n.UpAdjustDiskUsageDelta(node.GetDiskUsages())
+		for dt, du := range node.GetDiskUsages().usages {
+			n.UpAdjustDiskUsageDelta(dt, du)
+		}
 		n.UpAdjustMaxVolumeId(node.GetMaxVolumeId())
 		node.SetParent(n)
 		glog.V(0).Infoln(n, "adds child", node.Id())
@@ -258,7 +258,9 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 	if node != nil {
 		node.SetParent(nil)
 		delete(n.children, node.Id())
-		n.UpAdjustDiskUsageDelta(node.GetDiskUsages().negative())
+		for dt, du := range node.GetDiskUsages().negative().usages {
+			n.UpAdjustDiskUsageDelta(dt, du)
+		}
 		glog.V(0).Infoln(n, "removes", node.Id())
 	}
 }

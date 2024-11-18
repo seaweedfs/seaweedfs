@@ -88,7 +88,7 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 				Topic:     Topic{Namespace: localTopic.Namespace, Name: localTopic.Name},
 				Partition: localPartition.Partition,
 			}
-			stats.Stats[topicPartition.String()] = &mq_pb.TopicPartitionStats{
+			stats.Stats[topicPartition.TopicPartitionId()] = &mq_pb.TopicPartitionStats{
 				Topic: &mq_pb.Topic{
 					Namespace: string(localTopic.Namespace),
 					Name:      localTopic.Name,

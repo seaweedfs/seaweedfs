@@ -21,8 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 type BenchmarkOptions struct {
@@ -242,7 +242,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			DiskType:    *b.diskType,
 		}
 		if assignResult, err := operation.Assign(b.masterClient.GetMaster, b.grpcDialOption, ar); err == nil {
-			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
+			fp.Server, fp.Fid, fp.Pref.Collection = assignResult.Url, assignResult.Fid, *b.collection
 			if !isSecure && assignResult.Auth != "" {
 				isSecure = true
 			}

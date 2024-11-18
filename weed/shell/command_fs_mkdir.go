@@ -27,6 +27,10 @@ func (c *commandFsMkdir) Help() string {
 `
 }
 
+func (c *commandFsMkdir) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandFsMkdir) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	path, err := commandEnv.parseUrl(findInputDirectory(args))

@@ -109,6 +109,7 @@ const (
 	ErrRequestBytesExceed
 
 	OwnershipControlsNotFoundError
+	ErrNoSuchTagSet
 )
 
 // error code to APIError structure, these fields carry respective
@@ -182,6 +183,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchBucketPolicy: {
 		Code:           "NoSuchBucketPolicy",
 		Description:    "The bucket policy does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchTagSet: {
+		Code:           "NoSuchTagSet",
+		Description:    "The TagSet does not exist",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchCORSConfiguration: {

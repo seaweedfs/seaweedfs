@@ -41,6 +41,10 @@ func (c *commandRemoteUncache) Help() string {
 `
 }
 
+func (c *commandRemoteUncache) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	remoteUncacheCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
@@ -165,12 +169,12 @@ func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
 		}
 	}
 	if *ff.minAge != -1 {
-		if entry.Attributes.Crtime + *ff.minAge > time.Now().Unix() {
+		if entry.Attributes.Crtime+*ff.minAge > time.Now().Unix() {
 			return false
 		}
 	}
 	if *ff.maxAge != -1 {
-		if entry.Attributes.Crtime + *ff.maxAge < time.Now().Unix() {
+		if entry.Attributes.Crtime+*ff.maxAge < time.Now().Unix() {
 			return false
 		}
 	}

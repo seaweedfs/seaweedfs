@@ -67,7 +67,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	resp.RecordType = request.RecordType
 
 	// save the topic configuration on filer
-	if err := b.fca.SaveTopicConfToFiler(request.Topic, resp); err != nil {
+	if err := b.fca.SaveTopicConfToFiler(t, resp); err != nil {
 		return nil, fmt.Errorf("configure topic: %v", err)
 	}
 

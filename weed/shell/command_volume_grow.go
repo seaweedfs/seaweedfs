@@ -30,6 +30,10 @@ func (c *commandGrow) Help() string {
 `
 }
 
+func (c *commandGrow) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandGrow) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

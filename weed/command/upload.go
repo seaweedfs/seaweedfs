@@ -97,7 +97,14 @@ func runUpload(cmd *Command, args []string) bool {
 					if e != nil {
 						return e
 					}
-					results, e := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.diskType, *upload.maxMB, *upload.usePublicUrl)
+					results, e := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, operation.StoragePreference{
+						Replication: *upload.replication,
+						Collection:  *upload.collection,
+						DataCenter:  *upload.dataCenter,
+						Ttl:         *upload.ttl,
+						DiskType:    *upload.diskType,
+						MaxMB:       *upload.maxMB,
+					}, *upload.usePublicUrl)
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
 					if e != nil {
@@ -119,7 +126,14 @@ func runUpload(cmd *Command, args []string) bool {
 			fmt.Println(e.Error())
 			return false
 		}
-		results, err := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.diskType, *upload.maxMB, *upload.usePublicUrl)
+		results, err := operation.SubmitFiles(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*upload.master) }, grpcDialOption, parts, operation.StoragePreference{
+			Replication: *upload.replication,
+			Collection:  *upload.collection,
+			DataCenter:  *upload.dataCenter,
+			Ttl:         *upload.ttl,
+			DiskType:    *upload.diskType,
+			MaxMB:       *upload.maxMB,
+		}, *upload.usePublicUrl)
 		if err != nil {
 			fmt.Println(err.Error())
 			return false

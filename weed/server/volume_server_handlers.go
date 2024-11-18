@@ -31,6 +31,10 @@ security settings:
 */
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
+	inFlightGauge := stats.VolumeServerInFlightRequestsGauge.WithLabelValues(r.Method)
+	inFlightGauge.Inc()
+	defer inFlightGauge.Dec()
+
 	statusRecorder := stats.NewStatusResponseWriter(w)
 	w = statusRecorder
 	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)

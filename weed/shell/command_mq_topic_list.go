@@ -25,6 +25,10 @@ func (c *commandMqTopicList) Help() string {
 	return `print out all topics`
 }
 
+func (c *commandMqTopicList) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandMqTopicList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
 
 	brokerBalancer, err := findBrokerBalancer(commandEnv)

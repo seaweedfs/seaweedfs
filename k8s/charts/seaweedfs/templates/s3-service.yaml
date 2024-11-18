@@ -9,6 +9,10 @@ metadata:
     app.kubernetes.io/component: s3
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- if .Values.s3.annotations }}
+  annotations:
+    {{- toYaml .Values.s3.annotations | nindent 4 }}
+{{- end }}
 spec:
   internalTrafficPolicy: {{ .Values.s3.internalTrafficPolicy | default "Cluster" }}
   ports:

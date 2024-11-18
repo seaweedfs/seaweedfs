@@ -12,6 +12,14 @@ type ReplicaPlacement struct {
 
 func NewReplicaPlacementFromString(t string) (*ReplicaPlacement, error) {
 	rp := &ReplicaPlacement{}
+	switch len(t) {
+	case 0:
+		t = "000"
+	case 1:
+		t = "00" + t
+	case 2:
+		t = "0" + t
+	}
 	for i, c := range t {
 		count := int(c - '0')
 		if count < 0 {

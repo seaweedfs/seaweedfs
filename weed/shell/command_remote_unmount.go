@@ -37,6 +37,10 @@ func (c *commandRemoteUnmount) Help() string {
 `
 }
 
+func (c *commandRemoteUnmount) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	remoteMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

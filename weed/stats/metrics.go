@@ -94,6 +94,14 @@ var (
 			Help:      "Counter of master pick for write error",
 		})
 
+	MasterBroadcastToFullErrorCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "broadcast_to_full",
+			Help:      "Counter of master broadcast send to full message channel err",
+		})
+
 	MasterLeaderChangeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -125,6 +133,14 @@ var (
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of filer request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+		}, []string{"type"})
+
+	FilerInFlightRequestsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "in_flight_requests",
+			Help:      "Current number of in-flight requests being handled by filer.",
 		}, []string{"type"})
 
 	FilerServerLastSendTsOfSubscribeGauge = prometheus.NewGaugeVec(
@@ -210,6 +226,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
 
+	VolumeServerInFlightRequestsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "in_flight_requests",
+			Help:      "Current number of in-flight requests being handled by volume server.",
+		}, []string{"type"})
+
 	VolumeServerVolumeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -280,6 +304,13 @@ var (
 			Help:      "Bucketed histogram of s3 time to first byte request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 27),
 		}, []string{"type", "bucket"})
+	S3InFlightRequestsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "in_flight_requests",
+			Help:      "Current number of in-flight requests being handled by s3.",
+		}, []string{"type"})
 )
 
 func init() {
@@ -291,10 +322,12 @@ func init() {
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
 	Gather.MustRegister(MasterVolumeLayoutWritable)
 	Gather.MustRegister(MasterVolumeLayoutCrowded)
+	Gather.MustRegister(MasterBroadcastToFullErrorCounter)
 
 	Gather.MustRegister(FilerRequestCounter)
 	Gather.MustRegister(FilerHandlerCounter)
 	Gather.MustRegister(FilerRequestHistogram)
+	Gather.MustRegister(FilerInFlightRequestsGauge)
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
 	Gather.MustRegister(FilerSyncOffsetGauge)
@@ -305,6 +338,7 @@ func init() {
 	Gather.MustRegister(VolumeServerRequestCounter)
 	Gather.MustRegister(VolumeServerHandlerCounter)
 	Gather.MustRegister(VolumeServerRequestHistogram)
+	Gather.MustRegister(VolumeServerInFlightRequestsGauge)
 	Gather.MustRegister(VolumeServerVacuumingCompactCounter)
 	Gather.MustRegister(VolumeServerVacuumingCommitCounter)
 	Gather.MustRegister(VolumeServerVacuumingHistogram)
@@ -317,6 +351,7 @@ func init() {
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3HandlerCounter)
 	Gather.MustRegister(S3RequestHistogram)
+	Gather.MustRegister(S3InFlightRequestsGauge)
 	Gather.MustRegister(S3TimeToFirstByteHistogram)
 }
 

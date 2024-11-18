@@ -314,6 +314,10 @@ func processEachCmd(reg *regexp.Regexp, line string, commandEnv *shell.CommandEn
 
 	for _, c := range shell.Commands {
 		if c.Name() == cmd {
+			if c.HasTag(shell.ResourceHeavy) {
+				glog.Warningf("%s is resource heavy and should not run on master", cmd)
+				continue
+			}
 			glog.V(0).Infof("executing: %s %v", cmd, args)
 			if err := c.Do(args, commandEnv, os.Stdout); err != nil {
 				glog.V(0).Infof("error: %v", err)

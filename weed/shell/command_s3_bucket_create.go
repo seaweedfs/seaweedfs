@@ -30,6 +30,10 @@ func (c *commandS3BucketCreate) Help() string {
 `
 }
 
+func (c *commandS3BucketCreate) HasTag(CommandTag) bool {
+	return false
+}
+
 func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)

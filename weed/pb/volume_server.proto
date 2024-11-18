@@ -226,6 +226,7 @@ message VolumeDeleteResponse {
 
 message VolumeMarkReadonlyRequest {
     uint32 volume_id = 1;
+    bool persist = 2;
 }
 message VolumeMarkReadonlyResponse {
 }
@@ -477,9 +478,18 @@ message VolumeInfo {
     repeated RemoteFile files = 1;
     uint32 version = 2;
     string replication = 3;
+    uint32 bytes_offset = 4;
+    int64 dat_file_size = 5; // store the original dat file size
+    uint64 expire_at_sec = 6; // expiration time of ec volume
+    bool read_only = 7;
+}
+message OldVersionVolumeInfo {
+    repeated RemoteFile files = 1;
+    uint32 version = 2;
+    string replication = 3;
     uint32 BytesOffset = 4;
-    int64 dat_file_size = 5; // used for EC encoded volumes to store the original file size
-    uint64 DestroyTime = 6; // used to record the destruction time of ec volume
+    int64 dat_file_size = 5; // store the original dat file size
+    uint64 DestroyTime = 6; // expiration time of ec volume
     bool read_only = 7;
 }
 

@@ -3,8 +3,9 @@ package shell
 import (
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -25,6 +26,10 @@ func (c *commandVolumeMark) Help() string {
 
 	volume.mark -node <volume server host:port> -volumeId <volume id> -writable or -readonly
 `
+}
+
+func (c *commandVolumeMark) HasTag(CommandTag) bool {
+	return false
 }
 
 func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
@@ -52,5 +57,5 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 
-	return markVolumeWritable(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, markWritable)
+	return markVolumeWritable(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, markWritable, true)
 }
