@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <properties>
-        <seaweedfs.client.version>3.71</seaweedfs.client.version>
+        <seaweedfs.client.version>3.80</seaweedfs.client.version>
         <hadoop.version>3.2.4</hadoop.version>
     </properties>
 
