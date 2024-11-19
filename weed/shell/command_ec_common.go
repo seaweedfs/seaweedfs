@@ -128,12 +128,11 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	return
 }
 
-// TODO: Make dc a DataCenterId instead of string.
-func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, dn *master_pb.DataNodeInfo)) {
+func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo)) {
 	for _, dc := range topo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, dn := range rack.DataNodeInfos {
-				fn(dc.Id, RackId(rack.Id), dn)
+				fn(DataCenterId(dc.Id), RackId(rack.Id), dn)
 			}
 		}
 	}
@@ -223,15 +222,15 @@ func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes 
 }
 
 func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int) {
-	eachDataNode(topo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		if selectedDataCenter != "" && selectedDataCenter != dc {
+	eachDataNode(topo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		if selectedDataCenter != "" && selectedDataCenter != string(dc) {
 			return
 		}
 
 		freeEcSlots := countFreeShardSlots(dn, types.HardDriveType)
 		ecNodes = append(ecNodes, &EcNode{
 			info:       dn,
-			dc:         DataCenterId(dc),
+			dc:         dc,
 			rack:       rack,
 			freeEcSlot: int(freeEcSlots),
 		})
