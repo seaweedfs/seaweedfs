@@ -197,36 +197,36 @@ func (c *commandFsMergeVolumes) reloadVolumesInfo(masterClient *wdclient.MasterC
 
 func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId needle.VolumeId, fromVolumeId needle.VolumeId) (map[needle.VolumeId]needle.VolumeId, error) {
 	plan := make(map[needle.VolumeId]needle.VolumeId)
-	volumes := maps.Keys(c.volumes)
-	sort.Slice(volumes, func(a, b int) bool {
-		return c.volumes[volumes[b]].Size < c.volumes[volumes[a]].Size
+	volumeIds := maps.Keys(c.volumes)
+	sort.Slice(volumeIds, func(a, b int) bool {
+		return c.volumes[volumeIds[b]].Size < c.volumes[volumeIds[a]].Size
 	})
 
-	l := len(volumes)
+	l := len(volumeIds)
 	for i := 0; i < l; i++ {
-		volume := c.volumes[volumes[i]]
+		volume := c.volumes[volumeIds[i]]
 		if volume.GetReadOnly() || c.getVolumeSize(volume) == 0 || (collection != "*" && collection != volume.GetCollection()) {
 
-			if fromVolumeId != 0 && volumes[i] == fromVolumeId || toVolumeId != 0 && volumes[i] == toVolumeId {
+			if fromVolumeId != 0 && volumeIds[i] == fromVolumeId || toVolumeId != 0 && volumeIds[i] == toVolumeId {
 				if volume.GetReadOnly() {
-					return nil, fmt.Errorf("volume %d is readonly", volumes[i])
+					return nil, fmt.Errorf("volume %d is readonly", volumeIds[i])
 				}
 				if c.getVolumeSize(volume) == 0 {
-					return nil, fmt.Errorf("volume %d is empty", volumes[i])
+					return nil, fmt.Errorf("volume %d is empty", volumeIds[i])
 				}
 			}
-			volumes = slices.Delete(volumes, i, i+1)
+			volumeIds = slices.Delete(volumeIds, i, i+1)
 			i--
 			l--
 		}
 	}
 	for i := l - 1; i >= 0; i-- {
-		src := volumes[i]
+		src := volumeIds[i]
 		if fromVolumeId != 0 && src != fromVolumeId {
 			continue
 		}
 		for j := 0; j < i; j++ {
-			condidate := volumes[j]
+			condidate := volumeIds[j]
 			if toVolumeId != 0 && condidate != toVolumeId {
 				continue
 			}
