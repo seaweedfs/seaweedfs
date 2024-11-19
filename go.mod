@@ -143,7 +143,7 @@ require (
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.23.1-0.20241011155651-6446d1d0d2fe
 	github.com/rabbitmq/amqp091-go v1.10.0
-	github.com/rclone/rclone v1.68.1
+	github.com/rclone/rclone v1.68.2
 	github.com/rdleal/intervalst v1.4.0
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/schollz/progressbar/v3 v3.16.0
