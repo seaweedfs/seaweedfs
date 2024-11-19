@@ -129,7 +129,7 @@ func newEcNode(dc string, rack string, dataNodeId string, freeEcSlot int) *EcNod
 			Id:        dataNodeId,
 			DiskInfos: make(map[string]*master_pb.DiskInfo),
 		},
-		dc:         dc,
+		dc:         DataCenterId(dc),
 		rack:       RackId(rack),
 		freeEcSlot: freeEcSlot,
 	}

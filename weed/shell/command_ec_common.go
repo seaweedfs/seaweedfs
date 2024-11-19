@@ -17,12 +17,13 @@ import (
 	"google.golang.org/grpc"
 )
 
-type RackId string
+type DataCenterId string
 type EcNodeId string
+type RackId string
 
 type EcNode struct {
 	info       *master_pb.DataNodeInfo
-	dc         string
+	dc         DataCenterId
 	rack       RackId
 	freeEcSlot int
 }
@@ -127,6 +128,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	return
 }
 
+// TODO: Make dc a DataCenterId instead of string.
 func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, dn *master_pb.DataNodeInfo)) {
 	for _, dc := range topo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
@@ -229,7 +231,7 @@ func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter
 		freeEcSlots := countFreeShardSlots(dn, types.HardDriveType)
 		ecNodes = append(ecNodes, &EcNode{
 			info:       dn,
-			dc:         dc,
+			dc:         DataCenterId(dc),
 			rack:       rack,
 			freeEcSlot: int(freeEcSlots),
 		})
