@@ -226,29 +226,29 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 			continue
 		}
 		for j := 0; j < i; j++ {
-			condidate := volumeIds[j]
-			if toVolumeId != 0 && condidate != toVolumeId {
+			candidate := volumeIds[j]
+			if toVolumeId != 0 && candidate != toVolumeId {
 				continue
 			}
-			if _, moving := plan[condidate]; moving {
+			if _, moving := plan[candidate]; moving {
 				continue
 			}
-			compatible, err := c.volumesAreCompatible(src, condidate)
+			compatible, err := c.volumesAreCompatible(src, candidate)
 			if err != nil {
 				return nil, err
 			}
 			if !compatible {
-				fmt.Printf("volume %d is not compatible with volume %d\n", src, condidate)
+				fmt.Printf("volume %d is not compatible with volume %d\n", src, candidate)
 				continue
 			}
-			if c.getVolumeSizeBasedOnPlan(plan, condidate)+c.getVolumeSizeById(src) > c.volumeSizeLimit {
+			if c.getVolumeSizeBasedOnPlan(plan, candidate)+c.getVolumeSizeById(src) > c.volumeSizeLimit {
 				fmt.Printf("volume %d (%d MB) merge into volume %d (%d MB) exceeds volume size limit (%d MB)\n",
 					src, c.getVolumeSizeById(src)/1024/1024,
-					condidate, c.getVolumeSizeById(condidate)/1024/1024,
+					candidate, c.getVolumeSizeById(candidate)/1024/1024,
 					c.volumeSizeLimit/1024/1024)
 				continue
 			}
-			plan[src] = condidate
+			plan[src] = candidate
 			break
 		}
 	}
