@@ -206,6 +206,15 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 	for i := 0; i < l; i++ {
 		volume := c.volumes[volumes[i]]
 		if volume.GetReadOnly() || c.getVolumeSize(volume) == 0 || (collection != "*" && collection != volume.GetCollection()) {
+
+			if fromVolumeId != 0 && volumes[i] == fromVolumeId || toVolumeId != 0 && volumes[i] == toVolumeId {
+				if volume.GetReadOnly() {
+					return nil, fmt.Errorf("volume %d is readonly", volumes[i])
+				}
+				if c.getVolumeSize(volume) == 0 {
+					return nil, fmt.Errorf("volume %d is empty", volumes[i])
+				}
+			}
 			volumes = slices.Delete(volumes, i, i+1)
 			i--
 			l--
@@ -229,9 +238,14 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 				return nil, err
 			}
 			if !compatible {
+				fmt.Printf("volume %d is not compatible with volume %d\n", src, condidate)
 				continue
 			}
 			if c.getVolumeSizeBasedOnPlan(plan, condidate)+c.getVolumeSizeById(src) > c.volumeSizeLimit {
+				fmt.Printf("volume %d (%d MB) merge into volume %d (%d MB) exceeds volume size limit (%d MB)\n",
+					src, c.getVolumeSizeById(src)/1024/1024,
+					condidate, c.getVolumeSizeById(condidate)/1024/1024,
+					c.volumeSizeLimit/1024/1024)
 				continue
 			}
 			plan[src] = condidate
