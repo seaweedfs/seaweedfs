@@ -173,15 +173,14 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err err
 	// zero the remaining bytes if a gap exists at the end of the last chunk (or a fully sparse file)
 	if err == nil && remaining > 0 {
 		var delta int64
-		if c.fileSize > startOffset {
+		if c.fileSize >= startOffset {
 			delta = min(remaining, c.fileSize-startOffset)
 			startOffset -= offset
-		} else {
-			delta = remaining
-			startOffset = max(startOffset-offset, startOffset-remaining-offset)
 		}
-		glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+delta, c.fileSize)
-		n += zero(p, startOffset, delta)
+		if delta > 0 {
+			glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+delta, c.fileSize)
+			n += zero(p, startOffset, delta)
+		}
 	}
 
 	if err == nil && offset+int64(len(p)) >= c.fileSize {
@@ -220,6 +219,9 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 }
 
 func zero(buffer []byte, start, length int64) int {
+	if length <= 0 {
+		return 0
+	}
 	end := min(start+length, int64(len(buffer)))
 	start = max(start, 0)
 

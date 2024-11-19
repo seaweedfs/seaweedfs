@@ -237,7 +237,10 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 			fmt.Printf("unmount aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
 		}
 		if err := sourceServerDeleteEcShards(grpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
-			fmt.Printf("remove aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
+			fmt.Printf("remove aborted shards %d.%v on target server %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
+		}
+		if err := sourceServerDeleteEcShards(grpcDialOption, collection, volumeId, existingLocation.ServerAddress(), allocatedEcShardIds); err != nil {
+			fmt.Printf("remove aborted shards %d.%v on existing server %s: %v\n", volumeId, allocatedEcShardIds, existingLocation.ServerAddress(), err)
 		}
 	}
 

@@ -46,6 +46,7 @@ type Option struct {
 	Umask              os.FileMode
 	Quota              int64
 	DisableXAttr       bool
+	IsMacOs            bool
 
 	MountUid         uint32
 	MountGid         uint32
