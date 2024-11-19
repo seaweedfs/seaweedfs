@@ -4,10 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"google.golang.org/grpc"
 
@@ -262,7 +263,7 @@ func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Dura
 func collectEcShardIds(topoInfo *master_pb.TopologyInfo, selectedCollection string) (vids []needle.VolumeId) {
 
 	vidMap := make(map[uint32]bool)
-	eachDataNode(topoInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		if diskInfo, found := dn.DiskInfos[string(types.HardDriveType)]; found {
 			for _, v := range diskInfo.EcShardInfos {
 				if v.Collection == selectedCollection {
@@ -282,7 +283,7 @@ func collectEcShardIds(topoInfo *master_pb.TopologyInfo, selectedCollection stri
 func collectEcNodeShardBits(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) map[pb.ServerAddress]erasure_coding.ShardBits {
 
 	nodeToEcIndexBits := make(map[pb.ServerAddress]erasure_coding.ShardBits)
-	eachDataNode(topoInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		if diskInfo, found := dn.DiskInfos[string(types.HardDriveType)]; found {
 			for _, v := range diskInfo.EcShardInfos {
 				if v.Id == uint32(vid) {

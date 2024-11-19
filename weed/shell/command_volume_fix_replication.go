@@ -179,8 +179,8 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 func collectVolumeReplicaLocations(topologyInfo *master_pb.TopologyInfo) (map[uint32][]*VolumeReplica, []location) {
 	volumeReplicas := make(map[uint32][]*VolumeReplica)
 	var allLocations []location
-	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		loc := newLocation(dc, string(rack), dn)
+	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		loc := newLocation(string(dc), string(rack), dn)
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
 				volumeReplicas[v.Id] = append(volumeReplicas[v.Id], &VolumeReplica{
