@@ -4,6 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"regexp"
+	"strings"
+	"sync/atomic"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -16,11 +22,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc"
-	"os"
-	"regexp"
-	"strings"
-	"sync/atomic"
-	"time"
 )
 
 type SyncOptions struct {
@@ -403,11 +404,11 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			return nil
 		}
 
-		if !strings.HasPrefix(resp.Directory, sourcePath) {
+		if !strings.HasPrefix(resp.Directory+"/", sourcePath) {
 			return nil
 		}
 		for _, excludePath := range excludePaths {
-			if strings.HasPrefix(resp.Directory, excludePath) {
+			if strings.HasPrefix(resp.Directory+"/", excludePath) {
 				return nil
 			}
 		}
@@ -454,7 +455,11 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				// new key is also in the watched directory
 				if doDeleteFiles {
 					oldKey := util.Join(targetPath, string(sourceOldKey)[len(sourcePath):])
-					message.NewParentPath = util.Join(targetPath, message.NewParentPath[len(sourcePath):])
+					if strings.HasSuffix(sourcePath, "/") {
+						message.NewParentPath = util.Join(targetPath, message.NewParentPath[len(sourcePath)-1:])
+					} else {
+						message.NewParentPath = util.Join(targetPath, message.NewParentPath[len(sourcePath):])
+					}
 					foundExisting, err := dataSink.UpdateEntry(string(oldKey), message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks, message.Signatures)
 					if foundExisting {
 						return err
