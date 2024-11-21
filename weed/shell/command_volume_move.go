@@ -14,6 +14,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+
 	"google.golang.org/grpc"
 )
 
@@ -61,12 +63,18 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 	targetNodeStr := volMoveCommand.String("target", "", "the target volume server <host>:<port>")
 	diskTypeStr := volMoveCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	ioBytePerSecond := volMoveCommand.Int64("ioBytePerSecond", 0, "limit the speed of move")
+	noLock := volMoveCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
+
 	if err = volMoveCommand.Parse(args); err != nil {
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(args); err != nil {
-		return
+	if *noLock {
+		commandEnv.noLock = true
+	} else {
+		if err = commandEnv.confirmIsLocked(args); err != nil {
+			return
+		}
 	}
 
 	sourceVolumeServer, targetVolumeServer := pb.ServerAddress(*sourceNodeStr), pb.ServerAddress(*targetNodeStr)
@@ -169,7 +177,7 @@ func copyVolume(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needl
 			if resp.LastAppendAtNs != 0 {
 				lastAppendAtNs = resp.LastAppendAtNs
 			} else {
-				fmt.Fprintf(writer, "volume %d processed %d bytes\n", volumeId, resp.ProcessedBytes)
+				fmt.Fprintf(writer, "%s => %s volume %d processed %s\n", sourceVolumeServer, targetVolumeServer, volumeId, util.BytesToHumanReadable(uint64(resp.ProcessedBytes)))
 			}
 		}
 

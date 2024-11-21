@@ -3,7 +3,6 @@ package shell
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -12,10 +11,31 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 )
+
+type DataCenterId string
+type EcNodeId string
+type RackId string
+
+type EcNode struct {
+	info       *master_pb.DataNodeInfo
+	dc         DataCenterId
+	rack       RackId
+	freeEcSlot int
+}
+type CandidateEcNode struct {
+	ecNode     *EcNode
+	shardCount int
+}
+
+type EcRack struct {
+	ecNodes    map[EcNodeId]*EcNode
+	freeEcSlot int
+}
 
 func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) (err error) {
 
@@ -68,7 +88,6 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	err = operation.WithVolumeServerClient(false, targetAddress, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 		if targetAddress != existingLocation {
-
 			fmt.Printf("copy %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 			_, copyErr := volumeServerClient.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
 				VolumeId:       uint32(volumeId),
@@ -109,11 +128,11 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	return
 }
 
-func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, dn *master_pb.DataNodeInfo)) {
+func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo)) {
 	for _, dc := range topo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, dn := range rack.DataNodeInfos {
-				fn(dc.Id, RackId(rack.Id), dn)
+				fn(DataCenterId(dc.Id), RackId(rack.Id), dn)
 			}
 		}
 	}
@@ -129,11 +148,6 @@ func sortEcNodesByFreeslotsAscending(ecNodes []*EcNode) {
 	slices.SortFunc(ecNodes, func(a, b *EcNode) int {
 		return a.freeEcSlot - b.freeEcSlot
 	})
-}
-
-type CandidateEcNode struct {
-	ecNode     *EcNode
-	shardCount int
 }
 
 // if the index node changed the freeEcSlot, need to keep every EcNode still sorted
@@ -179,16 +193,6 @@ func countFreeShardSlots(dn *master_pb.DataNodeInfo, diskType types.DiskType) (c
 	return int(diskInfo.MaxVolumeCount-diskInfo.VolumeCount)*erasure_coding.DataShardsCount - countShards(diskInfo.EcShardInfos)
 }
 
-type RackId string
-type EcNodeId string
-
-type EcNode struct {
-	info       *master_pb.DataNodeInfo
-	dc         string
-	rack       RackId
-	freeEcSlot int
-}
-
 func (ecNode *EcNode) localShardIdCount(vid uint32) int {
 	for _, diskInfo := range ecNode.info.DiskInfos {
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
@@ -201,13 +205,7 @@ func (ecNode *EcNode) localShardIdCount(vid uint32) int {
 	return 0
 }
 
-type EcRack struct {
-	ecNodes    map[EcNodeId]*EcNode
-	freeEcSlot int
-}
-
 func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
-
 	// list all possible locations
 	// collect topology information
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
@@ -224,8 +222,8 @@ func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes 
 }
 
 func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int) {
-	eachDataNode(topo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		if selectedDataCenter != "" && selectedDataCenter != dc {
+	eachDataNode(topo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		if selectedDataCenter != "" && selectedDataCenter != string(dc) {
 			return
 		}
 
@@ -283,8 +281,12 @@ func mountEcShards(grpcDialOption grpc.DialOption, collection string, volumeId n
 	})
 }
 
-func ceilDivide(total, n int) int {
-	return int(math.Ceil(float64(total) / float64(n)))
+func ceilDivide(a, b int) int {
+	var r int
+	if (a % b) != 0 {
+		r = 1
+	}
+	return (a / b) + r
 }
 
 func findEcVolumeShards(ecNode *EcNode, vid needle.VolumeId) erasure_coding.ShardBits {
@@ -770,6 +772,21 @@ func collectVolumeIdToEcNodes(allEcNodes []*EcNode, collection string) map[needl
 		}
 	}
 	return vidLocations
+}
+
+func volumeIdToReplicaPlacement(vid needle.VolumeId, nodes []*EcNode) (*super_block.ReplicaPlacement, error) {
+	for _, ecNode := range nodes {
+		for _, diskInfo := range ecNode.info.DiskInfos {
+			for _, volumeInfo := range diskInfo.VolumeInfos {
+				if needle.VolumeId(volumeInfo.Id) != vid {
+					continue
+				}
+				return super_block.NewReplicaPlacementFromByte(byte(volumeInfo.ReplicaPlacement))
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("failed to resolve replica placement for volume ID %d", vid)
 }
 
 func EcBalance(commandEnv *CommandEnv, collections []string, dc string, applyBalancing bool) (err error) {

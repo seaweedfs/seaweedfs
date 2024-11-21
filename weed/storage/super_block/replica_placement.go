@@ -45,6 +45,15 @@ func NewReplicaPlacementFromByte(b byte) (*ReplicaPlacement, error) {
 	return NewReplicaPlacementFromString(fmt.Sprintf("%03d", b))
 }
 
+func (a *ReplicaPlacement) Equals(b *ReplicaPlacement) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return (a.SameRackCount == b.SameRackCount &&
+		a.DiffRackCount == b.DiffRackCount &&
+		a.DiffDataCenterCount == b.DiffDataCenterCount)
+}
+
 func (rp *ReplicaPlacement) Byte() byte {
 	if rp == nil {
 		return 0

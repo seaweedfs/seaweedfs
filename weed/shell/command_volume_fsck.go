@@ -651,7 +651,7 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 		return
 	}
 
-	eachDataNode(topologyInfo, func(dc string, rack RackId, t *master_pb.DataNodeInfo) {
+	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, t *master_pb.DataNodeInfo) {
 		var volumeCount, ecShardCount int
 		dataNodeId := t.GetId()
 		for _, diskInfo := range t.DiskInfos {

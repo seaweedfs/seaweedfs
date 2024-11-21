@@ -74,7 +74,9 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
 		newChecksum := NewCRC(n.Data)
 		if checksum != newChecksum.Value() && checksum != uint32(newChecksum) {
-			// the crc.Value() function is to be deprecated. this double checking is for backward compatible.
+			// the crc.Value() function is to be deprecated. this double checking is for backward compatibility
+			// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
+			// and switch appeared in version 3.09.
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
 			return errors.New("CRC error! Data On Disk Corrupted")
 		}

@@ -5,6 +5,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"math"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -15,11 +21,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"go.uber.org/atomic"
 	"golang.org/x/exp/slices"
-	"io"
-	"math"
-	"strings"
-	"sync"
-	"time"
 )
 
 func init() {
@@ -114,7 +115,7 @@ func (c *commandFsVerify) collectVolumeIds() error {
 	if err != nil {
 		return err
 	}
-	eachDataNode(topologyInfo, func(dc string, rack RackId, nodeInfo *master_pb.DataNodeInfo) {
+	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, nodeInfo *master_pb.DataNodeInfo) {
 		for _, diskInfo := range nodeInfo.DiskInfos {
 			for _, vi := range diskInfo.VolumeInfos {
 				volumeServer := pb.NewServerAddressFromDataNode(nodeInfo)

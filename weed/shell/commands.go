@@ -82,7 +82,7 @@ func (ce *CommandEnv) isLocked() bool {
 		return true
 	}
 	if ce.noLock {
-		return false
+		return true
 	}
 	return ce.locker.IsLocked()
 }
