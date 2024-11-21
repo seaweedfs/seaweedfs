@@ -71,6 +71,9 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				case mustGrow > 0:
 					vgr.WritableVolumeCount = uint32(mustGrow)
 					_, err = ms.VolumeGrow(ctx, vgr)
+				case lastGrowCount > 0 && writable < int(lastGrowCount*2) && float64(crowded+volumeGrowStepCount) > float64(writable)*topology.VolumeGrowStrategy.Threshold:
+					vgr.WritableVolumeCount = volumeGrowStepCount
+					_, err = ms.VolumeGrow(ctx, vgr)
 				default:
 					for _, dc := range dcs {
 						if vl.ShouldGrowVolumesByDataNode("DataCenter", dc) {
