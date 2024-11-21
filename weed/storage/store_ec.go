@@ -201,8 +201,9 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	shardId, actualOffset := interval.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
 	data = make([]byte, interval.Size)
 	if shard, found := ecVolume.FindEcVolumeShard(shardId); found {
-		if n, err = shard.ReadAt(data, actualOffset); err != nil {
-			if n != interval.Size {
+		var readSize int
+		if readSize, err = shard.ReadAt(data, actualOffset); err != nil {
+			if readSize != int(interval.Size) {
 				glog.V(0).Infof("read local ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, err)
 				return
 			}
