@@ -3,7 +3,7 @@ package shell
 import (
 	"context"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -564,7 +564,7 @@ func pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcRack, rackToShardCo
 	if len(targets) == 0 {
 		return ""
 	}
-	return targets[rand.Intn(len(targets))]
+	return targets[rand.IntN(len(targets))]
 }
 
 func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
