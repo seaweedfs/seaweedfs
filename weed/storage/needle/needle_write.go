@@ -133,6 +133,9 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 
 	if err == nil {
 		_, err = w.WriteAt(bytesBuffer.Bytes(), int64(offset))
+		if err != nil {
+			err = fmt.Errorf("failed to write %d bytes to %s at offset %d: %v", actualSize, w.Name(), offset, err)
+		}
 	}
 
 	return offset, size, actualSize, err
