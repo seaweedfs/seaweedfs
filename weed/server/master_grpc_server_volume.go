@@ -43,12 +43,12 @@ func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
 func (ms *MasterServer) ProcessGrowRequest() {
 	go func() {
 		ctx := context.Background()
-		firstRun := true 
+		firstRun := true
 		for {
 			if firstRun {
-				firstRun = false 
+				firstRun = false
 			} else {
-				time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
+				time.Sleep(5*time.Minute + time.Duration(30*rand.Float32())*time.Second)
 			}
 			if !ms.Topo.IsLeader() {
 				continue
@@ -70,9 +70,6 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				switch {
 				case mustGrow > 0:
 					vgr.WritableVolumeCount = uint32(mustGrow)
-					_, err = ms.VolumeGrow(ctx, vgr)
-				case crowded+volumeGrowStepCount >= writable:
-					vgr.WritableVolumeCount = volumeGrowStepCount
 					_, err = ms.VolumeGrow(ctx, vgr)
 				default:
 					for _, dc := range dcs {
