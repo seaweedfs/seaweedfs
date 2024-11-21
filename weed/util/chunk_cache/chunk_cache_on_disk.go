@@ -110,8 +110,10 @@ func (v *ChunkCacheVolume) GetNeedle(key types.NeedleId) ([]byte, error) {
 	}
 	data := make([]byte, nv.Size)
 	if readSize, readErr := v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()); readErr != nil {
-		return nil, fmt.Errorf("read %s.dat [%d,%d): %v",
-			v.fileName, nv.Offset.ToActualOffset(), nv.Offset.ToActualOffset()+int64(nv.Size), readErr)
+		if readSize != int(nv.Size) {
+			return nil, fmt.Errorf("read %s.dat [%d,%d): %v",
+				v.fileName, nv.Offset.ToActualOffset(), nv.Offset.ToActualOffset()+int64(nv.Size), readErr)
+		}
 	} else {
 		if readSize != int(nv.Size) {
 			return nil, fmt.Errorf("read %d, expected %d", readSize, nv.Size)
@@ -133,8 +135,10 @@ func (v *ChunkCacheVolume) getNeedleSlice(key types.NeedleId, offset, length uin
 	}
 	data := make([]byte, wanted)
 	if readSize, readErr := v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()+int64(offset)); readErr != nil {
-		return nil, fmt.Errorf("read %s.dat [%d,%d): %v",
-			v.fileName, nv.Offset.ToActualOffset()+int64(offset), int(nv.Offset.ToActualOffset())+int(offset)+wanted, readErr)
+		if readSize != wanted {
+			return nil, fmt.Errorf("read %s.dat [%d,%d): %v",
+				v.fileName, nv.Offset.ToActualOffset()+int64(offset), int(nv.Offset.ToActualOffset())+int(offset)+wanted, readErr)
+		}
 	} else {
 		if readSize != wanted {
 			return nil, fmt.Errorf("read %d, expected %d", readSize, wanted)
@@ -155,8 +159,10 @@ func (v *ChunkCacheVolume) readNeedleSliceAt(data []byte, key types.NeedleId, of
 		return 0, ErrorOutOfBounds
 	}
 	if n, err = v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()+int64(offset)); err != nil {
-		return n, fmt.Errorf("read %s.dat [%d,%d): %v",
-			v.fileName, nv.Offset.ToActualOffset()+int64(offset), int(nv.Offset.ToActualOffset())+int(offset)+wanted, err)
+		if n != wanted {
+			return n, fmt.Errorf("read %s.dat [%d,%d): %v",
+				v.fileName, nv.Offset.ToActualOffset()+int64(offset), int(nv.Offset.ToActualOffset())+int(offset)+wanted, err)
+		}
 	} else {
 		if n != wanted {
 			return n, fmt.Errorf("read %d, expected %d", n, wanted)

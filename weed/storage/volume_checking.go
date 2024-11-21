@@ -80,7 +80,11 @@ func readIndexEntryAtOffset(indexFile *os.File, offset int64) (bytes []byte, err
 		return
 	}
 	bytes = make([]byte, NeedleMapEntrySize)
-	_, err = indexFile.ReadAt(bytes, offset)
+	var readCount int
+	readCount, err = indexFile.ReadAt(bytes, offset)
+	if err == io.EOF && readCount == NeedleMapEntrySize {
+		err = nil
+	}
 	return
 }
 
@@ -97,7 +101,11 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 	}
 	if v == needle.Version3 {
 		bytes := make([]byte, TimestampSize)
-		_, err = datFile.ReadAt(bytes, offset+NeedleHeaderSize+int64(size)+needle.NeedleChecksumSize)
+		var readCount int
+		readCount, err = datFile.ReadAt(bytes, offset+NeedleHeaderSize+int64(size)+needle.NeedleChecksumSize)
+		if err == io.EOF && readCount == TimestampSize {
+			err = nil
+		}
 		if err == io.EOF {
 			return 0, err
 		}

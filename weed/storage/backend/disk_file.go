@@ -3,6 +3,7 @@ package backend
 import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"io"
 	"os"
 	"runtime"
 	"time"
@@ -43,7 +44,11 @@ func (df *DiskFile) ReadAt(p []byte, off int64) (n int, err error) {
 	if df.File == nil {
 		return 0, os.ErrClosed
 	}
-	return df.File.ReadAt(p, off)
+	n, err = df.File.ReadAt(p, off)
+	if err == io.EOF && n == len(p) {
+		err = nil
+	}
+	return
 }
 
 func (df *DiskFile) WriteAt(p []byte, off int64) (n int, err error) {
