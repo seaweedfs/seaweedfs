@@ -1,0 +1,134 @@
+Topology volumeSizeLimit:1024 MB hdd(volume:15900/25063 active:15900 free:9163 remote:0)
+  DataCenter DefaultDataCenter hdd(volume:15900/25063 active:15900 free:9163 remote:0)
+    Rack rack1 hdd(volume:15900/25063 active:15900 free:9163 remote:0)
+      DataNode 172.19.0.10:8702 hdd(volume:7/2225 active:7 free:2225 remote:0)
+        Disk hdd(volume:7/2232 active:7 free:2225 remote:0)
+          volume id:6225  size:24404408  file_count:275  replica_placement:2  version:3  compact_revision:2  modified_at_second:1664897660 
+          volume id:6226  size:20871152  file_count:258  replica_placement:2  version:3  compact_revision:2  modified_at_second:1664888660 
+          volume id:6241  size:34861224  file_count:274  replica_placement:2  version:3  compact_revision:1  modified_at_second:1664909248 
+          volume id:6242  size:40460472  file_count:236  replica_placement:2  version:3  compact_revision:1  modified_at_second:1664906607 
+          ec volume id:12737 collection:s3qldata shards:[3]
+          ec volume id:14322 collection:s3qldata shards:[5]
+          ec volume id:9577 collection:s3qldata shards:[11]
+        Disk hdd total size:1737345132344 file_count:533580 deleted_file:10764 deleted_bytes:22028207276 
+      DataNode 172.19.0.10:8702 total size:1737345132344 file_count:533580 deleted_file:10764 deleted_bytes:22028207276 
+    Rack rack1 total size:17676186754616 file_count:5439969 deleted_file:127907 deleted_bytes:251707271029 
+    Rack rack2 hdd(volume:3/25063 active:3 free:25060 remote:0)
+      DataNode 172.19.0.13:8701 hdd(volume:3/2187 active:3 free:2184 remote:0)
+        Disk hdd(volume:3/2187 active:3 free:2184 remote:0)
+          volume id:6241  size:34861256  file_count:275  delete_count:1  replica_placement:2  version:3  compact_revision:1  modified_at_second:1664909248 
+          ec volume id:10457 collection:s3qldata shards:[12]
+          ec volume id:14322 collection:s3qldata shards:[10]
+          ec volume id:9577 collection:s3qldata shards:[10]
+        Disk hdd total size:1695600546816 file_count:521054 deleted_file:9961 deleted_bytes:21063702677 
+      DataNode 172.19.0.13:8701 total size:1695600546816 file_count:521054 deleted_file:9961 deleted_bytes:21063702677 
+    Rack rack2 total size:17676186754616 file_count:5439969 deleted_file:127907 deleted_bytes:251707271029 
+    Rack rack3 hdd(volume:3/25063 active:28 free:25060 remote:0)
+      DataNode 172.19.0.14:8711 hdd(volume:3/1627 active:3 free:1624 remote:0)
+        Disk hdd(volume:3/1627 active:3 free:1624 remote:0)
+          ec volume id:10457 collection:s3qldata shards:[3]
+          ec volume id:12737 collection:s3qldata shards:[6]
+          ec volume id:9577 collection:s3qldata shards:[5]
+        Disk hdd total size:1050933775360 file_count:323231 deleted_file:8245 deleted_bytes:15595720358 
+      DataNode 172.19.0.14:8711 total size:1050933775360 file_count:323231 deleted_file:8245 deleted_bytes:15595720358 
+    Rack rack3 total size:17676186754616 file_count:5439969 deleted_file:127907 deleted_bytes:251707271029 
+    Rack rack4 hdd(volume:10/25063 active:4 free:25053 remote:0)
+      DataNode 172.19.0.16:8704 hdd(volume:10/2174 active:4 free:2164 remote:0)
+        Disk hdd(volume:4/2174 active:4 free:2170 remote:0)
+          ec volume id:10457 collection:s3qldata shards:[0 13]
+          ec volume id:12737 collection:s3qldata shards:[1]
+          ec volume id:14322 collection:s3qldata shards:[7]
+          ec volume id:9577 collection:s3qldata shards:[2]
+        Disk hdd total size:1653215155776 file_count:507914 deleted_file:11402 deleted_bytes:22641676340 
+      DataNode 172.19.0.16:8704 total size:1653215155776 file_count:507914 deleted_file:11402 deleted_bytes:22641676340 
+      DataNode 172.19.0.17:8703 hdd(volume:6/2214 active:6 free:2208 remote:0)
+        Disk hdd(volume:6/2214 active:6 free:2208 remote:0)
+          volume id:6226  size:20871152  file_count:258  replica_placement:2  version:3  compact_revision:2  modified_at_second:1664888660 
+          volume id:6241  size:34861256  file_count:275  delete_count:1  replica_placement:2  version:3  compact_revision:1  modified_at_second:1664909248 
+          ec volume id:10457 collection:s3qldata shards:[11]
+          ec volume id:12737 collection:s3qldata shards:[5]
+          ec volume id:14322 collection:s3qldata shards:[2 9]
+          ec volume id:9577 collection:s3qldata shards:[0]
+        Disk hdd total size:1715724688456 file_count:526901 deleted_file:10854 deleted_bytes:22441405472 
+      DataNode 172.19.0.17:8703 total size:1715724688456 file_count:526901 deleted_file:10854 deleted_bytes:22441405472 
+    Rack rack4 total size:17676186754616 file_count:5439969 deleted_file:127907 deleted_bytes:251707271029 
+    Rack rack5 hdd(volume:20/25063 active:20 free:25043 remote:0)
+      DataNode 172.19.0.19:8700 hdd(volume:6/2132 active:6 free:2126 remote:0)
+        Disk hdd(volume:6/2132 active:6 free:2126 remote:0)
+          volume id:6242  size:40460472  file_count:236  replica_placement:2  version:3  compact_revision:1  modified_at_second:1664906607 
+          volume id:6225  size:24398232  file_count:274  replica_placement:2  version:3  compact_revision:2  modified_at_second:1664897660 
+          ec volume id:10457 collection:s3qldata shards:[8]
+          ec volume id:12737 collection:s3qldata shards:[13]
+          ec volume id:14322 collection:s3qldata shards:[8]
+          ec volume id:9577 collection:s3qldata shards:[12]
+        Disk hdd total size:1635328083064 file_count:504512 deleted_file:11567 deleted_bytes:23202472281 
+      DataNode 172.19.0.19:8700 total size:1635328083064 file_count:504512 deleted_file:11567 deleted_bytes:23202472281 
+      DataNode 172.19.0.20:8706 hdd(volume:4/2153 active:4 free:2149 remote:0)
+        Disk hdd(volume:6/2153 active:1497 free:656 remote:0)
+          ec volume id:10457 collection:s3qldata shards:[1]
+          ec volume id:12737 collection:s3qldata shards:[7]
+          ec volume id:14322 collection:s3qldata shards:[5 11 12]
+          ec volume id:9577 collection:s3qldata shards:[1]
+        Disk hdd total size:1662887597128 file_count:510323 deleted_file:10919 deleted_bytes:22504428853 
+      DataNode 172.19.0.20:8706 total size:1662887597128 file_count:510323 deleted_file:10919 deleted_bytes:22504428853 
+      DataNode 172.19.0.21:8710 hdd(volume:6/2184 active:6 free:2178 remote:0)
+        Disk hdd(volume:6/2184 active:6 free:2178 remote:0)
+          volume id:6225  size:24398232  file_count:274  replica_placement:2  version:3  compact_revision:2  modified_at_second:1664897660 
+          volume id:6242  size:40460472  file_count:236  replica_placement:2  version:3  compact_revision:1  modified_at_second:1664906607 
+          ec volume id:10457 collection:s3qldata shards:[9]
+          ec volume id:12737 collection:s3qldata shards:[4]
+          ec volume id:14322 collection:s3qldata shards:[11]
+          ec volume id:9577 collection:s3qldata shards:[3]
+        Disk hdd total size:1685060737528 file_count:517231 deleted_file:10635 deleted_bytes:22306836236 
+      DataNode 172.19.0.21:8710 total size:1685060737528 file_count:517231 deleted_file:10635 deleted_bytes:22306836236 
+      DataNode 172.19.0.3:8708 hdd(volume:4/961 active:4 free:957 remote:0)
+        Disk hdd(volume:4/961 active:4 free:957 remote:0)
+          ec volume id:10457 collection:s3qldata shards:[4]
+          ec volume id:12737 collection:s3qldata shards:[10]
+          ec volume id:14322 collection:s3qldata shards:[3]
+          ec volume id:9577 collection:s3qldata shards:[7]
+        Disk hdd total size:377523488192 file_count:119577 deleted_file:5368 deleted_bytes:8596766559 
+      DataNode 172.19.0.3:8708 total size:377523488192 file_count:119577 deleted_file:5368 deleted_bytes:8596766559 
+    Rack rack5 total size:17676186754616 file_count:5439969 deleted_file:127907 deleted_bytes:251707271029 
+    Rack rack6 hdd(volume:18/25063 active:18 free:25045 remote:0)
+      DataNode 172.19.0.4:8707 hdd(volume:4/958 active:4 free:954 remote:0)
+        Disk hdd(volume:4/958 active:4 free:954 remote:0)
+          ec volume id:10457 collection:s3qldata shards:[6]
+          ec volume id:12737 collection:s3qldata shards:[9]
+          ec volume id:14322 collection:s3qldata shards:[4]
+          ec volume id:9577 collection:s3qldata shards:[9]
+        Disk hdd total size:378345005760 file_count:119036 deleted_file:5301 deleted_bytes:8574028334 
+      DataNode 172.19.0.4:8707 total size:378345005760 file_count:119036 deleted_file:5301 deleted_bytes:8574028334 
+      DataNode 172.19.0.5:8705 hdd(volume:3/983 active:3 free:980 remote:0)
+        Disk hdd(volume:3/983 active:3 free:980 remote:0)
+          ec volume id:10457 collection:s3qldata shards:[5]
+          ec volume id:12737 collection:s3qldata shards:[8]
+          ec volume id:9577 collection:s3qldata shards:[6]
+        Disk hdd total size:404653451288 file_count:126527 deleted_file:4789 deleted_bytes:8145619860 
+      DataNode 172.19.0.5:8705 total size:404653451288 file_count:126527 deleted_file:4789 deleted_bytes:8145619860 
+      DataNode 172.19.0.6:8713 hdd(volume:2/970 active:2 free:968 remote:0)
+        Disk hdd(volume:2/970 active:2 free:968 remote:0)
+          ec volume id:12737 collection:s3qldata shards:[11]
+          ec volume id:9577 collection:s3qldata shards:[8]
+        Disk hdd total size:401028073512 file_count:125448 deleted_file:4891 deleted_bytes:7914078769 
+      DataNode 172.19.0.6:8713 total size:401028073512 file_count:125448 deleted_file:4891 deleted_bytes:7914078769 
+      DataNode 172.19.0.8:8709 hdd(volume:5/2144 active:5 free:2139 remote:0)
+        Disk hdd(volume:5/2144 active:5 free:2139 remote:0)
+          volume id:6226  size:20871152  file_count:258  replica_placement:2  version:3  compact_revision:2  modified_at_second:1664888660 
+          ec volume id:10457 collection:s3qldata shards:[2]
+          ec volume id:12737 collection:s3qldata shards:[2 12]
+          ec volume id:14322 collection:s3qldata shards:[1 13]
+          ec volume id:9577 collection:s3qldata shards:[13]
+        Disk hdd total size:1648662273096 file_count:507133 deleted_file:11386 deleted_bytes:23141702025 
+      DataNode 172.19.0.8:8709 total size:1648662273096 file_count:507133 deleted_file:11386 deleted_bytes:23141702025 
+      DataNode 172.19.0.9:8712 hdd(volume:4/2144 active:4 free:2140 remote:0)
+        Disk hdd(volume:4/2144 active:4 free:2140 remote:0)
+          ec volume id:10457 collection:s3qldata shards:[7]
+          ec volume id:12737 collection:s3qldata shards:[0]
+          ec volume id:14322 collection:s3qldata shards:[0 6]
+          ec volume id:9577 collection:s3qldata shards:[4]
+        Disk hdd total size:1629878746296 file_count:497502 deleted_file:11825 deleted_bytes:23550625989 
+      DataNode 172.19.0.9:8712 total size:1629878746296 file_count:497502 deleted_file:11825 deleted_bytes:23550625989 
+    Rack rack6 total size:17676186754616 file_count:5439969 deleted_file:127907 deleted_bytes:251707271029 
+  DataCenter DefaultDataCenter total size:17676186754616 file_count:5439969 deleted_file:127907 deleted_bytes:251707271029 
+total size:17676186754616 file_count:5439969 deleted_file:127907 deleted_bytes:251707271029
