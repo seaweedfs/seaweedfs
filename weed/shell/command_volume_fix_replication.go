@@ -73,11 +73,10 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(args); err != nil {
+	commandEnv.noLock = *skipChange
+	if err = commandEnv.confirmIsLocked(args); !*skipChange && err != nil {
 		return
 	}
-
-	takeAction := !*skipChange
 
 	underReplicatedVolumeIdsCount := 1
 	for underReplicatedVolumeIdsCount > 0 {
