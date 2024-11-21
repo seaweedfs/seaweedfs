@@ -74,7 +74,9 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	commandEnv.noLock = *skipChange
-	if err = commandEnv.confirmIsLocked(args); !*skipChange && err != nil {
+	takeAction := !*skipChange
+
+	if err = commandEnv.confirmIsLocked(args); takeAction && err != nil {
 		return
 	}
 
