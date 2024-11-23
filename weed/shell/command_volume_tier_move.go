@@ -292,7 +292,7 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 	fmt.Printf("collect %s volumes quiet for: %d seconds\n", sourceTier, quietSeconds)
 
 	vidMap := make(map[uint32]bool)
-	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
 				// check collection name pattern

@@ -196,6 +196,9 @@ func ReadNeedleHeader(r backend.BackendStorageFile, version Version, offset int6
 
 		var count int
 		count, err = r.ReadAt(bytes, offset)
+		if err == io.EOF && count == NeedleHeaderSize {
+			err = nil
+		}
 		if count <= 0 || err != nil {
 			return nil, bytes, 0, err
 		}
@@ -230,7 +233,12 @@ func (n *Needle) ReadNeedleBody(r backend.BackendStorageFile, version Version, o
 		return nil, nil
 	}
 	bytes = make([]byte, bodyLength)
-	if _, err = r.ReadAt(bytes, offset); err != nil {
+	readCount, err := r.ReadAt(bytes, offset)
+	if err == io.EOF && int64(readCount) == bodyLength {
+		err = nil
+	}
+	if err != nil {
+		glog.Errorf("%s read %d bodyLength %d offset %d: %v", r.Name(), readCount, bodyLength, offset, err)
 		return
 	}
 

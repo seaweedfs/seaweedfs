@@ -3,7 +3,7 @@ package shell
 import (
 	"context"
 	"fmt"
-	"math"
+	"math/rand/v2"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -12,10 +12,31 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 )
+
+type DataCenterId string
+type EcNodeId string
+type RackId string
+
+type EcNode struct {
+	info       *master_pb.DataNodeInfo
+	dc         DataCenterId
+	rack       RackId
+	freeEcSlot int
+}
+type CandidateEcNode struct {
+	ecNode     *EcNode
+	shardCount int
+}
+
+type EcRack struct {
+	ecNodes    map[EcNodeId]*EcNode
+	freeEcSlot int
+}
 
 func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) (err error) {
 
@@ -68,7 +89,6 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	err = operation.WithVolumeServerClient(false, targetAddress, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 		if targetAddress != existingLocation {
-
 			fmt.Printf("copy %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 			_, copyErr := volumeServerClient.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
 				VolumeId:       uint32(volumeId),
@@ -109,11 +129,11 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	return
 }
 
-func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, dn *master_pb.DataNodeInfo)) {
+func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo)) {
 	for _, dc := range topo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, dn := range rack.DataNodeInfos {
-				fn(dc.Id, RackId(rack.Id), dn)
+				fn(DataCenterId(dc.Id), RackId(rack.Id), dn)
 			}
 		}
 	}
@@ -129,11 +149,6 @@ func sortEcNodesByFreeslotsAscending(ecNodes []*EcNode) {
 	slices.SortFunc(ecNodes, func(a, b *EcNode) int {
 		return a.freeEcSlot - b.freeEcSlot
 	})
-}
-
-type CandidateEcNode struct {
-	ecNode     *EcNode
-	shardCount int
 }
 
 // if the index node changed the freeEcSlot, need to keep every EcNode still sorted
@@ -179,16 +194,6 @@ func countFreeShardSlots(dn *master_pb.DataNodeInfo, diskType types.DiskType) (c
 	return int(diskInfo.MaxVolumeCount-diskInfo.VolumeCount)*erasure_coding.DataShardsCount - countShards(diskInfo.EcShardInfos)
 }
 
-type RackId string
-type EcNodeId string
-
-type EcNode struct {
-	info       *master_pb.DataNodeInfo
-	dc         string
-	rack       RackId
-	freeEcSlot int
-}
-
 func (ecNode *EcNode) localShardIdCount(vid uint32) int {
 	for _, diskInfo := range ecNode.info.DiskInfos {
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
@@ -201,13 +206,7 @@ func (ecNode *EcNode) localShardIdCount(vid uint32) int {
 	return 0
 }
 
-type EcRack struct {
-	ecNodes    map[EcNodeId]*EcNode
-	freeEcSlot int
-}
-
 func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
-
 	// list all possible locations
 	// collect topology information
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
@@ -224,8 +223,8 @@ func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes 
 }
 
 func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int) {
-	eachDataNode(topo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		if selectedDataCenter != "" && selectedDataCenter != dc {
+	eachDataNode(topo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		if selectedDataCenter != "" && selectedDataCenter != string(dc) {
 			return
 		}
 
@@ -283,8 +282,12 @@ func mountEcShards(grpcDialOption grpc.DialOption, collection string, volumeId n
 	})
 }
 
-func ceilDivide(total, n int) int {
-	return int(math.Ceil(float64(total) / float64(n)))
+func ceilDivide(a, b int) int {
+	var r int
+	if (a % b) != 0 {
+		r = 1
+	}
+	return (a / b) + r
 }
 
 func findEcVolumeShards(ecNode *EcNode, vid needle.VolumeId) erasure_coding.ShardBits {
@@ -471,16 +474,19 @@ func balanceEcShardsAcrossRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, ra
 	return nil
 }
 
-func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
+func countShardsByRack(vid needle.VolumeId, locations []*EcNode) map[string]int {
+	return groupByCount(locations, func(ecNode *EcNode) (id string, count int) {
+		shardBits := findEcVolumeShards(ecNode, vid)
+		return string(ecNode.rack), shardBits.ShardIdCount()
+	})
+}
 
+func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
 	// calculate average number of shards an ec rack should have for one volume
 	averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
 
 	// see the volume's shards are in how many racks, and how many in each rack
-	rackToShardCount := groupByCount(locations, func(ecNode *EcNode) (id string, count int) {
-		shardBits := findEcVolumeShards(ecNode, vid)
-		return string(ecNode.rack), shardBits.ShardIdCount()
-	})
+	rackToShardCount := countShardsByRack(vid, locations)
 	rackEcNodesWithVid := groupBy(locations, func(ecNode *EcNode) string {
 		return string(ecNode.rack)
 	})
@@ -488,16 +494,18 @@ func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid
 	// ecShardsToMove = select overflown ec shards from racks with ec shard counts > averageShardsPerEcRack
 	ecShardsToMove := make(map[erasure_coding.ShardId]*EcNode)
 	for rackId, count := range rackToShardCount {
-		if count > averageShardsPerEcRack {
-			possibleEcNodes := rackEcNodesWithVid[rackId]
-			for shardId, ecNode := range pickNEcShardsToMoveFrom(possibleEcNodes, vid, count-averageShardsPerEcRack) {
-				ecShardsToMove[shardId] = ecNode
-			}
+		if count <= averageShardsPerEcRack {
+			continue
+		}
+		possibleEcNodes := rackEcNodesWithVid[rackId]
+		for shardId, ecNode := range pickNEcShardsToMoveFrom(possibleEcNodes, vid, count-averageShardsPerEcRack) {
+			ecShardsToMove[shardId] = ecNode
 		}
 	}
 
 	for shardId, ecNode := range ecShardsToMove {
-		rackId := pickOneRack(racks, rackToShardCount, averageShardsPerEcRack)
+		// TODO: consider volume replica info when balancing racks
+		rackId := pickRackToBalanceShardsInto(racks, rackToShardCount, nil, averageShardsPerEcRack)
 		if rackId == "" {
 			fmt.Printf("ec shard %d.%d at %s can not find a destination rack\n", vid, shardId, ecNode.info.Id)
 			continue
@@ -519,23 +527,44 @@ func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid
 	return nil
 }
 
-func pickOneRack(rackToEcNodes map[RackId]*EcRack, rackToShardCount map[string]int, averageShardsPerEcRack int) RackId {
-
-	// TODO later may need to add some randomness
-
-	for rackId, rack := range rackToEcNodes {
-		if rackToShardCount[string(rackId)] >= averageShardsPerEcRack {
-			continue
+func pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcRack, rackToShardCount map[string]int, replicaPlacement *super_block.ReplicaPlacement, averageShardsPerEcRack int) RackId {
+	targets := []RackId{}
+	targetShards := -1
+	for _, shards := range rackToShardCount {
+		if shards > targetShards {
+			targetShards = shards
 		}
-
-		if rack.freeEcSlot <= 0 {
-			continue
-		}
-
-		return rackId
 	}
 
-	return ""
+	for rackId, rack := range rackToEcNodes {
+		shards := rackToShardCount[string(rackId)]
+
+		if rack.freeEcSlot <= 0 {
+			// No EC shards slots left :(
+			continue
+		}
+		if replicaPlacement != nil && shards >= replicaPlacement.DiffRackCount {
+			// Don't select racks with more EC shards for the target volume than the replicaton limit.
+			continue
+		}
+		if shards >= averageShardsPerEcRack {
+			// Keep EC shards across racks as balanced as possible.
+			continue
+		}
+		if shards < targetShards {
+			// Favor racks with less shards, to ensure an uniform distribution.
+			targets = nil
+			targetShards = shards
+		}
+		if shards == targetShards {
+			targets = append(targets, rackId)
+		}
+	}
+
+	if len(targets) == 0 {
+		return ""
+	}
+	return targets[rand.IntN(len(targets))]
 }
 
 func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
@@ -770,6 +799,37 @@ func collectVolumeIdToEcNodes(allEcNodes []*EcNode, collection string) map[needl
 		}
 	}
 	return vidLocations
+}
+
+// TODO: EC volumes have no replica placement info :( Maybe rely on the master's default?
+func volumeIdToReplicaPlacement(vid needle.VolumeId, nodes []*EcNode) (*super_block.ReplicaPlacement, error) {
+	for _, ecNode := range nodes {
+		for _, diskInfo := range ecNode.info.DiskInfos {
+			for _, volumeInfo := range diskInfo.VolumeInfos {
+				if needle.VolumeId(volumeInfo.Id) != vid {
+					continue
+				}
+				return super_block.NewReplicaPlacementFromByte(byte(volumeInfo.ReplicaPlacement))
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("failed to resolve replica placement for volume ID %d", vid)
+}
+
+func getDefaultReplicaPlacement(commandEnv *CommandEnv) (*super_block.ReplicaPlacement, error) {
+	var resp *master_pb.GetMasterConfigurationResponse
+	var err error
+
+	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		resp, err = client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return super_block.NewReplicaPlacementFromString(resp.DefaultReplication)
 }
 
 func EcBalance(commandEnv *CommandEnv, collections []string, dc string, applyBalancing bool) (err error) {

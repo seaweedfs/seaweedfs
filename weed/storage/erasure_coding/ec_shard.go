@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strconv"
@@ -93,6 +94,10 @@ func (shard *EcVolumeShard) Destroy() {
 
 func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {
 
-	return shard.ecdFile.ReadAt(buf, offset)
+	n, err := shard.ecdFile.ReadAt(buf, offset)
+	if err == io.EOF && n == len(buf) {
+		err = nil
+	}
+	return n, err
 
 }
