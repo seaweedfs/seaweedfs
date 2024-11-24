@@ -8,8 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"golang.org/x/exp/slices"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"github.com/klauspost/reedsolomon"
 
@@ -406,7 +407,7 @@ func (s *Store) EcVolumes() (ecVolumes []*erasure_coding.EcVolume) {
 		location.ecVolumesLock.RUnlock()
 	}
 	slices.SortFunc(ecVolumes, func(a, b *erasure_coding.EcVolume) int {
-		return int(a.VolumeId - b.VolumeId)
+		return int(a.VolumeId) - int(b.VolumeId)
 	})
 	return ecVolumes
 }
