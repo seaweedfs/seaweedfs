@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sync"
 	"time"
-
-	"golang.org/x/exp/slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
