@@ -184,12 +184,15 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
 			if ms.Topo.RaftServer.Leader() != "" {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
+				ms.Topo.LastLeaderChangeTime = time.Now()
 			}
 		})
 		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())
 	} else if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		raftServerName = ms.Topo.HashicorpRaft.String()
+		// TODO fix this for hashicorp raft
+		ms.Topo.LastLeaderChangeTime = time.Now()
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
 

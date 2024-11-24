@@ -55,6 +55,8 @@ type Topology struct {
 
 	UuidAccessLock sync.RWMutex
 	UuidMap        map[string][]string
+
+	LastLeaderChangeTime time.Time
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
