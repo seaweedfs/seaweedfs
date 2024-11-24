@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 	"math/rand/v2"
 	"reflect"
 	"sync"
@@ -125,6 +126,10 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 	servers, e := vg.findEmptySlotsForOneVolume(topo, option)
 	if e != nil {
 		return nil, e
+	}
+	for !topo.LastLeaderChangeTime.Add(constants.VolumePulseSeconds * 2).Before(time.Now()) {
+		glog.V(0).Infof("wait for volume servers to join back")
+		time.Sleep(constants.VolumePulseSeconds / 2)
 	}
 	vid, raftErr := topo.NextVolumeId()
 	if raftErr != nil {
