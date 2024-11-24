@@ -1,11 +1,10 @@
 package weed_server
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"net/http"
 	"path/filepath"
 	"time"
-
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	ui "github.com/seaweedfs/seaweedfs/weed/server/volume_server_ui"
@@ -45,14 +44,14 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Stats         interface{}
 		Counters      *stats.ServerStats
 	}{
-		Version:       util.Version(),
-		Masters:       vs.SeedMasterNodes,
-		Volumes:       normalVolumeInfos,
-		EcVolumes:     vs.store.EcVolumes(),
-		RemoteVolumes: remoteVolumeInfos,
-		DiskStatuses:  ds,
-		Stats:         infos,
-		Counters:      serverStats,
+		util.Version(),
+		vs.SeedMasterNodes,
+		normalVolumeInfos,
+		vs.store.EcVolumes(),
+		remoteVolumeInfos,
+		ds,
+		infos,
+		serverStats,
 	}
 	ui.StatusTpl.Execute(w, args)
 }
