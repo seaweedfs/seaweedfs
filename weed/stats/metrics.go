@@ -322,6 +322,7 @@ func init() {
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
 	Gather.MustRegister(MasterVolumeLayoutWritable)
 	Gather.MustRegister(MasterVolumeLayoutCrowded)
+	Gather.MustRegister(MasterPickForWriteErrorCounter)
 	Gather.MustRegister(MasterBroadcastToFullErrorCounter)
 
 	Gather.MustRegister(FilerRequestCounter)
