@@ -369,6 +369,19 @@ func (t *Topology) ListDataCenters() (dcs []string) {
 	return dcs
 }
 
+func (t *Topology) ListDCAndRacks() (dcs map[NodeId][]NodeId) {
+	t.RLock()
+	defer t.RUnlock()
+	dcs = make(map[NodeId][]NodeId)
+	for _, dcNode := range t.children {
+		dcNodeId := dcNode.(*DataCenter).Id()
+		for _, rackNode := range dcNode.Children() {
+			dcs[dcNodeId] = append(dcs[dcNodeId], rackNode.(*Rack).Id())
+		}
+	}
+	return dcs
+}
+
 func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes, deletedVolumes []storage.VolumeInfo) {
 	// convert into in memory struct storage.VolumeInfo
 	var volumeInfos []storage.VolumeInfo
