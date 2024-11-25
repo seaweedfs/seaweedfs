@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"strings"
 	"sync"
@@ -53,7 +54,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 			if !ms.Topo.IsLeader() {
 				continue
 			}
-			dcs := ms.Topo.ListDataCenters()
+			dcs := ms.Topo.ListDCAndRacks()
 			var err error
 			for _, vlc := range ms.Topo.ListVolumeLayoutCollections() {
 				vl := vlc.VolumeLayout
@@ -74,21 +75,27 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				case lastGrowCount > 0 && writable < int(lastGrowCount*2) && float64(crowded+volumeGrowStepCount) > float64(writable)*topology.VolumeGrowStrategy.Threshold:
 					vgr.WritableVolumeCount = volumeGrowStepCount
 					_, err = ms.VolumeGrow(ctx, vgr)
-				default:
-					for _, dc := range dcs {
-						if vl.ShouldGrowVolumesByDataNode("DataCenter", dc) {
-							vgr.DataCenter = dc
-							if lastGrowCount > 0 {
-								vgr.WritableVolumeCount = uint32(int(lastGrowCount) / len(dcs))
-							} else {
-								vgr.WritableVolumeCount = volumeGrowStepCount
-							}
-							_, err = ms.VolumeGrow(ctx, vgr)
-						}
-					}
 				}
 				if err != nil {
 					glog.V(0).Infof("volume grow request failed: %+v", err)
+				}
+				writableVolumes := vl.GetWritableVolumes()
+				for dcId, racks := range dcs {
+					for _, rackId := range racks {
+						if vl.ShouldGrowVolumesByDcAndRack(&writableVolumes, dcId, rackId) {
+							vgr.DataCenter = dcId
+							vgr.Rack = rackId
+							if lastGrowCount > 0 {
+								vgr.WritableVolumeCount = uint32(math.Ceil(float64(lastGrowCount) / float64(len(dcs)*len(racks))))
+							} else {
+								vgr.WritableVolumeCount = volumeGrowStepCount
+							}
+
+							if _, err = ms.VolumeGrow(ctx, vgr); err != nil {
+								glog.V(0).Infof("volume grow request for dc:%s rack:%s failed: %+v", dcId, rackId, err)
+							}
+						}
+					}
 				}
 			}
 		}
