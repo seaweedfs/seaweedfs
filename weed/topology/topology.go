@@ -369,14 +369,14 @@ func (t *Topology) ListDataCenters() (dcs []string) {
 	return dcs
 }
 
-func (t *Topology) ListDCAndRacks() (dcs map[string][]string) {
+func (t *Topology) ListDCAndRacks() (dcs map[NodeId][]NodeId) {
 	t.RLock()
 	defer t.RUnlock()
-	dcs = make(map[string][]string)
+	dcs = make(map[NodeId][]NodeId)
 	for _, dcNode := range t.children {
-		dcNodeId := string(dcNode.(*DataCenter).Id())
+		dcNodeId := dcNode.(*DataCenter).Id()
 		for _, rackNode := range dcNode.Children() {
-			dcs[dcNodeId] = append(dcs[dcNodeId], string(rackNode.(*Rack).Id()))
+			dcs[dcNodeId] = append(dcs[dcNodeId], rackNode.(*Rack).Id())
 		}
 	}
 	return dcs

@@ -365,9 +365,7 @@ func (vl *VolumeLayout) ShouldGrowVolumes() bool {
 	return writable <= crowded
 }
 
-func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeId, dc string, rack string) bool {
-	dcId := NodeId(dc)
-	rackId := NodeId(rack)
+func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeId, dcId NodeId, rackId NodeId) bool {
 	for _, v := range *writables {
 		for _, dn := range vl.Lookup(v) {
 			if dn.GetDataCenter().Id() == dcId && dn.GetRack().Id() == rackId {
@@ -386,7 +384,7 @@ func (vl *VolumeLayout) GetWritableVolumeCount() (active, crowded int) {
 	return len(vl.writables), len(vl.crowded)
 }
 
-func (vl *VolumeLayout) GetWritableVolumes() (writables []needle.VolumeId) {
+func (vl *VolumeLayout) CloneWritableVolumes() (writables []needle.VolumeId) {
 	vl.accessLock.RLock()
 	writables = make([]needle.VolumeId, len(vl.writables))
 	copy(writables, vl.writables)

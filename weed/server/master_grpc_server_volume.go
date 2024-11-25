@@ -79,12 +79,12 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				if err != nil {
 					glog.V(0).Infof("volume grow request failed: %+v", err)
 				}
-				writableVolumes := vl.GetWritableVolumes()
+				writableVolumes := vl.CloneWritableVolumes()
 				for dcId, racks := range dcs {
 					for _, rackId := range racks {
 						if vl.ShouldGrowVolumesByDcAndRack(&writableVolumes, dcId, rackId) {
-							vgr.DataCenter = dcId
-							vgr.Rack = rackId
+							vgr.DataCenter = string(dcId)
+							vgr.Rack = string(rackId)
 							if lastGrowCount > 0 {
 								vgr.WritableVolumeCount = uint32(math.Ceil(float64(lastGrowCount) / float64(len(dcs)*len(racks))))
 							} else {
