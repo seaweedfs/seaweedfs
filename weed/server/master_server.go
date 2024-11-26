@@ -191,7 +191,6 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	} else if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		raftServerName = ms.Topo.HashicorpRaft.String()
-		// TODO fix this for hashicorp raft
 		ms.Topo.LastLeaderChangeTime = time.Now()
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
