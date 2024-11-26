@@ -665,6 +665,23 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 			continue
 		}
 		switch header {
+		case "expect":
+			// Set the default value of the Expect header for compatibility.
+			//
+			// In NGINX v1.1, the Expect header is removed when handling 100-continue requests.
+			//
+			// `aws-cli` sets this as part of signed headers.
+			//
+			// According to
+			// http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.20
+			// Expect header is always of form:
+			//
+			//   Expect       =  "Expect" ":" 1#expectation
+			//   expectation  =  "100-continue" | expectation-extension
+			//
+			// So it safe to assume that '100-continue' is what would
+			// be sent, for the time being keep this work around.
+			extractedSignedHeaders.Set(header, "100-continue")
 		case "host":
 			// Go http server removes "host" from Request.Header
 			if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
