@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 
@@ -481,6 +482,7 @@ func countShardsByRack(vid needle.VolumeId, locations []*EcNode) map[string]int 
 	})
 }
 
+// TODO: Maybe remove averages constraints? We don't need those anymore now that we're properly balancing shards.
 func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
 	// calculate average number of shards an ec rack should have for one volume
 	averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
@@ -527,6 +529,7 @@ func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid
 	return nil
 }
 
+// TOOD: Return an error with details upon failure to resolve a destination rack.
 func pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcRack, rackToShardCount map[string]int, replicaPlacement *super_block.ReplicaPlacement, averageShardsPerEcRack int) RackId {
 	targets := []RackId{}
 	targetShards := -1
@@ -575,10 +578,7 @@ func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, ra
 	for vid, locations := range vidLocations {
 
 		// see the volume's shards are in how many racks, and how many in each rack
-		rackToShardCount := groupByCount(locations, func(ecNode *EcNode) (id string, count int) {
-			shardBits := findEcVolumeShards(ecNode, vid)
-			return string(ecNode.rack), shardBits.ShardIdCount()
-		})
+		rackToShardCount := countShardsByRack(vid, locations)
 		rackEcNodesWithVid := groupBy(locations, func(ecNode *EcNode) string {
 			return string(ecNode.rack)
 		})
@@ -711,37 +711,71 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 	return nil
 }
 
+func pickEcNodeToBalanceShardsInto(vid needle.VolumeId, existingLocation *EcNode, possibleDestinations []*EcNode, replicaPlacement *super_block.ReplicaPlacement, averageShardsPerEcNode int) (*EcNode, error) {
+	if existingLocation == nil || len(possibleDestinations) == 0 {
+		return nil, fmt.Errorf("invalid source/destination nodes")
+	}
+	nodeShards := map[*EcNode]int{}
+	for _, node := range possibleDestinations {
+		nodeShards[node] = findEcVolumeShards(node, vid).ShardIdCount()
+	}
+
+	targets := []*EcNode{}
+	targetShards := -1
+	for _, shards := range nodeShards {
+		if shards > targetShards {
+			targetShards = shards
+		}
+	}
+
+	details := ""
+	for _, node := range possibleDestinations {
+		if node.info.Id == existingLocation.info.Id {
+			continue
+		}
+		if node.freeEcSlot <= 0 {
+			details += fmt.Sprintf("  Skipped %s because it has no free slots\n", node.info.Id)
+			continue
+		}
+
+		shards := nodeShards[node]
+		if replicaPlacement != nil && shards >= replicaPlacement.SameRackCount {
+			details += fmt.Sprintf("  Skipped %s because shards %d >= replica placement limit for the rack (%d)\n", node.info.Id, shards, replicaPlacement.SameRackCount)
+			continue
+		}
+		if shards >= averageShardsPerEcNode {
+			details += fmt.Sprintf("  Skipped %s because shards %d >= averageShards (%d)\n",
+				node.info.Id, shards, averageShardsPerEcNode)
+			continue
+		}
+
+		if shards < targetShards {
+			// Favor nodes with less shards, to ensure an uniform distribution.
+			targets = nil
+			targetShards = shards
+		}
+		if shards == targetShards {
+			targets = append(targets, node)
+		}
+	}
+
+	if len(targets) == 0 {
+		return nil, errors.New(details)
+	}
+	return targets[rand.IntN(len(targets))], nil
+}
+
+// TODO: Maybe remove averages constraints? We don't need those anymore now that we're properly balancing shards.
 func pickOneEcNodeAndMoveOneShard(commandEnv *CommandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
-
-	sortEcNodesByFreeslotsDescending(possibleDestinationEcNodes)
-	skipReason := ""
-	for _, destEcNode := range possibleDestinationEcNodes {
-
-		if destEcNode.info.Id == existingLocation.info.Id {
-			continue
-		}
-
-		if destEcNode.freeEcSlot <= 0 {
-			skipReason += fmt.Sprintf("  Skipping %s because it has no free slots\n", destEcNode.info.Id)
-			continue
-		}
-		if findEcVolumeShards(destEcNode, vid).ShardIdCount() >= averageShardsPerEcNode {
-			skipReason += fmt.Sprintf("  Skipping %s because it %d >= avernageShards (%d)\n",
-				destEcNode.info.Id, findEcVolumeShards(destEcNode, vid).ShardIdCount(), averageShardsPerEcNode)
-			continue
-		}
-
-		fmt.Printf("%s moves ec shard %d.%d to %s\n", existingLocation.info.Id, vid, shardId, destEcNode.info.Id)
-
-		err := moveMountedShardToEcNode(commandEnv, existingLocation, collection, vid, shardId, destEcNode, applyBalancing)
-		if err != nil {
-			return err
-		}
-
+	// TODO: consider volume replica info when balancing nodes
+	destNode, err := pickEcNodeToBalanceShardsInto(vid, existingLocation, possibleDestinationEcNodes, nil, averageShardsPerEcNode)
+	if err != nil {
+		fmt.Printf("WARNING: Could not find suitable taget node for %d.%d:\n%s", vid, shardId, err.Error())
 		return nil
 	}
-	fmt.Printf("WARNING: Could not find suitable taget node for %d.%d:\n%s", vid, shardId, skipReason)
-	return nil
+
+	fmt.Printf("%s moves ec shard %d.%d to %s\n", existingLocation.info.Id, vid, shardId, destNode.info.Id)
+	return moveMountedShardToEcNode(commandEnv, existingLocation, collection, vid, shardId, destNode, applyBalancing)
 }
 
 func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) map[erasure_coding.ShardId]*EcNode {
