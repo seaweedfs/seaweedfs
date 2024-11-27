@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -15,6 +16,22 @@ var (
 	topology2  = parseOutput(topoData2)
 	topologyEc = parseOutput(topoDataEc)
 )
+
+func errorCheck(got error, want string) error {
+	if got == nil && want == "" {
+		return nil
+	}
+	if got != nil && want == "" {
+		return fmt.Errorf("expected no error, got %q", got.Error())
+	}
+	if got == nil && want != "" {
+		return fmt.Errorf("got no error, expected %q", want)
+	}
+	if !strings.Contains(got.Error(), want) {
+		return fmt.Errorf("expected error %q, got %q", want, got.Error())
+	}
+	return nil
+}
 
 func TestEcDistribution(t *testing.T) {
 
@@ -59,19 +76,9 @@ func TestVolumeIdToReplicaPlacement(t *testing.T) {
 		ecNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
 		got, gotErr := volumeIdToReplicaPlacement(vid, ecNodes)
 
-		if tc.wantErr == "" && gotErr != nil {
-			t.Errorf("expected no error for volume %q, got %q", tc.vid, gotErr.Error())
+		if err := errorCheck(gotErr, tc.wantErr); err != nil {
+			t.Errorf("volume %q: %s", tc.vid, err.Error())
 			continue
-		}
-		if tc.wantErr != "" {
-			if gotErr == nil {
-				t.Errorf("got no error for volume %q, expected %q", tc.vid, tc.wantErr)
-				continue
-			}
-			if gotErr.Error() != tc.wantErr {
-				t.Errorf("expected error %q for volume %q, got %q", tc.wantErr, tc.vid, gotErr.Error())
-				continue
-			}
 		}
 
 		if got == nil {
@@ -128,6 +135,87 @@ func TestPickRackToBalanceShardsInto(t *testing.T) {
 		}
 		if !(found) {
 			t.Errorf("expected one of %v for volume %q, got %q", tc.wantOneOf, tc.vid, got)
+		}
+	}
+}
+func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
+	testCases := []struct {
+		topology  *master_pb.TopologyInfo
+		nodeId    string
+		vid       string
+		wantOneOf []string
+		wantErr   string
+	}{
+		{topologyEc, "", "", nil, "INTERNAL: missing source nodes"},
+		{topologyEc, "idontexist", "12737", nil, "INTERNAL: missing source nodes"},
+		// Non-EC nodes. We don't care about these, but the function should return all available target nodes as a safeguard.
+		{
+			topologyEc, "172.19.0.10:8702", "6225", []string{
+				"172.19.0.13:8701", "172.19.0.14:8711", "172.19.0.16:8704", "172.19.0.17:8703",
+				"172.19.0.19:8700", "172.19.0.20:8706", "172.19.0.21:8710", "172.19.0.3:8708",
+				"172.19.0.4:8707", "172.19.0.5:8705", "172.19.0.6:8713", "172.19.0.8:8709",
+				"172.19.0.9:8712"},
+			"",
+		},
+		{
+			topologyEc, "172.19.0.8:8709", "6226", []string{
+				"172.19.0.10:8702", "172.19.0.13:8701", "172.19.0.14:8711", "172.19.0.16:8704",
+				"172.19.0.17:8703", "172.19.0.19:8700", "172.19.0.20:8706", "172.19.0.21:8710",
+				"172.19.0.3:8708", "172.19.0.4:8707", "172.19.0.5:8705", "172.19.0.6:8713",
+				"172.19.0.9:8712"},
+			"",
+		},
+		// EC volumes.
+		{topologyEc, "172.19.0.10:8702", "14322", []string{
+			"172.19.0.14:8711", "172.19.0.5:8705", "172.19.0.6:8713"},
+			""},
+		{topologyEc, "172.19.0.13:8701", "10457", []string{
+			"172.19.0.10:8702", "172.19.0.6:8713"},
+			""},
+		{topologyEc, "172.19.0.17:8703", "12737", []string{
+			"172.19.0.13:8701"},
+			""},
+		{topologyEc, "172.19.0.20:8706", "14322", []string{
+			"172.19.0.14:8711", "172.19.0.5:8705", "172.19.0.6:8713"},
+			""},
+	}
+
+	for _, tc := range testCases {
+		vid, _ := needle.NewVolumeId(tc.vid)
+		allEcNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
+
+		// Resolve target node by name
+		var ecNode *EcNode
+		for _, n := range allEcNodes {
+			if n.info.Id == tc.nodeId {
+				ecNode = n
+				break
+			}
+		}
+
+		averageShardsPerEcNode := 5
+		got, gotErr := pickEcNodeToBalanceShardsInto(vid, ecNode, allEcNodes, nil, averageShardsPerEcNode)
+		if err := errorCheck(gotErr, tc.wantErr); err != nil {
+			t.Errorf("node %q, volume %q: %s", tc.nodeId, tc.vid, err.Error())
+			continue
+		}
+
+		if got == nil {
+			if len(tc.wantOneOf) == 0 {
+				continue
+			}
+			t.Errorf("node %q, volume %q: got no node, want %q", tc.nodeId, tc.vid, tc.wantOneOf)
+			continue
+		}
+		found := false
+		for _, want := range tc.wantOneOf {
+			if got := got.info.Id; got == want {
+				found = true
+				break
+			}
+		}
+		if !(found) {
+			t.Errorf("expected one of %v for volume %q, got %q", tc.wantOneOf, tc.vid, got.info.Id)
 		}
 	}
 }
