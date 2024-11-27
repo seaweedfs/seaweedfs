@@ -146,8 +146,8 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 		wantOneOf []string
 		wantErr   string
 	}{
-		{topologyEc, "", "", nil, "invalid source/destination nodes"},
-		{topologyEc, "idontexist", "12737", nil, "invalid source/destination nodes"},
+		{topologyEc, "", "", nil, "INTERNAL: missing source nodes"},
+		{topologyEc, "idontexist", "12737", nil, "INTERNAL: missing source nodes"},
 		// Non-EC nodes. We don't care about these, but the function should return all available target nodes as a safeguard.
 		{
 			topologyEc, "172.19.0.10:8702", "6225", []string{

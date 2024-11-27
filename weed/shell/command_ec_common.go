@@ -712,9 +712,13 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 }
 
 func pickEcNodeToBalanceShardsInto(vid needle.VolumeId, existingLocation *EcNode, possibleDestinations []*EcNode, replicaPlacement *super_block.ReplicaPlacement, averageShardsPerEcNode int) (*EcNode, error) {
-	if existingLocation == nil || len(possibleDestinations) == 0 {
-		return nil, fmt.Errorf("invalid source/destination nodes")
+	if existingLocation == nil {
+		return nil, fmt.Errorf("INTERNAL: missing source nodes")
 	}
+	if len(possibleDestinations) == 0 {
+		return nil, fmt.Errorf("INTERNAL: missing destination nodes")
+	}
+
 	nodeShards := map[*EcNode]int{}
 	for _, node := range possibleDestinations {
 		nodeShards[node] = findEcVolumeShards(node, vid).ShardIdCount()
