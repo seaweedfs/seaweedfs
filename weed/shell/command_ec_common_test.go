@@ -122,7 +122,12 @@ func TestPickRackToBalanceShardsInto(t *testing.T) {
 		rackToShardCount := countShardsByRack(vid, locations)
 		averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
 
-		got := pickRackToBalanceShardsInto(racks, rackToShardCount, nil, averageShardsPerEcRack)
+		got, gotErr := pickRackToBalanceShardsInto(racks, rackToShardCount, nil, averageShardsPerEcRack)
+		if gotErr != nil {
+			t.Errorf("volume %q: %s", tc.vid, gotErr.Error())
+			continue
+		}
+
 		if string(got) == "" && len(tc.wantOneOf) == 0 {
 			continue
 		}
