@@ -507,16 +507,17 @@ func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid
 
 	for shardId, ecNode := range ecShardsToMove {
 		// TODO: consider volume replica info when balancing racks
-		rackId := pickRackToBalanceShardsInto(racks, rackToShardCount, nil, averageShardsPerEcRack)
-		if rackId == "" {
-			fmt.Printf("ec shard %d.%d at %s can not find a destination rack\n", vid, shardId, ecNode.info.Id)
+		rackId, err := pickRackToBalanceShardsInto(racks, rackToShardCount, nil, averageShardsPerEcRack)
+		if err != nil {
+			fmt.Printf("ec shard %d.%d at %s can not find a destination rack:\n%s\n", vid, shardId, ecNode.info.Id, err.Error())
 			continue
 		}
+
 		var possibleDestinationEcNodes []*EcNode
 		for _, n := range racks[rackId].ecNodes {
 			possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
 		}
-		err := pickOneEcNodeAndMoveOneShard(commandEnv, averageShardsPerEcRack, ecNode, collection, vid, shardId, possibleDestinationEcNodes, applyBalancing)
+		err = pickOneEcNodeAndMoveOneShard(commandEnv, averageShardsPerEcRack, ecNode, collection, vid, shardId, possibleDestinationEcNodes, applyBalancing)
 		if err != nil {
 			return err
 		}
@@ -529,8 +530,7 @@ func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid
 	return nil
 }
 
-// TOOD: Return an error with details upon failure to resolve a destination rack.
-func pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcRack, rackToShardCount map[string]int, replicaPlacement *super_block.ReplicaPlacement, averageShardsPerEcRack int) RackId {
+func pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcRack, rackToShardCount map[string]int, replicaPlacement *super_block.ReplicaPlacement, averageShardsPerEcRack int) (RackId, error) {
 	targets := []RackId{}
 	targetShards := -1
 	for _, shards := range rackToShardCount {
@@ -539,19 +539,20 @@ func pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcRack, rackToShardCo
 		}
 	}
 
+	details := ""
 	for rackId, rack := range rackToEcNodes {
 		shards := rackToShardCount[string(rackId)]
 
 		if rack.freeEcSlot <= 0 {
-			// No EC shards slots left :(
+			details += fmt.Sprintf("  Skipped %s because it has no free slots\n", rackId)
 			continue
 		}
 		if replicaPlacement != nil && shards >= replicaPlacement.DiffRackCount {
-			// Don't select racks with more EC shards for the target volume than the replicaton limit.
+			details += fmt.Sprintf("  Skipped %s because shards %d >= replica placement limit for other racks (%d)\n", rackId, shards, replicaPlacement.DiffRackCount)
 			continue
 		}
 		if shards >= averageShardsPerEcRack {
-			// Keep EC shards across racks as balanced as possible.
+			details += fmt.Sprintf("  Skipped %s because shards %d >= averageShards (%d)\n", rackId, shards, averageShardsPerEcRack)
 			continue
 		}
 		if shards < targetShards {
@@ -565,9 +566,9 @@ func pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcRack, rackToShardCo
 	}
 
 	if len(targets) == 0 {
-		return ""
+		return "", errors.New(details)
 	}
-	return targets[rand.IntN(len(targets))]
+	return targets[rand.IntN(len(targets))], nil
 }
 
 func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
