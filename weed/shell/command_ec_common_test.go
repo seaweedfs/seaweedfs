@@ -55,26 +55,41 @@ func TestEcDistribution(t *testing.T) {
 }
 
 func TestVolumeIdToReplicaPlacement(t *testing.T) {
+	getDefaultReplicaPlacementOrig := getDefaultReplicaPlacement
+	getDefaultReplicaPlacement = func(commandEnv *CommandEnv) (*super_block.ReplicaPlacement, error) {
+		return super_block.NewReplicaPlacementFromString("123")
+	}
+	defer func() {
+		getDefaultReplicaPlacement = getDefaultReplicaPlacementOrig
+	}()
+
 	testCases := []struct {
 		topology *master_pb.TopologyInfo
 		vid      string
 		want     string
 		wantErr  string
 	}{
-		{topology1, "", "", "failed to resolve replica placement for volume ID 0"},
-		{topology1, "0", "", "failed to resolve replica placement for volume ID 0"},
+		{topology1, "", "", "failed to resolve replica placement"},
+		{topology1, "0", "", "failed to resolve replica placement"},
 		{topology1, "1", "100", ""},
 		{topology1, "296", "100", ""},
-		{topology2, "", "", "failed to resolve replica placement for volume ID 0"},
-		{topology2, "19012", "", "failed to resolve replica placement for volume ID 19012"},
+		{topology2, "", "", "failed to resolve replica placement"},
+		{topology2, "19012", "", "failed to resolve replica placement"},
 		{topology2, "6271", "002", ""},
 		{topology2, "17932", "002", ""},
+		{topologyEc, "", "", "failed to resolve replica placement"},
+		{topologyEc, "0", "", "failed to resolve replica placement"},
+		{topologyEc, "6225", "002", ""},
+		{topologyEc, "6241", "002", ""},
+		{topologyEc, "9577", "123", ""},  // EC volume
+		{topologyEc, "12737", "123", ""}, // EC volume
 	}
 
 	for _, tc := range testCases {
+		commandEnv := &CommandEnv{}
 		vid, _ := needle.NewVolumeId(tc.vid)
 		ecNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
-		got, gotErr := volumeIdToReplicaPlacement(vid, ecNodes)
+		got, gotErr := volumeIdToReplicaPlacement(commandEnv, vid, ecNodes)
 
 		if err := errorCheck(gotErr, tc.wantErr); err != nil {
 			t.Errorf("volume %q: %s", tc.vid, err.Error())
