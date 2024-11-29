@@ -104,7 +104,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	topology.VolumeGrowStrategy.Copy3Count = v.GetUint32("master.volume_growth.copy_3")
 	topology.VolumeGrowStrategy.CopyOtherCount = v.GetUint32("master.volume_growth.copy_other")
 	topology.VolumeGrowStrategy.Threshold = v.GetFloat64("master.volume_growth.threshold")
-	whiteList := util.StringSplit(v.GetString("master.options.whiteList"), ",")
+	whiteList := util.StringSplit(v.GetString("guard.white_list"), ",")
 
 	var preallocateSize int64
 	if option.VolumePreallocate {
@@ -418,6 +418,6 @@ func (ms *MasterServer) Reload() {
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
 	ms.guard.UpdateWhiteList(append(ms.option.WhiteList,
-		util.StringSplit(v.GetString("guard.whiteList"), ",")...),
+		util.StringSplit(v.GetString("guard.white_list"), ",")...),
 	)
 }

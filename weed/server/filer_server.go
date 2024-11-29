@@ -152,7 +152,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		}
 	})
 	fs.filer.Cipher = option.Cipher
-	whiteList := util.StringSplit(v.GetString("guard.whiteList"), ",")
+	whiteList := util.StringSplit(v.GetString("guard.white_list"), ",")
 	fs.filerGuard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
 
@@ -247,5 +247,5 @@ func (fs *FilerServer) Reload() {
 
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
-	fs.filerGuard.UpdateWhiteList(util.StringSplit(v.GetString("guard.whiteList"), ","))
+	fs.filerGuard.UpdateWhiteList(util.StringSplit(v.GetString("guard.white_list"), ","))
 }

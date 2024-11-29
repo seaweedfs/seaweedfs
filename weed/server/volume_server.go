@@ -106,7 +106,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		whiteList:                     whiteList,
 	}
 
-	whiteList = append(whiteList, util.StringSplit(v.GetString("whiteList"), ",")...)
+	whiteList = append(whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...)
 	vs.SeedMasterNodes = masterNodes
 
 	vs.checkWithMaster()
@@ -160,5 +160,5 @@ func (vs *VolumeServer) Reload() {
 
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
-	vs.guard.UpdateWhiteList(append(vs.whiteList, util.StringSplit(v.GetString("guard.whiteList"), ",")...))
+	vs.guard.UpdateWhiteList(append(vs.whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...))
 }
