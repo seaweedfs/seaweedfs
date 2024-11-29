@@ -847,11 +847,6 @@ func collectVolumeIdToEcNodes(allEcNodes []*EcNode, collection string) map[needl
 
 // TODO: EC volumes have no replica placement info :( We need a better solution to resolve topology, and balancing, for those.
 func volumeIdToReplicaPlacement(commandEnv *CommandEnv, vid needle.VolumeId, nodes []*EcNode) (*super_block.ReplicaPlacement, error) {
-	defaultReplicaPlacement, err := getDefaultReplicaPlacement(commandEnv)
-	if err != nil {
-		return nil, err
-	}
-
 	for _, ecNode := range nodes {
 		for _, diskInfo := range ecNode.info.DiskInfos {
 			for _, volumeInfo := range diskInfo.VolumeInfos {
@@ -861,6 +856,10 @@ func volumeIdToReplicaPlacement(commandEnv *CommandEnv, vid needle.VolumeId, nod
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
 				if needle.VolumeId(ecShardInfo.Id) == vid {
+					defaultReplicaPlacement, err := getDefaultReplicaPlacement(commandEnv)
+					if err != nil {
+						return nil, err
+					}
 					return defaultReplicaPlacement, nil
 				}
 			}
