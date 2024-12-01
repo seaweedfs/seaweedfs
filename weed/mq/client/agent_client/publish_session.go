@@ -6,10 +6,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/grpc"
 )
 
-type AgentSession struct {
+type PublishSession struct {
 	schema         *schema.Schema
 	partitionCount int
 	publisherName  string
@@ -17,17 +18,17 @@ type AgentSession struct {
 	sessionId      int64
 }
 
-func NewAgentSession(address string, topicSchema *schema.Schema, partitionCount int, publisherName string) (*AgentSession, error) {
+func NewPublishSession(agentAddress string, topicSchema *schema.Schema, partitionCount int, publisherName string) (*PublishSession, error) {
 
 	// call local agent grpc server to create a new session
-	clientConn, err := pb.GrpcDial(context.Background(), address, true, grpc.WithInsecure())
+	clientConn, err := pb.GrpcDial(context.Background(), agentAddress, true, grpc.WithInsecure())
 	if err != nil {
-		return nil, fmt.Errorf("dial agent server %s: %v", address, err)
+		return nil, fmt.Errorf("dial agent server %s: %v", agentAddress, err)
 	}
 	agentClient := mq_agent_pb.NewSeaweedMessagingAgentClient(clientConn)
 
 	resp, err := agentClient.StartPublishSession(context.Background(), &mq_agent_pb.StartPublishSessionRequest{
-		Topic: &mq_agent_pb.Topic{
+		Topic: &schema_pb.Topic{
 			Namespace: topicSchema.Namespace,
 			Name:      topicSchema.Name,
 		},
@@ -47,7 +48,7 @@ func NewAgentSession(address string, topicSchema *schema.Schema, partitionCount 
 		return nil, fmt.Errorf("publish record: %v", err)
 	}
 
-	return &AgentSession{
+	return &PublishSession{
 		schema:         topicSchema,
 		partitionCount: partitionCount,
 		publisherName:  publisherName,
@@ -56,7 +57,7 @@ func NewAgentSession(address string, topicSchema *schema.Schema, partitionCount 
 	}, nil
 }
 
-func (a *AgentSession) CloseSession() error {
+func (a *PublishSession) CloseSession() error {
 	if a.schema == nil {
 		return nil
 	}

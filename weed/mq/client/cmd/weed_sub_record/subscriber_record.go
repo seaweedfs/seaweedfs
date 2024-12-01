@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/sub_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
@@ -60,30 +61,31 @@ func main() {
 		ConsumerGroupInstanceId: fmt.Sprintf("client-%d", *clientId),
 		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),
 		MaxPartitionCount:       int32(*maxPartitionCount),
-		PerPartitionConcurrency: int32(*perPartitionConcurrency),
+		SlidingWindowSize:       int32(*perPartitionConcurrency),
 	}
 
 	contentConfig := &sub_client.ContentConfiguration{
-		Topic:     topic.NewTopic(*namespace, *t),
-		Filter:    "",
-		StartTime: time.Now().Add(-*timeAgo),
+		Topic:  topic.NewTopic(*namespace, *t),
+		Filter: "",
+		// StartTime: time.Now().Add(-*timeAgo),
 	}
 
 	brokers := strings.Split(*seedBrokers, ",")
-	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig)
+	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig, make(chan sub_client.KeyedOffset, 1024))
 
 	counter := 0
-	subscriber.SetEachMessageFunc(func(key, value []byte) error {
-		counter++
-		record := &schema_pb.RecordValue{}
-		err := proto.Unmarshal(value, record)
-		if err != nil {
-			fmt.Printf("unmarshal record value: %v\n", err)
-		} else {
-			fmt.Printf("%s %d: %v\n", string(key), len(value), record)
-		}
-		//time.Sleep(1300 * time.Millisecond)
-		return nil
+	executors := util.NewLimitedConcurrentExecutor(int(subscriberConfig.SlidingWindowSize))
+	subscriber.SetOnDataMessageFn(func(m *mq_pb.SubscribeMessageResponse_Data) {
+		executors.Execute(func() {
+			counter++
+			record := &schema_pb.RecordValue{}
+			err := proto.Unmarshal(m.Data.Value, record)
+			if err != nil {
+				fmt.Printf("unmarshal record value: %v\n", err)
+			} else {
+				fmt.Printf("%s %d: %v\n", string(m.Data.Key), len(m.Data.Value), record)
+			}
+		})
 	})
 
 	subscriber.SetCompletionFunc(func() {

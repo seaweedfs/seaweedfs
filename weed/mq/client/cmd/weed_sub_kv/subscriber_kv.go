@@ -6,12 +6,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/sub_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"strings"
-	"time"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -33,23 +33,24 @@ func main() {
 		ConsumerGroupInstanceId: fmt.Sprintf("client-%d", *clientId),
 		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),
 		MaxPartitionCount:       int32(*maxPartitionCount),
-		PerPartitionConcurrency: int32(*perPartitionConcurrency),
+		SlidingWindowSize:       int32(*perPartitionConcurrency),
 	}
 
 	contentConfig := &sub_client.ContentConfiguration{
-		Topic:     topic.NewTopic(*namespace, *t),
-		Filter:    "",
-		StartTime: time.Unix(1, 1),
+		Topic:  topic.NewTopic(*namespace, *t),
+		Filter: "",
 	}
 
 	brokers := strings.Split(*seedBrokers, ",")
-	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig)
+	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig, make(chan sub_client.KeyedOffset, 1024))
 
 	counter := 0
-	subscriber.SetEachMessageFunc(func(key, value []byte) error {
-		counter++
-		println(string(key), "=>", string(value), counter)
-		return nil
+	executors := util.NewLimitedConcurrentExecutor(int(subscriberConfig.SlidingWindowSize))
+	subscriber.SetOnDataMessageFn(func(m *mq_pb.SubscribeMessageResponse_Data) {
+		executors.Execute(func() {
+			counter++
+			println(string(m.Data.Key), "=>", string(m.Data.Value), counter)
+		})
 	})
 
 	subscriber.SetCompletionFunc(func() {

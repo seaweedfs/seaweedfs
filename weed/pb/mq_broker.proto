@@ -64,43 +64,14 @@ message FindBrokerLeaderResponse {
     string broker = 1;
 }
 
-message Topic {
-    string namespace = 1;
-    string name = 2;
-}
-message Partition {
-    int32 ring_size = 1;
-    int32 range_start = 2;
-    int32 range_stop = 3;
-    int64 unix_time_ns = 4;
-}
-
-message Offset {
-    Topic topic = 1;
-    repeated PartitionOffset partition_offsets = 2;
-}
-
-enum PartitionOffsetStartType {
-    EARLIEST = 0;
-    EARLIEST_IN_MEMORY = 1;
-    LATEST = 2;
-}
-
-message PartitionOffset {
-    Partition partition = 1;
-    int64 start_ts_ns = 2;
-    int64 stop_ts_ns = 3;
-    PartitionOffsetStartType start_type = 4;
-}
-
 //////////////////////////////////////////////////
 message BrokerStats {
     int32 cpu_usage_percent = 1;
     map<string, TopicPartitionStats> stats = 2;
 }
 message TopicPartitionStats {
-    Topic topic = 1;
-    Partition partition = 2;
+    schema_pb.Topic topic = 1;
+    schema_pb.Partition partition = 2;
     int32 publisher_count = 3;
     int32 subscriber_count = 4;
     string follower = 5;
@@ -126,7 +97,7 @@ message BalanceTopicsResponse {
 
 //////////////////////////////////////////////////
 message ConfigureTopicRequest {
-    Topic topic = 1;
+    schema_pb.Topic topic = 1;
     int32 partition_count = 2;
     schema_pb.RecordType record_type = 3;
 }
@@ -137,23 +108,23 @@ message ConfigureTopicResponse {
 message ListTopicsRequest {
 }
 message ListTopicsResponse {
-    repeated Topic topics = 1;
+    repeated schema_pb.Topic topics = 1;
 }
 message LookupTopicBrokersRequest {
-    Topic topic = 1;
+    schema_pb.Topic topic = 1;
 }
 message LookupTopicBrokersResponse {
-    Topic topic = 1;
+    schema_pb.Topic topic = 1;
     repeated BrokerPartitionAssignment broker_partition_assignments = 2;
 }
 message BrokerPartitionAssignment {
-    Partition partition = 1;
+    schema_pb.Partition partition = 1;
     string leader_broker = 2;
     string follower_broker = 3;
 }
 
 message AssignTopicPartitionsRequest {
-    Topic topic = 1;
+    schema_pb.Topic topic = 1;
     repeated BrokerPartitionAssignment broker_partition_assignments = 2;
     bool is_leader = 3;
     bool is_draining = 4;
@@ -165,7 +136,7 @@ message SubscriberToSubCoordinatorRequest {
     message InitMessage {
         string consumer_group = 1;
         string consumer_group_instance_id = 2;
-        Topic topic = 3;
+        schema_pb.Topic topic = 3;
         // The consumer group instance will be assigned at most max_partition_count partitions.
         // If the number of partitions is less than the sum of max_partition_count,
         // the consumer group instance may be assigned partitions less than max_partition_count.
@@ -178,10 +149,10 @@ message SubscriberToSubCoordinatorRequest {
         int32 rebalance_seconds = 5;
     }
     message AckUnAssignmentMessage {
-        Partition partition = 1;
+        schema_pb.Partition partition = 1;
     }
     message AckAssignmentMessage {
-        Partition partition = 1;
+        schema_pb.Partition partition = 1;
     }
     oneof message {
         InitMessage init = 1;
@@ -194,7 +165,7 @@ message SubscriberToSubCoordinatorResponse {
         BrokerPartitionAssignment partition_assignment = 1;
     }
     message UnAssignment {
-        Partition partition = 1;
+        schema_pb.Partition partition = 1;
     }
     oneof message {
         Assignment assignment = 1;
@@ -215,8 +186,8 @@ message DataMessage {
 }
 message PublishMessageRequest {
     message InitMessage {
-        Topic topic = 1;
-        Partition partition = 2;
+        schema_pb.Topic topic = 1;
+        schema_pb.Partition partition = 2;
         int32 ack_interval = 3;
         string follower_broker = 4;
         string publisher_name = 5; // for debugging
@@ -233,8 +204,8 @@ message PublishMessageResponse {
 }
 message PublishFollowMeRequest {
     message InitMessage {
-        Topic topic = 1;
-        Partition partition = 2;
+        schema_pb.Topic topic = 1;
+        schema_pb.Partition partition = 2;
     }
     message FlushMessage {
         int64 ts_ns = 1;
@@ -256,11 +227,11 @@ message SubscribeMessageRequest {
         string consumer_group = 1;
         string consumer_id = 2;
         string client_id = 3;
-        Topic topic = 4;
-        PartitionOffset partition_offset = 5;
+        schema_pb.Topic topic = 4;
+        schema_pb.PartitionOffset partition_offset = 5;
         string filter = 6;
         string follower_broker = 7;
-        int32 concurrency = 8;
+        int32 sliding_window_size = 8;
     }
     message AckMessage {
         int64 sequence = 1;
@@ -284,8 +255,8 @@ message SubscribeMessageResponse {
 }
 message SubscribeFollowMeRequest {
     message InitMessage {
-        Topic topic = 1;
-        Partition partition = 2;
+        schema_pb.Topic topic = 1;
+        schema_pb.Partition partition = 2;
         string consumer_group = 3;
     }
     message AckMessage {
@@ -303,13 +274,13 @@ message SubscribeFollowMeResponse {
     int64 ack_ts_ns = 1;
 }
 message ClosePublishersRequest {
-    Topic topic = 1;
+    schema_pb.Topic topic = 1;
     int64 unix_time_ns = 2;
 }
 message ClosePublishersResponse {
 }
 message CloseSubscribersRequest {
-    Topic topic = 1;
+    schema_pb.Topic topic = 1;
     int64 unix_time_ns = 2;
 }
 message CloseSubscribersResponse {

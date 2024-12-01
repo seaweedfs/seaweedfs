@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 // LookupTopicBrokers returns the brokers that are serving the topic
@@ -54,7 +55,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 		_, brokerStats := brokerStatsItem.Key, brokerStatsItem.Val
 		for topicPartitionStatsItem := range brokerStats.TopicPartitionStats.IterBuffered() {
 			topicPartitionStat := topicPartitionStatsItem.Val
-			topic := &mq_pb.Topic{
+			topic := &schema_pb.Topic{
 				Namespace: topicPartitionStat.TopicPartition.Namespace,
 				Name:      topicPartitionStat.TopicPartition.Name,
 			}

@@ -3,6 +3,7 @@ package topic
 import (
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"time"
 )
@@ -89,7 +90,7 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 				Partition: localPartition.Partition,
 			}
 			stats.Stats[topicPartition.TopicPartitionId()] = &mq_pb.TopicPartitionStats{
-				Topic: &mq_pb.Topic{
+				Topic: &schema_pb.Topic{
 					Namespace: string(localTopic.Namespace),
 					Name:      localTopic.Name,
 				},

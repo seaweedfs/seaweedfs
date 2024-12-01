@@ -27,7 +27,7 @@ var (
 	counter int32
 )
 
-func doPublish(publisher *agent_client.AgentSession, id int) {
+func doPublish(publisher *agent_client.PublishSession, id int) {
 	startTime := time.Now()
 	for {
 		i := atomic.AddInt32(&counter, 1)
@@ -100,7 +100,7 @@ func main() {
 		WithField("field7", schema.TypeBoolean).
 		RecordTypeEnd()
 
-	session, err := agent_client.NewAgentSession("localhost:16777", schema.NewSchema(*namespace, *t, recordType), *partitionCount, *clientName)
+	session, err := agent_client.NewPublishSession("localhost:16777", schema.NewSchema(*namespace, *t, recordType), *partitionCount, *clientName)
 	if err != nil {
 		log.Printf("failed to create session: %v", err)
 		return

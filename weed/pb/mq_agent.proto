@@ -31,39 +31,8 @@ service SeaweedMessagingAgent {
 }
 
 //////////////////////////////////////////////////
-
-message Topic {
-    string namespace = 1;
-    string name = 2;
-}
-message Partition {
-    int32 ring_size = 1;
-    int32 range_start = 2;
-    int32 range_stop = 3;
-    int64 unix_time_ns = 4;
-}
-
-message Offset {
-    Topic topic = 1;
-    repeated PartitionOffset partition_offsets = 2;
-}
-
-enum PartitionOffsetStartType {
-    EARLIEST = 0;
-    EARLIEST_IN_MEMORY = 1;
-    LATEST = 2;
-}
-
-message PartitionOffset {
-    Partition partition = 1;
-    int64 start_ts_ns = 2;
-    int64 stop_ts_ns = 3;
-    PartitionOffsetStartType start_type = 4;
-}
-
-//////////////////////////////////////////////////
 message StartPublishSessionRequest {
-    Topic topic = 1;
+    schema_pb.Topic topic = 1;
     int32 partition_count = 2;
     schema_pb.RecordType record_type = 3;
     string publisher_name = 4;
@@ -92,12 +61,12 @@ message PublishRecordResponse {
 //////////////////////////////////////////////////
 message StartSubscribeSessionRequest {
     string consumer_group = 1;
-    string consumer_id = 2;
-    string client_id = 3;
-    Topic topic = 4;
-    PartitionOffset partition_offset = 5;
+    string consumer_group_instance_id = 2;
+    schema_pb.Topic topic = 4;
+    repeated schema_pb.PartitionOffset partition_offsets = 5;
     string filter = 6;
-    int32 concurrency = 8;
+    int32 max_subscribed_partitions = 8;
+    int32 sliding_window_size = 9;
 }
 message StartSubscribeSessionResponse {
     string error = 1;
@@ -116,7 +85,6 @@ message SubscribeRecordRequest {
     bytes ack_key = 3;
 }
 message SubscribeRecordResponse {
-    int64 sequence = 1;
     bytes key = 2;
     schema_pb.RecordValue value = 3;
     int64 ts_ns = 4;

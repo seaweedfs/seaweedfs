@@ -2,7 +2,7 @@ package pub_balancer
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 type PartitionSlotToBroker struct {
@@ -24,7 +24,7 @@ func NewPartitionSlotToBrokerList(ringSize int32) *PartitionSlotToBrokerList {
 	}
 }
 
-func (ps *PartitionSlotToBrokerList) AddBroker(partition *mq_pb.Partition, broker string, follower string) {
+func (ps *PartitionSlotToBrokerList) AddBroker(partition *schema_pb.Partition, broker string, follower string) {
 	for _, partitionSlot := range ps.PartitionSlots {
 		if partitionSlot.RangeStart == partition.RangeStart && partitionSlot.RangeStop == partition.RangeStop {
 			if partitionSlot.AssignedBroker != "" && partitionSlot.AssignedBroker != broker {

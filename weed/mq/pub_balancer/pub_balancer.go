@@ -4,6 +4,7 @@ import (
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 const (
@@ -32,7 +33,7 @@ type PubBalancer struct {
 	Brokers cmap.ConcurrentMap[string, *BrokerStats] // key: broker address
 	// Collected from all brokers when they connect to the broker leader
 	TopicToBrokers    cmap.ConcurrentMap[string, *PartitionSlotToBrokerList] // key: topic name
-	OnPartitionChange func(topic *mq_pb.Topic, assignments []*mq_pb.BrokerPartitionAssignment)
+	OnPartitionChange func(topic *schema_pb.Topic, assignments []*mq_pb.BrokerPartitionAssignment)
 }
 
 func NewPubBalancer() *PubBalancer {

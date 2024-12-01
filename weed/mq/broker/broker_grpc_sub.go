@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"io"
 	"time"
@@ -54,7 +55,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	}()
 
 	startPosition := b.getRequestPosition(req.GetInit())
-	imt := sub_coordinator.NewInflightMessageTracker(int(req.GetInit().Concurrency))
+	imt := sub_coordinator.NewInflightMessageTracker(int(req.GetInit().SlidingWindowSize))
 
 	// connect to the follower
 	var subscribeFollowMeStream mq_pb.SeaweedMessaging_SubscribeFollowMeClient
@@ -212,9 +213,9 @@ func (b *MessageQueueBroker) getRequestPosition(initMessage *mq_pb.SubscribeMess
 		return
 	}
 
-	if offset.StartType == mq_pb.PartitionOffsetStartType_EARLIEST {
+	if offset.StartType == schema_pb.PartitionOffsetStartType_EARLIEST {
 		startPosition = log_buffer.NewMessagePosition(1, -3)
-	} else if offset.StartType == mq_pb.PartitionOffsetStartType_LATEST {
+	} else if offset.StartType == schema_pb.PartitionOffsetStartType_LATEST {
 		startPosition = log_buffer.NewMessagePosition(time.Now().UnixNano(), -4)
 	}
 	return

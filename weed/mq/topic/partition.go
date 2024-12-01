@@ -2,7 +2,7 @@ package topic
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"time"
 )
 
@@ -40,7 +40,7 @@ func (partition Partition) Equals(other Partition) bool {
 	return true
 }
 
-func FromPbPartition(partition *mq_pb.Partition) Partition {
+func FromPbPartition(partition *schema_pb.Partition) Partition {
 	return Partition{
 		RangeStart: partition.RangeStart,
 		RangeStop:  partition.RangeStop,
@@ -67,8 +67,8 @@ func SplitPartitions(targetCount int32, ts int64) []*Partition {
 	return partitions
 }
 
-func (partition Partition) ToPbPartition() *mq_pb.Partition {
-	return &mq_pb.Partition{
+func (partition Partition) ToPbPartition() *schema_pb.Partition {
+	return &schema_pb.Partition{
 		RangeStart: partition.RangeStart,
 		RangeStop:  partition.RangeStop,
 		RingSize:   partition.RingSize,

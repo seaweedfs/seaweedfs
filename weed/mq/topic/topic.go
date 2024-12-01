@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -21,15 +22,15 @@ func NewTopic(namespace string, name string) Topic {
 		Name:      name,
 	}
 }
-func FromPbTopic(topic *mq_pb.Topic) Topic {
+func FromPbTopic(topic *schema_pb.Topic) Topic {
 	return Topic{
 		Namespace: topic.Namespace,
 		Name:      topic.Name,
 	}
 }
 
-func (t Topic) ToPbTopic() *mq_pb.Topic {
-	return &mq_pb.Topic{
+func (t Topic) ToPbTopic() *schema_pb.Topic {
+	return &schema_pb.Topic{
 		Namespace: t.Namespace,
 		Name:      t.Name,
 	}
