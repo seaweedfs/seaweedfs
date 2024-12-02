@@ -17,10 +17,11 @@ func (c *commandEcBalance) Name() string {
 	return "ec.balance"
 }
 
+// TODO: Update help string and move to command_ec_common.go once shard replica placement logic is enabled.
 func (c *commandEcBalance) Help() string {
 	return `balance all ec shards among all racks and volume servers
 
-	ec.balance [-c EACH_COLLECTION|<collection_name>] [-force] [-dataCenter <data_center>]
+	ec.balance [-c EACH_COLLECTION|<collection_name>] [-force] [-dataCenter <data_center>] [-shardReplicaPlacement <replica_placement>]
 
 	Algorithm:
 
@@ -100,6 +101,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := balanceCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
+	shardReplicaPlacement := balanceCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty (currently unused)")
 	applyBalancing := balanceCommand.Bool("force", false, "apply the balancing plan")
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
@@ -121,5 +123,10 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	}
 	fmt.Printf("balanceEcVolumes collections %+v\n", len(collections))
 
-	return EcBalance(commandEnv, collections, *dc, *applyBalancing)
+	rp, err := parseReplicaPlacementArg(commandEnv, *shardReplicaPlacement)
+	if err != nil {
+		return err
+	}
+
+	return EcBalance(commandEnv, collections, *dc, rp, *applyBalancing)
 }
