@@ -17,6 +17,7 @@ func (c *commandEcBalance) Name() string {
 	return "ec.balance"
 }
 
+// TODO: Update help string and move to command_ec_common.go once shard replica placement logic is enabled.
 func (c *commandEcBalance) Help() string {
 	return `balance all ec shards among all racks and volume servers
 
