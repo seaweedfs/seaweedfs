@@ -44,6 +44,37 @@ var (
 	getDefaultReplicaPlacement = _getDefaultReplicaPlacement
 )
 
+func _getDefaultReplicaPlacement(commandEnv *CommandEnv) (*super_block.ReplicaPlacement, error) {
+	var resp *master_pb.GetMasterConfigurationResponse
+	var err error
+
+	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		resp, err = client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return super_block.NewReplicaPlacementFromString(resp.DefaultReplication)
+}
+func parseReplicaPlacementArg(commandEnv *CommandEnv, replicaStr string) (*super_block.ReplicaPlacement, error) {
+	if replicaStr != "" {
+		rp, err := super_block.NewReplicaPlacementFromString(replicaStr)
+		if err == nil {
+			fmt.Printf("using replica placement %q for EC volumes\n", rp.String())
+		}
+		return rp, err
+	}
+
+	// No replica placement argument provided, resolve from master default settings.
+	rp, err := getDefaultReplicaPlacement(commandEnv)
+	if err == nil {
+		fmt.Printf("using master default replica placement %q for EC volumes\n", rp.String())
+	}
+	return rp, err
+}
+
 func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) (err error) {
 
 	if !commandEnv.isLocked() {
@@ -845,8 +876,8 @@ func collectVolumeIdToEcNodes(allEcNodes []*EcNode, collection string) map[needl
 	return vidLocations
 }
 
-// TODO: EC volumes have no replica placement info :( We need a better solution to resolve topology, and balancing, for those.
-func volumeIdToReplicaPlacement(commandEnv *CommandEnv, vid needle.VolumeId, nodes []*EcNode) (*super_block.ReplicaPlacement, error) {
+// TODO: EC volumes have no topology replica placement info :( We need a better solution to resolve topology, and balancing, for those.
+func volumeIdToReplicaPlacement(commandEnv *CommandEnv, vid needle.VolumeId, nodes []*EcNode, ecReplicaPlacement *super_block.ReplicaPlacement) (*super_block.ReplicaPlacement, error) {
 	for _, ecNode := range nodes {
 		for _, diskInfo := range ecNode.info.DiskInfos {
 			for _, volumeInfo := range diskInfo.VolumeInfos {
@@ -856,11 +887,7 @@ func volumeIdToReplicaPlacement(commandEnv *CommandEnv, vid needle.VolumeId, nod
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
 				if needle.VolumeId(ecShardInfo.Id) == vid {
-					defaultReplicaPlacement, err := getDefaultReplicaPlacement(commandEnv)
-					if err != nil {
-						return nil, err
-					}
-					return defaultReplicaPlacement, nil
+					return ecReplicaPlacement, nil
 				}
 			}
 		}
@@ -869,22 +896,7 @@ func volumeIdToReplicaPlacement(commandEnv *CommandEnv, vid needle.VolumeId, nod
 	return nil, fmt.Errorf("failed to resolve replica placement for volume ID %d", vid)
 }
 
-func _getDefaultReplicaPlacement(commandEnv *CommandEnv) (*super_block.ReplicaPlacement, error) {
-	var resp *master_pb.GetMasterConfigurationResponse
-	var err error
-
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		resp, err = client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return super_block.NewReplicaPlacementFromString(resp.DefaultReplication)
-}
-
-func EcBalance(commandEnv *CommandEnv, collections []string, dc string, applyBalancing bool) (err error) {
+func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, applyBalancing bool) (err error) {
 	if len(collections) == 0 {
 		return fmt.Errorf("no collections to balance")
 	}

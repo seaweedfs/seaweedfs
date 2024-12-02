@@ -32,6 +32,40 @@ func errorCheck(got error, want string) error {
 	}
 	return nil
 }
+func TestParseReplicaPlacementArg(t *testing.T) {
+	getDefaultReplicaPlacementOrig := getDefaultReplicaPlacement
+	getDefaultReplicaPlacement = func(commandEnv *CommandEnv) (*super_block.ReplicaPlacement, error) {
+		return super_block.NewReplicaPlacementFromString("123")
+	}
+	defer func() {
+		getDefaultReplicaPlacement = getDefaultReplicaPlacementOrig
+	}()
+
+	testCases := []struct {
+		argument string
+		want     string
+		wantErr  string
+	}{
+		{"lalala", "lal", "unexpected replication type"},
+		{"", "123", ""},
+		{"021", "021", ""},
+	}
+
+	for _, tc := range testCases {
+		commandEnv := &CommandEnv{}
+		got, gotErr := parseReplicaPlacementArg(commandEnv, tc.argument)
+
+		if err := errorCheck(gotErr, tc.wantErr); err != nil {
+			t.Errorf("argument %q: %s", tc.argument, err.Error())
+			continue
+		}
+
+		want, _ := super_block.NewReplicaPlacementFromString(tc.want)
+		if !got.Equals(want) {
+			t.Errorf("got replica placement %q, want %q", got.String(), want.String())
+		}
+	}
+}
 
 func TestEcDistribution(t *testing.T) {
 
@@ -55,13 +89,7 @@ func TestEcDistribution(t *testing.T) {
 }
 
 func TestVolumeIdToReplicaPlacement(t *testing.T) {
-	getDefaultReplicaPlacementOrig := getDefaultReplicaPlacement
-	getDefaultReplicaPlacement = func(commandEnv *CommandEnv) (*super_block.ReplicaPlacement, error) {
-		return super_block.NewReplicaPlacementFromString("123")
-	}
-	defer func() {
-		getDefaultReplicaPlacement = getDefaultReplicaPlacementOrig
-	}()
+	ecReplicaPlacement, _ := super_block.NewReplicaPlacementFromString("123")
 
 	testCases := []struct {
 		topology *master_pb.TopologyInfo
@@ -89,7 +117,7 @@ func TestVolumeIdToReplicaPlacement(t *testing.T) {
 		commandEnv := &CommandEnv{}
 		vid, _ := needle.NewVolumeId(tc.vid)
 		ecNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
-		got, gotErr := volumeIdToReplicaPlacement(commandEnv, vid, ecNodes)
+		got, gotErr := volumeIdToReplicaPlacement(commandEnv, vid, ecNodes, ecReplicaPlacement)
 
 		if err := errorCheck(gotErr, tc.wantErr); err != nil {
 			t.Errorf("volume %q: %s", tc.vid, err.Error())
