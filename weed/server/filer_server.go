@@ -152,8 +152,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		}
 	})
 	fs.filer.Cipher = option.Cipher
-	// we do not support IP whitelist right now
-	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	whiteList := util.StringSplit(v.GetString("guard.white_list"), ",")
+	fs.filerGuard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
 
 	fs.checkWithMaster()
@@ -187,12 +187,12 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
 		defaultMux.HandleFunc("/healthz", fs.filerHealthzHandler)
-		defaultMux.HandleFunc("/", fs.filerHandler)
+		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(fs.filerHandler))
 	}
 	if defaultMux != readonlyMux {
 		handleStaticResources(readonlyMux)
 		readonlyMux.HandleFunc("/healthz", fs.filerHealthzHandler)
-		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
+		readonlyMux.HandleFunc("/", fs.filerGuard.WhiteList(fs.readonlyFilerHandler))
 	}
 
 	existingNodes := fs.filer.ListExistingPeerUpdates(context.Background())
@@ -209,6 +209,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.filer.LoadRemoteStorageConfAndMapping()
 
+	grace.OnReload(fs.Reload)
 	grace.OnInterrupt(func() {
 		fs.filer.Shutdown()
 	})
@@ -239,5 +240,12 @@ func (fs *FilerServer) checkWithMaster() {
 			}
 		}
 	}
+}
 
+func (fs *FilerServer) Reload() {
+	glog.V(0).Infoln("Reload filer server...")
+
+	util.LoadConfiguration("security", false)
+	v := util.GetViper()
+	fs.filerGuard.UpdateWhiteList(util.StringSplit(v.GetString("guard.white_list"), ","))
 }

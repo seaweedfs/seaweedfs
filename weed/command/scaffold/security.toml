@@ -121,3 +121,7 @@ cert = ""
 key = ""
 ca = ""
 # disable_tls_verify_client_cert = true|false (default: false)
+
+# white list. It's checking request ip address.
+[guard]
+white_list = ""
