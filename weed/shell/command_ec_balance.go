@@ -69,7 +69,7 @@ func (c *commandEcBalance) Help() string {
 		volumeServersOverAverage = volume servers with volumeId's ec shard counts > averageShardsPerEcRack
 		ecShardsToMove = select overflown ec shards from volumeServersOverAverage
 		for each ecShardsToMove {
-			destVolumeServer = pickOneVolumeServer(volumeServer~shardCount, volumeServer~volumeIdShardCount, averageShardCount)
+			destVolumeServer = pickOneVolumeServer(volumeServer~shardCount, volumeServer~volumeIdShardCount, averageShardCount, ecShardReplicaPlacement)
 			pickOneEcNodeAndMoveOneShard(destVolumeServers)
 		}
 	}
