@@ -139,35 +139,40 @@ func TestVolumeIdToReplicaPlacement(t *testing.T) {
 
 func TestPickRackToBalanceShardsInto(t *testing.T) {
 	testCases := []struct {
-		topology  *master_pb.TopologyInfo
-		vid       string
-		wantOneOf []string
+		topology         *master_pb.TopologyInfo
+		vid              string
+		replicaPlacement string
+		wantOneOf        []string
+		wantErr          string
 	}{
 		// Non-EC volumes. We don't care about these, but the function should return all racks as a safeguard.
-		{topologyEc, "", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}},
-		{topologyEc, "6225", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}},
-		{topologyEc, "6226", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}},
-		{topologyEc, "6241", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}},
-		{topologyEc, "6242", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}},
+		{topologyEc, "", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
+		{topologyEc, "6225", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
+		{topologyEc, "6226", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
+		{topologyEc, "6241", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
+		{topologyEc, "6242", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
 		// EC volumes.
-		{topologyEc, "9577", []string{"rack1", "rack2", "rack3"}},
-		{topologyEc, "10457", []string{"rack1"}},
-		{topologyEc, "12737", []string{"rack2"}},
-		{topologyEc, "14322", []string{"rack3"}},
+		{topologyEc, "9577", "", nil, "shards 1 >= replica placement limit for other racks (0)"},
+		{topologyEc, "9577", "111", nil, "shards 1 >= replica placement limit for other racks (1)"},
+		{topologyEc, "9577", "222", []string{"rack1", "rack2", "rack3"}, ""},
+		{topologyEc, "10457", "222", []string{"rack1"}, ""},
+		{topologyEc, "12737", "222", []string{"rack2"}, ""},
+		{topologyEc, "14322", "222", []string{"rack3"}, ""},
 	}
 
 	for _, tc := range testCases {
 		vid, _ := needle.NewVolumeId(tc.vid)
 		ecNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
 		racks := collectRacks(ecNodes)
+		rp, _ := super_block.NewReplicaPlacementFromString(tc.replicaPlacement)
 
 		locations := ecNodes
 		rackToShardCount := countShardsByRack(vid, locations)
 		averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
 
-		got, gotErr := pickRackToBalanceShardsInto(racks, rackToShardCount, nil, averageShardsPerEcRack)
-		if gotErr != nil {
-			t.Errorf("volume %q: %s", tc.vid, gotErr.Error())
+		got, gotErr := pickRackToBalanceShardsInto(racks, rackToShardCount, rp, averageShardsPerEcRack)
+		if err := errorCheck(gotErr, tc.wantErr); err != nil {
+			t.Errorf("volume %q: %s", tc.vid, err.Error())
 			continue
 		}
 

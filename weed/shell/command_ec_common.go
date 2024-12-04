@@ -39,6 +39,8 @@ type EcRack struct {
 	freeEcSlot int
 }
 
+// TODO: We're shuffling way too many parameters between internal functions. Encapsulate in a ecBalancer{} struct.
+
 var (
 	// Overridable functions for testing.
 	getDefaultReplicaPlacement = _getDefaultReplicaPlacement
@@ -434,7 +436,7 @@ func collectRacks(allEcNodes []*EcNode) map[RackId]*EcRack {
 	return racks
 }
 
-func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
+func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*EcNode, racks map[RackId]*EcRack, rp *super_block.ReplicaPlacement, applyBalancing bool) error {
 
 	fmt.Printf("balanceEcVolumes %s\n", collection)
 
@@ -442,7 +444,7 @@ func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*E
 		return fmt.Errorf("delete duplicated collection %s ec shards: %v", collection, err)
 	}
 
-	if err := balanceEcShardsAcrossRacks(commandEnv, allEcNodes, racks, collection, applyBalancing); err != nil {
+	if err := balanceEcShardsAcrossRacks(commandEnv, allEcNodes, racks, collection, rp, applyBalancing); err != nil {
 		return fmt.Errorf("balance across racks collection %s ec shards: %v", collection, err)
 	}
 
@@ -499,12 +501,12 @@ func doDeduplicateEcShards(commandEnv *CommandEnv, collection string, vid needle
 	return nil
 }
 
-func balanceEcShardsAcrossRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
+func balanceEcShardsAcrossRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, rp *super_block.ReplicaPlacement, applyBalancing bool) error {
 	// collect vid => []ecNode, since previous steps can change the locations
 	vidLocations := collectVolumeIdToEcNodes(allEcNodes, collection)
 	// spread the ec shards evenly
 	for vid, locations := range vidLocations {
-		if err := doBalanceEcShardsAcrossRacks(commandEnv, collection, vid, locations, racks, applyBalancing); err != nil {
+		if err := doBalanceEcShardsAcrossRacks(commandEnv, collection, vid, locations, racks, rp, applyBalancing); err != nil {
 			return err
 		}
 	}
@@ -519,7 +521,7 @@ func countShardsByRack(vid needle.VolumeId, locations []*EcNode) map[string]int 
 }
 
 // TODO: Maybe remove averages constraints? We don't need those anymore now that we're properly balancing shards.
-func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
+func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, racks map[RackId]*EcRack, rp *super_block.ReplicaPlacement, applyBalancing bool) error {
 	// calculate average number of shards an ec rack should have for one volume
 	averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
 
@@ -543,7 +545,7 @@ func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid
 
 	for shardId, ecNode := range ecShardsToMove {
 		// TODO: consider volume replica info when balancing racks
-		rackId, err := pickRackToBalanceShardsInto(racks, rackToShardCount, nil, averageShardsPerEcRack)
+		rackId, err := pickRackToBalanceShardsInto(racks, rackToShardCount, rp, averageShardsPerEcRack)
 		if err != nil {
 			fmt.Printf("ec shard %d.%d at %s can not find a destination rack:\n%s\n", vid, shardId, ecNode.info.Id, err.Error())
 			continue
@@ -912,7 +914,7 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 
 	racks := collectRacks(allEcNodes)
 	for _, c := range collections {
-		if err = balanceEcVolumes(commandEnv, c, allEcNodes, racks, applyBalancing); err != nil {
+		if err = balanceEcVolumes(commandEnv, c, allEcNodes, racks, ecReplicaPlacement, applyBalancing); err != nil {
 			return err
 		}
 	}
