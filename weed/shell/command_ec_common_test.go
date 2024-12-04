@@ -228,6 +228,20 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 			topologyEc, "172.19.0.10:8702", "14322", "210",
 			nil, "Skipped 172.19.0.5:8705 because shards 0 >= replica placement limit for the rack (0)",
 		}, {
+			topologyEc, "172.19.0.10:8702", "9577", "110",
+			nil, "Skipped 172.19.0.4:8707 because shards 1 >= replica placement limit for the rack (0)",
+		}, {
+			topologyEc, "172.19.0.10:8702", "9577", "111",
+			nil, "Skipped 172.19.0.4:8707 because shards 1 >= replica placement limit for the rack (1)",
+		}, {
+			topologyEc, "172.19.0.10:8702", "9577", "113",
+			[]string{
+				"172.19.0.13:8701", "172.19.0.14:8711", "172.19.0.16:8704", "172.19.0.17:8703",
+				"172.19.0.19:8700", "172.19.0.20:8706", "172.19.0.21:8710", "172.19.0.3:8708",
+				"172.19.0.4:8707", "172.19.0.5:8705", "172.19.0.6:8713", "172.19.0.8:8709",
+				"172.19.0.9:8712"},
+			"",
+		}, {
 			topologyEc, "172.19.0.10:8702", "14322", "222",
 			[]string{"172.19.0.14:8711", "172.19.0.5:8705", "172.19.0.6:8713"}, "",
 		}, {
