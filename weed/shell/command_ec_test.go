@@ -28,7 +28,7 @@ func TestCommandEcBalanceSmall(t *testing.T) {
 	}
 
 	racks := collectRacks(allEcNodes)
-	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
+	balanceEcVolumes(nil, "c1", allEcNodes, racks, nil, false)
 }
 
 func TestCommandEcBalanceNothingToMove(t *testing.T) {
@@ -43,7 +43,7 @@ func TestCommandEcBalanceNothingToMove(t *testing.T) {
 	}
 
 	racks := collectRacks(allEcNodes)
-	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
+	balanceEcVolumes(nil, "c1", allEcNodes, racks, nil, false)
 }
 
 func TestCommandEcBalanceAddNewServers(t *testing.T) {
@@ -60,7 +60,7 @@ func TestCommandEcBalanceAddNewServers(t *testing.T) {
 	}
 
 	racks := collectRacks(allEcNodes)
-	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
+	balanceEcVolumes(nil, "c1", allEcNodes, racks, nil, false)
 }
 
 func TestCommandEcBalanceAddNewRacks(t *testing.T) {
@@ -77,7 +77,7 @@ func TestCommandEcBalanceAddNewRacks(t *testing.T) {
 	}
 
 	racks := collectRacks(allEcNodes)
-	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
+	balanceEcVolumes(nil, "c1", allEcNodes, racks, nil, false)
 }
 
 func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
@@ -119,7 +119,7 @@ func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
 	}
 
 	racks := collectRacks(allEcNodes)
-	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
+	balanceEcVolumes(nil, "c1", allEcNodes, racks, nil, false)
 	balanceEcRacks(nil, racks, false)
 }
 
