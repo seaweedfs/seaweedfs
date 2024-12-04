@@ -448,7 +448,7 @@ func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*E
 		return fmt.Errorf("balance across racks collection %s ec shards: %v", collection, err)
 	}
 
-	if err := balanceEcShardsWithinRacks(commandEnv, allEcNodes, racks, collection, applyBalancing); err != nil {
+	if err := balanceEcShardsWithinRacks(commandEnv, allEcNodes, racks, collection, rp, applyBalancing); err != nil {
 		return fmt.Errorf("balance within racks collection %s ec shards: %v", collection, err)
 	}
 
@@ -544,7 +544,6 @@ func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid
 	}
 
 	for shardId, ecNode := range ecShardsToMove {
-		// TODO: consider volume replica info when balancing racks
 		rackId, err := pickRackToBalanceShardsInto(racks, rackToShardCount, rp, averageShardsPerEcRack)
 		if err != nil {
 			fmt.Printf("ec shard %d.%d at %s can not find a destination rack:\n%s\n", vid, shardId, ecNode.info.Id, err.Error())
@@ -555,7 +554,7 @@ func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid
 		for _, n := range racks[rackId].ecNodes {
 			possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
 		}
-		err = pickOneEcNodeAndMoveOneShard(commandEnv, averageShardsPerEcRack, ecNode, collection, vid, shardId, possibleDestinationEcNodes, applyBalancing)
+		err = pickOneEcNodeAndMoveOneShard(commandEnv, averageShardsPerEcRack, ecNode, collection, vid, shardId, possibleDestinationEcNodes, rp, applyBalancing)
 		if err != nil {
 			return err
 		}
@@ -609,7 +608,7 @@ func pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcRack, rackToShardCo
 	return targets[rand.IntN(len(targets))], nil
 }
 
-func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
+func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, rp *super_block.ReplicaPlacement, applyBalancing bool) error {
 	// collect vid => []ecNode, since previous steps can change the locations
 	vidLocations := collectVolumeIdToEcNodes(allEcNodes, collection)
 
@@ -632,7 +631,7 @@ func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, ra
 			}
 			sourceEcNodes := rackEcNodesWithVid[rackId]
 			averageShardsPerEcNode := ceilDivide(rackToShardCount[rackId], len(possibleDestinationEcNodes))
-			if err := doBalanceEcShardsWithinOneRack(commandEnv, averageShardsPerEcNode, collection, vid, sourceEcNodes, possibleDestinationEcNodes, applyBalancing); err != nil {
+			if err := doBalanceEcShardsWithinOneRack(commandEnv, averageShardsPerEcNode, collection, vid, sourceEcNodes, possibleDestinationEcNodes, rp, applyBalancing); err != nil {
 				return err
 			}
 		}
@@ -640,7 +639,7 @@ func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, ra
 	return nil
 }
 
-func doBalanceEcShardsWithinOneRack(commandEnv *CommandEnv, averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
+func doBalanceEcShardsWithinOneRack(commandEnv *CommandEnv, averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode, rp *super_block.ReplicaPlacement, applyBalancing bool) error {
 
 	for _, ecNode := range existingLocations {
 
@@ -655,7 +654,7 @@ func doBalanceEcShardsWithinOneRack(commandEnv *CommandEnv, averageShardsPerEcNo
 
 			fmt.Printf("%s has %d overlimit, moving ec shard %d.%d\n", ecNode.info.Id, overLimitCount, vid, shardId)
 
-			err := pickOneEcNodeAndMoveOneShard(commandEnv, averageShardsPerEcNode, ecNode, collection, vid, shardId, possibleDestinationEcNodes, applyBalancing)
+			err := pickOneEcNodeAndMoveOneShard(commandEnv, averageShardsPerEcNode, ecNode, collection, vid, shardId, possibleDestinationEcNodes, rp, applyBalancing)
 			if err != nil {
 				return err
 			}
@@ -809,9 +808,8 @@ func pickEcNodeToBalanceShardsInto(vid needle.VolumeId, existingLocation *EcNode
 }
 
 // TODO: Maybe remove averages constraints? We don't need those anymore now that we're properly balancing shards.
-func pickOneEcNodeAndMoveOneShard(commandEnv *CommandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
-	// TODO: consider volume replica info when balancing nodes
-	destNode, err := pickEcNodeToBalanceShardsInto(vid, existingLocation, possibleDestinationEcNodes, nil, averageShardsPerEcNode)
+func pickOneEcNodeAndMoveOneShard(commandEnv *CommandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, rp *super_block.ReplicaPlacement, applyBalancing bool) error {
+	destNode, err := pickEcNodeToBalanceShardsInto(vid, existingLocation, possibleDestinationEcNodes, rp, averageShardsPerEcNode)
 	if err != nil {
 		fmt.Printf("WARNING: Could not find suitable taget node for %d.%d:\n%s", vid, shardId, err.Error())
 		return nil
