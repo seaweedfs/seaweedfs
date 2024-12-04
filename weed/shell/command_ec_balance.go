@@ -50,7 +50,7 @@ func (c *commandEcBalance) Help() string {
 		averageShardsPerEcRack = totalShardNumber / numRacks  // totalShardNumber is 14 for now, later could varies for each dc
 		ecShardsToMove = select overflown ec shards from racks with ec shard counts > averageShardsPerEcRack
 		for each ecShardsToMove {
-			destRack = pickOneRack(rack~shardCount, rack~volumeIdShardCount, averageShardsPerEcRack)
+			destRack = pickOneRack(rack~shardCount, rack~volumeIdShardCount, averageShardsPerEcRack, ecShardReplicaPlacement)
 			destVolumeServers = volume servers on the destRack
 			pickOneEcNodeAndMoveOneShard(destVolumeServers)
 		}
@@ -101,7 +101,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := balanceCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
-	shardReplicaPlacement := balanceCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty (currently unused)")
+	shardReplicaPlacement := balanceCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty (unused)")
 	applyBalancing := balanceCommand.Bool("force", false, "apply the balancing plan")
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
