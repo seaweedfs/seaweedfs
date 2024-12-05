@@ -114,10 +114,15 @@ func TestVolumeIdToReplicaPlacement(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		commandEnv := &CommandEnv{}
 		vid, _ := needle.NewVolumeId(tc.vid)
 		ecNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
-		got, gotErr := volumeIdToReplicaPlacement(commandEnv, vid, ecNodes, ecReplicaPlacement)
+
+		ecb := ecBalancer{
+			ecNodes:          ecNodes,
+			replicaPlacement: ecReplicaPlacement,
+		}
+
+		got, gotErr := ecb.volumeIdToReplicaPlacement(vid)
 
 		if err := errorCheck(gotErr, tc.wantErr); err != nil {
 			t.Errorf("volume %q: %s", tc.vid, err.Error())
@@ -163,14 +168,18 @@ func TestPickRackToBalanceShardsInto(t *testing.T) {
 	for _, tc := range testCases {
 		vid, _ := needle.NewVolumeId(tc.vid)
 		ecNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
-		racks := collectRacks(ecNodes)
 		rp, _ := super_block.NewReplicaPlacementFromString(tc.replicaPlacement)
 
-		locations := ecNodes
-		rackToShardCount := countShardsByRack(vid, locations)
+		ecb := &ecBalancer{
+			ecNodes:          ecNodes,
+			replicaPlacement: rp,
+		}
+
+		racks := ecb.racks()
+		rackToShardCount := countShardsByRack(vid, ecNodes)
 		averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
 
-		got, gotErr := pickRackToBalanceShardsInto(racks, rackToShardCount, rp, averageShardsPerEcRack)
+		got, gotErr := ecb.pickRackToBalanceShardsInto(racks, rackToShardCount, averageShardsPerEcRack)
 		if err := errorCheck(gotErr, tc.wantErr); err != nil {
 			t.Errorf("volume %q: %s", tc.vid, err.Error())
 			continue
@@ -193,27 +202,25 @@ func TestPickRackToBalanceShardsInto(t *testing.T) {
 }
 func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 	testCases := []struct {
-		topology         *master_pb.TopologyInfo
-		nodeId           string
-		vid              string
-		replicaPlacement string
-		wantOneOf        []string
-		wantErr          string
+		topology  *master_pb.TopologyInfo
+		nodeId    string
+		vid       string
+		wantOneOf []string
+		wantErr   string
 	}{
-		{topologyEc, "", "", "", nil, "INTERNAL: missing source nodes"},
-		{topologyEc, "idontexist", "12737", "", nil, "INTERNAL: missing source nodes"},
+		{topologyEc, "", "", nil, "INTERNAL: missing source nodes"},
+		{topologyEc, "idontexist", "12737", nil, "INTERNAL: missing source nodes"},
 		// Non-EC nodes. We don't care about these, but the function should return all available target nodes as a safeguard.
 		{
-			topologyEc, "172.19.0.10:8702", "6225", "123",
-			[]string{
+			topologyEc, "172.19.0.10:8702", "6225", []string{
 				"172.19.0.13:8701", "172.19.0.14:8711", "172.19.0.16:8704", "172.19.0.17:8703",
 				"172.19.0.19:8700", "172.19.0.20:8706", "172.19.0.21:8710", "172.19.0.3:8708",
 				"172.19.0.4:8707", "172.19.0.5:8705", "172.19.0.6:8713", "172.19.0.8:8709",
 				"172.19.0.9:8712"},
 			"",
-		}, {
-			topologyEc, "172.19.0.8:8709", "6226", "123",
-			[]string{
+		},
+		{
+			topologyEc, "172.19.0.8:8709", "6226", []string{
 				"172.19.0.10:8702", "172.19.0.13:8701", "172.19.0.14:8711", "172.19.0.16:8704",
 				"172.19.0.17:8703", "172.19.0.19:8700", "172.19.0.20:8706", "172.19.0.21:8710",
 				"172.19.0.3:8708", "172.19.0.4:8707", "172.19.0.5:8705", "172.19.0.6:8713",
@@ -221,45 +228,27 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 			"",
 		},
 		// EC volumes.
-		{
-			topologyEc, "172.19.0.10:8702", "14322", "",
-			nil, "Skipped 172.19.0.13:8701 because shards 1 >= replica placement limit for the rack (0)",
-		}, {
-			topologyEc, "172.19.0.10:8702", "14322", "210",
-			nil, "Skipped 172.19.0.5:8705 because shards 0 >= replica placement limit for the rack (0)",
-		}, {
-			topologyEc, "172.19.0.10:8702", "9577", "110",
-			nil, "Skipped 172.19.0.4:8707 because shards 1 >= replica placement limit for the rack (0)",
-		}, {
-			topologyEc, "172.19.0.10:8702", "9577", "111",
-			nil, "Skipped 172.19.0.4:8707 because shards 1 >= replica placement limit for the rack (1)",
-		}, {
-			topologyEc, "172.19.0.10:8702", "9577", "113",
-			[]string{
-				"172.19.0.13:8701", "172.19.0.14:8711", "172.19.0.16:8704", "172.19.0.17:8703",
-				"172.19.0.19:8700", "172.19.0.20:8706", "172.19.0.21:8710", "172.19.0.3:8708",
-				"172.19.0.4:8707", "172.19.0.5:8705", "172.19.0.6:8713", "172.19.0.8:8709",
-				"172.19.0.9:8712"},
-			"",
-		}, {
-			topologyEc, "172.19.0.10:8702", "14322", "222",
-			[]string{"172.19.0.14:8711", "172.19.0.5:8705", "172.19.0.6:8713"}, "",
-		}, {
-			topologyEc, "172.19.0.13:8701", "10457", "222",
-			[]string{"172.19.0.10:8702", "172.19.0.6:8713"}, "",
-		}, {
-			topologyEc, "172.19.0.17:8703", "12737", "222",
-			[]string{"172.19.0.13:8701"}, "",
-		}, {
-			topologyEc, "172.19.0.20:8706", "14322", "222",
-			[]string{"172.19.0.14:8711", "172.19.0.5:8705", "172.19.0.6:8713"}, "",
-		},
+		{topologyEc, "172.19.0.10:8702", "14322", []string{
+			"172.19.0.14:8711", "172.19.0.5:8705", "172.19.0.6:8713"},
+			""},
+		{topologyEc, "172.19.0.13:8701", "10457", []string{
+			"172.19.0.10:8702", "172.19.0.6:8713"},
+			""},
+		{topologyEc, "172.19.0.17:8703", "12737", []string{
+			"172.19.0.13:8701"},
+			""},
+		{topologyEc, "172.19.0.20:8706", "14322", []string{
+			"172.19.0.14:8711", "172.19.0.5:8705", "172.19.0.6:8713"},
+			""},
 	}
 
 	for _, tc := range testCases {
 		vid, _ := needle.NewVolumeId(tc.vid)
 		allEcNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
-		rp, _ := super_block.NewReplicaPlacementFromString(tc.replicaPlacement)
+
+		ecb := &ecBalancer{
+			ecNodes: allEcNodes,
+		}
 
 		// Resolve target node by name
 		var ecNode *EcNode
@@ -271,7 +260,7 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 		}
 
 		averageShardsPerEcNode := 5
-		got, gotErr := pickEcNodeToBalanceShardsInto(vid, ecNode, allEcNodes, rp, averageShardsPerEcNode)
+		got, gotErr := ecb.pickEcNodeToBalanceShardsInto(vid, ecNode, allEcNodes, averageShardsPerEcNode)
 		if err := errorCheck(gotErr, tc.wantErr); err != nil {
 			t.Errorf("node %q, volume %q: %s", tc.nodeId, tc.vid, err.Error())
 			continue
