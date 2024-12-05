@@ -209,7 +209,7 @@ spec:
               -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
-              {{- if .Values.filer.s3.allowEmptyFolder }}
+              {{- if eq (typeOf .Values.filer.s3.allowEmptyFolder) "bool" }}
               -s3.allowEmptyFolder={{ .Values.filer.s3.allowEmptyFolder }} \
               {{- end }}
               {{- if .Values.filer.s3.enableAuth }}
