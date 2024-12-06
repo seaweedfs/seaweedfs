@@ -88,60 +88,6 @@ func TestEcDistribution(t *testing.T) {
 	}
 }
 
-func TestVolumeIdToReplicaPlacement(t *testing.T) {
-	ecReplicaPlacement, _ := super_block.NewReplicaPlacementFromString("123")
-
-	testCases := []struct {
-		topology *master_pb.TopologyInfo
-		vid      string
-		want     string
-		wantErr  string
-	}{
-		{topology1, "", "", "failed to resolve replica placement"},
-		{topology1, "0", "", "failed to resolve replica placement"},
-		{topology1, "1", "100", ""},
-		{topology1, "296", "100", ""},
-		{topology2, "", "", "failed to resolve replica placement"},
-		{topology2, "19012", "", "failed to resolve replica placement"},
-		{topology2, "6271", "002", ""},
-		{topology2, "17932", "002", ""},
-		{topologyEc, "", "", "failed to resolve replica placement"},
-		{topologyEc, "0", "", "failed to resolve replica placement"},
-		{topologyEc, "6225", "002", ""},
-		{topologyEc, "6241", "002", ""},
-		{topologyEc, "9577", "123", ""},  // EC volume
-		{topologyEc, "12737", "123", ""}, // EC volume
-	}
-
-	for _, tc := range testCases {
-		vid, _ := needle.NewVolumeId(tc.vid)
-		ecNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
-
-		ecb := ecBalancer{
-			ecNodes:          ecNodes,
-			replicaPlacement: ecReplicaPlacement,
-		}
-
-		got, gotErr := ecb.volumeIdToReplicaPlacement(vid)
-
-		if err := errorCheck(gotErr, tc.wantErr); err != nil {
-			t.Errorf("volume %q: %s", tc.vid, err.Error())
-			continue
-		}
-
-		if got == nil {
-			if tc.want != "" {
-				t.Errorf("expected replica placement %q for volume %q, got nil", tc.want, tc.vid)
-			}
-			continue
-		}
-		want, _ := super_block.NewReplicaPlacementFromString(tc.want)
-		if !got.Equals(want) {
-			t.Errorf("got replica placement %q for volune %q, want %q", got.String(), tc.vid, want.String())
-		}
-	}
-}
-
 func TestPickRackToBalanceShardsInto(t *testing.T) {
 	testCases := []struct {
 		topology         *master_pb.TopologyInfo
@@ -177,9 +123,8 @@ func TestPickRackToBalanceShardsInto(t *testing.T) {
 
 		racks := ecb.racks()
 		rackToShardCount := countShardsByRack(vid, ecNodes)
-		averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
 
-		got, gotErr := ecb.pickRackToBalanceShardsInto(racks, rackToShardCount, averageShardsPerEcRack)
+		got, gotErr := ecb.pickRackToBalanceShardsInto(racks, rackToShardCount)
 		if err := errorCheck(gotErr, tc.wantErr); err != nil {
 			t.Errorf("volume %q: %s", tc.vid, err.Error())
 			continue
@@ -259,8 +204,7 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 			}
 		}
 
-		averageShardsPerEcNode := 5
-		got, gotErr := ecb.pickEcNodeToBalanceShardsInto(vid, ecNode, allEcNodes, averageShardsPerEcNode)
+		got, gotErr := ecb.pickEcNodeToBalanceShardsInto(vid, ecNode, allEcNodes)
 		if err := errorCheck(gotErr, tc.wantErr); err != nil {
 			t.Errorf("node %q, volume %q: %s", tc.nodeId, tc.vid, err.Error())
 			continue
