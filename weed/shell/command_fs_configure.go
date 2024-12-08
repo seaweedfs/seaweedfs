@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 func init() {
@@ -60,7 +61,8 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
-	worm := fsConfigureCommand.Bool("worm", false, "write-once-read-many, written files are readonly")
+	_ = fsConfigureCommand.Bool("worm", false, "[deprecated] write-once-read-many, written files are readonly")
+	wormMode := fsConfigureCommand.String("wormMode", "", "[enable|disable] write-once-read-many, If enable, written files are readonly")
 	maxFileNameLength := fsConfigureCommand.Uint("maxFileNameLength", 0, "file name length limits in bytes for compatibility with Unix-based systems")
 	dataCenter := fsConfigureCommand.String("dataCenter", "", "assign writes to this dataCenter")
 	rack := fsConfigureCommand.String("rack", "", "assign writes to this rack")
@@ -75,6 +77,13 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	fc, err := filer.ReadFilerConf(commandEnv.option.FilerAddress, commandEnv.option.GrpcDialOption, commandEnv.MasterClient)
 	if err != nil {
 		return err
+	}
+
+	var worm *wrapperspb.BoolValue
+	if *wormMode == "enable" {
+		worm = wrapperspb.Bool(true)
+	} else if *wormMode == "disable" {
+		worm = wrapperspb.Bool(false)
 	}
 
 	if *locationPrefix != "" {
@@ -92,7 +101,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			DataCenter:        *dataCenter,
 			Rack:              *rack,
 			DataNode:          *dataNode,
-			Worm:              *worm,
+			Worm:              worm,
 		}
 
 		// check collection
