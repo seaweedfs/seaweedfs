@@ -32,6 +32,7 @@ func errorCheck(got error, want string) error {
 	}
 	return nil
 }
+
 func TestParseReplicaPlacementArg(t *testing.T) {
 	getDefaultReplicaPlacementOrig := getDefaultReplicaPlacement
 	getDefaultReplicaPlacement = func(commandEnv *CommandEnv) (*super_block.ReplicaPlacement, error) {
