@@ -8,6 +8,7 @@ type DiskType string
 
 const (
 	HardDriveType DiskType = ""
+	HddType                = "hdd"
 	SsdType                = "ssd"
 )
 
@@ -15,7 +16,7 @@ func ToDiskType(vt string) (diskType DiskType) {
 	vt = strings.ToLower(vt)
 	diskType = HardDriveType
 	switch vt {
-	case "", "hdd":
+	case "", HddType:
 		diskType = HardDriveType
 	case "ssd":
 		diskType = SsdType
@@ -34,7 +35,7 @@ func (diskType DiskType) String() string {
 
 func (diskType DiskType) ReadableString() string {
 	if diskType == "" {
-		return "hdd"
+		return HddType
 	}
 	return string(diskType)
 }
