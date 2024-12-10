@@ -42,7 +42,7 @@ func (c *commandEcEncode) Help() string {
 	This command will:
 	1. freeze one volume
 	2. apply erasure coding to the volume
-	3. move the encoded shards to multiple volume servers
+	3. (optionally) re-balance encoded shards across multiple volume servers
 
 	The erasure coding is 10.4. So ideally you have more than 14 volume servers, and you can afford
 	to lose 4 volume servers.
@@ -53,7 +53,8 @@ func (c *commandEcEncode) Help() string {
 	If you only have less than 4 volume servers, with erasure coding, at least you can afford to
 	have 4 corrupted shard files.
 
-`
+	Re-balancing algorithm:
+	` + ecBalanceAlgorithmDescription
 }
 
 func (c *commandEcEncode) HasTag(CommandTag) bool {
@@ -67,14 +68,21 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	collection := encodeCommand.String("collection", "", "the collection name")
 	fullPercentage := encodeCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
-	parallelCopy := encodeCommand.Bool("parallelCopy", true, "copy shards in parallel")
+	// TODO: Add concurrency support to EcBalance and reenable this switch?
+	//parallelCopy := encodeCommand.Bool("parallelCopy", true, "copy shards in parallel")
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
+	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
+	applyBalancing := encodeCommand.Bool("rebalance", false, "re-balance EC shards after creation")
+
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
 	}
-
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
+	}
+	rp, err := parseReplicaPlacementArg(commandEnv, *shardReplicaPlacement)
+	if err != nil {
+		return err
 	}
 
 	// collect topology information
@@ -94,29 +102,44 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		}
 	}
 
-	vid := needle.VolumeId(*volumeId)
-
-	// volumeId is provided
-	if vid != 0 {
-		return doEcEncode(commandEnv, *collection, vid, *parallelCopy)
-	}
-
-	// apply to all volumes in the collection
-	volumeIds, err := collectVolumeIdsForEcEncode(commandEnv, *collection, *fullPercentage, *quietPeriod)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("ec encode volumes: %v\n", volumeIds)
-	for _, vid := range volumeIds {
-		if err = doEcEncode(commandEnv, *collection, vid, *parallelCopy); err != nil {
+	var volumeIds []needle.VolumeId
+	if vid := needle.VolumeId(*volumeId); vid != 0 {
+		// volumeId is provided
+		volumeIds = append(volumeIds, vid)
+	} else {
+		// apply to all volumes in the collection
+		volumeIds, err = collectVolumeIdsForEcEncode(commandEnv, *collection, *fullPercentage, *quietPeriod)
+		if err != nil {
 			return err
 		}
+	}
+
+	var collections []string
+	if *collection != "" {
+		collections = []string{*collection}
+	} else {
+		// TODO: should we limit this to collections associated with the provided volume ID?
+		collections, err = ListCollectionNames(commandEnv, false, true)
+		if err != nil {
+			return err
+		}
+	}
+
+	// encode all requested volumes...
+	for _, vid := range volumeIds {
+		if err = doEcEncode(commandEnv, *collection, vid); err != nil {
+			return fmt.Errorf("ec encode for volume %d: %v", vid, err)
+		}
+	}
+	// ...then re-balance ec shards.
+	if err := EcBalance(commandEnv, collections, "", rp, *applyBalancing); err != nil {
+		return fmt.Errorf("re-balance ec shards for collection(s) %v: %v", collections, err)
 	}
 
 	return nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, parallelCopy bool) (err error) {
+func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId) error {
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
@@ -130,21 +153,13 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	// fmt.Printf("found ec %d shards on %v\n", vid, locations)
 
 	// mark the volume as readonly
-	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false, false)
-	if err != nil {
+	if err := markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false, false); err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 
 	// generate ec shards
-	err = generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].ServerAddress())
-	if err != nil {
+	if err := generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].ServerAddress()); err != nil {
 		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, locations[0].Url, err)
-	}
-
-	// balance the ec shards to current cluster
-	err = spreadEcShards(commandEnv, vid, collection, locations, parallelCopy)
-	if err != nil {
-		return fmt.Errorf("spread ec shards for volume %d from %s: %v", vid, locations[0].Url, err)
 	}
 
 	return nil
@@ -166,9 +181,10 @@ func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, 
 
 }
 
+// TODO: delete this (now unused) shard spread logic.
 func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection string, existingLocations []wdclient.Location, parallelCopy bool) (err error) {
 
-	allEcNodes, totalFreeEcSlots, err := collectEcNodes(commandEnv, "")
+	allEcNodes, totalFreeEcSlots, err := collectEcNodes(commandEnv)
 	if err != nil {
 		return err
 	}
@@ -296,7 +312,6 @@ func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
 }
 
 func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
-
 	// collect topology information
 	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
