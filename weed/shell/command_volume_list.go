@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
 	"path/filepath"
 	"strings"
@@ -72,7 +73,7 @@ func diskInfosToString(diskInfos map[string]*master_pb.DiskInfo) string {
 	var buf bytes.Buffer
 	for diskType, diskInfo := range diskInfos {
 		if diskType == "" {
-			diskType = "hdd"
+			diskType = types.HddType
 		}
 		fmt.Fprintf(&buf, " %s(volume:%d/%d active:%d free:%d remote:%d)", diskType, diskInfo.VolumeCount, diskInfo.MaxVolumeCount, diskInfo.ActiveVolumeCount, diskInfo.FreeVolumeCount, diskInfo.RemoteVolumeCount)
 	}
@@ -162,7 +163,7 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 	var s statistics
 	diskType := t.Type
 	if diskType == "" {
-		diskType = "hdd"
+		diskType = types.HddType
 	}
 	output(verbosityLevel >= 4, writer, "        Disk %s(%s)\n", diskType, diskInfoToString(t))
 	slices.SortFunc(t.VolumeInfos, func(a, b *master_pb.VolumeInformationMessage) int {
