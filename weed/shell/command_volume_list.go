@@ -25,7 +25,9 @@ type commandVolumeList struct {
 	rack              *string
 	dataNode          *string
 	readonly          *bool
+	writable          *bool
 	volumeId          *uint64
+	volumeSizeLimitMb uint64
 }
 
 func (c *commandVolumeList) Name() string {
@@ -49,7 +51,8 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 	volumeListCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbosityLevel := volumeListCommand.Int("v", 5, "verbose mode: 0, 1, 2, 3, 4, 5")
 	c.collectionPattern = volumeListCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
-	c.readonly = volumeListCommand.Bool("readonly", false, "show only readonly")
+	c.readonly = volumeListCommand.Bool("readonly", false, "show only readonly volumes")
+	c.writable = volumeListCommand.Bool("writable", false, "show only writable volumes")
 	c.volumeId = volumeListCommand.Uint64("volumeId", 0, "show only volume id")
 	c.dataCenter = volumeListCommand.String("dataCenter", "", "show volumes only from the specified data center")
 	c.rack = volumeListCommand.String("rack", "", "show volumes only from the specified rack")
@@ -60,12 +63,13 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	// collect topology information
-	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
+	var topologyInfo *master_pb.TopologyInfo
+	topologyInfo, c.volumeSizeLimitMb, err = collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}
 
-	c.writeTopologyInfo(writer, topologyInfo, volumeSizeLimitMb, *verbosityLevel)
+	c.writeTopologyInfo(writer, topologyInfo, c.volumeSizeLimitMb, *verbosityLevel)
 	return nil
 }
 
@@ -161,8 +165,11 @@ func (c *commandVolumeList) writeDataNodeInfo(writer io.Writer, t *master_pb.Dat
 	return s
 }
 
-func (c *commandVolumeList) isNotMatchDiskInfo(readOnly bool, collection string, volumeId uint32) bool {
+func (c *commandVolumeList) isNotMatchDiskInfo(readOnly bool, collection string, volumeId uint32, volumeSize int64) bool {
 	if *c.readonly && !readOnly {
+		return true
+	}
+	if *c.writable && (readOnly || volumeSize == -1 || c.volumeSizeLimitMb >= uint64(volumeSize)) {
 		return true
 	}
 	if *c.collectionPattern != "" {
@@ -187,7 +194,7 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 	})
 	volumeInfosFound := false
 	for _, vi := range t.VolumeInfos {
-		if c.isNotMatchDiskInfo(vi.ReadOnly, vi.Collection, vi.Id) {
+		if c.isNotMatchDiskInfo(vi.ReadOnly, vi.Collection, vi.Id, int64(vi.Size)) {
 			continue
 		}
 		if !volumeInfosFound {
@@ -199,7 +206,7 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 	}
 	ecShardInfoFound := false
 	for _, ecShardInfo := range t.EcShardInfos {
-		if c.isNotMatchDiskInfo(false, ecShardInfo.Collection, ecShardInfo.Id) {
+		if c.isNotMatchDiskInfo(false, ecShardInfo.Collection, ecShardInfo.Id, -1) {
 			continue
 		}
 		if !volumeInfosFound && !ecShardInfoFound {
