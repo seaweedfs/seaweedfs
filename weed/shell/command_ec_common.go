@@ -523,14 +523,14 @@ type ecBalancer struct {
 	wgError error
 }
 
-type wgFunction func() error
+type ecBalancerTask func() error
 
 func (ecb *ecBalancer) WgInit() {
 	ecb.wg = sync.WaitGroup{}
 	ecb.wgError = nil
 }
 
-func (ecb *ecBalancer) WgAdd(f wgFunction) {
+func (ecb *ecBalancer) WgAdd(f ecBalancerTask) {
 	if !ecb.parallelize {
 		if err := f(); err != nil {
 			ecb.wgError = err
