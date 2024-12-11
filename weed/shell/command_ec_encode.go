@@ -68,8 +68,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	collection := encodeCommand.String("collection", "", "the collection name")
 	fullPercentage := encodeCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
-	// TODO: Add concurrency support to EcBalance and reenable this switch?
-	//parallelCopy := encodeCommand.Bool("parallelCopy", true, "copy shards in parallel")
+	parallelize := encodeCommand.Bool("parallelize", true, "parallelize operations whenever possible")
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
 	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	applyBalancing := encodeCommand.Bool("rebalance", false, "re-balance EC shards after creation")
@@ -132,7 +131,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		}
 	}
 	// ...then re-balance ec shards.
-	if err := EcBalance(commandEnv, collections, "", rp, *applyBalancing); err != nil {
+	if err := EcBalance(commandEnv, collections, "", rp, *parallelize, *applyBalancing); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %v", collections, err)
 	}
 
