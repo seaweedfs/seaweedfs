@@ -550,7 +550,7 @@ func (ecb *ecBalancer) wgAdd(f ecBalancerTask) {
 }
 
 func (ecb *ecBalancer) wgWait() error {
-	if ecb.wg == nil {
+	if ecb.wg != nil {
 		ecb.wg.Wait()
 	}
 	err := ecb.wgError
