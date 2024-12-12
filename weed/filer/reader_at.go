@@ -66,9 +66,17 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 
 		fcDataCenter := filerClient.GetDataCenter()
 		var sameDcTargetUrls, otherTargetUrls []string
+		localUrls := make(map[string]bool)
 		for _, loc := range locations.Locations {
 			volumeServerAddress := filerClient.AdjustedUrl(loc)
 			targetUrl := fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
+
+			glog.V(4).Infof("lookup %s => %s, data in remote storage tier: %v", fileId, targetUrl, loc.DataInRemote)
+
+			if !loc.DataInRemote {
+				localUrls[targetUrl] = true
+			}
+
 			if fcDataCenter == "" || fcDataCenter != loc.DataCenter {
 				otherTargetUrls = append(otherTargetUrls, targetUrl)
 			} else {
@@ -78,9 +86,30 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 		rand.Shuffle(len(sameDcTargetUrls), func(i, j int) {
 			sameDcTargetUrls[i], sameDcTargetUrls[j] = sameDcTargetUrls[j], sameDcTargetUrls[i]
 		})
+		if len(localUrls) > 0 && len(localUrls) != len(sameDcTargetUrls) {
+			for idx, url := range sameDcTargetUrls {
+				// move local url to the front of the list
+				if _, found := localUrls[url]; found {
+					if idx != 0 {
+						sameDcTargetUrls[idx], sameDcTargetUrls[0] = sameDcTargetUrls[0], sameDcTargetUrls[idx]
+					}
+					break
+				}
+			}
+		}
 		rand.Shuffle(len(otherTargetUrls), func(i, j int) {
 			otherTargetUrls[i], otherTargetUrls[j] = otherTargetUrls[j], otherTargetUrls[i]
 		})
+		if len(localUrls) > 0 && len(localUrls) != len(otherTargetUrls) {
+			for idx, url := range otherTargetUrls {
+				if _, found := localUrls[url]; found {
+					if idx != 0 {
+						otherTargetUrls[idx], otherTargetUrls[0] = otherTargetUrls[0], otherTargetUrls[idx]
+					}
+					break
+				}
+			}
+		}
 		// Prefer same data center
 		targetUrls = append(sameDcTargetUrls, otherTargetUrls...)
 		return
