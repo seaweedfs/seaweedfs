@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+  "sort"
 	"sync"
 	"time"
 
@@ -181,6 +182,46 @@ func collectEcNodesForDC(commandEnv *CommandEnv, selectedDataCenter string) (ecN
 
 func collectEcNodes(commandEnv *CommandEnv) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
 	return collectEcNodesForDC(commandEnv, "")
+}
+
+func collectCollectionsForVolumeIds(t *master_pb.TopologyInfo, vids []needle.VolumeId) []string {
+	if len(vids) == 0 {
+		return nil
+	}
+
+	found := map[string]bool{}
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			for _, dn := range r.DataNodeInfos {
+				for _, diskInfo := range dn.DiskInfos {
+					for _, vi := range diskInfo.VolumeInfos {
+						for _, vid := range vids {
+							if needle.VolumeId(vi.Id) == vid && vi.Collection != "" {
+								found[vi.Collection] = true
+							}
+						}
+					}
+					for _, ecs := range diskInfo.EcShardInfos {
+						for _, vid := range vids {
+							if needle.VolumeId(ecs.Id) == vid && ecs.Collection != "" {
+								found[ecs.Collection] = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if len(found) == 0 {
+		return nil
+	}
+
+	collections := []string{}
+	for k, _ := range found {
+		collections = append(collections, k)
+	}
+	sort.Strings(collections)
+	return collections
 }
 
 func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) (err error) {
