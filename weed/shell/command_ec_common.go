@@ -518,7 +518,7 @@ type ecBalancer struct {
 	applyBalancing   bool
 	parallelize      bool
 
-	wg sync.WaitGroup
+	wg *sync.WaitGroup
 	// TOOD: Maybe accumulate all errors instead of just the last one.
 	wgError error
 }
@@ -526,12 +526,12 @@ type ecBalancer struct {
 type ecBalancerTask func() error
 
 func (ecb *ecBalancer) WgInit() {
-	ecb.wg = sync.WaitGroup{}
+	ecb.wg = &sync.WaitGroup{}
 	ecb.wgError = nil
 }
 
 func (ecb *ecBalancer) WgAdd(f ecBalancerTask) {
-	if !ecb.parallelize {
+	if ecb.wg == nil || !ecb.parallelize {
 		if err := f(); err != nil {
 			ecb.wgError = err
 		}
@@ -548,8 +548,14 @@ func (ecb *ecBalancer) WgAdd(f ecBalancerTask) {
 }
 
 func (ecb *ecBalancer) WgWait() error {
-	ecb.wg.Wait()
-	return ecb.wgError
+	if ecb.wg == nil {
+		ecb.wg.Wait()
+	}
+	err := ecb.wgError
+	ecb.wg = nil
+	ecb.wgError = nil
+
+	return err
 }
 
 func (ecb *ecBalancer) racks() map[RackId]*EcRack {
