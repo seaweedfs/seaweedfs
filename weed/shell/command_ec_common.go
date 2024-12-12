@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
-  "sort"
+	"sort"
 	"sync"
 	"time"
 
@@ -560,7 +560,7 @@ type ecBalancer struct {
 	parallelize      bool
 
 	wg *sync.WaitGroup
-	// TOOD: Maybe accumulate all errors instead of just the last one.
+	// TODO: Maybe accumulate all errors instead of just the last one.
 	wgError error
 }
 
