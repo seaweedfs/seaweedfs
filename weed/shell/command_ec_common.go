@@ -525,12 +525,14 @@ type ecBalancer struct {
 
 type ecBalancerTask func() error
 
-func (ecb *ecBalancer) WgInit() {
-	ecb.wg = &sync.WaitGroup{}
-	ecb.wgError = nil
+func (ecb *ecBalancer) wgInit() {
+	if ecb.wg == nil {
+		ecb.wg = &sync.WaitGroup{}
+		ecb.wgError = nil
+	}
 }
 
-func (ecb *ecBalancer) WgAdd(f ecBalancerTask) {
+func (ecb *ecBalancer) wgAdd(f ecBalancerTask) {
 	if ecb.wg == nil || !ecb.parallelize {
 		if err := f(); err != nil {
 			ecb.wgError = err
@@ -547,7 +549,7 @@ func (ecb *ecBalancer) WgAdd(f ecBalancerTask) {
 	}()
 }
 
-func (ecb *ecBalancer) WgWait() error {
+func (ecb *ecBalancer) wgWait() error {
 	if ecb.wg == nil {
 		ecb.wg.Wait()
 	}
@@ -594,13 +596,13 @@ func (ecb *ecBalancer) balanceEcVolumes(collection string) error {
 func (ecb *ecBalancer) deleteDuplicatedEcShards(collection string) error {
 	vidLocations := ecb.collectVolumeIdToEcNodes(collection)
 
-	ecb.WgInit()
+	ecb.wgInit()
 	for vid, locations := range vidLocations {
-		ecb.WgAdd(func() error {
+		ecb.wgAdd(func() error {
 			return ecb.doDeduplicateEcShards(collection, vid, locations)
 		})
 	}
-	return ecb.WgWait()
+	return ecb.wgWait()
 }
 
 func (ecb *ecBalancer) doDeduplicateEcShards(collection string, vid needle.VolumeId, locations []*EcNode) error {
