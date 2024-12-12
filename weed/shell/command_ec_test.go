@@ -1,24 +1,11 @@
 package shell
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
-
-func TestCommandEcDistribution(t *testing.T) {
-
-	allEcNodes := []*EcNode{
-		newEcNode("dc1", "rack1", "dn1", 100),
-		newEcNode("dc1", "rack2", "dn2", 100),
-	}
-
-	allocated := balancedEcDistribution(allEcNodes)
-
-	fmt.Printf("allocated: %+v", allocated)
-}
 
 func TestCommandEcBalanceSmall(t *testing.T) {
 	ecb := &ecBalancer{
