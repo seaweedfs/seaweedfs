@@ -115,11 +115,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	if *collection != "" {
 		collections = []string{*collection}
 	} else {
-		// TODO: should we limit this to collections associated with the provided volume ID?
-		collections, err = ListCollectionNames(commandEnv, false, true)
-		if err != nil {
-			return err
-		}
+		collections = collectCollectionsForVolumeIds(topologyInfo, volumeIds)
 	}
 
 	// encode all requested volumes...

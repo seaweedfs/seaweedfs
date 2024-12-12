@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -31,6 +32,39 @@ func errorCheck(got error, want string) error {
 		return fmt.Errorf("expected error %q, got %q", want, got.Error())
 	}
 	return nil
+}
+
+func TestCollectCollectionsForVolumeIds(t *testing.T) {
+	testCases := []struct {
+		topology *master_pb.TopologyInfo
+		vids     []needle.VolumeId
+		want     []string
+	}{
+		// normal volumes
+		{topology1, nil, nil},
+		{topology1, []needle.VolumeId{}, nil},
+		{topology1, []needle.VolumeId{needle.VolumeId(9999)}, nil},
+		{topology1, []needle.VolumeId{needle.VolumeId(2)}, nil},
+		{topology1, []needle.VolumeId{needle.VolumeId(2), needle.VolumeId(272)}, []string{"collection2"}},
+		{topology1, []needle.VolumeId{needle.VolumeId(2), needle.VolumeId(272), needle.VolumeId(299)}, []string{"collection2"}},
+		{topology1, []needle.VolumeId{needle.VolumeId(272), needle.VolumeId(299), needle.VolumeId(95)}, []string{"collection1", "collection2"}},
+		{topology1, []needle.VolumeId{needle.VolumeId(272), needle.VolumeId(299), needle.VolumeId(95), needle.VolumeId(51)}, []string{"collection1", "collection2"}},
+		{topology1, []needle.VolumeId{needle.VolumeId(272), needle.VolumeId(299), needle.VolumeId(95), needle.VolumeId(51), needle.VolumeId(15)}, []string{"collection0", "collection1", "collection2"}},
+		// EC volumes
+		{topology2, []needle.VolumeId{needle.VolumeId(9577)}, []string{"s3qldata"}},
+		{topology2, []needle.VolumeId{needle.VolumeId(9577), needle.VolumeId(12549)}, []string{"s3qldata"}},
+		// normal + EC volumes
+		{topology2, []needle.VolumeId{needle.VolumeId(18111)}, []string{"s3qldata"}},
+		{topology2, []needle.VolumeId{needle.VolumeId(8677)}, []string{"s3qldata"}},
+		{topology2, []needle.VolumeId{needle.VolumeId(18111), needle.VolumeId(8677)}, []string{"s3qldata"}},
+	}
+
+	for _, tc := range testCases {
+		got := collectCollectionsForVolumeIds(tc.topology, tc.vids)
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("for %v: got %v, want %v", tc.vids, got, tc.want)
+		}
+	}
 }
 
 func TestParseReplicaPlacementArg(t *testing.T) {
