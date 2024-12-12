@@ -165,7 +165,7 @@ func isS3Request(r *http.Request) bool {
 func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fileName string) error {
 	fullPath := fs.fixFilePath(ctx, r, fileName)
 	rule := fs.filer.FilerConf.MatchStorageRule(fullPath)
-	if !rule.Worm {
+	if rule.Worm == nil || !rule.Worm.GetValue() {
 		return nil
 	}
 
