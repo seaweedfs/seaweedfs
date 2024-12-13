@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -27,7 +28,9 @@ const (
 )
 
 var readOnlyVolumeTypes = [4]string{IsReadOnly, NoWriteOrDelete, NoWriteCanDelete, IsDiskSpaceLow}
+
 var bucketLastActiveTsNs map[string]int64 = map[string]int64{}
+var bucketLastActiveLock sync.Mutex
 
 var (
 	Gather = prometheus.NewRegistry()
@@ -409,7 +412,9 @@ func SourceName(port uint32) string {
 }
 
 func RecordBucketActiveTime(bucket string) {
+	bucketLastActiveLock.Lock()
 	bucketLastActiveTsNs[bucket] = time.Now().UnixNano()
+	bucketLastActiveLock.Unlock()
 }
 
 func DeleteCollectionMetrics(collection string) {
@@ -429,6 +434,7 @@ func bucketMetricTTLControl() {
 	for {
 		now := time.Now().UnixNano()
 
+		bucketLastActiveLock.Lock()
 		for bucket, ts := range bucketLastActiveTsNs {
 			if (now - ts) > ttlNs {
 				delete(bucketLastActiveTsNs, bucket)
@@ -441,6 +447,7 @@ func bucketMetricTTLControl() {
 			}
 		}
 
+		bucketLastActiveLock.Unlock()
 		time.Sleep(bucketAtiveTTL)
 	}
 
