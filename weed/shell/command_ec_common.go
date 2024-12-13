@@ -679,17 +679,18 @@ func (ecb *ecBalancer) doDeduplicateEcShards(collection string, vid needle.Volum
 	return nil
 }
 
-// TODO: enable parallelization
 func (ecb *ecBalancer) balanceEcShardsAcrossRacks(collection string) error {
 	// collect vid => []ecNode, since previous steps can change the locations
 	vidLocations := ecb.collectVolumeIdToEcNodes(collection)
+
 	// spread the ec shards evenly
+	ecb.wgInit()
 	for vid, locations := range vidLocations {
-		if err := ecb.doBalanceEcShardsAcrossRacks(collection, vid, locations); err != nil {
-			return err
-		}
+		ecb.wgAdd(func() error {
+			return ecb.doBalanceEcShardsAcrossRacks(collection, vid, locations)
+		})
 	}
-	return nil
+	return ecb.wgWait()
 }
 
 func countShardsByRack(vid needle.VolumeId, locations []*EcNode) map[string]int {
