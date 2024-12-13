@@ -848,15 +848,15 @@ func (ecb *ecBalancer) doBalanceEcShardsWithinOneRack(averageShardsPerEcNode int
 
 func (ecb *ecBalancer) balanceEcRacks() error {
 	// balance one rack for all ec shards
+	ecb.wgInit()
 	for _, ecRack := range ecb.racks() {
-		if err := ecb.doBalanceEcRack(ecRack); err != nil {
-			return err
-		}
+		ecb.wgAdd(func() error {
+			return ecb.doBalanceEcRack(ecRack)
+		})
 	}
-	return nil
+	return ecb.wgWait()
 }
 
-// TODO: enable parallelization
 func (ecb *ecBalancer) doBalanceEcRack(ecRack *EcRack) error {
 	if len(ecRack.ecNodes) <= 1 {
 		return nil
