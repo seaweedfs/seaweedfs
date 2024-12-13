@@ -255,8 +255,8 @@ func TestBalance(t *testing.T) {
 	volumeServers := collectVolumeServersByDcRackNode(topologyInfo, "", "", "")
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
-
-	if err := balanceVolumeServers(nil, diskTypes, volumeReplicas, volumeServers, "ALL_COLLECTIONS", false); err != nil {
+	c := &commandVolumeBalance{}
+	if err := c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, "ALL_COLLECTIONS"); err != nil {
 		t.Errorf("balance: %v", err)
 	}
 
