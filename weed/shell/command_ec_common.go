@@ -786,13 +786,13 @@ func (ecb *ecBalancer) pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcR
 	return targets[rand.IntN(len(targets))], nil
 }
 
-// TODO: enable parallelization
 func (ecb *ecBalancer) balanceEcShardsWithinRacks(collection string) error {
 	// collect vid => []ecNode, since previous steps can change the locations
 	vidLocations := ecb.collectVolumeIdToEcNodes(collection)
 	racks := ecb.racks()
 
 	// spread the ec shards evenly
+	ecb.wgInit()
 	for vid, locations := range vidLocations {
 
 		// see the volume's shards are in how many racks, and how many in each rack
@@ -811,12 +811,12 @@ func (ecb *ecBalancer) balanceEcShardsWithinRacks(collection string) error {
 			}
 			sourceEcNodes := rackEcNodesWithVid[rackId]
 			averageShardsPerEcNode := ceilDivide(rackToShardCount[rackId], len(possibleDestinationEcNodes))
-			if err := ecb.doBalanceEcShardsWithinOneRack(averageShardsPerEcNode, collection, vid, sourceEcNodes, possibleDestinationEcNodes); err != nil {
-				return err
-			}
+			ecb.wgAdd(func() error {
+				return ecb.doBalanceEcShardsWithinOneRack(averageShardsPerEcNode, collection, vid, sourceEcNodes, possibleDestinationEcNodes)
+			})
 		}
 	}
-	return nil
+	return ecb.wgWait()
 }
 
 func (ecb *ecBalancer) doBalanceEcShardsWithinOneRack(averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode) error {
