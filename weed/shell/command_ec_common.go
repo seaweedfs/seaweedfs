@@ -574,22 +574,20 @@ func (ecb *ecBalancer) wgInit() {
 }
 
 func (ecb *ecBalancer) wgAdd(f ecBalancerTask) {
-	wrapper := func() {
-		if ecb.wg != nil {
-			defer ecb.wg.Done()
-		}
+	if ecb.wg == nil || !ecb.parallelize {
 		if err := f(); err != nil {
 			ecb.wgErrors = append(ecb.wgErrors, err)
 		}
-	}
-
-	if ecb.wg == nil || !ecb.parallelize {
-		wrapper()
 		return
 	}
 
 	ecb.wg.Add(1)
-	go wrapper()
+	go func() {
+		if err := f(); err != nil {
+			ecb.wgErrors = append(ecb.wgErrors, err)
+		}
+		ecb.wg.Done()
+	}()
 }
 
 func (ecb *ecBalancer) wgWait() error {
