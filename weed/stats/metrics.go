@@ -23,11 +23,11 @@ const (
 	NoWriteOrDelete  = "noWriteOrDelete"
 	NoWriteCanDelete = "noWriteCanDelete"
 	IsDiskSpaceLow   = "isDiskSpaceLow"
-	bucketAtiveTTL   = 10 * 60 * 1000 // 10 min
+	bucketAtiveTTL   = 10 * time.Minute
 )
 
 var readOnlyVolumeTypes = [4]string{IsReadOnly, NoWriteOrDelete, NoWriteCanDelete, IsDiskSpaceLow}
-var bucketLastActiveTime map[string]int64 = map[string]int64{}
+var bucketLastActiveTsNs map[string]int64 = map[string]int64{}
 
 var (
 	Gather = prometheus.NewRegistry()
@@ -409,7 +409,7 @@ func SourceName(port uint32) string {
 }
 
 func RecordBucketActiveTime(bucket string) {
-	bucketLastActiveTime[bucket] = time.Now().UnixMilli()
+	bucketLastActiveTsNs[bucket] = time.Now().UnixNano()
 }
 
 func DeleteCollectionMetrics(collection string) {
@@ -425,12 +425,13 @@ func DeleteCollectionMetrics(collection string) {
 }
 
 func bucketMetricTTLControl() {
+	ttlNs := bucketAtiveTTL.Nanoseconds()
 	for {
-		now := time.Now().UnixMilli()
+		now := time.Now().UnixNano()
 
-		for bucket, ts := range bucketLastActiveTime {
-			if (now - ts) > bucketAtiveTTL {
-				delete(bucketLastActiveTime, bucket)
+		for bucket, ts := range bucketLastActiveTsNs {
+			if (now - ts) > ttlNs {
+				delete(bucketLastActiveTsNs, bucket)
 
 				labels := prometheus.Labels{"bucket": bucket}
 				c := S3RequestCounter.DeletePartialMatch(labels)
@@ -440,7 +441,7 @@ func bucketMetricTTLControl() {
 			}
 		}
 
-		time.Sleep(bucketAtiveTTL * time.Millisecond)
+		time.Sleep(bucketAtiveTTL)
 	}
 
 }
