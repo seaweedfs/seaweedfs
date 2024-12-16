@@ -195,6 +195,10 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 }
 
 func (l *DiskLocation) deleteEcVolumeById(vid needle.VolumeId) (e error) {
+	// Add write lock since we're modifying the ecVolumes map
+	l.ecVolumesLock.Lock()
+	defer l.ecVolumesLock.Unlock()
+	
 	ecVolume, ok := l.ecVolumes[vid]
 	if !ok {
 		return
