@@ -5,7 +5,7 @@ go 1.22.0
 require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/pubsub v1.45.3
-	cloud.google.com/go/storage v1.45.0
+	cloud.google.com/go/storage v1.48.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.38.1
@@ -113,7 +113,7 @@ require (
 	golang.org/x/xerrors v0.0.0-20240716161551-93cc26a95ae9 // indirect
 	google.golang.org/api v0.210.0
 	google.golang.org/genproto v0.0.0-20241118233622-e639e219e697 // indirect
-	google.golang.org/grpc v1.67.1
+	google.golang.org/grpc v1.67.2
 	google.golang.org/protobuf v1.35.2
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
