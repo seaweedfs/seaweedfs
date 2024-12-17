@@ -10,15 +10,17 @@ import (
 
 type InodeToPath struct {
 	sync.RWMutex
-	nextInodeId uint64
-	inode2path  map[uint64]*InodeEntry
-	path2inode  map[util.FullPath]uint64
+	nextInodeId     uint64
+	cacheMetaTtlSec time.Duration
+	inode2path      map[uint64]*InodeEntry
+	path2inode      map[util.FullPath]uint64
 }
 type InodeEntry struct {
-	paths            []util.FullPath
-	nlookup          uint64
-	isDirectory      bool
-	isChildrenCached bool
+	paths             []util.FullPath
+	nlookup           uint64
+	isDirectory       bool
+	isChildrenCached  bool
+	cachedExpiresTime time.Time
 }
 
 func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
@@ -43,13 +45,15 @@ func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
 	return true
 }
 
-func NewInodeToPath(root util.FullPath) *InodeToPath {
+func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 	t := &InodeToPath{
-		inode2path: make(map[uint64]*InodeEntry),
-		path2inode: make(map[util.FullPath]uint64),
+		inode2path:      make(map[uint64]*InodeEntry),
+		path2inode:      make(map[util.FullPath]uint64),
+		cacheMetaTtlSec: time.Second * time.Duration(ttlSec),
 	}
-	t.inode2path[1] = &InodeEntry{[]util.FullPath{root}, 1, true, false}
+	t.inode2path[1] = &InodeEntry{[]util.FullPath{root}, 1, true, false, time.Time{}}
 	t.path2inode[root] = 1
+
 	return t
 }
 
@@ -92,9 +96,9 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 		}
 	} else {
 		if !isLookup {
-			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 0, isDirectory, false}
+			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 0, isDirectory, false, time.Time{}}
 		} else {
-			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 1, isDirectory, false}
+			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 1, isDirectory, false, time.Time{}}
 		}
 	}
 
@@ -157,6 +161,9 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	}
 	path, found := i.inode2path[inode]
 	path.isChildrenCached = true
+	if i.cacheMetaTtlSec > 0 {
+		path.cachedExpiresTime = time.Now().Add(i.cacheMetaTtlSec)
+	}
 }
 
 func (i *InodeToPath) IsChildrenCached(fullpath util.FullPath) bool {
@@ -167,8 +174,11 @@ func (i *InodeToPath) IsChildrenCached(fullpath util.FullPath) bool {
 		return false
 	}
 	path, found := i.inode2path[inode]
-	if found {
-		return path.isChildrenCached
+	if !found {
+		return false
+	}
+	if path.isChildrenCached {
+		return path.cachedExpiresTime.IsZero() || time.Now().Before(path.cachedExpiresTime)
 	}
 	return false
 }
