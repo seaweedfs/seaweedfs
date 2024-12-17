@@ -227,10 +227,14 @@ func markVolumeWritable(grpcDialOption grpc.DialOption, volumeId needle.VolumeId
 	})
 }
 
+func markVolumeReplicaWritable(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, location wdclient.Location, writable, persist bool) error {
+	fmt.Printf("markVolumeReadonly %d on %s ...\n", volumeId, location.Url)
+	return markVolumeWritable(grpcDialOption, volumeId, location.ServerAddress(), writable, persist)
+}
+
 func markVolumeReplicasWritable(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, locations []wdclient.Location, writable, persist bool) error {
 	for _, location := range locations {
-		fmt.Printf("markVolumeReadonly %d on %s ...\n", volumeId, location.Url)
-		if err := markVolumeWritable(grpcDialOption, volumeId, location.ServerAddress(), writable, persist); err != nil {
+		if err := markVolumeReplicaWritable(grpcDialOption, volumeId, location, writable, persist); err != nil {
 			return err
 		}
 	}

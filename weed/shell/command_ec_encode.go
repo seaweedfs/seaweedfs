@@ -119,7 +119,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// encode all requested volumes...
 	for _, vid := range volumeIds {
-		if err = doEcEncode(commandEnv, *collection, vid); err != nil {
+		if err = doEcEncode(commandEnv, *collection, vid, *parallelize); err != nil {
 			return fmt.Errorf("ec encode for volume %d: %v", vid, err)
 		}
 	}
@@ -131,7 +131,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	return nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId) error {
+func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, parallelize bool) error {
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
@@ -142,11 +142,20 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId) 
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
-	// fmt.Printf("found ec %d shards on %v\n", vid, locations)
-
 	// mark the volume as readonly
-	if err := markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false, false); err != nil {
-		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
+	ewg := ErrorWaitGroup{
+		parallelize: parallelize,
+	}
+	for _, location := range locations {
+		ewg.Add(func() error {
+			if err := markVolumeReplicaWritable(commandEnv.option.GrpcDialOption, vid, location, false, false); err != nil {
+				return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, location.Url, err)
+			}
+			return nil
+		})
+	}
+	if err := ewg.Wait(); err != nil {
+		return err
 	}
 
 	// generate ec shards
