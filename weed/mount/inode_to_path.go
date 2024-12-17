@@ -4,7 +4,6 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"math"
 	"sync"
 	"time"
 )
@@ -21,7 +20,7 @@ type InodeEntry struct {
 	nlookup           uint64
 	isDirectory       bool
 	isChildrenCached  bool
-	cachedExpiresTime int64
+	cachedExpiresTime time.Time
 }
 
 func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
@@ -52,7 +51,7 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 		path2inode:      make(map[util.FullPath]uint64),
 		cacheMetaTtlSec: time.Second * time.Duration(ttlSec),
 	}
-	t.inode2path[1] = &InodeEntry{[]util.FullPath{root}, 1, true, false, 0}
+	t.inode2path[1] = &InodeEntry{[]util.FullPath{root}, 1, true, false, time.Time{}}
 	t.path2inode[root] = 1
 
 	return t
@@ -97,9 +96,9 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 		}
 	} else {
 		if !isLookup {
-			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 0, isDirectory, false, 0}
+			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 0, isDirectory, false, time.Time{}}
 		} else {
-			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 1, isDirectory, false, 0}
+			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 1, isDirectory, false, time.Time{}}
 		}
 	}
 
@@ -163,9 +162,7 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	path, found := i.inode2path[inode]
 	path.isChildrenCached = true
 	if i.cacheMetaTtlSec > 0 {
-		path.cachedExpiresTime = time.Now().Add(i.cacheMetaTtlSec).Unix()
-	} else {
-		path.cachedExpiresTime = math.MaxInt64
+		path.cachedExpiresTime = time.Now().Add(i.cacheMetaTtlSec)
 	}
 }
 
@@ -177,8 +174,11 @@ func (i *InodeToPath) IsChildrenCached(fullpath util.FullPath) bool {
 		return false
 	}
 	path, found := i.inode2path[inode]
-	if found {
-		return path.isChildrenCached && path.cachedExpiresTime > time.Now().Unix()
+	if !found {
+		return false
+	}
+	if path.isChildrenCached {
+		return path.cachedExpiresTime.IsZero() || time.Now().Before(path.cachedExpiresTime)
 	}
 	return false
 }
