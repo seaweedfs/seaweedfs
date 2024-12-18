@@ -119,7 +119,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// encode all requested volumes...
 	for _, vid := range volumeIds {
-		if err = doEcEncode(commandEnv, *collection, vid, *parallelize); err != nil {
+		if err = doEcEncode(commandEnv, *collection, vid, *maxParallelization); err != nil {
 			return fmt.Errorf("ec encode for volume %d: %v", vid, err)
 		}
 	}
@@ -131,7 +131,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	return nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, parallelize bool) error {
+func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, maxParallelization int) error {
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
@@ -143,9 +143,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	}
 
 	// mark the volume as readonly
-	ewg := ErrorWaitGroup{
-		parallelize: parallelize,
-	}
+	ewg := NewErrorWaitGroup(maxParallelization)
 	for _, location := range locations {
 		ewg.Add(func() error {
 			if err := markVolumeReplicaWritable(commandEnv.option.GrpcDialOption, vid, location, false, false); err != nil {
