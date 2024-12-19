@@ -161,7 +161,7 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 
 	rule := fs.filer.FilerConf.MatchStorageRule(src)
-	if rule.Worm {
+	if rule.Worm != nil && rule.Worm.GetValue() {
 		// you cannot move a worm file or directory
 		err = fmt.Errorf("cannot move write-once entry from '%s' to '%s': operation not permitted", src, dst)
 		writeJsonError(w, r, http.StatusForbidden, err)
@@ -219,7 +219,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rule := fs.filer.FilerConf.MatchStorageRule(objectPath)
-	if rule.Worm {
+	if rule.Worm != nil && rule.Worm.GetValue() {
 		writeJsonError(w, r, http.StatusForbidden, errors.New("operation not permitted"))
 		return
 	}
