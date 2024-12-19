@@ -71,11 +71,13 @@ func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []stri
 		for vid, vidLocation := range resp.VolumeIdLocations {
 			for _, vidLoc := range vidLocation.Locations {
 				loc := Location{
-					Url:        vidLoc.Url,
-					PublicUrl:  vidLoc.PublicUrl,
-					GrpcPort:   int(vidLoc.GrpcPort),
-					DataCenter: vidLoc.DataCenter,
+					Url:          vidLoc.Url,
+					PublicUrl:    vidLoc.PublicUrl,
+					GrpcPort:     int(vidLoc.GrpcPort),
+					DataCenter:   vidLoc.DataCenter,
+					DataInRemote: vidLoc.DataInRemote,
 				}
+				glog.V(4).Infof("found location %s for %s, data in remote: %v", loc.Url, fileId, loc.DataInRemote)
 				mc.vidMap.addLocation(uint32(vid), loc)
 				httpUrl := "http://" + loc.Url + "/" + fileId
 				// Prefer same data center
@@ -301,6 +303,11 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
 		mc.addLocation(newVid, loc)
 	}
+	for _, remoteVid := range resp.VolumeLocation.RemoteVids {
+		loc.DataInRemote = true
+		glog.V(2).Infof("%s.%s: %s masterClient adds remote volume %d", mc.FilerGroup, mc.clientType, loc.Url, remoteVid)
+		mc.addLocation(remoteVid, loc)
+	}
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
 		glog.V(2).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
 		mc.deleteLocation(deletedVid, loc)
@@ -313,10 +320,11 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
 	}
-	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add: %d, del: %d, add ec: %d del ec: %d",
+	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add local: %d, remote: %d, del: %d, add ec: %d del ec: %d",
 		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,
-		len(resp.VolumeLocation.NewVids), len(resp.VolumeLocation.DeletedVids),
-		len(resp.VolumeLocation.NewEcVids), len(resp.VolumeLocation.DeletedEcVids))
+		len(resp.VolumeLocation.NewVids), len(resp.VolumeLocation.RemoteVids),
+		len(resp.VolumeLocation.DeletedVids), len(resp.VolumeLocation.NewEcVids),
+		len(resp.VolumeLocation.DeletedEcVids))
 }
 
 func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
