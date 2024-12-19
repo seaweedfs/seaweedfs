@@ -3,11 +3,12 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"golang.org/x/exp/slices"
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"golang.org/x/exp/slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 
@@ -155,6 +156,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				auditLog.Key = entryName
 				s3err.PostAccessLog(*auditLog)
 			}
+		}
+
+		if s3a.option.AllowEmptyFolder {
+			return nil
 		}
 
 		// purge empty folders, only checking folders with deletions
