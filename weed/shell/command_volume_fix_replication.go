@@ -9,12 +9,13 @@ import (
 	"strconv"
 	"time"
 
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
-	"slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -232,7 +233,7 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 				return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
 			}
 			if !matched {
-				break
+				continue
 			}
 		}
 
@@ -254,19 +255,24 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 		}
 
 		if doCheck {
+			var checkErr error
 			for _, replicaB := range replicas {
 				if replicaB.location.dataNode == replica.location.dataNode {
 					continue
 				}
-				if err := checkOneVolume(replica, replicaB, writer, commandEnv.option.GrpcDialOption); err != nil {
-					return fmt.Errorf("sync volume %d on %s and %s: %v\n", replica.info.Id, replica.location.dataNode.Id, replicaB.location.dataNode.Id, err)
+				if checkErr = checkOneVolume(replica, replicaB, writer, commandEnv.option.GrpcDialOption); checkErr != nil {
+					fmt.Fprintf(writer, "sync volume %d on %s and %s: %v\n", replica.info.Id, replica.location.dataNode.Id, replicaB.location.dataNode.Id, checkErr)
+					break
 				}
+			}
+			if checkErr != nil {
+				continue
 			}
 		}
 
 		if err := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(replica.info.Id),
 			pb.NewServerAddressFromDataNode(replica.location.dataNode), false); err != nil {
-			return fmt.Errorf("deleting volume %d from %s : %v", replica.info.Id, replica.location.dataNode.Id, err)
+			fmt.Fprintf(writer, "deleting volume %d from %s : %v", replica.info.Id, replica.location.dataNode.Id, err)
 		}
 
 	}
