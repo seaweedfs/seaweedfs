@@ -3,8 +3,10 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"

@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/pub_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"log"
 	"strings"
 	"sync"
 	"time"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (

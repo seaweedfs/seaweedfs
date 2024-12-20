@@ -8,12 +8,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
-	"golang.org/x/exp/slices"
 	"io"
 	"math/rand"
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/peterh/liner"

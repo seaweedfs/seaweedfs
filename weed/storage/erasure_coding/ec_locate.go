@@ -5,7 +5,7 @@ import (
 )
 
 type Interval struct {
-	BlockIndex          int  // the index of the block in either the large blocks or the small blocks
+	BlockIndex          int // the index of the block in either the large blocks or the small blocks
 	InnerBlockOffset    int64
 	Size                types.Size
 	IsLargeBlock        bool // whether the block is a large block or a small block
@@ -50,7 +50,7 @@ func LocateData(largeBlockLength, smallBlockLength int64, shardDatSize int64, of
 
 func locateOffset(largeBlockLength, smallBlockLength int64, shardDatSize int64, offset int64) (blockIndex int, isLargeBlock bool, nLargeBlockRows int64, innerBlockOffset int64) {
 	largeRowSize := largeBlockLength * DataShardsCount
-	nLargeBlockRows = (shardDatSize-1)/ largeBlockLength
+	nLargeBlockRows = (shardDatSize - 1) / largeBlockLength
 
 	// if offset is within the large block area
 	if offset < nLargeBlockRows*largeRowSize {

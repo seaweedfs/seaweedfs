@@ -17,8 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
+	"slices"
 )
 
 func init() {

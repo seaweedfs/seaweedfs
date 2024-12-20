@@ -53,7 +53,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		PairMap:           pu.PairMap,
 		Jwt:               auth,
 	}
-	
+
 	uploader, uploaderErr := operation.NewUploader()
 	if uploaderErr != nil {
 		return nil, fmt.Errorf("uploader initialization error: %v", uploaderErr)

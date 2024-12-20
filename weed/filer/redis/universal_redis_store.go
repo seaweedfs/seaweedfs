@@ -3,7 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
-	"golang.org/x/exp/slices"
+	"slices"
 	"strings"
 	"time"
 

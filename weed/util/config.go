@@ -11,7 +11,7 @@ import (
 
 var (
 	ConfigurationFileDirectory DirectoryValueType
-	loadSecurityConfigOnce sync.Once
+	loadSecurityConfigOnce     sync.Once
 )
 
 type DirectoryValueType string
@@ -32,7 +32,7 @@ type Configuration interface {
 	SetDefault(key string, value interface{})
 }
 
-func LoadSecurityConfiguration(){
+func LoadSecurityConfiguration() {
 	loadSecurityConfigOnce.Do(func() {
 		LoadConfiguration("security", false)
 	})

@@ -112,7 +112,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	appendBlobURL := g.containerURL.NewAppendBlobURL(key)
 
 	accessCondition := azblob.BlobAccessConditions{}
-	if entry.Attributes!=nil && entry.Attributes.Mtime>0 {
+	if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
 		accessCondition.ModifiedAccessConditions.IfUnmodifiedSince = time.Unix(entry.Attributes.Mtime, 0)
 	}
 

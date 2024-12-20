@@ -9,9 +9,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"net/http"
 	"strings"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type AccountManager interface {

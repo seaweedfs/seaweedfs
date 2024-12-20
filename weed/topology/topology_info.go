@@ -2,7 +2,7 @@ package topology
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"golang.org/x/exp/slices"
+	"slices"
 	"strings"
 )
 

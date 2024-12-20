@@ -50,7 +50,7 @@ func (p *TopicPublisher) FinishPublish() error {
 			inputBuffer.Enqueue(&mq_pb.DataMessage{
 				TsNs: time.Now().UnixNano(),
 				Ctrl: &mq_pb.ControlMessage{
-					IsClose: true,
+					IsClose:       true,
 					PublisherName: p.config.PublisherName,
 				},
 			})

@@ -37,10 +37,9 @@ func Replay(filerStore FilerStore, resp *filer_pb.SubscribeMetadataResponse) err
 	return nil
 }
 
-
 // ParallelProcessDirectoryStructure processes each entry in parallel, and also ensure parent directories are processed first.
 // This also assumes the parent directories are in the entryChan already.
-func ParallelProcessDirectoryStructure(entryChan chan *Entry, concurrency int, eachEntryFn func(entry *Entry)(error)) (firstErr error) {
+func ParallelProcessDirectoryStructure(entryChan chan *Entry, concurrency int, eachEntryFn func(entry *Entry) error) (firstErr error) {
 
 	executors := util.NewLimitedConcurrentExecutor(concurrency)
 

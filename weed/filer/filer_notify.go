@@ -123,7 +123,7 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 		err = fmt.Errorf("reading from persisted logs: %v", visitErr)
 		return
 	}
-	var logEntry  *filer_pb.LogEntry
+	var logEntry *filer_pb.LogEntry
 	for {
 		logEntry, visitErr = visitor.GetNext()
 		if visitErr != nil {

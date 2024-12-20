@@ -95,8 +95,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 1,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "",
+						Partition:      &mq_pb.Partition{},
 						FollowerBroker: "localhost:2",
 					},
 				},
@@ -110,8 +110,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 1,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "localhost:1",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "localhost:1",
+						Partition:      &mq_pb.Partition{},
 						FollowerBroker: "",
 					},
 				},
@@ -125,8 +125,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 1,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "localhost:1",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "localhost:1",
+						Partition:      &mq_pb.Partition{},
 						FollowerBroker: "localhost:200",
 					},
 				},
@@ -140,8 +140,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 1,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "localhost:100",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "localhost:100",
+						Partition:      &mq_pb.Partition{},
 						FollowerBroker: "localhost:200",
 					},
 				},
@@ -155,8 +155,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 3,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "localhost:1",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "localhost:1",
+						Partition:      &mq_pb.Partition{},
 						FollowerBroker: "localhost:2",
 					},
 				},
@@ -184,8 +184,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 3,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "localhost:1",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "localhost:1",
+						Partition:      &mq_pb.Partition{},
 						FollowerBroker: "localhost:2",
 					},
 				},

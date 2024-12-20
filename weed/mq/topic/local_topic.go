@@ -4,7 +4,7 @@ import "sync"
 
 type LocalTopic struct {
 	Topic
-	Partitions []*LocalPartition
+	Partitions    []*LocalPartition
 	partitionLock sync.RWMutex
 }
 

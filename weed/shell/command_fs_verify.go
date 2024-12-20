@@ -20,7 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"go.uber.org/atomic"
-	"golang.org/x/exp/slices"
+	"slices"
 )
 
 func init() {
