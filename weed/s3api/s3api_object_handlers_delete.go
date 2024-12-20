@@ -9,9 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"golang.org/x/exp/slices"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
