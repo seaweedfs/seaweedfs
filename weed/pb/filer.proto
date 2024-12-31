@@ -125,6 +125,7 @@ message Entry {
 
     RemoteEntry remote_entry = 10;
     int64 quota = 11; // for bucket only. Positive/Negative means enabled/disabled.
+    int64 worm_enforced_at_ts_ns = 12;
 }
 
 message FullEntry {
@@ -443,6 +444,8 @@ message FilerConf {
         uint32 max_file_name_length = 12;
         bool disable_chunk_deletion = 13;
         bool worm = 14;
+        uint64 worm_grace_period_seconds = 15;
+        uint64 worm_retention_time_seconds = 16;
     }
     repeated PathConf locations = 2;
 }

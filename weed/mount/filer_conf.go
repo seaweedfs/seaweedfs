@@ -3,12 +3,14 @@ package mount
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"path/filepath"
 )
 
 func (wfs *WFS) subscribeFilerConfEvents() (*meta_cache.MetadataFollower, error) {
@@ -73,18 +75,32 @@ func (wfs *WFS) subscribeFilerConfEvents() (*meta_cache.MetadataFollower, error)
 	}, nil
 }
 
-func (wfs *WFS) wormEnabledForEntry(path util.FullPath, entry *filer_pb.Entry) bool {
-	if entry == nil || entry.Attributes == nil {
-		return false
-	}
-	if wfs.FilerConf == nil {
-		return false
+func (wfs *WFS) wormEnforcedForEntry(path util.FullPath, entry *filer_pb.Entry) (wormEnforced, wormEnabled bool) {
+	if entry == nil || wfs.FilerConf == nil {
+		return false, false
 	}
 
 	rule := wfs.FilerConf.MatchStorageRule(string(path))
 	if !rule.Worm {
-		return false
+		return false, false
 	}
 
-	return entry.Attributes.FileSize > 0 || entry.Attributes.Crtime != entry.Attributes.Mtime
+	// worm is not enforced
+	if entry.WormEnforcedAtTsNs == 0 {
+		return false, true
+	}
+
+	// worm will never expire
+	if rule.WormRetentionTimeSeconds == 0 {
+		return true, true
+	}
+
+	enforcedAt := time.Unix(0, entry.WormEnforcedAtTsNs)
+
+	// worm is expired
+	if time.Now().Sub(enforcedAt).Seconds() >= float64(rule.WormRetentionTimeSeconds) {
+		return false, true
+	}
+
+	return true, true
 }
