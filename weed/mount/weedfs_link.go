@@ -49,7 +49,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	// hardlink is not allowed in WORM mode
-	if wfs.wormEnabledForEntry(oldEntryPath, oldEntry) {
+	if wormEnforced, _ := wfs.wormEnforcedForEntry(oldEntryPath, oldEntry); wormEnforced {
 		return fuse.EPERM
 	}
 
