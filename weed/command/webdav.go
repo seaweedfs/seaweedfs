@@ -23,7 +23,7 @@ var (
 
 type WebDavOption struct {
 	filer          *string
-	bindIp         *string
+	ipBind         *string
 	filerRootPath  *string
 	port           *int
 	collection     *string
@@ -39,7 +39,7 @@ type WebDavOption struct {
 func init() {
 	cmdWebDav.Run = runWebDav // break init cycle
 	webDavStandaloneOptions.filer = cmdWebDav.Flag.String("filer", "localhost:8888", "filer server address")
-	webDavStandaloneOptions.bindIp = cmdWebDav.Flag.String("ip.bind", "", "ip address to bind to. Default listen to all.")
+	webDavStandaloneOptions.ipBind = cmdWebDav.Flag.String("ip.bind", "", "ip address to bind to. Default listen to all.")
 	webDavStandaloneOptions.port = cmdWebDav.Flag.Int("port", 7333, "webdav server http listen port")
 	webDavStandaloneOptions.collection = cmdWebDav.Flag.String("collection", "", "collection to create the files")
 	webDavStandaloneOptions.replication = cmdWebDav.Flag.String("replication", "", "replication to create the files")
@@ -64,7 +64,7 @@ func runWebDav(cmd *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 
-	listenAddress := fmt.Sprintf("%s:%d", *webDavStandaloneOptions.bindIp, *webDavStandaloneOptions.port)
+	listenAddress := fmt.Sprintf("%s:%d", *webDavStandaloneOptions.ipBind, *webDavStandaloneOptions.port)
 	glog.V(0).Infof("Starting Seaweed WebDav Server %s at %s", util.Version(), listenAddress)
 
 	return webDavStandaloneOptions.startWebDav()
@@ -129,11 +129,11 @@ func (wo *WebDavOption) startWebDav() bool {
 
 	httpS := &http.Server{Handler: ws.Handler}
 
-	if wo.bindIp == nil {
-		wo.bindIp = new(string)
+	if wo.ipBind == nil {
+		wo.ipBind = new(string)
 	}
 
-	listenAddress := fmt.Sprintf("%s:%d", *wo.bindIp, *wo.port)
+	listenAddress := fmt.Sprintf("%s:%d", *wo.ipBind, *wo.port)
 	webDavListener, err := util.NewListener(listenAddress, time.Duration(10)*time.Second)
 	if err != nil {
 		glog.Fatalf("WebDav Server listener on %s error: %v", listenAddress, err)
