@@ -144,7 +144,7 @@ require (
 	github.com/parquet-go/parquet-go v0.24.0
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/rclone/rclone v1.68.2
-	github.com/rdleal/intervalst v1.4.0
+	github.com/rdleal/intervalst v1.4.1
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/schollz/progressbar/v3 v3.17.1
 	github.com/shirou/gopsutil/v3 v3.24.5
