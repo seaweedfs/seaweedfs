@@ -341,8 +341,6 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	var found bool
 	var authType string
 	switch getRequestAuthType(r) {
-	case authTypeStreamingSigned:
-		return identity, s3err.ErrNone
 	case authTypeUnknown:
 		glog.V(3).Infof("unknown auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
@@ -351,7 +349,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		glog.V(3).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
 		authType = "SigV2"
-	case authTypeSigned, authTypePresigned:
+	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
 		glog.V(3).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		authType = "SigV4"
