@@ -15,6 +15,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -56,6 +57,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	stats_collect.S3DeletedObjectsCounter.WithLabelValues(bucket).Inc()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -174,6 +176,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		deleteResp.DeletedObjects = deletedObjects
 	}
 	deleteResp.Errors = deleteErrors
+	stats_collect.S3DeletedObjectsCounter.WithLabelValues(bucket).Add(float64(len(deletedObjects)))
 
 	writeSuccessResponseXML(w, r, deleteResp)
 

@@ -319,6 +319,22 @@ var (
 			Name:      "in_flight_requests",
 			Help:      "Current number of in-flight requests being handled by s3.",
 		}, []string{"type"})
+
+	S3DeletedObjectsCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "deleted_objects",
+			Help:      "Number of objects deleted in each bucket.",
+		}, []string{"bucket"})
+
+	S3UploadedObjectsCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "uploaded_objects",
+			Help:      "Number of objects uploaded in each bucket.",
+		}, []string{"bucket"})
 )
 
 func init() {
@@ -362,6 +378,8 @@ func init() {
 	Gather.MustRegister(S3RequestHistogram)
 	Gather.MustRegister(S3InFlightRequestsGauge)
 	Gather.MustRegister(S3TimeToFirstByteHistogram)
+	Gather.MustRegister(S3DeletedObjectsCounter)
+	Gather.MustRegister(S3UploadedObjectsCounter)
 
 	go bucketMetricTTLControl()
 }

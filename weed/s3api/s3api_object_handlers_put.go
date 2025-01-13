@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +102,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		setEtag(w, etag)
 	}
+	stats_collect.S3UploadedObjectsCounter.WithLabelValues(bucket).Inc()
 
 	writeSuccessResponseEmpty(w, r)
 }
