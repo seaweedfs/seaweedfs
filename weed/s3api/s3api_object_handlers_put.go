@@ -102,6 +102,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		setEtag(w, etag)
 	}
+	stats_collect.S3UploadedObjectsCounter.WithLabelValues(bucket).Inc()
 
 	writeSuccessResponseEmpty(w, r)
 }
