@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -80,12 +81,15 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	racks := balanceCommand.String("racks", "", "only apply the balancing for this racks")
 	nodes := balanceCommand.String("nodes", "", "only apply the balancing for this nodes")
-	c.writable = *(balanceCommand.Bool("writable", false, "only apply the balancing for writable volumes"))
+	writable := balanceCommand.Bool("writable", false, "only apply the balancing for writable volumes")
 	noLock := balanceCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
-	c.applyBalancing = *(balanceCommand.Bool("force", false, "apply the balancing plan."))
+	applyBalancing := balanceCommand.Bool("force", false, "apply the balancing plan.")
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
+	c.writable = *writable
+	c.applyBalancing = *applyBalancing
+
 	infoAboutSimulationMode(writer, c.applyBalancing, "-force")
 
 	if *noLock {
