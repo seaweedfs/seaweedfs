@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"time"
+
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iamapi"
@@ -12,7 +14,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"time"
 )
 
 var (
@@ -35,7 +36,7 @@ func init() {
 }
 
 var cmdIam = &Command{
-	UsageLine: "iam [-port=8111] [-filer=<ip:port>] [-masters=<ip:port>,<ip:port>]",
+	UsageLine: "iam [-port=8111] [-filer=<ip:port>] [-master=<ip:port>,<ip:port>]",
 	Short:     "start a iam API compatible server",
 	Long:      "start a iam API compatible server.",
 }
