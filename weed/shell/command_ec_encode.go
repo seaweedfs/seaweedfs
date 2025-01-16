@@ -132,6 +132,8 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 }
 
 func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, maxParallelization int) error {
+	var ewg *ErrorWaitGroup
+
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
@@ -143,7 +145,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	}
 
 	// mark the volume as readonly
-	ewg := NewErrorWaitGroup(maxParallelization)
+	ewg = NewErrorWaitGroup(maxParallelization)
 	for _, location := range locations {
 		ewg.Add(func() error {
 			if err := markVolumeReplicaWritable(commandEnv.option.GrpcDialOption, vid, location, false, false); err != nil {
@@ -159,6 +161,21 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	// generate ec shards
 	if err := generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].ServerAddress()); err != nil {
 		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, locations[0].Url, err)
+	}
+
+	// ask the source volume server to delete the original volume
+	ewg = NewErrorWaitGroup(maxParallelization)
+	for _, location := range locations {
+		ewg.Add(func() error {
+			if err := deleteVolume(commandEnv.option.GrpcDialOption, vid, location.ServerAddress(), false); err != nil {
+				return fmt.Errorf("deleteVolume %s volume %d: %v", location.Url, vid, err)
+			}
+			fmt.Printf("deleted volume %d from %s\n", vid, location.Url)
+			return nil
+		})
+	}
+	if err := ewg.Wait(); err != nil {
+		return err
 	}
 
 	return nil
