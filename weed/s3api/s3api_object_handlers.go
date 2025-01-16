@@ -135,7 +135,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
 }
 
-func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, isWrite bool, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int)) {
+func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, isWrite bool, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64)) {
 
 	glog.V(3).Infof("s3 proxying %s to %s", r.Method, destUrl)
 	start := time.Now()
@@ -190,7 +190,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	if r.Method == http.MethodDelete {
 		if resp.StatusCode == http.StatusNotFound {
 			// this is normal
-			responseStatusCode := responseFn(resp, w)
+			responseStatusCode, _ := responseFn(resp, w)
 			s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
 			return
 		}
@@ -202,7 +202,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	TimeToFirstByte(r.Method, start, r)
 	if resp.Header.Get(s3_constants.SeaweedFSIsDirectoryKey) == "true" {
-		responseStatusCode := responseFn(resp, w)
+		responseStatusCode, _ := responseFn(resp, w)
 		s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
 		return
 	}
@@ -233,7 +233,9 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	setUserMetadataKeyToLowercase(resp)
 
-	responseStatusCode := responseFn(resp, w)
+	responseStatusCode, bytesTransferred := responseFn(resp, w)
+	BucketTrafficSent(bytesTransferred, r)
+
 	s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
 }
 
@@ -246,7 +248,7 @@ func setUserMetadataKeyToLowercase(resp *http.Response) {
 	}
 }
 
-func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int) {
+func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
 	for k, v := range proxyResponse.Header {
 		w.Header()[k] = v
 	}
@@ -259,8 +261,9 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 	w.WriteHeader(statusCode)
 	buf := mem.Allocate(128 * 1024)
 	defer mem.Free(buf)
-	if n, err := io.CopyBuffer(w, proxyResponse.Body, buf); err != nil {
-		glog.V(1).Infof("passthrough response read %d bytes: %v", n, err)
+	bytesTransferred, err := io.CopyBuffer(w, proxyResponse.Body, buf)
+	if err != nil {
+		glog.V(1).Infof("passthrough response read %d bytes: %v", bytesTransferred, err)
 	}
-	return statusCode
+	return statusCode, bytesTransferred
 }

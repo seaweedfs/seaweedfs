@@ -266,6 +266,192 @@
       "bars": false,
       "dashLength": 10,
       "dashes": false,
+      "datasource": "${DS_PROMETHEUS}",
+      "fill": 1,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "fillGradient": 0,
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "hiddenSeries": false,
+      "id": 84,
+      "legend": {
+        "avg": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "show": true,
+        "total": false,
+        "values": false
+      },
+      "lines": true,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.1.2",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_received_bytes_total{namespace=\"$namespace\",service=~\"$service-api\"}[$__interval])) by (bucket)",
+          "format": "time_series",
+          "hide": false,
+          "intervalFactor": 2,
+          "legendFormat": "{{bucket}}",
+          "refId": "A"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "S3 Bucket Traffic Received",
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "format": "decbytes",
+          "logBase": 1,
+          "min": 0,
+          "show": true
+        },
+        {
+          "format": "short",
+          "logBase": 1,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_PROMETHEUS}",
+      "fill": 1,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "fillGradient": 0,
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "hiddenSeries": false,
+      "id": 85,
+      "legend": {
+        "avg": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "show": true,
+        "total": false,
+        "values": false
+      },
+      "lines": true,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.1.2",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_sent_bytes_total{namespace=\"$namespace\",service=~\"$service-api\"}[$__interval])) by (bucket)",
+          "format": "time_series",
+          "hide": false,
+          "intervalFactor": 2,
+          "legendFormat": "{{bucket}}",
+          "refId": "A"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "S3 Bucket Traffic Sent",
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "format": "decbytes",
+          "logBase": 1,
+          "min": 0,
+          "show": true
+        },
+        {
+          "format": "short",
+          "logBase": 1,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
       "datasource": "$DS_PROMETHEUS",
       "editable": true,
       "error": false,
@@ -282,7 +468,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 8
+        "y": 15
       },
       "hiddenSeries": false,
       "id": 68,
@@ -393,7 +579,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 8
+        "y": 15
       },
       "hiddenSeries": false,
       "id": 67,
@@ -504,7 +690,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 8
+        "y": 15
       },
       "hiddenSeries": false,
       "id": 65,
@@ -601,7 +787,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 22
       },
       "id": 55,
       "panels": [],
@@ -630,7 +816,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 16
+        "y": 23
       },
       "hiddenSeries": false,
       "id": 46,
@@ -741,7 +927,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 16
+        "y": 23
       },
       "hiddenSeries": false,
       "id": 49,
@@ -857,7 +1043,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 16
+        "y": 23
       },
       "hiddenSeries": false,
       "id": 66,
@@ -973,7 +1159,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 30
       },
       "hiddenSeries": false,
       "id": 2,
@@ -1072,7 +1258,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 37
       },
       "id": 56,
       "panels": [],
@@ -1101,7 +1287,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 38
       },
       "hiddenSeries": false,
       "id": 47,
@@ -1209,7 +1395,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 38
       },
       "hiddenSeries": false,
       "id": 40,
@@ -1312,7 +1498,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 45
       },
       "hiddenSeries": false,
       "id": 48,
@@ -1425,7 +1611,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 45
+        "y": 52
       },
       "hiddenSeries": false,
       "id": 50,
@@ -1530,7 +1716,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 59
       },
       "hiddenSeries": false,
       "id": 51,
@@ -1615,7 +1801,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 59
+        "y": 66
       },
       "id": 57,
       "panels": [],
@@ -1644,7 +1830,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 60
+        "y": 67
       },
       "hiddenSeries": false,
       "id": 12,
@@ -1744,7 +1930,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 60
+        "y": 67
       },
       "hiddenSeries": false,
       "id": 14,
@@ -1833,7 +2019,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 67
+        "y": 74
       },
       "id": 58,
       "panels": [],
@@ -1862,7 +2048,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 68
+        "y": 75
       },
       "hiddenSeries": false,
       "id": 52,
@@ -1990,7 +2176,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 68
+        "y": 75
       },
       "hiddenSeries": false,
       "id": 54,
@@ -2090,7 +2276,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 75
+        "y": 82
       },
       "hiddenSeries": false,
       "id": 53,

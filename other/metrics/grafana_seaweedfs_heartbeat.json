@@ -721,6 +721,168 @@
           "datasource": "${DS_PROMETHEUS-DEV}",
           "editable": true,
           "error": false,
+          "fill": 1,
+          "grid": {},
+          "id": 84,
+          "fieldConfig": {
+            "defaults": {
+              "unit": "decbytes"
+            },
+            "overrides": []
+          },
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "span": 6,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_received_bytes_total[$__interval])) by (bucket)",
+              "format": "time_series",
+              "hide": false,
+              "intervalFactor": 2,
+              "legendFormat": "{{bucket}}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeShift": null,
+          "title": "S3 Bucket Traffic Received",
+          "tooltip": {
+            "msResolution": true,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "decbytes",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_PROMETHEUS-DEV}",
+          "editable": true,
+          "error": false,
+          "fill": 1,
+          "grid": {},
+          "id": 85,
+          "fieldConfig": {
+            "defaults": {
+              "unit": "decbytes"
+            },
+            "overrides": []
+          },
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "span": 6,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_sent_bytes_total[$__interval])) by (bucket)",
+              "format": "time_series",
+              "hide": false,
+              "intervalFactor": 2,
+              "legendFormat": "{{bucket}}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeShift": null,
+          "title": "S3 Bucket Traffic Sent",
+          "tooltip": {
+            "msResolution": true,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "decbytes",
+              "logBase": 1,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ]
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_PROMETHEUS-DEV}",
+          "editable": true,
+          "error": false,
           "fill": 0,
           "grid": {},
           "id": 55,
