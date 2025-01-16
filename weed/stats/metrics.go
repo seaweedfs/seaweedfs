@@ -320,7 +320,7 @@ var (
 			Help:      "Current number of in-flight requests being handled by s3.",
 		}, []string{"type"})
 
-	S3BucketTrafficReceivedBytes = prometheus.NewCounterVec(
+	S3BucketTrafficReceivedBytesCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
 			Subsystem: "s3",
@@ -328,7 +328,7 @@ var (
 			Help:      "Total number of bytes received by an S3 bucket from clients.",
 		}, []string{"bucket"})
 
-	S3BucketTrafficSentBytes = prometheus.NewCounterVec(
+	S3BucketTrafficSentBytesCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
 			Subsystem: "s3",
@@ -378,8 +378,8 @@ func init() {
 	Gather.MustRegister(S3RequestHistogram)
 	Gather.MustRegister(S3InFlightRequestsGauge)
 	Gather.MustRegister(S3TimeToFirstByteHistogram)
-	Gather.MustRegister(S3BucketTrafficReceivedBytes)
-	Gather.MustRegister(S3BucketTrafficSentBytes)
+	Gather.MustRegister(S3BucketTrafficReceivedBytesCounter)
+	Gather.MustRegister(S3BucketTrafficSentBytesCounter)
 
 	go bucketMetricTTLControl()
 }
