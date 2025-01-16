@@ -36,7 +36,7 @@ func TimeToFirstByte(action string, start time.Time, r *http.Request) {
 	stats_collect.RecordBucketActiveTime(bucket)
 }
 
-func BucketTrafficReceived(bytesTransferred int64, r *http.Request) {
+func BucketTrafficSent(bytesTransferred int64, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	stats_collect.S3BucketTrafficReceivedBytes.WithLabelValues(bucket).Add(float64(bytesTransferred))
+	stats_collect.S3BucketTrafficSentBytes.WithLabelValues(bucket).Add(float64(bytesTransferred))
 }

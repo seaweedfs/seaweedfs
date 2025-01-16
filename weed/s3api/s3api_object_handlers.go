@@ -234,7 +234,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	setUserMetadataKeyToLowercase(resp)
 
 	responseStatusCode, bytesTransferred := responseFn(resp, w)
-	BucketTrafficReceived(bytesTransferred, r)
+	BucketTrafficSent(bytesTransferred, r)
 
 	s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
 }

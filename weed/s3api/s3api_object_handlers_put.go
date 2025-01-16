@@ -162,7 +162,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.Errorf("upload to filer error: %v", ret.Error)
 		return "", filerErrorToS3Error(ret.Error)
 	}
-	stats_collect.S3BucketTrafficSentBytes.WithLabelValues(bucket).Add(float64(ret.Size))
+	stats_collect.S3BucketTrafficReceivedBytes.WithLabelValues(bucket).Add(float64(ret.Size))
 	return etag, s3err.ErrNone
 }
 
