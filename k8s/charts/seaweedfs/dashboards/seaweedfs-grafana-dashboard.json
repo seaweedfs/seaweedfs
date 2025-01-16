@@ -1512,6 +1512,96 @@
       },
       "fieldConfig": {
         "defaults": {
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "id": 84,
+      "links": [],
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.3.1",
+      "targets": [
+        {
+          "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_received_bytes_total{namespace=\"$NAMESPACE\"}[$__interval])) by (bucket)",
+          "format": "time_series",
+          "hide": false,
+          "intervalFactor": 2,
+          "legendFormat": "{{bucket}}",
+          "refId": "A"
+        }
+      ],
+      "title": "S3 Bucket Traffic Received",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "id": 85,
+      "links": [],
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.3.1",
+      "targets": [
+        {
+          "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_sent_bytes_total{namespace=\"$NAMESPACE\"}[$__interval])) by (bucket)",
+          "format": "time_series",
+          "hide": false,
+          "intervalFactor": 2,
+          "legendFormat": "{{bucket}}",
+          "refId": "A"
+        }
+      ],
+      "title": "S3 Bucket Traffic Sent",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
           "color": {
             "mode": "palette-classic"
           },
@@ -1571,7 +1661,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 41
       },
       "id": 72,
       "links": [],
@@ -1689,7 +1779,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 50
       },
       "id": 73,
       "links": [],
@@ -1845,7 +1935,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 50
+        "y": 57
       },
       "id": 55,
       "links": [],
@@ -2002,7 +2092,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 57
+        "y": 64
       },
       "hideTimeOverride": false,
       "id": 59,
@@ -2074,7 +2164,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 64
+        "y": 71
       },
       "id": 62,
       "panels": [],
@@ -2146,7 +2236,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 65
+        "y": 72
       },
       "id": 47,
       "links": [],
@@ -2289,7 +2379,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 65
+        "y": 72
       },
       "id": 40,
       "links": [],
@@ -2386,7 +2476,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 72
+        "y": 79
       },
       "id": 48,
       "links": [],
@@ -2496,7 +2586,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 79
+        "y": 86
       },
       "id": 50,
       "links": [],
@@ -2598,7 +2688,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 86
+        "y": 93
       },
       "id": 51,
       "links": [],
@@ -2711,7 +2801,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 94
+        "y": 101
       },
       "id": 12,
       "links": [],
@@ -2806,7 +2896,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 94
+        "y": 101
       },
       "id": 14,
       "links": [],
@@ -2848,7 +2938,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 101
+        "y": 108
       },
       "id": 64,
       "panels": [],
@@ -2921,7 +3011,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 102
+        "y": 109
       },
       "id": 52,
       "links": [],
@@ -3049,7 +3139,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 102
+        "y": 109
       },
       "id": 54,
       "links": [],
@@ -3146,7 +3236,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 109
+        "y": 116
       },
       "id": 53,
       "links": [],
