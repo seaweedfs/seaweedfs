@@ -53,10 +53,9 @@ func main() {
 	flag.Usage = usage
 
 	err := sentry.Init(sentry.ClientOptions{
-		SampleRate:         0.1,
-		EnableTracing:      true,
-		TracesSampleRate:   0.1,
-		ProfilesSampleRate: 0.1,
+		SampleRate:       0.1,
+		EnableTracing:    true,
+		TracesSampleRate: 0.1,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sentry.Init: %v", err)
