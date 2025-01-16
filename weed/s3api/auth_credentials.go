@@ -139,7 +139,6 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 	err = pb.WithFilerClient(false, 0, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		glog.V(3).Infof("loading config %s from filer %s", filer.IamConfigDirectory+"/"+filer.IamIdentityFile, option.Filer)
 		content, err = filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile)
-		glog.V(3).Infof("config content: %s", string(content))
 		return err
 	})
 	if err != nil {
@@ -150,11 +149,6 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
 	content, readErr := os.ReadFile(fileName)
-
-	// Log the content as utf-8
-	glog.V(3).Infof("reading config from: %s", fileName)
-	glog.V(3).Infof("config content: %s", string(content))
-
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
@@ -249,15 +243,9 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 			}
 		}
 
-		// count and print the number of actions to load
-		nbActions := len(ident.Actions)
-		glog.V(3).Infof("loading %d actions for identity %s", nbActions, ident.Name)
 		for _, action := range ident.Actions {
-			glog.V(3).Infof("loading action %s", action)
 			t.Actions = append(t.Actions, Action(action))
 		}
-		nbCredentials := len(ident.Credentials)
-		glog.V(3).Infof("loading %d credentials for identity %s", nbCredentials, ident.Name)
 		for _, cred := range ident.Credentials {
 			t.Credentials = append(t.Credentials, &Credential{
 				AccessKey: cred.AccessKey,
@@ -400,18 +388,14 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	}
 
 	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
-	glog.V(3).Infof("request: %v", r)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	prefix := s3_constants.GetPrefix(r)
 
-	glog.V(3).Infof("bucket: %v, object: %v, prefix: %v", bucket, object, prefix)
-
-	// If object is empty, and the prefix is not empty, then the object is the prefix
 	if object == "/" && prefix != "" {
+		// Using the aws cli with s3, and s3api, and with boto3, the object is always set to "/"
+		// but the prefix is set to the actual object key
 		object = prefix
 	}
-
-	glog.V(3).Infof("bucket: %v, object: %v, prefix: %v", bucket, object, prefix)
 
 	if !identity.canDo(action, bucket, object) {
 		return identity, s3err.ErrAccessDenied
@@ -490,27 +474,18 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 		glog.V(3).Infof("identity %s is not allowed to perform action %s on %s -- bucket is empty", identity.Name, action, bucket+objectKey)
 		return false
 	}
-	glog.V(3).Infof("checking bucket %s with object %s", bucket, objectKey)
 	glog.V(3).Infof("checking if %s can perform %s on bucket '%s'", identity.Name, action, bucket+objectKey)
 	target := string(action) + ":" + bucket + objectKey
 	adminTarget := s3_constants.ACTION_ADMIN + ":" + bucket + objectKey
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 
-	glog.V(3).Infof("checking target=%s", target)
-	glog.V(3).Infof("checking adminTarget=%s", adminTarget)
-	glog.V(3).Infof("checking limitedByBucket=%s", limitedByBucket)
-	glog.V(3).Infof("checking adminLimitedByBucket=%s", adminLimitedByBucket)
-
 	for _, a := range identity.Actions {
 		act := string(a)
-		glog.V(3).Infof("checking %s", act)
 		if strings.HasSuffix(act, "*") {
-			glog.V(3).Infof("checking if %s has prefix %s", target, act[:len(act)-1])
 			if strings.HasPrefix(target, act[:len(act)-1]) {
 				return true
 			}
-			glog.V(3).Infof("checking if %s has prefix %s", adminTarget, act[:len(act)-1])
 			if strings.HasPrefix(adminTarget, act[:len(act)-1]) {
 				return true
 			}

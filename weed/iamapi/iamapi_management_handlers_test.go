@@ -29,7 +29,7 @@ func TestGetActionsUserPath(t *testing.T) {
 		},
 	}
 
-	actions, _ := GetActions(&policyDocument)
+	actions := GetActions(&policyDocument)
 
 	expectedActions := []string{
 		"Write:shared/user-Alice/*",
@@ -61,7 +61,7 @@ func TestGetActionsWildcardPath(t *testing.T) {
 		},
 	}
 
-	actions, _ := GetActions(&policyDocument)
+	actions := GetActions(&policyDocument)
 
 	expectedActions := []string{
 		"Read",
