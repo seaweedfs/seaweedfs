@@ -332,26 +332,23 @@ func GetActions(policy *PolicyDocument) ([]string, error) {
 			// Parse "arn:aws:s3:::my-bucket/shared/*"
 			res := strings.Split(resource, ":")
 			if len(res) != 6 || res[0] != "arn" || res[1] != "aws" || res[2] != "s3" {
-				return nil, fmt.Errorf("not a valid resource: '%s'. Expected prefix 'arn:aws:s3'", res)
+				glog.Infof("not a valid resource: %s", res)
+				continue
 			}
 			for _, action := range statement.Action {
 				// Parse "s3:Get*"
 				act := strings.Split(action, ":")
 				if len(act) != 2 || act[0] != "s3" {
-					return nil, fmt.Errorf("not a valid action: '%s'. Expected prefix 's3:'", act)
+					glog.Infof("not a valid action: %s", act)
+					continue
 				}
 				statementAction := MapToStatementAction(act[1])
-				if res[5] == "*" {
+				path := res[5]
+				if path == "*" {
 					actions = append(actions, statementAction)
 					continue
 				}
-				// Parse my-bucket/shared/*
-				path := strings.Split(res[5], "/")
-				if len(path) != 2 || path[1] != "*" {
-					glog.Infof("not match bucket: %s", path)
-					continue
-				}
-				actions = append(actions, fmt.Sprintf("%s:%s", statementAction, path[0]))
+				actions = append(actions, fmt.Sprintf("%s:%s", statementAction, path))
 			}
 		}
 	}
