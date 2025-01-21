@@ -171,6 +171,17 @@ func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]strin
 	return ttls
 }
 
+func (fc *FilerConf) GetWORMPaths() []string {
+	var res []string
+	fc.rules.Walk(func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+		if value.Worm {
+			res = append(res, value.LocationPrefix)
+		}
+		return true
+	})
+	return res
+}
+
 // merge if values in b is not empty, merge them into a
 func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.Collection = util.Nvl(b.Collection, a.Collection)
