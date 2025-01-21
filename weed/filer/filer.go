@@ -52,6 +52,8 @@ type Filer struct {
 	RemoteStorage       *FilerRemoteStorage
 	Dlm                 *lock_manager.DistributedLockManager
 	MaxFilenameLength   uint32
+
+	wormAutoCommitController *wormAutoCommitController
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -219,6 +221,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 			glog.Errorf("insert entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 		}
+		f.maybeCommitAsWORM(entry)
 	} else {
 		if o_excl {
 			glog.V(3).Infof("EEXIST: entry %s already exists", entry.FullPath)
@@ -229,6 +232,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 			glog.Errorf("update entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
 		}
+		f.maybeCommitAsWORM(entry)
 	}
 
 	f.NotifyUpdateEvent(ctx, oldEntry, entry, true, isFromOtherCluster, signatures)
