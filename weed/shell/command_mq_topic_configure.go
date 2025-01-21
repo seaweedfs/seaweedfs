@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"io"
 )
 
@@ -54,7 +55,7 @@ func (c *commandMqTopicConfigure) Do(args []string, commandEnv *CommandEnv, writ
 	// create topic
 	return pb.WithBrokerGrpcClient(false, brokerBalancer, commandEnv.option.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 		resp, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
-			Topic: &mq_pb.Topic{
+			Topic: &schema_pb.Topic{
 				Namespace: *namespace,
 				Name:      *topicName,
 			},
