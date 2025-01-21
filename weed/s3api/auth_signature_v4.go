@@ -666,9 +666,10 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 		}
 		switch header {
 		case "expect":
-			// Golang http server strips off 'Expect' header, if the
-			// client sent this as part of signed headers we need to
-			// handle otherwise we would see a signature mismatch.
+			// Set the default value of the Expect header for compatibility.
+			//
+			// In NGINX v1.1, the Expect header is removed when handling 100-continue requests.
+			//
 			// `aws-cli` sets this as part of signed headers.
 			//
 			// According to
@@ -680,8 +681,6 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 			//
 			// So it safe to assume that '100-continue' is what would
 			// be sent, for the time being keep this work around.
-			// Adding a *TODO* to remove this later when Golang server
-			// doesn't filter out the 'Expect' header.
 			extractedSignedHeaders.Set(header, "100-continue")
 		case "host":
 			// Go http server removes "host" from Request.Header

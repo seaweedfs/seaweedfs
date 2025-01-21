@@ -3,10 +3,9 @@ package storage
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"golang.org/x/exp/slices"
 	"io"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -405,7 +405,7 @@ func (s *Store) EcVolumes() (ecVolumes []*erasure_coding.EcVolume) {
 		location.ecVolumesLock.RUnlock()
 	}
 	slices.SortFunc(ecVolumes, func(a, b *erasure_coding.EcVolume) int {
-		return int(b.VolumeId - a.VolumeId)
+		return int(a.VolumeId) - int(b.VolumeId)
 	})
 	return ecVolumes
 }

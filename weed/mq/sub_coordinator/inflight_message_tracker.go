@@ -84,9 +84,9 @@ type TimestampStatus struct {
 
 // RingBuffer represents a circular buffer to hold timestamps.
 type RingBuffer struct {
-	buffer       []*TimestampStatus
-	head         int
-	size         int
+	buffer        []*TimestampStatus
+	head          int
+	size          int
 	maxTimestamp  int64
 	maxAllAckedTs int64
 }
@@ -111,7 +111,7 @@ func (rb *RingBuffer) EnflightTimestamp(timestamp int64) {
 	if rb.size < len(rb.buffer) {
 		rb.size++
 	} else {
-		newBuf := newBuffer(2*len(rb.buffer))
+		newBuf := newBuffer(2 * len(rb.buffer))
 		for i := 0; i < rb.size; i++ {
 			newBuf[i] = rb.buffer[(rb.head+len(rb.buffer)-rb.size+i)%len(rb.buffer)]
 		}

@@ -61,6 +61,8 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
 	worm := fsConfigureCommand.Bool("worm", false, "write-once-read-many, written files are readonly")
+	wormGracePeriod := fsConfigureCommand.Uint64("wormGracePeriod", 0, "grace period before worm is enforced, in seconds")
+	wormRetentionTime := fsConfigureCommand.Uint64("wormRetentionTime", 0, "retention time for a worm enforced file, in seconds")
 	maxFileNameLength := fsConfigureCommand.Uint("maxFileNameLength", 0, "file name length limits in bytes for compatibility with Unix-based systems")
 	dataCenter := fsConfigureCommand.String("dataCenter", "", "assign writes to this dataCenter")
 	rack := fsConfigureCommand.String("rack", "", "assign writes to this rack")
@@ -80,19 +82,21 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	if *locationPrefix != "" {
 		infoAboutSimulationMode(writer, *apply, "-apply")
 		locConf := &filer_pb.FilerConf_PathConf{
-			LocationPrefix:    *locationPrefix,
-			Collection:        *collection,
-			Replication:       *replication,
-			Ttl:               *ttl,
-			Fsync:             *fsync,
-			MaxFileNameLength: uint32(*maxFileNameLength),
-			DiskType:          *diskType,
-			VolumeGrowthCount: uint32(*volumeGrowthCount),
-			ReadOnly:          *isReadOnly,
-			DataCenter:        *dataCenter,
-			Rack:              *rack,
-			DataNode:          *dataNode,
-			Worm:              *worm,
+			LocationPrefix:           *locationPrefix,
+			Collection:               *collection,
+			Replication:              *replication,
+			Ttl:                      *ttl,
+			Fsync:                    *fsync,
+			MaxFileNameLength:        uint32(*maxFileNameLength),
+			DiskType:                 *diskType,
+			VolumeGrowthCount:        uint32(*volumeGrowthCount),
+			ReadOnly:                 *isReadOnly,
+			DataCenter:               *dataCenter,
+			Rack:                     *rack,
+			DataNode:                 *dataNode,
+			Worm:                     *worm,
+			WormGracePeriodSeconds:   *wormGracePeriod,
+			WormRetentionTimeSeconds: *wormRetentionTime,
 		}
 
 		// check collection

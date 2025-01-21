@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -150,6 +151,53 @@ func TestPutUserPolicy(t *testing.T) {
 	response, err := executeRequest(req.HTTPRequest, out)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, http.StatusOK, response.Code)
+}
+
+func TestPutUserPolicyError(t *testing.T) {
+	userName := aws.String("InvalidUser")
+	params := &iam.PutUserPolicyInput{
+		UserName:   userName,
+		PolicyName: aws.String("S3-read-only-example-bucket"),
+		PolicyDocument: aws.String(
+			`{
+				  "Version": "2012-10-17",
+				  "Statement": [
+					{
+					  "Effect": "Allow",
+					  "Action": [
+						"s3:Get*",
+						"s3:List*"
+					  ],
+					  "Resource": [
+						"arn:aws:s3:::EXAMPLE-BUCKET",
+						"arn:aws:s3:::EXAMPLE-BUCKET/*"
+					  ]
+					}
+				  ]
+			}`),
+	}
+	req, _ := iam.New(session.New()).PutUserPolicyRequest(params)
+	_ = req.Build()
+	response, err := executeRequest(req.HTTPRequest, nil)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusNotFound, response.Code)
+
+	expectedMessage := "the user with name InvalidUser cannot be found"
+	expectedCode := "NoSuchEntity"
+
+	code, message := extractErrorCodeAndMessage(response)
+
+	assert.Equal(t, expectedMessage, message)
+	assert.Equal(t, expectedCode, code)
+}
+
+func extractErrorCodeAndMessage(response *httptest.ResponseRecorder) (string, string) {
+	pattern := `<Error><Code>(.*)</Code><Message>(.*)</Message><Type>(.*)</Type></Error>`
+	re := regexp.MustCompile(pattern)
+
+	code := re.FindStringSubmatch(response.Body.String())[1]
+	message := re.FindStringSubmatch(response.Body.String())[2]
+	return code, message
 }
 
 func TestGetUserPolicy(t *testing.T) {

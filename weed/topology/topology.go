@@ -55,6 +55,8 @@ type Topology struct {
 
 	UuidAccessLock sync.RWMutex
 	UuidMap        map[string][]string
+
+	LastLeaderChangeTime time.Time
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -252,7 +254,7 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 		return "", 0, nil, shouldGrow, fmt.Errorf("failed to find writable volumes for collection:%s replication:%s ttl:%s error: %v", option.Collection, option.ReplicaPlacement.String(), option.Ttl.String(), err)
 	}
 	if volumeLocationList == nil || volumeLocationList.Length() == 0 {
-		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", noWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
+		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
 	nextFileId := t.Sequence.NextFileId(requestedCount)
 	fileId = needle.NewFileId(vid, nextFileId, rand.Uint32()).String()
@@ -363,6 +365,19 @@ func (t *Topology) ListDataCenters() (dcs []string) {
 	defer t.RUnlock()
 	for _, c := range t.children {
 		dcs = append(dcs, string(c.(*DataCenter).Id()))
+	}
+	return dcs
+}
+
+func (t *Topology) ListDCAndRacks() (dcs map[NodeId][]NodeId) {
+	t.RLock()
+	defer t.RUnlock()
+	dcs = make(map[NodeId][]NodeId)
+	for _, dcNode := range t.children {
+		dcNodeId := dcNode.(*DataCenter).Id()
+		for _, rackNode := range dcNode.Children() {
+			dcs[dcNodeId] = append(dcs[dcNodeId], rackNode.(*Rack).Id())
+		}
 	}
 	return dcs
 }

@@ -10,10 +10,12 @@ import (
 	"sort"
 	"strings"
 
+	"slices"
+
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -112,13 +114,13 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 				return
 			}
 			for _, chunk := range entry.Chunks {
-				if chunk.IsChunkManifest {
-					fmt.Printf("Change volume id for large file is not implemented yet: %s/%s\n", parentPath, entry.Name)
-					continue
-				}
 				chunkVolumeId := needle.VolumeId(chunk.Fid.VolumeId)
 				toVolumeId, found := plan[chunkVolumeId]
 				if !found {
+					continue
+				}
+				if chunk.IsChunkManifest {
+					fmt.Printf("Change volume id for large file is not implemented yet: %s/%s\n", parentPath, entry.Name)
 					continue
 				}
 				path := parentPath.Child(entry.Name)
@@ -341,6 +343,14 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 		return err
 	}
 
+	v := util.GetViper()
+	signingKey := v.GetString("jwt.signing.key")
+	var jwt security.EncodedJwt
+	if signingKey != "" {
+		expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
+		jwt = security.GenJwtForVolumeServer(security.SigningKey(signingKey), expiresAfterSec, toFid.String())
+	}
+
 	_, err, _ = uploader.Upload(reader, &operation.UploadOption{
 		UploadUrl:         uploadURL,
 		Filename:          filename,
@@ -349,6 +359,7 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 		MimeType:          contentType,
 		PairMap:           nil,
 		Md5:               md5,
+		Jwt:               security.EncodedJwt(jwt),
 	})
 	if err != nil {
 		return err

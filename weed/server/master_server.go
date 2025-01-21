@@ -104,6 +104,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	topology.VolumeGrowStrategy.Copy3Count = v.GetUint32("master.volume_growth.copy_3")
 	topology.VolumeGrowStrategy.CopyOtherCount = v.GetUint32("master.volume_growth.copy_other")
 	topology.VolumeGrowStrategy.Threshold = v.GetFloat64("master.volume_growth.threshold")
+	whiteList := util.StringSplit(v.GetString("guard.white_list"), ",")
 
 	var preallocateSize int64
 	if option.VolumePreallocate {
@@ -133,7 +134,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
 
-	ms.guard = security.NewGuard(ms.option.WhiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	ms.guard = security.NewGuard(append(ms.option.WhiteList, whiteList...), signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources2(r)
 	r.HandleFunc("/", ms.proxyToLeader(ms.uiStatusHandler))
@@ -184,12 +185,14 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
 			if ms.Topo.RaftServer.Leader() != "" {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
+				ms.Topo.LastLeaderChangeTime = time.Now()
 			}
 		})
 		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())
 	} else if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		raftServerName = ms.Topo.HashicorpRaft.String()
+		ms.Topo.LastLeaderChangeTime = time.Now()
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
 
@@ -407,4 +410,14 @@ func (ms *MasterServer) Shutdown() {
 		ms.Topo.HashicorpRaft.LeadershipTransfer()
 	}
 	ms.Topo.HashicorpRaft.Shutdown()
+}
+
+func (ms *MasterServer) Reload() {
+	glog.V(0).Infoln("Reload master server...")
+
+	util.LoadConfiguration("security", false)
+	v := util.GetViper()
+	ms.guard.UpdateWhiteList(append(ms.option.WhiteList,
+		util.StringSplit(v.GetString("guard.white_list"), ",")...),
+	)
 }

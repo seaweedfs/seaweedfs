@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func TestUnUsedSpace(t *testing.T) {
 		Directory:              "/test/",
 		DirectoryUuid:          "1234",
 		IdxDirectory:           "/test/",
-		DiskType:               "hdd",
+		DiskType:               types.HddType,
 		MaxVolumeCount:         0,
 		OriginalMaxVolumeCount: 0,
 		MinFreeSpace:           minFreeSpace,

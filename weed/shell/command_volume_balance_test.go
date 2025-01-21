@@ -255,8 +255,8 @@ func TestBalance(t *testing.T) {
 	volumeServers := collectVolumeServersByDcRackNode(topologyInfo, "", "", "")
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
-
-	if err := balanceVolumeServers(nil, diskTypes, volumeReplicas, volumeServers, "ALL_COLLECTIONS", false); err != nil {
+	c := &commandVolumeBalance{}
+	if err := c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, "ALL_COLLECTIONS"); err != nil {
 		t.Errorf("balance: %v", err)
 	}
 
@@ -265,7 +265,7 @@ func TestBalance(t *testing.T) {
 func TestVolumeSelection(t *testing.T) {
 	topologyInfo := parseOutput(topoData)
 
-	vids, err := collectVolumeIdsForTierChange(topologyInfo, 1000, types.ToDiskType("hdd"), "", 20.0, 0)
+	vids, err := collectVolumeIdsForTierChange(topologyInfo, 1000, types.ToDiskType(types.HddType), "", 20.0, 0)
 	if err != nil {
 		t.Errorf("collectVolumeIdsForTierChange: %v", err)
 	}

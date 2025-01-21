@@ -11,7 +11,7 @@ import (
 
 	hashicorpRaft "github.com/hashicorp/raft"
 
-	"golang.org/x/exp/slices"
+	"slices"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/raft/protobuf"

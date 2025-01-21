@@ -20,7 +20,7 @@ jobs:
       -
         name: Docker meta
         id: docker_meta
-        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v3
+        uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96 # v3
         with:
           images: |
             chrislusf/seaweedfs
@@ -33,10 +33,10 @@ jobs:
             org.opencontainers.image.vendor=Chris Lu
       -
         name: Set up QEMU
-        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v1
+        uses: docker/setup-qemu-action@53851d14592bedcffcf25ea515637cff71ef929a # v1
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v1
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v1
         with:
           buildkitd-flags: "--debug"
       -
@@ -56,7 +56,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
       -
         name: Build
-        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v2
+        uses: docker/build-push-action@67a2d409c0a876cbe6b11854e3e25193efe4e62d # v2
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}

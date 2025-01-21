@@ -9,11 +9,11 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
-	"sync"
 	"net/http"
 	"net/textproto"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -66,9 +66,9 @@ func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64, tsN
 
 var (
 	fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", "")
-	uploader *Uploader
-	uploaderErr error
-	once sync.Once
+	uploader        *Uploader
+	uploaderErr     error
+	once            sync.Once
 )
 
 // HTTPClient interface for testing
@@ -82,7 +82,7 @@ type Uploader struct {
 }
 
 func NewUploader() (*Uploader, error) {
-	once.Do(func ()  {
+	once.Do(func() {
 		// With Dial context
 		var httpClient *util_http_client.HTTPClient
 		httpClient, uploaderErr = util_http.NewGlobalHttpClient(util_http_client.AddDialContext)
@@ -96,7 +96,7 @@ func NewUploader() (*Uploader, error) {
 	return uploader, uploaderErr
 }
 
-func newUploader(httpClient HTTPClient) (*Uploader) {
+func newUploader(httpClient HTTPClient) *Uploader {
 	return &Uploader{
 		httpClient: httpClient,
 	}

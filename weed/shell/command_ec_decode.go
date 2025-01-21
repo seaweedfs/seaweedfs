@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -239,25 +238,6 @@ func lookupVolumeIds(commandEnv *CommandEnv, volumeIds []string) (volumeIdLocati
 		return nil, err
 	}
 	return resp.VolumeIdLocations, nil
-}
-
-func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Duration) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
-
-	if delayBeforeCollecting > 0 {
-		time.Sleep(delayBeforeCollecting)
-	}
-
-	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		return err
-	})
-	if err != nil {
-		return
-	}
-
-	return resp.TopologyInfo, resp.VolumeSizeLimitMb, nil
-
 }
 
 func collectEcShardIds(topoInfo *master_pb.TopologyInfo, selectedCollection string) (vids []needle.VolumeId) {

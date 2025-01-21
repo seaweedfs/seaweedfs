@@ -2,8 +2,8 @@ package filer
 
 import (
 	"github.com/stretchr/testify/assert"
-	"golang.org/x/exp/slices"
 	"log"
+	"slices"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"

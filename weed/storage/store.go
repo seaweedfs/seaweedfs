@@ -381,19 +381,32 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeEcShardInformationMessage) {
 	for _, location := range s.Locations {
+		// Collect ecVolume to be deleted
+		var toDeleteEvs []*erasure_coding.EcVolume
+		location.ecVolumesLock.RLock()
 		for _, ev := range location.ecVolumes {
-			messages := ev.ToVolumeEcShardInformationMessage()
 			if ev.IsTimeToDestroy() {
-				err := location.deleteEcVolumeById(ev.VolumeId)
-				if err != nil {
-					ecShards = append(ecShards, messages...)
-					glog.Errorf("delete EcVolume err %d: %v", ev.VolumeId, err)
-					continue
-				}
-				deleted = append(deleted, messages...)
+				toDeleteEvs = append(toDeleteEvs, ev)
 			} else {
+				messages := ev.ToVolumeEcShardInformationMessage()
 				ecShards = append(ecShards, messages...)
 			}
+		}
+		location.ecVolumesLock.RUnlock()
+
+		// Delete expired volumes
+		for _, ev := range toDeleteEvs {
+			messages := ev.ToVolumeEcShardInformationMessage()
+			// deleteEcVolumeById has its own lock
+			err := location.deleteEcVolumeById(ev.VolumeId)
+			if err != nil {
+				ecShards = append(ecShards, messages...)
+				glog.Errorf("delete EcVolume err %d: %v", ev.VolumeId, err)
+				continue
+			}
+			// No need for additional lock here since we only need the messages
+			// from volumes that were already collected
+			deleted = append(deleted, messages...)
 		}
 	}
 	return

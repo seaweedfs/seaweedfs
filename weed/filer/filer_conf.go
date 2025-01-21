@@ -190,6 +190,12 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.DataNode = util.Nvl(b.DataNode, a.DataNode)
 	a.DisableChunkDeletion = b.DisableChunkDeletion || a.DisableChunkDeletion
 	a.Worm = b.Worm || a.Worm
+	if b.WormRetentionTimeSeconds > 0 {
+		a.WormRetentionTimeSeconds = b.WormRetentionTimeSeconds
+	}
+	if b.WormGracePeriodSeconds > 0 {
+		a.WormGracePeriodSeconds = b.WormGracePeriodSeconds
+	}
 }
 
 func (fc *FilerConf) ToProto() *filer_pb.FilerConf {
