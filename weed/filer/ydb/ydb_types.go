@@ -22,7 +22,7 @@ type FileMetas []FileMeta
 func (fm *FileMeta) queryParameters(ttlSec int32) *table.QueryParameters {
 	var expireAtValue types.Value
 	if ttlSec > 0 {
-		expireAtValue = types.Uint32Value(uint32(ttlSec))
+		expireAtValue = types.OptionalValue(types.Uint32Value(uint32(ttlSec)))
 	} else {
 		expireAtValue = types.NullValue(types.TypeUint32)
 	}
