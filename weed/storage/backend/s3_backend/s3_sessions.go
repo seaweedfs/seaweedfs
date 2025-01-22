@@ -2,9 +2,10 @@ package s3_backend
 
 import (
 	"fmt"
+	"sync"
+
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -26,7 +27,7 @@ func getSession(region string) (s3iface.S3API, bool) {
 	return sess, found
 }
 
-func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string) (s3iface.S3API, error) {
+func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string, forcePathStyle bool) (s3iface.S3API, error) {
 
 	sessionsLock.Lock()
 	defer sessionsLock.Unlock()
@@ -38,7 +39,7 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string) 
 	config := &aws.Config{
 		Region:                        aws.String(region),
 		Endpoint:                      aws.String(endpoint),
-		S3ForcePathStyle:              aws.Bool(true),
+		S3ForcePathStyle:              aws.Bool(forcePathStyle),
 		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
