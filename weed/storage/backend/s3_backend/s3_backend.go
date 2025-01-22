@@ -2,11 +2,12 @@ package s3_backend
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
@@ -39,6 +40,7 @@ type S3BackendStorage struct {
 	bucket                string
 	endpoint              string
 	storageClass          string
+	forcePathStyle        bool
 	conn                  s3iface.S3API
 }
 
@@ -51,11 +53,12 @@ func newS3BackendStorage(configuration backend.StringProperties, configPrefix st
 	s.bucket = configuration.GetString(configPrefix + "bucket")
 	s.endpoint = configuration.GetString(configPrefix + "endpoint")
 	s.storageClass = configuration.GetString(configPrefix + "storage_class")
+	s.forcePathStyle = util.ParseBool(configuration.GetString(configPrefix+"force_path_style"), true)
 	if s.storageClass == "" {
 		s.storageClass = "STANDARD_IA"
 	}
 
-	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region, s.endpoint)
+	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region, s.endpoint, s.forcePathStyle)
 
 	glog.V(0).Infof("created backend storage s3.%s for region %s bucket %s", s.id, s.region, s.bucket)
 	return
@@ -69,6 +72,7 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	m["bucket"] = s.bucket
 	m["endpoint"] = s.endpoint
 	m["storage_class"] = s.storageClass
+	m["force_path_style"] = util.BoolToString(s.forcePathStyle)
 	return m
 }
 
