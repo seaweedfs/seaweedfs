@@ -8,8 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/http"
 	"net/url"
@@ -21,7 +19,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestIsRequestPresignedSignatureV4 - Test validates the logic for presign signature version v4 detection.
@@ -286,6 +288,73 @@ var ignoredHeaders = map[string]bool{
 	"Content-Type":   true,
 	"Content-Length": true,
 	"User-Agent":     true,
+}
+
+// Tests the test helper with an example from the AWS Doc.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+// This time it's a PUT request uploading the file with content "Welcome to Amazon S3."
+func TestGetStringToSignPUT(t *testing.T) {
+
+	canonicalRequest := `PUT
+/test%24file.text
+
+date:Fri, 24 May 2013 00:00:00 GMT
+host:examplebucket.s3.amazonaws.com
+x-amz-content-sha256:44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072
+x-amz-date:20130524T000000Z
+x-amz-storage-class:REDUCED_REDUNDANCY
+
+date;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class
+44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072`
+
+	date, err := time.Parse(iso8601Format, "20130524T000000Z")
+
+	if err != nil {
+		t.Fatalf("Error parsing date: %v", err)
+	}
+
+	scope := "20130524/us-east-1/s3/aws4_request"
+	stringToSign := getStringToSign(canonicalRequest, date, scope)
+
+	expected := `AWS4-HMAC-SHA256
+20130524T000000Z
+20130524/us-east-1/s3/aws4_request
+9e0e90d9c76de8fa5b200d8c849cd5b8dc7a3be3951ddb7f6a76b4158342019d`
+
+	assert.Equal(t, expected, stringToSign)
+}
+
+// Tests the test helper with an example from the AWS Doc.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+// The GET request example with empty string hash.
+func TestGetStringToSignGETEmptyStringHash(t *testing.T) {
+
+	canonicalRequest := `GET
+/test.txt
+
+host:examplebucket.s3.amazonaws.com
+range:bytes=0-9
+x-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+x-amz-date:20130524T000000Z
+
+host;range;x-amz-content-sha256;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+
+	date, err := time.Parse(iso8601Format, "20130524T000000Z")
+
+	if err != nil {
+		t.Fatalf("Error parsing date: %v", err)
+	}
+
+	scope := "20130524/us-east-1/s3/aws4_request"
+	stringToSign := getStringToSign(canonicalRequest, date, scope)
+
+	expected := `AWS4-HMAC-SHA256
+20130524T000000Z
+20130524/us-east-1/s3/aws4_request
+7344ae5b7ee6c3e7e6b0fe0640412a37625d1fbfff95c48bbb2dc43964946972`
+
+	assert.Equal(t, expected, stringToSign)
 }
 
 // Sign given request using Signature V4.
