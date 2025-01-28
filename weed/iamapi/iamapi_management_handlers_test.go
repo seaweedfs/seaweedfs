@@ -69,3 +69,24 @@ func TestGetActionsWildcardPath(t *testing.T) {
 	}
 	assert.Equal(t, expectedActions, actions)
 }
+
+func TestGetActionsInvalidAction(t *testing.T) {
+	policyDocument := PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []*Statement{
+			{
+				Effect: "Allow",
+				Action: []string{
+					"s3:InvalidAction",
+				},
+				Resource: []string{
+					"arn:aws:s3:::shared/user-Alice/*",
+				},
+			},
+		},
+	}
+
+	_, err := GetActions(&policyDocument)
+	assert.NotNil(t, err)
+	assert.Equal(t, "not a valid action: 'InvalidAction'", err.Error())
+}

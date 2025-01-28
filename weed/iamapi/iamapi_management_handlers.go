@@ -343,6 +343,11 @@ func GetActions(policy *PolicyDocument) ([]string, error) {
 					continue
 				}
 				statementAction := MapToStatementAction(act[1])
+
+				if statementAction == "" {
+					return nil, fmt.Errorf("not a valid action: '%s'", act[1])
+				}
+
 				path := res[5]
 				if path == "*" {
 					actions = append(actions, statementAction)
