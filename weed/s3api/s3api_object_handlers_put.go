@@ -129,6 +129,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		query.Add("collection", s3a.getCollectionName(bucket))
 		proxyReq.URL.RawQuery = query.Encode()
 	}
+	proxyReq.ContentLength = r.ContentLength
 
 	for header, values := range r.Header {
 		for _, value := range values {
