@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -19,7 +20,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
-	"slices"
 )
 
 type DataCenterId string
@@ -1059,10 +1059,6 @@ func (ecb *ecBalancer) collectVolumeIdToEcNodes(collection string) map[needle.Vo
 }
 
 func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, maxParallelization int, applyBalancing bool) (err error) {
-	if len(collections) == 0 {
-		return fmt.Errorf("no collections to balance")
-	}
-
 	// collect all ec nodes
 	allEcNodes, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, dc)
 	if err != nil {
@@ -1080,11 +1076,15 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 		maxParallelization: maxParallelization,
 	}
 
+	if len(collections) == 0 {
+		fmt.Printf("WARNING: No collections to balance EC volumes across.")
+	}
 	for _, c := range collections {
 		if err = ecb.balanceEcVolumes(c); err != nil {
 			return err
 		}
 	}
+
 	if err := ecb.balanceEcRacks(); err != nil {
 		return fmt.Errorf("balance ec racks: %v", err)
 	}
