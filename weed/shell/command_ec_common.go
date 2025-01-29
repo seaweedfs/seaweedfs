@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -19,7 +20,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
-	"slices"
 )
 
 type DataCenterId string
@@ -176,20 +176,28 @@ func _getDefaultReplicaPlacement(commandEnv *CommandEnv) (*super_block.ReplicaPl
 }
 
 func parseReplicaPlacementArg(commandEnv *CommandEnv, replicaStr string) (*super_block.ReplicaPlacement, error) {
-	if replicaStr != "" {
-		rp, err := super_block.NewReplicaPlacementFromString(replicaStr)
-		if err == nil {
-			fmt.Printf("using replica placement %q for EC volumes\n", rp.String())
-		}
-		return rp, err
-	}
+	var rp *super_block.ReplicaPlacement
+	var err error
 
-	// No replica placement argument provided, resolve from master default settings.
-	rp, err := getDefaultReplicaPlacement(commandEnv)
-	if err == nil {
+	if replicaStr != "" {
+		rp, err = super_block.NewReplicaPlacementFromString(replicaStr)
+		if err != nil {
+			return rp, err
+		}
+		fmt.Printf("using replica placement %q for EC volumes\n", rp.String())
+	} else {
+		// No replica placement argument provided, resolve from master default settings.
+		rp, err = getDefaultReplicaPlacement(commandEnv)
+		if err != nil {
+			return rp, err
+		}
 		fmt.Printf("using master default replica placement %q for EC volumes\n", rp.String())
 	}
-	return rp, err
+
+	if !rp.HasReplication() {
+		fmt.Printf("WARNING: replica placement type %q is empty!", rp.String())
+	}
+	return rp, nil
 }
 
 func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Duration) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
