@@ -138,8 +138,8 @@ func TestPickRackToBalanceShardsInto(t *testing.T) {
 		{topologyEc, "6241", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
 		{topologyEc, "6242", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
 		// EC volumes.
-		{topologyEc, "9577", "", nil, "shards 1 >= replica placement limit for other racks (0)"},
-		{topologyEc, "9577", "111", nil, "shards 1 >= replica placement limit for other racks (1)"},
+		{topologyEc, "9577", "", nil, "shards 1 > replica placement limit for other racks (0)"},
+		{topologyEc, "9577", "111", []string{"rack1", "rack2", "rack3"}, ""},
 		{topologyEc, "9577", "222", []string{"rack1", "rack2", "rack3"}, ""},
 		{topologyEc, "10457", "222", []string{"rack1"}, ""},
 		{topologyEc, "12737", "222", []string{"rack2"}, ""},
