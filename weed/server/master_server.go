@@ -65,8 +65,6 @@ type MasterServer struct {
 	vg                      *topology.VolumeGrowth
 	volumeGrowthRequestChan chan *topology.VolumeGrowRequest
 
-	boundedLeaderChan chan int
-
 	// notifying clients
 	clientChansLock sync.RWMutex
 	clientChans     map[string]chan *master_pb.KeepConnectedResponse
@@ -122,7 +120,6 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		adminLocks:              NewAdminLocks(),
 		Cluster:                 cluster.NewCluster(),
 	}
-	ms.boundedLeaderChan = make(chan int, 16)
 
 	ms.MasterClient.SetOnPeerUpdateFn(ms.OnPeerUpdate)
 
@@ -228,8 +225,6 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		ms.boundedLeaderChan <- 1
-		defer func() { <-ms.boundedLeaderChan }()
 		targetUrl, err := url.Parse("http://" + raftServerLeader)
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError,
