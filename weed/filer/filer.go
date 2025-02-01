@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"os"
 	"sort"
 	"strings"
@@ -255,6 +256,12 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 
 	// no such existing directory
 	if dirEntry == nil {
+
+		if len(dirParts) >= 2 && level == 2 && dirParts[0] == "buckets" {
+			if err := s3bucket.VerifyS3BucketName(dirParts[1]); err != nil {
+				return fmt.Errorf("invalid bucket name %s: %v", dirParts[1], err)
+			}
+		}
 
 		// ensure parent directory
 		if err = f.ensureParentDirectoryEntry(ctx, entry, dirParts, level-1, isFromOtherCluster); err != nil {
