@@ -145,7 +145,7 @@ require (
 	github.com/rclone/rclone v1.68.2
 	github.com/rdleal/intervalst v1.4.1
 	github.com/redis/go-redis/v9 v9.7.0
-	github.com/schollz/progressbar/v3 v3.17.1
+	github.com/schollz/progressbar/v3 v3.18.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
