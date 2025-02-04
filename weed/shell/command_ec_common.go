@@ -195,7 +195,7 @@ func parseReplicaPlacementArg(commandEnv *CommandEnv, replicaStr string) (*super
 	}
 
 	if !rp.HasReplication() {
-		fmt.Printf("WARNING: replica placement type %q is empty!", rp.String())
+		fmt.Printf("WARNING: replica placement type %q is empty!\n", rp.String())
 	}
 	return rp, nil
 }
