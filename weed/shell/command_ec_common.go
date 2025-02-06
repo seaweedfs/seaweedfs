@@ -194,9 +194,6 @@ func parseReplicaPlacementArg(commandEnv *CommandEnv, replicaStr string) (*super
 		fmt.Printf("using master default replica placement %q for EC volumes\n", rp.String())
 	}
 
-	if !rp.HasReplication() {
-		fmt.Printf("WARNING: replica placement type %q is empty!", rp.String())
-	}
 	return rp, nil
 }
 
