@@ -683,12 +683,8 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 			// be sent, for the time being keep this work around.
 			extractedSignedHeaders.Set(header, "100-continue")
 		case "host":
-			// Go http server removes "host" from Request.Header
-			if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
-				extractedSignedHeaders.Set(header, forwardedHost)
-			} else {
-				extractedSignedHeaders.Set(header, r.Host)
-			}
+			extractedHost := extractHostHeader(r)
+			extractedSignedHeaders.Set(header, extractedHost)
 		case "transfer-encoding":
 			for _, enc := range r.TransferEncoding {
 				extractedSignedHeaders.Add(header, enc)
@@ -703,6 +699,25 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 		}
 	}
 	return extractedSignedHeaders, s3err.ErrNone
+}
+
+func extractHostHeader(r *http.Request) string {
+
+	forwardedHost := r.Header.Get("X-Forwarded-Host")
+	forwardedPort := r.Header.Get("X-Forwarded-Port")
+
+	// If X-Forwarded-Host is set, use that as the host.
+	// If X-Forwarded-Port is set, use that too to form the host.
+	if forwardedHost != "" {
+		extractedHost := forwardedHost
+		if forwardedPort != "" {
+			extractedHost = forwardedHost + ":" + forwardedPort
+		}
+		return extractedHost
+	} else {
+		// Go http server removes "host" from Request.Header
+		return r.Host
+	}
 }
 
 // getSignedHeaders generate a string i.e alphabetically sorted, semicolon-separated list of lowercase request header names
