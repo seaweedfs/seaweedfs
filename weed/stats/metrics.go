@@ -479,6 +479,10 @@ func bucketMetricTTLControl() {
 				c := S3RequestCounter.DeletePartialMatch(labels)
 				c += S3RequestHistogram.DeletePartialMatch(labels)
 				c += S3TimeToFirstByteHistogram.DeletePartialMatch(labels)
+				c += S3BucketTrafficReceivedBytesCounter.DeletePartialMatch(labels)
+				c += S3BucketTrafficSentBytesCounter.DeletePartialMatch(labels)
+				c += S3DeletedObjectsCounter.DeletePartialMatch(labels)
+				c += S3UploadedObjectsCounter.DeletePartialMatch(labels)
 				glog.V(0).Infof("delete inactive bucket metrics, %s: %d", bucket, c)
 			}
 		}
