@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
@@ -54,13 +55,20 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 		return nil, "", "", time.Time{}, errCode
 	}
 
-	// Payload streaming.
-	payload := streamingContentSHA256
+	contentSha256Header := req.Header.Get("X-Amz-Content-Sha256")
 
+	switch contentSha256Header {
 	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
-	if payload != req.Header.Get("X-Amz-Content-Sha256") {
+	case streamingContentSHA256:
+		glog.V(3).Infof("streaming content sha256")
+	case streamingUnsignedPayload:
+		glog.V(3).Infof("streaming unsigned payload")
+	default:
 		return nil, "", "", time.Time{}, s3err.ErrContentSHA256Mismatch
 	}
+
+	// Payload streaming.
+	payload := contentSha256Header
 
 	// Extract all the signed headers along with its values.
 	extractedSignedHeaders, errCode := extractSignedHeaders(signV4Values.SignedHeaders, r)
