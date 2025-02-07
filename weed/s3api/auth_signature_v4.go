@@ -710,7 +710,7 @@ func extractHostHeader(r *http.Request) string {
 	// If X-Forwarded-Port is set, use that too to form the host.
 	if forwardedHost != "" {
 		extractedHost := forwardedHost
-		if forwardedPort != "" {
+		if forwardedPort != "" && forwardedPort != "80" && forwardedPort != "443" {
 			extractedHost = forwardedHost + ":" + forwardedPort
 		}
 		return extractedHost
