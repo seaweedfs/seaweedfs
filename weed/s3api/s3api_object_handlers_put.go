@@ -102,6 +102,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		setEtag(w, etag)
 	}
+	stats_collect.RecordBucketActiveTime(bucket)
 	stats_collect.S3UploadedObjectsCounter.WithLabelValues(bucket).Inc()
 
 	writeSuccessResponseEmpty(w, r)
@@ -163,6 +164,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.Errorf("upload to filer error: %v", ret.Error)
 		return "", filerErrorToS3Error(ret.Error)
 	}
+	stats_collect.RecordBucketActiveTime(bucket)
 	stats_collect.S3BucketTrafficReceivedBytesCounter.WithLabelValues(bucket).Add(float64(ret.Size))
 	return etag, s3err.ErrNone
 }

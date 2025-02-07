@@ -3,11 +3,12 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 
@@ -57,6 +58,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	stats_collect.RecordBucketActiveTime(bucket)
 	stats_collect.S3DeletedObjectsCounter.WithLabelValues(bucket).Inc()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -176,6 +178,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		deleteResp.DeletedObjects = deletedObjects
 	}
 	deleteResp.Errors = deleteErrors
+	stats_collect.RecordBucketActiveTime(bucket)
 	stats_collect.S3DeletedObjectsCounter.WithLabelValues(bucket).Add(float64(len(deletedObjects)))
 
 	writeSuccessResponseXML(w, r, deleteResp)
