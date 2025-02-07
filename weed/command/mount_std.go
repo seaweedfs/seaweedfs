@@ -61,7 +61,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// basic checks
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
 	if chunkSizeLimitMB <= 0 {
-		fmt.Printf("Please specify a reasonable buffer size.")
+		fmt.Printf("Please specify a reasonable buffer size.\n")
 		return false
 	}
 
