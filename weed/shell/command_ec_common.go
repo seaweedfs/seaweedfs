@@ -1082,7 +1082,7 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 	}
 
 	if len(collections) == 0 {
-		fmt.Printf("WARNING: No collections to balance EC volumes across.")
+		fmt.Printf("WARNING: No collections to balance EC volumes across.\n")
 	}
 	for _, c := range collections {
 		if err = ecb.balanceEcVolumes(c); err != nil {
