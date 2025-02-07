@@ -56,9 +56,10 @@ const (
 	streamingContentSHA256 = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
 	signV4ChunkedAlgorithm = "AWS4-HMAC-SHA256-PAYLOAD"
 
-	// http Header "x-amz-content-sha256" == "UNSIGNED-PAYLOAD" indicates that the
+	// http Header "x-amz-content-sha256" == "UNSIGNED-PAYLOAD" or "STREAMING-UNSIGNED-PAYLOAD-TRAILER" indicates that the
 	// client did not calculate sha256 of the payload.
-	unsignedPayload = "UNSIGNED-PAYLOAD"
+	unsignedPayload          = "UNSIGNED-PAYLOAD"
+	streamingUnsignedPayload = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
 )
 
 // Returns SHA256 for calculating canonical-request.
