@@ -143,6 +143,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	if !found {
 		return fmt.Errorf("volume %d not found", vid)
 	}
+	target := locations[0]
 
 	// mark the volume as readonly
 	ewg = NewErrorWaitGroup(maxParallelization)
@@ -159,8 +160,8 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	}
 
 	// generate ec shards
-	if err := generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].ServerAddress()); err != nil {
-		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, locations[0].Url, err)
+	if err := generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, target.ServerAddress()); err != nil {
+		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, target.Url, err)
 	}
 
 	// ask the source volume server to delete the original volume
@@ -176,6 +177,15 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	}
 	if err := ewg.Wait(); err != nil {
 		return err
+	}
+
+	// mount all ec shards for the converted volume
+	shardIds := make([]uint32, erasure_coding.TotalShardsCount)
+	for i := range shardIds {
+		shardIds[i] = uint32(i)
+	}
+	if err := mountEcShards(commandEnv.option.GrpcDialOption, collection, vid, target.ServerAddress(), shardIds); err != nil {
+		return fmt.Errorf("mount ec shards for volume %d on %s: %v", vid, target.Url, err)
 	}
 
 	return nil
