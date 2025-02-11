@@ -101,7 +101,6 @@ func generateStreamingUnsignedPayloadTrailerPayload(includeFinalCRLF bool) strin
 	checksum := writer.Sum(nil)
 	base64EncodedChecksum := base64.StdEncoding.EncodeToString(checksum)
 	trailer := "x-amz-checksum-crc32:" + base64EncodedChecksum + "\n\r\n\r\n\r\n"
-	fmt.Println("Trailer:", trailer)
 
 	payload := chunk1 + chunk2 + chunk3 + chunk4 + trailer
 	return payload
