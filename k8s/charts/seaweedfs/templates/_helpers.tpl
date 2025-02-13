@@ -134,14 +134,17 @@ Inject extra environment vars in the format key:value, if populated
 
 {{/* Return the proper imagePullSecrets */}}
 {{- define "seaweedfs.imagePullSecrets" -}}
-{{- if .Values.global.imagePullSecrets }}
-{{- if kindIs "string" .Values.global.imagePullSecrets }}
+{{- with .Values.global.imagePullSecrets }}
 imagePullSecrets:
-  - name: {{ .Values.global.imagePullSecrets }}
-{{- else }}
-imagePullSecrets:
-{{- range .Values.global.imagePullSecrets }}
+{{- if kindIs "string" . }}
   - name: {{ . }}
+{{- else }}
+{{- range . }}
+  {{- if kindIs "string" . }}
+  - name: {{ . }}
+  {{- else }}
+  - {{ toYaml . }}
+  {{- end}}
 {{- end }}
 {{- end }}
 {{- end }}
