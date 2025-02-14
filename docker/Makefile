@@ -18,6 +18,11 @@ binary_race: options = -race
 binary_race: cgo = 1
 binary_race: binary
 
+binary_rocksdb: tags = "rocksdb"
+binary_rocksdb: cgo = 1
+binary_rocksdb: binary
+
+
 build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
 
@@ -36,8 +41,11 @@ build_rocksdb_dev_env:
 build_rocksdb_local: build_rocksdb_dev_env
 	cd .. ; docker build --no-cache -t chrislusf/seaweedfs:rocksdb_local -f docker/Dockerfile.rocksdb_large_local .
 
-build_rocksdb:
+build_rocksdb_large:
 	docker build --no-cache -t chrislusf/seaweedfs:rocksdb -f Dockerfile.rocksdb_large .
+
+build_rocksdb:
+	docker build --no-cache -t vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.77.1-rocksdb -f Dockerfile.rocksdb .
 
 build_mysql:
 	docker build --no-cache -t vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.77.1-dev -f Dockerfile.mysql .
