@@ -1,0 +1,81 @@
+#FROM golang:1.22 as builder
+FROM vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/golang:1.23.2-bullseye as builder
+
+RUN cp /etc/apt/sources.list /etc/apt/sources.list.bak
+
+RUN echo "deb http://mirrors.aliyun.com/debian/ bullseye main non-free contrib" > /etc/apt/sources.list && \
+    echo "deb http://mirrors.aliyun.com/debian/ bullseye-updates main non-free contrib" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.aliyun.com/debian/ bullseye-backports main non-free contrib" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.aliyun.com/debian-security bullseye-security main" >> /etc/apt/sources.list
+
+RUN apt-get update && \
+    apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev
+
+ENV ROCKSDB_VERSION v9.3.1
+
+COPY ./rocksdb.v9.3.1.tgz /tmp/
+
+RUN cd /tmp && \
+    tar -xzf rocksdb.v9.3.1.tgz && \
+    cd rocksdb && \
+    PORTABLE=1 make -j4 static_lib && \
+    make install-static
+
+#ENV CGO_CFLAGS "-I/tmp/rocksdb/include"
+ENV CGO_CFLAGS "-I/usr/local/include"
+#ENV CGO_LDFLAGS "-L/tmp/rocksdb -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
+ENV CGO_LDFLAGS "-L/usr/local/lib -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
+ENV CGO_ENABLED=1
+ENV GOPROXY=https://goproxy.io,direct
+
+RUN mkdir -p /code
+WORKDIR /code
+COPY ./seaweedfs.tar /code/
+RUN tar -xf seaweedfs.tar
+
+RUN cd /code/hhy-seaweedfs/weed && \
+    go install -buildvcs=false -tags "rocksdb" -ldflags "-extldflags -static"
+    # ${LDFLAGS}"
+
+FROM vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/alpine:3.18.4 AS final
+
+COPY --from=builder /tmp/rocksdb /usr/local/rocksdb
+COPY --from=builder /go/bin/weed /usr/bin/
+RUN mkdir -p /etc/seaweedfs
+COPY --from=builder /code/hhy-seaweedfs/docker/filer_rocksdb.toml /etc/seaweedfs/filer.toml
+COPY --from=builder /code/hhy-seaweedfs/docker/master-udm.toml /etc/seaweedfs/master.toml
+COPY --from=builder /code/hhy-seaweedfs/docker/entrypoint.sh /entrypoint.sh
+
+#COPY  ./weed_pub* /usr/bin/
+#COPY  ./weed_sub* /usr/bin/
+
+RUN apk add fuse # for weed mount
+RUN apk add curl # for health checks
+
+RUN apk add --no-cache snappy zlib bzip2 gflags lz4 zstd
+
+# volume server grpc port
+EXPOSE 18080
+# volume server http port
+EXPOSE 8080
+# filer server grpc port
+EXPOSE 18888
+# filer server http port
+EXPOSE 8888
+# master server shared grpc port
+EXPOSE 19333
+# master server shared http port
+EXPOSE 9333
+# s3 server http port
+EXPOSE 8333
+# webdav server http port
+EXPOSE 7333
+
+RUN mkdir -p /data/filer_rocksdb
+
+#VOLUME /data
+#WORKDIR /data
+
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
