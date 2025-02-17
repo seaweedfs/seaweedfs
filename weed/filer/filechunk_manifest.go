@@ -130,7 +130,9 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, jwt stri
 	var totalWritten int
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
+		retriedCnt := 0
 		for _, urlString := range urlStrings {
+			retriedCnt++
 			var localProcessed int
 			var writeErr error
 			shouldRetry, err = util_http.ReadUrlAsStreamAuthenticated(urlString+"?readDeleted=true", jwt, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
@@ -160,6 +162,10 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, jwt stri
 			} else {
 				break
 			}
+		}
+		// all nodes have tried it
+		if retriedCnt == len(urlStrings) {
+			break
 		}
 		if err != nil && shouldRetry {
 			glog.V(0).Infof("retry reading in %v", waitTime)
