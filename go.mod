@@ -109,7 +109,7 @@ require (
 	golang.org/x/image v0.23.0
 	golang.org/x/net v0.34.0
 	golang.org/x/oauth2 v0.25.0 // indirect
-	golang.org/x/sys v0.29.0
+	golang.org/x/sys v0.30.0
 	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/tools v0.29.0
 	golang.org/x/xerrors v0.0.0-20240716161551-93cc26a95ae9 // indirect
