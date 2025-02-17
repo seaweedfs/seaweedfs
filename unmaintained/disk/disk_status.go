@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-// go run test/disk/disk_status.go
+// go run unmaintained/disk/disk_status.go
 
 type DiskStatus struct {
 	Dir         string  `protobuf:"bytes,1,opt,name=dir,proto3" json:"dir,omitempty"`
