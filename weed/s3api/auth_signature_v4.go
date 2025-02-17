@@ -56,9 +56,10 @@ const (
 	streamingContentSHA256 = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
 	signV4ChunkedAlgorithm = "AWS4-HMAC-SHA256-PAYLOAD"
 
-	// http Header "x-amz-content-sha256" == "UNSIGNED-PAYLOAD" indicates that the
+	// http Header "x-amz-content-sha256" == "UNSIGNED-PAYLOAD" or "STREAMING-UNSIGNED-PAYLOAD-TRAILER" indicates that the
 	// client did not calculate sha256 of the payload.
-	unsignedPayload = "UNSIGNED-PAYLOAD"
+	unsignedPayload          = "UNSIGNED-PAYLOAD"
+	streamingUnsignedPayload = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
 )
 
 // Returns SHA256 for calculating canonical-request.
@@ -710,7 +711,7 @@ func extractHostHeader(r *http.Request) string {
 	// If X-Forwarded-Port is set, use that too to form the host.
 	if forwardedHost != "" {
 		extractedHost := forwardedHost
-		if forwardedPort != "" {
+		if forwardedPort != "" && forwardedPort != "80" && forwardedPort != "443" {
 			extractedHost = forwardedHost + ":" + forwardedPort
 		}
 		return extractedHost
