@@ -10,14 +10,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 const (
@@ -91,6 +91,8 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
+	stats_collect.RecordBucketActiveTime(bucket)
+	stats_collect.S3UploadedObjectsCounter.WithLabelValues(bucket).Inc()
 
 	writeSuccessResponseXML(w, r, response)
 
@@ -228,12 +230,12 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	dataReader := r.Body
+	rAuthType := getRequestAuthType(r)
 	if s3a.iam.isEnabled() {
-		rAuthType := getRequestAuthType(r)
 		var s3ErrCode s3err.ErrorCode
 		switch rAuthType {
 		case authTypeStreamingSigned:
-			dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+			dataReader, s3ErrCode = s3a.iam.newChunkedReader(r)
 		case authTypeSignedV2, authTypePresignedV2:
 			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
 		case authTypePresigned, authTypeSigned:
@@ -241,6 +243,11 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		}
 		if s3ErrCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, s3ErrCode)
+			return
+		}
+	} else {
+		if authTypeStreamingSigned == rAuthType {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAuthNotSetup)
 			return
 		}
 	}

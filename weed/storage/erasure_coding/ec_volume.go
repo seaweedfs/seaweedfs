@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/exp/slices"
+	"slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -255,8 +255,10 @@ func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId t
 	l, h := int64(0), ecxFileSize/types.NeedleMapEntrySize
 	for l < h {
 		m := (l + h) / 2
-		if _, err := ecxFile.ReadAt(buf, m*types.NeedleMapEntrySize); err != nil {
-			return types.Offset{}, types.TombstoneFileSize, fmt.Errorf("ecx file %d read at %d: %v", ecxFileSize, m*types.NeedleMapEntrySize, err)
+		if n, err := ecxFile.ReadAt(buf, m*types.NeedleMapEntrySize); err != nil {
+			if n != types.NeedleMapEntrySize {
+				return types.Offset{}, types.TombstoneFileSize, fmt.Errorf("ecx file %d read at %d: %v", ecxFileSize, m*types.NeedleMapEntrySize, err)
+			}
 		}
 		key, offset, size = idx.IdxFileEntry(buf)
 		if key == needleId {

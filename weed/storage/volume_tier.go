@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -60,7 +61,10 @@ func (v *Volume) HasRemoteFile() bool {
 
 func (v *Volume) LoadRemoteFile() error {
 	tierFile := v.volumeInfo.GetFiles()[0]
-	backendStorage := backend.BackendStorages[tierFile.BackendName()]
+	backendStorage, found := backend.BackendStorages[tierFile.BackendName()]
+	if !found {
+		return fmt.Errorf("backend storage %s not found", tierFile.BackendName())
+	}
 
 	if v.DataBackend != nil {
 		v.DataBackend.Close()

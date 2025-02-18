@@ -160,8 +160,11 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 		return
 	}
 
-	rule := fs.filer.FilerConf.MatchStorageRule(src)
-	if rule.Worm {
+	wormEnforced, err := fs.wormEnforcedForEntry(ctx, src)
+	if err != nil {
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	} else if wormEnforced {
 		// you cannot move a worm file or directory
 		err = fmt.Errorf("cannot move write-once entry from '%s' to '%s': operation not permitted", src, dst)
 		writeJsonError(w, r, http.StatusForbidden, err)
@@ -218,13 +221,16 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		objectPath = objectPath[0 : len(objectPath)-1]
 	}
 
-	rule := fs.filer.FilerConf.MatchStorageRule(objectPath)
-	if rule.Worm {
+	wormEnforced, err := fs.wormEnforcedForEntry(context.TODO(), objectPath)
+	if err != nil {
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	} else if wormEnforced {
 		writeJsonError(w, r, http.StatusForbidden, errors.New("operation not permitted"))
 		return
 	}
 
-	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil, 0)
+	err = fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil, 0)
 	if err != nil && err != filer_pb.ErrNotFound {
 		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)

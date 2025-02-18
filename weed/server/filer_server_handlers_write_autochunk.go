@@ -164,22 +164,50 @@ func isS3Request(r *http.Request) bool {
 
 func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fileName string) error {
 	fullPath := fs.fixFilePath(ctx, r, fileName)
+	enforced, err := fs.wormEnforcedForEntry(ctx, fullPath)
+	if err != nil {
+		return err
+	} else if enforced {
+		// you cannot change a worm file
+		return errors.New("operation not permitted")
+	}
+
+	return nil
+}
+
+func (fs *FilerServer) wormEnforcedForEntry(ctx context.Context, fullPath string) (bool, error) {
 	rule := fs.filer.FilerConf.MatchStorageRule(fullPath)
 	if !rule.Worm {
-		return nil
+		return false, nil
 	}
 
-	_, err := fs.filer.FindEntry(ctx, util.FullPath(fullPath))
+	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullPath))
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
-			return nil
+			return false, nil
 		}
 
-		return err
+		return false, err
 	}
 
-	// you cannot change an existing file in Worm mode
-	return errors.New("operation not permitted")
+	// worm is not enforced
+	if entry.WORMEnforcedAtTsNs == 0 {
+		return false, nil
+	}
+
+	// worm will never expire
+	if rule.WormRetentionTimeSeconds == 0 {
+		return true, nil
+	}
+
+	enforcedAt := time.Unix(0, entry.WORMEnforcedAtTsNs)
+
+	// worm is expired
+	if time.Now().Sub(enforcedAt).Seconds() >= float64(rule.WormRetentionTimeSeconds) {
+		return false, nil
+	}
+
+	return true, nil
 }
 
 func (fs *FilerServer) fixFilePath(ctx context.Context, r *http.Request, fileName string) string {

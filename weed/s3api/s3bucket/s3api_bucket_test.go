@@ -11,6 +11,7 @@ func Test_verifyBucketName(t *testing.T) {
 		"123.12.153.10",
 		"abc214..2",
 		"d",
+		"aa",
 		".ewfs3253543",
 		"grehtrry-",
 		"----------",

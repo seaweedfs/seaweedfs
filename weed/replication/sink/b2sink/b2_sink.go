@@ -79,7 +79,14 @@ func (g *B2Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, 
 
 	targetObject := bucket.Object(key)
 
-	return targetObject.Delete(context.Background())
+	err = targetObject.Delete(context.Background())
+	if err != nil {
+		// b2_download_file_by_name: 404: File with such name does not exist.
+		if strings.Contains(err.Error(), ": 404:") {
+			return nil
+		}
+	}
+	return err
 
 }
 

@@ -2,14 +2,17 @@ package shell
 
 import (
 	_ "embed"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
+
 	//"google.golang.org/protobuf/proto"
-	"github.com/golang/protobuf/proto"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/golang/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
@@ -127,3 +130,6 @@ var topoData string
 
 //go:embed volume.list2.txt
 var topoData2 string
+
+//go:embed volume.ecshards.txt
+var topoDataEc string

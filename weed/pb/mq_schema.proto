@@ -5,6 +5,39 @@ package schema_pb;
 option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/schema_pb";
 
 ///////////////////////////
+// Topic definition
+///////////////////////////
+
+message Topic {
+    string namespace = 1;
+    string name = 2;
+}
+message Partition {
+    int32 ring_size = 1;
+    int32 range_start = 2;
+    int32 range_stop = 3;
+    int64 unix_time_ns = 4;
+}
+
+message Offset {
+    Topic topic = 1;
+    repeated PartitionOffset partition_offsets = 2;
+}
+
+enum PartitionOffsetStartType {
+    EARLIEST = 0;
+    EARLIEST_IN_MEMORY = 1;
+    LATEST = 2;
+}
+
+message PartitionOffset {
+    Partition partition = 1;
+    int64 start_ts_ns = 2;
+    int64 stop_ts_ns = 3;
+    PartitionOffsetStartType start_type = 4;
+}
+
+///////////////////////////
 // schema definition
 ///////////////////////////
 

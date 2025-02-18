@@ -161,11 +161,13 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	}
 	newPath := newDir.Child(newName)
 
-	if wfs.FilerConf != nil {
-		rule := wfs.FilerConf.MatchStorageRule(string(oldPath))
-		if rule.Worm {
-			return fuse.EPERM
-		}
+	oldEntry, status := wfs.maybeLoadEntry(oldPath)
+	if status != fuse.OK {
+		return status
+	}
+
+	if wormEnforced, _ := wfs.wormEnforcedForEntry(oldPath, oldEntry); wormEnforced {
+		return fuse.EPERM
 	}
 
 	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)

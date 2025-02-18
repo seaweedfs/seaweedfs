@@ -166,9 +166,11 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool) (offset uint
 
 	// append to dat file
 	n.UpdateAppendAtNs(v.lastAppendAtNs)
-	offset, size, _, err = n.Append(v.DataBackend, v.Version())
+	var actualSize int64
+	offset, size, actualSize, err = n.Append(v.DataBackend, v.Version())
 	v.checkReadWriteError(err)
 	if err != nil {
+		err = fmt.Errorf("append to volume %d size %d actualSize %d: %v", v.Id, size, actualSize, err)
 		return
 	}
 	v.lastAppendAtNs = n.AppendAtNs

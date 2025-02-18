@@ -227,7 +227,7 @@ func (v *Volume) BinarySearchByAppendAtNs(sinceNs uint64) (offset Offset, isLast
 
 		mNs, nsReadErr := v.readAppendAtNs(offset)
 		if nsReadErr != nil {
-			err = fmt.Errorf("read entry %d offset %d: %v", m, offset, nsReadErr)
+			err = fmt.Errorf("read entry %d offset %d: %v", m, offset.ToActualOffset(), nsReadErr)
 			return
 		}
 

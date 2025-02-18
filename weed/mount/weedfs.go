@@ -42,10 +42,12 @@ type Option struct {
 	CacheDirForRead    string
 	CacheSizeMBForRead int64
 	CacheDirForWrite   string
+	CacheMetaTTlSec    int
 	DataCenter         string
 	Umask              os.FileMode
 	Quota              int64
 	DisableXAttr       bool
+	IsMacOs            bool
 
 	MountUid         uint32
 	MountGid         uint32
@@ -88,7 +90,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		RawFileSystem: fuse.NewDefaultRawFileSystem(),
 		option:        option,
 		signature:     util.RandomInt32(),
-		inodeToPath:   NewInodeToPath(util.FullPath(option.FilerMountRootPath)),
+		inodeToPath:   NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
 		fhMap:         NewFileHandleToInode(),
 		dhMap:         NewDirectoryHandleToInode(),
 		fhLockTable:   util.NewLockTable[FileHandleId](),

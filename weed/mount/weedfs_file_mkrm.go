@@ -130,7 +130,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return code
 	}
 
-	if wfs.wormEnabledForEntry(entryFullPath, entry) {
+	if wormEnforced, _ := wfs.wormEnforcedForEntry(entryFullPath, entry); wormEnforced {
 		return fuse.EPERM
 	}
 

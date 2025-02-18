@@ -16,8 +16,8 @@ type ConsumerGroupInstance struct {
 
 func NewConsumerGroupInstance(instanceId string, maxPartitionCount int32) *ConsumerGroupInstance {
 	return &ConsumerGroupInstance{
-		InstanceId:   ConsumerGroupInstanceId(instanceId),
-		ResponseChan: make(chan *mq_pb.SubscriberToSubCoordinatorResponse, 1),
+		InstanceId:        ConsumerGroupInstanceId(instanceId),
+		ResponseChan:      make(chan *mq_pb.SubscriberToSubCoordinatorResponse, 1),
 		MaxPartitionCount: maxPartitionCount,
 	}
 }

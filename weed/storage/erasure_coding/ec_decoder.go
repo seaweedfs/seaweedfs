@@ -180,7 +180,7 @@ func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []strin
 		for shardId := 0; shardId < DataShardsCount; shardId++ {
 			w, err := io.CopyN(datFile, inputFiles[shardId], ErasureCodingLargeBlockSize)
 			if w != ErasureCodingLargeBlockSize {
-				return fmt.Errorf("copy %s large block %d: %v", baseFileName, shardId, err)
+				return fmt.Errorf("copy %s large block on shardId %d: %v", baseFileName, shardId, err)
 			}
 			datFileSize -= ErasureCodingLargeBlockSize
 		}

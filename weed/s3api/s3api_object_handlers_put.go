@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -51,8 +52,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	if s3a.iam.isEnabled() {
 		var s3ErrCode s3err.ErrorCode
 		switch rAuthType {
-		case authTypeStreamingSigned:
-			dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+		case authTypeStreamingSigned, authTypeStreamingUnsigned:
+			dataReader, s3ErrCode = s3a.iam.newChunkedReader(r)
 		case authTypeSignedV2, authTypePresignedV2:
 			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
 		case authTypePresigned, authTypeSigned:
@@ -101,6 +102,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		setEtag(w, etag)
 	}
+	stats_collect.RecordBucketActiveTime(bucket)
+	stats_collect.S3UploadedObjectsCounter.WithLabelValues(bucket).Inc()
 
 	writeSuccessResponseEmpty(w, r)
 }
@@ -161,7 +164,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.Errorf("upload to filer error: %v", ret.Error)
 		return "", filerErrorToS3Error(ret.Error)
 	}
-
+	stats_collect.RecordBucketActiveTime(bucket)
+	stats_collect.S3BucketTrafficReceivedBytesCounter.WithLabelValues(bucket).Add(float64(ret.Size))
 	return etag, s3err.ErrNone
 }
 

@@ -57,7 +57,7 @@ Here is an example:
 
 to label a node to be able to run all pod types in k8s:
 ```
-kubectl label node YOUR_NODE_NAME sw-volume=true,sw-backend=true
+kubectl label node YOUR_NODE_NAME sw-volume=true sw-backend=true
 ```
 
 on production k8s deployment you will want each pod to have a different host,

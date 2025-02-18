@@ -21,6 +21,9 @@ func (n *Needle) ReadNeedleData(r backend.BackendStorageFile, volumeOffset int64
 	startOffset := volumeOffset + NeedleHeaderSize + DataSizeSize + needleOffset
 
 	count, err = r.ReadAt(data[:sizeToRead], startOffset)
+	if err == io.EOF && int64(count) == sizeToRead {
+		err = nil
+	}
 	if err != nil {
 		fileSize, _, _ := r.GetStat()
 		glog.Errorf("%s read %d %d size %d at offset %d fileSize %d: %v", r.Name(), n.Id, needleOffset, sizeToRead, volumeOffset, fileSize, err)
@@ -40,6 +43,9 @@ func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size
 	bytes := make([]byte, NeedleHeaderSize+DataSizeSize)
 
 	count, err := r.ReadAt(bytes, offset)
+	if err == io.EOF && count == NeedleHeaderSize+DataSizeSize {
+		err = nil
+	}
 	if count != NeedleHeaderSize+DataSizeSize || err != nil {
 		return err
 	}

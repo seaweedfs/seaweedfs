@@ -119,11 +119,14 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
+
 	if option.Config != "" {
+		glog.V(3).Infof("loading static config file %s", option.Config)
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
 	} else {
+		glog.V(3).Infof("no static config file specified... loading config from filer %s", option.Filer)
 		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
 			glog.Warningf("fail to load config: %v", err)
 		}
@@ -134,6 +137,7 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) (err error) {
 	var content []byte
 	err = pb.WithFilerClient(false, 0, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		glog.V(3).Infof("loading config %s from filer %s", filer.IamConfigDirectory+"/"+filer.IamIdentityFile, option.Filer)
 		content, err = filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile)
 		return err
 	})
@@ -179,6 +183,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	foundAccountAnonymous := false
 
 	for _, account := range config.Accounts {
+		glog.V(3).Infof("loading account  name=%s, id=%s", account.DisplayName, account.Id)
 		switch account.Id {
 		case AccountAdmin.Id:
 			AccountAdmin = Account{
@@ -217,6 +222,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		emailAccount[AccountAnonymous.EmailAddress] = &AccountAnonymous
 	}
 	for _, ident := range config.Identities {
+		glog.V(3).Infof("loading identity %s", ident.Name)
 		t := &Identity{
 			Name:        ident.Name,
 			Credentials: nil,
@@ -236,6 +242,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 				glog.Warningf("identity %s is associated with a non exist account ID, the association is invalid", ident.Name)
 			}
 		}
+
 		for _, action := range ident.Actions {
 			t.Actions = append(t.Actions, Action(action))
 		}
@@ -341,8 +348,6 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	var found bool
 	var authType string
 	switch getRequestAuthType(r) {
-	case authTypeStreamingSigned:
-		return identity, s3err.ErrNone
 	case authTypeUnknown:
 		glog.V(3).Infof("unknown auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
@@ -351,13 +356,16 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		glog.V(3).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
 		authType = "SigV2"
-	case authTypeSigned, authTypePresigned:
+	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
 		glog.V(3).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		authType = "SigV4"
 	case authTypePostPolicy:
 		glog.V(3).Infof("post policy auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
+		return identity, s3err.ErrNone
+	case authTypeStreamingUnsigned:
+		glog.V(3).Infof("unsigned streaming upload")
 		return identity, s3err.ErrNone
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type")
@@ -381,8 +389,14 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	}
 
 	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
-
 	bucket, object := s3_constants.GetBucketAndObject(r)
+	prefix := s3_constants.GetPrefix(r)
+
+	if object == "/" && prefix != "" {
+		// Using the aws cli with s3, and s3api, and with boto3, the object is always set to "/"
+		// but the prefix is set to the actual object key
+		object = prefix
+	}
 
 	if !identity.canDo(action, bucket, object) {
 		return identity, s3err.ErrAccessDenied
@@ -401,6 +415,10 @@ func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err
 	var authType string
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
+		glog.V(3).Infof("signed streaming upload")
+		return identity, s3err.ErrNone
+	case authTypeStreamingUnsigned:
+		glog.V(3).Infof("unsigned streaming upload")
 		return identity, s3err.ErrNone
 	case authTypeUnknown:
 		glog.V(3).Infof("unknown auth type")
@@ -449,6 +467,10 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 		return true
 	}
 	for _, a := range identity.Actions {
+		// Case where the Resource provided is
+		// 	"Resource": [
+		//		"arn:aws:s3:::*"
+		//	]
 		if a == action {
 			return true
 		}
@@ -457,10 +479,12 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 		glog.V(3).Infof("identity %s is not allowed to perform action %s on %s -- bucket is empty", identity.Name, action, bucket+objectKey)
 		return false
 	}
+	glog.V(3).Infof("checking if %s can perform %s on bucket '%s'", identity.Name, action, bucket+objectKey)
 	target := string(action) + ":" + bucket + objectKey
 	adminTarget := s3_constants.ACTION_ADMIN + ":" + bucket + objectKey
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
+
 	for _, a := range identity.Actions {
 		act := string(a)
 		if strings.HasSuffix(act, "*") {

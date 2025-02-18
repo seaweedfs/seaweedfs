@@ -2,9 +2,10 @@ package shell
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
-	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -254,8 +255,8 @@ func TestBalance(t *testing.T) {
 	volumeServers := collectVolumeServersByDcRackNode(topologyInfo, "", "", "")
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
-
-	if err := balanceVolumeServers(nil, diskTypes, volumeReplicas, volumeServers, "ALL_COLLECTIONS", false); err != nil {
+	c := &commandVolumeBalance{}
+	if err := c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, "ALL_COLLECTIONS"); err != nil {
 		t.Errorf("balance: %v", err)
 	}
 
@@ -264,7 +265,7 @@ func TestBalance(t *testing.T) {
 func TestVolumeSelection(t *testing.T) {
 	topologyInfo := parseOutput(topoData)
 
-	vids, err := collectVolumeIdsForTierChange(topologyInfo, 1000, types.ToDiskType("hdd"), "", 20.0, 0)
+	vids, err := collectVolumeIdsForTierChange(topologyInfo, 1000, types.ToDiskType(types.HddType), "", 20.0, 0)
 	if err != nil {
 		t.Errorf("collectVolumeIdsForTierChange: %v", err)
 	}
@@ -275,7 +276,7 @@ func TestVolumeSelection(t *testing.T) {
 func TestDeleteEmptySelection(t *testing.T) {
 	topologyInfo := parseOutput(topoData)
 
-	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
 				if v.Size <= super_block.SuperBlockSize && v.ModifiedAtSecond > 0 {

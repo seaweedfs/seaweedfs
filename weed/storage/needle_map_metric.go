@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync/atomic"
 
@@ -152,8 +153,11 @@ func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key
 	remainingCount := entryCount - nextBatchSize
 
 	for remainingCount >= 0 {
-		_, e := r.ReadAt(bytes[:NeedleMapEntrySize*nextBatchSize], NeedleMapEntrySize*remainingCount)
+		n, e := r.ReadAt(bytes[:NeedleMapEntrySize*nextBatchSize], NeedleMapEntrySize*remainingCount)
 		// glog.V(0).Infoln("file", r.Name(), "readerOffset", NeedleMapEntrySize*remainingCount, "count", count, "e", e)
+		if e == io.EOF && n == int(NeedleMapEntrySize*nextBatchSize) {
+			e = nil
+		}
 		if e != nil {
 			return e
 		}

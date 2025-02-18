@@ -185,7 +185,7 @@
                 <td>{{ .Collection }}</td>
                 <td>{{ bytesToHumanReadable .ShardSize }}</td>
                 <td>{{ .ShardIdList }}</td>
-                <td>{{ .CreatedAt.Format "02 Jan 06 15:04 -0700" }}</td>
+                <td>{{ .CreatedAt.Format "2006-01-02 15:04" }}</td>
             </tr>
             {{ end }}
             </tbody>

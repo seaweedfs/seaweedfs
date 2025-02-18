@@ -6,7 +6,7 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-    command: "-v=1 master -ip=master"
+    command: "-v=1 master -ip=master -volumeSizeLimitMB=10"
     volumes:
       - ./tls:/etc/seaweedfs/tls
     env_file:
@@ -16,7 +16,7 @@ services:
     ports:
       - 8080:8080
       - 18080:18080
-    command: "-v=1 volume -mserver=master:9333 -port=8080 -ip=volume -preStopSeconds=1"
+    command: "-v=1 volume -mserver=master:9333 -port=8080 -ip=volume -preStopSeconds=1 -max=10000"
     depends_on:
       - master
     volumes:
@@ -26,10 +26,9 @@ services:
   filer:
     image: chrislusf/seaweedfs:local
     ports:
-      - 8111:8111
       - 8888:8888
       - 18888:18888
-    command: '-v=1 filer -ip.bind=0.0.0.0 -master="master:9333" -iam -iam.ip=filer'
+    command: '-v=1 filer -ip.bind=0.0.0.0 -master="master:9333"'
     depends_on:
       - master
       - volume
@@ -37,6 +36,19 @@ services:
       - ./tls:/etc/seaweedfs/tls
     env_file:
       - ${ENV_FILE:-dev.env}
+
+  iam:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8111:8111
+    command: '-v=1 iam -filer="filer:8888" -master="master:9333"'
+    depends_on:
+      - master
+      - volume
+      - filer
+    volumes:
+      - ./tls:/etc/seaweedfs/tls
+
   s3:
     image: chrislusf/seaweedfs:local
     ports:
@@ -50,6 +62,7 @@ services:
       - ./tls:/etc/seaweedfs/tls
     env_file:
       - ${ENV_FILE:-dev.env}
+
   mount:
     image: chrislusf/seaweedfs:local
     privileged: true

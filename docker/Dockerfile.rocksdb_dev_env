@@ -1,9 +1,9 @@
-FROM golang:1.22 as builder
+FROM golang:1.23 as builder
 
 RUN apt-get update
 RUN apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev
 
-ENV ROCKSDB_VERSION v8.10.0
+ENV ROCKSDB_VERSION v9.10.0
 
 # build RocksDB
 RUN cd /tmp && \

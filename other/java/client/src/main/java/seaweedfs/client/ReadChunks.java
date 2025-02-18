@@ -14,20 +14,23 @@ public class ReadChunks {
             points.add(new Point(chunk.getOffset(), chunk, true));
             points.add(new Point(chunk.getOffset() + chunk.getSize(), chunk, false));
         }
+
         Collections.sort(points, new Comparator<Point>() {
             @Override
             public int compare(Point a, Point b) {
-                int x = (int) (a.x - b.x);
-                if (a.x != b.x) {
-                    return (int) (a.x - b.x);
+                int xComparison = Long.compare(a.x, b.x);
+                if (xComparison != 0) {
+                    return xComparison;
                 }
-                if (a.ts != b.ts) {
-                    return (int) (a.ts - b.ts);
+
+                // If x values are equal, compare ts
+                int tsComparison = Long.compare(a.ts, b.ts);
+                if (tsComparison != 0) {
+                    return tsComparison;
                 }
-                if (!a.isStart) {
-                    return -1;
-                }
-                return 1;
+
+                // If both x and ts are equal, prioritize start points
+                return Boolean.compare(b.isStart, a.isStart); // b.isStart first to prioritize starts
             }
         });
 

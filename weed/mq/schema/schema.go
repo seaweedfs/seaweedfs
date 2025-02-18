@@ -5,19 +5,24 @@ import (
 )
 
 type Schema struct {
+	Namespace  string
+	Name       string
+	RevisionId uint32
 	RecordType *schema_pb.RecordType
 	fieldMap   map[string]*schema_pb.Field
 }
 
-func NewSchema(recordType *schema_pb.RecordType) (*Schema, error) {
+func NewSchema(namespace string, name string, recordType *schema_pb.RecordType) *Schema {
 	fieldMap := make(map[string]*schema_pb.Field)
 	for _, field := range recordType.Fields {
 		fieldMap[field.Name] = field
 	}
 	return &Schema{
+		Namespace:  namespace,
+		Name:       name,
 		RecordType: recordType,
 		fieldMap:   fieldMap,
-	}, nil
+	}
 }
 
 func (s *Schema) GetField(name string) (*schema_pb.Field, bool) {

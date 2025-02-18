@@ -3,10 +3,9 @@ package storage
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"golang.org/x/exp/slices"
 	"io"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -201,9 +201,12 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	shardId, actualOffset := interval.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
 	data = make([]byte, interval.Size)
 	if shard, found := ecVolume.FindEcVolumeShard(shardId); found {
-		if _, err = shard.ReadAt(data, actualOffset); err != nil {
-			glog.V(0).Infof("read local ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, err)
-			return
+		var readSize int
+		if readSize, err = shard.ReadAt(data, actualOffset); err != nil {
+			if readSize != int(interval.Size) {
+				glog.V(0).Infof("read local ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, err)
+				return
+			}
 		}
 	} else {
 		ecVolume.ShardLocationsLock.RLock()
@@ -402,7 +405,7 @@ func (s *Store) EcVolumes() (ecVolumes []*erasure_coding.EcVolume) {
 		location.ecVolumesLock.RUnlock()
 	}
 	slices.SortFunc(ecVolumes, func(a, b *erasure_coding.EcVolume) int {
-		return int(b.VolumeId - a.VolumeId)
+		return int(a.VolumeId) - int(b.VolumeId)
 	})
 	return ecVolumes
 }

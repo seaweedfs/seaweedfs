@@ -11,7 +11,7 @@ import (
 
 	hashicorpRaft "github.com/hashicorp/raft"
 
-	"golang.org/x/exp/slices"
+	"slices"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/raft/protobuf"
@@ -192,7 +192,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		}
 	}
 	ms.SetRaftServer(raftServer)
-	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods(http.MethodGet)
+	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc("/cluster/healthz", raftServer.HealthzHandler).Methods(http.MethodGet, http.MethodHead)
 	if *masterOption.raftHashicorp {
 		r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods(http.MethodGet)

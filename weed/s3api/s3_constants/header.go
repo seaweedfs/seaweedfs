@@ -17,9 +17,10 @@
 package s3_constants
 
 import (
-	"github.com/gorilla/mux"
 	"net/http"
 	"strings"
+
+	"github.com/gorilla/mux"
 )
 
 // Standard S3 HTTP request constants
@@ -70,6 +71,16 @@ func GetBucketAndObject(r *http.Request) (bucket, object string) {
 	}
 
 	return
+}
+
+func GetPrefix(r *http.Request) string {
+	query := r.URL.Query()
+	prefix := query.Get("prefix")
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+
+	return prefix
 }
 
 var PassThroughHeaders = map[string]string{

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -29,7 +30,7 @@ func Test_allocateOneBroker(t *testing.T) {
 			wantAssignments: []*mq_pb.BrokerPartitionAssignment{
 				{
 					LeaderBroker: "localhost:17777",
-					Partition: &mq_pb.Partition{
+					Partition: &schema_pb.Partition{
 						RingSize:   MaxPartitionCount,
 						RangeStart: 0,
 						RangeStop:  MaxPartitionCount,
@@ -95,8 +96,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 1,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "",
+						Partition:      &schema_pb.Partition{},
 						FollowerBroker: "localhost:2",
 					},
 				},
@@ -110,8 +111,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 1,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "localhost:1",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "localhost:1",
+						Partition:      &schema_pb.Partition{},
 						FollowerBroker: "",
 					},
 				},
@@ -125,8 +126,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 1,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "localhost:1",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "localhost:1",
+						Partition:      &schema_pb.Partition{},
 						FollowerBroker: "localhost:200",
 					},
 				},
@@ -140,8 +141,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 1,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "localhost:100",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "localhost:100",
+						Partition:      &schema_pb.Partition{},
 						FollowerBroker: "localhost:200",
 					},
 				},
@@ -155,8 +156,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 3,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "localhost:1",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "localhost:1",
+						Partition:      &schema_pb.Partition{},
 						FollowerBroker: "localhost:2",
 					},
 				},
@@ -171,7 +172,7 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
 						LeaderBroker: "localhost:1",
-						Partition:    &mq_pb.Partition{},
+						Partition:    &schema_pb.Partition{},
 					},
 				},
 			},
@@ -184,8 +185,8 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				followerCount: 3,
 				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
-						LeaderBroker: "localhost:1",
-						Partition:    &mq_pb.Partition{},
+						LeaderBroker:   "localhost:1",
+						Partition:      &schema_pb.Partition{},
 						FollowerBroker: "localhost:2",
 					},
 				},

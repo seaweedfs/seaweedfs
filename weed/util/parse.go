@@ -28,6 +28,18 @@ func ParseUint64(text string, defaultValue uint64) uint64 {
 	return count
 }
 
+func ParseBool(s string, defaultValue bool) bool {
+	value, err := strconv.ParseBool(s)
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
+func BoolToString(b bool) string {
+	return strconv.FormatBool(b)
+}
+
 func ParseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {
 	if !strings.HasPrefix(entryPath, "http://") && !strings.HasPrefix(entryPath, "https://") {
 		entryPath = "http://" + entryPath

@@ -280,6 +280,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
 
 	grace.OnReload(volumeServer.LoadNewVolumes)
+	grace.OnReload(volumeServer.Reload)
 
 	stopChan := make(chan bool)
 	grace.OnInterrupt(func() {

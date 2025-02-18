@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,6 +15,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
+
+var ErrNotFound = fmt.Errorf("not found")
 
 func Post(url string, values url.Values) ([]byte, error) {
 	r, err := GetGlobalHttpClient().PostForm(url, values)
@@ -311,7 +313,10 @@ func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isConte
 	}
 	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
-		retryable = r.StatusCode == http.StatusNotFound || r.StatusCode >= 499
+		if r.StatusCode == http.StatusNotFound {
+			return true, fmt.Errorf("%s: %s: %w", fileUrl, r.Status, ErrNotFound)
+		}
+		retryable = r.StatusCode >= 499
 		return retryable, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 

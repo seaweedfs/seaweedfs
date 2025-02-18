@@ -4,7 +4,7 @@ import (
 	"sync"
 )
 
-type node[T any]struct {
+type node[T any] struct {
 	data T
 	next *node[T]
 }

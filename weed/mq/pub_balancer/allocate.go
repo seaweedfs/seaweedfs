@@ -4,6 +4,7 @@ import (
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"math/rand"
 	"time"
 )
@@ -14,7 +15,7 @@ func AllocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], p
 	rangeSize := MaxPartitionCount / partitionCount
 	for i := int32(0); i < partitionCount; i++ {
 		assignment := &mq_pb.BrokerPartitionAssignment{
-			Partition: &mq_pb.Partition{
+			Partition: &schema_pb.Partition{
 				RingSize:   MaxPartitionCount,
 				RangeStart: int32(i * rangeSize),
 				RangeStop:  int32((i + 1) * rangeSize),

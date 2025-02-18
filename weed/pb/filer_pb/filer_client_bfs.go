@@ -69,7 +69,7 @@ func processOneDirectory(filerClient FilerClient, parentPath util.FullPath, queu
 
 }
 
-func StreamBfs(client SeaweedFilerClient, dir util.FullPath, olderThanTsNs int64, fn func(parentPath util.FullPath, entry *Entry)error) (err error) {
+func StreamBfs(client SeaweedFilerClient, dir util.FullPath, olderThanTsNs int64, fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
 	glog.V(0).Infof("TraverseBfsMetadata %v if before %v", dir, time.Unix(0, olderThanTsNs))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -87,7 +87,7 @@ func StreamBfs(client SeaweedFilerClient, dir util.FullPath, olderThanTsNs int64
 			}
 			return fmt.Errorf("traverse bfs metadata: %v", err)
 		}
-		if err := fn(util.FullPath(resp.Directory),  resp.Entry); err != nil {
+		if err := fn(util.FullPath(resp.Directory), resp.Entry); err != nil {
 			return err
 		}
 	}
