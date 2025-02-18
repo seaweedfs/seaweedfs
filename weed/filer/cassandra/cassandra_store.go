@@ -209,7 +209,7 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, dirPath u
 			break
 		}
 	}
-	if err := iter.Close(); err != nil {
+	if err = iter.Close(); err != nil {
 		glog.V(0).Infof("list iterator close: %v", err)
 	}
 
