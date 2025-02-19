@@ -370,8 +370,3 @@ require (
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
-
-replace (
-	github.com/boltdb/bolt => go.etcd.io/bbolt v1.3.10
-	go.etcd.io/bbolt => github.com/etcd-io/bbolt v1.3.10
-)
