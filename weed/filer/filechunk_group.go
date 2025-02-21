@@ -56,6 +56,9 @@ func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (
 	for si := sectionIndexStart; si < sectionIndexStop+1; si++ {
 		section, found := group.sections[si]
 		rangeStart, rangeStop := max(offset, int64(si*SectionSize)), min(offset+int64(len(buff)), int64((si+1)*SectionSize))
+		if rangeStart >= rangeStop {
+			continue
+		}
 		if !found {
 			rangeStop = min(rangeStop, fileSize)
 			for i := rangeStart; i < rangeStop; i++ {
