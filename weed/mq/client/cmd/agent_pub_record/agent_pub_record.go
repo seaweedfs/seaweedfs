@@ -20,9 +20,9 @@ var (
 
 	clientName = flag.String("client", "c1", "client name")
 
-	namespace   = flag.String("ns", "test", "namespace")
-	t           = flag.String("t", "test", "t")
-	seedBrokers = flag.String("brokers", "localhost:17777", "seed brokers")
+	namespace = flag.String("ns", "test", "namespace")
+	t         = flag.String("t", "test", "t")
+	agent     = flag.String("agent", "localhost:16777", "mq agent address")
 
 	counter int32
 )
@@ -100,7 +100,7 @@ func main() {
 		WithField("field7", schema.TypeBoolean).
 		RecordTypeEnd()
 
-	session, err := agent_client.NewPublishSession("localhost:16777", schema.NewSchema(*namespace, *t, recordType), *partitionCount, *clientName)
+	session, err := agent_client.NewPublishSession(*agent, schema.NewSchema(*namespace, *t, recordType), *partitionCount, *clientName)
 	if err != nil {
 		log.Printf("failed to create session: %v", err)
 		return
