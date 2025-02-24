@@ -64,6 +64,7 @@ func (mqAgentOpt *MessageQueueAgentOptions) startQueueAgent() bool {
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *mqAgentOpt.port, err)
 	}
+	glog.Info("Start Seaweed Message Queue Agent on ", grpcL.Addr().String())
 	grpcS := pb.NewGrpcServer()
 	mq_agent_pb.RegisterSeaweedMessagingAgentServer(grpcS, agentServer)
 	reflection.Register(grpcS)
