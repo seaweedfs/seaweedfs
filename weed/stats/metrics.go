@@ -1,7 +1,6 @@
 package stats
 
 import (
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -436,7 +435,7 @@ func StartMetricsServer(ip string, port int) {
 		return
 	}
 	http.Handle("/metrics", promhttp.HandlerFor(Gather, promhttp.HandlerOpts{}))
-	log.Fatal(http.ListenAndServe(JoinHostPort(ip, port), nil))
+	glog.Fatal(http.ListenAndServe(JoinHostPort(ip, port), nil))
 }
 
 func SourceName(port uint32) string {
