@@ -41,3 +41,16 @@ func (r *MyRecord) ToRecordValue() *schema_pb.RecordValue {
 		SetBool("field7", r.Field7).
 		RecordEnd()
 }
+
+func FromRecordValue(recordValue *schema_pb.RecordValue) *MyRecord {
+	return &MyRecord{
+		Key:    recordValue.Fields["key"].GetBytesValue(),
+		Field1: recordValue.Fields["field1"].GetBytesValue(),
+		Field2: recordValue.Fields["field2"].GetStringValue(),
+		Field3: recordValue.Fields["field3"].GetInt32Value(),
+		Field4: recordValue.Fields["field4"].GetInt64Value(),
+		Field5: recordValue.Fields["field5"].GetFloatValue(),
+		Field6: recordValue.Fields["field6"].GetDoubleValue(),
+		Field7: recordValue.Fields["field7"].GetBoolValue(),
+	}
+}

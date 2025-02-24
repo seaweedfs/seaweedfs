@@ -61,3 +61,8 @@ func NewSubscribeSession(agentAddress string, option *SubscribeOption) (*Subscri
 		sessionId: resp.SessionId,
 	}, nil
 }
+
+func (s *SubscribeSession) CloseSession() error {
+	err := s.stream.CloseSend()
+	return err
+}

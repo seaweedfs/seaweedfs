@@ -14,4 +14,8 @@ func (a *SubscribeSession) SubscribeMessageRecord(
 		}
 		onEachMessageFn(resp.Key, resp.Value)
 	}
+	if onCompletionFn != nil {
+		onCompletionFn()
+	}
+	return nil
 }
