@@ -32,7 +32,7 @@ require (
 	github.com/fclairamb/ftpserverlib v0.25.0
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-redsync/redsync/v4 v4.13.0
-	github.com/go-sql-driver/mysql v1.8.1
+	github.com/go-sql-driver/mysql v1.9.0
 	github.com/go-zookeeper/zk v1.0.3 // indirect
 	github.com/gocql/gocql v1.7.0
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
