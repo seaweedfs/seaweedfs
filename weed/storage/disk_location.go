@@ -40,21 +40,28 @@ type DiskLocation struct {
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 	glog.V(1).Infof("Getting uuid of volume directory:%s", dir)
-	dirUuidString = ""
 	fileName := dir + "/vol_dir.uuid"
 	if !util.FileExists(fileName) {
-		dirUuid, _ := uuid.NewRandom()
-		dirUuidString = dirUuid.String()
-		writeErr := util.WriteFile(fileName, []byte(dirUuidString), 0644)
-		if writeErr != nil {
-			return "", fmt.Errorf("failed to write uuid to %s : %v", fileName, writeErr)
-		}
+		dirUuidString, err = writeNewUuid(fileName)
 	} else {
 		uuidData, readErr := os.ReadFile(fileName)
 		if readErr != nil {
 			return "", fmt.Errorf("failed to read uuid from %s : %v", fileName, readErr)
 		}
-		dirUuidString = string(uuidData)
+		if len(uuidData) > 0 {
+			dirUuidString = string(uuidData)
+		} else {
+			dirUuidString, err = writeNewUuid(fileName)
+		}
+	}
+	return dirUuidString, err
+}
+
+func writeNewUuid(fileName string) (string, error) {
+	dirUuid, _ := uuid.NewRandom()
+	dirUuidString := dirUuid.String()
+	if err := util.WriteFile(fileName, []byte(dirUuidString), 0644); err != nil {
+		return "", fmt.Errorf("failed to write uuid to %s : %v", fileName, err)
 	}
 	return dirUuidString, nil
 }
