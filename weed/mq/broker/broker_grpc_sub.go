@@ -67,7 +67,9 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		} else {
 			defer func() {
 				println("closing SubscribeFollowMe connection", follower)
-				subscribeFollowMeStream.CloseSend()
+				if subscribeFollowMeStream != nil {
+					subscribeFollowMeStream.CloseSend()
+				}
 				// followerGrpcConnection.Close()
 			}()
 			followerClient := mq_pb.NewSeaweedMessagingClient(followerGrpcConnection)
