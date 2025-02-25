@@ -66,17 +66,10 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				isDone = true
 				return
 			}
-			logBuffer.RLock()
-			lastTsNs := logBuffer.LastTsNs
-			logBuffer.RUnlock()
-			loopTsNs := lastTsNs // make a copy
+			lastTsNs := logBuffer.LastTsNs.Load()
 
-			for lastTsNs == loopTsNs {
+			for lastTsNs == logBuffer.LastTsNs.Load() {
 				if waitForDataFn() {
-					// Update loopTsNs and loop again
-					logBuffer.RLock()
-					loopTsNs = logBuffer.LastTsNs
-					logBuffer.RUnlock()
 					continue
 				} else {
 					isDone = true
