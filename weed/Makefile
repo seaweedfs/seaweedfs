@@ -43,7 +43,7 @@ debug_mq:
 
 debug_mq_agent:
 	go build -gcflags="all=-N -l"
-	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ./weed -- -v=4 mq.agent -broker=localhost:17777
+	dlv --listen=:2346 --headless=true --api-version=2 --accept-multiclient exec ./weed -- -v=4 mq.agent -broker=localhost:17777
 
 debug_filer_copy:
 	go build -gcflags="all=-N -l"
