@@ -15,7 +15,6 @@ type PublishSession struct {
 	partitionCount int
 	publisherName  string
 	stream         grpc.BidiStreamingClient[mq_agent_pb.PublishRecordRequest, mq_agent_pb.PublishRecordResponse]
-	sessionId      int64
 }
 
 func NewPublishSession(agentAddress string, topicSchema *schema.Schema, partitionCount int, publisherName string) (*PublishSession, error) {
@@ -48,12 +47,17 @@ func NewPublishSession(agentAddress string, topicSchema *schema.Schema, partitio
 		return nil, fmt.Errorf("publish record: %v", err)
 	}
 
+	if err = stream.Send(&mq_agent_pb.PublishRecordRequest{
+		SessionId: resp.SessionId,
+	}); err != nil {
+		return nil, fmt.Errorf("send session id: %v", err)
+	}
+
 	return &PublishSession{
 		schema:         topicSchema,
 		partitionCount: partitionCount,
 		publisherName:  publisherName,
 		stream:         stream,
-		sessionId:      resp.SessionId,
 	}, nil
 }
 

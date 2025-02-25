@@ -7,8 +7,7 @@ import (
 
 func (a *PublishSession) PublishMessageRecord(key []byte, record *schema_pb.RecordValue) error {
 	return a.stream.Send(&mq_agent_pb.PublishRecordRequest{
-		SessionId: a.sessionId,
-		Key:       key,
-		Value:     record,
+		Key:   key,
+		Value: record,
 	})
 }
