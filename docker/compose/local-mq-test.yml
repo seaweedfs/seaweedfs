@@ -21,7 +21,7 @@ services:
     image: chrislusf/seaweedfs:local
     ports:
       - 16777:16777
-    command: "mq.agent -broker=mq_broker:17777"
+    command: "mq.agent -broker=mq_broker:17777 -port=16777"
     depends_on:
       - mq_broker
   mq_client:

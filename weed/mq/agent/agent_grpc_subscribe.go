@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func (a *MessageQueueAgent) SubscribeRecordRequest(stream mq_agent_pb.SeaweedMessagingAgent_SubscribeRecordServer) error {
+func (a *MessageQueueAgent) SubscribeRecord(stream mq_agent_pb.SeaweedMessagingAgent_SubscribeRecordServer) error {
 	// the first message is the subscribe request
 	// it should only contain the session id
 	m, err := stream.Recv()

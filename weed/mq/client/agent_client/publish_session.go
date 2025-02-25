@@ -2,13 +2,12 @@ package agent_client
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type PublishSession struct {
@@ -22,7 +21,7 @@ type PublishSession struct {
 func NewPublishSession(agentAddress string, topicSchema *schema.Schema, partitionCount int, publisherName string) (*PublishSession, error) {
 
 	// call local agent grpc server to create a new session
-	clientConn, err := grpc.NewClient(agentAddress, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
+	clientConn, err := grpc.NewClient(agentAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("dial agent server %s: %v", agentAddress, err)
 	}

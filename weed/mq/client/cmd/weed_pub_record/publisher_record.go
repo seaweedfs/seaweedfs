@@ -114,7 +114,10 @@ func main() {
 		PublisherName:  *clientName,
 		RecordType:     recordType,
 	}
-	publisher := pub_client.NewTopicPublisher(config)
+	publisher, err := pub_client.NewTopicPublisher(config)
+	if err != nil {
+		log.Fatalf("Failed to create publisher: %v", err)
+	}
 
 	startTime := time.Now()
 

@@ -13,7 +13,7 @@ import (
 func (a *MessageQueueAgent) StartPublishSession(ctx context.Context, req *mq_agent_pb.StartPublishSessionRequest) (*mq_agent_pb.StartPublishSessionResponse, error) {
 	sessionId := rand.Int64()
 
-	topicPublisher := pub_client.NewTopicPublisher(
+	topicPublisher, err := pub_client.NewTopicPublisher(
 		&pub_client.PublisherConfiguration{
 			Topic:          topic.NewTopic(req.Topic.Namespace, req.Topic.Name),
 			PartitionCount: req.PartitionCount,
@@ -21,6 +21,9 @@ func (a *MessageQueueAgent) StartPublishSession(ctx context.Context, req *mq_age
 			PublisherName:  req.PublisherName,
 			RecordType:     req.RecordType,
 		})
+	if err != nil {
+		return nil, err
+	}
 
 	a.publishersLock.Lock()
 	// remove inactive publishers to avoid memory leak

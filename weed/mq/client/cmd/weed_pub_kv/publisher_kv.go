@@ -54,7 +54,10 @@ func main() {
 		Brokers:        strings.Split(*seedBrokers, ","),
 		PublisherName:  *clientName,
 	}
-	publisher := pub_client.NewTopicPublisher(config)
+	publisher, err := pub_client.NewTopicPublisher(config)
+	if err != nil {
+		log.Fatalf("Failed to create publisher: %v", err)
+	}
 
 	startTime := time.Now()
 

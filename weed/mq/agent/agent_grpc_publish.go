@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func (a *MessageQueueAgent) PublishRecordRequest(stream mq_agent_pb.SeaweedMessagingAgent_PublishRecordServer) error {
+func (a *MessageQueueAgent) PublishRecord(stream mq_agent_pb.SeaweedMessagingAgent_PublishRecordServer) error {
 	m, err := stream.Recv()
 	if err != nil {
 		return err
@@ -29,7 +29,7 @@ func (a *MessageQueueAgent) PublishRecordRequest(stream mq_agent_pb.SeaweedMessa
 	}
 
 	for {
-		m, err := stream.Recv()
+		m, err = stream.Recv()
 		if err != nil {
 			return err
 		}
