@@ -144,7 +144,9 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 					Close: &mq_pb.SubscribeFollowMeRequest_CloseMessage{},
 				},
 			}); err != nil {
-				glog.Errorf("Error sending close to follower: %v", err)
+				if err != io.EOF {
+					glog.Errorf("Error sending close to follower: %v", err)
+				}
 			}
 		}
 	}()
