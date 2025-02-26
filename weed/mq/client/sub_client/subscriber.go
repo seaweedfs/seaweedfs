@@ -6,7 +6,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/grpc"
 	"sync"
-	"time"
 )
 
 type SubscriberConfiguration struct {
@@ -22,7 +21,6 @@ type ContentConfiguration struct {
 	Topic            topic.Topic
 	Filter           string
 	PartitionOffsets []*schema_pb.PartitionOffset
-	DefaultStartTime time.Time
 }
 
 type OnDataMessageFn func(m *mq_pb.SubscribeMessageResponse_Data)
