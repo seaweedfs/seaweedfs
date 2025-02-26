@@ -34,7 +34,6 @@ type TopicSubscriber struct {
 	OnDataMessageFunc                OnDataMessageFn
 	OnCompletionFunc                 OnCompletionFunc
 	bootstrapBrokers                 []string
-	waitForMoreMessage               bool
 	activeProcessors                 map[topic.Partition]*ProcessorState
 	activeProcessorsLock             sync.Mutex
 	PartitionOffsetChan              chan KeyedOffset
@@ -47,7 +46,6 @@ func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfigu
 		brokerPartitionAssignmentChan:    make(chan *mq_pb.SubscriberToSubCoordinatorResponse, 1024),
 		brokerPartitionAssignmentAckChan: make(chan *mq_pb.SubscriberToSubCoordinatorRequest, 1024),
 		bootstrapBrokers:                 bootstrapBrokers,
-		waitForMoreMessage:               true,
 		activeProcessors:                 make(map[topic.Partition]*ProcessorState),
 		PartitionOffsetChan:              partitionOffsetChan,
 	}
