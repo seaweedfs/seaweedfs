@@ -8,7 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"io"
-	"time"
 )
 
 type KeyedOffset struct {
@@ -34,7 +33,6 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 		if po == nil {
 			po = &schema_pb.PartitionOffset{
 				Partition: assigned.Partition,
-				StartTsNs: time.Now().UnixNano(),
 				StartType: schema_pb.PartitionOffsetStartType_EARLIEST_IN_MEMORY,
 			}
 		}
