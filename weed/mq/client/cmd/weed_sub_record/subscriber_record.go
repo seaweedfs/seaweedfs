@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -71,7 +72,7 @@ func main() {
 	}
 
 	brokers := strings.Split(*seedBrokers, ",")
-	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig, make(chan sub_client.KeyedOffset, 1024))
+	subscriber := sub_client.NewTopicSubscriber(context.Background(), brokers, subscriberConfig, contentConfig, make(chan sub_client.KeyedOffset, 1024))
 
 	counter := 0
 	executors := util.NewLimitedConcurrentExecutor(int(subscriberConfig.SlidingWindowSize))

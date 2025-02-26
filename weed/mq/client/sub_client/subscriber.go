@@ -1,6 +1,7 @@
 package sub_client
 
 import (
+	"context"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -17,6 +18,10 @@ type SubscriberConfiguration struct {
 	SlidingWindowSize       int32 // how many messages to process concurrently per partition
 }
 
+func (s *SubscriberConfiguration) String() string {
+	return "ClientId: " + s.ClientId + ", ConsumerGroup: " + s.ConsumerGroup + ", ConsumerGroupInstanceId: " + s.ConsumerGroupInstanceId
+}
+
 type ContentConfiguration struct {
 	Topic            topic.Topic
 	Filter           string
@@ -27,6 +32,7 @@ type OnDataMessageFn func(m *mq_pb.SubscribeMessageResponse_Data)
 type OnCompletionFunc func()
 
 type TopicSubscriber struct {
+	ctx                              context.Context
 	SubscriberConfig                 *SubscriberConfiguration
 	ContentConfig                    *ContentConfiguration
 	brokerPartitionAssignmentChan    chan *mq_pb.SubscriberToSubCoordinatorResponse
@@ -39,8 +45,9 @@ type TopicSubscriber struct {
 	PartitionOffsetChan              chan KeyedOffset
 }
 
-func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration, partitionOffsetChan chan KeyedOffset) *TopicSubscriber {
+func NewTopicSubscriber(ctx context.Context, bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration, partitionOffsetChan chan KeyedOffset) *TopicSubscriber {
 	return &TopicSubscriber{
+		ctx:                              ctx,
 		SubscriberConfig:                 subscriber,
 		ContentConfig:                    content,
 		brokerPartitionAssignmentChan:    make(chan *mq_pb.SubscriberToSubCoordinatorResponse, 1024),

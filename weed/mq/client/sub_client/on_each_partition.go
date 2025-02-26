@@ -2,6 +2,7 @@ package sub_client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -62,6 +63,9 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 		go func() {
 			for {
 				select {
+				case <-sub.ctx.Done():
+					subscribeClient.CloseSend()
+					return
 				case <-stopCh:
 					subscribeClient.CloseSend()
 					return
@@ -86,12 +90,24 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 			// glog.V(0).Infof("subscriber %s/%s waiting for message", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup)
 			resp, err := subscribeClient.Recv()
 			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return nil
+				}
 				return fmt.Errorf("subscribe recv: %v", err)
 			}
 			if resp.Message == nil {
 				glog.V(0).Infof("subscriber %s/%s received nil message", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup)
 				continue
 			}
+
+			select {
+			case <-sub.ctx.Done():
+				return nil
+			case <-stopCh:
+				return nil
+			default:
+			}
+
 			switch m := resp.Message.(type) {
 			case *mq_pb.SubscribeMessageResponse_Data:
 				if m.Data.Ctrl != nil {

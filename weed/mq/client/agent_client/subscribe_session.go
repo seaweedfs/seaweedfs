@@ -32,7 +32,7 @@ func NewSubscribeSession(agentAddress string, option *SubscribeOption) (*Subscri
 	}
 	agentClient := mq_agent_pb.NewSeaweedMessagingAgentClient(clientConn)
 
-	resp, err := agentClient.StartSubscribeSession(context.Background(), &mq_agent_pb.StartSubscribeSessionRequest{
+	initRequest := &mq_agent_pb.SubscribeRecordRequest_InitSubscribeRecordRequest{
 		ConsumerGroup:           option.ConsumerGroup,
 		ConsumerGroupInstanceId: option.ConsumerGroupInstanceId,
 		Topic: &schema_pb.Topic{
@@ -42,12 +42,6 @@ func NewSubscribeSession(agentAddress string, option *SubscribeOption) (*Subscri
 		MaxSubscribedPartitions: option.MaxSubscribedPartitions,
 		Filter:                  option.Filter,
 		SlidingWindowSize:       option.SlidingWindowSize,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if resp.Error != "" {
-		return nil, fmt.Errorf("start subscribe session: %v", resp.Error)
 	}
 
 	stream, err := agentClient.SubscribeRecord(context.Background())
@@ -56,7 +50,7 @@ func NewSubscribeSession(agentAddress string, option *SubscribeOption) (*Subscri
 	}
 
 	if err = stream.Send(&mq_agent_pb.SubscribeRecordRequest{
-		SessionId: resp.SessionId,
+		Init: initRequest,
 	}); err != nil {
 		return nil, fmt.Errorf("send session id: %v", err)
 	}
