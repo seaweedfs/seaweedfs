@@ -8,7 +8,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"math/rand/v2"
-	"time"
 )
 
 func (a *MessageQueueAgent) StartSubscribeSession(ctx context.Context, req *mq_agent_pb.StartSubscribeSessionRequest) (*mq_agent_pb.StartSubscribeSessionResponse, error) {
@@ -36,16 +35,6 @@ func (a *MessageQueueAgent) StartSubscribeSession(ctx context.Context, req *mq_a
 	)
 
 	a.subscribersLock.Lock()
-	// remove inactive publishers to avoid memory leak
-	for k, entry := range a.subscribers {
-		if entry.lastActiveTsNs == 0 {
-			// this is an active session
-			continue
-		}
-		if time.Unix(0, entry.lastActiveTsNs).Add(10 * time.Hour).Before(time.Now()) {
-			delete(a.subscribers, k)
-		}
-	}
 	a.subscribers[SessionId(sessionId)] = &SessionEntry[*sub_client.TopicSubscriber]{
 		entry: topicSubscriber,
 	}

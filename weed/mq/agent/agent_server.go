@@ -11,8 +11,7 @@ import (
 
 type SessionId int64
 type SessionEntry[T any] struct {
-	entry          T
-	lastActiveTsNs int64
+	entry T
 }
 
 type MessageQueueAgentOptions struct {

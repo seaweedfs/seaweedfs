@@ -7,7 +7,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
 	"log/slog"
 	"math/rand/v2"
-	"time"
 )
 
 func (a *MessageQueueAgent) StartPublishSession(ctx context.Context, req *mq_agent_pb.StartPublishSessionRequest) (*mq_agent_pb.StartPublishSessionResponse, error) {
@@ -26,16 +25,6 @@ func (a *MessageQueueAgent) StartPublishSession(ctx context.Context, req *mq_age
 	}
 
 	a.publishersLock.Lock()
-	// remove inactive publishers to avoid memory leak
-	for k, entry := range a.publishers {
-		if entry.lastActiveTsNs == 0 {
-			// this is an active session
-			continue
-		}
-		if time.Unix(0, entry.lastActiveTsNs).Add(10 * time.Hour).Before(time.Now()) {
-			delete(a.publishers, k)
-		}
-	}
 	a.publishers[SessionId(sessionId)] = &SessionEntry[*pub_client.TopicPublisher]{
 		entry: topicPublisher,
 	}

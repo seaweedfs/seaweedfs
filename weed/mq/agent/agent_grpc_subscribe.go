@@ -7,8 +7,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
-	"time"
 )
 
 func (a *MessageQueueAgent) SubscribeRecord(stream mq_agent_pb.SeaweedMessagingAgent_SubscribeRecordServer) error {
@@ -26,31 +26,35 @@ func (a *MessageQueueAgent) SubscribeRecord(stream mq_agent_pb.SeaweedMessagingA
 		return fmt.Errorf("subscribe session id %d not found", sessionId)
 	}
 	defer func() {
-		subscriberEntry.lastActiveTsNs = time.Now().UnixNano()
+		a.subscribersLock.Lock()
+		delete(a.subscribers, sessionId)
+		a.subscribersLock.Unlock()
 	}()
-	subscriberEntry.lastActiveTsNs = 0
 
 	var lastErr error
+	executors := util.NewLimitedConcurrentExecutor(int(subscriberEntry.entry.SubscriberConfig.SlidingWindowSize))
 	subscriberEntry.entry.SetOnDataMessageFn(func(m *mq_pb.SubscribeMessageResponse_Data) {
-		record := &schema_pb.RecordValue{}
-		err := proto.Unmarshal(m.Data.Value, record)
-		if err != nil {
-			glog.V(0).Infof("unmarshal record value: %v", err)
-			if lastErr == nil {
-				lastErr = err
+		executors.Execute(func() {
+			record := &schema_pb.RecordValue{}
+			err := proto.Unmarshal(m.Data.Value, record)
+			if err != nil {
+				glog.V(0).Infof("unmarshal record value: %v", err)
+				if lastErr == nil {
+					lastErr = err
+				}
+				return
 			}
-			return
-		}
-		if sendErr := stream.Send(&mq_agent_pb.SubscribeRecordResponse{
-			Key:   m.Data.Key,
-			Value: record,
-			TsNs:  m.Data.TsNs,
-		}); sendErr != nil {
-			glog.V(0).Infof("send record: %v", sendErr)
-			if lastErr == nil {
-				lastErr = sendErr
+			if sendErr := stream.Send(&mq_agent_pb.SubscribeRecordResponse{
+				Key:   m.Data.Key,
+				Value: record,
+				TsNs:  m.Data.TsNs,
+			}); sendErr != nil {
+				glog.V(0).Infof("send record: %v", sendErr)
+				if lastErr == nil {
+					lastErr = sendErr
+				}
 			}
-		}
+		})
 	})
 
 	go func() {

@@ -3,7 +3,6 @@ package agent
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
-	"time"
 )
 
 func (a *MessageQueueAgent) PublishRecord(stream mq_agent_pb.SeaweedMessagingAgent_PublishRecordServer) error {
@@ -11,16 +10,18 @@ func (a *MessageQueueAgent) PublishRecord(stream mq_agent_pb.SeaweedMessagingAge
 	if err != nil {
 		return err
 	}
+	sessionId := SessionId(m.SessionId)
 	a.publishersLock.RLock()
-	publisherEntry, found := a.publishers[SessionId(m.SessionId)]
+	publisherEntry, found := a.publishers[sessionId]
 	a.publishersLock.RUnlock()
 	if !found {
-		return fmt.Errorf("publish session id %d not found", m.SessionId)
+		return fmt.Errorf("publish session id %d not found", sessionId)
 	}
 	defer func() {
-		publisherEntry.lastActiveTsNs = time.Now().UnixNano()
+		a.publishersLock.Lock()
+		delete(a.publishers, sessionId)
+		a.publishersLock.Unlock()
 	}()
-	publisherEntry.lastActiveTsNs = 0
 
 	if m.Value != nil {
 		if err := publisherEntry.entry.PublishRecord(m.Key, m.Value); err != nil {
