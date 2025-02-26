@@ -89,7 +89,7 @@ func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Reque
 
 	// delete all tags or specific tags
 	hasDeletion := false
-	for header, _ := range existingEntry.Extended {
+	for header := range existingEntry.Extended {
 		if strings.HasPrefix(header, needle.PairNamePrefix) {
 			if len(deletions) == 0 {
 				delete(existingEntry.Extended, header)
