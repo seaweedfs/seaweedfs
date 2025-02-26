@@ -15,11 +15,11 @@ import (
 )
 
 var (
-	namespace               = flag.String("ns", "test", "namespace")
-	t                       = flag.String("topic", "test", "topic")
-	seedBrokers             = flag.String("brokers", "localhost:17777", "seed brokers")
-	maxPartitionCount       = flag.Int("maxPartitionCount", 3, "max partition count")
-	perPartitionConcurrency = flag.Int("perPartitionConcurrency", 1, "per partition concurrency")
+	namespace         = flag.String("ns", "test", "namespace")
+	t                 = flag.String("topic", "test", "topic")
+	seedBrokers       = flag.String("brokers", "localhost:17777", "seed brokers")
+	maxPartitionCount = flag.Int("maxPartitionCount", 3, "max partition count")
+	slidingWindowSize = flag.Int("slidingWindowSize", 1, "per partition concurrency")
 
 	clientId = flag.Uint("client_id", uint(util.RandomInt32()), "client id")
 )
@@ -33,7 +33,7 @@ func main() {
 		ConsumerGroupInstanceId: fmt.Sprintf("client-%d", *clientId),
 		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),
 		MaxPartitionCount:       int32(*maxPartitionCount),
-		SlidingWindowSize:       int32(*perPartitionConcurrency),
+		SlidingWindowSize:       int32(*slidingWindowSize),
 	}
 
 	contentConfig := &sub_client.ContentConfiguration{

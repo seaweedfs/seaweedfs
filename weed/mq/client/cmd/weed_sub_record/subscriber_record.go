@@ -18,12 +18,12 @@ import (
 )
 
 var (
-	namespace               = flag.String("ns", "test", "namespace")
-	t                       = flag.String("topic", "test", "topic")
-	seedBrokers             = flag.String("brokers", "localhost:17777", "seed brokers")
-	maxPartitionCount       = flag.Int("maxPartitionCount", 3, "max partition count")
-	perPartitionConcurrency = flag.Int("perPartitionConcurrency", 1, "per partition concurrency")
-	timeAgo                 = flag.Duration("timeAgo", 1*time.Hour, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	namespace         = flag.String("ns", "test", "namespace")
+	t                 = flag.String("topic", "test", "topic")
+	seedBrokers       = flag.String("brokers", "localhost:17777", "seed brokers")
+	maxPartitionCount = flag.Int("maxPartitionCount", 3, "max partition count")
+	slidingWindowSize = flag.Int("slidingWindowSize", 1, "per partition concurrency")
+	timeAgo           = flag.Duration("timeAgo", 1*time.Hour, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 
 	clientId = flag.Uint("client_id", uint(util.RandomInt32()), "client id")
 )
@@ -61,7 +61,7 @@ func main() {
 		ConsumerGroupInstanceId: fmt.Sprintf("client-%d", *clientId),
 		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),
 		MaxPartitionCount:       int32(*maxPartitionCount),
-		SlidingWindowSize:       int32(*perPartitionConcurrency),
+		SlidingWindowSize:       int32(*slidingWindowSize),
 	}
 
 	contentConfig := &sub_client.ContentConfiguration{

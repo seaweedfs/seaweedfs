@@ -16,7 +16,7 @@ type SubscribeOption struct {
 	Topic                   topic.Topic
 	Filter                  string
 	MaxSubscribedPartitions int32
-	PerPartitionConcurrency int32
+	SlidingWindowSize       int32
 }
 
 type SubscribeSession struct {
@@ -41,6 +41,7 @@ func NewSubscribeSession(agentAddress string, option *SubscribeOption) (*Subscri
 		},
 		MaxSubscribedPartitions: option.MaxSubscribedPartitions,
 		Filter:                  option.Filter,
+		SlidingWindowSize:       option.SlidingWindowSize,
 	})
 	if err != nil {
 		return nil, err

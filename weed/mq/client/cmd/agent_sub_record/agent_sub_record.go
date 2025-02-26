@@ -14,12 +14,12 @@ import (
 )
 
 var (
-	namespace               = flag.String("ns", "test", "namespace")
-	t                       = flag.String("topic", "test", "topic")
-	agent                   = flag.String("agent", "localhost:16777", "mq agent address")
-	maxPartitionCount       = flag.Int("maxPartitionCount", 3, "max partition count")
-	perPartitionConcurrency = flag.Int("perPartitionConcurrency", 1, "per partition concurrency")
-	timeAgo                 = flag.Duration("timeAgo", 1*time.Hour, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	namespace         = flag.String("ns", "test", "namespace")
+	t                 = flag.String("topic", "test", "topic")
+	agent             = flag.String("agent", "localhost:16777", "mq agent address")
+	maxPartitionCount = flag.Int("maxPartitionCount", 3, "max partition count")
+	slidingWindowSize = flag.Int("slidingWindowSize", 1, "per partition concurrency")
+	timeAgo           = flag.Duration("timeAgo", 1*time.Hour, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 
 	clientId = flag.Uint("client_id", uint(util.RandomInt32()), "client id")
 )
@@ -34,7 +34,7 @@ func main() {
 		Topic:                   topic.NewTopic(*namespace, *t),
 		Filter:                  "",
 		MaxSubscribedPartitions: int32(*maxPartitionCount),
-		PerPartitionConcurrency: int32(*perPartitionConcurrency),
+		SlidingWindowSize:       int32(*slidingWindowSize),
 	})
 	if err != nil {
 		log.Printf("new subscribe session: %v", err)
