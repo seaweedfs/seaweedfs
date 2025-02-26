@@ -46,7 +46,7 @@ func main() {
 	session.SubscribeMessageRecord(func(key []byte, recordValue *schema_pb.RecordValue) {
 		counter++
 		record := example.FromRecordValue(recordValue)
-		fmt.Printf("%d %s %v\n", counter, string(key), record)
+		fmt.Printf("%d %s %v\n", counter, string(key), record.Field2)
 	}, func() {
 		log.Printf("done received %d messages", counter)
 	})
