@@ -89,8 +89,8 @@ func (a *MessageQueueAgent) handleInitSubscribeRecordRequest(ctx context.Context
 		Topic:            topic.FromPbTopic(req.Topic),
 		Filter:           req.Filter,
 		PartitionOffsets: req.PartitionOffsets,
-		OffsetType:       schema_pb.OffsetType_EXACT_TS_NS,
-		OffsetTsNs:       0,
+		OffsetType:       req.OffsetType,
+		OffsetTsNs:       req.OffsetTsNs,
 	}
 
 	topicSubscriber := sub_client.NewTopicSubscriber(

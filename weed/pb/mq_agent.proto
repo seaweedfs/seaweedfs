@@ -61,9 +61,11 @@ message SubscribeRecordRequest {
         string consumer_group_instance_id = 2;
         schema_pb.Topic topic = 4;
         repeated schema_pb.PartitionOffset partition_offsets = 5;
-        string filter = 6;
-        int32 max_subscribed_partitions = 8;
-        int32 sliding_window_size = 9;
+        schema_pb.OffsetType offset_type = 6;
+        int64 offset_ts_ns = 7;
+        string filter = 10;
+        int32 max_subscribed_partitions = 11;
+        int32 sliding_window_size = 12;
     }
     InitSubscribeRecordRequest init = 1;
     int64 ack_sequence = 2;

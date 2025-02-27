@@ -14,6 +14,8 @@ type SubscribeOption struct {
 	ConsumerGroup           string
 	ConsumerGroupInstanceId string
 	Topic                   topic.Topic
+	OffsetType              schema_pb.OffsetType
+	OffsetTsNs              int64
 	Filter                  string
 	MaxSubscribedPartitions int32
 	SlidingWindowSize       int32
@@ -39,6 +41,8 @@ func NewSubscribeSession(agentAddress string, option *SubscribeOption) (*Subscri
 			Namespace: option.Topic.Namespace,
 			Name:      option.Topic.Name,
 		},
+		OffsetType:              option.OffsetType,
+		OffsetTsNs:              option.OffsetTsNs,
 		MaxSubscribedPartitions: option.MaxSubscribedPartitions,
 		Filter:                  option.Filter,
 		SlidingWindowSize:       option.SlidingWindowSize,

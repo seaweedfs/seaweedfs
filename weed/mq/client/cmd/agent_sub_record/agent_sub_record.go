@@ -8,7 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"log"
 	"time"
 )
@@ -19,19 +18,28 @@ var (
 	agent             = flag.String("agent", "localhost:16777", "mq agent address")
 	maxPartitionCount = flag.Int("maxPartitionCount", 3, "max partition count")
 	slidingWindowSize = flag.Int("slidingWindowSize", 1, "per partition concurrency")
-	timeAgo           = flag.Duration("timeAgo", 1*time.Hour, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	timeAgo           = flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 
 	clientId = flag.Uint("client_id", uint(util.RandomInt32()), "client id")
 )
 
 func main() {
 	flag.Parse()
-	util_http.InitGlobalHttpClient()
+
+	// determine the start of the messages
+	var startTsNs int64
+	startType := schema_pb.OffsetType_RESUME_OR_EARLIEST
+	if *timeAgo > 0 {
+		startTsNs = time.Now().Add(-*timeAgo).UnixNano()
+		startType = schema_pb.OffsetType_EXACT_TS_NS
+	}
 
 	session, err := agent_client.NewSubscribeSession(*agent, &agent_client.SubscribeOption{
 		ConsumerGroup:           "test",
 		ConsumerGroupInstanceId: fmt.Sprintf("client-%d", *clientId),
 		Topic:                   topic.NewTopic(*namespace, *t),
+		OffsetType:              startType,
+		OffsetTsNs:              startTsNs,
 		Filter:                  "",
 		MaxSubscribedPartitions: int32(*maxPartitionCount),
 		SlidingWindowSize:       int32(*slidingWindowSize),
