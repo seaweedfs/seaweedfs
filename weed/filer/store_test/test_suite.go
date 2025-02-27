@@ -17,7 +17,7 @@ func TestFilerStore(t *testing.T, store filer.FilerStore) {
 	store.InsertEntry(ctx, makeEntry(util.FullPath("/a"), true))
 	store.InsertEntry(ctx, makeEntry(util.FullPath("/a/b"), true))
 	store.InsertEntry(ctx, makeEntry(util.FullPath("/a/b/c"), true))
-	for i := 0; i < 2000; i++ {
+	for i := 1; i <= 2000; i++ {
 		store.InsertEntry(ctx, makeEntry(util.FullPath(fmt.Sprintf("/a/b/c/f%05d", i)), false))
 	}
 

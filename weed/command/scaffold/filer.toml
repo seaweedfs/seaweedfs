@@ -41,6 +41,39 @@ dir = "./filerrdb"                    # directory to store rocksdb files
 enabled = false
 dbFile = "./filer.db"                # sqlite db file
 
+[dameng]  # or memsql, tidb
+# CREATE TABLE SEAWEEDFS.FILEMETA (
+# 	DIRHASH BIGINT NOT NULL,
+# 	NAME VARCHAR(4000) NOT NULL,
+# 	DIRECTORY TEXT NOT NULL,
+# 	META LONGVARBINARY,
+# 	PRIMARY KEY (DIRHASH,NAME)
+# );
+
+enabled = true
+# dsn will take priority over "hostname, port, username, password, database".
+# [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
+dsn = ""
+hostname = ""
+port = 5236
+username = "SYSDBA"
+password = "SYSDBA001"
+database = "seaweedfs"              # create or use an existing database
+connection_max_idle = 2
+connection_max_open = 100
+connection_max_lifetime_seconds = 0
+interpolateParams = false
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """MERGE INTO %s AS target
+USING (SELECT ? AS dirhash, ? AS name, ? AS directory, ? AS meta FROM dual) AS source
+ON (target.dirhash = source.dirhash AND target.name = source.name)
+WHEN MATCHED THEN
+  UPDATE SET target.meta = source.meta
+WHEN NOT MATCHED THEN
+  INSERT (dirhash, name, directory, meta)
+  VALUES (source.dirhash, source.name, source.directory, source.meta);"""
+
 [mysql]  # or memsql, tidb
 # CREATE TABLE IF NOT EXISTS `filemeta` (
 #   `dirhash`   BIGINT NOT NULL       COMMENT 'first 64 bits of MD5 hash value of directory field',
