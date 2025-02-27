@@ -26,6 +26,8 @@ type ContentConfiguration struct {
 	Topic            topic.Topic
 	Filter           string
 	PartitionOffsets []*schema_pb.PartitionOffset
+	OffsetType       schema_pb.OffsetType
+	OffsetTsNs       int64
 }
 
 type OnDataMessageFn func(m *mq_pb.SubscribeMessageResponse_Data)

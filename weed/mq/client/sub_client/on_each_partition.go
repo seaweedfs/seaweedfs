@@ -34,7 +34,7 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 		if po == nil {
 			po = &schema_pb.PartitionOffset{
 				Partition: assigned.Partition,
-				StartType: schema_pb.PartitionOffsetStartType_EARLIEST_IN_MEMORY,
+				StartTsNs: sub.ContentConfig.OffsetTsNs,
 			}
 		}
 
@@ -45,6 +45,7 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 					ConsumerId:        sub.SubscriberConfig.ConsumerGroupInstanceId,
 					Topic:             sub.ContentConfig.Topic.ToPbTopic(),
 					PartitionOffset:   po,
+					OffsetType:        sub.ContentConfig.OffsetType,
 					Filter:            sub.ContentConfig.Filter,
 					FollowerBroker:    assigned.FollowerBroker,
 					SlidingWindowSize: slidingWindowSize,

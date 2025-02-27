@@ -221,20 +221,35 @@ func (b *MessageQueueBroker) getRequestPosition(initMessage *mq_pb.SubscribeMess
 		return
 	}
 	offset := initMessage.GetPartitionOffset()
-	if offset.StartTsNs != 0 {
+	offsetType := initMessage.OffsetType
+
+	// reset to earliest or latest
+	if offsetType == schema_pb.OffsetType_RESET_TO_EARLIEST {
+		startPosition = log_buffer.NewMessagePosition(1, -3)
+		return
+	}
+	if offsetType == schema_pb.OffsetType_RESET_TO_LATEST {
+		startPosition = log_buffer.NewMessagePosition(time.Now().UnixNano(), -4)
+		return
+	}
+
+	// use the exact timestamp
+	if offsetType == schema_pb.OffsetType_EXACT_TS_NS {
 		startPosition = log_buffer.NewMessagePosition(offset.StartTsNs, -2)
 		return
 	}
+
+	// try to resume
 	if storedOffset, err := b.readConsumerGroupOffset(initMessage); err == nil {
 		glog.V(0).Infof("resume from saved offset %v %v %v: %v", initMessage.Topic, initMessage.PartitionOffset.Partition, initMessage.ConsumerGroup, storedOffset)
 		startPosition = log_buffer.NewMessagePosition(storedOffset, -2)
 		return
 	}
 
-	if offset.StartType == schema_pb.PartitionOffsetStartType_EARLIEST {
-		startPosition = log_buffer.NewMessagePosition(1, -3)
-	} else if offset.StartType == schema_pb.PartitionOffsetStartType_LATEST {
-		startPosition = log_buffer.NewMessagePosition(time.Now().UnixNano(), -4)
+	if offsetType == schema_pb.OffsetType_RESUME_OR_EARLIEST {
+		startPosition = log_buffer.NewMessagePosition(1, -5)
+	} else if offsetType == schema_pb.OffsetType_RESUME_OR_LATEST {
+		startPosition = log_buffer.NewMessagePosition(time.Now().UnixNano(), -6)
 	}
 	return
 }
