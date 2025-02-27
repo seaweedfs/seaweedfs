@@ -139,12 +139,13 @@ connection_max_lifetime_seconds = 0
 enableUpsert = true
 upsertQuery = """UPSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4)"""
 
-[cassandra]
+[cassandra2]
 # CREATE TABLE filemeta (
+#    dirhash bigint,
 #    directory varchar,
 #    name varchar,
 #    meta blob,
-#    PRIMARY KEY (directory, name)
+#    PRIMARY KEY ((dirhash, directory), name)
 # ) WITH CLUSTERING ORDER BY (name ASC);
 enabled = false
 keyspace = "seaweedfs"
@@ -198,70 +199,6 @@ readOnly = false
 routeByLatency = false
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
-
-[redis_lua]
-enabled = false
-address = "localhost:6379"
-password = ""
-database = 0
-# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
-superLargeDirectories = []
-
-[redis_lua_sentinel]
-enabled = false
-addresses = ["172.22.12.7:26379","172.22.12.8:26379","172.22.12.9:26379"]
-masterName = "master"
-username = ""
-password = ""
-database = 0
-
-[redis_lua_cluster]
-enabled = false
-addresses = [
-    "localhost:30001",
-    "localhost:30002",
-    "localhost:30003",
-    "localhost:30004",
-    "localhost:30005",
-    "localhost:30006",
-]
-password = ""
-# allows reads from slave servers or the master, but all writes still go to the master
-readOnly = false
-# automatically use the closest Redis server for reads
-routeByLatency = false
-# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
-superLargeDirectories = []
-
-[redis3] # beta
-enabled = false
-address = "localhost:6379"
-password = ""
-database = 0
-
-[redis3_sentinel]
-enabled = false
-addresses = ["172.22.12.7:26379","172.22.12.8:26379","172.22.12.9:26379"]
-masterName = "master"
-username = ""
-password = ""
-database = 0
-
-[redis_cluster3] # beta
-enabled = false
-addresses = [
-    "localhost:30001",
-    "localhost:30002",
-    "localhost:30003",
-    "localhost:30004",
-    "localhost:30005",
-    "localhost:30006",
-]
-password = ""
-# allows reads from slave servers or the master, but all writes still go to the master
-readOnly = false
-# automatically use the closest Redis server for reads
-routeByLatency = false
 
 [etcd]
 enabled = false
@@ -333,7 +270,7 @@ dialTimeOut = 10
 ##########################
 # To add path-specific filer store:
 #
-# 1. Add a name following the store type separated by a dot ".". E.g., cassandra.tmp
+# 1. Add a name following the store type separated by a dot ".". E.g., cassandra2.tmp
 # 2. Add a location configuration. E.g., location = "/tmp/"
 # 3. Copy and customize all other configurations.
 #     Make sure they are not the same if using the same store type!

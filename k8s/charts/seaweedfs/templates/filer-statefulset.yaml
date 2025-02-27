@@ -248,18 +248,14 @@ spec:
             - name: ca-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/ca/
-            - name: master-cert
-              readOnly: true
-              mountPath: /usr/local/share/ca-certificates/master/
-            - name: volume-cert
-              readOnly: true
-              mountPath: /usr/local/share/ca-certificates/volume/
             - name: filer-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/filer/
+            {{- if .Values.filer.s3.enabled }}
             - name: client-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client/
+            {{- end }}
             {{- end }}
             {{ tpl .Values.filer.extraVolumeMounts . | nindent 12 | trim }}
           ports:
@@ -367,18 +363,14 @@ spec:
         - name: ca-cert
           secret:
             secretName: {{ template "seaweedfs.name" . }}-ca-cert
-        - name: master-cert
-          secret:
-            secretName: {{ template "seaweedfs.name" . }}-master-cert
-        - name: volume-cert
-          secret:
-            secretName: {{ template "seaweedfs.name" . }}-volume-cert
         - name: filer-cert
           secret:
             secretName: {{ template "seaweedfs.name" . }}-filer-cert
+        {{- if .Values.filer.s3.enabled }}
         - name: client-cert
           secret:
             secretName: {{ template "seaweedfs.name" . }}-client-cert
+        {{- end }}
         {{- end }}
         {{ tpl .Values.filer.extraVolumes . | indent 8 | trim }}
       {{- if .Values.filer.nodeSelector }}
