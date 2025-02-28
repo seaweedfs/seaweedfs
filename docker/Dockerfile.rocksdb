@@ -1,4 +1,3 @@
-#FROM golang:1.22 as builder
 FROM vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/golang:1.23.2-bullseye as builder
 
 RUN cp /etc/apt/sources.list /etc/apt/sources.list.bak
@@ -21,9 +20,7 @@ RUN cd /tmp && \
     PORTABLE=1 make -j4 static_lib && \
     make install-static
 
-#ENV CGO_CFLAGS "-I/tmp/rocksdb/include"
 ENV CGO_CFLAGS "-I/usr/local/include"
-#ENV CGO_LDFLAGS "-L/tmp/rocksdb -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
 ENV CGO_LDFLAGS "-L/usr/local/lib -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
 ENV CGO_ENABLED=1
 ENV GOPROXY=https://goproxy.io,direct
@@ -35,7 +32,6 @@ RUN tar -xf seaweedfs.tar
 
 RUN cd /code/hhy-seaweedfs/weed && \
     go install -buildvcs=false -tags "rocksdb" -ldflags "-extldflags -static"
-    # ${LDFLAGS}"
 
 FROM vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/alpine:3.18.4 AS final
 
@@ -46,8 +42,6 @@ COPY --from=builder /code/hhy-seaweedfs/docker/filer_rocksdb.toml /etc/seaweedfs
 COPY --from=builder /code/hhy-seaweedfs/docker/master-udm.toml /etc/seaweedfs/master.toml
 COPY --from=builder /code/hhy-seaweedfs/docker/entrypoint.sh /entrypoint.sh
 
-#COPY  ./weed_pub* /usr/bin/
-#COPY  ./weed_sub* /usr/bin/
 
 RUN apk add fuse # for weed mount
 RUN apk add curl # for health checks

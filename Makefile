@@ -42,13 +42,23 @@ TAG ?= ${IMAGE_TAG}
 SWCOMMIT=$(shell git rev-parse --short HEAD)
 LDFLAGS="-s -w -extldflags '-static' -X 'github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)'"
 
-container: IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${TAG}
-container: LATEST_IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${LATEST_TAG}
-container: TAG_FLAGS=-t ${IMAGE} $(if $(findstring $(BUILD_LATEST),true),-t ${LATEST_IMAGE})
-container:
+filer_mysql: IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${TAG}
+filer_mysql: LATEST_IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${LATEST_TAG}
+filer_mysql: TAG_FLAGS=-t ${IMAGE} $(if $(findstring $(BUILD_LATEST),true),-t ${LATEST_IMAGE})
+filer_mysql:
 	docker buildx build --platform linux/amd64,linux/arm64 \
         ${TAG_FLAGS} \
         -f docker/Dockerfile \
+        --build-arg LDFLAGS=${LDFLAGS} \
+        --build-arg GOPROXY=${GOPROXY} \
+        --push .
+
+filer_rocksdb: IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${TAG}
+filer_rocksdb: LATEST_IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${LATEST_TAG}
+filer_rocksdb: TAG_FLAGS=-t ${IMAGE} $(if $(findstring $(BUILD_LATEST),true),-t ${LATEST_IMAGE})
+	docker buildx build --platform linux/amd64,linux/arm64 \
+        ${TAG_FLAGS} \
+        -f docker/Dockerfile.rocksdb \
         --build-arg LDFLAGS=${LDFLAGS} \
         --build-arg GOPROXY=${GOPROXY} \
         --push .

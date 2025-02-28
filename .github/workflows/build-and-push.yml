@@ -2,7 +2,14 @@ name: Build And Push
 
 on:
   workflow_dispatch:
-
+    inputs:
+      build_type:
+        description: "Select the type of build to execute"
+        required: true
+        default: "filer_mysql"
+        options:
+          - filer_mysql
+          - filer_rocksdb
 jobs:
 
   build:
@@ -23,4 +30,4 @@ jobs:
         password: ${{ secrets.ALI_REGISTRY_PASS }}
     - name: Build and push Docker images
       run: |
-        GOPROXY=https://proxy.golang.org,direct make container
+        GOPROXY=https://proxy.golang.org,direct make ${{ github.event.inputs.build_type }}
