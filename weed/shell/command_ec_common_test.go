@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 var (
@@ -262,5 +263,94 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 		if !(found) {
 			t.Errorf("expected one of %v for volume %q, got %q", tc.wantOneOf, tc.vid, got.info.Id)
 		}
+	}
+}
+
+func TestCountFreeShardSlots(t *testing.T) {
+	testCases := []struct {
+		name     string
+		topology *master_pb.TopologyInfo
+		diskType types.DiskType
+		want     map[string]int
+	}{
+		{
+			name:     "topology #1, free HDD shards",
+			topology: topology1,
+			diskType: types.HardDriveType,
+			want: map[string]int{
+				"192.168.1.1:8080": 17330,
+				"192.168.1.2:8080": 1540,
+				"192.168.1.4:8080": 1900,
+				"192.168.1.5:8080": 27010,
+				"192.168.1.6:8080": 17420,
+			},
+		},
+		{
+			name:     "topology #1, no free SSD shards available",
+			topology: topology1,
+			diskType: types.SsdType,
+			want: map[string]int{
+				"192.168.1.1:8080": 0,
+				"192.168.1.2:8080": 0,
+				"192.168.1.4:8080": 0,
+				"192.168.1.5:8080": 0,
+				"192.168.1.6:8080": 0,
+			},
+		},
+		{
+			name:     "topology #2, no negative free HDD shards",
+			topology: topology2,
+			diskType: types.HardDriveType,
+			want: map[string]int{
+				"172.19.0.3:8708":  0,
+				"172.19.0.4:8707":  8,
+				"172.19.0.5:8705":  58,
+				"172.19.0.6:8713":  39,
+				"172.19.0.8:8709":  8,
+				"172.19.0.9:8712":  0,
+				"172.19.0.10:8702": 0,
+				"172.19.0.13:8701": 0,
+				"172.19.0.14:8711": 0,
+				"172.19.0.16:8704": 89,
+				"172.19.0.17:8703": 0,
+				"172.19.0.19:8700": 9,
+				"172.19.0.20:8706": 0,
+				"172.19.0.21:8710": 9,
+			},
+		},
+		{
+			name:     "topology #2, no free SSD shards available",
+			topology: topology2,
+			diskType: types.SsdType,
+			want: map[string]int{
+				"172.19.0.10:8702": 0,
+				"172.19.0.13:8701": 0,
+				"172.19.0.14:8711": 0,
+				"172.19.0.16:8704": 0,
+				"172.19.0.17:8703": 0,
+				"172.19.0.19:8700": 0,
+				"172.19.0.20:8706": 0,
+				"172.19.0.21:8710": 0,
+				"172.19.0.3:8708":  0,
+				"172.19.0.4:8707":  0,
+				"172.19.0.5:8705":  0,
+				"172.19.0.6:8713":  0,
+				"172.19.0.8:8709":  0,
+				"172.19.0.9:8712":  0,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := map[string]int{}
+			eachDataNode(tc.topology, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+				got[dn.Id] = countFreeShardSlots(dn, tc.diskType)
+			})
+
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
