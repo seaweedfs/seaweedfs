@@ -12,11 +12,11 @@ RUN apt-get update && \
 
 ENV ROCKSDB_VERSION v9.3.1
 
-COPY ./rocksdb.v9.3.1.tgz /tmp/
 
-RUN cd /tmp && \
-    tar -xzf rocksdb.v9.3.1.tgz && \
-    cd rocksdb && \
+RUN wget https://github.com/facebook/rocksdb/archive/refs/tags/${ROCKSDB_VERSION}.tar.gz -O /tmp/rocksdb.tar.gz && \
+    cd /tmp && \
+    tar -xzf rocksdb.tar.gz && \
+    cd rocksdb-${ROCKSDB_VERSION#v} && \
     PORTABLE=1 make -j4 static_lib && \
     make install-static
 
@@ -25,22 +25,28 @@ ENV CGO_LDFLAGS "-L/usr/local/lib -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz
 ENV CGO_ENABLED=1
 ENV GOPROXY=https://goproxy.io,direct
 
-RUN mkdir -p /code
-WORKDIR /code
-COPY ./seaweedfs.tar /code/
-RUN tar -xf seaweedfs.tar
+WORKDIR /seaweedfs
 
-RUN cd /code/hhy-seaweedfs/weed && \
+COPY go.mod go.sum ./
+
+# Get dependencies - will also be cached if we won't change mod/sum
+RUN --mount=type=cache,target=/go/pkg,id=go-mod-cache,sharing=locked \
+    go mod download
+
+COPY weed weed
+
+RUN cd weed && \
     go install -buildvcs=false -tags "rocksdb" -ldflags "-extldflags -static"
 
 FROM vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/alpine:3.18.4 AS final
 
-COPY --from=builder /tmp/rocksdb /usr/local/rocksdb
+COPY --from=builder /usr/local /usr/local
 COPY --from=builder /go/bin/weed /usr/bin/
+
 RUN mkdir -p /etc/seaweedfs
-COPY --from=builder /code/hhy-seaweedfs/docker/filer_rocksdb.toml /etc/seaweedfs/filer.toml
-COPY --from=builder /code/hhy-seaweedfs/docker/master-udm.toml /etc/seaweedfs/master.toml
-COPY --from=builder /code/hhy-seaweedfs/docker/entrypoint.sh /entrypoint.sh
+COPY ./docker/filer_rocksdb.toml /etc/seaweedfs/filer.toml
+COPY ./docker/master-udm.toml /etc/seaweedfs/master.toml
+COPY ./docker/entrypoint.sh /entrypoint.sh
 
 
 RUN apk add fuse # for weed mount
