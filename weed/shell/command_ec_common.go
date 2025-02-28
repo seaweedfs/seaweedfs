@@ -248,14 +248,14 @@ func collectCollectionsForVolumeIds(t *master_pb.TopologyInfo, vids []needle.Vol
 				for _, diskInfo := range dn.DiskInfos {
 					for _, vi := range diskInfo.VolumeInfos {
 						for _, vid := range vids {
-							if needle.VolumeId(vi.Id) == vid && vi.Collection != "" {
+							if needle.VolumeId(vi.Id) == vid {
 								found[vi.Collection] = true
 							}
 						}
 					}
 					for _, ecs := range diskInfo.EcShardInfos {
 						for _, vid := range vids {
-							if needle.VolumeId(ecs.Id) == vid && ecs.Collection != "" {
+							if needle.VolumeId(ecs.Id) == vid {
 								found[ecs.Collection] = true
 							}
 						}
