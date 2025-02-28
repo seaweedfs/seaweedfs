@@ -98,23 +98,19 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		}
 	}
 
+	var collections []string
 	var volumeIds []needle.VolumeId
 	if vid := needle.VolumeId(*volumeId); vid != 0 {
 		// volumeId is provided
 		volumeIds = append(volumeIds, vid)
+		collections = collectCollectionsForVolumeIds(topologyInfo, volumeIds)
 	} else {
-		// apply to all volumes in the collection
+		// apply to all volumes for the given collection
 		volumeIds, err = collectVolumeIdsForEcEncode(commandEnv, *collection, *fullPercentage, *quietPeriod)
 		if err != nil {
 			return err
 		}
-	}
-
-	var collections []string
-	if *collection != "" {
-		collections = []string{*collection}
-	} else {
-		collections = collectCollectionsForVolumeIds(topologyInfo, volumeIds)
+		collections = append(collections, *collection)
 	}
 
 	// encode all requested volumes...
