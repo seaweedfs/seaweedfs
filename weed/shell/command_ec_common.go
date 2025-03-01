@@ -248,14 +248,14 @@ func collectCollectionsForVolumeIds(t *master_pb.TopologyInfo, vids []needle.Vol
 				for _, diskInfo := range dn.DiskInfos {
 					for _, vi := range diskInfo.VolumeInfos {
 						for _, vid := range vids {
-							if needle.VolumeId(vi.Id) == vid && vi.Collection != "" {
+							if needle.VolumeId(vi.Id) == vid {
 								found[vi.Collection] = true
 							}
 						}
 					}
 					for _, ecs := range diskInfo.EcShardInfos {
 						for _, vid := range vids {
-							if needle.VolumeId(ecs.Id) == vid && ecs.Collection != "" {
+							if needle.VolumeId(ecs.Id) == vid {
 								found[ecs.Collection] = true
 							}
 						}
@@ -429,7 +429,13 @@ func countFreeShardSlots(dn *master_pb.DataNodeInfo, diskType types.DiskType) (c
 	if diskInfo == nil {
 		return 0
 	}
-	return int(diskInfo.MaxVolumeCount-diskInfo.VolumeCount)*erasure_coding.DataShardsCount - countShards(diskInfo.EcShardInfos)
+
+	slots := int(diskInfo.MaxVolumeCount-diskInfo.VolumeCount)*erasure_coding.DataShardsCount - countShards(diskInfo.EcShardInfos)
+	if slots < 0 {
+		return 0
+	}
+
+	return slots
 }
 
 func (ecNode *EcNode) localShardIdCount(vid uint32) int {
