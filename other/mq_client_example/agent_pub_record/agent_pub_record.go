@@ -3,8 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/other/mq_client_example/example"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/agent_client"
-	"github.com/seaweedfs/seaweedfs/weed/mq/client/cmd/example"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"log"
 	"sync"
