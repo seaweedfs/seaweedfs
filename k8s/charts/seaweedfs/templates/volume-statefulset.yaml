@@ -207,9 +207,18 @@ spec:
             - name: ca-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/ca/
+            - name: master-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/master/
             - name: volume-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/volume/
+            - name: filer-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/filer/
+            - name: client-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/client/
             {{- end }}
             {{ tpl .Values.volume.extraVolumeMounts . | nindent 12 | trim }}
           ports:
