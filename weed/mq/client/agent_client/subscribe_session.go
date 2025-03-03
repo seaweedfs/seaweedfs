@@ -69,3 +69,19 @@ func (s *SubscribeSession) CloseSession() error {
 	err := s.stream.CloseSend()
 	return err
 }
+
+func (a *SubscribeSession) SubscribeMessageRecord(
+	onEachMessageFn func(key []byte, record *schema_pb.RecordValue),
+	onCompletionFn func()) error {
+	for {
+		resp, err := a.stream.Recv()
+		if err != nil {
+			return err
+		}
+		onEachMessageFn(resp.Key, resp.Value)
+	}
+	if onCompletionFn != nil {
+		onCompletionFn()
+	}
+	return nil
+}

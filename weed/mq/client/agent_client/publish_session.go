@@ -72,3 +72,10 @@ func (a *PublishSession) CloseSession() error {
 	a.schema = nil
 	return err
 }
+
+func (a *PublishSession) PublishMessageRecord(key []byte, record *schema_pb.RecordValue) error {
+	return a.stream.Send(&mq_agent_pb.PublishRecordRequest{
+		Key:   key,
+		Value: record,
+	})
+}
