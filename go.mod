@@ -99,7 +99,7 @@ require (
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.etcd.io/etcd/client/v3 v3.5.18
-	go.mongodb.org/mongo-driver v1.17.2
+	go.mongodb.org/mongo-driver v1.17.3
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.40.0
 	gocloud.dev/pubsub/natspubsub v0.40.0
