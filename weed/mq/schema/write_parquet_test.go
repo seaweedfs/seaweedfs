@@ -91,13 +91,13 @@ func testWritingParquetFile(t *testing.T, count int, filename string, parquetSch
 		AddRecordValue(rowBuilder, recordType, parquetLevels, recordValue)
 
 		if count < 10 {
-			fmt.Printf("RecordValue: %v\n", recordValue)
+			fmt.Printf("Write RecordValue: %v\n", recordValue)
 		}
 
 		row := rowBuilder.Row()
 
 		if count < 10 {
-			fmt.Printf("Row: %+v\n", row)
+			fmt.Printf("Build Row: %+v\n", row)
 		}
 
 		if err != nil {
@@ -143,7 +143,7 @@ func testReadingParquetFile(t *testing.T, filename string, parquetSchema *parque
 				t.Fatalf("ToRecordValue failed: %v", err)
 			}
 			if rowCount < 10 {
-				fmt.Printf("RecordValue: %v\n", recordValue)
+				fmt.Printf("Read RecordValue: %v\n", recordValue)
 			}
 		}
 		total += rowCount
