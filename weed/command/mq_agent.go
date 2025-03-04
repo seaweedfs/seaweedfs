@@ -26,12 +26,12 @@ type MessageQueueAgentOptions struct {
 func init() {
 	cmdMqAgent.Run = runMqAgent // break init cycle
 	mqAgentOptions.brokersString = cmdMqAgent.Flag.String("broker", "localhost:17777", "comma-separated message queue brokers")
-	mqAgentOptions.ip = cmdMqAgent.Flag.String("ip", "localhost", "message queue agent host address")
+	mqAgentOptions.ip = cmdMqAgent.Flag.String("ip", "", "message queue agent host address")
 	mqAgentOptions.port = cmdMqAgent.Flag.Int("port", 16777, "message queue agent gRPC server port")
 }
 
 var cmdMqAgent = &Command{
-	UsageLine: "mq.agent [-port=6377] [-master=<ip:port>]",
+	UsageLine: "mq.agent [-port=16777] [-master=<ip:port>]",
 	Short:     "<WIP> start a message queue agent",
 	Long: `start a message queue agent
 
@@ -64,6 +64,7 @@ func (mqAgentOpt *MessageQueueAgentOptions) startQueueAgent() bool {
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *mqAgentOpt.port, err)
 	}
+	glog.Infof("Start Seaweed Message Queue Agent on %s:%d", *mqAgentOpt.ip, *mqAgentOpt.port)
 	grpcS := pb.NewGrpcServer()
 	mq_agent_pb.RegisterSeaweedMessagingAgentServer(grpcS, agentServer)
 	reflection.Register(grpcS)

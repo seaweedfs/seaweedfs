@@ -11,8 +11,7 @@ import (
 
 type SessionId int64
 type SessionEntry[T any] struct {
-	entry          T
-	lastActiveTsNs int64
+	entry T
 }
 
 type MessageQueueAgentOptions struct {
@@ -32,11 +31,15 @@ type MessageQueueAgent struct {
 
 func NewMessageQueueAgent(option *MessageQueueAgentOptions, grpcDialOption grpc.DialOption) *MessageQueueAgent {
 
-	// check masters to list all brokers
+	// initialize brokers which may change later
+	var brokers []pb.ServerAddress
+	for _, broker := range option.SeedBrokers {
+		brokers = append(brokers, broker)
+	}
 
 	return &MessageQueueAgent{
 		option:         option,
-		brokers:        []pb.ServerAddress{},
+		brokers:        brokers,
 		grpcDialOption: grpcDialOption,
 		publishers:     make(map[SessionId]*SessionEntry[*pub_client.TopicPublisher]),
 		subscribers:    make(map[SessionId]*SessionEntry[*sub_client.TopicSubscriber]),

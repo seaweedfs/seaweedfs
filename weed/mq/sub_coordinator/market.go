@@ -20,7 +20,7 @@ Trigger rebalance when:
 * A new consumer group instance is added
 * Some partitions are unassigned from a consumer group instance.
 
-If multiple reblance requests are received, after a certain period, the market will only process the latest request.
+If multiple rebalance requests are received, after a certain period, the market will only process the latest request.
 
 However, if the number of unassigned partition is increased to exactly the total number of partitions,
 and total partitions are less than or equal to the sum of the max partition count of all consumer group instances,

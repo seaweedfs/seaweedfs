@@ -19,12 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SeaweedMessagingAgent_StartPublishSession_FullMethodName   = "/messaging_pb.SeaweedMessagingAgent/StartPublishSession"
-	SeaweedMessagingAgent_ClosePublishSession_FullMethodName   = "/messaging_pb.SeaweedMessagingAgent/ClosePublishSession"
-	SeaweedMessagingAgent_PublishRecord_FullMethodName         = "/messaging_pb.SeaweedMessagingAgent/PublishRecord"
-	SeaweedMessagingAgent_StartSubscribeSession_FullMethodName = "/messaging_pb.SeaweedMessagingAgent/StartSubscribeSession"
-	SeaweedMessagingAgent_CloseSubscribeSession_FullMethodName = "/messaging_pb.SeaweedMessagingAgent/CloseSubscribeSession"
-	SeaweedMessagingAgent_SubscribeRecord_FullMethodName       = "/messaging_pb.SeaweedMessagingAgent/SubscribeRecord"
+	SeaweedMessagingAgent_StartPublishSession_FullMethodName = "/messaging_pb.SeaweedMessagingAgent/StartPublishSession"
+	SeaweedMessagingAgent_ClosePublishSession_FullMethodName = "/messaging_pb.SeaweedMessagingAgent/ClosePublishSession"
+	SeaweedMessagingAgent_PublishRecord_FullMethodName       = "/messaging_pb.SeaweedMessagingAgent/PublishRecord"
+	SeaweedMessagingAgent_SubscribeRecord_FullMethodName     = "/messaging_pb.SeaweedMessagingAgent/SubscribeRecord"
 )
 
 // SeaweedMessagingAgentClient is the client API for SeaweedMessagingAgent service.
@@ -36,8 +34,6 @@ type SeaweedMessagingAgentClient interface {
 	ClosePublishSession(ctx context.Context, in *ClosePublishSessionRequest, opts ...grpc.CallOption) (*ClosePublishSessionResponse, error)
 	PublishRecord(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[PublishRecordRequest, PublishRecordResponse], error)
 	// Subscribing
-	StartSubscribeSession(ctx context.Context, in *StartSubscribeSessionRequest, opts ...grpc.CallOption) (*StartSubscribeSessionResponse, error)
-	CloseSubscribeSession(ctx context.Context, in *CloseSubscribeSessionRequest, opts ...grpc.CallOption) (*CloseSubscribeSessionResponse, error)
 	SubscribeRecord(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SubscribeRecordRequest, SubscribeRecordResponse], error)
 }
 
@@ -82,26 +78,6 @@ func (c *seaweedMessagingAgentClient) PublishRecord(ctx context.Context, opts ..
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessagingAgent_PublishRecordClient = grpc.BidiStreamingClient[PublishRecordRequest, PublishRecordResponse]
 
-func (c *seaweedMessagingAgentClient) StartSubscribeSession(ctx context.Context, in *StartSubscribeSessionRequest, opts ...grpc.CallOption) (*StartSubscribeSessionResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(StartSubscribeSessionResponse)
-	err := c.cc.Invoke(ctx, SeaweedMessagingAgent_StartSubscribeSession_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *seaweedMessagingAgentClient) CloseSubscribeSession(ctx context.Context, in *CloseSubscribeSessionRequest, opts ...grpc.CallOption) (*CloseSubscribeSessionResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CloseSubscribeSessionResponse)
-	err := c.cc.Invoke(ctx, SeaweedMessagingAgent_CloseSubscribeSession_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *seaweedMessagingAgentClient) SubscribeRecord(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SubscribeRecordRequest, SubscribeRecordResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &SeaweedMessagingAgent_ServiceDesc.Streams[1], SeaweedMessagingAgent_SubscribeRecord_FullMethodName, cOpts...)
@@ -124,8 +100,6 @@ type SeaweedMessagingAgentServer interface {
 	ClosePublishSession(context.Context, *ClosePublishSessionRequest) (*ClosePublishSessionResponse, error)
 	PublishRecord(grpc.BidiStreamingServer[PublishRecordRequest, PublishRecordResponse]) error
 	// Subscribing
-	StartSubscribeSession(context.Context, *StartSubscribeSessionRequest) (*StartSubscribeSessionResponse, error)
-	CloseSubscribeSession(context.Context, *CloseSubscribeSessionRequest) (*CloseSubscribeSessionResponse, error)
 	SubscribeRecord(grpc.BidiStreamingServer[SubscribeRecordRequest, SubscribeRecordResponse]) error
 	mustEmbedUnimplementedSeaweedMessagingAgentServer()
 }
@@ -145,12 +119,6 @@ func (UnimplementedSeaweedMessagingAgentServer) ClosePublishSession(context.Cont
 }
 func (UnimplementedSeaweedMessagingAgentServer) PublishRecord(grpc.BidiStreamingServer[PublishRecordRequest, PublishRecordResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method PublishRecord not implemented")
-}
-func (UnimplementedSeaweedMessagingAgentServer) StartSubscribeSession(context.Context, *StartSubscribeSessionRequest) (*StartSubscribeSessionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method StartSubscribeSession not implemented")
-}
-func (UnimplementedSeaweedMessagingAgentServer) CloseSubscribeSession(context.Context, *CloseSubscribeSessionRequest) (*CloseSubscribeSessionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CloseSubscribeSession not implemented")
 }
 func (UnimplementedSeaweedMessagingAgentServer) SubscribeRecord(grpc.BidiStreamingServer[SubscribeRecordRequest, SubscribeRecordResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeRecord not implemented")
@@ -219,42 +187,6 @@ func _SeaweedMessagingAgent_PublishRecord_Handler(srv interface{}, stream grpc.S
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessagingAgent_PublishRecordServer = grpc.BidiStreamingServer[PublishRecordRequest, PublishRecordResponse]
 
-func _SeaweedMessagingAgent_StartSubscribeSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StartSubscribeSessionRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedMessagingAgentServer).StartSubscribeSession(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SeaweedMessagingAgent_StartSubscribeSession_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingAgentServer).StartSubscribeSession(ctx, req.(*StartSubscribeSessionRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SeaweedMessagingAgent_CloseSubscribeSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CloseSubscribeSessionRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedMessagingAgentServer).CloseSubscribeSession(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SeaweedMessagingAgent_CloseSubscribeSession_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingAgentServer).CloseSubscribeSession(ctx, req.(*CloseSubscribeSessionRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _SeaweedMessagingAgent_SubscribeRecord_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(SeaweedMessagingAgentServer).SubscribeRecord(&grpc.GenericServerStream[SubscribeRecordRequest, SubscribeRecordResponse]{ServerStream: stream})
 }
@@ -276,14 +208,6 @@ var SeaweedMessagingAgent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClosePublishSession",
 			Handler:    _SeaweedMessagingAgent_ClosePublishSession_Handler,
-		},
-		{
-			MethodName: "StartSubscribeSession",
-			Handler:    _SeaweedMessagingAgent_StartSubscribeSession_Handler,
-		},
-		{
-			MethodName: "CloseSubscribeSession",
-			Handler:    _SeaweedMessagingAgent_CloseSubscribeSession_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -32,6 +32,7 @@ var Commands = []*Command{
 	cmdMaster,
 	cmdMasterFollower,
 	cmdMount,
+	cmdMqAgent,
 	cmdMqBroker,
 	cmdS3,
 	cmdScaffold,

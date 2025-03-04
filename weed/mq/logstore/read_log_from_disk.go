@@ -36,7 +36,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				err = fmt.Errorf("unexpected unmarshal mq_pb.Message: %v", err)
 				return
 			}
-			if logEntry.TsNs < starTsNs {
+			if logEntry.TsNs <= starTsNs {
 				pos += 4 + int(size)
 				continue
 			}
