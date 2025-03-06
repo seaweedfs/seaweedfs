@@ -224,6 +224,12 @@ func (wfs *WFS) getCurrentFiler() pb.ServerAddress {
 	return wfs.option.FilerAddresses[i]
 }
 
+func (wfs *WFS) ClearCacheDir() {
+	wfs.metaCache.Shutdown()
+	os.RemoveAll(wfs.option.getUniqueCacheDirForWrite())
+	os.RemoveAll(wfs.option.getUniqueCacheDirForRead())
+}
+
 func (option *Option) setupUniqueCacheDirectory() {
 	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + string(option.FilerAddresses[0]) + option.FilerMountRootPath + util.Version()))[0:8]
 	option.uniqueCacheDirForRead = path.Join(option.CacheDirForRead, cacheUniqueId)
