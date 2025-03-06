@@ -284,5 +284,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	server.Serve()
 
+	seaweedFileSystem.ClearCacheDir()
+
 	return true
 }
