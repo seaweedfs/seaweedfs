@@ -60,7 +60,7 @@ spec:
               
               echo "Waiting for service at $url..."
               while [ $attempt -le $max_attempts ]; do
-                if wget -q --spider "$url" >/dev/null 2>&1; then
+                if wget -q -O - "$url" >/dev/null 2>&1; then
                   echo "Service at $url is up!"
                   return 0
                 fi
