@@ -13,6 +13,8 @@ binary:
 	cd ../weed/mq/client/cmd/weed_pub_record && CGO_ENABLED=$(cgo) GOOS=linux go build && mv weed_pub_record ../../../../../docker/
 	cd ../weed/mq/client/cmd/weed_sub_kv && CGO_ENABLED=$(cgo) GOOS=linux go build && mv weed_sub_kv ../../../../../docker/
 	cd ../weed/mq/client/cmd/weed_sub_record && CGO_ENABLED=$(cgo) GOOS=linux go build && mv weed_sub_record ../../../../../docker/
+	cd ../weed/mq/client/cmd/agent_pub_record && CGO_ENABLED=$(cgo) GOOS=linux go build && mv agent_pub_record ../../../../../docker/
+	cd ../weed/mq/client/cmd/agent_sub_record && CGO_ENABLED=$(cgo) GOOS=linux go build && mv agent_sub_record ../../../../../docker/
 
 binary_race: options = -race
 binary_race: cgo = 1
@@ -96,6 +98,9 @@ s3tests: build s3tests_build
 
 brokers: build
 	docker compose -f compose/local-brokers-compose.yml -p seaweedfs up
+
+agent: build
+	docker compose -f compose/local-mq-test.yml -p seaweedfs up
 
 filer_etcd: build
 	docker stack deploy -c compose/swarm-etcd.yml fs

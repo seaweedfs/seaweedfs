@@ -229,9 +229,10 @@ message SubscribeMessageRequest {
         string client_id = 3;
         schema_pb.Topic topic = 4;
         schema_pb.PartitionOffset partition_offset = 5;
-        string filter = 6;
-        string follower_broker = 7;
-        int32 sliding_window_size = 8;
+        schema_pb.OffsetType offset_type = 6;
+        string filter = 10;
+        string follower_broker = 11;
+        int32 sliding_window_size = 12;
     }
     message AckMessage {
         int64 sequence = 1;

@@ -1,7 +1,6 @@
 package sub_client
 
 import (
-	"context"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -12,10 +11,17 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 	waitTime := 1 * time.Second
 	for {
 		for _, broker := range sub.bootstrapBrokers {
+
+			select {
+			case <-sub.ctx.Done():
+				return
+			default:
+			}
+
 			// lookup topic brokers
 			var brokerLeader string
 			err := pb.WithBrokerGrpcClient(false, broker, sub.SubscriberConfig.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
-				resp, err := client.FindBrokerLeader(context.Background(), &mq_pb.FindBrokerLeaderRequest{})
+				resp, err := client.FindBrokerLeader(sub.ctx, &mq_pb.FindBrokerLeaderRequest{})
 				if err != nil {
 					return err
 				}
@@ -30,10 +36,8 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 
 			// connect to the balancer
 			pb.WithBrokerGrpcClient(true, brokerLeader, sub.SubscriberConfig.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
-				ctx, cancel := context.WithCancel(context.Background())
-				defer cancel()
 
-				stream, err := client.SubscriberToSubCoordinator(ctx)
+				stream, err := client.SubscriberToSubCoordinator(sub.ctx)
 				if err != nil {
 					glog.V(0).Infof("subscriber %s: %v", sub.ContentConfig.Topic, err)
 					return err
@@ -58,6 +62,13 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 
 				go func() {
 					for reply := range sub.brokerPartitionAssignmentAckChan {
+
+						select {
+						case <-sub.ctx.Done():
+							return
+						default:
+						}
+
 						glog.V(0).Infof("subscriber instance %s ack %+v", sub.SubscriberConfig.ConsumerGroupInstanceId, reply)
 						if err := stream.Send(reply); err != nil {
 							glog.V(0).Infof("subscriber %s reply: %v", sub.ContentConfig.Topic, err)
@@ -73,6 +84,13 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 						glog.V(0).Infof("subscriber %s receive: %v", sub.ContentConfig.Topic, err)
 						return err
 					}
+
+					select {
+					case <-sub.ctx.Done():
+						return nil
+					default:
+					}
+
 					sub.brokerPartitionAssignmentChan <- resp
 					glog.V(0).Infof("Received assignment: %+v", resp)
 				}
