@@ -557,7 +557,7 @@ func isASCIISpace(b byte) bool {
 // Constant s3 chunk encoding signature.
 const s3ChunkSignatureStr = ";chunk-signature="
 
-// parses3ChunkExtension removes any s3 specific chunk-extension from buf.
+// parseS3ChunkExtension removes any s3 specific chunk-extension from buf.
 // For example,
 //
 //	"10000;chunk-signature=..." => "10000", "chunk-signature=..."
