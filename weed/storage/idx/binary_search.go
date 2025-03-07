@@ -4,7 +4,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-// firstInvalidIndex find the first index the failed lessThanOrEqualToFn function's requirement.
+// FirstInvalidIndex find the first index the failed lessThanOrEqualToFn function's requirement.
 func FirstInvalidIndex(bytes []byte, lessThanOrEqualToFn func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error)) (int, error) {
 	left, right := 0, len(bytes)/types.NeedleMapEntrySize-1
 	index := right + 1
