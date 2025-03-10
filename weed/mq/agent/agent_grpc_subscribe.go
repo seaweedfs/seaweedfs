@@ -63,7 +63,7 @@ func (a *MessageQueueAgent) SubscribeRecord(stream mq_agent_pb.SeaweedMessagingA
 	for {
 		m, err := stream.Recv()
 		if err != nil {
-			glog.V(0).Infof("subscriber %d receive: %v", subscriber.SubscriberConfig.String(), err)
+			glog.V(0).Infof("subscriber %s receive: %v", subscriber.SubscriberConfig.String(), err)
 			return err
 		}
 		if m != nil {
