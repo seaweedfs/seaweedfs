@@ -73,7 +73,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 					return processedTsNs, fmt.Errorf("ToRecordValue failed: %v", err)
 				}
 				processedTsNs = recordValue.Fields[SW_COLUMN_NAME_TS].GetInt64Value()
-				if processedTsNs < starTsNs {
+				if processedTsNs <= starTsNs {
 					continue
 				}
 				if stopTsNs != 0 && processedTsNs >= stopTsNs {

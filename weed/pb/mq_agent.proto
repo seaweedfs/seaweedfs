@@ -21,10 +21,6 @@ service SeaweedMessagingAgent {
     }
 
     // Subscribing
-    rpc StartSubscribeSession (StartSubscribeSessionRequest) returns (StartSubscribeSessionResponse) {
-    }
-    rpc CloseSubscribeSession (CloseSubscribeSessionRequest) returns (CloseSubscribeSessionResponse) {
-    }
     rpc SubscribeRecord (stream SubscribeRecordRequest) returns (stream SubscribeRecordResponse) {
     }
 
@@ -59,28 +55,19 @@ message PublishRecordResponse {
     string error = 2;
 }
 //////////////////////////////////////////////////
-message StartSubscribeSessionRequest {
-    string consumer_group = 1;
-    string consumer_group_instance_id = 2;
-    schema_pb.Topic topic = 4;
-    repeated schema_pb.PartitionOffset partition_offsets = 5;
-    string filter = 6;
-    int32 max_subscribed_partitions = 8;
-    int32 sliding_window_size = 9;
-}
-message StartSubscribeSessionResponse {
-    string error = 1;
-    int64 session_id = 2;
-}
-message CloseSubscribeSessionRequest {
-    int64 session_id = 1;
-}
-message CloseSubscribeSessionResponse {
-    string error = 1;
-}
-//////////////////////////////////////////////////
 message SubscribeRecordRequest {
-    int64 session_id = 1; // session_id is required for the first record
+    message InitSubscribeRecordRequest {
+        string consumer_group = 1;
+        string consumer_group_instance_id = 2;
+        schema_pb.Topic topic = 4;
+        repeated schema_pb.PartitionOffset partition_offsets = 5;
+        schema_pb.OffsetType offset_type = 6;
+        int64 offset_ts_ns = 7;
+        string filter = 10;
+        int32 max_subscribed_partitions = 11;
+        int32 sliding_window_size = 12;
+    }
+    InitSubscribeRecordRequest init = 1;
     int64 ack_sequence = 2;
     bytes ack_key = 3;
 }

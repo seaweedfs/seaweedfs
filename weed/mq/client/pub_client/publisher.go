@@ -34,8 +34,8 @@ type TopicPublisher struct {
 	jobs             []*EachPartitionPublishJob
 }
 
-func NewTopicPublisher(config *PublisherConfiguration) *TopicPublisher {
-	tp := &TopicPublisher{
+func NewTopicPublisher(config *PublisherConfiguration) (tp *TopicPublisher, err error) {
+	tp = &TopicPublisher{
 		partition2Buffer: interval.NewSearchTree[*buffered_queue.BufferedQueue[*mq_pb.DataMessage]](func(a, b int32) int {
 			return int(a - b)
 		}),
@@ -46,7 +46,7 @@ func NewTopicPublisher(config *PublisherConfiguration) *TopicPublisher {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		if err := tp.startSchedulerThread(&wg); err != nil {
+		if err = tp.startSchedulerThread(&wg); err != nil {
 			log.Println(err)
 			return
 		}
@@ -54,7 +54,7 @@ func NewTopicPublisher(config *PublisherConfiguration) *TopicPublisher {
 
 	wg.Wait()
 
-	return tp
+	return
 }
 
 func (p *TopicPublisher) Shutdown() error {

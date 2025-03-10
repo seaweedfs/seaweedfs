@@ -72,12 +72,12 @@ func (sub *TopicSubscriber) startProcessors() {
 				executors := util.NewLimitedConcurrentExecutor(int(sub.SubscriberConfig.SlidingWindowSize))
 				onDataMessageFn := func(m *mq_pb.SubscribeMessageResponse_Data) {
 					executors.Execute(func() {
-						processErr := sub.OnEachMessageFunc(m.Data.Key, m.Data.Value)
-						if processErr == nil {
-							sub.PartitionOffsetChan <- KeyedOffset{
-								Key:    m.Data.Key,
-								Offset: m.Data.TsNs,
-							}
+						if sub.OnDataMessageFunc != nil {
+							sub.OnDataMessageFunc(m)
+						}
+						sub.PartitionOffsetChan <- KeyedOffset{
+							Key:    m.Data.Key,
+							Offset: m.Data.TsNs,
 						}
 					})
 				}
