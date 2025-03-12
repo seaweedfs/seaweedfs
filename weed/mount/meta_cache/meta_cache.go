@@ -147,7 +147,7 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 	}
 
 	_, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *filer.Entry) bool {
-		if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)).Before(time.Now()) {
+		if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now()) {
 			return true
 		}
 		mc.mapIdFromFilerToLocal(entry)
