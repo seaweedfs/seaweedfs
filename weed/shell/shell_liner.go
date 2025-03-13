@@ -154,6 +154,7 @@ func printHelp(cmds []string) {
 		for _, c := range Commands {
 			if strings.ToLower(c.Name()) == cmd {
 				fmt.Printf("  %s\t# %s\n", c.Name(), c.Help())
+				fmt.Printf("use \"%s -h\" for more details\n", c.Name())
 			}
 		}
 	}
