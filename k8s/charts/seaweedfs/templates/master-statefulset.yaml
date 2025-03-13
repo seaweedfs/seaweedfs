@@ -139,7 +139,7 @@ spec:
               -mdir=/data \
               -ip.bind={{ .Values.master.ipBind }} \
               {{- if .Values.global.enableReplication }}
-              -defaultReplication={{ .Values.global.replicationPlacment }} \
+              -defaultReplication={{ .Values.global.replicationPlacement }} \
               {{- else }}
               -defaultReplication={{ .Values.master.defaultReplication }} \
               {{- end }}

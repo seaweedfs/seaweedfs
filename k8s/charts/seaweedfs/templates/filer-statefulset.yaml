@@ -173,7 +173,7 @@ spec:
               {{- end }}
               -dirListLimit={{ .Values.filer.dirListLimit }} \
               {{- if .Values.global.enableReplication }}
-              -defaultReplicaPlacement={{ .Values.global.replicationPlacment }} \
+              -defaultReplicaPlacement={{ .Values.global.replicationPlacement }} \
               {{- else }}
               -defaultReplicaPlacement={{ .Values.filer.defaultReplicaPlacement }} \
               {{- end }}
