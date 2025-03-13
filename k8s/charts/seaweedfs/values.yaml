@@ -291,7 +291,7 @@ volume:
   # For each data disk you may use ANY storage-class, example with local-path-provisioner
   # Annotations are optional.
   #  dataDirs:
-  #   - name: data:
+  #   - name: data
   #     type: "persistentVolumeClaim"
   #     size: "24Ti"
   #     storageClass: "local-path-provisioner"
