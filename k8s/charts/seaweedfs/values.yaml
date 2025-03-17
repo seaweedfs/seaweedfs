@@ -962,6 +962,11 @@ cosi:
 
   sidecar:
     image: gcr.io/k8s-staging-sig-storage/objectstorage-sidecar/objectstorage-sidecar:v20230130-v0.1.0-24-gc0cf995
+    # Resource requests, limits, etc. for the server cluster placement. This
+    # should map directly to the value of the resources field for a PodSpec,
+    # formatted as a multi-line string. By default no direct resource request
+    # is made.
+    resources: {}
 
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
@@ -974,6 +979,12 @@ cosi:
 
   extraVolumes: ""
   extraVolumeMounts: ""
+
+  # Resource requests, limits, etc. for the server cluster placement. This
+  # should map directly to the value of the resources field for a PodSpec,
+  # formatted as a multi-line string. By default no direct resource request
+  # is made.
+  resources: {}
 
 certificates:
   commonName: "SeaweedFS CA"

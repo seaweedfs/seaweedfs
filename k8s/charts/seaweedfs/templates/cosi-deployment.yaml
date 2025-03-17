@@ -140,6 +140,10 @@ spec:
               mountPath: /usr/local/share/ca-certificates/client/
             {{- end }}
             {{ tpl .Values.cosi.extraVolumeMounts . | nindent 12 | trim }}
+          {{- with .Values.cosi.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
         - name: seaweedfs-cosi-sidecar
           image: "{{ .Values.cosi.sidecar.image }}"
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
@@ -153,7 +157,7 @@ spec:
           volumeMounts:
             - mountPath: /var/lib/cosi
               name: socket
-          {{- with .Values.cosi.resources }}
+          {{- with .Values.cosi.sidecar.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
