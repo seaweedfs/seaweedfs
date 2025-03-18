@@ -62,6 +62,19 @@ const (
 	streamingUnsignedPayload = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
 )
 
+// AWS S3 authentication headers that should be skipped when signing the request
+// https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
+var awsS3AuthHeaders = map[string]struct{}{
+	"x-amz-content-sha256": {},
+	"x-amz-security-token": {},
+	"x-amz-algorithm":      {},
+	"x-amz-date":           {},
+	"x-amz-expires":        {},
+	"x-amz-signedheaders":  {},
+	"x-amz-credential":     {},
+	"x-amz-signature":      {},
+}
+
 // Returns SHA256 for calculating canonical-request.
 func getContentSha256Cksum(r *http.Request) string {
 	var (
@@ -424,15 +437,11 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 
 	// Save other headers available in the request parameters.
 	for k, v := range req.URL.Query() {
-
-		// Handle the metadata in presigned put query string
-		if strings.Contains(strings.ToLower(k), "x-amz-meta-") {
-			query.Set(k, v[0])
-		}
-
-		if strings.HasPrefix(strings.ToLower(k), "x-amz") {
+		// Skip AWS S3 authentication headers
+		if _, ok := awsS3AuthHeaders[strings.ToLower(k)]; ok {
 			continue
 		}
+
 		query[k] = v
 	}
 
