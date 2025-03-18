@@ -221,6 +221,7 @@ func runServer(cmd *Command, args []string) bool {
 	s3Options.bindIp = serverBindIp
 	iamOptions.ip = serverBindIp
 	iamOptions.masters = masterOptions.peers
+	webdavOptions.ipBind = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
 	serverOptions.v.masters = pb.ServerAddresses(*masterOptions.peers).ToAddresses()

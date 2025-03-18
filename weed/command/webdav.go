@@ -129,10 +129,6 @@ func (wo *WebDavOption) startWebDav() bool {
 
 	httpS := &http.Server{Handler: ws.Handler}
 
-	if wo.ipBind == nil {
-		wo.ipBind = new(string)
-	}
-
 	listenAddress := fmt.Sprintf("%s:%d", *wo.ipBind, *wo.port)
 	webDavListener, err := util.NewListener(listenAddress, time.Duration(10)*time.Second)
 	if err != nil {
