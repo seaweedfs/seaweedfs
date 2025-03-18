@@ -209,6 +209,7 @@ func runFiler(cmd *Command, args []string) bool {
 
 	if *filerStartWebDav {
 		filerWebDavOptions.filer = &filerAddress
+		filerWebDavOptions.ipBind = f.bindIp
 
 		if *filerWebDavOptions.disk == "" {
 			filerWebDavOptions.disk = f.diskType
