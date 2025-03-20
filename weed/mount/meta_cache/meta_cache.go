@@ -119,7 +119,7 @@ func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *fi
 	if err != nil {
 		return nil, err
 	}
-	if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)).Before(time.Now()) {
+	if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now()) {
 		return nil, filer_pb.ErrNotFound
 	}
 	mc.mapIdFromFilerToLocal(entry)
