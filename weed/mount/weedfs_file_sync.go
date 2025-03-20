@@ -54,7 +54,9 @@ import (
 func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 	fh := wfs.GetHandle(FileHandleId(in.Fh))
 	if fh == nil {
-		return fuse.ENOENT
+		// If handle is not found, it might have been already released
+		// This is not an error condition for FLUSH
+		return fuse.OK
 	}
 
 	return wfs.doFlush(fh, in.Uid, in.Gid)
