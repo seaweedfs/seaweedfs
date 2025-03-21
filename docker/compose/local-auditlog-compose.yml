@@ -19,7 +19,9 @@ services:
     depends_on:
       - fluent
   fluent:
-    image: fluent/fluentd:v1.14
+    image: fluent/fluentd:v1.17
+    volumes:
+      - ./fluent.conf:/fluentd/etc/fluent.conf
     ports:
       - 24224:24224
   #s3tests:

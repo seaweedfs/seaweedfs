@@ -32,10 +32,21 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
 	dir, name := target.DirAndName()
 
+	var auditLog *s3err.AccessLog
+
+	if s3err.Logger != nil {
+		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
+	}
+
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		if err := doDeleteEntry(client, dir, name, true, false); err != nil {
 			return err
+		}
+
+		if auditLog != nil {
+			auditLog.Key = name
+			s3err.PostAccessLog(*auditLog)
 		}
 
 		if s3a.option.AllowEmptyFolder {

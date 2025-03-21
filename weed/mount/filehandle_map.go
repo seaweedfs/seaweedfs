@@ -1,8 +1,9 @@
 package mount
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -67,22 +68,26 @@ func (i *FileHandleToInode) ReleaseByInode(inode uint64) {
 		}
 	}
 }
+
 func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) {
 	i.Lock()
 	defer i.Unlock()
-	inode, found := i.fh2inode[fh]
-	if found {
-		fhHandle, fhFound := i.inode2fh[inode]
-		if !fhFound {
-			delete(i.fh2inode, fh)
-		} else {
-			fhHandle.counter--
-			if fhHandle.counter <= 0 {
-				delete(i.inode2fh, inode)
-				delete(i.fh2inode, fhHandle.fh)
-				fhHandle.ReleaseHandle()
-			}
-		}
 
+	inode, found := i.fh2inode[fh]
+	if !found {
+		return // Handle already released or invalid
+	}
+
+	fhHandle, fhFound := i.inode2fh[inode]
+	if !fhFound {
+		delete(i.fh2inode, fh)
+		return
+	}
+
+	fhHandle.counter--
+	if fhHandle.counter <= 0 {
+		delete(i.inode2fh, inode)
+		delete(i.fh2inode, fhHandle.fh)
+		fhHandle.ReleaseHandle()
 	}
 }
