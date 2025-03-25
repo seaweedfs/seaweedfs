@@ -31,7 +31,7 @@ func init() {
 }
 
 var cmdMqAgent = &Command{
-	UsageLine: "mq.agent [-port=16777] [-master=<ip:port>]",
+	UsageLine: "mq.agent [-port=16777] [-broker=<ip:port>]",
 	Short:     "<WIP> start a message queue agent",
 	Long: `start a message queue agent
 
