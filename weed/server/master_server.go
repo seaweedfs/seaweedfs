@@ -45,13 +45,14 @@ type MasterOption struct {
 	VolumePreallocate          bool
 	MaxParallelVacuumPerServer int
 	// PulseSeconds            int
-	DefaultReplicaPlacement string
-	GarbageThreshold        float64
-	WhiteList               []string
-	DisableHttp             bool
-	MetricsAddress          string
-	MetricsIntervalSec      int
-	IsFollower              bool
+	DefaultReplicaPlacement     string
+	GarbageThreshold            float64
+	WhiteList                   []string
+	DisableHttp                 bool
+	MetricsAddress              string
+	MetricsIntervalSec          int
+	IsFollower                  bool
+	SupportSeaweedFsWithMetrics bool
 }
 
 type MasterServer struct {
@@ -415,4 +416,32 @@ func (ms *MasterServer) Reload() {
 	ms.guard.UpdateWhiteList(append(ms.option.WhiteList,
 		util.StringSplit(v.GetString("guard.white_list"), ",")...),
 	)
+}
+
+func (ms *MasterServer) startMetricsCollection() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				if ms.Topo != nil {
+					stats.UpdateClusterMetrics(ms.Topo.ToTopologyInfo(), ms.option.VolumeSizeLimitMB)
+					// Push metrics to the gateway if enabled
+					if err := stats.PushMetrics(stats.GenerateClusterId(ms.Topo.ToTopologyInfo()), ms.option.SupportSeaweedFsWithMetrics); err != nil {
+						glog.Warningf("Failed to push metrics: %v", err)
+					}
+				}
+			}
+		}
+	}()
+}
+
+func (ms *MasterServer) Start() error {
+	// Start metrics collection
+	ms.startMetricsCollection()
+
+	// ... rest of existing code ...
+	return nil
 }
