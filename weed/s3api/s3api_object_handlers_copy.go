@@ -188,7 +188,6 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	uploadID := r.URL.Query().Get("uploadId")
 	partIDString := r.URL.Query().Get("partNumber")
 
 	partID, err := strconv.Atoi(partIDString)
@@ -205,29 +204,71 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	rangeHeader := r.Header.Get("x-amz-copy-source-range")
-
-	dstUrl := s3a.genPartUploadUrl(dstBucket, uploadID, partID)
-	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlEscapeObject(srcObject))
-
-	resp, dataReader, err := util_http.ReadUrlAsReaderCloser(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false), rangeHeader)
-	if err != nil {
+	// Get source entry
+	srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
+	dir, name := srcPath.DirAndName()
+	entry, err := s3a.getEntry(dir, name)
+	if err != nil || entry.IsDirectory {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
-	defer util_http.CloseResponse(resp)
-	defer dataReader.Close()
 
-	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
-	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader, destination, dstBucket)
+	// Handle range header if present
+	rangeHeader := r.Header.Get("x-amz-copy-source-range")
+	var startOffset, endOffset int64
+	if rangeHeader != "" {
+		startOffset, endOffset, err = parseRangeHeader(rangeHeader)
+		if err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+			return
+		}
+	} else {
+		startOffset = 0
+		endOffset = int64(entry.Attributes.FileSize) - 1
+	}
 
-	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+	// Create new entry for the part
+	dstEntry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{
+			FileSize: uint64(endOffset - startOffset + 1),
+			Mtime:    time.Now().Unix(),
+			Crtime:   time.Now().Unix(),
+			Mime:     entry.Attributes.Mime,
+		},
+		Extended: make(map[string][]byte),
+	}
+
+	// Copy chunks that overlap with the range
+	dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, r.URL.Path)
+	if err != nil {
+		glog.Errorf("CopyObjectPartHandler copy chunks error: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
+	dstEntry.Chunks = dstChunks
+
+	// Save the part entry
+	dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
+	dstDir, dstName := dstPath.DirAndName()
+	if err := s3a.touch(dstDir, dstName, dstEntry); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// Calculate ETag for the part
+	filerEntry := &filer.Entry{
+		FullPath: dstPath,
+		Attr: filer.Attr{
+			FileSize: dstEntry.Attributes.FileSize,
+			Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
+			Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
+			Mime:     dstEntry.Attributes.Mime,
+		},
+		Chunks: dstEntry.Chunks,
+	}
+
+	etag := filer.ETagEntry(filerEntry)
 	setEtag(w, etag)
 
 	response := CopyPartResult{
@@ -236,7 +277,6 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	writeSuccessResponseXML(w, r, response)
-
 }
 
 func replaceDirective(reqHeader http.Header) (replaceMeta, replaceTagging bool) {
@@ -478,4 +518,87 @@ func (s3a *S3ApiServer) transferChunkData(srcUrl string, assignResult *filer_pb.
 	}
 
 	return nil
+}
+
+// parseRangeHeader parses the x-amz-copy-source-range header
+func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err error) {
+	// Remove "bytes=" prefix if present
+	rangeStr := strings.TrimPrefix(rangeHeader, "bytes=")
+	parts := strings.Split(rangeStr, "-")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid range format")
+	}
+
+	startOffset, err = strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid start offset: %v", err)
+	}
+
+	endOffset, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid end offset: %v", err)
+	}
+
+	return startOffset, endOffset, nil
+}
+
+// copyChunksForRange copies chunks that overlap with the specified range
+func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, endOffset int64, dstPath string) ([]*filer_pb.FileChunk, error) {
+	var relevantChunks []*filer_pb.FileChunk
+	var currentOffset int64
+
+	// Find chunks that overlap with the range
+	for _, chunk := range entry.GetChunks() {
+		chunkEnd := currentOffset + int64(chunk.Size)
+		if chunkEnd > startOffset && currentOffset <= endOffset {
+			// Calculate the portion of the chunk to copy
+			chunkStart := currentOffset
+			chunkSize := int64(chunk.Size)
+			if chunkStart < startOffset {
+				chunkStart = startOffset
+			}
+			if chunkEnd > endOffset {
+				chunkSize = endOffset - chunkStart + 1
+			}
+
+			// Create a new chunk with adjusted offset and size
+			newChunk := &filer_pb.FileChunk{
+				Offset:       chunkStart - startOffset, // Adjust offset relative to range start
+				Size:         uint64(chunkSize),
+				ModifiedTsNs: time.Now().UnixNano(),
+				ETag:         chunk.ETag,
+				IsCompressed: chunk.IsCompressed,
+				CipherKey:    chunk.CipherKey,
+			}
+			relevantChunks = append(relevantChunks, newChunk)
+		}
+		currentOffset += int64(chunk.Size)
+	}
+
+	// Copy the relevant chunks
+	dstChunks := make([]*filer_pb.FileChunk, len(relevantChunks))
+	executor := util.NewLimitedConcurrentExecutor(8)
+	errChan := make(chan error, len(relevantChunks))
+
+	for i, chunk := range relevantChunks {
+		chunkIndex := i
+		executor.Execute(func() {
+			dstChunk, err := s3a.copySingleChunk(chunk, dstPath)
+			if err != nil {
+				errChan <- fmt.Errorf("chunk %d: %v", chunkIndex, err)
+				return
+			}
+			dstChunks[chunkIndex] = dstChunk
+			errChan <- nil
+		})
+	}
+
+	// Wait for all operations to complete and check for errors
+	for i := 0; i < len(relevantChunks); i++ {
+		if err := <-errChan; err != nil {
+			return nil, err
+		}
+	}
+
+	return dstChunks, nil
 }
