@@ -349,13 +349,13 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 // copyChunks replicates chunks from source entry to destination entry
 func (s3a *S3ApiServer) copyChunks(entry *filer_pb.Entry, dstPath string) ([]*filer_pb.FileChunk, error) {
 	dstChunks := make([]*filer_pb.FileChunk, len(entry.GetChunks()))
-	executor := util.NewLimitedConcurrentExecutor(8) // Limit to 8 concurrent operations
+	executor := util.NewLimitedConcurrentExecutor(4) // Limit to 4 concurrent operations
 	errChan := make(chan error, len(entry.GetChunks()))
 
 	for i, chunk := range entry.GetChunks() {
 		chunkIndex := i
 		executor.Execute(func() {
-			dstChunk, err := s3a.copySingleChunk(chunk, chunkIndex, dstPath)
+			dstChunk, err := s3a.copySingleChunk(chunk, dstPath)
 			if err != nil {
 				errChan <- fmt.Errorf("chunk %d: %v", chunkIndex, err)
 				return
@@ -376,7 +376,7 @@ func (s3a *S3ApiServer) copyChunks(entry *filer_pb.Entry, dstPath string) ([]*fi
 }
 
 // copySingleChunk copies a single chunk from source to destination
-func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, chunkIndex int, dstPath string) (*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath string) (*filer_pb.FileChunk, error) {
 	// Create a new chunk with same properties but new file ID
 	dstChunk := &filer_pb.FileChunk{
 		Offset:       chunk.Offset,
