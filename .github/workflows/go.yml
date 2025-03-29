@@ -34,7 +34,7 @@ jobs:
         cd weed; go get -v -t -d ./...
 
     - name: Build
-      run: cd weed; go build -tags "elastic gocdk sqlite ydb tikv rclone" -v .
+      run: cd weed; go build -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v .
 
     - name: Test
-      run: cd weed; go test -tags "elastic gocdk sqlite ydb tikv rclone" -v ./...
+      run: cd weed; go test -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v ./...

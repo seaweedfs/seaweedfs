@@ -1,0 +1,145 @@
+config:
+  context:
+    app_user_password:
+      from: env
+      env: APP_USER_PASSWORD
+    client_user_password:
+      from: env
+      env: CLIENT_USER_PASSWORD
+    replicator_user_password:
+      from: env
+      env: REPLICATOR_USER_PASSWORD
+    storage_user_password:
+      from: env
+      env: STORAGE_USER_PASSWORD
+
+credentials:
+  roles:
+    crud-role:
+      privileges:
+        - permissions: [ "execute" ]
+          lua_call: [ "crud.delete", "crud.get", "crud.upsert" ]
+  users:
+    app:
+      password: '{{ context.app_user_password }}'
+      roles: [ public, crud-role ]
+    client:
+      password: '{{ context.client_user_password }}'
+      roles: [ super ]
+    replicator:
+      password: '{{ context.replicator_user_password }}'
+      roles: [ replication ]
+    storage:
+      password: '{{ context.storage_user_password }}'
+      roles: [ sharding ]
+
+iproto:
+  advertise:
+    peer:
+      login: replicator
+    sharding:
+      login: storage
+
+sharding:
+  bucket_count: 10000
+
+metrics:
+  include: [ all ]
+  exclude: [ vinyl ]
+  labels:
+    alias: '{{ instance_name }}'
+
+
+groups:
+  storages:
+    roles:
+      - roles.crud-storage
+      - roles.expirationd
+      - roles.metrics-export
+    roles_cfg:
+      roles.expirationd:
+        cfg:
+          metrics: true
+        filer_metadata_task:
+          space: filer_metadata
+          is_expired: filer_metadata.is_expired
+          options:
+            atomic_iteration: true
+            force: true
+            index: 'expire_at_idx'
+            iterator_type: GT
+            start_key:
+              - 0
+            tuples_per_iteration: 10000
+    app:
+      module: storage
+    sharding:
+      roles: [ storage ]
+    replication:
+      failover: election
+    database:
+      use_mvcc_engine: true
+    replicasets:
+      storage-001:
+        instances:
+          storage-001-a:
+            roles_cfg:
+              roles.metrics-export:
+                http:
+                  - listen: '0.0.0.0:8081'
+                    endpoints:
+                      - path: /metrics/prometheus/
+                        format: prometheus
+                      - path: /metrics/json
+                        format: json
+            iproto:
+              listen:
+                - uri: 127.0.0.1:3301
+              advertise:
+                client: 127.0.0.1:3301
+          storage-001-b:
+            roles_cfg:
+              roles.metrics-export:
+                http:
+                  - listen: '0.0.0.0:8082'
+                    endpoints:
+                      - path: /metrics/prometheus/
+                        format: prometheus
+                      - path: /metrics/json
+                        format: json
+            iproto:
+              listen:
+                - uri: 127.0.0.1:3302
+              advertise:
+                client: 127.0.0.1:3302
+  routers:
+    roles:
+      - roles.crud-router
+      - roles.metrics-export
+    roles_cfg:
+      roles.crud-router:
+        stats: true
+        stats_driver: metrics
+        stats_quantiles: true
+    app:
+      module: router
+    sharding:
+      roles: [ router ]
+    replicasets:
+      router-001:
+        instances:
+          router-001-a:
+            roles_cfg:
+              roles.metrics-export:
+                http:
+                  - listen: '0.0.0.0:8083'
+                    endpoints:
+                      - path: /metrics/prometheus/
+                        format: prometheus
+                      - path: /metrics/json
+                        format: json
+            iproto:
+              listen:
+                - uri: 127.0.0.1:3303
+              advertise:
+                client: 127.0.0.1:3303

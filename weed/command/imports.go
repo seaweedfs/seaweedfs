@@ -31,6 +31,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis2"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis3"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/sqlite"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/tarantool"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/tikv"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/ydb"
 )
