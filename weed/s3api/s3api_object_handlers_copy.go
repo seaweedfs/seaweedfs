@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,9 +11,14 @@ import (
 
 	"modernc.org/strutil"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -73,7 +79,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 	srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
 	dir, name := srcPath.DirAndName()
-	if entry, err := s3a.getEntry(dir, name); err != nil || entry.IsDirectory {
+	entry, err := s3a.getEntry(dir, name)
+	if err != nil || entry.IsDirectory {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
@@ -83,36 +90,63 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	dstUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, dstBucket, urlEscapeObject(dstObject))
-	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlEscapeObject(srcObject))
-
-	_, _, resp, err := util_http.DownloadFile(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false))
-	if err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
-		return
-	}
-	defer util_http.CloseResponse(resp)
-
-	tagErr := processMetadata(r.Header, resp.Header, replaceMeta, replaceTagging, s3a.getTags, dir, name)
+	// Process metadata and tags
+	tagErr := processMetadata(r.Header, nil, replaceMeta, replaceTagging, s3a.getTags, dir, name)
 	if tagErr != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
-	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
-	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body, destination, dstBucket)
 
-	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+	// Create new entry for destination
+	dstEntry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{
+			FileSize: entry.Attributes.FileSize,
+			Mtime:    time.Now().Unix(),
+			Crtime:   entry.Attributes.Crtime,
+			Mime:     entry.Attributes.Mime,
+		},
+		Extended: make(map[string][]byte),
+	}
+
+	// Copy extended attributes
+	for k, v := range entry.Extended {
+		dstEntry.Extended[k] = v
+	}
+
+	// Replicate chunks
+	dstChunks, err := s3a.copyChunks(entry, r.URL.Path)
+	if err != nil {
+		glog.Errorf("CopyObjectHandler copy chunks error: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
-	setEtag(w, etag)
+	dstEntry.Chunks = dstChunks
+
+	// Save the new entry
+	dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
+	dstDir, dstName := dstPath.DirAndName()
+	if err := s3a.touch(dstDir, dstName, dstEntry); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// Convert filer_pb.Entry to filer.Entry for ETag calculation
+	filerEntry := &filer.Entry{
+		FullPath: dstPath,
+		Attr: filer.Attr{
+			FileSize: dstEntry.Attributes.FileSize,
+			Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
+			Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
+			Mime:     dstEntry.Attributes.Mime,
+		},
+		Chunks: dstEntry.Chunks,
+	}
+
+	setEtag(w, filer.ETagEntry(filerEntry))
 
 	response := CopyObjectResult{
-		ETag:         etag,
+		ETag:         filer.ETagEntry(filerEntry),
 		LastModified: time.Now().UTC(),
 	}
 
@@ -153,7 +187,6 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	uploadID := r.URL.Query().Get("uploadId")
 	partIDString := r.URL.Query().Get("partNumber")
 
 	partID, err := strconv.Atoi(partIDString)
@@ -170,29 +203,71 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	rangeHeader := r.Header.Get("x-amz-copy-source-range")
-
-	dstUrl := s3a.genPartUploadUrl(dstBucket, uploadID, partID)
-	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlEscapeObject(srcObject))
-
-	resp, dataReader, err := util_http.ReadUrlAsReaderCloser(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false), rangeHeader)
-	if err != nil {
+	// Get source entry
+	srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
+	dir, name := srcPath.DirAndName()
+	entry, err := s3a.getEntry(dir, name)
+	if err != nil || entry.IsDirectory {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
-	defer util_http.CloseResponse(resp)
-	defer dataReader.Close()
 
-	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
-	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader, destination, dstBucket)
+	// Handle range header if present
+	rangeHeader := r.Header.Get("x-amz-copy-source-range")
+	var startOffset, endOffset int64
+	if rangeHeader != "" {
+		startOffset, endOffset, err = parseRangeHeader(rangeHeader)
+		if err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+			return
+		}
+	} else {
+		startOffset = 0
+		endOffset = int64(entry.Attributes.FileSize) - 1
+	}
 
-	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+	// Create new entry for the part
+	dstEntry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{
+			FileSize: uint64(endOffset - startOffset + 1),
+			Mtime:    time.Now().Unix(),
+			Crtime:   time.Now().Unix(),
+			Mime:     entry.Attributes.Mime,
+		},
+		Extended: make(map[string][]byte),
+	}
+
+	// Copy chunks that overlap with the range
+	dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, r.URL.Path)
+	if err != nil {
+		glog.Errorf("CopyObjectPartHandler copy chunks error: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
+	dstEntry.Chunks = dstChunks
+
+	// Save the part entry
+	dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
+	dstDir, dstName := dstPath.DirAndName()
+	if err := s3a.touch(dstDir, dstName, dstEntry); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// Calculate ETag for the part
+	filerEntry := &filer.Entry{
+		FullPath: dstPath,
+		Attr: filer.Attr{
+			FileSize: dstEntry.Attributes.FileSize,
+			Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
+			Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
+			Mime:     dstEntry.Attributes.Mime,
+		},
+		Chunks: dstEntry.Chunks,
+	}
+
+	etag := filer.ETagEntry(filerEntry)
 	setEtag(w, etag)
 
 	response := CopyPartResult{
@@ -201,7 +276,6 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	writeSuccessResponseXML(w, r, response)
-
 }
 
 func replaceDirective(reqHeader http.Header) (replaceMeta, replaceTagging bool) {
@@ -309,4 +383,210 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 	}
 
 	return
+}
+
+// copyChunks replicates chunks from source entry to destination entry
+func (s3a *S3ApiServer) copyChunks(entry *filer_pb.Entry, dstPath string) ([]*filer_pb.FileChunk, error) {
+	dstChunks := make([]*filer_pb.FileChunk, len(entry.GetChunks()))
+	executor := util.NewLimitedConcurrentExecutor(4) // Limit to 4 concurrent operations
+	errChan := make(chan error, len(entry.GetChunks()))
+
+	for i, chunk := range entry.GetChunks() {
+		chunkIndex := i
+		executor.Execute(func() {
+			dstChunk, err := s3a.copySingleChunk(chunk, dstPath)
+			if err != nil {
+				errChan <- fmt.Errorf("chunk %d: %v", chunkIndex, err)
+				return
+			}
+			dstChunks[chunkIndex] = dstChunk
+			errChan <- nil
+		})
+	}
+
+	// Wait for all operations to complete and check for errors
+	for i := 0; i < len(entry.GetChunks()); i++ {
+		if err := <-errChan; err != nil {
+			return nil, err
+		}
+	}
+
+	return dstChunks, nil
+}
+
+// copySingleChunk copies a single chunk from source to destination
+func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath string) (*filer_pb.FileChunk, error) {
+	// Create a new chunk with same properties but new file ID
+	dstChunk := &filer_pb.FileChunk{
+		Offset:       chunk.Offset,
+		Size:         chunk.Size,
+		ModifiedTsNs: time.Now().UnixNano(),
+		ETag:         chunk.ETag,
+		IsCompressed: chunk.IsCompressed,
+		CipherKey:    chunk.CipherKey,
+	}
+
+	// Get new file ID using filer's AssignVolume
+	assignResult, err := s3a.assignNewVolume(dstPath)
+	if err != nil {
+		return nil, fmt.Errorf("assign volume: %v", err)
+	}
+
+	dstChunk.FileId = assignResult.FileId
+	fid, err := filer_pb.ToFileIdObject(assignResult.FileId)
+	if err != nil {
+		return nil, fmt.Errorf("parse file ID: %v", err)
+	}
+	dstChunk.Fid = fid
+
+	// Get source URL using LookupFileId
+	srcUrl, _, err := operation.LookupFileId(func(_ context.Context) pb.ServerAddress {
+		return pb.ServerAddress(s3a.option.Filer.ToGrpcAddress())
+	}, s3a.option.GrpcDialOption, chunk.GetFileIdString())
+	if err != nil {
+		return nil, fmt.Errorf("lookup source file ID: %v", err)
+	}
+
+	// Download and upload the chunk
+	if err := s3a.transferChunkData(srcUrl, assignResult, chunk.Offset, int64(chunk.Size)); err != nil {
+		return nil, fmt.Errorf("transfer chunk data: %v", err)
+	}
+
+	return dstChunk, nil
+}
+
+// assignNewVolume assigns a new volume for the chunk
+func (s3a *S3ApiServer) assignNewVolume(dstPath string) (*filer_pb.AssignVolumeResponse, error) {
+	var assignResult *filer_pb.AssignVolumeResponse
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.AssignVolume(context.Background(), &filer_pb.AssignVolumeRequest{
+			Count:       1,
+			Replication: "",
+			Collection:  "",
+			DiskType:    "",
+			DataCenter:  s3a.option.DataCenter,
+			Path:        dstPath,
+		})
+		if err != nil {
+			return fmt.Errorf("assign volume: %v", err)
+		}
+		if resp.Error != "" {
+			return fmt.Errorf("assign volume: %v", resp.Error)
+		}
+		assignResult = resp
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return assignResult, nil
+}
+
+// transferChunkData downloads a portion of the chunk from source and uploads it to destination
+func (s3a *S3ApiServer) transferChunkData(srcUrl string, assignResult *filer_pb.AssignVolumeResponse, offset, size int64) error {
+	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
+
+	// Read the chunk data using ReadUrlAsStream
+	var chunkData []byte
+	shouldRetry, err := util_http.ReadUrlAsStream(srcUrl, nil, false, false, offset, int(size), func(data []byte) {
+		chunkData = append(chunkData, data...)
+	})
+	if err != nil {
+		return fmt.Errorf("download chunk: %v", err)
+	}
+	if shouldRetry {
+		return fmt.Errorf("download chunk: retry needed")
+	}
+
+	// Upload chunk to new location
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         dstUrl,
+		Cipher:            false,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               security.EncodedJwt(assignResult.Auth),
+	}
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return fmt.Errorf("create uploader: %v", err)
+	}
+	_, err = uploader.UploadData(chunkData, uploadOption)
+	if err != nil {
+		return fmt.Errorf("upload chunk: %v", err)
+	}
+
+	return nil
+}
+
+// parseRangeHeader parses the x-amz-copy-source-range header
+func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err error) {
+	// Remove "bytes=" prefix if present
+	rangeStr := strings.TrimPrefix(rangeHeader, "bytes=")
+	parts := strings.Split(rangeStr, "-")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid range format")
+	}
+
+	startOffset, err = strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid start offset: %v", err)
+	}
+
+	endOffset, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid end offset: %v", err)
+	}
+
+	return startOffset, endOffset, nil
+}
+
+// copyChunksForRange copies chunks that overlap with the specified range
+func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, endOffset int64, dstPath string) ([]*filer_pb.FileChunk, error) {
+	var relevantChunks []*filer_pb.FileChunk
+
+	// Find chunks that overlap with the range
+	for _, chunk := range entry.GetChunks() {
+		maxStart := max(startOffset, chunk.Offset)
+		minStop := min(chunk.Offset+int64(chunk.Size), endOffset+1)
+		if maxStart < minStop {
+			// Create a new chunk with adjusted offset and size
+			newChunk := &filer_pb.FileChunk{
+				Offset:       maxStart,
+				Size:         uint64(minStop - maxStart),
+				ModifiedTsNs: time.Now().UnixNano(),
+				ETag:         chunk.ETag,
+				IsCompressed: chunk.IsCompressed,
+				CipherKey:    chunk.CipherKey,
+			}
+			relevantChunks = append(relevantChunks, newChunk)
+		}
+	}
+
+	// Copy the relevant chunks
+	dstChunks := make([]*filer_pb.FileChunk, len(relevantChunks))
+	executor := util.NewLimitedConcurrentExecutor(4)
+	errChan := make(chan error, len(relevantChunks))
+
+	for i, chunk := range relevantChunks {
+		chunkIndex := i
+		executor.Execute(func() {
+			dstChunk, err := s3a.copySingleChunk(chunk, dstPath)
+			if err != nil {
+				errChan <- fmt.Errorf("chunk %d: %v", chunkIndex, err)
+				return
+			}
+			dstChunks[chunkIndex] = dstChunk
+			errChan <- nil
+		})
+	}
+
+	// Wait for all operations to complete and check for errors
+	for i := 0; i < len(relevantChunks); i++ {
+		if err := <-errChan; err != nil {
+			return nil, err
+		}
+	}
+
+	return dstChunks, nil
 }
