@@ -89,7 +89,7 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 			return fmt.Errorf("CacheRemoteObjectToLocalCluster file %s: %v", fileFullPath, err)
 		}
 
-		entry.SetEntry(resp.Entry)
+		fh.SetEntry(resp.Entry)
 
 		fh.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, resp.Entry))
 
