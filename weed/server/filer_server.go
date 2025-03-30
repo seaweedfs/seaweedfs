@@ -159,6 +159,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
+	go fs.loopUpdateMetric()
 	go fs.filer.KeepMasterClientConnected(context.Background())
 
 	if !util.LoadConfiguration("filer", false) {
