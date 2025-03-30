@@ -337,3 +337,10 @@ cert_path=""
 key_path=""
 # The name list used to verify the cn name
 verify_cn=""
+
+[tarantool]
+address = "localhost:3301"
+user = "guest"
+password = ""
+timeout = "5s"
+maxReconnects = 1000

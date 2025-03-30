@@ -22,7 +22,7 @@ build: binary
 build_e2e: binary_race
 	docker build --no-cache -t chrislusf/seaweedfs:e2e -f Dockerfile.e2e .
 
-go_build: # make go_build tags=elastic,ydb,gocdk,hdfs,5BytesOffset
+go_build: # make go_build tags=elastic,ydb,gocdk,hdfs,5BytesOffset,tarantool
 	docker build --build-arg TAGS=$(tags) --no-cache -t chrislusf/seaweedfs:go_build -f Dockerfile.go_build .
 
 go_build_large_disk:
@@ -36,6 +36,9 @@ build_rocksdb_local: build_rocksdb_dev_env
 
 build_rocksdb:
 	docker build --no-cache -t chrislusf/seaweedfs:rocksdb -f Dockerfile.rocksdb_large .
+
+build_tarantool_dev_env:
+	docker build --no-cache -t chrislusf/tarantool_dev_env -f Dockerfile.tarantool.dev_env .
 
 s3tests_build:
 	docker build --no-cache -t chrislusf/ceph-s3-tests:local -f Dockerfile.s3tests .
@@ -106,8 +109,11 @@ test_etcd: build
 
 test_ydb: tags = ydb
 test_ydb: build
-	export
 	docker compose -f compose/test-ydb-filer.yml -p seaweedfs up
+
+test_tarantool: tags = tarantool
+test_tarantool: build_tarantool_dev_env build
+	docker compose -f compose/test-tarantool-filer.yml -p seaweedfs up
 
 clean:
 	rm ./weed
