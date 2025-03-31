@@ -2,7 +2,7 @@ module github.com/seaweedfs/seaweedfs
 
 go 1.23.0
 
-toolchain go1.23.5
+toolchain go1.24.1
 
 require (
 	cloud.google.com/go v0.118.3 // indirect
@@ -139,7 +139,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
 	github.com/hanwen/go-fuse/v2 v2.7.2
-	github.com/hashicorp/raft v1.7.2
+	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.24.0
@@ -149,6 +149,7 @@ require (
 	github.com/redis/go-redis/v9 v9.7.3
 	github.com/schollz/progressbar/v3 v3.18.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/tarantool/go-tarantool/v2 v2.3.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.104.1
@@ -327,7 +328,6 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/t3rm1n4l/go-mega v0.0.0-20241213150454-ec0027fb0002 // indirect
 	github.com/tarantool/go-iproto v1.1.0 // indirect
-	github.com/tarantool/go-tarantool/v2 v2.3.0 // indirect
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a // indirect
 	github.com/tikv/pd/client v0.0.0-20230329114254-1948c247c2b1 // indirect
 	github.com/tinylib/msgp v1.1.8 // indirect
