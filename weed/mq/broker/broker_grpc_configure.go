@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -57,7 +58,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	}
 	resp = &mq_pb.ConfigureTopicResponse{}
 	if b.PubBalancer.Brokers.IsEmpty() {
-		return nil, status.Errorf(codes.Unavailable, pub_balancer.ErrNoBroker.Error())
+		return nil, status.Errorf(codes.Unavailable, "no broker available: %v", pub_balancer.ErrNoBroker)
 	}
 	resp.BrokerPartitionAssignments = pub_balancer.AllocateTopicPartitions(b.PubBalancer.Brokers, request.PartitionCount)
 	resp.RecordType = request.RecordType
