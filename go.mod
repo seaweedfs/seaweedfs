@@ -136,7 +136,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
 	github.com/hanwen/go-fuse/v2 v2.7.2
-	github.com/hashicorp/raft v1.7.2
+	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.24.0
