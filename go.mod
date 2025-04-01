@@ -1,6 +1,9 @@
 module github.com/seaweedfs/seaweedfs
 
-go 1.23.0
+go 1.24
+
+toolchain go1.24.1
+
 require (
 	cloud.google.com/go v0.120.0 // indirect
 	cloud.google.com/go/pubsub v1.48.0
