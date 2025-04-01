@@ -136,7 +136,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	var buf2 bytes.Buffer
 	fc.ToText(&buf2)
 
-	fmt.Fprintf(writer, string(buf2.Bytes()))
+	fmt.Fprint(writer, buf2.String())
 	fmt.Fprintln(writer)
 
 	if *apply {

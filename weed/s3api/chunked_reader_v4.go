@@ -378,7 +378,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 
 			if extractedCheckSumAlgorithm.String() != cr.checkSumAlgorithm {
 				errorMessage := fmt.Sprintf("checksum algorithm in trailer '%s' does not match the one advertised in the header '%s'", extractedCheckSumAlgorithm.String(), cr.checkSumAlgorithm)
-				glog.V(3).Infof(errorMessage)
+				glog.V(3).Info(errorMessage)
 				cr.err = errors.New(errorMessage)
 				return 0, cr.err
 			}
