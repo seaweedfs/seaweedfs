@@ -176,7 +176,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	buf.Reset()
 	filer.ProtoToText(&buf, s3cfg)
 
-	fmt.Fprintf(writer, string(buf.Bytes()))
+	fmt.Fprint(writer, buf.String())
 	fmt.Fprintln(writer)
 
 	if *apply {

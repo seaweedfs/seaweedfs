@@ -290,7 +290,7 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 		errBuilder.WriteString("; ")
 	}
 	if errBuilder.Len() > 0 {
-		e = fmt.Errorf(errBuilder.String())
+		e = fmt.Errorf("%s", errBuilder.String())
 	}
 
 	return

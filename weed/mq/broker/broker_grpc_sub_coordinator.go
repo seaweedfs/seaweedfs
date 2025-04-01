@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -26,7 +27,7 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 	if initMessage != nil {
 		cg, cgi, err = b.SubCoordinator.AddSubscriber(initMessage)
 		if err != nil {
-			return status.Errorf(codes.InvalidArgument, err.Error())
+			return status.Errorf(codes.InvalidArgument, "failed to add subscriber: %v", err)
 		}
 		glog.V(0).Infof("subscriber %s/%s/%s connected", initMessage.ConsumerGroup, initMessage.ConsumerGroupInstanceId, initMessage.Topic)
 	} else {

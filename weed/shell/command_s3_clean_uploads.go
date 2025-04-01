@@ -64,7 +64,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 
 	for _, bucket := range buckets {
 		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo, signingKey); err != nil {
-			fmt.Fprintf(writer, fmt.Sprintf("failed cleanup uploads for bucket %s: %v", bucket, err))
+			fmt.Fprintf(writer, "failed cleanup uploads for bucket %s: %v", bucket, err)
 		}
 	}
 
