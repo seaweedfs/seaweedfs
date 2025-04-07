@@ -312,7 +312,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 
 		caCertPool := x509.NewCertPool()
-		if s3opt.tlsCACertificate != nil && *s3opt.tlsCACertificate != "" {
+		if *s3opt.tlsCACertificate != "" {
 			// load CA certificate file and add it to list of client CAs
 			caCertFile, err := ioutil.ReadFile(*s3opt.tlsCACertificate)
 			if err != nil {
