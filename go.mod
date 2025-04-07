@@ -6,7 +6,7 @@ toolchain go1.24.1
 
 require (
 	cloud.google.com/go v0.120.0 // indirect
-	cloud.google.com/go/pubsub v1.48.0
+	cloud.google.com/go/pubsub v1.48.1
 	cloud.google.com/go/storage v1.51.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
@@ -75,7 +75,7 @@ require (
 	github.com/prometheus/client_golang v1.21.1
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
-	github.com/prometheus/procfs v0.15.1
+	github.com/prometheus/procfs v0.16.0
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/seaweedfs/goexif v1.0.3
@@ -103,9 +103,9 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.41.0
 	gocloud.dev/pubsub/natspubsub v0.40.0
-	gocloud.dev/pubsub/rabbitpubsub v0.40.0
+	gocloud.dev/pubsub/rabbitpubsub v0.41.0
 	golang.org/x/crypto v0.36.0 // indirect
-	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
+	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
 	golang.org/x/image v0.24.0
 	golang.org/x/net v0.38.0
 	golang.org/x/oauth2 v0.28.0 // indirect
@@ -120,8 +120,8 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/mathutil v1.7.1
-	modernc.org/memory v1.8.2 // indirect
-	modernc.org/sqlite v1.36.1
+	modernc.org/memory v1.9.1 // indirect
+	modernc.org/sqlite v1.37.0
 	modernc.org/strutil v1.2.1
 )
 
@@ -369,7 +369,7 @@ require (
 	gopkg.in/validator.v2 v2.0.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.61.13 // indirect
+	modernc.org/libc v1.62.1 // indirect
 	moul.io/http2curl/v2 v2.3.0 // indirect
 	storj.io/common v0.0.0-20240812101423-26b53789c348 // indirect
 	storj.io/drpc v0.0.35-0.20240709171858-0075ac871661 // indirect
