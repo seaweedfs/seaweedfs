@@ -732,7 +732,7 @@ func extractHostHeader(r *http.Request) string {
 			}
 		}
 		if !isDefaultPort(r.URL.Scheme, forwardedPort) {
-			extractedHost = net.JoinHostPort(forwardedHost, forwardedPort)
+			extractedHost = net.JoinHostPort(extractedHost, forwardedPort)
 		}
 		return extractedHost
 	} else {
@@ -743,12 +743,12 @@ func extractHostHeader(r *http.Request) string {
 		}
 		h, port, err := net.SplitHostPort(host)
 		if err != nil {
-			return r.Host
+			return host
 		}
 		if isDefaultPort(r.URL.Scheme, port) {
 			return h
 		}
-		return r.Host
+		return host
 	}
 }
 
