@@ -149,7 +149,7 @@ require (
 	github.com/tarantool/go-tarantool/v2 v2.3.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.104.1
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.106.1
 	go.etcd.io/etcd/client/pkg/v3 v3.5.21
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.13.0
