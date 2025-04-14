@@ -43,7 +43,6 @@ var (
 
 func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId string) (fullUrl string, jwt string, err error) {
 	var location string
-	var foundLocal bool
 
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
@@ -56,14 +55,16 @@ func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId s
 	if len(lookup.Locations) == 0 {
 		return "", jwt, errors.New("File Not Found")
 	}
+
+	localUrls := make([]string, 0)
 	for _, loc := range lookup.Locations {
 		if !loc.DataInRemote {
-			location = "http://" + loc.Url + "/" + fileId
-			foundLocal = true
-			break
+			localUrls = append(localUrls, loc.Url)
 		}
 	}
-	if !foundLocal {
+	if len(localUrls) > 0 {
+		location = "http://" + localUrls[rand.IntN(len(localUrls))] + "/" + fileId
+	} else {
 		location = "http://" + lookup.Locations[rand.IntN(len(lookup.Locations))].Url + "/" + fileId
 	}
 
