@@ -43,10 +43,10 @@ func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
 func (ms *MasterServer) ProcessGrowRequest() {
 	go func() {
 		ctx := context.Background()
-		firstRun := true 
+		firstRun := true
 		for {
 			if firstRun {
-				firstRun = false 
+				firstRun = false
 			} else {
 				time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
 			}
@@ -156,10 +156,11 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 			var locations []*master_pb.Location
 			for _, loc := range result.Locations {
 				locations = append(locations, &master_pb.Location{
-					Url:        loc.Url,
-					PublicUrl:  loc.PublicUrl,
-					DataCenter: loc.DataCenter,
-					GrpcPort:   uint32(loc.GrpcPort),
+					Url:          loc.Url,
+					PublicUrl:    loc.PublicUrl,
+					DataCenter:   loc.DataCenter,
+					GrpcPort:     uint32(loc.GrpcPort),
+					DataInRemote: loc.DataInRemote,
 				})
 			}
 			var auth string
