@@ -9,9 +9,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
@@ -102,28 +102,13 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 		sameDcServers[i], sameDcServers[j] = sameDcServers[j], sameDcServers[i]
 	})
 	if len(localUrls) > 0 && len(localUrls) != len(sameDcServers) {
-		for idx, url := range sameDcServers {
-			// move local url to the front of the list
-			if _, found := localUrls[url]; found {
-				if idx != 0 {
-					sameDcServers[idx], sameDcServers[0] = sameDcServers[0], sameDcServers[idx]
-				}
-				break
-			}
-		}
+		sameDcServers = util.ReorderSliceByPriority(localUrls, sameDcServers)
 	}
 	rand.Shuffle(len(otherDcServers), func(i, j int) {
 		otherDcServers[i], otherDcServers[j] = otherDcServers[j], otherDcServers[i]
 	})
 	if len(localUrls) > 0 && len(localUrls) != len(otherDcServers) {
-		for idx, url := range otherDcServers {
-			if _, found := localUrls[url]; found {
-				if idx != 0 {
-					otherDcServers[idx], otherDcServers[0] = otherDcServers[0], otherDcServers[idx]
-				}
-				break
-			}
-		}
+		otherDcServers = util.ReorderSliceByPriority(localUrls, otherDcServers)
 	}
 	// Prefer same data center
 	serverUrls = append(sameDcServers, otherDcServers...)
