@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestReorderSliceByPriority_StringSlice(t *testing.T) {
+func TestReorderToFront_StringSlice(t *testing.T) {
 	localUrls := map[string]bool{
 		"http://local1": true,
 		"http://local2": true,
@@ -32,9 +32,9 @@ func TestReorderSliceByPriority_StringSlice(t *testing.T) {
 		"http://remote2",
 	}
 
-	result := ReorderSliceByPriority(localUrls, sameDcTargetUrls)
+	result := ReorderToFront(localUrls, sameDcTargetUrls)
 
 	if !reflect.DeepEqual(result, expected1) && !reflect.DeepEqual(result, expected2) {
-		t.Errorf("ReorderSliceByPriority failed for strings. Got: %v, Expected1: %v, Expected2: %v", result, expected1, expected2)
+		t.Errorf("ReorderToFront failed for strings. Got: %v, Expected1: %v, Expected2: %v", result, expected1, expected2)
 	}
 }

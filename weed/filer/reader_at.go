@@ -88,10 +88,10 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 			otherTargetUrls[i], otherTargetUrls[j] = otherTargetUrls[j], otherTargetUrls[i]
 		})
 		if len(localUrls) > 0 && len(localUrls) != len(sameDcTargetUrls) {
-			sameDcTargetUrls = util.ReorderSliceByPriority(localUrls, sameDcTargetUrls)
+			sameDcTargetUrls = util.ReorderToFront(localUrls, sameDcTargetUrls)
 		}
 		if len(localUrls) > 0 && len(localUrls) != len(otherTargetUrls) {
-			otherTargetUrls = util.ReorderSliceByPriority(localUrls, otherTargetUrls)
+			otherTargetUrls = util.ReorderToFront(localUrls, otherTargetUrls)
 		}
 		// Prefer same data center
 		targetUrls = append(sameDcTargetUrls, otherTargetUrls...)

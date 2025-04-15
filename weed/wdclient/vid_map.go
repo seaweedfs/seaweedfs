@@ -102,13 +102,13 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 		sameDcServers[i], sameDcServers[j] = sameDcServers[j], sameDcServers[i]
 	})
 	if len(localUrls) > 0 && len(localUrls) != len(sameDcServers) {
-		sameDcServers = util.ReorderSliceByPriority(localUrls, sameDcServers)
+		sameDcServers = util.ReorderToFront(localUrls, sameDcServers)
 	}
 	rand.Shuffle(len(otherDcServers), func(i, j int) {
 		otherDcServers[i], otherDcServers[j] = otherDcServers[j], otherDcServers[i]
 	})
 	if len(localUrls) > 0 && len(localUrls) != len(otherDcServers) {
-		otherDcServers = util.ReorderSliceByPriority(localUrls, otherDcServers)
+		otherDcServers = util.ReorderToFront(localUrls, otherDcServers)
 	}
 	// Prefer same data center
 	serverUrls = append(sameDcServers, otherDcServers...)

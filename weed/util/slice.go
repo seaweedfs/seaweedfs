@@ -1,11 +1,11 @@
 package util
 
-func ReorderSliceByPriority[T comparable](priorityMap map[T]bool, inputSlice []T) []T {
+func ReorderToFront[T comparable](frontMap map[T]bool, inputSlice []T) []T {
 	var prioritized []T
 	var remaining []T
 
 	for _, item := range inputSlice {
-		if priorityMap[item] {
+		if frontMap[item] {
 			prioritized = append(prioritized, item)
 		} else {
 			remaining = append(remaining, item)
