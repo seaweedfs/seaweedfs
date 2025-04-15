@@ -38,11 +38,12 @@ type Entry struct {
 	// the following is for files
 	Chunks []*filer_pb.FileChunk `json:"chunks,omitempty"`
 
-	HardLinkId      HardLinkId
-	HardLinkCounter int32
-	Content         []byte
-	Remote          *filer_pb.RemoteEntry
-	Quota           int64
+	HardLinkId         HardLinkId
+	HardLinkCounter    int32
+	Content            []byte
+	Remote             *filer_pb.RemoteEntry
+	Quota              int64
+	WORMEnforcedAtTsNs int64
 }
 
 func (entry *Entry) Size() uint64 {
@@ -98,6 +99,7 @@ func (entry *Entry) ToExistingProtoEntry(message *filer_pb.Entry) {
 	message.Content = entry.Content
 	message.RemoteEntry = entry.Remote
 	message.Quota = entry.Quota
+	message.WormEnforcedAtTsNs = entry.WORMEnforcedAtTsNs
 }
 
 func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
@@ -110,6 +112,7 @@ func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
 	fsEntry.Remote = message.RemoteEntry
 	fsEntry.Quota = message.Quota
 	fsEntry.FileSize = FileSize(message)
+	fsEntry.WORMEnforcedAtTsNs = message.WormEnforcedAtTsNs
 }
 
 func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {

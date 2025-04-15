@@ -11,7 +11,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	var path util.FullPath
 	path, _, entry, status = wfs.maybeReadEntry(inode)
 	if status == fuse.OK {
-		if wfs.wormEnabledForEntry(path, entry) && flags&fuse.O_ANYWRITE != 0 {
+		if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
 			return nil, fuse.EPERM
 		}
 		// need to AcquireFileHandle again to ensure correct handle counter
