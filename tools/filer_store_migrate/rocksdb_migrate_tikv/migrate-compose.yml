@@ -1,0 +1,9 @@
+version: "3.7"
+services:
+  filer-migrate:
+    network_mode: "host"
+    image: vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm-dev/filer-migrate:0.5
+    volumes:
+      - ./migrate_filer.toml:/app/migrate_filer.toml
+    stdin_open: true
+    tty: true
