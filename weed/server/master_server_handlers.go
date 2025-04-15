@@ -70,15 +70,21 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 	if ms.Topo.IsLeader() {
 		volumeId, newVolumeIdErr := needle.NewVolumeId(vid)
 		if newVolumeIdErr != nil {
-			err = fmt.Errorf("Unknown volume id %s", vid)
+			err = fmt.Errorf("unknown volume id %s", vid)
 		} else {
 			machines := ms.Topo.Lookup(collection, volumeId)
 			for _, loc := range machines {
+				volInfo, err := loc.GetVolumesById(volumeId)
+				if err != nil {
+					glog.V(0).Infof("failed to get volume info from %s: %v", loc.Url(), err)
+					continue
+				}
 				locations = append(locations, operation.Location{
-					Url:        loc.Url(),
-					PublicUrl:  loc.PublicUrl,
-					DataCenter: loc.GetDataCenterId(),
-					GrpcPort:   loc.GrpcPort,
+					Url:          loc.Url(),
+					PublicUrl:    loc.PublicUrl,
+					DataCenter:   loc.GetDataCenterId(),
+					GrpcPort:     loc.GrpcPort,
+					DataInRemote: volInfo.DataInRemote,
 				})
 			}
 		}
@@ -86,10 +92,11 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		machines, getVidLocationsErr := ms.MasterClient.GetVidLocations(vid)
 		for _, loc := range machines {
 			locations = append(locations, operation.Location{
-				Url:        loc.Url,
-				PublicUrl:  loc.PublicUrl,
-				DataCenter: loc.DataCenter,
-				GrpcPort:   loc.GrpcPort,
+				Url:          loc.Url,
+				PublicUrl:    loc.PublicUrl,
+				DataCenter:   loc.DataCenter,
+				GrpcPort:     loc.GrpcPort,
+				DataInRemote: loc.DataInRemote,
 			})
 		}
 		err = getVidLocationsErr

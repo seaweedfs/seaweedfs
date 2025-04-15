@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"net"
 	"sort"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -201,7 +202,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 			for _, v := range newVolumes {
 				glog.V(0).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
-				message.NewVids = append(message.NewVids, uint32(v.Id))
+				if v.DataInRemote {
+					message.RemoteVids = append(message.RemoteVids, uint32(v.Id))
+				} else {
+					message.NewVids = append(message.NewVids, uint32(v.Id))
+				}
 			}
 			for _, v := range deletedVolumes {
 				glog.V(0).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
@@ -243,7 +248,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 
 		}
-		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 || len(message.NewEcVids) > 0 || len(message.DeletedEcVids) > 0 {
+		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 || len(message.NewEcVids) > 0 || len(message.DeletedEcVids) > 0 || len(message.RemoteVids) > 0 {
 			ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
 		}
 	}

@@ -1,9 +1,10 @@
 package topology
 
 import (
+	"strings"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"golang.org/x/exp/slices"
-	"strings"
 )
 
 type TopologyInfo struct {
@@ -100,6 +101,11 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 				}
 				for _, v := range dn.GetVolumes() {
 					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(v.Id))
+					if v.DataInRemote {
+						volumeLocation.RemoteVids = append(volumeLocation.RemoteVids, uint32(v.Id))
+					} else {
+						volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(v.Id))
+					}
 				}
 				for _, s := range dn.GetEcShards() {
 					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(s.VolumeId))

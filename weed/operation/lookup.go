@@ -4,20 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"google.golang.org/grpc"
 	"math/rand/v2"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 type Location struct {
-	Url        string `json:"url,omitempty"`
-	PublicUrl  string `json:"publicUrl,omitempty"`
-	DataCenter string `json:"dataCenter,omitempty"`
-	GrpcPort   int    `json:"grpcPort,omitempty"`
+	Url          string `json:"url,omitempty"`
+	PublicUrl    string `json:"publicUrl,omitempty"`
+	DataCenter   string `json:"dataCenter,omitempty"`
+	GrpcPort     int    `json:"grpcPort,omitempty"`
+	DataInRemote bool   `json:"dataInRemote,omitempty"`
 }
 
 func (l *Location) ServerAddress() pb.ServerAddress {
@@ -40,6 +42,8 @@ var (
 )
 
 func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId string) (fullUrl string, jwt string, err error) {
+	var location string
+
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return "", jwt, errors.New("Invalid fileId " + fileId)
@@ -51,7 +55,20 @@ func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId s
 	if len(lookup.Locations) == 0 {
 		return "", jwt, errors.New("File Not Found")
 	}
-	return "http://" + lookup.Locations[rand.IntN(len(lookup.Locations))].Url + "/" + fileId, lookup.Jwt, nil
+
+	localUrls := make([]string, 0)
+	for _, loc := range lookup.Locations {
+		if !loc.DataInRemote {
+			localUrls = append(localUrls, loc.Url)
+		}
+	}
+	if len(localUrls) > 0 {
+		location = "http://" + localUrls[rand.IntN(len(localUrls))] + "/" + fileId
+	} else {
+		location = "http://" + lookup.Locations[rand.IntN(len(lookup.Locations))].Url + "/" + fileId
+	}
+
+	return location, lookup.Jwt, nil
 }
 
 func LookupVolumeId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid string) (*LookupResult, error) {
@@ -95,10 +112,11 @@ func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids 
 			var locations []Location
 			for _, loc := range vidLocations.Locations {
 				locations = append(locations, Location{
-					Url:        loc.Url,
-					PublicUrl:  loc.PublicUrl,
-					DataCenter: loc.DataCenter,
-					GrpcPort:   int(loc.GrpcPort),
+					Url:          loc.Url,
+					PublicUrl:    loc.PublicUrl,
+					DataCenter:   loc.DataCenter,
+					GrpcPort:     int(loc.GrpcPort),
+					DataInRemote: loc.DataInRemote,
 				})
 			}
 			if vidLocations.Error != "" {
