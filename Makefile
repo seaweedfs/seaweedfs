@@ -42,6 +42,9 @@ TAG ?= ${IMAGE_TAG}
 SWCOMMIT=$(shell git rev-parse --short HEAD)
 LDFLAGS="-s -w -extldflags '-static' -X 'github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)'"
 
+filer_migrate_tool: IMAGE := ${IMAGE_PREFIX}filer-migrate:${TAG}
+filer_migrate_tool: LATEST_IMAGE := ${IMAGE_PREFIX}filer-migrate:${LATEST_TAG}
+
 IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${TAG}
 LATEST_IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${LATEST_TAG}
 TAG_FLAGS=-t ${IMAGE} $(if $(findstring $(BUILD_LATEST),true),-t ${LATEST_IMAGE})
@@ -66,6 +69,15 @@ filer_migrate_tool:
 	docker buildx build --platform linux/amd64,linux/arm64 \
         ${TAG_FLAGS} \
         -f tools/filer_store_migrate/rocksdb_migrate_tikv/Dockerfile \
+        --build-arg LDFLAGS=${LDFLAGS} \
+        --build-arg GOPROXY=${GOPROXY} \
+        --push .
+
+filer_tikv:
+	docker buildx build --platform linux/amd64,linux/arm64 \
+        ${TAG_FLAGS} \
+        -f docker/Dockerfile \
+		--build-arg GOBUILDTAGS="tikv" \
         --build-arg LDFLAGS=${LDFLAGS} \
         --build-arg GOPROXY=${GOPROXY} \
         --push .

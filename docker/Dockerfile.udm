@@ -26,11 +26,6 @@ EXPOSE 8333
 # webdav server http port
 EXPOSE 7333
 
-#RUN mkdir -p /data/filerldb2
-
-#VOLUME /data
-#WORKDIR /data
-
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

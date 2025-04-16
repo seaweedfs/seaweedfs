@@ -7,6 +7,7 @@ WORKDIR /seaweedfs
 ENV CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH}
 ARG GOPROXY=https://goproxy.cn,direct
 ARG LDFLAGS=""
+ARG GOBUILDTAGS=""
 
 COPY go.mod go.sum ./
 
@@ -17,7 +18,7 @@ RUN --mount=type=cache,target=/go/pkg,id=go-mod-cache,sharing=locked \
 COPY weed weed
 
 RUN --mount=type=cache,target=/go/pkg,id=go-mod-cache,sharing=locked \
-    go build -ldflags "$LDFLAGS" -o /weed ./weed
+    go build -ldflags "$LDFLAGS" -tags "$GOBUILDTAGS" -o /weed ./weed
 
 RUN --mount=type=cache,target=/go/pkg,id=go-mod-cache,sharing=locked \
     go build -ldflags "$LDFLAGS" -o /weed_pub_kv ./weed/mq/client/cmd/weed_pub_kv
@@ -56,7 +57,7 @@ EXPOSE 8333
 # webdav server http port
 EXPOSE 7333
 
-COPY ./docker/filer_mysql.toml /etc/seaweedfs/filer.toml
+#COPY ./docker/filer_mysql.toml /etc/seaweedfs/filer.toml
 COPY ./docker/master-udm.toml /etc/seaweedfs/master.toml
 COPY ./docker/entrypoint.sh /entrypoint.sh
 

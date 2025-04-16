@@ -5,12 +5,13 @@ on:
     inputs:
       build_type:
         description: "Select the type of build to execute"
+        type: choice
         required: true
         default: "filer_rocksdb"
-        type: choice
         options:
           - filer_mysql
           - filer_rocksdb
+          - filer_tikv
           - filer_migrate_tool
 jobs:
 

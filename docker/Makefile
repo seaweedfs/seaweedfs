@@ -22,6 +22,10 @@ binary_rocksdb: tags = "rocksdb"
 binary_rocksdb: cgo = 1
 binary_rocksdb: binary
 
+binary_tikv: tags = "tikv"
+binary_tikv: cgo = 0
+binary_tikv: binary
+
 
 build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
@@ -48,7 +52,7 @@ build_rocksdb:
 	docker build --no-cache -t vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.77.1-rocksdb -f Dockerfile.rocksdb .
 
 build_mysql:
-	docker build --no-cache -t vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.77.1-dev -f Dockerfile.mysql .
+	docker build --no-cache -t vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/seaweedfs:3.77.1-dev -f Dockerfile.udm .
 
 s3tests_build:
 	docker build --no-cache -t chrislusf/ceph-s3-tests:local -f Dockerfile.s3tests .
