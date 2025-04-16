@@ -1,9 +1,12 @@
 package topology
 
 import (
+	"reflect"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -206,5 +209,76 @@ func TestAddRemoveVolume(t *testing.T) {
 	if _, hasCollection := topo.FindCollection(v.Collection); hasCollection {
 		t.Errorf("collection %v should not exist", v.Collection)
 	}
+}
 
+func TestListCollections(t *testing.T) {
+	rp, _ := super_block.NewReplicaPlacementFromString("002")
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", nil)
+
+	topo.RegisterVolumeLayout(storage.VolumeInfo{
+		Id:               needle.VolumeId(1111),
+		ReplicaPlacement: rp,
+	}, dn)
+	topo.RegisterVolumeLayout(storage.VolumeInfo{
+		Id:               needle.VolumeId(2222),
+		ReplicaPlacement: rp,
+		Collection:       "vol_collection_a",
+	}, dn)
+	topo.RegisterVolumeLayout(storage.VolumeInfo{
+		Id:               needle.VolumeId(3333),
+		ReplicaPlacement: rp,
+		Collection:       "vol_collection_b",
+	}, dn)
+
+	topo.RegisterEcShards(&erasure_coding.EcVolumeInfo{
+		VolumeId:   needle.VolumeId(4444),
+		Collection: "ec_collection_a",
+	}, dn)
+	topo.RegisterEcShards(&erasure_coding.EcVolumeInfo{
+		VolumeId:   needle.VolumeId(5555),
+		Collection: "ec_collection_b",
+	}, dn)
+
+	testCases := []struct {
+		name                 string
+		includeNormalVolumes bool
+		includeEcVolumes     bool
+		want                 []string
+	}{
+		{
+			name:                 "no volume types selected",
+			includeNormalVolumes: false,
+			includeEcVolumes:     false,
+			want:                 nil,
+		}, {
+			name:                 "normal volumes",
+			includeNormalVolumes: true,
+			includeEcVolumes:     false,
+			want:                 []string{"", "vol_collection_a", "vol_collection_b"},
+		}, {
+			name:                 "EC volumes",
+			includeNormalVolumes: false,
+			includeEcVolumes:     true,
+			want:                 []string{"ec_collection_a", "ec_collection_b"},
+		}, {
+			name:                 "normal + EC volumes",
+			includeNormalVolumes: true,
+			includeEcVolumes:     true,
+			want:                 []string{"", "ec_collection_a", "ec_collection_b", "vol_collection_a", "vol_collection_b"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := topo.ListCollections(tc.includeNormalVolumes, tc.includeEcVolumes)
+
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
