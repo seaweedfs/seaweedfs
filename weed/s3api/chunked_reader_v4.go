@@ -386,7 +386,6 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			computedChecksum := cr.checkSumWriter.Sum(nil)
 			base64Checksum := base64.StdEncoding.EncodeToString(computedChecksum)
 			if string(extractedChecksum) != base64Checksum {
-				// TODO: Return BadDigest
 				glog.V(3).Infof("payload checksum '%s' does not match provided checksum '%s'", base64Checksum, string(extractedChecksum))
 				cr.err = errors.New("payload checksum does not match")
 				return 0, cr.err

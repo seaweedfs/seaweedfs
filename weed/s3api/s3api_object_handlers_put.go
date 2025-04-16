@@ -143,6 +143,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
+		if strings.Contains(postErr.Error(), "checksum") {
+			return "", s3err.ErrInvalidDigest
+		}
 		return "", s3err.ErrInternalError
 	}
 	defer resp.Body.Close()
