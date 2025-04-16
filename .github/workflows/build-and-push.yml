@@ -6,10 +6,12 @@ on:
       build_type:
         description: "Select the type of build to execute"
         required: true
-        default: "filer_mysql"
+        default: "filer_rocksdb"
+        type: choice
         options:
           - filer_mysql
           - filer_rocksdb
+          - filer_migrate_tool
 jobs:
 
   build:
