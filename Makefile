@@ -49,22 +49,6 @@ IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${TAG}
 LATEST_IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${LATEST_TAG}
 TAG_FLAGS=-t ${IMAGE} $(if $(findstring $(BUILD_LATEST),true),-t ${LATEST_IMAGE})
 
-filer_mysql:
-	docker buildx build --platform linux/amd64,linux/arm64 \
-        ${TAG_FLAGS} \
-        -f docker/Dockerfile \
-        --build-arg LDFLAGS=${LDFLAGS} \
-        --build-arg GOPROXY=${GOPROXY} \
-        --push .
-
-filer_rocksdb:
-	docker buildx build --platform linux/amd64,linux/arm64 \
-        ${TAG_FLAGS} \
-        -f docker/Dockerfile.rocksdb \
-        --build-arg LDFLAGS=${LDFLAGS} \
-        --build-arg GOPROXY=${GOPROXY} \
-        --push .
-
 filer_migrate_tool:
 	docker buildx build --platform linux/amd64,linux/arm64 \
         ${TAG_FLAGS} \
@@ -73,11 +57,21 @@ filer_migrate_tool:
         --build-arg GOPROXY=${GOPROXY} \
         --push .
 
-filer_tikv:
+# build filer for mysql, tikv, ...
+udm:
 	docker buildx build --platform linux/amd64,linux/arm64 \
         ${TAG_FLAGS} \
         -f docker/Dockerfile \
 		--build-arg GOBUILDTAGS="tikv" \
+        --build-arg LDFLAGS=${LDFLAGS} \
+        --build-arg GOPROXY=${GOPROXY} \
+        --push .
+
+# build filer for rocksdb with cgo=1
+udm_rocksdb:
+	docker buildx build --platform linux/amd64,linux/arm64 \
+        ${TAG_FLAGS} \
+        -f docker/Dockerfile.rocksdb \
         --build-arg LDFLAGS=${LDFLAGS} \
         --build-arg GOPROXY=${GOPROXY} \
         --push .

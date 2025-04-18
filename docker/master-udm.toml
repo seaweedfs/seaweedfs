@@ -1,7 +1,0 @@
-# configurations for udm
-# old volumes are transparently moved to udm tiering storage for cost efficiency
-[storage.backend]
-	[storage.backend.udm.tape]
-	enabled = true
-    grpc_server = "localhost:50051"
-    read_disabled = "true"

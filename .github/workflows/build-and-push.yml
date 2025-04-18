@@ -7,11 +7,10 @@ on:
         description: "Select the type of build to execute"
         type: choice
         required: true
-        default: "filer_rocksdb"
+        default: "udm"
         options:
-          - filer_mysql
-          - filer_rocksdb
-          - filer_tikv
+          - udm
+          - udm_rocksdb
           - filer_migrate_tool
 jobs:
 

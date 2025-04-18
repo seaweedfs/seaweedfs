@@ -57,8 +57,6 @@ EXPOSE 8333
 # webdav server http port
 EXPOSE 7333
 
-#COPY ./docker/filer_mysql.toml /etc/seaweedfs/filer.toml
-COPY ./docker/master-udm.toml /etc/seaweedfs/master.toml
 COPY ./docker/entrypoint.sh /entrypoint.sh
 
 COPY --from=builder /weed /usr/bin/
