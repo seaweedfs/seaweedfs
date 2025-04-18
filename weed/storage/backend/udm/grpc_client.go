@@ -171,8 +171,6 @@ func (cs *ClientSet) ReadSuperBlock(ctx context.Context, key string) ([]byte, er
 	return res.Data, nil
 }
 
-const superBlockSize = 8
-
 func isSuperBlock(offset, length int64) bool {
 	return offset == 0 && length == superBlockSize
 }

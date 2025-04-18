@@ -4,12 +4,19 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+)
+
+const (
+	superBlockSize  = 8
+	volumeCachePath = ".udm_cache"
+	separator       = "::"
 )
 
 func init() {
@@ -70,16 +77,16 @@ func (s *BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.V
 	return f
 }
 
-func (s *BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
-	key = f.Name()
-
-	glog.V(1).Infof("copying dat file of %s to remote udm.%s as %s", f.Name(), s.id, key)
-
-	size, err = s.client.UploadFile(context.TODO(), f.Name(), key, fn)
+func (s *BackendStorage) CopyFile(f *os.File, _ func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+	superblock, size, err := moveFileToCache(f.Name())
 	if err != nil {
 		glog.V(1).Infof("failed to copy file: %v", err)
 		return
 	}
+
+	key = fmt.Sprintf("%s%s%s", f.Name(), separator, string(superblock))
+
+	glog.V(1).Infof("copying dat file of %s to remote udm.%s as %s", f.Name(), s.id, key)
 
 	return
 }
@@ -149,4 +156,59 @@ func (f *backendStorageFile) Name() string {
 
 func (f *backendStorageFile) Sync() error {
 	return nil
+}
+
+func moveFileToCache(path string) (superBlock []byte, size int64, err error) {
+	cacheFile := buildInternalCacheFilePath(path)
+	err = os.MkdirAll(filepath.Dir(cacheFile), 0777)
+	if err != nil {
+		glog.V(1).Infof("Failed to create cache dir for file %s, err: %v", cacheFile, err)
+		return nil, 0, err
+	}
+
+	fileInfo, err := os.Stat(cacheFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			err = os.Rename(path, cacheFile)
+			if err != nil {
+				glog.V(1).Infof("Failed to rename file from %s to %s, err: %s", path, cacheFile, err)
+				return nil, 0, err
+			}
+		} else {
+			glog.V(1).Infof("Can not stat file %s", cacheFile)
+			return nil, 0, err
+		}
+	}
+
+	size = fileInfo.Size()
+	superBlock, err = readSuperBlock(cacheFile)
+	if err != nil {
+		glog.V(1).Infof("Failed to read super block for file %s, err: %s", cacheFile, err)
+		return nil, 0, err
+	}
+
+	return
+}
+
+func buildInternalCacheFilePath(path string) string {
+	filePath, fileName := filepath.Dir(path), filepath.Base(path)
+	return filepath.Join(filePath, volumeCachePath, fileName)
+}
+
+func readSuperBlock(filePath string) ([]byte, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	data := make([]byte, superBlockSize)
+	n, err := f.ReadAt(data, 0)
+	if err != nil {
+		return nil, err
+	} else if n != superBlockSize {
+		return nil, fmt.Errorf("read super block size %d not equal to %d", n, superBlockSize)
+	}
+
+	return data, nil
 }
