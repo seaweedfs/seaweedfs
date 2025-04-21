@@ -5,30 +5,32 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend/udm/util"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend/udm/util/hash"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	pb "github.com/seaweedfs/seaweedfs/weed/storage/backend/udm/api/v1"
+	pb "github.com/seaweedfs/seaweedfs/weed/storage/backend/udm/api/private/v1"
 )
 
 type ClientSet struct {
-	conn         *grpc.ClientConn
-	readDisabled bool
+	conn *grpc.ClientConn
 
-	storageClient pb.UDMStorageClient
+	tapeIOClient pb.TapeIOClient
 }
 
-func NewClient(target string, readDisabled ...bool) (*ClientSet, error) {
+func NewClient(target string) (*ClientSet, error) {
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
 
 	return &ClientSet{
-		conn:          conn,
-		storageClient: pb.NewUDMStorageClient(conn),
-		readDisabled:  len(readDisabled) > 0 && readDisabled[0],
+		conn:         conn,
+		tapeIOClient: pb.NewTapeIOClient(conn),
 	}, nil
 }
 
@@ -39,138 +41,80 @@ func (cs *ClientSet) Close() error {
 	return nil
 }
 
-func (cs *ClientSet) UploadFile(ctx context.Context, filePath, key string, fn func(progressed int64, percentage float32) error) (int64, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	stream, err := cs.storageClient.UploadFile(ctx, &pb.FileRequest{
-		Key:  key,
-		File: filePath,
-	})
-	if err != nil {
-		return 0, err
-	}
+//func (cs *ClientSet) DownloadFile(ctx context.Context, volumeShortName string) error {
+//	_, err := cs.tapeIOClient.ReadFromTape(ctx, &pb.ReadFromTapeRequest{
+//		Files: []*pb.ReadFromTapeFileInfo{
+//			{
+//				Id: strings.TrimSuffix(volumeShortName, filepath.Ext(volumeShortName)),
+//				WriteTo: &pb.DataLocation{
+//					Host:          "",
+//					TransportType: pb.TransportType_volumeInternalCache,
+//					SubPath:       volumeShortName,
+//				},
+//			},
+//		},
+//	})
+//
+//	return err
+//}
 
-	var totalBytes int64
-	for {
-		select {
-		case <-ctx.Done():
-			return totalBytes, fmt.Errorf("context is canceled, err: %w", ctx.Err())
-		default:
-		}
-
-		var res *pb.FileInfo
-		res, err = stream.Recv()
-		if err == io.EOF {
-			break
-		}
+func (cs *ClientSet) DownloadFileFromTape(ctx context.Context, targetPath, volumeShortName string) (err error) {
+	defer func() {
 		if err != nil {
-			return totalBytes, err
+			_ = os.Remove(targetPath)
 		}
+	}()
 
-		totalBytes = res.TotalBytes
-		if fn != nil {
-			err = fn(res.TotalBytes, res.Percentage)
-			if err != nil {
-				return totalBytes, err
-			}
-		}
-	}
-
-	return totalBytes, nil
-}
-
-func (cs *ClientSet) DownloadFile(ctx context.Context, filePath, key string, fn func(progressed int64, percentage float32) error) (int64, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	stream, err := cs.storageClient.DownloadFile(ctx, &pb.FileRequest{
-		Key:  key,
-		File: filePath,
-	})
-
+	rc, err := cs.downloadFromTape(ctx, strings.TrimSuffix(volumeShortName, filepath.Ext(volumeShortName)), 0, pb.CheckSumAlgorithm_md5)
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("failed to download file: %w", err)
 	}
 
-	var totalBytes int64
-	for {
-		select {
-		case <-ctx.Done():
-			return totalBytes, fmt.Errorf("context is canceled, err: %w", ctx.Err())
-		default:
-		}
-
-		var res *pb.FileInfo
-		res, err = stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return totalBytes, err
-		}
-
-		totalBytes = res.TotalBytes
-		if fn != nil {
-			err = fn(res.TotalBytes, res.Percentage)
-			if err != nil {
-				return totalBytes, err
-			}
-		}
+	// write the file content to a new file
+	outFile, err := os.Create(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %w", targetPath, err)
 	}
 
-	return totalBytes, nil
+	defer outFile.Close()
+
+	// Write the file content
+	_, err = io.Copy(outFile, rc)
+	if err != nil {
+		return fmt.Errorf("failed to write file %s: %w", targetPath, err)
+	}
+
+	// seek to the beginning of the file
+	_, err = outFile.Seek(0, 0)
+	if err != nil {
+		return fmt.Errorf("failed to seek to beginning of downloaded file %s: %w", targetPath, err)
+	}
+
+	// Calculate MD5 checksum
+	checksum, err := hash.Md5(outFile)
+	if err != nil {
+		return fmt.Errorf("failed to calculate md5 of %s: %w", targetPath, err)
+	}
+
+	// Compare the checksum with the original checksum
+	if checksum != rc.Checksum() {
+		return fmt.Errorf("file %s checksum mismatch: %s != %s", targetPath, checksum, rc.Checksum())
+	}
+
+	return nil
 }
 
-func (cs *ClientSet) DeleteFile(ctx context.Context, key string) error {
-	_, err := cs.storageClient.DeleteFile(ctx, &pb.FileKey{
-		Key: key,
-	})
-
-	return err
-}
-
-func (cs *ClientSet) ReadAt(ctx context.Context, key string, offset, length int64) ([]byte, error) {
-	if isSuperBlock(offset, length) {
-		return cs.ReadSuperBlock(ctx, key)
-	}
-
-	if cs.readDisabled {
-		return nil, fmt.Errorf("can not read %s at %d with length %d: read is disabled", key, offset, length)
-	}
-
-	res, err := cs.storageClient.CacheFile(ctx, &pb.FileKey{
-		Key: key,
+func (cs *ClientSet) downloadFromTape(ctx context.Context, key string, chunkSize uint64, checksumAlg pb.CheckSumAlgorithm) (util.ReaderWithChecksum, error) {
+	stream, err := cs.tapeIOClient.DownloadFromTape(ctx, &pb.DownloadFromTapeRequest{
+		Id:          key,
+		ChunkSize:   chunkSize,
+		ChecksumAlg: checksumAlg,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	f, err := os.Open(res.CacheFile)
-	if err != nil {
-		return nil, err
-	}
-
-	defer f.Close()
-
-	buffer := make([]byte, length)
-	n, err := f.ReadAt(buffer, offset)
-	if err != nil {
-		return nil, err
-	}
-
-	return buffer[:n], nil
-}
-
-func (cs *ClientSet) ReadSuperBlock(ctx context.Context, key string) ([]byte, error) {
-	res, err := cs.storageClient.ReadSuperBlock(ctx, &pb.FileKey{
-		Key: key,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return res.Data, nil
-}
-
-func isSuperBlock(offset, length int64) bool {
-	return offset == 0 && length == superBlockSize
+	return &util.FileStream{
+		Stream: stream,
+	}, nil
 }

@@ -3,9 +3,11 @@ package udm
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -46,7 +48,7 @@ func newBackendStorage(configuration backend.StringProperties, configPrefix stri
 	grpcServer := configuration.GetString(configPrefix + "grpc_server")
 	readDisabled, _ := strconv.ParseBool(configuration.GetString(configPrefix + "read_disabled"))
 
-	cl, err := NewClient(grpcServer, readDisabled)
+	cl, err := NewClient(grpcServer)
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +73,7 @@ func (s *BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.V
 	f := &backendStorageFile{
 		backendStorage: s,
 		key:            key,
+		readDisabled:   s.readDisabled,
 		tierInfo:       tierInfo,
 	}
 
@@ -78,24 +81,27 @@ func (s *BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.V
 }
 
 func (s *BackendStorage) CopyFile(f *os.File, _ func(progressed int64, percentage float32) error) (key string, size int64, err error) {
-	superblock, size, err := moveFileToCache(f.Name())
+	superblock, size, err := moveFileToInternalCache(f.Name())
 	if err != nil {
 		glog.V(1).Infof("failed to copy file: %v", err)
 		return
 	}
 
-	key = fmt.Sprintf("%s%s%s", f.Name(), separator, string(superblock))
+	key = generateFileKey(f.Name(), superblock)
 
 	glog.V(1).Infof("copying dat file of %s to remote udm.%s as %s", f.Name(), s.id, key)
 
 	return
 }
 
-func (s *BackendStorage) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
+func (s *BackendStorage) DownloadFile(fileName string, key string, _ func(progressed int64, percentage float32) error) (size int64, err error) {
+	size, err = moveFileFromInternalCache(fileName)
+	if err != nil {
+		glog.V(1).Infof("failed to download file: %v", err)
+		return
+	}
 
-	glog.V(1).Infof("download dat file of %s from remote s3.%s as %s", fileName, s.id, key)
-
-	size, err = s.client.DownloadFile(context.TODO(), fileName, key, fn)
+	glog.V(1).Infof("download dat file of %s from remote udm.%s as %s", fileName, s.id, key)
 
 	return
 }
@@ -104,7 +110,7 @@ func (s *BackendStorage) DeleteFile(key string) (err error) {
 
 	glog.V(1).Infof("delete dat file %s from remote", key)
 
-	err = s.client.DeleteFile(context.TODO(), key)
+	_ = deleteFileInInternalCache(key)
 
 	return
 }
@@ -112,26 +118,67 @@ func (s *BackendStorage) DeleteFile(key string) (err error) {
 type backendStorageFile struct {
 	backendStorage *BackendStorage
 	key            string
+	readDisabled   bool
 	tierInfo       *volume_server_pb.VolumeInfo
 }
 
 func (f *backendStorageFile) ReadAt(p []byte, off int64) (n int, err error) {
 	length := len(p)
-	data, err := f.backendStorage.client.ReadAt(context.TODO(), f.key, off, int64(length))
-	if err != nil {
-		return 0, err
+	var data []byte
+	if isSuperBlock(off, length) {
+		_, data = getPathAndSuperBlockFromKey(f.key)
+		copy(p, data)
+		return length, nil
 	}
 
-	n = len(data)
+	if f.readDisabled {
+		return 0, fmt.Errorf("can not read %s at %d with length %d: read is disabled", f.key, off, length)
+	}
 
-	copy(p, data)
-	if length > n {
-		for i := n; i < length; i++ {
+	path, _ := getPathAndSuperBlockFromKey(f.key)
+	cacheFile := buildInternalCacheFilePath(path)
+	_, err = os.Stat(cacheFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			glog.V(1).Infof("file %s does not exist in cache, downloading from remote", path)
+			err = f.downloadFile(cacheFile, path)
+			if err != nil {
+				glog.V(1).Infof("failed to download file %s, err: %v", path, err)
+				return 0, fmt.Errorf("failed to download file %s, err: %w", path, err)
+			}
+		} else {
+			return 0, fmt.Errorf("failed to stat file %s, err: %w", path, err)
+		}
+	}
+
+	return f.readAtInternalCache(cacheFile, p, off)
+}
+
+func (f *backendStorageFile) readAtInternalCache(path string, p []byte, off int64) (n int, err error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return
+	}
+
+	defer f.Close()
+
+	n, err = file.ReadAt(p, off)
+	if err == io.EOF {
+		err = nil
+	}
+
+	// p might be reused by previous call
+	if len(p) > n {
+		for i := n; i < len(p); i++ {
 			p[i] = 0
 		}
 	}
 
-	return n, nil
+	return
+}
+
+func (f *backendStorageFile) downloadFile(cacheFile, path string) error {
+	return f.backendStorage.client.DownloadFileFromTape(context.TODO(), cacheFile, filepath.Base(path))
 }
 
 func (f *backendStorageFile) WriteAt(p []byte, off int64) (n int, err error) {
@@ -158,7 +205,7 @@ func (f *backendStorageFile) Sync() error {
 	return nil
 }
 
-func moveFileToCache(path string) (superBlock []byte, size int64, err error) {
+func moveFileToInternalCache(path string) (superBlock []byte, size int64, err error) {
 	cacheFile := buildInternalCacheFilePath(path)
 	err = os.MkdirAll(filepath.Dir(cacheFile), 0777)
 	if err != nil {
@@ -190,6 +237,44 @@ func moveFileToCache(path string) (superBlock []byte, size int64, err error) {
 	return
 }
 
+func moveFileFromInternalCache(path string) (int64, error) {
+	f, err := os.Stat(path)
+	if err == nil {
+		// already exists
+		return f.Size(), nil
+	}
+
+	cacheFile := buildInternalCacheFilePath(path)
+	fileInfo, err := os.Stat(cacheFile)
+	if err != nil {
+		glog.V(1).Infof("Can not stat file %s", cacheFile)
+		return 0, err
+	}
+
+	err = os.Rename(cacheFile, path)
+	if err != nil {
+		glog.V(1).Infof("Failed to rename file from %s to %s, err: %s", cacheFile, path, err)
+		return 0, err
+	}
+
+	return fileInfo.Size(), nil
+}
+
+func generateFileKey(path string, superBlock []byte) string {
+	return fmt.Sprintf("%s%s%s", path, separator, string(superBlock))
+}
+
+func getPathAndSuperBlockFromKey(key string) (string, []byte) {
+	path := strings.SplitN(key, separator, 2)
+	return path[0], []byte(path[1])
+}
+
+func deleteFileInInternalCache(key string) error {
+	path, _ := getPathAndSuperBlockFromKey(key)
+	cacheFile := buildInternalCacheFilePath(path)
+	return os.Remove(cacheFile)
+}
+
 func buildInternalCacheFilePath(path string) string {
 	filePath, fileName := filepath.Dir(path), filepath.Base(path)
 	return filepath.Join(filePath, volumeCachePath, fileName)
@@ -211,4 +296,8 @@ func readSuperBlock(filePath string) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+func isSuperBlock(offset int64, length int) bool {
+	return offset == 0 && length == superBlockSize
 }

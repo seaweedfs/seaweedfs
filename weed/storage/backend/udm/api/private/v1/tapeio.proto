@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package private.v1;
+
+import "private/v1/meta.proto";
+
+option go_package = "gitee.com/hhy-data/archive-api/private/v1;v1";
+
+service TapeIO {
+  // WriteToTape reads files from the specified locations and writes them to tape.
+  rpc WriteToTape(WriteToTapeRequest) returns (WriteToTapeResponse) {}
+  // ReadFromTape reads files from tape and writes them to the specified locations.
+  rpc ReadFromTape(ReadFromTapeRequest) returns (ReadFromTapeResponse) {}
+  // DownloadFromTape reads a file from tape and writes it to local.
+  rpc DownloadFromTape(DownloadFromTapeRequest) returns (stream DownloadFileResponse) {}
+}
+
+message DownloadFromTapeRequest {
+  string id = 1;
+  uint64 chunkSize = 2;
+  CheckSumAlgorithm checksum_alg = 3;
+}
+
+message DataLocation {
+  string host = 1;
+  LocationType location_type = 2;
+  string sub_path = 3;
+}
+
+message WriteToTapeRequest {
+  repeated WriteToTapeFileInfo files = 1;
+  repeated string pools = 2;
+  int32 replicas = 3;
+}
+
+message WriteToTapeFileInfo {
+  string id = 1;
+  DataLocation read_from = 2;
+}
+
+message WriteToTapeResponse {
+  repeated WriteToTapeResult data = 1;
+}
+
+message WriteToTapeResult {
+  string id = 1;
+  bool success = 2;
+  string error = 3;
+  repeated string tapes = 4;
+}
+
+message ReadFromTapeRequest {
+  repeated ReadFromTapeFileInfo files = 1;
+}
+
+message ReadFromTapeFileInfo {
+  string id = 1;
+  DataLocation write_to = 2;
+}
+
+message ReadFromTapeResponse {
+  bool success = 1;
+  string error = 2;
+}

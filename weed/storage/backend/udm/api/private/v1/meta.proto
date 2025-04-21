@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package private.v1;
+
+option go_package = "gitee.com/hhy-data/archive-api/private/v1;v1";
+
+
+enum LocationType {
+  unknown = 0;
+
+  volume = 1;
+  volumeInternalCache = 2;
+  utdm = 3;
+}
+
+enum CheckSumAlgorithm {
+  none = 0;
+  md5 = 1;
+}
+
+message Checksum {
+  CheckSumAlgorithm alg = 1;
+  string digest = 2;
+}
+
+message DownloadFileResponse {
+  bytes data = 1;
+}
