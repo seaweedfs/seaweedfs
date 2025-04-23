@@ -35,7 +35,6 @@ test:
 	cd weed; go test -tags "elastic gocdk sqlite ydb tikv rclone" -v ./...
 
 GOPROXY ?= https://goproxy.cn,direct
-BUILD_LATEST ?= false
 IMAGE_PREFIX ?= vdm-registry.cn-hangzhou.cr.aliyuncs.com/udm/
 IMAGE_TAG:=$(shell ./docker/image-tag)
 TAG ?= ${IMAGE_TAG}
@@ -46,12 +45,10 @@ filer_migrate_tool: IMAGE := ${IMAGE_PREFIX}filer-migrate:${TAG}
 filer_migrate_tool: LATEST_IMAGE := ${IMAGE_PREFIX}filer-migrate:${LATEST_TAG}
 
 IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${TAG}
-LATEST_IMAGE ?= ${IMAGE_PREFIX}seaweedfs:${LATEST_TAG}
-TAG_FLAGS=-t ${IMAGE} $(if $(findstring $(BUILD_LATEST),true),-t ${LATEST_IMAGE})
 
 filer_migrate_tool:
 	docker buildx build --platform linux/amd64,linux/arm64 \
-        ${TAG_FLAGS} \
+        -t ${IMAGE} \
         -f tools/filer_store_migrate/rocksdb_migrate_tikv/Dockerfile \
         --build-arg LDFLAGS=${LDFLAGS} \
         --build-arg GOPROXY=${GOPROXY} \
@@ -60,7 +57,7 @@ filer_migrate_tool:
 # build filer for mysql, tikv, ...
 udm:
 	docker buildx build --platform linux/amd64,linux/arm64 \
-        ${TAG_FLAGS} \
+        -t ${IMAGE} \
         -f docker/Dockerfile \
 		--build-arg GOBUILDTAGS="tikv" \
         --build-arg LDFLAGS=${LDFLAGS} \
@@ -70,8 +67,10 @@ udm:
 # build filer for rocksdb with cgo=1
 udm_rocksdb:
 	docker buildx build --platform linux/amd64,linux/arm64 \
-        ${TAG_FLAGS} \
+        -t ${IMAGE}-rocksdb \
         -f docker/Dockerfile.rocksdb \
         --build-arg LDFLAGS=${LDFLAGS} \
         --build-arg GOPROXY=${GOPROXY} \
         --push .
+
+udm_and_rocksdb: udm udm_rocksdb
