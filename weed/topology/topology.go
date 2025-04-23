@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -268,23 +269,29 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.Replic
 }
 
 func (t *Topology) ListCollections(includeNormalVolumes, includeEcVolumes bool) (ret []string) {
+	found := make(map[string]bool)
 
-	mapOfCollections := make(map[string]bool)
-	for _, c := range t.collectionMap.Items() {
-		mapOfCollections[c.(*Collection).Name] = true
+	if includeNormalVolumes {
+		t.collectionMap.RLock()
+		for _, c := range t.collectionMap.Items() {
+			found[c.(*Collection).Name] = true
+		}
+		t.collectionMap.RUnlock()
 	}
 
 	if includeEcVolumes {
 		t.ecShardMapLock.RLock()
 		for _, ecVolumeLocation := range t.ecShardMap {
-			mapOfCollections[ecVolumeLocation.Collection] = true
+			found[ecVolumeLocation.Collection] = true
 		}
 		t.ecShardMapLock.RUnlock()
 	}
 
-	for k := range mapOfCollections {
+	for k := range found {
 		ret = append(ret, k)
 	}
+	slices.Sort(ret)
+
 	return ret
 }
 
@@ -317,6 +324,7 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	vl.RegisterVolume(&v, dn)
 	vl.EnsureCorrectWritables(&v)
 }
+
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info: %+v from %v", v, dn.id)
 	if v.ReplicaPlacement.GetCopyCount() > 1 {

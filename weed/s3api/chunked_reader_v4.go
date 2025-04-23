@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"hash"
 	"hash/crc32"
-	"hash/crc64"
 	"io"
 	"net/http"
 	"time"
@@ -39,6 +38,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
 	"github.com/dustin/go-humanize"
+	"github.com/minio/crc64nvme"
 )
 
 // calculateSeedSignature - Calculate seed signature in accordance with
@@ -673,7 +673,7 @@ func getCheckSumWriter(checksumAlgorithm ChecksumAlgorithm) hash.Hash {
 	case ChecksumAlgorithmCRC32C:
 		return crc32.New(crc32.MakeTable(crc32.Castagnoli))
 	case ChecksumAlgorithmCRC64NVMe:
-		return crc64.New(crc64.MakeTable(crc64.ISO))
+		return crc64nvme.New()
 	case ChecksumAlgorithmSHA1:
 		return sha1.New()
 	case ChecksumAlgorithmSHA256:
