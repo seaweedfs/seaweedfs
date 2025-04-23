@@ -138,6 +138,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.7.2
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
+	github.com/minio/crc64nvme v1.0.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.24.0
 	github.com/rabbitmq/amqp091-go v1.10.0
@@ -268,7 +269,7 @@ require (
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/jtolio/noiseconn v0.0.0-20231127013910-f6d9ecbf1de7 // indirect
 	github.com/jzelinskie/whirlpool v0.0.0-20201016144138-0675e54bb004 // indirect
-	github.com/klauspost/cpuid/v2 v2.2.8 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/koofr/go-httpclient v0.0.0-20240520111329-e20f8f203988 // indirect
 	github.com/koofr/go-koofrclient v0.0.0-20221207135200-cbd7fc9ad6a6 // indirect
 	github.com/kr/fs v0.1.0 // indirect
