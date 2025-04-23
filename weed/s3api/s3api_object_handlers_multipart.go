@@ -234,7 +234,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	if s3a.iam.isEnabled() {
 		var s3ErrCode s3err.ErrorCode
 		switch rAuthType {
-		case authTypeStreamingSigned:
+		case authTypeStreamingSigned, authTypeStreamingUnsigned:
 			dataReader, s3ErrCode = s3a.iam.newChunkedReader(r)
 		case authTypeSignedV2, authTypePresignedV2:
 			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
