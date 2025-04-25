@@ -60,7 +60,7 @@ jobs:
         run: |
           aws --no-verify-ssl s3api create-bucket --bucket bucket
 
-      - name: Test PubObject
+      - name: Test PutObject
         run: |
           set -e
           dd if=/dev/urandom of=generated bs=1M count=2
