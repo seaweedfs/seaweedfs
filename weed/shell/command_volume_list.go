@@ -190,7 +190,7 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 		diskType = types.HddType
 	}
 	slices.SortFunc(t.VolumeInfos, func(a, b *master_pb.VolumeInformationMessage) int {
-		return int(a.Id - b.Id)
+		return int(a.Id) - int(b.Id)
 	})
 	volumeInfosFound := false
 	for _, vi := range t.VolumeInfos {
