@@ -178,7 +178,9 @@ func (f *backendStorageFile) readAtInternalCache(path string, p []byte, off int6
 }
 
 func (f *backendStorageFile) downloadFile(cacheFile, path string) error {
-	return f.backendStorage.client.DownloadFileFromTape(context.TODO(), cacheFile, filepath.Base(path))
+	shortName := filepath.Base(path)
+
+	return f.backendStorage.client.DownloadFile(context.TODO(), shortName, strings.TrimSuffix(shortName, filepath.Ext(shortName)))
 }
 
 func (f *backendStorageFile) WriteAt(p []byte, off int64) (n int, err error) {

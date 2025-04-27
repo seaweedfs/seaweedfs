@@ -11,14 +11,6 @@ service TapeIO {
   rpc WriteToTape(WriteToTapeRequest) returns (WriteToTapeResponse) {}
   // ReadFromTape reads files from tape and writes them to the specified locations.
   rpc ReadFromTape(ReadFromTapeRequest) returns (ReadFromTapeResponse) {}
-  // DownloadFromTape reads a file from tape and writes it to local.
-  rpc DownloadFromTape(DownloadFromTapeRequest) returns (stream DownloadFileResponse) {}
-}
-
-message DownloadFromTapeRequest {
-  string id = 1;
-  uint64 chunkSize = 2;
-  CheckSumAlgorithm checksum_alg = 3;
 }
 
 message DataLocation {
@@ -58,7 +50,12 @@ message ReadFromTapeFileInfo {
   DataLocation write_to = 2;
 }
 
+message ReadFromTapeResult {
+  string id = 1;
+  bool success = 2;
+  string error = 3;
+}
+
 message ReadFromTapeResponse {
-  bool success = 1;
-  string error = 2;
+  repeated ReadFromTapeResult data = 1;
 }

@@ -19,9 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	TapeIO_WriteToTape_FullMethodName      = "/private.v1.TapeIO/WriteToTape"
-	TapeIO_ReadFromTape_FullMethodName     = "/private.v1.TapeIO/ReadFromTape"
-	TapeIO_DownloadFromTape_FullMethodName = "/private.v1.TapeIO/DownloadFromTape"
+	TapeIO_WriteToTape_FullMethodName  = "/private.v1.TapeIO/WriteToTape"
+	TapeIO_ReadFromTape_FullMethodName = "/private.v1.TapeIO/ReadFromTape"
 )
 
 // TapeIOClient is the client API for TapeIO service.
@@ -32,8 +31,6 @@ type TapeIOClient interface {
 	WriteToTape(ctx context.Context, in *WriteToTapeRequest, opts ...grpc.CallOption) (*WriteToTapeResponse, error)
 	// ReadFromTape reads files from tape and writes them to the specified locations.
 	ReadFromTape(ctx context.Context, in *ReadFromTapeRequest, opts ...grpc.CallOption) (*ReadFromTapeResponse, error)
-	// DownloadFromTape reads a file from tape and writes it to local.
-	DownloadFromTape(ctx context.Context, in *DownloadFromTapeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DownloadFileResponse], error)
 }
 
 type tapeIOClient struct {
@@ -64,25 +61,6 @@ func (c *tapeIOClient) ReadFromTape(ctx context.Context, in *ReadFromTapeRequest
 	return out, nil
 }
 
-func (c *tapeIOClient) DownloadFromTape(ctx context.Context, in *DownloadFromTapeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DownloadFileResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &TapeIO_ServiceDesc.Streams[0], TapeIO_DownloadFromTape_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[DownloadFromTapeRequest, DownloadFileResponse]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type TapeIO_DownloadFromTapeClient = grpc.ServerStreamingClient[DownloadFileResponse]
-
 // TapeIOServer is the server API for TapeIO service.
 // All implementations must embed UnimplementedTapeIOServer
 // for forward compatibility.
@@ -91,8 +69,6 @@ type TapeIOServer interface {
 	WriteToTape(context.Context, *WriteToTapeRequest) (*WriteToTapeResponse, error)
 	// ReadFromTape reads files from tape and writes them to the specified locations.
 	ReadFromTape(context.Context, *ReadFromTapeRequest) (*ReadFromTapeResponse, error)
-	// DownloadFromTape reads a file from tape and writes it to local.
-	DownloadFromTape(*DownloadFromTapeRequest, grpc.ServerStreamingServer[DownloadFileResponse]) error
 	mustEmbedUnimplementedTapeIOServer()
 }
 
@@ -108,9 +84,6 @@ func (UnimplementedTapeIOServer) WriteToTape(context.Context, *WriteToTapeReques
 }
 func (UnimplementedTapeIOServer) ReadFromTape(context.Context, *ReadFromTapeRequest) (*ReadFromTapeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReadFromTape not implemented")
-}
-func (UnimplementedTapeIOServer) DownloadFromTape(*DownloadFromTapeRequest, grpc.ServerStreamingServer[DownloadFileResponse]) error {
-	return status.Errorf(codes.Unimplemented, "method DownloadFromTape not implemented")
 }
 func (UnimplementedTapeIOServer) mustEmbedUnimplementedTapeIOServer() {}
 func (UnimplementedTapeIOServer) testEmbeddedByValue()                {}
@@ -169,17 +142,6 @@ func _TapeIO_ReadFromTape_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
-func _TapeIO_DownloadFromTape_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(DownloadFromTapeRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(TapeIOServer).DownloadFromTape(m, &grpc.GenericServerStream[DownloadFromTapeRequest, DownloadFileResponse]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type TapeIO_DownloadFromTapeServer = grpc.ServerStreamingServer[DownloadFileResponse]
-
 // TapeIO_ServiceDesc is the grpc.ServiceDesc for TapeIO service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -196,12 +158,6 @@ var TapeIO_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _TapeIO_ReadFromTape_Handler,
 		},
 	},
-	Streams: []grpc.StreamDesc{
-		{
-			StreamName:    "DownloadFromTape",
-			Handler:       _TapeIO_DownloadFromTape_Handler,
-			ServerStreams: true,
-		},
-	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "private/v1/tapeio.proto",
 }
