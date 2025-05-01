@@ -1,0 +1,79 @@
+name: "test s3 over https using aws-cli"
+
+on:
+  push:
+    branches: [master, test-https-s3-awscli]
+  pull_request:
+    branches: [master, test-https-s3-awscli]
+
+env:
+  AWS_ACCESS_KEY_ID: some_access_key1
+  AWS_SECRET_ACCESS_KEY: some_secret_key1
+  AWS_ENDPOINT_URL: https://localhost:8443
+
+defaults:
+  run:
+    working-directory: weed
+
+jobs:
+  awscli-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ^1.24
+
+      - name: Build SeaweedFS
+        run: |
+          go build
+
+      - name: Start SeaweedFS
+        run: |
+          set -e
+          mkdir -p /tmp/data
+          ./weed server -s3 -dir=/tmp/data -s3.config=../docker/compose/s3.json &
+          until curl -s http://localhost:8333/ > /dev/null; do sleep 1; done
+
+      - name: Setup Caddy
+        run: |
+          curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64" -o caddy
+          chmod +x caddy
+          ./caddy version
+          echo "{
+            auto_https disable_redirects
+            local_certs
+          }
+          localhost:8443 {
+            tls internal
+            reverse_proxy localhost:8333
+          }" > Caddyfile
+
+      - name: Start Caddy
+        run: |
+          ./caddy start
+          until curl -fsS --insecure https://localhost:8443 > /dev/null; do sleep 1; done
+
+      - name: Create Bucket
+        run: |
+          aws --no-verify-ssl s3api create-bucket --bucket bucket
+
+      - name: Test PutObject
+        run: |
+          set -e
+          dd if=/dev/urandom of=generated bs=1M count=2
+          aws --no-verify-ssl s3api put-object --bucket bucket --key test-putobject --body generated
+          aws --no-verify-ssl s3api get-object --bucket bucket --key test-putobject downloaded
+          diff -q generated downloaded
+          rm -f generated downloaded
+
+      - name: Test Multi-part Upload
+        run: |
+          set -e
+          dd if=/dev/urandom of=generated bs=1M count=32
+          aws --no-verify-ssl s3 cp --no-progress generated s3://bucket/test-multipart
+          aws --no-verify-ssl s3 cp --no-progress s3://bucket/test-multipart downloaded
+          diff -q generated downloaded
+          rm -f generated downloaded
