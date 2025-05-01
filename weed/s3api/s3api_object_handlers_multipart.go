@@ -229,27 +229,10 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	dataReader := r.Body
-	rAuthType := getRequestAuthType(r)
-	if s3a.iam.isEnabled() {
-		var s3ErrCode s3err.ErrorCode
-		switch rAuthType {
-		case authTypeStreamingSigned, authTypeStreamingUnsigned:
-			dataReader, s3ErrCode = s3a.iam.newChunkedReader(r)
-		case authTypeSignedV2, authTypePresignedV2:
-			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
-		case authTypePresigned, authTypeSigned:
-			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
-		}
-		if s3ErrCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, s3ErrCode)
-			return
-		}
-	} else {
-		if authTypeStreamingSigned == rAuthType {
-			s3err.WriteErrorResponse(w, r, s3err.ErrAuthNotSetup)
-			return
-		}
+	dataReader, s3ErrCode := getRequestDataReader(s3a, r)
+	if s3ErrCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, s3ErrCode)
+		return
 	}
 	defer dataReader.Close()
 
