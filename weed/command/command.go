@@ -43,6 +43,7 @@ var Commands = []*Command{
 	cmdVersion,
 	cmdVolume,
 	cmdWebDav,
+	cmdSftp,
 }
 
 type Command struct {

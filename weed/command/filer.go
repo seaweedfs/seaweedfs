@@ -35,6 +35,8 @@ var (
 	filerWebDavOptions WebDavOption
 	filerStartIam      *bool
 	filerIamOptions    IamOptions
+	filerStartSftp     *bool
+	filerSftpOptions   SftpOptions
 )
 
 type FilerOptions struct {
@@ -140,6 +142,19 @@ func init() {
 	filerStartIam = cmdFiler.Flag.Bool("iam", false, "whether to start IAM service")
 	filerIamOptions.ip = cmdFiler.Flag.String("iam.ip", *f.ip, "iam server http listen ip address")
 	filerIamOptions.port = cmdFiler.Flag.Int("iam.port", 8111, "iam server http listen port")
+
+	filerStartSftp = cmdFiler.Flag.Bool("sftp", false, "whether to start the SFTP server")
+	filerSftpOptions.port = cmdFiler.Flag.Int("sftp.port", 2022, "SFTP server listen port")
+	filerSftpOptions.sshPrivateKey = cmdFiler.Flag.String("sftp.sshPrivateKey", "", "path to the SSH private key file for host authentication")
+	filerSftpOptions.hostKeysFolder = cmdFiler.Flag.String("sftp.hostKeysFolder", "", "path to folder containing SSH private key files for host authentication")
+	filerSftpOptions.authMethods = cmdFiler.Flag.String("sftp.authMethods", "password,publickey", "comma-separated list of allowed auth methods: password, publickey, keyboard-interactive")
+	filerSftpOptions.maxAuthTries = cmdFiler.Flag.Int("sftp.maxAuthTries", 6, "maximum number of authentication attempts per connection")
+	filerSftpOptions.bannerMessage = cmdFiler.Flag.String("sftp.bannerMessage", "SeaweedFS SFTP Server - Unauthorized access is prohibited", "message displayed before authentication")
+	filerSftpOptions.loginGraceTime = cmdFiler.Flag.Duration("sftp.loginGraceTime", 2*time.Minute, "timeout for authentication")
+	filerSftpOptions.clientAliveInterval = cmdFiler.Flag.Duration("sftp.clientAliveInterval", 5*time.Second, "interval for sending keep-alive messages")
+	filerSftpOptions.clientAliveCountMax = cmdFiler.Flag.Int("sftp.clientAliveCountMax", 3, "maximum number of missed keep-alive messages before disconnecting")
+	filerSftpOptions.userStoreFile = cmdFiler.Flag.String("sftp.userStoreFile", "", "path to JSON file containing user credentials and permissions")
+	filerSftpOptions.localSocket = cmdFiler.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
 }
 
 func filerLongDesc() string {
@@ -231,6 +246,18 @@ func runFiler(cmd *Command, args []string) bool {
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)
 			filerIamOptions.startIamServer()
+		}(startDelay)
+		startDelay++
+	}
+
+	if *filerStartSftp {
+		sftpOptions.filer = &filerAddress
+		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
+			filerSftpOptions.dataCenter = f.dataCenter
+		}
+		go func(delay time.Duration) {
+			time.Sleep(delay * time.Second)
+			sftpOptions.startSftpServer()
 		}(startDelay)
 	}
 
