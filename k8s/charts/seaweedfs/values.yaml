@@ -46,6 +46,7 @@ global:
 image:
   registry: ""
   repository: ""
+  tag: ""
 
 master:
   enabled: true
@@ -948,7 +949,82 @@ s3:
     # additional ingress annotations for the s3 endpoint
     annotations: {}
     tls: []
+sftp:
+  enabled: false
+  imageOverride: null
+  restartPolicy: null
+  replicas: 1
+  bindAddress: 0.0.0.0
+  port: 2022  # Default SFTP port
+  metricsPort: 9327
+  metricsIp: ""  # If empty, defaults to bindAddress
+  service:
+    type: ClusterIP  # Can be ClusterIP, NodePort, LoadBalancer
+    nodePort: null  # Optional: specific nodePort for SFTP
+    metricsNodePort: null  # Optional: specific nodePort for metrics
+  loggingOverrideLevel: null
 
+  # SSH server configuration
+  sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key"  # Path to the SSH private key file for host authentication
+  hostKeysFolder: "/etc/sw/ssh"  # path to folder containing SSH private key files for host authentication
+  authMethods: "password,publickey"  # Comma-separated list of allowed auth methods: password, publickey, keyboard-interactive
+  maxAuthTries: 6  # Maximum number of authentication attempts per connection
+  bannerMessage: "SeaweedFS SFTP Server"  # Message displayed before authentication
+  loginGraceTime: "2m"  # Timeout for authentication
+  clientAliveInterval: "5s"  # Interval for sending keep-alive messages
+  clientAliveCountMax: 3  # Maximum number of missed keep-alive messages before disconnecting
+  dataCenter: ""  # Prefer to read and write to volumes in this data center
+  localSocket: ""  # Default to /tmp/seaweedfs-sftp-<port>.sock
+
+  # User authentication
+  enableAuth: false
+  # Set to the name of an existing kubernetes Secret with the sftp json config file
+  # Should have a secret key called seaweedfs_sftp_config with an inline json config
+  existingConfigSecret: null
+  # Set to the name of an existing kubernetes Secret with the list of ssh private keys for sftp
+  existingSshConfigSecret: null
+
+  # Additional resources
+  sidecars: []
+  initContainers: ""
+  extraVolumes: ""
+  extraVolumeMounts: ""
+  podLabels: {}
+  podAnnotations: {}
+  annotations: {}
+  resources: {}
+  tolerations: ""
+  nodeSelector: |
+    kubernetes.io/arch: amd64
+  priorityClassName: ""
+  serviceAccountName: ""
+  podSecurityContext: {}
+  containerSecurityContext: {}
+
+  logs:
+    type: "hostPath"
+    hostPathPrefix: /storage
+
+  extraEnvironmentVars: {}
+
+  # Health checks
+  # Health checks for SFTP - using tcpSocket instead of httpGet
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 20
+    periodSeconds: 60
+    successThreshold: 1
+    failureThreshold: 20
+    timeoutSeconds: 10
+
+  # Health checks for SFTP - using tcpSocket instead of httpGet
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 100
+    timeoutSeconds: 10
 # Deploy Kubernetes COSI Driver for SeaweedFS
 # Requires COSI CRDs and controller to be installed in the cluster
 # For more information, visit: https://container-object-storage-interface.github.io/docs/deployment-guide

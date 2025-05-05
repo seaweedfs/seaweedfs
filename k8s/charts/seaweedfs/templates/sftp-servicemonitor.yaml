@@ -1,0 +1,33 @@
+{{- if .Values.sftp.enabled }}
+{{- if .Values.sftp.metricsPort }}
+{{- if .Values.global.monitoring.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ template "seaweedfs.name" . }}-sftp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: sftp
+    {{- with .Values.global.monitoring.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- if .Values.sftp.annotations }}
+  annotations:
+    {{- toYaml .Values.sftp.annotations | nindent 4 }}
+{{- end }}
+spec:
+  endpoints:
+    - interval: 30s
+      port: metrics
+      scrapeTimeout: 5s
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      app.kubernetes.io/component: sftp
+{{- end }}
+{{- end }}
+{{- end }}

@@ -73,6 +73,16 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
+{{/* Return the proper sftp image */}}
+{{- define "sftp.image" -}}
+{{- if .Values.sftp.imageOverride -}}
+{{- $imageOverride := .Values.sftp.imageOverride -}}
+{{- printf "%s" $imageOverride -}}
+{{- else -}}
+{{- include "common.image" . }}
+{{- end -}}
+{{- end -}}
+
 {{/* Return the proper volume image */}}
 {{- define "volume.image" -}}
 {{- if .Values.volume.imageOverride -}}
@@ -88,7 +98,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $registryName := default .Values.image.registry .Values.global.registry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
+{{- $tag := default .Chart.AppVersion .Values.image.tag  | toString -}}
 {{- if $registryName -}}
 {{- printf "%s/%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- else -}}
@@ -167,4 +177,24 @@ Usage:
 {{- else }}
     {{- $value }}
 {{- end }}
+{{- end -}}
+
+
+{{/*
+getOrGeneratePassword will check if a password exists in a secret and return it,
+or generate a new random password if it doesn't exist.
+*/}}
+{{- define "getOrGeneratePassword" -}}
+{{- $params := . -}}
+{{- $namespace := $params.namespace -}}
+{{- $secretName := $params.secretName -}}
+{{- $key := $params.key -}}
+{{- $length := default 16 $params.length -}}
+
+{{- $existingSecret := lookup "v1" "Secret" $namespace $secretName -}}
+{{- if and $existingSecret (index $existingSecret.data $key) -}}
+  {{- index $existingSecret.data $key | b64dec -}}
+{{- else -}}
+  {{- randAlphaNum $length -}}
+{{- end -}}
 {{- end -}}

@@ -1,0 +1,37 @@
+[
+  {
+    "Username": "admin",
+    "Password": "myadminpassword",
+    "PublicKeys": [
+    ],
+    "HomeDir": "/",
+    "Permissions": {
+      "/": ["*"]
+    },
+    "Uid": 0,
+    "Gid": 0
+  },
+  {
+    "Username": "user1",
+    "Password": "myuser1password",
+    "PublicKeys": [""],
+    "HomeDir": "/user1",
+    "Permissions": {
+      "/user1": ["*"],
+      "/public": ["read", "list","write"]
+    },
+    "Uid": 1111,
+    "Gid": 1111
+  },
+  {
+    "Username": "readonly",
+    "Password": "myreadonlypassword",
+    "PublicKeys": [],
+    "HomeDir": "/public",
+    "Permissions": {
+      "/public": ["read", "list"]
+    },
+    "Uid": 1112,
+    "Gid": 1112
+  }
+]
