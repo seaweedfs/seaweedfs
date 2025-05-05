@@ -171,6 +171,10 @@ enabled = false
 address = "localhost:6379"
 password = ""
 database = 0
+enable_tls = false
+ca_cert_path = ""
+client_cert_path = ""
+client_key_path = ""
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 
@@ -181,6 +185,10 @@ masterName = "master"
 username = ""
 password = ""
 database = 0
+enable_tls = false
+ca_cert_path = ""
+client_cert_path = ""
+client_key_path = ""
 
 [redis_cluster2]
 enabled = false
@@ -193,6 +201,10 @@ addresses = [
     "localhost:30006",
 ]
 password = ""
+enable_tls = false
+ca_cert_path = ""
+client_cert_path = ""
+client_key_path = ""
 # allows reads from slave servers or the master, but all writes still go to the master
 readOnly = false
 # automatically use the closest Redis server for reads
@@ -206,6 +218,10 @@ enabled = false
 address = "localhost:6379"
 password = ""
 database = 0
+enable_tls = false
+ca_cert_path = ""
+client_cert_path = ""
+client_key_path = ""
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 
@@ -216,6 +232,10 @@ masterName = "master"
 username = ""
 password = ""
 database = 0
+enable_tls = false
+ca_cert_path = ""
+client_cert_path = ""
+client_key_path = ""
 
 [redis_lua_cluster]
 enabled = false
@@ -228,6 +248,10 @@ addresses = [
     "localhost:30006",
 ]
 password = ""
+enable_tls = false
+ca_cert_path = ""
+client_cert_path = ""
+client_key_path = ""
 # allows reads from slave servers or the master, but all writes still go to the master
 readOnly = false
 # automatically use the closest Redis server for reads
