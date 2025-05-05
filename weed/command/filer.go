@@ -252,7 +252,7 @@ func runFiler(cmd *Command, args []string) bool {
 
 	if *filerStartSftp {
 		sftpOptions.filer = &filerAddress
-		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
+		if *f.dataCenter != "" && *filerSftpOptions.dataCenter == "" {
 			filerSftpOptions.dataCenter = f.dataCenter
 		}
 		go func(delay time.Duration) {

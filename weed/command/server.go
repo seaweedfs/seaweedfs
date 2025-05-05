@@ -239,7 +239,7 @@ func runServer(cmd *Command, args []string) bool {
 	if *s3Options.bindIp == "" {
 		s3Options.bindIp = serverBindIp
 	}
-	if *sftpOptions.bindIp == "" {
+	if sftpOptions.bindIp == nil || *sftpOptions.bindIp == "" {
 		sftpOptions.bindIp = serverBindIp
 	}
 	iamOptions.ip = serverBindIp

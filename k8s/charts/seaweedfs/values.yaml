@@ -961,9 +961,9 @@ sftp:
   service:
     type: ClusterIP  # Can be ClusterIP, NodePort, LoadBalancer
     nodePort: null  # Optional: specific nodePort for SFTP
-    metricsNodePort: null # Optional: specific nodePort for metrics
+    metricsNodePort: null  # Optional: specific nodePort for metrics
   loggingOverrideLevel: null
-  
+
   # SSH server configuration
   sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key"  # Path to the SSH private key file for host authentication
   hostKeysFolder: "/etc/sw/ssh"  # path to folder containing SSH private key files for host authentication
@@ -975,7 +975,7 @@ sftp:
   clientAliveCountMax: 3  # Maximum number of missed keep-alive messages before disconnecting
   dataCenter: ""  # Prefer to read and write to volumes in this data center
   localSocket: ""  # Default to /tmp/seaweedfs-sftp-<port>.sock
-  
+
   # User authentication
   enableAuth: false
   # Set to the name of an existing kubernetes Secret with the sftp json config file
