@@ -45,9 +45,17 @@ func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string
 	}
 	v.ecdFileSize = ecdFi.Size()
 
-	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "ec_shards").Inc()
+	v.Mount()
 
 	return
+}
+
+func (shard *EcVolumeShard) Mount() {
+	stats.VolumeServerVolumeGauge.WithLabelValues(shard.Collection, "ec_shards").Inc()
+}
+
+func (shard *EcVolumeShard) Unmount() {
+	stats.VolumeServerVolumeGauge.WithLabelValues(shard.Collection, "ec_shards").Dec()
 }
 
 func (shard *EcVolumeShard) Size() int64 {
@@ -88,8 +96,8 @@ func (shard *EcVolumeShard) Close() {
 }
 
 func (shard *EcVolumeShard) Destroy() {
+	shard.Unmount()
 	os.Remove(shard.FileName() + ToExt(int(shard.ShardId)))
-	stats.VolumeServerVolumeGauge.WithLabelValues(shard.Collection, "ec_shards").Dec()
 }
 
 func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {

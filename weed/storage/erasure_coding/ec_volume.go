@@ -111,7 +111,7 @@ func (ev *EcVolume) DeleteEcVolumeShard(shardId ShardId) (ecVolumeShard *EcVolum
 	}
 
 	ecVolumeShard = ev.Shards[foundPosition]
-
+	ecVolumeShard.Unmount()
 	ev.Shards = append(ev.Shards[:foundPosition], ev.Shards[foundPosition+1:]...)
 	return ecVolumeShard, true
 }
