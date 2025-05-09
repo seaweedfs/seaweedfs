@@ -87,9 +87,13 @@ func (shard *EcVolumeShard) Close() {
 	}
 }
 
-func (shard *EcVolumeShard) Destroy() {
-	os.Remove(shard.FileName() + ToExt(int(shard.ShardId)))
+func (shard *EcVolumeShard) Unmount() {
 	stats.VolumeServerVolumeGauge.WithLabelValues(shard.Collection, "ec_shards").Dec()
+}
+
+func (shard *EcVolumeShard) Destroy() {
+	shard.Unmount()
+	os.Remove(shard.FileName() + ToExt(int(shard.ShardId)))
 }
 
 func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {
