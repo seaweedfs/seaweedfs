@@ -27,8 +27,8 @@ public class SeaweedFileSystemStore {
     private FilerClient filerClient;
     private Configuration conf;
 
-    public SeaweedFileSystemStore(String host, int port, int grpcPort, Configuration conf) {
-        filerClient = new FilerClient(host, port, grpcPort);
+    public SeaweedFileSystemStore(String host, int port, int grpcPort, String cn, Configuration conf) {
+        filerClient = new FilerClient(host, port, grpcPort, cn);
         this.conf = conf;
         String volumeServerAccessMode = this.conf.get(FS_SEAWEED_VOLUME_SERVER_ACCESS, "direct");
         if (volumeServerAccessMode.equals("publicUrl")) {
@@ -36,7 +36,6 @@ public class SeaweedFileSystemStore {
         } else if (volumeServerAccessMode.equals("filerProxy")) {
             filerClient.setAccessVolumeServerByFilerProxy();
         }
-
     }
 
     public void close() {

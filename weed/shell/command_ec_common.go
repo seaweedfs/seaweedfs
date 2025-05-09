@@ -134,6 +134,14 @@ func NewErrorWaitGroup(maxConcurrency int) *ErrorWaitGroup {
 	}
 }
 
+func (ewg *ErrorWaitGroup) Reset() {
+	close(ewg.wgSem)
+
+	ewg.wg = &sync.WaitGroup{}
+	ewg.wgSem = make(chan bool, ewg.maxConcurrency)
+	ewg.errors = nil
+}
+
 func (ewg *ErrorWaitGroup) Add(f ErrorWaitGroupTask) {
 	if ewg.maxConcurrency <= 1 {
 		// Keep run order deterministic when parallelization is off
