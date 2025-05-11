@@ -203,7 +203,7 @@ func (store *YdbStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) 
 	dir, name := fullpath.DirAndName()
 	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
 	query := withPragma(tablePathPrefix, deleteQuery)
-	glog.V(4).Infof("DeleteEntry %s, tablePathPrefix %s, shortDir %s", fullpath, tablePathPrefix, *shortDir)
+	glog.V(4).Infof("DeleteEntry %s, tablePathPrefix %s, shortDir %s", fullpath, *tablePathPrefix, *shortDir)
 	queryParams := table.NewQueryParameters(
 		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
 		table.ValueParam("$name", types.UTF8Value(name)))
