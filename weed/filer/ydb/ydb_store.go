@@ -339,12 +339,13 @@ func (store *YdbStore) OnBucketCreation(bucket string) {
 	if !store.SupportBucketTable {
 		return
 	}
+	prefix := path.Join(store.tablePathPrefix, bucket)
+
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
-	if err := store.createTable(context.Background(),
-		path.Join(store.tablePathPrefix, bucket)); err != nil {
-		glog.Errorf("createTable %s: %v", bucket, err)
+	if err := store.createTable(context.Background(), prefix); err != nil {
+		glog.Errorf("createTable %s: %v", prefix, err)
 	}
 
 	if store.dbs == nil {
@@ -363,16 +364,12 @@ func (store *YdbStore) OnBucketDeletion(bucket string) {
 	prefix := path.Join(store.tablePathPrefix, bucket)
 	glog.V(4).Infof("deleting table %s", prefix)
 
-	if err := store.deleteTable(context.Background(),
-		path.Join(store.tablePathPrefix, bucket)); err != nil {
+	if err := store.deleteTable(context.Background(), prefix); err != nil {
 		glog.Errorf("deleteTable %s: %v", prefix, err)
 	}
 
-	if store.SupportBucketTable {
-		ctx := context.Background()
-		if err := store.DB.Scheme().RemoveDirectory(ctx, prefix); err != nil {
-			glog.Errorf("remove directory %s: %v", prefix, err)
-		}
+	if err := store.DB.Scheme().RemoveDirectory(context.Background(), prefix); err != nil {
+		glog.Errorf("remove directory %s: %v", prefix, err)
 	}
 
 	if store.dbs == nil {
