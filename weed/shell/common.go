@@ -5,6 +5,11 @@ import (
 	"sync"
 )
 
+var (
+	// Default maximum parallelization/concurrency for commands supporting it.
+	DefaultMaxParallelization = 10
+)
+
 // ErrorWaitGroup implements a goroutine wait group which aggregates errors, if any.
 type ErrorWaitGroup struct {
 	maxConcurrency int
