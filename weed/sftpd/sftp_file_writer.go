@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // FileInfo implements os.FileInfo.
@@ -70,57 +68,43 @@ func (l listerat) ListAt(ls []os.FileInfo, offset int64) (int, error) {
 	return n, nil
 }
 
-// filerFileWriter buffers writes and flushes on Close.
-type filerFileWriter struct {
+// SeaweedSftpFileWriter buffers writes and flushes on Close.
+type SeaweedSftpFileWriter struct {
 	fs          SftpServer
 	req         *sftp.Request
 	mu          sync.Mutex
-	data        []byte
+	tmpFile     *os.File
 	permissions os.FileMode
 	uid         uint32
 	gid         uint32
 	offset      int64
 }
 
-func (w *filerFileWriter) Write(p []byte) (int, error) {
+func (w *SeaweedSftpFileWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	end := w.offset + int64(len(p))
-	if end > int64(len(w.data)) {
-		newBuf := make([]byte, end)
-		copy(newBuf, w.data)
-		w.data = newBuf
-	}
-	n := copy(w.data[w.offset:], p)
+	n, err := w.tmpFile.WriteAt(p, w.offset)
 	w.offset += int64(n)
-	return n, nil
+	return n, err
 }
 
-func (w *filerFileWriter) WriteAt(p []byte, off int64) (int, error) {
+func (w *SeaweedSftpFileWriter) WriteAt(p []byte, off int64) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	end := int(off) + len(p)
-	if end > len(w.data) {
-		newBuf := make([]byte, end)
-		copy(newBuf, w.data)
-		w.data = newBuf
-	}
-	n := copy(w.data[off:], p)
-	return n, nil
+	return w.tmpFile.WriteAt(p, off)
 }
 
-func (w *filerFileWriter) Close() error {
+func (w *SeaweedSftpFileWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	dir, _ := util.FullPath(w.req.Filepath).DirAndName()
+	defer os.Remove(w.tmpFile.Name()) // Clean up temp file
+	defer w.tmpFile.Close()
 
-	// Check permissions based on file metadata and user permissions
-	if err := w.fs.checkFilePermission(dir, "write"); err != nil {
-		glog.Errorf("Permission denied for %s", dir)
+	if _, err := w.tmpFile.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 
-	// Call the extracted putFile method on SftpServer
-	return w.fs.putFile(w.req.Filepath, w.data, w.fs.user)
+	// Stream the file instead of loading it
+	return w.fs.putFile(w.req.Filepath, w.tmpFile, w.fs.user)
 }

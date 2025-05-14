@@ -1,11 +1,12 @@
-package auth
+package sftpd
 
 import (
-	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
 )
 
@@ -23,17 +24,6 @@ const (
 	PermReadWrite = "readwrite"
 )
 
-// PermissionChecker handles permission checking for file operations
-// It verifies both Unix-style permissions and explicit ACLs defined in user configuration.
-type PermissionChecker struct {
-	fsHelper FileSystemHelper
-}
-
-// FileSystemHelper provides necessary filesystem operations for permission checking
-type FileSystemHelper interface {
-	GetEntry(path string) (*Entry, error)
-}
-
 // Entry represents a filesystem entry with attributes
 type Entry struct {
 	IsDirectory bool
@@ -50,23 +40,7 @@ type EntryAttributes struct {
 	SymlinkTarget string
 }
 
-// PermissionError represents a permission-related error
-type PermissionError struct {
-	Path string
-	Perm string
-	User string
-}
-
-func (e *PermissionError) Error() string {
-	return fmt.Sprintf("permission denied: %s required on %s for user %s", e.Perm, e.Path, e.User)
-}
-
-// NewPermissionChecker creates a new permission checker
-func NewPermissionChecker(fsHelper FileSystemHelper) *PermissionChecker {
-	return &PermissionChecker{
-		fsHelper: fsHelper,
-	}
-}
+// PermissionError represents a permission-related erro
 
 // CheckFilePermission verifies if a user has the required permission on a path
 // It first checks if the path is in the user's home directory with explicit permissions.
@@ -78,45 +52,53 @@ func NewPermissionChecker(fsHelper FileSystemHelper) *PermissionChecker {
 //
 // Returns:
 //   - nil if permission is granted, error otherwise
-func (pc *PermissionChecker) CheckFilePermission(user *user.User, path string, perm string) error {
-	if user == nil {
-		return &PermissionError{Path: path, Perm: perm, User: "unknown"}
+func (fs *SftpServer) CheckFilePermission(path string, perm string) error {
+
+	if fs.user == nil {
+		glog.V(0).Infof("permission denied. No user associated with the SftpServer.")
+		return os.ErrPermission
 	}
 
-	// Retrieve metadata via helper
-	entry, err := pc.fsHelper.GetEntry(path)
+	// Special case for "create" or "write" permissions on non-existent paths
+	// Check parent directory permissions instead
+	entry, err := fs.getEntry(path)
 	if err != nil {
+		// If the path doesn't exist and we're checking for create/write/mkdir permission,
+		// check permissions on the parent directory instead
+		if err == os.ErrNotExist {
+			parentPath := filepath.Dir(path)
+			// Check if user can write to the parent directory
+			return fs.CheckFilePermission(parentPath, perm)
+		}
 		return fmt.Errorf("failed to get entry for path %s: %w", path, err)
 	}
 
+	// Rest of the function remains the same...
 	// Handle symlinks by resolving them
-	if entry.IsSymlink {
+	if entry.Attributes.GetSymlinkTarget() != "" {
 		// Get the actual entry for the resolved path
-		entry, err = pc.fsHelper.GetEntry(entry.Attributes.SymlinkTarget)
+		entry, err = fs.getEntry(entry.Attributes.GetSymlinkTarget())
 		if err != nil {
 			return fmt.Errorf("failed to get entry for resolved path %s: %w", entry.Attributes.SymlinkTarget, err)
 		}
-
-		// Store the original target
-		entry.Target = entry.Attributes.SymlinkTarget
 	}
 
 	// Special case: root user always has permission
-	if user.Username == "root" || user.Uid == 0 {
+	if fs.user.Username == "root" || fs.user.Uid == 0 {
 		return nil
 	}
 
 	// Check if path is within user's home directory and has explicit permissions
-	if isPathInHomeDirectory(user, path) {
+	if isPathInHomeDirectory(fs.user, path) {
 		// Check if user has explicit permissions for this path
-		if HasExplicitPermission(user, path, perm, entry.IsDirectory) {
+		if HasExplicitPermission(fs.user, path, perm, entry.IsDirectory) {
 			return nil
 		}
 	} else {
 		// For paths outside home directory or without explicit home permissions,
 		// check UNIX-style perms first
-		isOwner := user.Uid == entry.Attributes.Uid
-		isGroup := user.Gid == entry.Attributes.Gid
+		isOwner := fs.user.Uid == entry.Attributes.Uid
+		isGroup := fs.user.Gid == entry.Attributes.Gid
 		mode := os.FileMode(entry.Attributes.FileMode)
 
 		if HasUnixPermission(isOwner, isGroup, mode, entry.IsDirectory, perm) {
@@ -124,23 +106,12 @@ func (pc *PermissionChecker) CheckFilePermission(user *user.User, path string, p
 		}
 
 		// Then check explicit ACLs
-		if HasExplicitPermission(user, path, perm, entry.IsDirectory) {
+		if HasExplicitPermission(fs.user, path, perm, entry.IsDirectory) {
 			return nil
 		}
 	}
-
-	return &PermissionError{Path: path, Perm: perm, User: user.Username}
-}
-
-// CheckFilePermissionWithContext is a context-aware version of CheckFilePermission
-// that supports cancellation and timeouts
-func (pc *PermissionChecker) CheckFilePermissionWithContext(ctx context.Context, user *user.User, path string, perm string) error {
-	// Check for context cancellation
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-
-	return pc.CheckFilePermission(user, path, perm)
+	glog.V(0).Infof("permission denied for user %s on path %s for permission %s", fs.user.Username, path, perm)
+	return os.ErrPermission
 }
 
 // isPathInHomeDirectory checks if a path is in the user's home directory
