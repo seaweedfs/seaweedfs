@@ -269,6 +269,13 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				maxFileKey = curMaxFileKey
 			}
 			shouldDeleteVolume := false
+			
+			if v.lastIoError != nil {
+				deleteVids = append(deleteVids, v.Id)
+				shouldDeleteVolume = true
+				glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
+			}
+
 			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
@@ -277,11 +284,6 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 					shouldDeleteVolume = true
 				} else {
 					glog.V(0).Infof("volume %d is expired", v.Id)
-				}
-				if v.lastIoError != nil {
-					deleteVids = append(deleteVids, v.Id)
-					shouldDeleteVolume = true
-					glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
 				}
 			}
 
