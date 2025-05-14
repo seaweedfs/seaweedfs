@@ -121,7 +121,7 @@ func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool) (o
 		n.Ttl = v.Ttl
 	}
 
-	if !fsync {
+	if fsync {
 		return v.syncWrite(n, checkCookie)
 	} else {
 		asyncRequest := needle.NewAsyncRequest(n, true)
