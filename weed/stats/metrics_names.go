@@ -6,6 +6,8 @@ const (
 	// volume server
 	WriteToLocalDisk            = "writeToLocalDisk"
 	WriteToReplicas             = "writeToReplicas"
+	DownloadLimitCond           = "downloadLimitCond"
+	UploadLimitCond             = "uploadLimitCond"
 	ErrorSizeMismatchOffsetSize = "errorSizeMismatchOffsetSize"
 	ErrorSizeMismatch           = "errorSizeMismatch"
 	ErrorCRC                    = "errorCRC"
