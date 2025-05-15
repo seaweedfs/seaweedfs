@@ -7,15 +7,16 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/sftpd/utils"
 )
 
 type SeaweedFileReaderAt struct {
 	fs         *SftpServer
 	entry      *filer_pb.Entry
-	reader     io.Reader // Use the correct type
+	reader     io.ReadSeeker
 	mu         sync.Mutex
 	bufferSize int
-	cache      map[int64][]byte
+	cache      *utils.LruCache
 	fileSize   int64
 }
 
@@ -23,9 +24,8 @@ func NewSeaweedFileReaderAt(fs *SftpServer, entry *filer_pb.Entry) *SeaweedFileR
 	return &SeaweedFileReaderAt{
 		fs:         fs,
 		entry:      entry,
-		reader:     nil,             // Will be initialized on first read
-		bufferSize: 5 * 1024 * 1024, // 1MB buffer size, adjust as needed
-		cache:      make(map[int64][]byte),
+		bufferSize: 5 * 1024 * 1024,       // 5MB
+		cache:      utils.NewLRUCache(10), // Max 10 chunks = ~50MB
 		fileSize:   int64(entry.Attributes.FileSize),
 	}
 }
@@ -34,117 +34,66 @@ func (ra *SeaweedFileReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	ra.mu.Lock()
 	defer ra.mu.Unlock()
 
-	// Check if we're reading past the end of the file
 	if off >= ra.fileSize {
 		return 0, io.EOF
 	}
 
-	// Calculate the buffer key (aligned to buffer size)
-	bufferKey := (off / int64(ra.bufferSize)) * int64(ra.bufferSize)
+	remaining := len(p)
+	readOffset := off
+	totalRead := 0
 
-	// Check if we have this buffer in cache
-	buffer, exists := ra.cache[bufferKey]
+	for remaining > 0 && readOffset < ra.fileSize {
+		bufferKey := (readOffset / int64(ra.bufferSize)) * int64(ra.bufferSize)
+		bufferOffset := int(readOffset - bufferKey)
 
-	// If not in cache, fetch the buffer
-	if !exists {
-		// Create reader if not exists
-		if ra.reader == nil {
-			ra.reader = filer.NewFileReader(ra.fs, ra.entry)
-			if ra.reader == nil {
-				return 0, fmt.Errorf("failed to create file reader")
+		buffer, ok := ra.cache.Get(bufferKey)
+		if !ok {
+			readSize := ra.bufferSize
+			if bufferKey+int64(readSize) > ra.fileSize {
+				readSize = int(ra.fileSize - bufferKey)
 			}
-		}
 
-		// Calculate how much to read
-		readSize := ra.bufferSize
-		if bufferKey+int64(readSize) > ra.fileSize {
-			readSize = int(ra.fileSize - bufferKey)
-		}
+			if ra.reader == nil {
+				r := filer.NewFileReader(ra.fs, ra.entry)
+				if rs, ok := r.(io.ReadSeeker); ok {
+					ra.reader = rs
+				} else {
+					return 0, fmt.Errorf("reader is not seekable")
+				}
+			}
 
-		// Seek to the buffer start position
-		if seeker, ok := ra.reader.(io.Seeker); ok {
-			_, err = seeker.Seek(bufferKey, io.SeekStart)
-			if err != nil {
+			if _, err := ra.reader.Seek(bufferKey, io.SeekStart); err != nil {
 				return 0, fmt.Errorf("seek error: %v", err)
 			}
-		} else {
-			// If we can't seek, create a new reader positioned at the right offset
-			ra.reader = filer.NewFileReader(ra.fs, ra.entry)
-			if ra.reader == nil {
-				return 0, fmt.Errorf("failed to create file reader")
+
+			buffer = make([]byte, readSize)
+			readBytes, err := io.ReadFull(ra.reader, buffer)
+			if err != nil && err != io.ErrUnexpectedEOF {
+				return 0, fmt.Errorf("read error: %v", err)
 			}
-
-			// Skip to the position
-			toSkip := bufferKey
-			skipBuf := make([]byte, 8192)
-			for toSkip > 0 {
-				skipSize := int64(len(skipBuf))
-				if skipSize > toSkip {
-					skipSize = toSkip
-				}
-				read, err := ra.reader.Read(skipBuf[:skipSize])
-				if err != nil {
-					return 0, fmt.Errorf("skip error: %v", err)
-				}
-				if read == 0 {
-					return 0, fmt.Errorf("unable to skip to offset %d", bufferKey)
-				}
-				toSkip -= int64(read)
-			}
+			buffer = buffer[:readBytes]
+			ra.cache.Put(bufferKey, buffer)
 		}
 
-		// Read the buffer
-		buffer = make([]byte, readSize)
-		bytesRead, err := io.ReadFull(ra.reader, buffer)
-		if err != nil && err != io.ErrUnexpectedEOF {
-			return 0, fmt.Errorf("buffer read error: %v", err)
+		toCopy := len(buffer) - bufferOffset
+		if toCopy > remaining {
+			toCopy = remaining
+		}
+		if toCopy <= 0 {
+			break
 		}
 
-		// Store in cache (only if we read something)
-		if bytesRead > 0 {
-			buffer = buffer[:bytesRead]
-			ra.cache[bufferKey] = buffer
-		} else {
-			return 0, io.EOF
-		}
+		copy(p[totalRead:], buffer[bufferOffset:bufferOffset+toCopy])
+		totalRead += toCopy
+		readOffset += int64(toCopy)
+		remaining -= toCopy
 	}
 
-	// Calculate the offset within the buffer
-	bufferOffset := int(off - bufferKey)
-
-	// Calculate how much we can copy from this buffer
-	copySize := len(buffer) - bufferOffset
-	if copySize > len(p) {
-		copySize = len(p)
-	}
-
-	// Copy from buffer to output
-	if copySize <= 0 {
+	if totalRead == 0 {
 		return 0, io.EOF
 	}
-
-	copy(p, buffer[bufferOffset:bufferOffset+copySize])
-
-	// If we didn't fill the entire output buffer and we're not at EOF
-	if copySize < len(p) && bufferKey+int64(len(buffer)) < ra.fileSize {
-		// Recursively read the next chunk
-		nextOff := bufferKey + int64(len(buffer))
-
-		// Release lock during recursive call to prevent deadlock
-		ra.mu.Unlock()
-		nextRead, err := ra.ReadAt(p[copySize:], nextOff)
-		ra.mu.Lock() // Reacquire lock
-
-		if err != nil && err != io.EOF {
-			return copySize, err
-		}
-		return copySize + nextRead, nil
+	if totalRead < len(p) {
+		return totalRead, io.EOF
 	}
-
-	// Check if we're at EOF
-	if bufferOffset+copySize >= len(buffer) && bufferKey+int64(len(buffer)) >= ra.fileSize {
-		return copySize, io.EOF
-	}
-
-	return copySize, nil
+	return totalRead, nil
 }
