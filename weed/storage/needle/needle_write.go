@@ -3,12 +3,13 @@ package needle
 import (
 	"bytes"
 	"fmt"
+	"math"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/buffer_pool"
-	"math"
 )
 
 func (n *Needle) prepareWriteBuffer(version Version, writeBytes *bytes.Buffer) (Size, int64, error) {
@@ -118,7 +119,7 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 		}(w, end)
 		offset = uint64(end)
 	} else {
-		err = fmt.Errorf("Cannot Read Current Volume Position: %v", e)
+		err = fmt.Errorf("Cannot Read Current Volume Position: %w", e)
 		return
 	}
 	if offset >= MaxPossibleVolumeSize && len(n.Data) != 0 {
@@ -134,7 +135,7 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 	if err == nil {
 		_, err = w.WriteAt(bytesBuffer.Bytes(), int64(offset))
 		if err != nil {
-			err = fmt.Errorf("failed to write %d bytes to %s at offset %d: %v", actualSize, w.Name(), offset, err)
+			err = fmt.Errorf("failed to write %d bytes to %s at offset %d: %w", actualSize, w.Name(), offset, err)
 		}
 	}
 
