@@ -9,6 +9,7 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: volume
 {{- if .Values.volume.annotations }}
   annotations:
     {{- toYaml .Values.volume.annotations | nindent 4 }}
@@ -47,9 +48,8 @@ spec:
       affinity:
         {{ tpl .Values.volume.affinity . | nindent 8 | trim }}
       {{- end }}
-      {{- with .Values.volume.topologySpreadConstraints }}
-      topologySpreadConstraints:
-        {{- toYaml . | nindent 8 }}
+      {{- if .Values.volume.topologySpreadConstraints }}
+      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "volume") | nindent 6 }}
       {{- end }}
       restartPolicy: {{ default .Values.global.restartPolicy .Values.volume.restartPolicy }}
       {{- if .Values.volume.tolerations }}

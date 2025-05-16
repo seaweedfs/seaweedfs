@@ -9,6 +9,7 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: s3
 {{- if .Values.s3.annotations }}
   annotations:
     {{- toYaml .Values.s3.annotations | nindent 4 }}
@@ -42,6 +43,13 @@ spec:
       {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.s3.restartPolicy }}
+      {{- if .Values.s3.affinity }}
+      affinity:
+        {{ tpl .Values.s3.affinity . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.s3.topologySpreadConstraints }}
+      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "s3") | nindent 6 }}
+      {{- end }}
       {{- if .Values.s3.tolerations }}
       tolerations:
         {{ tpl .Values.s3.tolerations . | nindent 8 | trim }}

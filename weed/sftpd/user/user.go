@@ -2,7 +2,6 @@
 package user
 
 import (
-	"fmt"
 	"math/rand"
 	"path/filepath"
 )
@@ -16,39 +15,6 @@ type User struct {
 	Permissions map[string][]string // path -> permissions (read, write, list, etc.)
 	Uid         uint32              // User ID for file ownership
 	Gid         uint32              // Group ID for file ownership
-}
-
-// Store defines the interface for user storage and retrieval
-type Store interface {
-	// GetUser retrieves a user by username
-	GetUser(username string) (*User, error)
-
-	// ValidatePassword checks if the password is valid for the user
-	ValidatePassword(username string, password []byte) bool
-
-	// ValidatePublicKey checks if the public key is valid for the user
-	ValidatePublicKey(username string, keyData string) bool
-
-	// GetUserPermissions returns the permissions for a user on a path
-	GetUserPermissions(username string, path string) []string
-
-	// SaveUser saves or updates a user
-	SaveUser(user *User) error
-
-	// DeleteUser removes a user
-	DeleteUser(username string) error
-
-	// ListUsers returns all usernames
-	ListUsers() ([]string, error)
-}
-
-// UserNotFoundError is returned when a user is not found
-type UserNotFoundError struct {
-	Username string
-}
-
-func (e *UserNotFoundError) Error() string {
-	return fmt.Sprintf("user not found: %s", e.Username)
 }
 
 // NewUser creates a new user with default settings

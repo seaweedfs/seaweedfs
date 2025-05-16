@@ -61,9 +61,9 @@ spec:
       affinity:
         {{ tpl .Values.filer.affinity . | nindent 8 | trim }}
       {{- end }}
-      {{- with .Values.filer.topologySpreadConstraints }}
+      {{- if .Values.filer.topologySpreadConstraints }}
       topologySpreadConstraints:
-        {{- toYaml . | nindent 8 }}
+      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "filer") | nindent 6 }}
       {{- end }}
       {{- if .Values.filer.tolerations }}
       tolerations:

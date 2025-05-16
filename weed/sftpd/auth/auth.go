@@ -17,12 +17,11 @@ type Manager struct {
 	userStore          user.Store
 	passwordAuth       *PasswordAuthenticator
 	publicKeyAuth      *PublicKeyAuthenticator
-	permissionChecker  *PermissionChecker
 	enabledAuthMethods []string
 }
 
 // NewManager creates a new authentication manager
-func NewManager(userStore user.Store, fsHelper FileSystemHelper, enabledAuthMethods []string) *Manager {
+func NewManager(userStore user.Store, enabledAuthMethods []string) *Manager {
 	manager := &Manager{
 		userStore:          userStore,
 		enabledAuthMethods: enabledAuthMethods,
@@ -43,7 +42,6 @@ func NewManager(userStore user.Store, fsHelper FileSystemHelper, enabledAuthMeth
 
 	manager.passwordAuth = NewPasswordAuthenticator(userStore, passwordEnabled)
 	manager.publicKeyAuth = NewPublicKeyAuthenticator(userStore, publicKeyEnabled)
-	manager.permissionChecker = NewPermissionChecker(fsHelper)
 
 	return manager
 }
@@ -63,11 +61,6 @@ func (m *Manager) GetSSHServerConfig() *ssh.ServerConfig {
 	}
 
 	return config
-}
-
-// CheckPermission checks if a user has the required permission on a path
-func (m *Manager) CheckPermission(user *user.User, path, permission string) error {
-	return m.permissionChecker.CheckFilePermission(user, path, permission)
 }
 
 // GetUser retrieves a user from the user store

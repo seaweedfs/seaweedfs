@@ -9,6 +9,7 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: sftp
 {{- if .Values.sftp.annotations }}
   annotations:
     {{- toYaml .Values.sftp.annotations | nindent 4 }}
@@ -42,6 +43,13 @@ spec:
       {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.sftp.restartPolicy }}
+      {{- if .Values.sftp.affinity }}
+      affinity:
+        {{ tpl .Values.sftp.affinity . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.sftp.topologySpreadConstraints }}
+      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "sftp") | nindent 6 }}
+      {{- end }}
       {{- if .Values.sftp.tolerations }}
       tolerations:
         {{ tpl .Values.sftp.tolerations . | nindent 8 | trim }}

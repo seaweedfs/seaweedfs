@@ -198,3 +198,25 @@ or generate a new random password if it doesn't exist.
   {{- randAlphaNum $length -}}
 {{- end -}}
 {{- end -}}
+
+{{- /*
+Render a component’s topologySpreadConstraints exactly as given in values,
+respecting string vs. list, and providing the component name for tpl lookups.
+
+Usage:
+  {{ include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "filer") | nindent 8 }}
+*/ -}}
+{{- define "seaweedfs.topologySpreadConstraints" -}}
+  {{- $vals := .Values -}}
+  {{- $comp := .component -}}
+  {{- $section := index $vals $comp | default dict -}}
+  {{- $tsp := index $section "topologySpreadConstraints" -}}
+  {{- with $tsp }}
+topologySpreadConstraints:
+{{- if kindIs "string" $tsp }}
+{{ tpl $tsp (dict "Values" $vals "component" $comp) }}
+{{- else }}
+{{ toYaml $tsp }}
+{{- end }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,21 @@
+{{- if and .Values.allInOne.enabled (eq .Values.allInOne.data.type "persistentVolumeClaim") }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.allInOne.data.claimName }}
+  labels:
+    app.kubernetes.io/component: seaweedfs-all-in-one
+  {{- if .Values.allInOne.annotations }}
+  annotations:
+    {{- toYaml .Values.allInOne.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.allInOne.data.size }}
+  {{- if .Values.allInOne.data.storageClass }}
+  storageClassName: {{ .Values.allInOne.data.storageClass }}
+  {{- end }}
+{{- end }}

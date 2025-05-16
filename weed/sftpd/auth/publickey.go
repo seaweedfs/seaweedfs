@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"crypto/subtle"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
@@ -40,7 +39,7 @@ func (a *PublicKeyAuthenticator) Authenticate(conn ssh.ConnMetadata, key ssh.Pub
 	keyData := string(key.Marshal())
 
 	// Validate public key
-	if ValidatePublicKey(a.userStore, username, keyData) {
+	if a.userStore.ValidatePublicKey(username, keyData) {
 		return &ssh.Permissions{
 			Extensions: map[string]string{
 				"username": username,
@@ -49,20 +48,4 @@ func (a *PublicKeyAuthenticator) Authenticate(conn ssh.ConnMetadata, key ssh.Pub
 	}
 
 	return nil, fmt.Errorf("authentication failed")
-}
-
-// ValidatePublicKey checks if the provided public key is valid for the user
-func ValidatePublicKey(store user.Store, username string, keyData string) bool {
-	user, err := store.GetUser(username)
-	if err != nil {
-		return false
-	}
-
-	for _, key := range user.PublicKeys {
-		if subtle.ConstantTimeCompare([]byte(key), []byte(keyData)) == 1 {
-			return true
-		}
-	}
-
-	return false
 }
