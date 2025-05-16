@@ -351,7 +351,9 @@ spec:
   volumeClaimTemplates:
     {{- range $dir := .Values.volume.dataDirs }}
     {{- if eq $dir.type "persistentVolumeClaim" }}
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: {{ $dir.name }}
         {{- with $dir.annotations }}
         annotations:
@@ -367,7 +369,9 @@ spec:
     {{- end }}
 
     {{- if and .Values.volume.idx (eq .Values.volume.idx.type "persistentVolumeClaim") }}
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: idx
         {{- with .Values.volume.idx.annotations }}
         annotations:
@@ -381,7 +385,9 @@ spec:
             storage: {{ .Values.volume.idx.size }}
     {{- end }}
     {{- if and .Values.volume.logs (eq .Values.volume.logs.type "persistentVolumeClaim") }}
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: logs
         {{- with .Values.volume.logs.annotations }}
         annotations:
