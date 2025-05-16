@@ -45,6 +45,13 @@ spec:
         {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.allInOne.restartPolicy }}
+      {{- if .Values.allInOne.affinity }}
+      affinity:
+        {{ tpl .Values.allInOne.affinity . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.allInOne.topologySpreadConstraints }}
+      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "all-in-one") | nindent 6 }}
+      {{- end }}
       {{- if .Values.allInOne.tolerations }}
       tolerations:
         {{- tpl .Values.allInOne.tolerations . | nindent 8 }}
