@@ -949,6 +949,7 @@ s3:
     # additional ingress annotations for the s3 endpoint
     annotations: {}
     tls: []
+
 sftp:
   enabled: false
   imageOverride: null
@@ -1028,7 +1029,7 @@ allInOne:
   imageOverride: null
   restartPolicy: Always
   replicas: 1
-  
+
   # Core configuration
   idleTimeout: 30  # Connection idle seconds
   dataCenter: ""  # Current volume server's data center name
@@ -1038,18 +1039,18 @@ allInOne:
   metricsPort: 9324  # Prometheus metrics listen port
   metricsIp: ""  # Metrics listen IP. If empty, defaults to bindAddress
   loggingOverrideLevel: null  # Override logging level
-  
+
   # Service configuration
   s3:
     enabled: false  # Whether to enable S3 gateway
   sftp:
     enabled: false  # Whether to enable SFTP server
-  
+
   # Service settings
   service:
     annotations: {}  # Annotations for the service
     type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
-  
+
   # Storage configuration
   data:
     type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir"
@@ -1057,7 +1058,7 @@ allInOne:
     claimName: seaweedfs-data-pvc  # Name of the PVC to use
     size: ""  # Size of the PVC
     storageClass: ""  # Storage class for the PVC
-  
+
   # Health checks
   readinessProbe:
     enabled: true
@@ -1082,7 +1083,7 @@ allInOne:
     successThreshold: 1
     failureThreshold: 5
     timeoutSeconds: 5
-  
+
   # Additional resources
   extraEnvironmentVars: {}  # Additional environment variables
   extraVolumeMounts: ""  # Additional volume mounts
@@ -1092,7 +1093,7 @@ allInOne:
   annotations: {}  # Annotations for the deployment
   podAnnotations: {}  # Annotations for the pods
   podLabels: {}  # Labels for the pods
-  
+
   # Scheduling configuration
   # Affinity Settings
   # Commenting out or setting as empty the affinity variable, will allow
@@ -1106,30 +1107,30 @@ allInOne:
               app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/component: master
           topologyKey: kubernetes.io/hostname
-  
+
   # Topology Spread Constraints Settings
   # This should map directly to the value of the topologySpreadConstraints
   # for a PodSpec. By Default no constraints are set.
   topologySpreadConstraints: null
-  
+
   # Toleration Settings for master pods
   # This should be a multi-line string matching the Toleration array
   # in a PodSpec.
   tolerations: ""
-  
+
   # nodeSelector labels for master pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   nodeSelector: |
     kubernetes.io/arch: amd64
-  
+
   # Used to assign priority to master pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
-  
+
   # Used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
-  
+
   # Configure security context for Pod
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   # Example:
@@ -1139,7 +1140,7 @@ allInOne:
   #   runAsGroup: 3000
   #   fsGroup: 2000
   podSecurityContext: {}
-  
+
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   # Example:
@@ -1148,7 +1149,7 @@ allInOne:
   #   runAsUser: 2000
   #   allowPrivilegeEscalation: false
   containerSecurityContext: {}
-  
+
   # Resource management
   resources:
     limits:
