@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"syscall"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -23,7 +24,7 @@ func (v *Volume) checkReadWriteError(err error) {
 		}
 		return
 	}
-	if err.Error() == "input/output error" {
+	if errors.Is(err, syscall.EIO) {
 		v.lastIoError = err
 	}
 }
