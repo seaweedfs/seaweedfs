@@ -256,7 +256,9 @@ func (ms *MasterServer) startAdminScripts() {
 	}
 	glog.V(0).Infof("adminScripts: %v", adminScripts)
 
+	v.SetDefault("master.maintenance.sleep_seconds", 0)
 	v.SetDefault("master.maintenance.sleep_minutes", 17)
+	sleepSeconds := v.GetInt("master.maintenance.sleep_seconds")
 	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
 
 	scriptLines := strings.Split(adminScripts, "\n")
@@ -283,7 +285,7 @@ func (ms *MasterServer) startAdminScripts() {
 
 	go func() {
 		for {
-			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
+			time.Sleep(time.Duration(sleepMinutes * 60 + sleepSeconds) * time.Second)
 			if ms.Topo.IsLeader() && ms.MasterClient.GetMaster(context.Background()) != "" {
 				shellOptions.FilerAddress = ms.GetOneFiler(cluster.FilerGroupName(*shellOptions.FilerGroup))
 				if shellOptions.FilerAddress == "" {
