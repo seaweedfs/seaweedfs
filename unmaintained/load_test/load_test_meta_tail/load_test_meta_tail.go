@@ -1,18 +1,19 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"strconv"
 	"strings"
 	"time"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (
@@ -60,7 +61,7 @@ func startGenerateMetadata() {
 		for i := 0; i < *n; i++ {
 			name := fmt.Sprintf("file%d", i)
 			glog.V(0).Infof("write %s/%s", *dir, name)
-			if err := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
+			if err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 				Directory: *dir,
 				Entry: &filer_pb.Entry{
 					Name: name,

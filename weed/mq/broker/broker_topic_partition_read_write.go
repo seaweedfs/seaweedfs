@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -12,7 +13,7 @@ import (
 func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, p topic.Partition) log_buffer.LogFlushFuncType {
 	partitionDir := topic.PartitionDir(t, p)
 
-	return func(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
+	return func(ctx context.Context, logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
 		if len(buf) == 0 {
 			return
 		}

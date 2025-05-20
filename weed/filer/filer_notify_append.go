@@ -11,9 +11,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func (f *Filer) appendToFile(targetFile string, data []byte) error {
+func (f *Filer) appendToFile(ctx context.Context, targetFile string, data []byte) error {
 
-	assignResult, uploadResult, err2 := f.assignAndUpload(targetFile, data)
+	assignResult, uploadResult, err2 := f.assignAndUpload(ctx, targetFile, data)
 	if err2 != nil {
 		return err2
 	}
@@ -48,7 +48,7 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	return err
 }
 
-func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
+func (f *Filer) assignAndUpload(ctx context.Context, targetFile string, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
 	// assign a volume location
 	rule := f.FilerConf.MatchStorageRule(targetFile)
 	assignRequest := &operation.VolumeAssignRequest{
@@ -58,7 +58,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		WritableVolumeCount: rule.VolumeGrowthCount,
 	}
 
-	assignResult, err := operation.Assign(f.GetMaster, f.GrpcDialOption, assignRequest)
+	assignResult, err := operation.Assign(ctx, f.GetMaster, f.GrpcDialOption, assignRequest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("AssignVolume: %v", err)
 	}
@@ -83,7 +83,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}
 
-	uploadResult, err := uploader.UploadData(data, uploadOption)
+	uploadResult, err := uploader.UploadData(ctx, data, uploadOption)
 	if err != nil {
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}

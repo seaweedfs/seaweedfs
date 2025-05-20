@@ -86,7 +86,7 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 
 }
 
-func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
+func (f *Filer) logFlushFunc(ctx context.Context, logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
 
 	if len(buf) == 0 {
 		return
@@ -100,7 +100,7 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 	)
 
 	for {
-		if err := f.appendToFile(targetFile, buf); err != nil {
+		if err := f.appendToFile(ctx, targetFile, buf); err != nil {
 			glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
 			time.Sleep(737 * time.Millisecond)
 		} else {

@@ -235,7 +235,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 
 	f.NotifyUpdateEvent(ctx, oldEntry, entry, true, isFromOtherCluster, signatures)
 
-	f.deleteChunksIfNotNew(oldEntry, entry)
+	f.deleteChunksIfNotNew(ctx, oldEntry, entry)
 
 	glog.V(4).Infof("CreateEntry %s: created", entry.FullPath)
 

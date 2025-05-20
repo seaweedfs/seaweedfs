@@ -1,6 +1,7 @@
 package filersink
 
 import (
+	"context"
 	"fmt"
 	"github.com/schollz/progressbar/v3"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -98,6 +99,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 	}
 
 	fileId, uploadResult, err, _ := uploader.UploadWithRetry(
+		context.Background(),
 		fs,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,

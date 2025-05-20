@@ -3,9 +3,13 @@ package weed_server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"google.golang.org/grpc/metadata"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -126,6 +130,7 @@ func debug(params ...interface{}) {
 }
 
 func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption) {
+	ctx := r.Context()
 	m := make(map[string]interface{})
 	if r.Method != http.MethodPost {
 		writeJsonError(w, r, http.StatusMethodNotAllowed, errors.New("Only submit via POST!"))
@@ -160,7 +165,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn ope
 		Ttl:         r.FormValue("ttl"),
 		DiskType:    r.FormValue("disk"),
 	}
-	assignResult, ae := operation.Assign(masterFn, grpcDialOption, ar)
+	assignResult, ae := operation.Assign(ctx, masterFn, grpcDialOption, ar)
 	if ae != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, ae)
 		return
@@ -186,7 +191,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn ope
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
-	uploadResult, err := uploader.UploadData(pu.Data, uploadOption)
+	uploadResult, err := uploader.UploadData(ctx, pu.Data, uploadOption)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
@@ -420,4 +425,22 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		return fmt.Errorf("ProcessRangeRequest err: %v", err)
 	}
 	return nil
+}
+
+func requestIDMiddleware(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		reqID := r.Header.Get("X-Request-ID")
+		if reqID == "" {
+			reqID = uuid.New().String()
+		}
+		ctx := context.WithValue(r.Context(), pb.RequestIDKey, reqID)
+
+		md := metadata.New(map[string]string{
+			"x-request-id": reqID,
+		})
+		ctx = metadata.NewOutgoingContext(ctx, md)
+
+		w.Header().Set("X-Request-ID", reqID)
+		h(w, r.WithContext(ctx))
+	}
 }

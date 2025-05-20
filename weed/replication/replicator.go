@@ -65,30 +65,30 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 	key = newKey
 	if message.OldEntry != nil && message.NewEntry == nil {
 		glog.V(4).Infof("deleting %v", key)
-		return r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
+		return r.sink.DeleteEntry(ctx, key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
 	}
 	if message.OldEntry == nil && message.NewEntry != nil {
 		glog.V(4).Infof("creating %v", key)
-		return r.sink.CreateEntry(key, message.NewEntry, message.Signatures)
+		return r.sink.CreateEntry(ctx, key, message.NewEntry, message.Signatures)
 	}
 	if message.OldEntry == nil && message.NewEntry == nil {
 		glog.V(0).Infof("weird message %+v", message)
 		return nil
 	}
 
-	foundExisting, err := r.sink.UpdateEntry(key, message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks, message.Signatures)
+	foundExisting, err := r.sink.UpdateEntry(ctx, key, message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks, message.Signatures)
 	if foundExisting {
 		glog.V(4).Infof("updated %v", key)
 		return err
 	}
 
-	err = r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, false, message.Signatures)
+	err = r.sink.DeleteEntry(ctx, key, message.OldEntry.IsDirectory, false, message.Signatures)
 	if err != nil {
 		return fmt.Errorf("delete old entry %v: %v", key, err)
 	}
 
 	glog.V(4).Infof("creating missing %v", key)
-	return r.sink.CreateEntry(key, message.NewEntry, message.Signatures)
+	return r.sink.CreateEntry(ctx, key, message.NewEntry, message.Signatures)
 }
 
 func ReadFilerSignature(grpcDialOption grpc.DialOption, filer pb.ServerAddress) (filerSignature int32, readErr error) {

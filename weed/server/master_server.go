@@ -134,24 +134,24 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	ms.guard = security.NewGuard(append(ms.option.WhiteList, whiteList...), signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources2(r)
-	r.HandleFunc("/", ms.proxyToLeader(ms.uiStatusHandler))
-	r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
+	r.HandleFunc("/", ms.proxyToLeader(requestIDMiddleware(ms.uiStatusHandler)))
+	r.HandleFunc("/ui/index.html", requestIDMiddleware(ms.uiStatusHandler))
 	if !ms.option.DisableHttp {
-		r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
-		r.HandleFunc("/dir/lookup", ms.guard.WhiteList(ms.dirLookupHandler))
-		r.HandleFunc("/dir/status", ms.proxyToLeader(ms.guard.WhiteList(ms.dirStatusHandler)))
-		r.HandleFunc("/col/delete", ms.proxyToLeader(ms.guard.WhiteList(ms.collectionDeleteHandler)))
-		r.HandleFunc("/vol/grow", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeGrowHandler)))
-		r.HandleFunc("/vol/status", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeStatusHandler)))
-		r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.guard.WhiteList(ms.volumeVacuumHandler)))
-		r.HandleFunc("/submit", ms.guard.WhiteList(ms.submitFromMasterServerHandler))
-		r.HandleFunc("/collection/info", ms.guard.WhiteList(ms.collectionInfoHandler))
+		r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.dirAssignHandler))))
+		r.HandleFunc("/dir/lookup", ms.guard.WhiteList(requestIDMiddleware(ms.dirLookupHandler)))
+		r.HandleFunc("/dir/status", ms.proxyToLeader(requestIDMiddleware(ms.guard.WhiteList(ms.dirStatusHandler))))
+		r.HandleFunc("/col/delete", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.collectionDeleteHandler))))
+		r.HandleFunc("/vol/grow", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.volumeGrowHandler))))
+		r.HandleFunc("/vol/status", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.volumeStatusHandler))))
+		r.HandleFunc("/vol/vacuum", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.volumeVacuumHandler))))
+		r.HandleFunc("/submit", ms.guard.WhiteList(requestIDMiddleware(ms.submitFromMasterServerHandler)))
+		r.HandleFunc("/collection/info", ms.guard.WhiteList(requestIDMiddleware(ms.collectionInfoHandler)))
 		/*
 			r.HandleFunc("/stats/health", ms.guard.WhiteList(statsHealthHandler))
 			r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
 			r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
 		*/
-		r.HandleFunc("/{fileId}", ms.redirectHandler)
+		r.HandleFunc("/{fileId}", requestIDMiddleware(ms.redirectHandler))
 	}
 
 	ms.Topo.StartRefreshWritableVolumes(

@@ -31,7 +31,7 @@ func (fs *FilerServer) maybeGetVolumeJwtAuthorizationToken(fileId string, isWrit
 }
 
 func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Request, fileId string) {
-
+	ctx := r.Context()
 	urlStrings, err := fs.filer.MasterClient.GetLookupFileIdFunction()(fileId)
 	if err != nil {
 		glog.Errorf("locate %s: %v", fileId, err)
@@ -53,6 +53,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 
 	proxyReq.Header.Set("Host", r.Host)
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
+	proxyReq.Header.Set("X-Request-ID", util_http.GetRequestID(ctx))
 
 	for header, values := range r.Header {
 		for _, value := range values {

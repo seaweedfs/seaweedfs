@@ -11,13 +11,13 @@ import (
 
 func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn func(entry *filer_pb.Entry)) error {
 
-	return filer_pb.Mkdir(s3a, parentDirectoryPath, dirName, fn)
+	return filer_pb.Mkdir(context.Background(), s3a, parentDirectoryPath, dirName, fn)
 
 }
 
 func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chunks []*filer_pb.FileChunk, fn func(entry *filer_pb.Entry)) error {
 
-	return filer_pb.MkFile(s3a, parentDirectoryPath, fileName, chunks, fn)
+	return filer_pb.MkFile(context.Background(), s3a, parentDirectoryPath, fileName, chunks, fn)
 
 }
 
@@ -76,19 +76,19 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 
 func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isDirectory bool) (exists bool, err error) {
 
-	return filer_pb.Exists(s3a, parentDirectoryPath, entryName, isDirectory)
+	return filer_pb.Exists(context.Background(), s3a, parentDirectoryPath, entryName, isDirectory)
 
 }
 
 func (s3a *S3ApiServer) touch(parentDirectoryPath string, entryName string, entry *filer_pb.Entry) (err error) {
 
-	return filer_pb.Touch(s3a, parentDirectoryPath, entryName, entry)
+	return filer_pb.Touch(context.Background(), s3a, parentDirectoryPath, entryName, entry)
 
 }
 
 func (s3a *S3ApiServer) getEntry(parentDirectoryPath, entryName string) (entry *filer_pb.Entry, err error) {
 	fullPath := util.NewFullPath(parentDirectoryPath, entryName)
-	return filer_pb.GetEntry(s3a, fullPath)
+	return filer_pb.GetEntry(context.Background(), s3a, fullPath)
 }
 
 func (s3a *S3ApiServer) updateEntry(parentDirectoryPath string, newEntry *filer_pb.Entry) error {
@@ -98,7 +98,7 @@ func (s3a *S3ApiServer) updateEntry(parentDirectoryPath string, newEntry *filer_
 	}
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		err := filer_pb.UpdateEntry(client, updateEntryRequest)
+		err := filer_pb.UpdateEntry(context.Background(), client, updateEntryRequest)
 		if err != nil {
 			return err
 		}

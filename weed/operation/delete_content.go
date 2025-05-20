@@ -29,10 +29,10 @@ func ParseFileId(fid string) (vid string, key_cookie string, err error) {
 }
 
 // DeleteFileIds batch deletes a list of fileIds
-func DeleteFileIds(masterFn GetMasterFn, usePublicUrl bool, grpcDialOption grpc.DialOption, fileIds []string) ([]*volume_server_pb.DeleteResult, error) {
+func DeleteFileIds(ctx context.Context, masterFn GetMasterFn, usePublicUrl bool, grpcDialOption grpc.DialOption, fileIds []string) ([]*volume_server_pb.DeleteResult, error) {
 
 	lookupFunc := func(vids []string) (results map[string]*LookupResult, err error) {
-		results, err = LookupVolumeIds(masterFn, grpcDialOption, vids)
+		results, err = LookupVolumeIds(ctx, masterFn, grpcDialOption, vids)
 		if err == nil && usePublicUrl {
 			for _, result := range results {
 				for _, loc := range result.Locations {

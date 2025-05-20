@@ -2,9 +2,11 @@ package http
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
@@ -41,16 +43,17 @@ func Post(url string, values url.Values) ([]byte, error) {
 // github.com/seaweedfs/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
 // may need increasing http.Client.Timeout
 func Get(url string) ([]byte, bool, error) {
-	return GetAuthenticated(url, "")
+	return GetAuthenticated(context.Background(), url, "")
 }
 
-func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
+func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error) {
 	request, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, true, err
 	}
 	maybeAddAuth(request, jwt)
 	request.Header.Add("Accept-Encoding", "gzip")
+	request.Header.Set("X-Request-ID", GetRequestID(ctx))
 
 	response, err := GetGlobalHttpClient().Do(request)
 	if err != nil {
@@ -99,12 +102,13 @@ func maybeAddAuth(req *http.Request, jwt string) {
 	}
 }
 
-func Delete(url string, jwt string) error {
+func Delete(ctx context.Context, url string, jwt string) error {
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	maybeAddAuth(req, jwt)
 	if err != nil {
 		return err
 	}
+	req.Header.Set("X-Request-ID", GetRequestID(ctx))
 	resp, e := GetGlobalHttpClient().Do(req)
 	if e != nil {
 		return e
@@ -214,11 +218,11 @@ func NormalizeUrl(url string) (string, error) {
 	return GetGlobalHttpClient().NormalizeHttpScheme(url)
 }
 
-func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
+func ReadUrl(ctx context.Context, fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
 
 	if cipherKey != nil {
 		var n int
-		_, err := readEncryptedUrl(fileUrl, "", cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
+		_, err := readEncryptedUrl(ctx, fileUrl, "", cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
 			n = copy(buf, data)
 		})
 		return int64(n), err
@@ -286,13 +290,13 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 	return n, err
 }
 
-func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
-	return ReadUrlAsStreamAuthenticated(fileUrl, "", cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
+func ReadUrlAsStream(ctx context.Context, fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
+	return ReadUrlAsStreamAuthenticated(ctx, fileUrl, "", cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 }
 
-func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
+func ReadUrlAsStreamAuthenticated(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
 	if cipherKey != nil {
-		return readEncryptedUrl(fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
+		return readEncryptedUrl(ctx, fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
 
 	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
@@ -300,7 +304,7 @@ func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isConte
 	if err != nil {
 		return false, err
 	}
-
+	req.Header.Set("X-Request-ID", GetRequestID(ctx))
 	if isFullChunk {
 		req.Header.Add("Accept-Encoding", "gzip")
 	} else {
@@ -351,8 +355,17 @@ func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isConte
 
 }
 
-func readEncryptedUrl(fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
-	encryptedData, retryable, err := GetAuthenticated(fileUrl, jwt)
+// GetRequestID returns the request_id from the context, if available.
+func GetRequestID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(pb.RequestIDKey).(string)
+	return id
+}
+
+func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
+	encryptedData, retryable, err := GetAuthenticated(ctx, fileUrl, jwt)
 	if err != nil {
 		return retryable, fmt.Errorf("fetch %s: %v", fileUrl, err)
 	}
@@ -447,7 +460,7 @@ func (r *CountingReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func RetriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
+func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
 
 	var shouldRetry bool
 
@@ -457,7 +470,7 @@ func RetriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte,
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
-			shouldRetry, err = ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+			shouldRetry, err = ReadUrlAsStream(ctx, urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
 				if n < len(buffer) {
 					x := copy(buffer[n:], data)
 					n += x

@@ -1,6 +1,7 @@
 package S3Sink
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
@@ -125,7 +126,7 @@ func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey string) erro
 	return nil
 }
 
-func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+func (s3sink *S3Sink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -150,14 +151,14 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 
 }
 
-func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) (err error) {
+func (s3sink *S3Sink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry, signatures []int32) (err error) {
 	key = cleanKey(key)
 
 	if entry.IsDirectory {
 		return nil
 	}
 
-	reader := filer.NewFileReader(s3sink.filerSource, entry)
+	reader := filer.NewFileReader(ctx, s3sink.filerSource, entry)
 
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(s3sink.conn, func(u *s3manager.Uploader) {
@@ -211,9 +212,9 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 
 }
 
-func (s3sink *S3Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
+func (s3sink *S3Sink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
-	return true, s3sink.CreateEntry(key, newEntry, signatures)
+	return true, s3sink.CreateEntry(ctx, key, newEntry, signatures)
 }
 
 func cleanKey(key string) string {

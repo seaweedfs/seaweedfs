@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -45,7 +46,7 @@ func (c *commandFsLogPurge) Do(args []string, commandEnv *CommandEnv, writer io.
 		if entry.Attributes.Mtime > modificationTimeAgo {
 			return nil
 		}
-		if errDel := filer_pb.Remove(commandEnv, filer.SystemLogDir, entry.Name, true, true, true, false, nil); errDel != nil {
+		if errDel := filer_pb.Remove(context.Background(), commandEnv, filer.SystemLogDir, entry.Name, true, true, true, false, nil); errDel != nil {
 			return errDel
 		}
 		if *verbose {

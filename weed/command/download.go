@@ -60,7 +60,8 @@ func runDownload(cmd *Command, args []string) bool {
 }
 
 func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, fileId, saveDir string) error {
-	fileUrl, jwt, lookupError := operation.LookupFileId(masterFn, grpcDialOption, fileId)
+	ctx := context.Background()
+	fileUrl, jwt, lookupError := operation.LookupFileId(ctx, masterFn, grpcDialOption, fileId)
 	if lookupError != nil {
 		return lookupError
 	}
@@ -91,7 +92,7 @@ func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpti
 		fids := strings.Split(string(content), "\n")
 		for _, partId := range fids {
 			var n int
-			_, part, err := fetchContent(masterFn, grpcDialOption, partId)
+			_, part, err := fetchContent(ctx, masterFn, grpcDialOption, partId)
 			if err == nil {
 				n, err = f.Write(part)
 			}
@@ -111,8 +112,8 @@ func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpti
 	return nil
 }
 
-func fetchContent(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, fileId string) (filename string, content []byte, e error) {
-	fileUrl, jwt, lookupError := operation.LookupFileId(masterFn, grpcDialOption, fileId)
+func fetchContent(ctx context.Context, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, fileId string) (filename string, content []byte, e error) {
+	fileUrl, jwt, lookupError := operation.LookupFileId(ctx, masterFn, grpcDialOption, fileId)
 	if lookupError != nil {
 		return "", nil, lookupError
 	}

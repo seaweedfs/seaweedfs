@@ -348,6 +348,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 		}
 
 		finalFileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
+			context.Background(),
 			worker,
 			&filer_pb.AssignVolumeRequest{
 				Count:       1,
@@ -394,7 +395,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 			},
 		}
 
-		if err := filer_pb.CreateEntry(client, request); err != nil {
+		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)
 		}
 		return nil
@@ -433,6 +434,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 			}
 
 			fileId, uploadResult, err, _ := uploader.UploadWithRetry(
+				context.Background(),
 				worker,
 				&filer_pb.AssignVolumeRequest{
 					Count:       1,
@@ -481,7 +483,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 		for _, chunk := range chunks {
 			fileIds = append(fileIds, chunk.FileId)
 		}
-		operation.DeleteFileIds(func(_ context.Context) pb.ServerAddress {
+		operation.DeleteFileIds(context.Background(), func(_ context.Context) pb.ServerAddress {
 			return pb.ServerAddress(copy.masters[0])
 		}, false, worker.options.grpcDialOption, fileIds)
 		return uploadError
@@ -511,7 +513,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 			},
 		}
 
-		if err := filer_pb.CreateEntry(client, request); err != nil {
+		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			return fmt.Errorf("update fh: %v", err)
 		}
 		return nil
@@ -550,6 +552,7 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 	}
 
 	finalFileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
+		context.Background(),
 		worker,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,

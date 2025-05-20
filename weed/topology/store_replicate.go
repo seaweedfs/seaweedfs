@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,7 +24,7 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5 string) (isUnchanged bool, err error) {
+func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5 string) (isUnchanged bool, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
@@ -32,7 +33,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
 		// this is the initial request
-		remoteLocations, err = GetWritableRemoteReplications(s, grpcDialOption, volumeId, masterFn)
+		remoteLocations, err = GetWritableRemoteReplications(ctx, s, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -121,7 +122,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
 				return err
 			}
-			_, err = uploader.UploadData(n.Data, uploadOption)
+			_, err = uploader.UploadData(ctx, n.Data, uploadOption)
 			if err != nil {
 				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
 			}
@@ -138,14 +139,14 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	return
 }
 
-func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (size types.Size, err error) {
+func ReplicatedDelete(ctx context.Context, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (size types.Size, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
 
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
-		remoteLocations, err = GetWritableRemoteReplications(store, grpcDialOption, volumeId, masterFn)
+		remoteLocations, err = GetWritableRemoteReplications(ctx, store, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -160,7 +161,7 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 
 	if len(remoteLocations) > 0 { //send to other replica locations
 		if err = DistributedOperation(remoteLocations, func(location operation.Location) error {
-			return util_http.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
+			return util_http.Delete(ctx, "http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 		}); err != nil {
 			size = 0
 		}
@@ -205,7 +206,7 @@ func DistributedOperation(locations []operation.Location, op func(location opera
 	return ret.Error()
 }
 
-func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (remoteLocations []operation.Location, err error) {
+func GetWritableRemoteReplications(ctx context.Context, s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (remoteLocations []operation.Location, err error) {
 
 	v := s.GetVolume(volumeId)
 	if v != nil && v.ReplicaPlacement.GetCopyCount() == 1 {
@@ -213,7 +214,7 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	}
 
 	// not on local store, or has replications
-	lookupResult, lookupErr := operation.LookupVolumeId(masterFn, grpcDialOption, volumeId.String())
+	lookupResult, lookupErr := operation.LookupVolumeId(ctx, masterFn, grpcDialOption, volumeId.String())
 	if lookupErr == nil {
 		selfUrl := util.JoinHostPort(s.Ip, s.Port)
 		for _, location := range lookupResult.Locations {

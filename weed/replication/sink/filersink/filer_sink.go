@@ -90,12 +90,12 @@ func (fs *FilerSink) DoInitialize(address, grpcAddress string, dir string,
 	return nil
 }
 
-func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+func (fs *FilerSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	dir, name := util.FullPath(key).DirAndName()
 
 	glog.V(4).Infof("delete entry: %v", key)
-	err := filer_pb.Remove(fs, dir, name, deleteIncludeChunks, true, true, true, signatures)
+	err := filer_pb.Remove(ctx, fs, dir, name, deleteIncludeChunks, true, true, true, signatures)
 	if err != nil {
 		glog.V(0).Infof("delete entry %s: %v", key, err)
 		return fmt.Errorf("delete entry %s: %v", key, err)
@@ -103,7 +103,7 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 	return nil
 }
 
-func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
+func (fs *FilerSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -115,7 +115,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			Name:      name,
 		}
 		// glog.V(1).Infof("lookup: %v", lookupRequest)
-		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
+		if resp, err := filer_pb.LookupEntry(ctx, client, lookupRequest); err == nil {
 			if filer.ETag(resp.Entry) == filer.ETag(entry) {
 				glog.V(3).Infof("already replicated %s", key)
 				return nil
@@ -152,7 +152,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 		}
 
 		glog.V(3).Infof("create: %v", request)
-		if err := filer_pb.CreateEntry(client, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).Infof("create entry %s: %v", key, err)
 			return fmt.Errorf("create entry %s: %v", key, err)
 		}
@@ -161,7 +161,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 	})
 }
 
-func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
+func (fs *FilerSink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 
 	dir, name := util.FullPath(key).DirAndName()
 
@@ -175,7 +175,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		glog.V(4).Infof("lookup entry: %v", request)
-		resp, err := filer_pb.LookupEntry(client, request)
+		resp, err := filer_pb.LookupEntry(ctx, client, request)
 		if err != nil {
 			glog.V(0).Infof("lookup %s: %v", key, err)
 			return err
@@ -198,7 +198,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		glog.V(2).Infof("late updates %s", key)
 	} else {
 		// find out what changed
-		deletedChunks, newChunks, err := compareChunks(filer.LookupFn(fs), oldEntry, newEntry)
+		deletedChunks, newChunks, err := compareChunks(ctx, filer.LookupFn(fs), oldEntry, newEntry)
 		if err != nil {
 			return true, fmt.Errorf("replicate %s compare chunks error: %v", key, err)
 		}
@@ -242,12 +242,12 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	})
 
 }
-func compareChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
-	aData, aMeta, aErr := filer.ResolveChunkManifest(lookupFileIdFn, oldEntry.GetChunks(), 0, math.MaxInt64)
+func compareChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
+	aData, aMeta, aErr := filer.ResolveChunkManifest(ctx, lookupFileIdFn, oldEntry.GetChunks(), 0, math.MaxInt64)
 	if aErr != nil {
 		return nil, nil, aErr
 	}
-	bData, bMeta, bErr := filer.ResolveChunkManifest(lookupFileIdFn, newEntry.GetChunks(), 0, math.MaxInt64)
+	bData, bMeta, bErr := filer.ResolveChunkManifest(ctx, lookupFileIdFn, newEntry.GetChunks(), 0, math.MaxInt64)
 	if bErr != nil {
 		return nil, nil, bErr
 	}

@@ -76,13 +76,13 @@ func (g *GcsSink) initialize(google_application_credentials, bucketName, dir str
 	return nil
 }
 
-func (g *GcsSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+func (g *GcsSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	if isDirectory {
 		key = key + "/"
 	}
 
-	if err := g.client.Bucket(g.bucket).Object(key).Delete(context.Background()); err != nil {
+	if err := g.client.Bucket(g.bucket).Object(key).Delete(ctx); err != nil {
 		return fmt.Errorf("gcs delete %s%s: %v", g.bucket, key, err)
 	}
 
@@ -90,14 +90,14 @@ func (g *GcsSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool,
 
 }
 
-func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
+func (g *GcsSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	if entry.IsDirectory {
 		return nil
 	}
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews := filer.ViewFromChunks(ctx, g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
 	wc := g.client.Bucket(g.bucket).Object(key).NewWriter(context.Background())
 	defer wc.Close()
@@ -119,6 +119,6 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []in
 
 }
 
-func (g *GcsSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
-	return true, g.CreateEntry(key, newEntry, signatures)
+func (g *GcsSink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
+	return true, g.CreateEntry(ctx, key, newEntry, signatures)
 }

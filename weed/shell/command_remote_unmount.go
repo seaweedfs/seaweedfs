@@ -99,12 +99,12 @@ func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir stri
 
 		oldEntry := lookupResp.Entry
 
-		deleteError := filer_pb.DoRemove(client, parent, name, true, true, true, false, nil)
+		deleteError := filer_pb.DoRemove(context.Background(), client, parent, name, true, true, true, false, nil)
 		if deleteError != nil {
 			return fmt.Errorf("delete %s: %v", dir, deleteError)
 		}
 
-		mkdirErr := filer_pb.DoMkdir(client, parent, name, func(entry *filer_pb.Entry) {
+		mkdirErr := filer_pb.DoMkdir(context.Background(), client, parent, name, func(entry *filer_pb.Entry) {
 			entry.Attributes = oldEntry.Attributes
 			entry.Extended = oldEntry.Extended
 			entry.Attributes.Crtime = time.Now().Unix()

@@ -1,6 +1,7 @@
 package logstore
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"github.com/parquet-go/parquet-go"
@@ -54,7 +55,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 	eachFileFn := func(entry *filer_pb.Entry, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64) (processedTsNs int64, err error) {
 		// create readerAt for the parquet file
 		fileSize := filer.FileSize(entry)
-		visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+		visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
 		chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
 		readerCache := filer.NewReaderCache(32, chunkCache, lookupFileIdFn)
 		readerAt := filer.NewChunkReaderAtFromClient(readerCache, chunkViews, int64(fileSize))

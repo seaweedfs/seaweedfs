@@ -139,7 +139,7 @@ func (ap *singleThreadAssignProxy) doAssign(grpcConnection *grpc.ClientConn, pri
 	return
 }
 
-func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
+func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
 
 	var requests []*VolumeAssignRequest
 	requests = append(requests, primaryRequest)
@@ -165,7 +165,7 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 				DataNode:            request.DataNode,
 				WritableVolumeCount: request.WritableVolumeCount,
 			}
-			resp, grpcErr := masterClient.Assign(context.Background(), req)
+			resp, grpcErr := masterClient.Assign(ctx, req)
 			if grpcErr != nil {
 				return grpcErr
 			}

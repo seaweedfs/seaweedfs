@@ -43,6 +43,7 @@ func InternalError(w http.ResponseWriter) {
 }
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	n := new(needle.Needle)
 	vid, fid, filename, ext, _ := parseURLPath(r.URL.Path)
 
@@ -73,7 +74,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			NotFound(w)
 			return
 		}
-		lookupResult, err := operation.LookupVolumeId(vs.GetMaster, vs.grpcDialOption, volumeId.String())
+		lookupResult, err := operation.LookupVolumeId(ctx, vs.GetMaster, vs.grpcDialOption, volumeId.String())
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
 		if err != nil || len(lookupResult.Locations) <= 0 {
 			glog.V(0).Infoln("lookup error:", err, r.URL.Path)

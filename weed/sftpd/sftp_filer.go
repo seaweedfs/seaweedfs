@@ -322,7 +322,7 @@ func (fs *SftpServer) makeDir(r *sftp.Request) error {
 		return err
 	}
 	// default mode and ownership
-	err := filer_pb.Mkdir(fs, string(dir), name, func(entry *filer_pb.Entry) {
+	err := filer_pb.Mkdir(context.Background(), fs, string(dir), name, func(entry *filer_pb.Entry) {
 		mode := uint32(0755 | os.ModeDir)
 		if strings.HasPrefix(r.Filepath, fs.user.HomeDir) {
 			mode = uint32(0700 | os.ModeDir)
@@ -394,7 +394,7 @@ type SeaweedFileReaderAt struct {
 
 func (ra *SeaweedFileReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	// Create a new reader for each ReadAt call
-	reader := filer.NewFileReader(ra.fs, ra.entry)
+	reader := filer.NewFileReader(context.Background(), ra.fs, ra.entry)
 	if reader == nil {
 		return 0, fmt.Errorf("failed to create file reader")
 	}

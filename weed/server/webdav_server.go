@@ -209,7 +209,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
-		if err := filer_pb.CreateEntry(client, request); err != nil {
+		if err := filer_pb.CreateEntry(ctx, client, request); err != nil {
 			return fmt.Errorf("mkdir %s/%s: %v", dir, name, err)
 		}
 
@@ -240,7 +240,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 
 		dir, name := util.FullPath(fullFilePath).DirAndName()
 		err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			if err := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
+			if err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 				Directory: dir,
 				Entry: &filer_pb.Entry{
 					Name:        name,
@@ -299,7 +299,7 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 
 	dir, name := util.FullPath(fullFilePath).DirAndName()
 
-	return filer_pb.Remove(fs, dir, name, true, false, false, false, []int32{fs.signature})
+	return filer_pb.Remove(context.Background(), fs, dir, name, true, false, false, false, []int32{fs.signature})
 
 }
 
@@ -371,7 +371,7 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 	fullpath := util.FullPath(fullFilePath)
 
 	var fi FileInfo
-	entry, err := filer_pb.GetEntry(fs, fullpath)
+	entry, err := filer_pb.GetEntry(ctx, fs, fullpath)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			return nil, os.ErrNotExist
@@ -410,6 +410,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 	}
 
 	fileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
+		context.Background(),
 		f.fs,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,
@@ -452,7 +453,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	var getErr error
 	ctx := context.Background()
 	if f.entry == nil {
-		f.entry, getErr = filer_pb.GetEntry(f.fs, fullPath)
+		f.entry, getErr = filer_pb.GetEntry(ctx, f.fs, fullPath)
 	}
 
 	if f.entry == nil {
@@ -543,7 +544,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	glog.V(2).Infof("WebDavFileSystem.Read %v", f.name)
 
 	if f.entry == nil {
-		f.entry, err = filer_pb.GetEntry(f.fs, util.FullPath(f.name))
+		f.entry, err = filer_pb.GetEntry(context.Background(), f.fs, util.FullPath(f.name))
 	}
 	if f.entry == nil {
 		return 0, err
@@ -556,7 +557,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		return 0, io.EOF
 	}
 	if f.visibleIntervals == nil {
-		f.visibleIntervals, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.GetChunks(), 0, fileSize)
+		f.visibleIntervals, _ = filer.NonOverlappingVisibleIntervals(context.Background(), filer.LookupFn(f.fs), f.entry.GetChunks(), 0, fileSize)
 		f.reader = nil
 	}
 	if f.reader == nil {

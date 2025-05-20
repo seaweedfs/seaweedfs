@@ -18,8 +18,7 @@ import (
 
 // handling single chunk POST or PUT upload
 func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) (filerResult *FilerPostResult, err error) {
-
-	fileId, urlLocation, auth, err := fs.assignNewFileInfo(so)
+	fileId, urlLocation, auth, err := fs.assignNewFileInfo(ctx, so)
 
 	if err != nil || fileId == "" || urlLocation == "" {
 		return nil, fmt.Errorf("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, so.Collection, so.DataCenter)
@@ -59,7 +58,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		return nil, fmt.Errorf("uploader initialization error: %v", uploaderErr)
 	}
 
-	uploadResult, uploadError := uploader.UploadData(uncompressedData, uploadOption)
+	uploadResult, uploadError := uploader.UploadData(ctx, uncompressedData, uploadOption)
 	if uploadError != nil {
 		return nil, fmt.Errorf("upload to volume server: %v", uploadError)
 	}
@@ -97,7 +96,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 
 	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil, false, so.MaxFileNameLength); dbErr != nil {
-		fs.filer.DeleteUncommittedChunks(entry.GetChunks())
+		fs.filer.DeleteUncommittedChunks(ctx, entry.GetChunks())
 		err = dbErr
 		filerResult.Error = dbErr.Error()
 		return

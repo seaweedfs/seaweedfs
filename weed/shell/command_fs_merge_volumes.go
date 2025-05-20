@@ -134,7 +134,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					continue
 				}
 
-				if err = filer_pb.UpdateEntry(filerClient, &filer_pb.UpdateEntryRequest{
+				if err = filer_pb.UpdateEntry(context.Background(), filerClient, &filer_pb.UpdateEntryRequest{
 					Directory: string(parentPath),
 					Entry:     entry,
 				}); err != nil {
@@ -351,16 +351,17 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 		jwt = security.GenJwtForVolumeServer(security.SigningKey(signingKey), expiresAfterSec, toFid.String())
 	}
 
-	_, err, _ = uploader.Upload(reader, &operation.UploadOption{
-		UploadUrl:         uploadURL,
-		Filename:          filename,
-		IsInputCompressed: isCompressed,
-		Cipher:            false,
-		MimeType:          contentType,
-		PairMap:           nil,
-		Md5:               md5,
-		Jwt:               security.EncodedJwt(jwt),
-	})
+	_, err, _ = uploader.Upload(context.Background(),
+		reader, &operation.UploadOption{
+			UploadUrl:         uploadURL,
+			Filename:          filename,
+			IsInputCompressed: isCompressed,
+			Cipher:            false,
+			MimeType:          contentType,
+			PairMap:           nil,
+			Md5:               md5,
+			Jwt:               security.EncodedJwt(jwt),
+		})
 	if err != nil {
 		return err
 	}

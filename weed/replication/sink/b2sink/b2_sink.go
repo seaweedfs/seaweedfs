@@ -64,7 +64,7 @@ func (g *B2Sink) initialize(accountId, accountKey, bucket, dir string) error {
 	return nil
 }
 
-func (g *B2Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+func (g *B2Sink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -72,14 +72,14 @@ func (g *B2Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, 
 		key = key + "/"
 	}
 
-	bucket, err := g.client.Bucket(context.Background(), g.bucket)
+	bucket, err := g.client.Bucket(ctx, g.bucket)
 	if err != nil {
 		return err
 	}
 
 	targetObject := bucket.Object(key)
 
-	err = targetObject.Delete(context.Background())
+	err = targetObject.Delete(ctx)
 	if err != nil {
 		// b2_download_file_by_name: 404: File with such name does not exist.
 		if strings.Contains(err.Error(), ": 404:") {
@@ -90,7 +90,7 @@ func (g *B2Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, 
 
 }
 
-func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
+func (g *B2Sink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -99,7 +99,7 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int
 	}
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews := filer.ViewFromChunks(ctx, g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
 	bucket, err := g.client.Bucket(context.Background(), g.bucket)
 	if err != nil {
@@ -107,7 +107,7 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int
 	}
 
 	targetObject := bucket.Object(key)
-	writer := targetObject.NewWriter(context.Background())
+	writer := targetObject.NewWriter(ctx)
 	defer writer.Close()
 
 	writeFunc := func(data []byte) error {
@@ -127,9 +127,9 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int
 
 }
 
-func (g *B2Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
+func (g *B2Sink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
-	return true, g.CreateEntry(key, newEntry, signatures)
+	return true, g.CreateEntry(ctx, key, newEntry, signatures)
 }
 
 func cleanKey(key string) string {

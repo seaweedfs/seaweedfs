@@ -18,7 +18,7 @@ func (vs *VolumeServer) healthzHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if vinfo.ReplicaPlacement.GetCopyCount() > 1 {
-			_, err := topology.GetWritableRemoteReplications(vs.store, vs.grpcDialOption, vinfo.Id, vs.GetMaster)
+			_, err := topology.GetWritableRemoteReplications(r.Context(), vs.store, vs.grpcDialOption, vinfo.Id, vs.GetMaster)
 			if err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return

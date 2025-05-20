@@ -210,7 +210,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource *source.FilerSource, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
 	var writeErr error
 	err = util.Retry("writeFile", func() error {
-		reader := filer.NewFileReader(filerSource, newEntry)
+		reader := filer.NewFileReader(context.Background(), filerSource, newEntry)
 		glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
 		remoteEntry, writeErr = client.WriteFile(dest, newEntry, reader)
 		if writeErr != nil {
@@ -230,7 +230,7 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 	// 3. directory creation time
 	var lastOffsetTs time.Time
 	if timeAgo == 0 {
-		mountedDirEntry, err := filer_pb.GetEntry(filerClient, util.FullPath(mountedDir))
+		mountedDirEntry, err := filer_pb.GetEntry(context.Background(), filerClient, util.FullPath(mountedDir))
 		if err != nil {
 			glog.V(0).Infof("get mounted directory %s: %v", mountedDir, err)
 			return time.Now()

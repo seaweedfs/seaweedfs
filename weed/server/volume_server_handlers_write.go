@@ -16,6 +16,7 @@ import (
 )
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	if e := r.ParseForm(); e != nil {
 		glog.V(0).Infoln("form parse error:", e)
 		writeJsonError(w, r, http.StatusBadRequest, e)
@@ -45,7 +46,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ret := operation.UploadResult{}
-	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, contentMd5)
+	isUnchanged, writeError := topology.ReplicatedWrite(ctx, vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, contentMd5)
 	if writeError != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, writeError)
 		return
@@ -71,6 +72,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	n := new(needle.Needle)
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, _ := needle.NewVolumeId(vid)
@@ -116,7 +118,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// make sure all chunks had deleted before delete manifest
-		if e := chunkManifest.DeleteChunks(vs.GetMaster, false, vs.grpcDialOption); e != nil {
+		if e := chunkManifest.DeleteChunks(ctx, vs.GetMaster, false, vs.grpcDialOption); e != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Delete chunks error: %v", e))
 			return
 		}
@@ -131,7 +133,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err := topology.ReplicatedDelete(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, n, r)
+	_, err := topology.ReplicatedDelete(ctx, vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, n, r)
 
 	writeDeleteResult(err, count, w, r)
 

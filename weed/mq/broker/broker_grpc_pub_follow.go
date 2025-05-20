@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -131,7 +132,7 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 
 func (b *MessageQueueBroker) buildFollowerLogBuffer(inMemoryBuffers *buffered_queue.BufferedQueue[memBuffer]) *log_buffer.LogBuffer {
 	lb := log_buffer.NewLogBuffer("follower",
-		2*time.Minute, func(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
+		2*time.Minute, func(ctx context.Context, logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
 			if len(buf) == 0 {
 				return
 			}
@@ -143,5 +144,6 @@ func (b *MessageQueueBroker) buildFollowerLogBuffer(inMemoryBuffers *buffered_qu
 			glog.V(0).Infof("queue up %d~%d size %d", startTime.UnixNano(), stopTime.UnixNano(), len(buf))
 		}, nil, func() {
 		})
+
 	return lb
 }

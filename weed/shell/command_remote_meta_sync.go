@@ -136,7 +136,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 			localDir := filer.MapRemoteStorageLocationPathToFullPath(localMountedDir, remoteMountedLocation, remoteDir)
 			fmt.Fprint(writer, localDir.Child(name))
 
-			lookupResponse, lookupErr := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
+			lookupResponse, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 				Directory: string(localDir),
 				Name:      name,
 			})

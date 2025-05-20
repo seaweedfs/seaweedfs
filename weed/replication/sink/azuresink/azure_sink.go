@@ -79,7 +79,7 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	return nil
 }
 
-func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+func (g *AzureSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -87,7 +87,7 @@ func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks boo
 		key = key + "/"
 	}
 
-	if _, err := g.containerURL.NewBlobURL(key).Delete(context.Background(),
+	if _, err := g.containerURL.NewBlobURL(key).Delete(ctx,
 		azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{}); err != nil {
 		return fmt.Errorf("azure delete %s/%s: %v", g.container, key, err)
 	}
@@ -96,7 +96,7 @@ func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks boo
 
 }
 
-func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
+func (g *AzureSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -105,7 +105,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	}
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews := filer.ViewFromChunks(ctx, g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
 	// Create a URL that references a to-be-created blob in your
 	// Azure Storage account's container.
@@ -116,7 +116,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 		accessCondition.ModifiedAccessConditions.IfUnmodifiedSince = time.Unix(entry.Attributes.Mtime, 0)
 	}
 
-	res, err := appendBlobURL.Create(context.Background(), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, accessCondition, azblob.BlobTagsMap{}, azblob.ClientProvidedKeyOptions{}, azblob.ImmutabilityPolicyOptions{})
+	res, err := appendBlobURL.Create(ctx, azblob.BlobHTTPHeaders{}, azblob.Metadata{}, accessCondition, azblob.BlobTagsMap{}, azblob.ClientProvidedKeyOptions{}, azblob.ImmutabilityPolicyOptions{})
 	if res != nil && res.StatusCode() == http.StatusPreconditionFailed {
 		glog.V(0).Infof("skip overwriting %s/%s: %v", g.container, key, err)
 		return nil
@@ -126,7 +126,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	}
 
 	writeFunc := func(data []byte) error {
-		_, writeErr := appendBlobURL.AppendBlock(context.Background(), bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil, azblob.ClientProvidedKeyOptions{})
+		_, writeErr := appendBlobURL.AppendBlock(ctx, bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil, azblob.ClientProvidedKeyOptions{})
 		return writeErr
 	}
 
@@ -142,9 +142,9 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 
 }
 
-func (g *AzureSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
+func (g *AzureSink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
-	return true, g.CreateEntry(key, newEntry, signatures)
+	return true, g.CreateEntry(ctx, key, newEntry, signatures)
 }
 
 func cleanKey(key string) string {

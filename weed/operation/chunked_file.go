@@ -75,12 +75,12 @@ func (cm *ChunkManifest) Marshal() ([]byte, error) {
 	return json.Marshal(cm)
 }
 
-func (cm *ChunkManifest) DeleteChunks(masterFn GetMasterFn, usePublicUrl bool, grpcDialOption grpc.DialOption) error {
+func (cm *ChunkManifest) DeleteChunks(ctx context.Context, masterFn GetMasterFn, usePublicUrl bool, grpcDialOption grpc.DialOption) error {
 	var fileIds []string
 	for _, ci := range cm.Chunks {
 		fileIds = append(fileIds, ci.Fid)
 	}
-	results, err := DeleteFileIds(masterFn, usePublicUrl, grpcDialOption, fileIds)
+	results, err := DeleteFileIds(ctx, masterFn, usePublicUrl, grpcDialOption, fileIds)
 	if err != nil {
 		glog.V(0).Infof("delete %+v: %v", fileIds, err)
 		return fmt.Errorf("chunk delete: %v", err)
@@ -175,7 +175,7 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 	for ; chunkIndex < len(cf.chunkList); chunkIndex++ {
 		ci := cf.chunkList[chunkIndex]
 		// if we need read date from local volume server first?
-		fileUrl, jwt, lookupError := LookupFileId(func(_ context.Context) pb.ServerAddress {
+		fileUrl, jwt, lookupError := LookupFileId(context.Background(), func(_ context.Context) pb.ServerAddress {
 			return cf.master
 		}, cf.grpcDialOption, ci.Fid)
 		if lookupError != nil {

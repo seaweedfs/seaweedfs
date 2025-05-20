@@ -1,6 +1,7 @@
 package log_buffer
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -14,7 +15,7 @@ import (
 
 func TestNewLogBufferFirstBuffer(t *testing.T) {
 	flushInterval := time.Second
-	lb := NewLogBuffer("test", flushInterval, func(logBuffer *LogBuffer, startTime time.Time, stopTime time.Time, buf []byte) {
+	lb := NewLogBuffer("test", flushInterval, func(ctx context.Context, logBuffer *LogBuffer, startTime time.Time, stopTime time.Time, buf []byte) {
 		fmt.Printf("flush from %v to %v %d bytes\n", startTime, stopTime, len(buf))
 	}, nil, func() {
 	})

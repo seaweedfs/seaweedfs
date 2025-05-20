@@ -108,8 +108,8 @@ func AfterEntryDeserialization(chunks []*FileChunk) {
 	}
 }
 
-func CreateEntry(client SeaweedFilerClient, request *CreateEntryRequest) error {
-	resp, err := client.CreateEntry(context.Background(), request)
+func CreateEntry(ctx context.Context, client SeaweedFilerClient, request *CreateEntryRequest) error {
+	resp, err := client.CreateEntry(ctx, request)
 	if err != nil {
 		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
 		return fmt.Errorf("CreateEntry: %v", err)
@@ -121,8 +121,8 @@ func CreateEntry(client SeaweedFilerClient, request *CreateEntryRequest) error {
 	return nil
 }
 
-func UpdateEntry(client SeaweedFilerClient, request *UpdateEntryRequest) error {
-	_, err := client.UpdateEntry(context.Background(), request)
+func UpdateEntry(ctx context.Context, client SeaweedFilerClient, request *UpdateEntryRequest) error {
+	_, err := client.UpdateEntry(ctx, request)
 	if err != nil {
 		glog.V(1).Infof("update entry %s/%s :%v", request.Directory, request.Entry.Name, err)
 		return fmt.Errorf("UpdateEntry: %v", err)
@@ -130,8 +130,8 @@ func UpdateEntry(client SeaweedFilerClient, request *UpdateEntryRequest) error {
 	return nil
 }
 
-func LookupEntry(client SeaweedFilerClient, request *LookupDirectoryEntryRequest) (*LookupDirectoryEntryResponse, error) {
-	resp, err := client.LookupDirectoryEntry(context.Background(), request)
+func LookupEntry(ctx context.Context, client SeaweedFilerClient, request *LookupDirectoryEntryRequest) (*LookupDirectoryEntryResponse, error) {
+	resp, err := client.LookupDirectoryEntry(ctx, request)
 	if err != nil {
 		if err == ErrNotFound || strings.Contains(err.Error(), ErrNotFound.Error()) {
 			return nil, ErrNotFound

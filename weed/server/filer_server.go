@@ -189,13 +189,13 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
-		defaultMux.HandleFunc("/healthz", fs.filerHealthzHandler)
-		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(fs.filerHandler))
+		defaultMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		defaultMux.HandleFunc("/", requestIDMiddleware(fs.filerGuard.WhiteList(fs.filerHandler)))
 	}
 	if defaultMux != readonlyMux {
 		handleStaticResources(readonlyMux)
-		readonlyMux.HandleFunc("/healthz", fs.filerHealthzHandler)
-		readonlyMux.HandleFunc("/", fs.filerGuard.WhiteList(fs.readonlyFilerHandler))
+		readonlyMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		readonlyMux.HandleFunc("/", requestIDMiddleware(fs.filerGuard.WhiteList(fs.readonlyFilerHandler)))
 	}
 
 	existingNodes := fs.filer.ListExistingPeerUpdates(context.Background())

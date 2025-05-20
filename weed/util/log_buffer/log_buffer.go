@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"bytes"
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,7 +25,7 @@ type dataToFlush struct {
 }
 
 type EachLogEntryFuncType func(logEntry *filer_pb.LogEntry) (isDone bool, err error)
-type LogFlushFuncType func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte)
+type LogFlushFuncType func(ctx context.Context, logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte)
 type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error)
 
 type LogBuffer struct {
@@ -160,7 +161,7 @@ func (logBuffer *LogBuffer) loopFlush() {
 	for d := range logBuffer.flushChan {
 		if d != nil {
 			// glog.V(4).Infof("%s flush [%v, %v] size %d", m.name, d.startTime, d.stopTime, len(d.data.Bytes()))
-			logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data.Bytes())
+			logBuffer.flushFn(context.Background(), logBuffer, d.startTime, d.stopTime, d.data.Bytes())
 			d.releaseMemory()
 			// local logbuffer is different from aggregate logbuffer here
 			logBuffer.lastFlushDataTime = d.stopTime

@@ -1,6 +1,7 @@
 package localsink
 
 import (
+	"context"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -57,7 +58,7 @@ func (localsink *LocalSink) IsIncremental() bool {
 	return localsink.isIncremental
 }
 
-func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+func (localsink *LocalSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 	if localsink.isMultiPartEntry(key) {
 		return nil
 	}
@@ -68,14 +69,14 @@ func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeCh
 	return nil
 }
 
-func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
+func (localsink *LocalSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry, signatures []int32) error {
 	if entry.IsDirectory || localsink.isMultiPartEntry(key) {
 		return nil
 	}
 	glog.V(4).Infof("Create Entry key: %s", key)
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(localsink.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews := filer.ViewFromChunks(ctx, localsink.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
 	dir := filepath.Dir(key)
 
@@ -124,13 +125,13 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	return nil
 }
 
-func (localsink *LocalSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
+func (localsink *LocalSink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	if localsink.isMultiPartEntry(key) {
 		return true, nil
 	}
 	glog.V(4).Infof("Update Entry key: %s", key)
 	// do delete and create
 	foundExistingEntry = util.FileExists(key)
-	err = localsink.CreateEntry(key, newEntry, signatures)
+	err = localsink.CreateEntry(ctx, key, newEntry, signatures)
 	return
 }

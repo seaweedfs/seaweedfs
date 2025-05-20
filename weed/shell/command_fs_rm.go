@@ -74,7 +74,7 @@ func (c *commandFsRm) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 				Directory: targetDir,
 				Name:      targetName,
 			}
-			_, err = filer_pb.LookupEntry(client, lookupRequest)
+			_, err = filer_pb.LookupEntry(context.Background(), client, lookupRequest)
 			if err != nil {
 				fmt.Fprintf(writer, "rm: %s: %v\n", targetPath, err)
 				continue

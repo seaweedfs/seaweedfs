@@ -83,7 +83,7 @@ func (c *commandS3BucketQuota) Do(args []string, commandEnv *CommandEnv, writer 
 			}
 		}
 
-		if err := filer_pb.UpdateEntry(client, &filer_pb.UpdateEntryRequest{
+		if err := filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 			Directory: filerBucketsPath,
 			Entry:     bucketEntry,
 		}); err != nil {

@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -20,6 +21,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 		}
 
 		fileId, uploadResult, err, data := uploader.UploadWithRetry(
+			context.Background(),
 			wfs,
 			&filer_pb.AssignVolumeRequest{
 				Count:       1,

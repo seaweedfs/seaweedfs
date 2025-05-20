@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"context"
 	"github.com/stretchr/testify/assert"
 	"log"
 	"slices"
@@ -65,7 +66,7 @@ func TestCompactFileChunksRealCase(t *testing.T) {
 
 	printChunks("before", chunks)
 
-	compacted, garbage := CompactFileChunks(nil, chunks)
+	compacted, garbage := CompactFileChunks(context.Background(), nil, chunks)
 
 	printChunks("compacted", compacted)
 	printChunks("garbage", garbage)

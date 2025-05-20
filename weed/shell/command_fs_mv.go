@@ -59,13 +59,13 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 	destinationDir, destinationName := util.FullPath(destinationPath).DirAndName()
 
 	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-
+		ctx := context.Background()
 		// collect destination entry info
 		destinationRequest := &filer_pb.LookupDirectoryEntryRequest{
 			Name:      destinationDir,
 			Directory: destinationName,
 		}
-		respDestinationLookupEntry, err := filer_pb.LookupEntry(client, destinationRequest)
+		respDestinationLookupEntry, err := filer_pb.LookupEntry(ctx, client, destinationRequest)
 
 		var targetDir, targetName string
 
@@ -87,7 +87,7 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 			NewName:      targetName,
 		}
 
-		_, err = client.AtomicRenameEntry(context.Background(), request)
+		_, err = client.AtomicRenameEntry(ctx, request)
 
 		fmt.Fprintf(writer, "move: %s => %s\n", sourcePath, util.NewFullPath(targetDir, targetName))
 

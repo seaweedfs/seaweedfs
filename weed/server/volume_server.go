@@ -115,22 +115,22 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)
-	adminMux.HandleFunc("/status", vs.statusHandler)
-	adminMux.HandleFunc("/healthz", vs.healthzHandler)
+	adminMux.HandleFunc("/status", requestIDMiddleware(vs.statusHandler))
+	adminMux.HandleFunc("/healthz", requestIDMiddleware(vs.healthzHandler))
 	if signingKey == "" || enableUiAccess {
 		// only expose the volume server details for safe environments
-		adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
+		adminMux.HandleFunc("/ui/index.html", requestIDMiddleware(vs.uiStatusHandler))
 		/*
 			adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
 			adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
 			adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
 		*/
 	}
-	adminMux.HandleFunc("/", vs.privateStoreHandler)
+	adminMux.HandleFunc("/", requestIDMiddleware(vs.privateStoreHandler))
 	if publicMux != adminMux {
 		// separated admin and public port
 		handleStaticResources(publicMux)
-		publicMux.HandleFunc("/", vs.publicReadOnlyHandler)
+		publicMux.HandleFunc("/", requestIDMiddleware(vs.publicReadOnlyHandler))
 	}
 
 	go vs.heartbeat()
