@@ -98,13 +98,12 @@ func (cs *CompactSection) setOverflowEntry(skey SectionalNeedleId, offset Offset
 	})
 	if insertCandidate != len(cs.overflow) && cs.overflow[insertCandidate].Key == needleValue.Key {
 		cs.overflow[insertCandidate] = needleValue
-	} else {
-		cs.overflow = append(cs.overflow, needleValue)
-		for i := len(cs.overflow) - 1; i > insertCandidate; i-- {
-			cs.overflow[i] = cs.overflow[i-1]
-		}
-		cs.overflow[insertCandidate] = needleValue
+		return
 	}
+
+	cs.overflow = append(cs.overflow, needleValue)
+	copy(cs.overflow[insertCandidate+1:], cs.overflow[insertCandidate:])
+	cs.overflow[insertCandidate] = needleValue
 }
 
 func (cs *CompactSection) findOverflowEntry(key SectionalNeedleId) (nv SectionalNeedleValue, found bool) {
