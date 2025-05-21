@@ -44,50 +44,56 @@ func NewCompactSection(start NeedleId) *CompactSection {
 // return old entry size
 func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset Offset, oldSize Size) {
 	cs.Lock()
+	defer cs.Unlock()
+
 	if key > cs.end {
 		cs.end = key
 	}
 	skey := SectionalNeedleId(key - cs.start)
 	if i := cs.binarySearchValues(skey); i >= 0 {
+		// update
 		oldOffset.OffsetHigher, oldOffset.OffsetLower, oldSize = cs.values[i].OffsetHigher, cs.values[i].OffsetLower, cs.values[i].Size
-		//println("key", key, "old size", ret)
 		cs.values[i].OffsetHigher, cs.values[i].OffsetLower, cs.values[i].Size = offset.OffsetHigher, offset.OffsetLower, size
-	} else {
-		needOverflow := cs.counter >= batch
-		needOverflow = needOverflow || cs.counter > 0 && cs.values[cs.counter-1].Key > skey
-		if needOverflow {
-			lookBackIndex := cs.counter - 128
-			if lookBackIndex < 0 {
-				lookBackIndex = 0
-			}
-			if cs.counter < batch && cs.values[lookBackIndex].Key < skey {
-				// still has capacity and only partially out of order
-				p := &cs.values[cs.counter]
-				p.Key, cs.values[cs.counter].OffsetHigher, p.OffsetLower, p.Size = skey, offset.OffsetHigher, offset.OffsetLower, size
-				//println("added index", cs.counter, "key", key, cs.values[cs.counter].Key)
-				for x := cs.counter - 1; x >= lookBackIndex; x-- {
-					if cs.values[x].Key > cs.values[x+1].Key {
-						cs.values[x], cs.values[x+1] = cs.values[x+1], cs.values[x]
-					} else {
-						break
-					}
-				}
-				cs.counter++
-			} else {
-				//println("start", cs.start, "counter", cs.counter, "key", key)
-				if oldValue, found := cs.findOverflowEntry(skey); found {
-					oldOffset.OffsetHigher, oldOffset.OffsetLower, oldSize = oldValue.OffsetHigher, oldValue.OffsetLower, oldValue.Size
-				}
-				cs.setOverflowEntry(skey, offset, size)
-			}
-		} else {
-			p := &cs.values[cs.counter]
-			p.Key, cs.values[cs.counter].OffsetHigher, p.OffsetLower, p.Size = skey, offset.OffsetHigher, offset.OffsetLower, size
-			//println("added index", cs.counter, "key", key, cs.values[cs.counter].Key)
-			cs.counter++
-		}
+		return
 	}
-	cs.Unlock()
+
+	needOverflow := cs.counter >= batch
+	needOverflow = needOverflow || cs.counter > 0 && cs.values[cs.counter-1].Key > skey
+	if !needOverflow {
+		// non-overflow update
+		p := &cs.values[cs.counter]
+		p.Key, cs.values[cs.counter].OffsetHigher, p.OffsetLower, p.Size = skey, offset.OffsetHigher, offset.OffsetLower, size
+		cs.counter++
+		return
+	}
+
+	lookBackIndex := cs.counter - 128
+	if lookBackIndex < 0 {
+		lookBackIndex = 0
+	}
+	if cs.counter < batch && cs.values[lookBackIndex].Key < skey {
+		// still has capacity and only partially out of order
+		p := &cs.values[cs.counter]
+		p.Key, cs.values[cs.counter].OffsetHigher, p.OffsetLower, p.Size = skey, offset.OffsetHigher, offset.OffsetLower, size
+		//println("added index", cs.counter, "key", key, cs.values[cs.counter].Key)
+		for x := cs.counter - 1; x >= lookBackIndex; x-- {
+			if cs.values[x].Key > cs.values[x+1].Key {
+				cs.values[x], cs.values[x+1] = cs.values[x+1], cs.values[x]
+			} else {
+				break
+			}
+		}
+		cs.counter++
+		return
+	}
+
+	// overflow update
+	//println("start", cs.start, "counter", cs.counter, "key", key)
+	if oldValue, found := cs.findOverflowEntry(skey); found {
+		oldOffset.OffsetHigher, oldOffset.OffsetLower, oldSize = oldValue.OffsetHigher, oldValue.OffsetLower, oldValue.Size
+	}
+	cs.setOverflowEntry(skey, offset, size)
+
 	return
 }
 
@@ -96,6 +102,7 @@ func (cs *CompactSection) setOverflowEntry(skey SectionalNeedleId, offset Offset
 	insertCandidate := sort.Search(len(cs.overflow), func(i int) bool {
 		return cs.overflow[i].Key >= needleValue.Key
 	})
+
 	if insertCandidate != len(cs.overflow) && cs.overflow[insertCandidate].Key == needleValue.Key {
 		cs.overflow[insertCandidate] = needleValue
 		return
