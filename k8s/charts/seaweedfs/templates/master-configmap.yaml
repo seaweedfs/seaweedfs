@@ -1,4 +1,4 @@
-{{- if .Values.master.enabled }}
+{{- if or .Values.master.enabled .Values.allInOne.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

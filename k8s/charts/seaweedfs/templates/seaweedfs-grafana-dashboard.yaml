@@ -1,20 +1,19 @@
 {{- if .Values.global.monitoring.enabled }}
 {{- $files := .Files.Glob "dashboards/*.json" }}
 {{- if $files }}
-apiVersion: v1
-kind: ConfigMapList
-items:
-{{- range $path, $fileContents := $files }}
+{{- range $path, $file := $files }}
 {{- $dashboardName := regexReplaceAll "(^.*/)(.*)\\.json$" $path "${2}" }}
-- apiVersion: v1
-  kind: ConfigMap
-  metadata:
-    name: {{ printf "%s" $dashboardName | lower | replace "_" "-" }}
-    namespace: {{ $.Release.Namespace }}
-    labels:
-     grafana_dashboard: "1"
-  data:
-    {{ $dashboardName }}.json: {{ $.Files.Get $path | toJson }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s" $dashboardName | lower | replace "_" "-" }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    grafana_dashboard: "1"
+data:
+  {{ $dashboardName }}.json: |-
+{{ toString $file | indent 4 }}
 {{- end }}
 {{- end }}
 {{- end }}
