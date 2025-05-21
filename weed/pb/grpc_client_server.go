@@ -3,6 +3,7 @@ package pb
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"google.golang.org/grpc/metadata"
 	"math/rand/v2"
 	"net/http"
@@ -58,6 +59,7 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 		}),
 		grpc.MaxRecvMsgSize(Max_Message_Size),
 		grpc.MaxSendMsgSize(Max_Message_Size),
+		grpc.UnaryInterceptor(requestIDUnaryInterceptor()),
 	)
 	for _, opt := range opts {
 		if opt != nil {
@@ -116,6 +118,30 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 	grpcClients[address] = vgc
 
 	return vgc, nil
+}
+
+func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req interface{},
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (interface{}, error) {
+		md, _ := metadata.FromIncomingContext(ctx)
+		idList := md.Get(util.RequestIDKey)
+		var reqID string
+		if len(idList) > 0 {
+			reqID = idList[0]
+		}
+		if reqID == "" {
+			reqID = uuid.New().String()
+		}
+
+		ctx = util.WithRequestID(ctx, reqID)
+		grpc.SetTrailer(ctx, metadata.Pairs(util.RequestIDKey, reqID))
+
+		return handler(ctx, req)
+	}
 }
 
 // WithGrpcClient In streamingMode, always use a fresh connection. Otherwise, try to reuse an existing connection.

@@ -3,9 +3,12 @@ package weed_server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
+	"google.golang.org/grpc/metadata"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -420,4 +423,22 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		return fmt.Errorf("ProcessRangeRequest err: %v", err)
 	}
 	return nil
+}
+
+func requestIDMiddleware(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		reqID := r.Header.Get(util.RequestIdHttpHeader)
+		if reqID == "" {
+			reqID = uuid.New().String()
+		}
+
+		ctx := context.WithValue(r.Context(), util.RequestIDKey, reqID)
+		ctx = metadata.NewOutgoingContext(ctx,
+			metadata.New(map[string]string{
+				util.RequestIDKey: reqID,
+			}))
+
+		w.Header().Set(util.RequestIdHttpHeader, reqID)
+		h(w, r.WithContext(ctx))
+	}
 }
