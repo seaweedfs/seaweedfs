@@ -35,8 +35,8 @@ type Overflow []SectionalNeedleValue
 
 func NewCompactSection(start NeedleId) *CompactSection {
 	return &CompactSection{
-		values:   make([]SectionalNeedleValue, batch),
-		overflow: Overflow(make([]SectionalNeedleValue, 0)),
+		values:   []SectionalNeedleValue{},
+		overflow: Overflow([]SectionalNeedleValue{}),
 		start:    start,
 	}
 }
@@ -60,9 +60,13 @@ func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset
 	needOverflow := cs.counter >= batch
 	needOverflow = needOverflow || cs.counter > 0 && cs.values[cs.counter-1].Key > skey
 	if !needOverflow {
-		// non-overflow update
-		p := &cs.values[cs.counter]
-		p.Key, cs.values[cs.counter].OffsetHigher, p.OffsetLower, p.Size = skey, offset.OffsetHigher, offset.OffsetLower, size
+		// non-overflow insert
+		cs.values = append(cs.values, SectionalNeedleValue{
+			Key:          skey,
+			OffsetLower:  offset.OffsetLower,
+			Size:         size,
+			OffsetHigher: offset.OffsetHigher,
+		})
 		cs.counter++
 		return
 	}
@@ -73,21 +77,20 @@ func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset
 	}
 	if cs.counter < batch && cs.values[lookBackIndex].Key < skey {
 		// still has capacity and only partially out of order
-		p := &cs.values[cs.counter]
-		p.Key, cs.values[cs.counter].OffsetHigher, p.OffsetLower, p.Size = skey, offset.OffsetHigher, offset.OffsetLower, size
-		//println("added index", cs.counter, "key", key, cs.values[cs.counter].Key)
-		for x := cs.counter - 1; x >= lookBackIndex; x-- {
-			if cs.values[x].Key > cs.values[x+1].Key {
-				cs.values[x], cs.values[x+1] = cs.values[x+1], cs.values[x]
-			} else {
+		for ; lookBackIndex < cs.counter; lookBackIndex++ {
+			if cs.values[lookBackIndex].Key >= skey {
 				break
 			}
 		}
+		cs.values = append(cs.values, SectionalNeedleValue{})
+		copy(cs.values[lookBackIndex+1:], cs.values[lookBackIndex:])
+		cs.values[lookBackIndex].Key, cs.values[lookBackIndex].Size = skey, size
+		cs.values[lookBackIndex].OffsetLower, cs.values[lookBackIndex].OffsetHigher = offset.OffsetLower, offset.OffsetHigher
 		cs.counter++
 		return
 	}
 
-	// overflow update
+	// overflow insert
 	//println("start", cs.start, "counter", cs.counter, "key", key)
 	if oldValue, found := cs.findOverflowEntry(skey); found {
 		oldOffset.OffsetHigher, oldOffset.OffsetLower, oldSize = oldValue.OffsetHigher, oldValue.OffsetLower, oldValue.Size
@@ -108,7 +111,7 @@ func (cs *CompactSection) setOverflowEntry(skey SectionalNeedleId, offset Offset
 		return
 	}
 
-	cs.overflow = append(cs.overflow, needleValue)
+	cs.overflow = append(cs.overflow, SectionalNeedleValue{})
 	copy(cs.overflow[insertCandidate+1:], cs.overflow[insertCandidate:])
 	cs.overflow[insertCandidate] = needleValue
 }
