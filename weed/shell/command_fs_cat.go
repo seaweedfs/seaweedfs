@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -49,7 +50,7 @@ func (c *commandFsCat) Do(args []string, commandEnv *CommandEnv, writer io.Write
 			Name:      name,
 			Directory: dir,
 		}
-		respLookupEntry, err := filer_pb.LookupEntry(client, request)
+		respLookupEntry, err := filer_pb.LookupEntry(context.Background(), client, request)
 		if err != nil {
 			return err
 		}

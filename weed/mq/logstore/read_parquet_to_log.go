@@ -1,6 +1,7 @@
 package logstore
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"github.com/parquet-go/parquet-go"
@@ -115,7 +116,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-			return filer_pb.SeaweedList(client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+			return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 				if entry.IsDirectory {
 					return nil
 				}

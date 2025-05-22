@@ -322,7 +322,7 @@ func (fs *SftpServer) makeDir(r *sftp.Request) error {
 		return err
 	}
 	// default mode and ownership
-	err := filer_pb.Mkdir(fs, string(dir), name, func(entry *filer_pb.Entry) {
+	err := filer_pb.Mkdir(context.Background(), fs, string(dir), name, func(entry *filer_pb.Entry) {
 		mode := uint32(0755 | os.ModeDir)
 		if strings.HasPrefix(r.Filepath, fs.user.HomeDir) {
 			mode = uint32(0700 | os.ModeDir)

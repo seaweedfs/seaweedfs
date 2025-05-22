@@ -255,7 +255,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// create mount root
 	mountRootPath := util.FullPath(mountRoot)
 	mountRootParent, mountDir := mountRootPath.DirAndName()
-	if err = filer_pb.Mkdir(seaweedFileSystem, mountRootParent, mountDir, nil); err != nil {
+	if err = filer_pb.Mkdir(context.Background(), seaweedFileSystem, mountRootParent, mountDir, nil); err != nil {
 		fmt.Printf("failed to create dir %s on filer %s: %v\n", mountRoot, filerAddresses, err)
 		return false
 	}

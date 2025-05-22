@@ -65,7 +65,7 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 			Name:      destinationDir,
 			Directory: destinationName,
 		}
-		respDestinationLookupEntry, err := filer_pb.LookupEntry(client, destinationRequest)
+		respDestinationLookupEntry, err := filer_pb.LookupEntry(context.Background(), client, destinationRequest)
 
 		var targetDir, targetName string
 

@@ -63,7 +63,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
-		if err := filer_pb.CreateEntry(client, request); err != nil {
+		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
 			return err
 		}
@@ -107,7 +107,7 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 
 	glog.V(3).Infof("remove directory: %v", entryFullPath)
 	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
-	err := filer_pb.Remove(wfs, string(dirFullPath), name, true, false, ignoreRecursiveErr, false, []int32{wfs.signature})
+	err := filer_pb.Remove(context.Background(), wfs, string(dirFullPath), name, true, false, ignoreRecursiveErr, false, []int32{wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
 		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {

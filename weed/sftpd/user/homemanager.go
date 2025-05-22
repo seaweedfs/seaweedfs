@@ -104,7 +104,7 @@ func (hm *HomeManager) createSingleDirectory(dirPath string, user *User) error {
 			// Directory doesn't exist, create it
 			glog.V(0).Infof("Creating directory %s for user %s", dirPath, user.Username)
 
-			err = filer_pb.Mkdir(hm, string(dir), name, func(entry *filer_pb.Entry) {
+			err = filer_pb.Mkdir(context.Background(), hm, string(dir), name, func(entry *filer_pb.Entry) {
 				// Set appropriate permissions
 				entry.Attributes.FileMode = uint32(0700 | os.ModeDir) // rwx------ for user
 				entry.Attributes.Uid = user.Uid

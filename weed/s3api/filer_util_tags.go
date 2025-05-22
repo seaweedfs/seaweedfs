@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"strings"
 
@@ -15,7 +16,7 @@ func (s3a *S3ApiServer) getTags(parentDirectoryPath string, entryName string) (t
 
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parentDirectoryPath,
 			Name:      entryName,
 		})
@@ -37,7 +38,7 @@ func (s3a *S3ApiServer) setTags(parentDirectoryPath string, entryName string, ta
 
 	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parentDirectoryPath,
 			Name:      entryName,
 		})
@@ -58,7 +59,7 @@ func (s3a *S3ApiServer) setTags(parentDirectoryPath string, entryName string, ta
 			resp.Entry.Extended[S3TAG_PREFIX+k] = []byte(v)
 		}
 
-		return filer_pb.UpdateEntry(client, &filer_pb.UpdateEntryRequest{
+		return filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
 			Directory:          parentDirectoryPath,
 			Entry:              resp.Entry,
 			IsFromOtherCluster: false,
@@ -73,7 +74,7 @@ func (s3a *S3ApiServer) rmTags(parentDirectoryPath string, entryName string) (er
 
 	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parentDirectoryPath,
 			Name:      entryName,
 		})
@@ -93,7 +94,7 @@ func (s3a *S3ApiServer) rmTags(parentDirectoryPath string, entryName string) (er
 			return nil
 		}
 
-		return filer_pb.UpdateEntry(client, &filer_pb.UpdateEntryRequest{
+		return filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
 			Directory:          parentDirectoryPath,
 			Entry:              resp.Entry,
 			IsFromOtherCluster: false,

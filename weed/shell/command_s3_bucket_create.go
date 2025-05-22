@@ -71,7 +71,7 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 			},
 		}
 
-		if err := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
+		if err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 			Directory: filerBucketsPath,
 			Entry:     entry,
 		}); err != nil {

@@ -134,7 +134,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					continue
 				}
 
-				if err = filer_pb.UpdateEntry(filerClient, &filer_pb.UpdateEntryRequest{
+				if err = filer_pb.UpdateEntry(context.Background(), filerClient, &filer_pb.UpdateEntryRequest{
 					Directory: string(parentPath),
 					Entry:     entry,
 				}); err != nil {
