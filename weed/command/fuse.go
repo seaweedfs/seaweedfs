@@ -227,7 +227,7 @@ func runFuse(cmd *Command, args []string) bool {
 		argv := append(os.Args, "-o", "child="+strconv.Itoa(pid))
 
 		c := make(chan os.Signal, 1)
-		signal.Notify(c, syscall.SIGUSR1)
+		signal.Notify(c, syscall.SIGTERM)
 
 		attr := os.ProcAttr{}
 		attr.Env = os.Environ()
