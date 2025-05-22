@@ -3,7 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"strings"
 	"time"
@@ -22,16 +22,16 @@ func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer
 	for {
 		req, err := server.Recv()
 		if err != nil {
-			glog.Errorf("StreamAssign failed to receive: %v", err)
+			log.Errorf("StreamAssign failed to receive: %v", err)
 			return err
 		}
 		resp, err := ms.Assign(context.Background(), req)
 		if err != nil {
-			glog.Errorf("StreamAssign failed to assign: %v", err)
+			log.Errorf("StreamAssign failed to assign: %v", err)
 			return err
 		}
 		if err = server.Send(resp); err != nil {
-			glog.Errorf("StreamAssign failed to send: %v", err)
+			log.Errorf("StreamAssign failed to send: %v", err)
 			return err
 		}
 	}
@@ -98,7 +98,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			}
 		}
 		if err != nil {
-			glog.V(1).Infof("assign %v %v: %v", req, option.String(), err)
+			log.V(2).Infof("assign %v %v: %v", req, option.String(), err)
 			stats.MasterPickForWriteErrorCounter.Inc()
 			lastErr = err
 			if (req.DataCenter != "" || req.Rack != "") && strings.Contains(err.Error(), topology.NoWritableVolumes) {
@@ -134,7 +134,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		}, nil
 	}
 	if lastErr != nil {
-		glog.V(0).Infof("assign %v %v: %v", req, option.String(), lastErr)
+		log.V(3).Infof("assign %v %v: %v", req, option.String(), lastErr)
 	}
 	return nil, lastErr
 }

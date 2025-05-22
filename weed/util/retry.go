@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 var RetryWaitTime = 6 * time.Second
@@ -16,14 +16,14 @@ func Retry(name string, job func() error) (err error) {
 		err = job()
 		if err == nil {
 			if hasErr {
-				glog.V(0).Infof("retry %s successfully", name)
+				log.V(3).Infof("retry %s successfully", name)
 			}
 			waitTime = time.Second
 			break
 		}
 		if strings.Contains(err.Error(), "transport") {
 			hasErr = true
-			glog.V(0).Infof("retry %s: err: %v", name, err)
+			log.V(3).Infof("retry %s: err: %v", name, err)
 		} else {
 			break
 		}
@@ -40,14 +40,14 @@ func MultiRetry(name string, errList []string, job func() error) (err error) {
 		err = job()
 		if err == nil {
 			if hasErr {
-				glog.V(0).Infof("retry %s successfully", name)
+				log.V(3).Infof("retry %s successfully", name)
 			}
 			waitTime = time.Second
 			break
 		}
 		if containErr(err.Error(), errList) {
 			hasErr = true
-			glog.V(0).Infof("retry %s: err: %v", name, err)
+			log.V(3).Infof("retry %s: err: %v", name, err)
 		} else {
 			break
 		}
@@ -68,7 +68,7 @@ func RetryUntil(name string, job func() error, onErrFn func(err error) (shouldCo
 		}
 		if onErrFn(err) {
 			if strings.Contains(err.Error(), "transport") {
-				glog.V(0).Infof("retry %s: err: %v", name, err)
+				log.V(3).Infof("retry %s: err: %v", name, err)
 			}
 			time.Sleep(waitTime)
 			if waitTime < RetryWaitTime {

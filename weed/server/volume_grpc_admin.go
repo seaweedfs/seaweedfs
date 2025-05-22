@@ -14,7 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -29,9 +29,9 @@ func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server
 	err := vs.store.DeleteCollection(req.Collection)
 
 	if err != nil {
-		glog.Errorf("delete collection %s: %v", req.Collection, err)
+		log.Errorf("delete collection %s: %v", req.Collection, err)
 	} else {
-		glog.V(2).Infof("delete collection %v", req)
+		log.V(1).Infof("delete collection %v", req)
 	}
 
 	return resp, err
@@ -55,9 +55,9 @@ func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_p
 	)
 
 	if err != nil {
-		glog.Errorf("assign volume %v: %v", req, err)
+		log.Errorf("assign volume %v: %v", req, err)
 	} else {
-		glog.V(2).Infof("assign volume %v", req)
+		log.V(1).Infof("assign volume %v", req)
 	}
 
 	return resp, err
@@ -71,9 +71,9 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
-		glog.Errorf("volume mount %v: %v", req, err)
+		log.Errorf("volume mount %v: %v", req, err)
 	} else {
-		glog.V(2).Infof("volume mount %v", req)
+		log.V(1).Infof("volume mount %v", req)
 	}
 
 	return resp, err
@@ -87,9 +87,9 @@ func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb
 	err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
-		glog.Errorf("volume unmount %v: %v", req, err)
+		log.Errorf("volume unmount %v: %v", req, err)
 	} else {
-		glog.V(2).Infof("volume unmount %v", req)
+		log.V(1).Infof("volume unmount %v", req)
 	}
 
 	return resp, err
@@ -103,9 +103,9 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty)
 
 	if err != nil {
-		glog.Errorf("volume delete %v: %v", req, err)
+		log.Errorf("volume delete %v: %v", req, err)
 	} else {
-		glog.V(2).Infof("volume delete %v", req)
+		log.V(1).Infof("volume delete %v", req)
 	}
 
 	return resp, err
@@ -124,21 +124,21 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 
 	// unmount
 	if err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId)); err != nil {
-		glog.Errorf("volume configure unmount %v: %v", req, err)
+		log.Errorf("volume configure unmount %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure unmount %v: %v", req, err)
 		return resp, nil
 	}
 
 	// modify the volume info file
 	if err := vs.store.ConfigureVolume(needle.VolumeId(req.VolumeId), req.Replication); err != nil {
-		glog.Errorf("volume configure %v: %v", req, err)
+		log.Errorf("volume configure %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure %v: %v", req, err)
 		return resp, nil
 	}
 
 	// mount
 	if err := vs.store.MountVolume(needle.VolumeId(req.VolumeId)); err != nil {
-		glog.Errorf("volume configure mount %v: %v", req, err)
+		log.Errorf("volume configure mount %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure mount %v: %v", req, err)
 		return resp, nil
 	}
@@ -167,9 +167,9 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 	err := vs.store.MarkVolumeReadonly(needle.VolumeId(req.VolumeId), req.GetPersist())
 
 	if err != nil {
-		glog.Errorf("volume mark readonly %v: %v", req, err)
+		log.Errorf("volume mark readonly %v: %v", req, err)
 	} else {
-		glog.V(2).Infof("volume mark readonly %v", req)
+		log.V(1).Infof("volume mark readonly %v", req)
 	}
 
 	// step 3: tell master from redirecting traffic here again, to prevent rare case 1.5
@@ -197,7 +197,7 @@ func (vs *VolumeServer) notifyMasterVolumeReadonly(v *storage.Volume, isReadOnly
 		}
 		return nil
 	}); grpcErr != nil {
-		glog.V(0).Infof("connect to %s: %v", vs.GetMaster(context.Background()), grpcErr)
+		log.V(3).Infof("connect to %s: %v", vs.GetMaster(context.Background()), grpcErr)
 		return fmt.Errorf("grpc VolumeMarkReadonly with master %s: %v", vs.GetMaster(context.Background()), grpcErr)
 	}
 	return nil
@@ -215,9 +215,9 @@ func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_serv
 	err := vs.store.MarkVolumeWritable(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
-		glog.Errorf("volume mark writable %v: %v", req, err)
+		log.Errorf("volume mark writable %v: %v", req, err)
 	} else {
-		glog.V(2).Infof("volume mark writable %v", req)
+		log.V(1).Infof("volume mark writable %v", req)
 	}
 
 	// enable master to redirect traffic here

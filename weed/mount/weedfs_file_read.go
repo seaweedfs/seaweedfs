@@ -8,7 +8,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 /**
@@ -48,7 +48,7 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 	offset := int64(in.Offset)
 	totalRead, err := readDataByFileHandle(buff, fh, offset)
 	if err != nil {
-		glog.Warningf("file handle read %s %d: %v", fh.FullPath(), totalRead, err)
+		log.Warningf("file handle read %s %d: %v", fh.FullPath(), totalRead, err)
 		return nil, fuse.EIO
 	}
 

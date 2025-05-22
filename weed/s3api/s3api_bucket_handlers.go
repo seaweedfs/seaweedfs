@@ -23,14 +23,14 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
-	glog.V(3).Infof("ListBucketsHandler")
+	log.V(0).Infof("ListBucketsHandler")
 
 	var identity *Identity
 	var s3Err s3err.ErrorCode
@@ -80,12 +80,12 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("PutBucketHandler %s", bucket)
+	log.V(0).Infof("PutBucketHandler %s", bucket)
 
 	// validate the bucket name
 	err := s3bucket.VerifyS3BucketName(bucket)
 	if err != nil {
-		glog.Errorf("put invalid bucket name: %v %v", bucket, err)
+		log.Errorf("put invalid bucket name: %v %v", bucket, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidBucketName)
 		return
 	}
@@ -97,7 +97,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			IncludeEcVolumes:     true,
 			IncludeNormalVolumes: true,
 		}); err != nil {
-			glog.Errorf("list collection: %v", err)
+			log.Errorf("list collection: %v", err)
 			return fmt.Errorf("list collections: %v", err)
 		} else {
 			for _, c := range resp.Collections {
@@ -131,7 +131,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 	// create the folder for bucket, but lazily create actual collection
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, fn); err != nil {
-		glog.Errorf("PutBucketHandler mkdir: %v", err)
+		log.Errorf("PutBucketHandler mkdir: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -142,7 +142,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
+	log.V(0).Infof("DeleteBucketHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
@@ -167,7 +167,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 			Collection: s3a.getCollectionName(bucket),
 		}
 
-		glog.V(1).Infof("delete collection: %v", deleteCollectionRequest)
+		log.V(2).Infof("delete collection: %v", deleteCollectionRequest)
 		if _, err := client.DeleteCollection(context.Background(), deleteCollectionRequest); err != nil {
 			return fmt.Errorf("delete collection %s: %v", bucket, err)
 		}
@@ -197,7 +197,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("HeadBucketHandler %s", bucket)
+	log.V(0).Infof("HeadBucketHandler %s", bucket)
 
 	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || err == filer_pb.ErrNotFound {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
@@ -235,7 +235,7 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 	identityId := r.Header.Get(s3_constants.AmzIdentityId)
 	if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
 		if identityId != string(id) {
-			glog.V(3).Infof("hasAccess: %s != %s (entry.Extended = %v)", identityId, id, entry.Extended)
+			log.V(0).Infof("hasAccess: %s != %s (entry.Extended = %v)", identityId, id, entry.Extended)
 			return false
 		}
 	}
@@ -247,7 +247,7 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Request) {
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
+	log.V(0).Infof("GetBucketAclHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
@@ -279,7 +279,7 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Request) {
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("PutBucketAclHandler %s", bucket)
+	log.V(0).Infof("PutBucketAclHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
@@ -290,7 +290,7 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	case cannedAcl == "":
 		acl := &s3.AccessControlPolicy{}
 		if err := xmlDecoder(r.Body, acl, r.ContentLength); err != nil {
-			glog.Errorf("PutBucketAclHandler: %s", err)
+			log.Errorf("PutBucketAclHandler: %s", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
@@ -310,7 +310,7 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("GetBucketLifecycleConfigurationHandler %s", bucket)
+	log.V(0).Infof("GetBucketLifecycleConfigurationHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
@@ -318,7 +318,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 	}
 	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
 	if err != nil {
-		glog.Errorf("GetBucketLifecycleConfigurationHandler: %s", err)
+		log.Errorf("GetBucketLifecycleConfigurationHandler: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -355,7 +355,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("PutBucketLifecycleConfigurationHandler %s", bucket)
+	log.V(0).Infof("PutBucketLifecycleConfigurationHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
@@ -364,14 +364,14 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 
 	lifeCycleConfig := Lifecycle{}
 	if err := xmlDecoder(r.Body, &lifeCycleConfig, r.ContentLength); err != nil {
-		glog.Warningf("PutBucketLifecycleConfigurationHandler xml decode: %s", err)
+		log.Warningf("PutBucketLifecycleConfigurationHandler xml decode: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
 	}
 
 	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
 	if err != nil {
-		glog.Errorf("PutBucketLifecycleConfigurationHandler read filer config: %s", err)
+		log.Errorf("PutBucketLifecycleConfigurationHandler read filer config: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -407,7 +407,7 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			continue
 		}
 		if err := fc.AddLocationConf(locConf); err != nil {
-			glog.Errorf("PutBucketLifecycleConfigurationHandler add location config: %s", err)
+			log.Errorf("PutBucketLifecycleConfigurationHandler add location config: %s", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
@@ -417,13 +417,13 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	if changed {
 		var buf bytes.Buffer
 		if err := fc.ToText(&buf); err != nil {
-			glog.Errorf("PutBucketLifecycleConfigurationHandler save config to text: %s", err)
+			log.Errorf("PutBucketLifecycleConfigurationHandler save config to text: %s", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
 		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
 		}); err != nil {
-			glog.Errorf("PutBucketLifecycleConfigurationHandler save config inside filer: %s", err)
+			log.Errorf("PutBucketLifecycleConfigurationHandler save config inside filer: %s", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
@@ -437,7 +437,7 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *http.Request) {
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("DeleteBucketLifecycleHandler %s", bucket)
+	log.V(0).Infof("DeleteBucketLifecycleHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
@@ -446,7 +446,7 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 
 	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
 	if err != nil {
-		glog.Errorf("DeleteBucketLifecycleHandler read filer config: %s", err)
+		log.Errorf("DeleteBucketLifecycleHandler read filer config: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -467,13 +467,13 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 	if changed {
 		var buf bytes.Buffer
 		if err := fc.ToText(&buf); err != nil {
-			glog.Errorf("DeleteBucketLifecycleHandler save config to text: %s", err)
+			log.Errorf("DeleteBucketLifecycleHandler save config to text: %s", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
 		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
 		}); err != nil {
-			glog.Errorf("DeleteBucketLifecycleHandler save config inside filer: %s", err)
+			log.Errorf("DeleteBucketLifecycleHandler save config inside filer: %s", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
@@ -504,7 +504,7 @@ func (s3a *S3ApiServer) GetBucketRequestPaymentHandler(w http.ResponseWriter, r 
 // PutBucketOwnershipControls https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketOwnershipControls.html
 func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("PutBucketOwnershipControls %s", bucket)
+	log.V(0).Infof("PutBucketOwnershipControls %s", bucket)
 
 	errCode := s3a.checkAccessByOwnership(r, bucket)
 	if errCode != s3err.ErrNone {
@@ -579,7 +579,7 @@ func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *htt
 // GetBucketOwnershipControls https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketOwnershipControls.html
 func (s3a *S3ApiServer) GetBucketOwnershipControls(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("GetBucketOwnershipControls %s", bucket)
+	log.V(0).Infof("GetBucketOwnershipControls %s", bucket)
 
 	errCode := s3a.checkAccessByOwnership(r, bucket)
 	if errCode != s3err.ErrNone {
@@ -620,7 +620,7 @@ func (s3a *S3ApiServer) GetBucketOwnershipControls(w http.ResponseWriter, r *htt
 // DeleteBucketOwnershipControls https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketOwnershipControls.html
 func (s3a *S3ApiServer) DeleteBucketOwnershipControls(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("PutBucketOwnershipControls %s", bucket)
+	log.V(0).Infof("PutBucketOwnershipControls %s", bucket)
 
 	errCode := s3a.checkAccessByOwnership(r, bucket)
 	if errCode != s3err.ErrNone {
@@ -661,7 +661,7 @@ func (s3a *S3ApiServer) DeleteBucketOwnershipControls(w http.ResponseWriter, r *
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketVersioning.html
 func (s3a *S3ApiServer) GetBucketVersioningHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("GetBucketVersioning %s", bucket)
+	log.V(0).Infof("GetBucketVersioning %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)

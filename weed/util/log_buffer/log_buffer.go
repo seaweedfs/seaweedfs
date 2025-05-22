@@ -8,7 +8,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -117,7 +117,7 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	}
 
 	if logBuffer.startTime.Add(logBuffer.flushInterval).Before(ts) || len(logBuffer.buf)-logBuffer.pos < size+4 {
-		// glog.V(0).Infof("%s copyToFlush1 batch:%d count:%d start time %v, ts %v, remaining %d bytes", logBuffer.name, logBuffer.batchIndex, len(logBuffer.idx), logBuffer.startTime, ts, len(logBuffer.buf)-logBuffer.pos)
+		// log.V(3).Infof("%s copyToFlush1 batch:%d count:%d start time %v, ts %v, remaining %d bytes", logBuffer.name, logBuffer.batchIndex, len(logBuffer.idx), logBuffer.startTime, ts, len(logBuffer.buf)-logBuffer.pos)
 		toFlush = logBuffer.copyToFlush()
 		logBuffer.startTime = ts
 		if len(logBuffer.buf) < size+4 {
@@ -159,7 +159,7 @@ func (logBuffer *LogBuffer) IsAllFlushed() bool {
 func (logBuffer *LogBuffer) loopFlush() {
 	for d := range logBuffer.flushChan {
 		if d != nil {
-			// glog.V(4).Infof("%s flush [%v, %v] size %d", m.name, d.startTime, d.stopTime, len(d.data.Bytes()))
+			// log.V(-1).Infof("%s flush [%v, %v] size %d", m.name, d.startTime, d.stopTime, len(d.data.Bytes()))
 			logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data.Bytes())
 			d.releaseMemory()
 			// local logbuffer is different from aggregate logbuffer here
@@ -179,10 +179,10 @@ func (logBuffer *LogBuffer) loopInterval() {
 		toFlush := logBuffer.copyToFlush()
 		logBuffer.Unlock()
 		if toFlush != nil {
-			glog.V(4).Infof("%s flush [%v, %v] size %d", logBuffer.name, toFlush.startTime, toFlush.stopTime, len(toFlush.data.Bytes()))
+			log.V(-1).Infof("%s flush [%v, %v] size %d", logBuffer.name, toFlush.startTime, toFlush.stopTime, len(toFlush.data.Bytes()))
 			logBuffer.flushChan <- toFlush
 		} else {
-			// glog.V(0).Infof("%s no flush", m.name)
+			// log.V(3).Infof("%s no flush", m.name)
 		}
 	}
 }
@@ -198,9 +198,9 @@ func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
 				stopTime:  logBuffer.stopTime,
 				data:      copiedBytes(logBuffer.buf[:logBuffer.pos]),
 			}
-			// glog.V(4).Infof("%s flushing [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
+			// log.V(-1).Infof("%s flushing [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
 		} else {
-			// glog.V(4).Infof("%s removed from memory [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
+			// log.V(-1).Infof("%s removed from memory [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
 			logBuffer.lastFlushDataTime = logBuffer.stopTime
 		}
 		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.batchIndex)
@@ -259,7 +259,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		return nil, -2, nil
 	} else if lastReadPosition.Before(tsMemory) && lastReadPosition.BatchIndex+1 < tsBatchIndex { // case 2.3
 		if !logBuffer.lastFlushDataTime.IsZero() {
-			glog.V(0).Infof("resume with last flush time: %v", logBuffer.lastFlushDataTime)
+			log.V(3).Infof("resume with last flush time: %v", logBuffer.lastFlushDataTime)
 			return nil, -2, ResumeFromDiskError
 		}
 	}
@@ -270,14 +270,14 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		return nil, logBuffer.batchIndex, nil
 	}
 	if lastReadPosition.After(logBuffer.stopTime) {
-		// glog.Fatalf("unexpected last read time %v, older than latest %v", lastReadPosition, m.stopTime)
+		// log.Fatalf("unexpected last read time %v, older than latest %v", lastReadPosition, m.stopTime)
 		return nil, logBuffer.batchIndex, nil
 	}
 	if lastReadPosition.Before(logBuffer.startTime) {
 		// println("checking ", lastReadPosition.UnixNano())
 		for _, buf := range logBuffer.prevBuffers.buffers {
 			if buf.startTime.After(lastReadPosition.Time) {
-				// glog.V(4).Infof("%s return the %d sealed buffer %v", m.name, i, buf.startTime)
+				// log.V(-1).Infof("%s return the %d sealed buffer %v", m.name, i, buf.startTime)
 				// println("return the", i, "th in memory", buf.startTime.UnixNano())
 				return copiedBytes(buf.buf[:buf.size]), buf.batchIndex, nil
 			}
@@ -287,7 +287,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				return copiedBytes(buf.buf[pos:buf.size]), buf.batchIndex, nil
 			}
 		}
-		// glog.V(4).Infof("%s return the current buf %v", m.name, lastReadPosition)
+		// log.V(-1).Infof("%s return the current buf %v", m.name, lastReadPosition)
 		return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.batchIndex, nil
 	}
 
@@ -358,7 +358,7 @@ func readTs(buf []byte, pos int) (size int, ts int64) {
 
 	err := proto.Unmarshal(entryData, logEntry)
 	if err != nil {
-		glog.Fatalf("unexpected unmarshal filer_pb.LogEntry: %v", err)
+		log.Fatalf("unexpected unmarshal filer_pb.LogEntry: %v", err)
 	}
 	return size, logEntry.TsNs
 

@@ -12,7 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
@@ -94,10 +94,10 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 
 	dir, name := util.FullPath(key).DirAndName()
 
-	glog.V(4).Infof("delete entry: %v", key)
+	log.V(-1).Infof("delete entry: %v", key)
 	err := filer_pb.Remove(fs, dir, name, deleteIncludeChunks, true, true, true, signatures)
 	if err != nil {
-		glog.V(0).Infof("delete entry %s: %v", key, err)
+		log.V(3).Infof("delete entry %s: %v", key, err)
 		return fmt.Errorf("delete entry %s: %v", key, err)
 	}
 	return nil
@@ -114,14 +114,14 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			Directory: dir,
 			Name:      name,
 		}
-		// glog.V(1).Infof("lookup: %v", lookupRequest)
+		// log.V(2).Infof("lookup: %v", lookupRequest)
 		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
 			if filer.ETag(resp.Entry) == filer.ETag(entry) {
-				glog.V(3).Infof("already replicated %s", key)
+				log.V(0).Infof("already replicated %s", key)
 				return nil
 			}
 			if resp.Entry.Attributes != nil && resp.Entry.Attributes.Mtime >= entry.Attributes.Mtime {
-				glog.V(3).Infof("skip overwriting %s", key)
+				log.V(0).Infof("skip overwriting %s", key)
 				return nil
 			}
 		}
@@ -130,11 +130,11 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 
 		if err != nil {
 			// only warning here since the source chunk may have been deleted already
-			glog.Warningf("replicate entry chunks %s: %v", key, err)
+			log.Warningf("replicate entry chunks %s: %v", key, err)
 			return nil
 		}
 
-		// glog.V(4).Infof("replicated %s %+v ===> %+v", key, entry.GetChunks(), replicatedChunks)
+		// log.V(-1).Infof("replicated %s %+v ===> %+v", key, entry.GetChunks(), replicatedChunks)
 
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
@@ -151,9 +151,9 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			Signatures:         signatures,
 		}
 
-		glog.V(3).Infof("create: %v", request)
+		log.V(0).Infof("create: %v", request)
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("create entry %s: %v", key, err)
+			log.V(3).Infof("create entry %s: %v", key, err)
 			return fmt.Errorf("create entry %s: %v", key, err)
 		}
 
@@ -174,10 +174,10 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 			Name:      name,
 		}
 
-		glog.V(4).Infof("lookup entry: %v", request)
+		log.V(-1).Infof("lookup entry: %v", request)
 		resp, err := filer_pb.LookupEntry(client, request)
 		if err != nil {
-			glog.V(0).Infof("lookup %s: %v", key, err)
+			log.V(3).Infof("lookup %s: %v", key, err)
 			return err
 		}
 
@@ -190,12 +190,12 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		return false, fmt.Errorf("lookup %s: %v", key, err)
 	}
 
-	glog.V(4).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
+	log.V(-1).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
 
 	if existingEntry.Attributes.Mtime > newEntry.Attributes.Mtime {
 		// skip if already changed
 		// this usually happens when the messages are not ordered
-		glog.V(2).Infof("late updates %s", key)
+		log.V(1).Infof("late updates %s", key)
 	} else {
 		// find out what changed
 		deletedChunks, newChunks, err := compareChunks(filer.LookupFn(fs), oldEntry, newEntry)
@@ -212,7 +212,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// replicate the chunks that are new in the source
 		replicatedChunks, err := fs.replicateChunks(newChunks, key)
 		if err != nil {
-			glog.Warningf("replicate entry chunks %s: %v", key, err)
+			log.Warningf("replicate entry chunks %s: %v", key, err)
 			return true, nil
 		}
 		existingEntry.Chunks = append(existingEntry.GetChunks(), replicatedChunks...)

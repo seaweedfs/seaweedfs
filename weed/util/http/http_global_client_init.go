@@ -1,7 +1,7 @@
 package http
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
 
@@ -22,6 +22,6 @@ func InitGlobalHttpClient() {
 
 	globalHttpClient, err = NewGlobalHttpClient()
 	if err != nil {
-		glog.Fatalf("error init global http client: %v", err)
+		log.Fatalf("error init global http client: %v", err)
 	}
 }

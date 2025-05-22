@@ -10,7 +10,7 @@ import (
 	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -42,22 +42,22 @@ func (store *Redis3Store) initialize(hostPort string, password string, database 
 	if enableMtls {
 		clientCert, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
 		if err != nil {
-			glog.Fatalf("Error loading client certificate and key pair: %v", err)
+			log.Fatalf("Error loading client certificate and key pair: %v", err)
 		}
 
 		caCertBytes, err := os.ReadFile(caCertPath)
 		if err != nil {
-			glog.Fatalf("Error reading CA certificate file: %v", err)
+			log.Fatalf("Error reading CA certificate file: %v", err)
 		}
 
 		caCertPool := x509.NewCertPool()
 		if ok := caCertPool.AppendCertsFromPEM(caCertBytes); !ok {
-			glog.Fatalf("Error appending CA certificate to pool")
+			log.Fatalf("Error appending CA certificate to pool")
 		}
 
 		redisHost, _, err := net.SplitHostPort(hostPort)
 		if err != nil {
-			glog.Fatalf("Error parsing redis host and port from %s: %v", hostPort, err)
+			log.Fatalf("Error parsing redis host and port from %s: %v", hostPort, err)
 		}
 
 		tlsConfig := &tls.Config{

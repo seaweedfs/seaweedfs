@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
@@ -170,7 +170,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 				return false
 			}
 			if fh, found := wfs.fhMap.FindFileHandle(inode); found {
-				glog.V(4).Infof("readdir opened file %s", dirPath.Child(dirEntry.Name))
+				log.V(-1).Infof("readdir opened file %s", dirPath.Child(dirEntry.Name))
 				entry = filer.FromPbEntry(string(dirPath), fh.GetEntry().GetEntry())
 			}
 			wfs.outputFilerEntry(entryOut, inode, entry)
@@ -218,7 +218,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 
 	var err error
 	if err = meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
-		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
+		log.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 		return fuse.EIO
 	}
 	listErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, lastEntryName, false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
@@ -226,7 +226,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		return processEachEntryFn(entry)
 	})
 	if listErr != nil {
-		glog.Errorf("list meta cache: %v", listErr)
+		log.Errorf("list meta cache: %v", listErr)
 		return fuse.EIO
 	}
 

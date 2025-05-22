@@ -24,7 +24,7 @@ import (
 
 	"google.golang.org/grpc/reflection"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
@@ -156,7 +156,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	v.folders = strings.Split(volumeFolders, ",")
 	for _, folder := range v.folders {
 		if err := util.TestFolderWritable(util.ResolvePath(folder)); err != nil {
-			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
+			log.Fatalf("Check Data Folder(-dir) Writable %s : %s", folder, err)
 		}
 	}
 
@@ -166,7 +166,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		if max, e := strconv.ParseInt(maxString, 10, 64); e == nil {
 			v.folderMaxLimits = append(v.folderMaxLimits, int32(max))
 		} else {
-			glog.Fatalf("The max specified in -max not a valid number %s", maxString)
+			log.Fatalf("The max specified in -max not a valid number %s", maxString)
 		}
 	}
 	if len(v.folderMaxLimits) == 1 && len(v.folders) > 1 {
@@ -175,7 +175,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		}
 	}
 	if len(v.folders) != len(v.folderMaxLimits) {
-		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
+		log.Fatalf("%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
 	}
 
 	if len(minFreeSpaces) == 1 && len(v.folders) > 1 {
@@ -184,7 +184,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		}
 	}
 	if len(v.folders) != len(minFreeSpaces) {
-		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(minFreeSpaces))
+		log.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(minFreeSpaces))
 	}
 
 	// set disk types
@@ -199,7 +199,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		}
 	}
 	if len(v.folders) != len(diskTypes) {
-		glog.Fatalf("%d directories by -dir, but only %d disk types is set by -disk", len(v.folders), len(diskTypes))
+		log.Fatalf("%d directories by -dir, but only %d disk types is set by -disk", len(v.folders), len(diskTypes))
 	}
 
 	// security related white list configuration
@@ -207,7 +207,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	if *v.ip == "" {
 		*v.ip = util.DetectedHostAddress()
-		glog.V(0).Infof("detected volume server ip address: %v", *v.ip)
+		log.V(3).Infof("detected volume server ip address: %v", *v.ip)
 	}
 	if *v.bindIp == "" {
 		*v.bindIp = *v.ip
@@ -272,7 +272,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	if v.isSeparatedPublicPort() {
 		publicHttpDown = v.startPublicHttpService(publicVolumeMux)
 		if nil == publicHttpDown {
-			glog.Fatalf("start public http service failed")
+			log.Fatalf("start public http service failed")
 		}
 	}
 
@@ -289,7 +289,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		// Stop heartbeats
 		if !volumeServer.StopHeartbeat() {
 			volumeServer.SetStopping()
-			glog.V(0).Infof("stop send heartbeat and wait %d seconds until shutdown ...", *v.preStopSeconds)
+			log.V(3).Infof("stop send heartbeat and wait %d seconds until shutdown ...", *v.preStopSeconds)
 			time.Sleep(time.Duration(*v.preStopSeconds) * time.Second)
 		}
 
@@ -307,18 +307,18 @@ func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server,
 
 	// firstly, stop the public http service to prevent from receiving new user request
 	if nil != publicHttpDown {
-		glog.V(0).Infof("stop public http server ... ")
+		log.V(3).Infof("stop public http server ... ")
 		if err := publicHttpDown.Stop(); err != nil {
-			glog.Warningf("stop the public http server failed, %v", err)
+			log.Warningf("stop the public http server failed, %v", err)
 		}
 	}
 
-	glog.V(0).Infof("graceful stop cluster http server ... ")
+	log.V(3).Infof("graceful stop cluster http server ... ")
 	if err := clusterHttpServer.Stop(); err != nil {
-		glog.Warningf("stop the cluster http server failed, %v", err)
+		log.Warningf("stop the cluster http server failed, %v", err)
 	}
 
-	glog.V(0).Infof("graceful stop gRPC ...")
+	log.V(3).Infof("graceful stop gRPC ...")
 	grpcS.GracefulStop()
 
 	volumeServer.Shutdown()
@@ -336,14 +336,14 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 	grpcPort := *v.portGrpc
 	grpcL, err := util.NewListener(util.JoinHostPort(*v.bindIp, grpcPort), 0)
 	if err != nil {
-		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
+		log.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.volume"))
 	volume_server_pb.RegisterVolumeServerServer(grpcS, vs)
 	reflection.Register(grpcS)
 	go func() {
 		if err := grpcS.Serve(grpcL); err != nil {
-			glog.Fatalf("start gRPC service failed, %s", err)
+			log.Fatalf("start gRPC service failed, %s", err)
 		}
 	}()
 	return grpcS
@@ -351,17 +351,17 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 
 func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdown.Server {
 	publicListeningAddress := util.JoinHostPort(*v.bindIp, *v.publicPort)
-	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "public at", publicListeningAddress)
+	log.V(3).Infoln("Start Seaweed volume server", util.Version(), "public at", publicListeningAddress)
 	publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
-		glog.Fatalf("Volume server listener error:%v", e)
+		log.Fatalf("Volume server listener error:%v", e)
 	}
 
 	pubHttp := httpdown.HTTP{StopTimeout: 5 * time.Minute, KillTimeout: 5 * time.Minute}
 	publicHttpDown := pubHttp.Serve(&http.Server{Handler: handler}, publicListener)
 	go func() {
 		if err := publicHttpDown.Wait(); err != nil {
-			glog.Errorf("public http down wait failed, %v", err)
+			log.Errorf("public http down wait failed, %v", err)
 		}
 	}()
 
@@ -378,10 +378,10 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	}
 
 	listeningAddress := util.JoinHostPort(*v.bindIp, *v.port)
-	glog.V(0).Infof("Start Seaweed volume server %s at %s", util.Version(), listeningAddress)
+	log.V(3).Infof("Start Seaweed volume server %s at %s", util.Version(), listeningAddress)
 	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
-		glog.Fatalf("Volume server listener error:%v", e)
+		log.Fatalf("Volume server listener error:%v", e)
 	}
 
 	httpDown := httpdown.HTTP{
@@ -399,7 +399,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	clusterHttpServer := httpDown.Serve(httpS, listener)
 	go func() {
 		if e := clusterHttpServer.Wait(); e != nil {
-			glog.Fatalf("Volume server fail to serve: %v", e)
+			log.Fatalf("Volume server fail to serve: %v", e)
 		}
 	}()
 	return clusterHttpServer

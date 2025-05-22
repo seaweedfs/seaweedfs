@@ -14,7 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -217,7 +217,7 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 		// println("  enqueue", tsMinute)
 		t, parseErr := time.Parse("2006-01-02-15-04", tsMinute)
 		if parseErr != nil {
-			glog.Errorf("failed to parse %s: %v", tsMinute, parseErr)
+			log.Errorf("failed to parse %s: %v", tsMinute, parseErr)
 			continue
 		}
 		filerId := getFilerId(hourMinuteEntry.Name())
@@ -237,7 +237,7 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 	for filerId, entryName := range freshFilerIds {
 		iter, found := v.perFilerIteratorMap[filerId]
 		if !found {
-			glog.Errorf("Unexpected! failed to find iterator for filer %s", filerId)
+			log.Errorf("Unexpected! failed to find iterator for filer %s", filerId)
 			continue
 		}
 		next, nextErr := iter.getNext(v)

@@ -1,7 +1,7 @@
 package mount
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
 )
 
@@ -31,7 +31,7 @@ func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 
 func (pw *PageWriter) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) {
 
-	glog.V(4).Infof("%v AddPage [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
+	log.V(-1).Infof("%v AddPage [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
@@ -51,7 +51,7 @@ func (pw *PageWriter) FlushData() error {
 }
 
 func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64, tsNs int64) (maxStop int64) {
-	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.fh.inode, offset, offset+int64(len(data)))
+	log.V(-1).Infof("ReadDirtyDataAt %v [%d, %d)", pw.fh.inode, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {

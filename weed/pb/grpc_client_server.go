@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
@@ -190,7 +190,7 @@ func ServerToGrpcAddress(server string) (serverGrpcAddress string) {
 
 	host, port, parseErr := hostAndPort(server)
 	if parseErr != nil {
-		glog.Fatalf("server address %s parse error: %v", server, parseErr)
+		log.Fatalf("server address %s parse error: %v", server, parseErr)
 	}
 
 	grpcPort := int(port) + 10000
@@ -201,7 +201,7 @@ func ServerToGrpcAddress(server string) (serverGrpcAddress string) {
 func GrpcAddressToServerAddress(grpcAddress string) (serverAddress string) {
 	host, grpcPort, parseErr := hostAndPort(grpcAddress)
 	if parseErr != nil {
-		glog.Fatalf("server grpc address %s parse error: %v", grpcAddress, parseErr)
+		log.Fatalf("server grpc address %s parse error: %v", grpcAddress, parseErr)
 	}
 
 	port := int(grpcPort) - 10000

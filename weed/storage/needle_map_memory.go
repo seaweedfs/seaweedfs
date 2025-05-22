@@ -3,7 +3,7 @@ package storage
 import (
 	"os"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -22,7 +22,7 @@ func NewCompactNeedleMap(file *os.File) *NeedleMap {
 	nm.indexFile = file
 	stat, err := file.Stat()
 	if err != nil {
-		glog.Fatalf("stat file %s: %v", file.Name(), err)
+		log.Fatalf("stat file %s: %v", file.Name(), err)
 	}
 	nm.indexFileOffset = stat.Size()
 	return nm
@@ -51,7 +51,7 @@ func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 		}
 		return nil
 	})
-	glog.V(1).Infof("max file key: %v count: %d deleted: %d for file: %s", nm.MaxFileKey(), nm.FileCount(), nm.DeletedCount(), file.Name())
+	log.V(2).Infof("max file key: %v count: %d deleted: %d for file: %s", nm.MaxFileKey(), nm.FileCount(), nm.DeletedCount(), file.Name())
 	return nm, e
 }
 
@@ -75,7 +75,7 @@ func (nm *NeedleMap) Close() {
 	}
 	indexFileName := nm.indexFile.Name()
 	if err := nm.indexFile.Sync(); err != nil {
-		glog.Warningf("sync file %s failed, %v", indexFileName, err)
+		log.Warningf("sync file %s failed, %v", indexFileName, err)
 	}
 	_ = nm.indexFile.Close()
 }
@@ -98,7 +98,7 @@ func (nm *NeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Op
 	nm.indexFile = indexFile
 	stat, err := indexFile.Stat()
 	if err != nil {
-		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
+		log.Fatalf("stat file %s: %v", indexFile.Name(), err)
 		return err
 	}
 	nm.indexFileOffset = stat.Size()
@@ -108,7 +108,7 @@ func (nm *NeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Op
 }
 
 func (nm *NeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) error {
-	glog.V(0).Infof("loading idx from offset %d for file: %s", startFrom, indexFile.Name())
+	log.V(3).Infof("loading idx from offset %d for file: %s", startFrom, indexFile.Name())
 	e := idx.WalkIndexFile(indexFile, startFrom, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
 		nm.FileCounter++

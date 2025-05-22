@@ -3,7 +3,7 @@ package lock_manager
 import (
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"sync"
 	"time"
 )
@@ -38,19 +38,19 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
-	glog.V(4).Infof("lock %s %v %v %v", path, time.Unix(0, expiredAtNs), token, owner)
+	log.V(-1).Infof("lock %s %v %v %v", path, time.Unix(0, expiredAtNs), token, owner)
 
 	if oldValue, found := lm.locks[path]; found {
 		if oldValue.ExpiredAtNs > 0 && oldValue.ExpiredAtNs < time.Now().UnixNano() {
 			// lock is expired, set to a new lock
 			if token != "" {
-				glog.V(4).Infof("lock expired key %s non-empty token %v owner %v ts %s", path, token, owner, time.Unix(0, oldValue.ExpiredAtNs))
+				log.V(-1).Infof("lock expired key %s non-empty token %v owner %v ts %s", path, token, owner, time.Unix(0, oldValue.ExpiredAtNs))
 				err = LockErrorNonEmptyTokenOnExpiredLock
 				return
 			} else {
 				// new lock
 				renewToken = uuid.New().String()
-				glog.V(4).Infof("key %s new token %v owner %v", path, renewToken, owner)
+				log.V(-1).Infof("key %s new token %v owner %v", path, renewToken, owner)
 				lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner}
 				return
 			}
@@ -60,30 +60,30 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 		if oldValue.Token == token {
 			// token matches, renew the lock
 			renewToken = uuid.New().String()
-			glog.V(4).Infof("key %s old token %v owner %v => %v owner %v", path, oldValue.Token, oldValue.Owner, renewToken, owner)
+			log.V(-1).Infof("key %s old token %v owner %v => %v owner %v", path, oldValue.Token, oldValue.Owner, renewToken, owner)
 			lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner}
 			return
 		} else {
 			if token == "" {
 				// new lock
-				glog.V(4).Infof("key %s locked by %v", path, oldValue.Owner)
+				log.V(-1).Infof("key %s locked by %v", path, oldValue.Owner)
 				err = fmt.Errorf("lock already owned by %v", oldValue.Owner)
 				return
 			}
-			glog.V(4).Infof("key %s expected token %v owner %v received %v from %v", path, oldValue.Token, oldValue.Owner, token, owner)
+			log.V(-1).Infof("key %s expected token %v owner %v received %v from %v", path, oldValue.Token, oldValue.Owner, token, owner)
 			err = fmt.Errorf("lock: token mismatch")
 			return
 		}
 	} else {
-		glog.V(4).Infof("key %s no lock owner %v", path, owner)
+		log.V(-1).Infof("key %s no lock owner %v", path, owner)
 		if token == "" {
 			// new lock
-			glog.V(4).Infof("key %s new token %v owner %v", path, token, owner)
+			log.V(-1).Infof("key %s new token %v owner %v", path, token, owner)
 			renewToken = uuid.New().String()
 			lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner}
 			return
 		} else {
-			glog.V(4).Infof("key %s non-empty token %v owner %v", path, token, owner)
+			log.V(-1).Infof("key %s non-empty token %v owner %v", path, token, owner)
 			err = LockErrorNonEmptyTokenOnNewLock
 			return
 		}
@@ -99,13 +99,13 @@ func (lm *LockManager) Unlock(path string, token string) (isUnlocked bool, err e
 		if oldValue.ExpiredAtNs > 0 && oldValue.ExpiredAtNs < now.UnixNano() {
 			// lock is expired, delete it
 			isUnlocked = true
-			glog.V(4).Infof("key %s expired at %v", path, time.Unix(0, oldValue.ExpiredAtNs))
+			log.V(-1).Infof("key %s expired at %v", path, time.Unix(0, oldValue.ExpiredAtNs))
 			delete(lm.locks, path)
 			return
 		}
 		if oldValue.Token == token {
 			isUnlocked = true
-			glog.V(4).Infof("key %s unlocked with %v", path, token)
+			log.V(-1).Infof("key %s unlocked with %v", path, token)
 			delete(lm.locks, path)
 			return
 		} else {
@@ -130,7 +130,7 @@ func (lm *LockManager) CleanUp() {
 				continue
 			}
 			if now > value.ExpiredAtNs {
-				glog.V(4).Infof("key %s expired at %v", key, time.Unix(0, value.ExpiredAtNs))
+				log.V(-1).Infof("key %s expired at %v", key, time.Unix(0, value.ExpiredAtNs))
 				delete(lm.locks, key)
 			}
 		}
@@ -148,12 +148,12 @@ func (lm *LockManager) SelectLocks(selectFn func(key string) bool) (locks []*Loc
 
 	for key, lock := range lm.locks {
 		if now > lock.ExpiredAtNs {
-			glog.V(4).Infof("key %s expired at %v", key, time.Unix(0, lock.ExpiredAtNs))
+			log.V(-1).Infof("key %s expired at %v", key, time.Unix(0, lock.ExpiredAtNs))
 			delete(lm.locks, key)
 			continue
 		}
 		if selectFn(key) {
-			glog.V(4).Infof("key %s selected and deleted", key)
+			log.V(-1).Infof("key %s selected and deleted", key)
 			delete(lm.locks, key)
 			lock.Key = key
 			locks = append(locks, lock)

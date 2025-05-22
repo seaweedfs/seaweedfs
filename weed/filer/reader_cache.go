@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -63,7 +63,7 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 			continue
 		}
 		if rc.chunkCache.IsInCache(chunkView.FileId, true) {
-			glog.V(4).Infof("%s is in cache", chunkView.FileId)
+			log.V(-1).Infof("%s is in cache", chunkView.FileId)
 			continue
 		}
 
@@ -72,7 +72,7 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 			return
 		}
 
-		// glog.V(4).Infof("prefetch %s offset %d", chunkView.FileId, chunkView.ViewOffset)
+		// log.V(-1).Infof("prefetch %s offset %d", chunkView.FileId, chunkView.ViewOffset)
 		// cache this chunk if not yet
 		shouldCache := (uint64(chunkView.ViewOffset) + chunkView.ChunkSize) <= rc.chunkCache.GetMaxFilePartSizeInCache()
 		cacher := newSingleChunkCacher(rc, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int(chunkView.ChunkSize), shouldCache)
@@ -118,7 +118,7 @@ func (rc *ReaderCache) ReadChunkAt(buffer []byte, fileId string, cipherKey []byt
 		}
 	}
 
-	// glog.V(4).Infof("cache1 %s", fileId)
+	// log.V(-1).Infof("cache1 %s", fileId)
 
 	cacher := newSingleChunkCacher(rc, fileId, cipherKey, isGzipped, chunkSize, shouldCache)
 	go cacher.startCaching()
@@ -132,7 +132,7 @@ func (rc *ReaderCache) ReadChunkAt(buffer []byte, fileId string, cipherKey []byt
 func (rc *ReaderCache) UnCache(fileId string) {
 	rc.Lock()
 	defer rc.Unlock()
-	// glog.V(4).Infof("uncache %s", fileId)
+	// log.V(-1).Infof("uncache %s", fileId)
 	if downloader, found := rc.downloaders[fileId]; found {
 		downloader.destroy()
 		delete(rc.downloaders, fileId)

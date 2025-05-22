@@ -3,7 +3,7 @@ package mount
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"time"
 )
@@ -29,16 +29,16 @@ func (wfs *WFS) loopCheckQuota() {
 
 			resp, err := client.Statistics(context.Background(), request)
 			if err != nil {
-				glog.V(0).Infof("reading quota usage %v: %v", request, err)
+				log.V(3).Infof("reading quota usage %v: %v", request, err)
 				return err
 			}
-			glog.V(4).Infof("read quota usage: %+v", resp)
+			log.V(-1).Infof("read quota usage: %+v", resp)
 
 			isOverQuota := int64(resp.UsedSize) > wfs.option.Quota
 			if isOverQuota && !wfs.IsOverQuota {
-				glog.Warningf("Quota Exceeded! quota:%d used:%d", wfs.option.Quota, resp.UsedSize)
+				log.Warningf("Quota Exceeded! quota:%d used:%d", wfs.option.Quota, resp.UsedSize)
 			} else if !isOverQuota && wfs.IsOverQuota {
-				glog.Warningf("Within quota limit! quota:%d used:%d", wfs.option.Quota, resp.UsedSize)
+				log.Warningf("Within quota limit! quota:%d used:%d", wfs.option.Quota, resp.UsedSize)
 			}
 			wfs.IsOverQuota = isOverQuota
 
@@ -46,7 +46,7 @@ func (wfs *WFS) loopCheckQuota() {
 		})
 
 		if err != nil {
-			glog.Warningf("read quota usage: %v", err)
+			log.Warningf("read quota usage: %v", err)
 		}
 
 	}

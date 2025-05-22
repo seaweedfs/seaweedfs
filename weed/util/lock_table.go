@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 // LockTable is a table of locks that can be acquired.
@@ -70,7 +70,7 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 	// If the lock is held exclusively, wait
 	entry.mu.Lock()
 	if len(entry.waiters) > 0 || lockType == ExclusiveLock || entry.activeExclusiveLockOwnerCount > 0 {
-		if glog.V(4) {
+		if log.V(-1).Info != nil {
 			fmt.Printf("ActiveLock %d %s wait for %+v type=%v with waiters %d active r%d w%d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeSharedLockOwnerCount, entry.activeExclusiveLockOwnerCount)
 			if len(entry.waiters) > 0 {
 				for _, waiter := range entry.waiters {
@@ -97,7 +97,7 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 	}
 
 	// Otherwise, grant the lock
-	if glog.V(4) {
+	if log.V(-1).Info != nil {
 		fmt.Printf("ActiveLock %d %s locked %+v type=%v with waiters %d active r%d w%d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeSharedLockOwnerCount, entry.activeExclusiveLockOwnerCount)
 		if len(entry.waiters) > 0 {
 			for _, waiter := range entry.waiters {
@@ -150,7 +150,7 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 		delete(lt.locksInFlight, key)
 	}
 
-	if glog.V(4) {
+	if log.V(-1).Info != nil {
 		fmt.Printf("ActiveLock %d %s unlocked %+v type=%v with waiters %d active r%d w%d.\n", lock.ID, lock.intention, key, lock.lockType, len(entry.waiters), entry.activeSharedLockOwnerCount, entry.activeExclusiveLockOwnerCount)
 		if len(entry.waiters) > 0 {
 			for _, waiter := range entry.waiters {

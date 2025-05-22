@@ -10,7 +10,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/storage"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -26,7 +26,7 @@ func NewMemDb() *MemDb {
 	var err error
 	t := &MemDb{}
 	if t.db, err = leveldb.Open(storage.NewMemStorage(), opts); err != nil {
-		glog.V(0).Infof("MemDb fails to open: %v", err)
+		log.V(3).Infof("MemDb fails to open: %v", err)
 		return nil
 	}
 

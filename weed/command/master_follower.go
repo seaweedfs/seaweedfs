@@ -8,7 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/gorilla/mux"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -99,13 +99,13 @@ func startMasterFollower(masterOptions MasterOptions) {
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("failed to talk to filer %v: %v", masters, err)
-			glog.V(0).Infof("wait for %d seconds ...", i+1)
+			log.V(3).Infof("failed to talk to filer %v: %v", masters, err)
+			log.V(3).Infof("wait for %d seconds ...", i+1)
 			time.Sleep(time.Duration(i+1) * time.Second)
 		}
 	}
 	if err != nil {
-		glog.Errorf("failed to talk to filer %v: %v", masters, err)
+		log.Errorf("failed to talk to filer %v: %v", masters, err)
 		return
 	}
 
@@ -119,22 +119,22 @@ func startMasterFollower(masterOptions MasterOptions) {
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, option, masters)
 	listeningAddress := util.JoinHostPort(*masterOptions.ipBind, *masterOptions.port)
-	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
+	log.V(3).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOptions.ipBind, *masterOptions.port, 0)
 	if e != nil {
-		glog.Fatalf("Master startup error: %v", e)
+		log.Fatalf("Master startup error: %v", e)
 	}
 
 	// starting grpc server
 	grpcPort := *masterOptions.portGrpc
 	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOptions.ipBind, grpcPort, 0)
 	if err != nil {
-		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
+		log.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	reflection.Register(grpcS)
-	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOptions.ip, grpcPort)
+	log.V(3).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOptions.ip, grpcPort)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)
 	}

@@ -5,7 +5,7 @@ import (
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
 	"os"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/rclone_backend"
 	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/s3_backend"
@@ -17,14 +17,14 @@ func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeIn
 
 	volumeInfo = &volume_server_pb.VolumeInfo{}
 
-	glog.V(1).Infof("maybeLoadVolumeInfo checks %s", fileName)
+	log.V(2).Infof("maybeLoadVolumeInfo checks %s", fileName)
 	if exists, canRead, _, _, _ := util.CheckFile(fileName); !exists || !canRead {
 		if !exists {
 			return
 		}
 		hasVolumeInfoFile = true
 		if !canRead {
-			glog.Warningf("can not read %s", fileName)
+			log.Warningf("can not read %s", fileName)
 			err = fmt.Errorf("can not read %s", fileName)
 			return
 		}
@@ -33,19 +33,19 @@ func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeIn
 
 	hasVolumeInfoFile = true
 
-	glog.V(1).Infof("maybeLoadVolumeInfo reads %s", fileName)
+	log.V(2).Infof("maybeLoadVolumeInfo reads %s", fileName)
 	fileData, readErr := os.ReadFile(fileName)
 	if readErr != nil {
-		glog.Warningf("fail to read %s : %v", fileName, readErr)
+		log.Warningf("fail to read %s : %v", fileName, readErr)
 		err = fmt.Errorf("fail to read %s : %v", fileName, readErr)
 		return
 
 	}
 
-	glog.V(1).Infof("maybeLoadVolumeInfo Unmarshal volume info %v", fileName)
+	log.V(2).Infof("maybeLoadVolumeInfo Unmarshal volume info %v", fileName)
 	if err = jsonpb.Unmarshal(fileData, volumeInfo); err != nil {
 		if oldVersionErr := tryOldVersionVolumeInfo(fileData, volumeInfo); oldVersionErr != nil {
-			glog.Warningf("unmarshal error: %v oldFormat: %v", err, oldVersionErr)
+			log.Warningf("unmarshal error: %v oldFormat: %v", err, oldVersionErr)
 			err = fmt.Errorf("unmarshal error: %v oldFormat: %v", err, oldVersionErr)
 			return
 		} else {

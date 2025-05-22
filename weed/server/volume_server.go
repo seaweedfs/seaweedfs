@@ -14,7 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 )
@@ -140,23 +140,23 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 }
 
 func (vs *VolumeServer) SetStopping() {
-	glog.V(0).Infoln("Stopping volume server...")
+	log.V(3).Infoln("Stopping volume server...")
 	vs.store.SetStopping()
 }
 
 func (vs *VolumeServer) LoadNewVolumes() {
-	glog.V(0).Infoln(" Loading new volume ids ...")
+	log.V(3).Infoln(" Loading new volume ids ...")
 	vs.store.LoadNewVolumes()
 }
 
 func (vs *VolumeServer) Shutdown() {
-	glog.V(0).Infoln("Shutting down volume server...")
+	log.V(3).Infoln("Shutting down volume server...")
 	vs.store.Close()
-	glog.V(0).Infoln("Shut down successfully!")
+	log.V(3).Infoln("Shut down successfully!")
 }
 
 func (vs *VolumeServer) Reload() {
-	glog.V(0).Infoln("Reload volume server...")
+	log.V(3).Infoln("Reload volume server...")
 
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()

@@ -15,7 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -113,7 +113,7 @@ func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
+	log.V(0).Infof("GetObjectHandler %s %s", bucket, object)
 
 	if strings.HasSuffix(r.URL.Path, "/") {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
@@ -128,7 +128,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
+	log.V(0).Infof("HeadObjectHandler %s %s", bucket, object)
 
 	destUrl := s3a.toFilerUrl(bucket, object)
 
@@ -137,13 +137,13 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, isWrite bool, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64)) {
 
-	glog.V(3).Infof("s3 proxying %s to %s", r.Method, destUrl)
+	log.V(0).Infof("s3 proxying %s to %s", r.Method, destUrl)
 	start := time.Now()
 
 	proxyReq, err := http.NewRequest(r.Method, destUrl, r.Body)
 
 	if err != nil {
-		glog.Errorf("NewRequest %s: %v", destUrl, err)
+		log.Errorf("NewRequest %s: %v", destUrl, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -171,7 +171,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	resp, postErr := s3a.client.Do(proxyReq)
 
 	if postErr != nil {
-		glog.Errorf("post to filer: %v", postErr)
+		log.Errorf("post to filer: %v", postErr)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -263,7 +263,7 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 	defer mem.Free(buf)
 	bytesTransferred, err := io.CopyBuffer(w, proxyResponse.Body, buf)
 	if err != nil {
-		glog.V(1).Infof("passthrough response read %d bytes: %v", bytesTransferred, err)
+		log.V(2).Infof("passthrough response read %d bytes: %v", bytesTransferred, err)
 	}
 	return statusCode, bytesTransferred
 }

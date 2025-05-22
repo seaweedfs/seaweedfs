@@ -14,7 +14,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
@@ -102,14 +102,14 @@ func newFilePart(fullPathFilename string) (ret *FilePart, err error) {
 	ret = &FilePart{}
 	fh, openErr := os.Open(fullPathFilename)
 	if openErr != nil {
-		glog.V(0).Info("Failed to open file: ", fullPathFilename)
+		log.V(3).Info("Failed to open file: ", fullPathFilename)
 		return ret, openErr
 	}
 	ret.Reader = fh
 
 	fi, fiErr := fh.Stat()
 	if fiErr != nil {
-		glog.V(0).Info("Failed to stat file:", fullPathFilename)
+		log.V(3).Info("Failed to stat file:", fullPathFilename)
 		return ret, fiErr
 	}
 	ret.ModTime = fi.ModTime().UTC().Unix()
@@ -251,7 +251,7 @@ func genFileUrl(ret *AssignResult, id string, usePublicUrl bool) string {
 func uploadOneChunk(filename string, reader io.Reader, masterFn GetMasterFn,
 	fileUrl string, jwt security.EncodedJwt,
 ) (size uint32, e error) {
-	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
+	log.V(-1).Info("Uploading part ", filename, " to ", fileUrl, "...")
 	uploadOption := &UploadOption{
 		UploadUrl:         fileUrl,
 		Filename:          filename,
@@ -279,7 +279,7 @@ func uploadChunkedFileManifest(fileUrl string, manifest *ChunkManifest, jwt secu
 	if e != nil {
 		return e
 	}
-	glog.V(4).Info("Uploading chunks manifest ", manifest.Name, " to ", fileUrl, "...")
+	log.V(-1).Info("Uploading chunks manifest ", manifest.Name, " to ", fileUrl, "...")
 	u, _ := url.Parse(fileUrl)
 	q := u.Query()
 	q.Set("cm", "true")

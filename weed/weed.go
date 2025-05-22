@@ -16,11 +16,12 @@ import (
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/seaweedfs/seaweedfs/weed/command"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 var IsDebug *bool
@@ -48,8 +49,16 @@ func init() {
 }
 
 func main() {
-	glog.MaxSize = 1024 * 1024 * 10
-	glog.MaxFileCount = 5
+	config := &log.LogConfig{
+		LogFile:    "weed.log",
+		MaxSize:    100,
+		MaxBackups: 5,
+		MaxAge:     30,
+		Compress:   true,
+	}
+	log.Init(zapcore.InfoLevel, config)
+	//log.MaxSize = 1024 * 1024 * 10
+	//log.MaxFileCount = 5
 	flag.Usage = usage
 
 	err := sentry.Init(sentry.ClientOptions{
@@ -207,5 +216,5 @@ func exit() {
 }
 
 func debug(params ...interface{}) {
-	glog.V(4).Infoln(params...)
+	log.V(-1).Infoln(params...)
 }

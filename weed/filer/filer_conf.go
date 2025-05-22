@@ -10,7 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/viant/ptrie"
@@ -68,7 +68,7 @@ func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
 		if err == filer_pb.ErrNotFound {
 			return nil
 		}
-		glog.Errorf("read filer conf entry %s: %v", filerConfPath, err)
+		log.Errorf("read filer conf entry %s: %v", filerConfPath, err)
 		return
 	}
 
@@ -83,7 +83,7 @@ func (fc *FilerConf) loadFromChunks(filer *Filer, content []byte, chunks []*file
 	if len(content) == 0 {
 		content, err = filer.readEntry(chunks, size)
 		if err != nil {
-			glog.Errorf("read filer conf content: %v", err)
+			log.Errorf("read filer conf content: %v", err)
 			return
 		}
 	}
@@ -119,7 +119,7 @@ func (fc *FilerConf) GetLocationConf(locationPrefix string) (locConf *filer_pb.F
 func (fc *FilerConf) SetLocationConf(locConf *filer_pb.FilerConf_PathConf) (err error) {
 	err = fc.rules.Put([]byte(locConf.LocationPrefix), locConf)
 	if err != nil {
-		glog.Errorf("put location prefix: %v", err)
+		log.Errorf("put location prefix: %v", err)
 	}
 	return
 }
@@ -132,7 +132,7 @@ func (fc *FilerConf) AddLocationConf(locConf *filer_pb.FilerConf_PathConf) (err 
 	}
 	err = fc.rules.Put([]byte(locConf.LocationPrefix), locConf)
 	if err != nil {
-		glog.Errorf("put location prefix: %v", err)
+		log.Errorf("put location prefix: %v", err)
 	}
 	return
 }

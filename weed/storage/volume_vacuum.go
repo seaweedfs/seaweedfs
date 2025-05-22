@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	idx2 "github.com/seaweedfs/seaweedfs/weed/storage/idx"
@@ -41,13 +41,13 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 	if v.MemoryMapMaxSizeMb != 0 { //it makes no sense to compact in memory
 		return nil
 	}
-	glog.V(3).Infof("Compacting volume %d ...", v.Id)
+	log.V(0).Infof("Compacting volume %d ...", v.Id)
 	//no need to lock for copy on write
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
-	//glog.V(3).Infof("Got Compaction lock...")
+	//log.V(0).Infof("Got Compaction lock...")
 	if v.isCompacting || v.isCommitCompacting {
-		glog.V(0).Infof("Volume %d is already compacting...", v.Id)
+		log.V(3).Infof("Volume %d is already compacting...", v.Id)
 		return nil
 	}
 	v.isCompacting = true
@@ -57,12 +57,12 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
-	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
+	log.V(0).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
 	if err := v.DataBackend.Sync(); err != nil {
-		glog.V(0).Infof("compact failed to sync volume %d", v.Id)
+		log.V(3).Infof("compact failed to sync volume %d", v.Id)
 	}
 	if err := v.nm.Sync(); err != nil {
-		glog.V(0).Infof("compact failed to sync volume idx %d", v.Id)
+		log.V(3).Infof("compact failed to sync volume idx %d", v.Id)
 	}
 	return v.copyDataAndGenerateIndexFile(v.FileName(".cpd"), v.FileName(".cpx"), preallocate, compactionBytePerSecond)
 }
@@ -73,10 +73,10 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64, prog
 	if v.MemoryMapMaxSizeMb != 0 { //it makes no sense to compact in memory
 		return nil
 	}
-	glog.V(3).Infof("Compact2 volume %d ...", v.Id)
+	log.V(0).Infof("Compact2 volume %d ...", v.Id)
 
 	if v.isCompacting || v.isCommitCompacting {
-		glog.V(0).Infof("Volume %d is already compacting2 ...", v.Id)
+		log.V(3).Infof("Volume %d is already compacting2 ...", v.Id)
 		return nil
 	}
 	v.isCompacting = true
@@ -86,15 +86,15 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64, prog
 
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
-	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
+	log.V(0).Infof("creating copies for volume %d ...", v.Id)
 	if v.DataBackend == nil {
 		return fmt.Errorf("volume %d backend is empty remote:%v", v.Id, v.HasRemoteFile())
 	}
 	if err := v.DataBackend.Sync(); err != nil {
-		glog.V(0).Infof("compact2 failed to sync volume dat %d: %v", v.Id, err)
+		log.V(3).Infof("compact2 failed to sync volume dat %d: %v", v.Id, err)
 	}
 	if err := v.nm.Sync(); err != nil {
-		glog.V(0).Infof("compact2 failed to sync volume idx %d: %v", v.Id, err)
+		log.V(3).Infof("compact2 failed to sync volume idx %d: %v", v.Id, err)
 	}
 	return v.copyDataBasedOnIndexFile(
 		v.FileName(".dat"), v.FileName(".idx"),
@@ -111,10 +111,10 @@ func (v *Volume) CommitCompact() error {
 	if v.MemoryMapMaxSizeMb != 0 { //it makes no sense to compact in memory
 		return nil
 	}
-	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
+	log.V(3).Infof("Committing volume %d vacuuming...", v.Id)
 
 	if v.isCommitCompacting {
-		glog.V(0).Infof("Volume %d is already commit compacting ...", v.Id)
+		log.V(3).Infof("Volume %d is already commit compacting ...", v.Id)
 		return nil
 	}
 	v.isCommitCompacting = true
@@ -125,14 +125,14 @@ func (v *Volume) CommitCompact() error {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
-	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
+	log.V(0).Infof("Got volume %d committing lock...", v.Id)
 	if v.nm != nil {
 		v.nm.Close()
 		v.nm = nil
 	}
 	if v.DataBackend != nil {
 		if err := v.DataBackend.Close(); err != nil {
-			glog.V(0).Infof("failed to close volume %d", v.Id)
+			log.V(3).Infof("failed to close volume %d", v.Id)
 		}
 	}
 	v.DataBackend = nil
@@ -140,7 +140,7 @@ func (v *Volume) CommitCompact() error {
 
 	var e error
 	if e = v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); e != nil {
-		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, e)
+		log.V(3).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, e)
 		e = os.Remove(v.FileName(".cpd"))
 		if e != nil {
 			return e
@@ -169,21 +169,21 @@ func (v *Volume) CommitCompact() error {
 		}
 	}
 
-	//glog.V(3).Infof("Pretending to be vacuuming...")
+	//log.V(0).Infof("Pretending to be vacuuming...")
 	//time.Sleep(20 * time.Second)
 
 	os.RemoveAll(v.FileName(".ldb"))
 
-	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
+	log.V(0).Infof("Loading volume %d commit file...", v.Id)
 	if e = v.load(true, false, v.needleMapKind, 0); e != nil {
 		return e
 	}
-	glog.V(3).Infof("Finish committing volume %d", v.Id)
+	log.V(0).Infof("Finish committing volume %d", v.Id)
 	return nil
 }
 
 func (v *Volume) cleanupCompact() error {
-	glog.V(0).Infof("Cleaning up volume %d vacuuming...", v.Id)
+	log.V(3).Infof("Cleaning up volume %d vacuuming...", v.Id)
 
 	e1 := os.Remove(v.FileName(".cpd"))
 	e2 := os.Remove(v.FileName(".cpx"))
@@ -254,7 +254,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			return fmt.Errorf("readIndexEntry %s at offset %d failed: %v", oldIdxFileName, idxOffset, err)
 		}
 		key, offset, size := idx2.IdxFileEntry(IdxEntry)
-		glog.V(4).Infof("key %d offset %d size %d", key, offset, size)
+		log.V(-1).Infof("key %d offset %d size %d", key, offset, size)
 		if _, found := incrementedHasUpdatedIndexEntry[key]; !found {
 			incrementedHasUpdatedIndexEntry[key] = keyField{
 				offset: offset,
@@ -308,21 +308,21 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 
 		var offset int64
 		if offset, err = dst.Seek(0, 2); err != nil {
-			glog.V(0).Infof("failed to seek the end of file: %v", err)
+			log.V(3).Infof("failed to seek the end of file: %v", err)
 			return
 		}
 		//ensure file writing starting from aligned positions
 		if offset%NeedlePaddingSize != 0 {
 			offset = offset + (NeedlePaddingSize - offset%NeedlePaddingSize)
 			if offset, err = dst.Seek(offset, 0); err != nil {
-				glog.V(0).Infof("failed to align in datafile %s: %v", dst.Name(), err)
+				log.V(3).Infof("failed to align in datafile %s: %v", dst.Name(), err)
 				return
 			}
 		}
 		//updated needle
 		if !increIdxEntry.offset.IsZero() && increIdxEntry.size != 0 && increIdxEntry.size.IsValid() {
 			//even the needle cache in memory is hit, the need_bytes is correct
-			glog.V(4).Infof("file %d offset %d size %d", key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size)
+			log.V(-1).Infof("file %d offset %d size %d", key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size)
 			var needleBytes []byte
 			needleBytes, err = needle.ReadNeedleBlob(oldDatBackend, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, v.Version())
 			if err != nil {
@@ -386,7 +386,7 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset in
 		return nil
 	}
 	nv, ok := scanner.v.nm.Get(n.Id)
-	glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
+	log.V(-1).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
 	if ok && nv.Offset.ToActualOffset() == offset && nv.Size > 0 && nv.Size.IsValid() {
 		if err := scanner.nm.Set(n.Id, ToOffset(scanner.newOffset), n.Size); err != nil {
 			return fmt.Errorf("cannot put needle: %s", err)
@@ -397,7 +397,7 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset in
 		delta := n.DiskSize(scanner.version)
 		scanner.newOffset += delta
 		scanner.writeThrottler.MaybeSlowdown(delta)
-		glog.V(4).Infoln("saving key", n.Id, "volume offset", offset, "=>", scanner.newOffset, "data_size", n.Size)
+		log.V(-1).Infoln("saving key", n.Id, "volume offset", offset, "=>", scanner.newOffset, "data_size", n.Size)
 	}
 	return nil
 }
@@ -492,7 +492,7 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 		delta := n.DiskSize(version)
 		newOffset += delta
 		writeThrottler.MaybeSlowdown(delta)
-		glog.V(4).Infoln("saving key", n.Id, "volume offset", offset, "=>", newOffset, "data_size", n.Size)
+		log.V(-1).Infoln("saving key", n.Id, "volume offset", offset, "=>", newOffset, "data_size", n.Size)
 
 		return nil
 	})
@@ -511,7 +511,7 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 					v.Id.String(), dstDatSize, expectedContentSize)
 			}
 		} else {
-			glog.Warningf("volume %s content size: %d less deleted size: %d, new size: %d",
+			log.Warningf("volume %s content size: %d less deleted size: %d, new size: %d",
 				v.Id.String(), v.nm.ContentSize(), v.nm.DeletedSize(), dstDatSize)
 		}
 	}
@@ -522,7 +522,7 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 
 	indexFile, err := os.OpenFile(datIdxName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		glog.Errorf("cannot open Volume Index %s: %v", datIdxName, err)
+		log.Errorf("cannot open Volume Index %s: %v", datIdxName, err)
 		return err
 	}
 	defer func() {

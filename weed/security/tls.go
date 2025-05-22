@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -40,7 +40,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 
 	serverIdentityProvider, err := pemfile.NewProvider(serverOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) %v failed: %v", serverOptions, component, err)
+		log.Warningf("pemfile.NewProvider(%v) %v failed: %v", serverOptions, component, err)
 		return nil, nil
 	}
 
@@ -50,7 +50,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	}
 	serverRootProvider, err := pemfile.NewProvider(serverRootOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) failed: %v", serverRootOptions, err)
+		log.Warningf("pemfile.NewProvider(%v) failed: %v", serverRootOptions, err)
 		return nil, nil
 	}
 
@@ -67,17 +67,17 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	}
 	options.MinTLSVersion, err = TlsVersionByName(config.GetString("tls.min_version"))
 	if err != nil {
-		glog.Warningf("tls min version parse failed, %v", err)
+		log.Warningf("tls min version parse failed, %v", err)
 		return nil, nil
 	}
 	options.MaxTLSVersion, err = TlsVersionByName(config.GetString("tls.max_version"))
 	if err != nil {
-		glog.Warningf("tls max version parse failed, %v", err)
+		log.Warningf("tls max version parse failed, %v", err)
 		return nil, nil
 	}
 	options.CipherSuites, err = TlsCipherSuiteByNames(config.GetString("tls.cipher_suites"))
 	if err != nil {
-		glog.Warningf("tls cipher suite parse failed, %v", err)
+		log.Warningf("tls cipher suite parse failed, %v", err)
 		return nil, nil
 	}
 	allowedCommonNames := config.GetString(component + ".allowed_commonNames")
@@ -99,7 +99,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	}
 	ta, err := advancedtls.NewServerCreds(options)
 	if err != nil {
-		glog.Warningf("advancedtls.NewServerCreds(%v) failed: %v", options, err)
+		log.Warningf("advancedtls.NewServerCreds(%v) failed: %v", options, err)
 		return nil, nil
 	}
 	return grpc.Creds(ta), nil
@@ -122,7 +122,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	}
 	clientProvider, err := pemfile.NewProvider(clientOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) failed %v", clientOptions, err)
+		log.Warningf("pemfile.NewProvider(%v) failed %v", clientOptions, err)
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 	clientRootOptions := pemfile.Options{
@@ -131,7 +131,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	}
 	clientRootProvider, err := pemfile.NewProvider(clientRootOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) failed: %v", clientRootOptions, err)
+		log.Warningf("pemfile.NewProvider(%v) failed: %v", clientRootOptions, err)
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 	options := &advancedtls.Options{
@@ -148,7 +148,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	}
 	ta, err := advancedtls.NewClientCreds(options)
 	if err != nil {
-		glog.Warningf("advancedtls.NewClientCreds(%v) failed: %v", options, err)
+		log.Warningf("advancedtls.NewClientCreds(%v) failed: %v", options, err)
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 	return grpc.WithTransportCredentials(ta)
@@ -157,12 +157,12 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
 	clientCerts, err := os.ReadFile(clientCertFile)
 	if err != nil {
-		glog.Fatal(err)
+		log.Fatal(err)
 	}
 	certPool := x509.NewCertPool()
 	ok := certPool.AppendCertsFromPEM(clientCerts)
 	if !ok {
-		glog.Fatalf("Error processing client certificate in %s\n", clientCertFile)
+		log.Fatalf("Error processing client certificate in %s\n", clientCertFile)
 	}
 
 	return &tls.Config{
@@ -179,7 +179,7 @@ func (a Authenticator) Authenticate(params *advancedtls.HandshakeVerificationInf
 		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	err := fmt.Errorf("Authenticate: invalid subject client common name: %s", params.Leaf.Subject.CommonName)
-	glog.Error(err)
+	log.Error(err)
 	return nil, err
 }
 

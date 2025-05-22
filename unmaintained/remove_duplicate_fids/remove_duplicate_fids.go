@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -50,7 +50,7 @@ func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset in
 		newFileName := filepath.Join(*volumePath, "dat_fixed")
 		newDatFile, err := os.Create(newFileName)
 		if err != nil {
-			glog.Fatalf("Write New Volume Data %v", err)
+			log.Fatalf("Write New Volume Data %v", err)
 		}
 		scanner.datBackend = backend.NewDiskFile(newDatFile)
 		scanner.datBackend.WriteAt(scanner.block.Bytes(), 0)
@@ -59,7 +59,7 @@ func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset in
 	checksum := Checksum(n)
 
 	if scanner.hashes[checksum] {
-		glog.V(0).Infof("duplicate checksum:%s fid:%d,%s%x @ offset:%d", checksum, *volumeId, n.Id, n.Cookie, offset)
+		log.V(3).Infof("duplicate checksum:%s fid:%d,%s%x @ offset:%d", checksum, *volumeId, n.Id, n.Cookie, offset)
 		return nil
 	}
 	scanner.hashes[checksum] = true
@@ -85,13 +85,13 @@ func main() {
 
 	if _, err := os.Stat(scanner.dir); err != nil {
 		if err := os.MkdirAll(scanner.dir, os.ModePerm); err != nil {
-			glog.Fatalf("could not create output dir : %s", err)
+			log.Fatalf("could not create output dir : %s", err)
 		}
 	}
 
 	err := storage.ScanVolumeFile(*volumePath, *volumeCollection, vid, storage.NeedleMapInMemory, scanner)
 	if err != nil {
-		glog.Fatalf("Reading Volume File [ERROR] %s\n", err)
+		log.Fatalf("Reading Volume File [ERROR] %s\n", err)
 	}
 
 }

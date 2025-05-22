@@ -14,7 +14,7 @@ import (
 	gorocksdb "github.com/linxGnu/grocksdb"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -60,7 +60,7 @@ func (store *RocksDBStore) Initialize(configuration weed_util.Configuration, pre
 }
 
 func (store *RocksDBStore) initialize(dir string) (err error) {
-	glog.Infof("filer store rocksdb dir: %s", dir)
+	log.Infof("filer store rocksdb dir: %s", dir)
 	os.MkdirAll(dir, 0755)
 	if err := weed_util.TestFolderWritable(dir); err != nil {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
@@ -262,7 +262,7 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 		// println("list", entry.FullPath, "chunks", len(entry.GetChunks()))
 		if decodeErr := entry.DecodeAttributesAndChunks(value); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			log.V(3).Infof("list %s : %v", entry.FullPath, err)
 			return false
 		}
 		if !eachEntryFunc(entry) {

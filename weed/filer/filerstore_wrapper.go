@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/viant/ptrie"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -79,7 +79,7 @@ func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, storeId string, 
 	fsw.storeIdToStore[storeId] = NewFilerStorePathTranslator(path, store)
 	err := fsw.pathToStore.Put([]byte(path), storeId)
 	if err != nil {
-		glog.Fatalf("put path specific store: %v", err)
+		log.Fatalf("put path specific store: %v", err)
 	}
 }
 
@@ -128,7 +128,7 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 		return err
 	}
 
-	// glog.V(4).Infof("InsertEntry %s", entry.FullPath)
+	// log.V(-1).Infof("InsertEntry %s", entry.FullPath)
 	return actualStore.InsertEntry(ctx, entry)
 }
 
@@ -149,7 +149,7 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 		return err
 	}
 
-	// glog.V(4).Infof("UpdateEntry %s", entry.FullPath)
+	// log.V(-1).Infof("UpdateEntry %s", entry.FullPath)
 	return actualStore.UpdateEntry(ctx, entry)
 }
 
@@ -162,7 +162,7 @@ func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (
 	}()
 
 	entry, err = actualStore.FindEntry(ctx, fp)
-	// glog.V(4).Infof("FindEntry %s: %v", fp, err)
+	// log.V(-1).Infof("FindEntry %s: %v", fp, err)
 	if err != nil {
 		if fsw.CanDropWholeBucket() && strings.Contains(err.Error(), "Table") && strings.Contains(err.Error(), "doesn't exist") {
 			err = filer_pb.ErrNotFound
@@ -192,14 +192,14 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 		// remove hard link
 		op := ctx.Value("OP")
 		if op != "MV" {
-			glog.V(4).Infof("DeleteHardLink %s", existingEntry.FullPath)
+			log.V(-1).Infof("DeleteHardLink %s", existingEntry.FullPath)
 			if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
 				return err
 			}
 		}
 	}
 
-	// glog.V(4).Infof("DeleteEntry %s", fp)
+	// log.V(-1).Infof("DeleteEntry %s", fp)
 	return actualStore.DeleteEntry(ctx, fp)
 }
 
@@ -215,14 +215,14 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 		// remove hard link
 		op := ctx.Value("OP")
 		if op != "MV" {
-			glog.V(4).Infof("DeleteHardLink %s", existingEntry.FullPath)
+			log.V(-1).Infof("DeleteHardLink %s", existingEntry.FullPath)
 			if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
 				return err
 			}
 		}
 	}
 
-	// glog.V(4).Infof("DeleteOneEntry %s", existingEntry.FullPath)
+	// log.V(-1).Infof("DeleteOneEntry %s", existingEntry.FullPath)
 	return actualStore.DeleteEntry(ctx, existingEntry.FullPath)
 }
 
@@ -234,7 +234,7 @@ func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "deleteFolderChildren").Observe(time.Since(start).Seconds())
 	}()
 
-	// glog.V(4).Infof("DeleteFolderChildren %s", fp)
+	// log.V(-1).Infof("DeleteFolderChildren %s", fp)
 	return actualStore.DeleteFolderChildren(ctx, fp)
 }
 
@@ -246,7 +246,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath 
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "list").Observe(time.Since(start).Seconds())
 	}()
 
-	// glog.V(4).Infof("ListDirectoryEntries %s from %s limit %d", dirPath, startFileName, limit)
+	// log.V(-1).Infof("ListDirectoryEntries %s from %s limit %d", dirPath, startFileName, limit)
 	return actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
 		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.GetChunks())
@@ -264,7 +264,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 	if limit > math.MaxInt32-1 {
 		limit = math.MaxInt32 - 1
 	}
-	// glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
+	// log.V(-1).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
 	adjustedEntryFunc := func(entry *Entry) bool {
 		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.GetChunks())

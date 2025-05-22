@@ -11,7 +11,7 @@ import (
 	"go.etcd.io/etcd/client/v3"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -73,7 +73,7 @@ func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix
 }
 
 func (store *EtcdStore) initialize(servers, username, password string, timeout time.Duration, tlsConfig *tls.Config) error {
-	glog.Infof("filer store etcd: %s", servers)
+	log.Infof("filer store etcd: %s", servers)
 
 	client, err := clientv3.New(clientv3.Config{
 		Endpoints:   strings.Split(servers, ","),
@@ -95,7 +95,7 @@ func (store *EtcdStore) initialize(servers, username, password string, timeout t
 		return fmt.Errorf("error checking etcd connection: %s", err)
 	}
 
-	glog.V(0).Infof("сonnection to etcd has been successfully verified. etcd version: %s", resp.Version)
+	log.V(3).Infof("сonnection to etcd has been successfully verified. etcd version: %s", resp.Version)
 	store.client = client
 
 	return nil
@@ -208,7 +208,7 @@ func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(kv.Value)); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			log.V(3).Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
 		if !eachEntryFunc(entry) {

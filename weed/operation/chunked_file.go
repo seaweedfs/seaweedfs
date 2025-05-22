@@ -12,7 +12,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
@@ -60,7 +60,7 @@ func LoadChunkManifest(buffer []byte, isCompressed bool) (*ChunkManifest, error)
 	if isCompressed {
 		var err error
 		if buffer, err = util.DecompressData(buffer); err != nil {
-			glog.V(0).Infof("fail to decompress chunk manifest: %v", err)
+			log.V(3).Infof("fail to decompress chunk manifest: %v", err)
 		}
 	}
 	cm := ChunkManifest{}
@@ -82,12 +82,12 @@ func (cm *ChunkManifest) DeleteChunks(masterFn GetMasterFn, usePublicUrl bool, g
 	}
 	results, err := DeleteFileIds(masterFn, usePublicUrl, grpcDialOption, fileIds)
 	if err != nil {
-		glog.V(0).Infof("delete %+v: %v", fileIds, err)
+		log.V(3).Infof("delete %+v: %v", fileIds, err)
 		return fmt.Errorf("chunk delete: %v", err)
 	}
 	for _, result := range results {
 		if result.Error != "" {
-			glog.V(0).Infof("delete file %+v: %v", result.FileId, result.Error)
+			log.V(3).Infof("delete file %+v: %v", result.FileId, result.Error)
 			return fmt.Errorf("chunk delete %v: %v", result.FileId, result.Error)
 		}
 	}

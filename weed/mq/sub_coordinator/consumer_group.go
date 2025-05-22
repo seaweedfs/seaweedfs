@@ -4,7 +4,7 @@ import (
 	"fmt"
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -35,7 +35,7 @@ func NewConsumerGroup(t *schema_pb.Topic, reblanceSeconds int32, filerClientAcce
 		}
 		cg.Market = NewMarket(partitions, time.Duration(reblanceSeconds)*time.Second)
 	} else {
-		glog.V(0).Infof("fail to read topic conf from filer: %v", err)
+		log.V(3).Infof("fail to read topic conf from filer: %v", err)
 		return nil
 	}
 
@@ -45,7 +45,7 @@ func NewConsumerGroup(t *schema_pb.Topic, reblanceSeconds int32, filerClientAcce
 			case adjustment := <-cg.Market.AdjustmentChan:
 				cgi, found := cg.ConsumerGroupInstances.Get(string(adjustment.consumer))
 				if !found {
-					glog.V(0).Infof("consumer group instance %s not found", adjustment.consumer)
+					log.V(3).Infof("consumer group instance %s not found", adjustment.consumer)
 					continue
 				}
 				if adjustment.isAssign {
@@ -63,7 +63,7 @@ func NewConsumerGroup(t *schema_pb.Topic, reblanceSeconds int32, filerClientAcce
 										},
 									},
 								}
-								glog.V(0).Infof("send assignment %v to %s", adjustment.partition, adjustment.consumer)
+								log.V(3).Infof("send assignment %v to %s", adjustment.partition, adjustment.consumer)
 								break
 							}
 						}
@@ -76,7 +76,7 @@ func NewConsumerGroup(t *schema_pb.Topic, reblanceSeconds int32, filerClientAcce
 							},
 						},
 					}
-					glog.V(0).Infof("send unassignment %v to %s", adjustment.partition, adjustment.consumer)
+					log.V(3).Infof("send unassignment %v to %s", adjustment.partition, adjustment.consumer)
 				}
 			case <-cg.stopCh:
 				return

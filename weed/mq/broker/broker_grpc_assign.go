@@ -3,7 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -50,7 +50,7 @@ func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *m
 		}
 	}
 
-	glog.V(0).Infof("AssignTopicPartitions: topic %s partition assignments: %v", request.Topic, request.BrokerPartitionAssignments)
+	log.V(3).Infof("AssignTopicPartitions: topic %s partition assignments: %v", request.Topic, request.BrokerPartitionAssignments)
 	return ret, nil
 }
 
@@ -91,7 +91,7 @@ func (b *MessageQueueBroker) assignTopicPartitionsToBrokers(ctx context.Context,
 				brokerStats.RegisterAssignment(t, bpa.Partition, isAdd)
 				return nil
 			}); doCreateErr != nil {
-				glog.Errorf("create topic %s partition %+v on %s: %v", t, bpa.Partition, bpa.LeaderBroker, doCreateErr)
+				log.Errorf("create topic %s partition %+v on %s: %v", t, bpa.Partition, bpa.LeaderBroker, doCreateErr)
 			}
 		}(bpa)
 	}

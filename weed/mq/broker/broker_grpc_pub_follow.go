@@ -2,7 +2,7 @@ package broker
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/buffered_queue"
@@ -43,7 +43,7 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 				err = nil
 				break
 			}
-			glog.V(0).Infof("topic %v partition %v publish stream error: %v", initMessage.Topic, initMessage.Partition, err)
+			log.V(3).Infof("topic %v partition %v publish stream error: %v", initMessage.Topic, initMessage.Partition, err)
 			break
 		}
 
@@ -58,14 +58,14 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 			if err := stream.Send(&mq_pb.PublishFollowMeResponse{
 				AckTsNs: dataMessage.TsNs,
 			}); err != nil {
-				glog.Errorf("Error sending response %v: %v", dataMessage, err)
+				log.Errorf("Error sending response %v: %v", dataMessage, err)
 			}
 			// println("ack", string(dataMessage.Key), dataMessage.TsNs)
 		} else if closeMessage := req.GetClose(); closeMessage != nil {
-			glog.V(0).Infof("topic %v partition %v publish stream closed: %v", initMessage.Topic, initMessage.Partition, closeMessage)
+			log.V(3).Infof("topic %v partition %v publish stream closed: %v", initMessage.Topic, initMessage.Partition, closeMessage)
 			break
 		} else if flushMessage := req.GetFlush(); flushMessage != nil {
-			glog.V(0).Infof("topic %v partition %v publish stream flushed: %v", initMessage.Topic, initMessage.Partition, flushMessage)
+			log.V(3).Infof("topic %v partition %v publish stream flushed: %v", initMessage.Topic, initMessage.Partition, flushMessage)
 
 			lastFlushTsNs = flushMessage.TsNs
 
@@ -80,7 +80,7 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 			}
 
 		} else {
-			glog.Errorf("unknown message: %v", req)
+			log.Errorf("unknown message: %v", req)
 		}
 	}
 
@@ -104,7 +104,7 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 		startTime, stopTime := mem.startTime.UTC(), mem.stopTime.UTC()
 
 		if stopTime.UnixNano() <= lastFlushTsNs {
-			glog.V(0).Infof("dropping remaining data at %v %v", t, p)
+			log.V(3).Infof("dropping remaining data at %v %v", t, p)
 			continue
 		}
 
@@ -114,17 +114,17 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 
 		for {
 			if err := b.appendToFile(targetFile, mem.buf); err != nil {
-				glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
+				log.V(3).Infof("metadata log write failed %s: %v", targetFile, err)
 				time.Sleep(737 * time.Millisecond)
 			} else {
 				break
 			}
 		}
 
-		glog.V(0).Infof("flushed remaining data at %v to %s size %d", mem.stopTime.UnixNano(), targetFile, len(mem.buf))
+		log.V(3).Infof("flushed remaining data at %v to %s size %d", mem.stopTime.UnixNano(), targetFile, len(mem.buf))
 	}
 
-	glog.V(0).Infof("shut down follower for %v %v", t, p)
+	log.V(3).Infof("shut down follower for %v %v", t, p)
 
 	return err
 }
@@ -140,7 +140,7 @@ func (b *MessageQueueBroker) buildFollowerLogBuffer(inMemoryBuffers *buffered_qu
 				startTime: startTime,
 				stopTime:  stopTime,
 			})
-			glog.V(0).Infof("queue up %d~%d size %d", startTime.UnixNano(), stopTime.UnixNano(), len(buf))
+			log.V(3).Infof("queue up %d~%d size %d", startTime.UnixNano(), stopTime.UnixNano(), len(buf))
 		}, nil, func() {
 		})
 	return lb

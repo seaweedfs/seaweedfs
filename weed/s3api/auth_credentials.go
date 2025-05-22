@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -121,14 +121,14 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 	}
 
 	if option.Config != "" {
-		glog.V(3).Infof("loading static config file %s", option.Config)
+		log.V(0).Infof("loading static config file %s", option.Config)
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
-			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
+			log.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
 	} else {
-		glog.V(3).Infof("no static config file specified... loading config from filer %s", option.Filer)
+		log.V(0).Infof("no static config file specified... loading config from filer %s", option.Filer)
 		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
-			glog.Warningf("fail to load config: %v", err)
+			log.Warningf("fail to load config: %v", err)
 		}
 	}
 	return iam
@@ -137,7 +137,7 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) (err error) {
 	var content []byte
 	err = pb.WithFilerClient(false, 0, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		glog.V(3).Infof("loading config %s from filer %s", filer.IamConfigDirectory+"/"+filer.IamIdentityFile, option.Filer)
+		log.V(0).Infof("loading config %s from filer %s", filer.IamConfigDirectory+"/"+filer.IamIdentityFile, option.Filer)
 		content, err = filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile)
 		return err
 	})
@@ -150,7 +150,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
 	content, readErr := os.ReadFile(fileName)
 	if readErr != nil {
-		glog.Warningf("fail to read %s : %v", fileName, readErr)
+		log.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
 	return iam.LoadS3ApiConfigurationFromBytes(content)
@@ -159,7 +159,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []byte) error {
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
-		glog.Warningf("unmarshal error: %v", err)
+		log.Warningf("unmarshal error: %v", err)
 		return fmt.Errorf("unmarshal error: %v", err)
 	}
 
@@ -183,7 +183,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	foundAccountAnonymous := false
 
 	for _, account := range config.Accounts {
-		glog.V(3).Infof("loading account  name=%s, id=%s", account.DisplayName, account.Id)
+		log.V(0).Infof("loading account  name=%s, id=%s", account.DisplayName, account.Id)
 		switch account.Id {
 		case AccountAdmin.Id:
 			AccountAdmin = Account{
@@ -222,7 +222,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		emailAccount[AccountAnonymous.EmailAddress] = &AccountAnonymous
 	}
 	for _, ident := range config.Identities {
-		glog.V(3).Infof("loading identity %s", ident.Name)
+		log.V(0).Infof("loading identity %s", ident.Name)
 		t := &Identity{
 			Name:        ident.Name,
 			Credentials: nil,
@@ -239,7 +239,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 				t.Account = account
 			} else {
 				t.Account = &AccountAdmin
-				glog.Warningf("identity %s is associated with a non exist account ID, the association is invalid", ident.Name)
+				log.Warningf("identity %s is associated with a non exist account ID, the association is invalid", ident.Name)
 			}
 		}
 
@@ -285,7 +285,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 			}
 		}
 	}
-	glog.V(1).Infof("could not find accessKey %s", accessKey)
+	log.V(2).Infof("could not find accessKey %s", accessKey)
 	return nil, nil, false
 }
 
@@ -324,7 +324,7 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		}
 
 		identity, errCode := iam.authRequest(r, action)
-		glog.V(3).Infof("auth error: %v", errCode)
+		log.V(0).Infof("auth error: %v", errCode)
 		if errCode == s3err.ErrNone {
 			if identity != nil && identity.Name != "" {
 				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
@@ -349,26 +349,26 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	var authType string
 	switch getRequestAuthType(r) {
 	case authTypeUnknown:
-		glog.V(3).Infof("unknown auth type")
+		log.V(0).Infof("unknown auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
 		return identity, s3err.ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
-		glog.V(3).Infof("v2 auth type")
+		log.V(0).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
 		authType = "SigV2"
 	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
-		glog.V(3).Infof("v4 auth type")
+		log.V(0).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		authType = "SigV4"
 	case authTypePostPolicy:
-		glog.V(3).Infof("post policy auth type")
+		log.V(0).Infof("post policy auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
 		return identity, s3err.ErrNone
 	case authTypeStreamingUnsigned:
-		glog.V(3).Infof("unsigned streaming upload")
+		log.V(0).Infof("unsigned streaming upload")
 		return identity, s3err.ErrNone
 	case authTypeJWT:
-		glog.V(3).Infof("jwt auth type")
+		log.V(0).Infof("jwt auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
 		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
@@ -388,7 +388,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		return identity, s3Err
 	}
 
-	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
+	log.V(0).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	prefix := s3_constants.GetPrefix(r)
 
@@ -415,29 +415,29 @@ func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err
 	var authType string
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
-		glog.V(3).Infof("signed streaming upload")
+		log.V(0).Infof("signed streaming upload")
 		return identity, s3err.ErrNone
 	case authTypeStreamingUnsigned:
-		glog.V(3).Infof("unsigned streaming upload")
+		log.V(0).Infof("unsigned streaming upload")
 		return identity, s3err.ErrNone
 	case authTypeUnknown:
-		glog.V(3).Infof("unknown auth type")
+		log.V(0).Infof("unknown auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
 		return identity, s3err.ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
-		glog.V(3).Infof("v2 auth type")
+		log.V(0).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
 		authType = "SigV2"
 	case authTypeSigned, authTypePresigned:
-		glog.V(3).Infof("v4 auth type")
+		log.V(0).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		authType = "SigV4"
 	case authTypePostPolicy:
-		glog.V(3).Infof("post policy auth type")
+		log.V(0).Infof("post policy auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
 		return identity, s3err.ErrNone
 	case authTypeJWT:
-		glog.V(3).Infof("jwt auth type")
+		log.V(0).Infof("jwt auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
 		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
@@ -455,7 +455,7 @@ func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err
 		r.Header.Set(s3_constants.AmzAuthType, authType)
 	}
 
-	glog.V(3).Infof("auth error: %v", s3Err)
+	log.V(0).Infof("auth error: %v", s3Err)
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err
 	}
@@ -476,10 +476,10 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 		}
 	}
 	if bucket == "" {
-		glog.V(3).Infof("identity %s is not allowed to perform action %s on %s -- bucket is empty", identity.Name, action, bucket+objectKey)
+		log.V(0).Infof("identity %s is not allowed to perform action %s on %s -- bucket is empty", identity.Name, action, bucket+objectKey)
 		return false
 	}
-	glog.V(3).Infof("checking if %s can perform %s on bucket '%s'", identity.Name, action, bucket+objectKey)
+	log.V(0).Infof("checking if %s can perform %s on bucket '%s'", identity.Name, action, bucket+objectKey)
 	target := string(action) + ":" + bucket + objectKey
 	adminTarget := s3_constants.ACTION_ADMIN + ":" + bucket + objectKey
 	limitedByBucket := string(action) + ":" + bucket
@@ -504,7 +504,7 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 		}
 	}
 	//log error
-	glog.V(3).Infof("identity %s is not allowed to perform action %s on %s", identity.Name, action, bucket+objectKey)
+	log.V(0).Infof("identity %s is not allowed to perform action %s on %s", identity.Name, action, bucket+objectKey)
 	return false
 }
 

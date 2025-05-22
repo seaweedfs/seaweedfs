@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
@@ -40,12 +40,12 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		return nil
 	}
 	if !strings.HasPrefix(key, r.source.Dir) {
-		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
+		log.V(-1).Infof("skipping %v outside of %v", key, r.source.Dir)
 		return nil
 	}
 	for _, excludeDir := range r.excludeDirs {
 		if strings.HasPrefix(key, excludeDir) {
-			glog.V(4).Infof("skipping %v of exclude dir %v", key, excludeDir)
+			log.V(-1).Infof("skipping %v of exclude dir %v", key, excludeDir)
 			return nil
 		}
 	}
@@ -61,24 +61,24 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		dateKey = time.Unix(mTime, 0).Format("2006-01-02")
 	}
 	newKey := util.Join(r.sink.GetSinkToDirectory(), dateKey, key[len(r.source.Dir):])
-	glog.V(3).Infof("replicate %s => %s", key, newKey)
+	log.V(0).Infof("replicate %s => %s", key, newKey)
 	key = newKey
 	if message.OldEntry != nil && message.NewEntry == nil {
-		glog.V(4).Infof("deleting %v", key)
+		log.V(-1).Infof("deleting %v", key)
 		return r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
 	}
 	if message.OldEntry == nil && message.NewEntry != nil {
-		glog.V(4).Infof("creating %v", key)
+		log.V(-1).Infof("creating %v", key)
 		return r.sink.CreateEntry(key, message.NewEntry, message.Signatures)
 	}
 	if message.OldEntry == nil && message.NewEntry == nil {
-		glog.V(0).Infof("weird message %+v", message)
+		log.V(3).Infof("weird message %+v", message)
 		return nil
 	}
 
 	foundExisting, err := r.sink.UpdateEntry(key, message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks, message.Signatures)
 	if foundExisting {
-		glog.V(4).Infof("updated %v", key)
+		log.V(-1).Infof("updated %v", key)
 		return err
 	}
 
@@ -87,7 +87,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		return fmt.Errorf("delete old entry %v: %v", key, err)
 	}
 
-	glog.V(4).Infof("creating missing %v", key)
+	log.V(-1).Infof("creating missing %v", key)
 	return r.sink.CreateEntry(key, message.NewEntry, message.Signatures)
 }
 

@@ -1,7 +1,7 @@
 package pub_balancer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
@@ -28,11 +28,11 @@ func (ps *PartitionSlotToBrokerList) AddBroker(partition *schema_pb.Partition, b
 	for _, partitionSlot := range ps.PartitionSlots {
 		if partitionSlot.RangeStart == partition.RangeStart && partitionSlot.RangeStop == partition.RangeStop {
 			if partitionSlot.AssignedBroker != "" && partitionSlot.AssignedBroker != broker {
-				glog.V(0).Infof("partition %s broker change: %s => %s", partition, partitionSlot.AssignedBroker, broker)
+				log.V(3).Infof("partition %s broker change: %s => %s", partition, partitionSlot.AssignedBroker, broker)
 				partitionSlot.AssignedBroker = broker
 			}
 			if partitionSlot.FollowerBroker != "" && partitionSlot.FollowerBroker != follower {
-				glog.V(0).Infof("partition %s follower change: %s => %s", partition, partitionSlot.FollowerBroker, follower)
+				log.V(3).Infof("partition %s follower change: %s => %s", partition, partitionSlot.FollowerBroker, follower)
 				partitionSlot.FollowerBroker = follower
 			}
 

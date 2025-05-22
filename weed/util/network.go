@@ -5,13 +5,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 func DetectedHostAddress() string {
 	netInterfaces, err := net.Interfaces()
 	if err != nil {
-		glog.V(0).Infof("failed to detect net interfaces: %v", err)
+		log.V(3).Infof("failed to detect net interfaces: %v", err)
 		return ""
 	}
 
@@ -33,7 +33,7 @@ func selectIpV4(netInterfaces []net.Interface, isIpV4 bool) string {
 		}
 		addrs, err := netInterface.Addrs()
 		if err != nil {
-			glog.V(0).Infof("get interface addresses: %v", err)
+			log.V(3).Infof("get interface addresses: %v", err)
 		}
 
 		for _, a := range addrs {

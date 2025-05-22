@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -117,7 +117,7 @@ func (w *filerFileWriter) Close() error {
 
 	// Check permissions based on file metadata and user permissions
 	if err := w.fs.checkFilePermission(dir, "write"); err != nil {
-		glog.Errorf("Permission denied for %s", dir)
+		log.Errorf("Permission denied for %s", dir)
 		return err
 	}
 

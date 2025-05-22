@@ -3,7 +3,7 @@ package security
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"net"
 	"net/http"
 	"strings"
@@ -112,7 +112,7 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	glog.V(0).Infof("Not in whitelist: %s", r.RemoteAddr)
+	log.V(3).Infof("Not in whitelist: %s", r.RemoteAddr)
 	return fmt.Errorf("Not in whitelist: %s", r.RemoteAddr)
 }
 
@@ -123,7 +123,7 @@ func (g *Guard) UpdateWhiteList(whiteList []string) {
 		if strings.Contains(ip, "/") {
 			_, cidrnet, err := net.ParseCIDR(ip)
 			if err != nil {
-				glog.Errorf("Parse CIDR %s in whitelist failed: %v", ip, err)
+				log.Errorf("Parse CIDR %s in whitelist failed: %v", ip, err)
 			}
 			whiteListCIDR[ip] = cidrnet
 		} else {

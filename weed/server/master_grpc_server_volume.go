@@ -15,7 +15,7 @@ import (
 
 	"github.com/seaweedfs/raft"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -28,12 +28,12 @@ const (
 )
 
 func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
-	glog.V(1).Infoln("starting automatic volume grow")
+	log.V(2).Infoln("starting automatic volume grow")
 	start := time.Now()
 	newVidLocations, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
-	glog.V(1).Infoln("finished automatic volume grow, cost ", time.Now().Sub(start))
+	log.V(2).Infoln("finished automatic volume grow, cost ", time.Now().Sub(start))
 	if err != nil {
-		glog.V(1).Infof("automatic volume grow failed: %+v", err)
+		log.V(2).Infof("automatic volume grow failed: %+v", err)
 		return
 	}
 	for _, newVidLocation := range newVidLocations {
@@ -77,7 +77,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 					_, err = ms.VolumeGrow(ctx, vgr)
 				}
 				if err != nil {
-					glog.V(0).Infof("volume grow request failed: %+v", err)
+					log.V(3).Infof("volume grow request failed: %+v", err)
 				}
 				writableVolumes := vl.CloneWritableVolumes()
 				for dcId, racks := range dcs {
@@ -92,7 +92,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 							}
 
 							if _, err = ms.VolumeGrow(ctx, vgr); err != nil {
-								glog.V(0).Infof("volume grow request for dc:%s rack:%s failed: %+v", dcId, rackId, err)
+								log.V(3).Infof("volume grow request for dc:%s rack:%s failed: %+v", dcId, rackId, err)
 							}
 						}
 					}
@@ -130,7 +130,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 
 			// not atomic but it's okay
 			if found || (!req.Force && !vl.ShouldGrowVolumes()) {
-				glog.V(4).Infoln("discard volume grow request")
+				log.V(-1).Infoln("discard volume grow request")
 				time.Sleep(time.Millisecond * 211)
 				vl.DoneGrowRequest()
 				continue
@@ -138,7 +138,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 
 			filter.Store(req, nil)
 			// we have lock called inside vg
-			glog.V(0).Infof("volume grow %+v", req)
+			log.V(3).Infof("volume grow %+v", req)
 			go func(req *topology.VolumeGrowRequest, vl *topology.VolumeLayout) {
 				ms.DoAutomaticVolumeGrow(req)
 				vl.DoneGrowRequest()

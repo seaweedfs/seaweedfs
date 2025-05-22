@@ -5,7 +5,7 @@ import (
 	"hash/fnv"
 
 	"github.com/bwmarrin/snowflake"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 // a simple snowflake Sequencer
@@ -18,7 +18,7 @@ func NewSnowflakeSequencer(nodeid string, snowflakeId int) (*SnowflakeSequencer,
 	if snowflakeId != 0 {
 		nodeid_hash = uint32(snowflakeId)
 	}
-	glog.V(0).Infof("use snowflake seq id generator, nodeid:%s hex_of_nodeid: %x", nodeid, nodeid_hash)
+	log.V(3).Infof("use snowflake seq id generator, nodeid:%s hex_of_nodeid: %x", nodeid, nodeid_hash)
 	node, err := snowflake.NewNode(int64(nodeid_hash))
 	if err != nil {
 		fmt.Println(err)

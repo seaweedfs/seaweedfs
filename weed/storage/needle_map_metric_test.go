@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
@@ -23,9 +23,9 @@ func TestFastLoadingNeedleMapMetrics(t *testing.T) {
 
 	mm, _ := newNeedleMapMetricFromIndexFile(idxFile)
 
-	glog.V(0).Infof("FileCount expected %d actual %d", nm.FileCount(), mm.FileCount())
-	glog.V(0).Infof("DeletedSize expected %d actual %d", nm.DeletedSize(), mm.DeletedSize())
-	glog.V(0).Infof("ContentSize expected %d actual %d", nm.ContentSize(), mm.ContentSize())
-	glog.V(0).Infof("DeletedCount expected %d actual %d", nm.DeletedCount(), mm.DeletedCount())
-	glog.V(0).Infof("MaxFileKey expected %d actual %d", nm.MaxFileKey(), mm.MaxFileKey())
+	log.V(3).Infof("FileCount expected %d actual %d", nm.FileCount(), mm.FileCount())
+	log.V(3).Infof("DeletedSize expected %d actual %d", nm.DeletedSize(), mm.DeletedSize())
+	log.V(3).Infof("ContentSize expected %d actual %d", nm.ContentSize(), mm.ContentSize())
+	log.V(3).Infof("DeletedCount expected %d actual %d", nm.DeletedCount(), mm.DeletedCount())
+	log.V(3).Infof("MaxFileKey expected %d actual %d", nm.MaxFileKey(), mm.MaxFileKey())
 }

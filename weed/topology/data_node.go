@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -78,7 +78,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 	for _, v := range existingVolumes {
 		vid := v.Id
 		if _, ok := actualVolumeMap[vid]; !ok {
-			glog.V(0).Infoln("Deleting volume id:", vid)
+			log.V(3).Infoln("Deleting volume id:", vid)
 			disk := dn.getOrCreateDisk(v.DiskType)
 			disk.DeleteVolumeById(vid)
 			deletedVolumes = append(deletedVolumes, v)

@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/tikv/client-go/v2/config"
@@ -66,7 +66,7 @@ func (store *TikvStore) initialize(ca, cert, key string, verify_cn, pdAddrs []st
 func (store *TikvStore) Shutdown() {
 	err := store.client.Close()
 	if err != nil {
-		glog.V(0).Infof("Shutdown TiKV client got error: %v", err)
+		log.V(3).Infof("Shutdown TiKV client got error: %v", err)
 	}
 }
 
@@ -249,7 +249,7 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 			// println("list", entry.FullPath, "chunks", len(entry.GetChunks()))
 			if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(iter.Value())); decodeErr != nil {
 				err = decodeErr
-				glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+				log.V(3).Infof("list %s : %v", entry.FullPath, err)
 				break
 			}
 			if err := iter.Next(); !eachEntryFunc(entry) || err != nil {

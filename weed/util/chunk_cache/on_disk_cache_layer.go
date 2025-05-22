@@ -2,7 +2,7 @@ package chunk_cache
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"path"
@@ -25,7 +25,7 @@ func NewOnDiskCacheLayer(dir, namePrefix string, diskSize int64, segmentCount in
 		fileName := path.Join(dir, fmt.Sprintf("%s_%d", namePrefix, i))
 		diskCache, err := LoadOrCreateChunkCacheVolume(fileName, volumeSize)
 		if err != nil {
-			glog.Errorf("failed to add cache %s : %v", fileName, err)
+			log.Errorf("failed to add cache %s : %v", fileName, err)
 		} else {
 			c.diskCaches = append(c.diskCaches, diskCache)
 		}
@@ -47,7 +47,7 @@ func (c *OnDiskCacheLayer) setChunk(needleId types.NeedleId, data []byte) {
 	if c.diskCaches[0].fileSize+int64(len(data)) > c.diskCaches[0].sizeLimit {
 		t, resetErr := c.diskCaches[len(c.diskCaches)-1].Reset()
 		if resetErr != nil {
-			glog.Errorf("failed to reset cache file %s", c.diskCaches[len(c.diskCaches)-1].fileName)
+			log.Errorf("failed to reset cache file %s", c.diskCaches[len(c.diskCaches)-1].fileName)
 			return
 		}
 		for i := len(c.diskCaches) - 1; i > 0; i-- {
@@ -57,7 +57,7 @@ func (c *OnDiskCacheLayer) setChunk(needleId types.NeedleId, data []byte) {
 	}
 
 	if err := c.diskCaches[0].WriteNeedle(needleId, data); err != nil {
-		glog.V(0).Infof("cache write %v size %d: %v", needleId, len(data), err)
+		log.V(3).Infof("cache write %v size %d: %v", needleId, len(data), err)
 	}
 
 }
@@ -72,7 +72,7 @@ func (c *OnDiskCacheLayer) getChunk(needleId types.NeedleId) (data []byte) {
 			continue
 		}
 		if err != nil {
-			glog.Errorf("failed to read cache file %s id %d", diskCache.fileName, needleId)
+			log.Errorf("failed to read cache file %s id %d", diskCache.fileName, needleId)
 			continue
 		}
 		if len(data) != 0 {
@@ -94,7 +94,7 @@ func (c *OnDiskCacheLayer) getChunkSlice(needleId types.NeedleId, offset, length
 			continue
 		}
 		if err != nil {
-			glog.Warningf("failed to read cache file %s id %d: %v", diskCache.fileName, needleId, err)
+			log.Warningf("failed to read cache file %s id %d: %v", diskCache.fileName, needleId, err)
 			continue
 		}
 		if len(data) != 0 {
@@ -114,7 +114,7 @@ func (c *OnDiskCacheLayer) readChunkAt(buffer []byte, needleId types.NeedleId, o
 			continue
 		}
 		if err != nil {
-			glog.Warningf("failed to read cache file %s id %d: %v", diskCache.fileName, needleId, err)
+			log.Warningf("failed to read cache file %s id %d: %v", diskCache.fileName, needleId, err)
 			continue
 		}
 		if n > 0 {

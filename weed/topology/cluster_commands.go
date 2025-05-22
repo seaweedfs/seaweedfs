@@ -5,7 +5,7 @@ import (
 	"fmt"
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
@@ -29,7 +29,7 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	before := topo.GetMaxVolumeId()
 	topo.UpAdjustMaxVolumeId(c.MaxVolumeId)
 
-	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
+	log.V(2).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
 
 	return nil, nil
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/google/uuid"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
@@ -48,7 +48,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 	}
 	response, errCode := s3a.createMultipartUpload(createMultipartUploadInput)
 
-	glog.V(2).Info("NewMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)), errCode)
+	log.V(1).Info("NewMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)), errCode)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -85,7 +85,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		UploadId: aws.String(uploadID),
 	}, parts)
 
-	glog.V(2).Info("CompleteMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)), errCode)
+	log.V(1).Info("CompleteMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)), errCode)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -121,7 +121,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	glog.V(2).Info("AbortMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)))
+	log.V(1).Info("AbortMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)))
 
 	//https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
@@ -156,7 +156,7 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		UploadIdMarker: aws.String(uploadIDMarker),
 	})
 
-	glog.V(2).Infof("ListMultipartUploadsHandler %s errCode=%d", string(s3err.EncodeXMLResponse(response)), errCode)
+	log.V(1).Infof("ListMultipartUploadsHandler %s errCode=%d", string(s3err.EncodeXMLResponse(response)), errCode)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -201,7 +201,7 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	glog.V(2).Infof("ListObjectPartsHandler %s count=%d", string(s3err.EncodeXMLResponse(response)), len(response.Part))
+	log.V(1).Infof("ListObjectPartsHandler %s count=%d", string(s3err.EncodeXMLResponse(response)), len(response.Part))
 
 	writeSuccessResponseXML(w, r, response)
 
@@ -236,7 +236,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 	defer dataReader.Close()
 
-	glog.V(2).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
+	log.V(1).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
 
 	uploadUrl := s3a.genPartUploadUrl(bucket, uploadID, partID)
 
@@ -282,7 +282,7 @@ func (s3a *S3ApiServer) checkUploadId(object string, id string) error {
 	hash := s3a.generateUploadID(object)
 
 	if !strings.HasPrefix(id, hash) {
-		glog.Errorf("object %s and uploadID %s are not matched", object, id)
+		log.Errorf("object %s and uploadID %s are not matched", object, id)
 		return fmt.Errorf("object %s and uploadID %s are not matched", object, id)
 	}
 	return nil

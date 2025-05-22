@@ -3,7 +3,7 @@ package meta_cache
 import (
 	"context"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -63,7 +63,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		var newEntry *filer.Entry
 		if message.OldEntry != nil {
 			oldPath = util.NewFullPath(dir, message.OldEntry.Name)
-			glog.V(4).Infof("deleting %v", oldPath)
+			log.V(-1).Infof("deleting %v", oldPath)
 		}
 
 		if message.NewEntry != nil {
@@ -71,7 +71,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 				dir = message.NewParentPath
 			}
 			key := util.NewFullPath(dir, message.NewEntry.Name)
-			glog.V(4).Infof("creating %v", key)
+			log.V(-1).Infof("creating %v", key)
 			newEntry = filer.FromPbEntry(dir, message.NewEntry)
 		}
 		err := mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
@@ -116,7 +116,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		metadataFollowOption.ClientEpoch++
 		return pb.WithFilerClientFollowMetadata(client, metadataFollowOption, mergeProcessors(processEventFn, followers...))
 	}, func(err error) bool {
-		glog.Errorf("follow metadata updates: %v", err)
+		log.Errorf("follow metadata updates: %v", err)
 		return true
 	})
 

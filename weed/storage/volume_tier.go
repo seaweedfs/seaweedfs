@@ -2,7 +2,7 @@ package storage
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/rclone_backend"
@@ -27,7 +27,7 @@ func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 	}
 
 	if v.hasRemoteFile {
-		glog.V(0).Infof("volume %d is tiered to %s as %s and read only", v.Id,
+		log.V(3).Infof("volume %d is tiered to %s as %s and read only", v.Id,
 			v.volumeInfo.Files[0].BackendName(), v.volumeInfo.Files[0].Key)
 	} else {
 		if v.volumeInfo.BytesOffset == 0 {
@@ -42,12 +42,12 @@ func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 		} else {
 			m = "with"
 		}
-		glog.Exitf("BytesOffset mismatch in volume info file %s, try use binary version %s large_disk", v.FileName(".vif"), m)
+		log.Exitf("BytesOffset mismatch in volume info file %s, try use binary version %s large_disk", v.FileName(".vif"), m)
 		return
 	}
 
 	if err != nil {
-		glog.Warningf("load volume %d.vif file: %v", v.Id, err)
+		log.Warningf("load volume %d.vif file: %v", v.Id, err)
 		return
 	}
 

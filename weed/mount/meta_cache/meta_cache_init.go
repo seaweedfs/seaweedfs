@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -41,7 +41,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
 
-	glog.V(4).Infof("ReadDirAllEntries %s ...", path)
+	log.V(-1).Infof("ReadDirAllEntries %s ...", path)
 
 	err := util.Retry("ReadDirAllEntries", func() error {
 		return filer_pb.ReadDirAllEntries(client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
@@ -50,7 +50,7 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 				return nil
 			}
 			if err := mc.doInsertEntry(context.Background(), entry); err != nil {
-				glog.V(0).Infof("read %s: %v", entry.FullPath, err)
+				log.V(3).Infof("read %s: %v", entry.FullPath, err)
 				return err
 			}
 			return nil

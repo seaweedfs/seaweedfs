@@ -7,7 +7,7 @@ import (
 
 	"github.com/klauspost/reedsolomon"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -78,7 +78,7 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 		return fmt.Errorf("failed to stat dat file: %v", err)
 	}
 
-	glog.V(0).Infof("encodeDatFile %s.dat size:%d", baseFileName, fi.Size())
+	log.V(3).Infof("encodeDatFile %s.dat size:%d", baseFileName, fi.Size())
 	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize)
 	if err != nil {
 		return fmt.Errorf("encodeDatFile: %v", err)
@@ -121,12 +121,12 @@ func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize i
 
 	bufferSize := int64(len(buffers[0]))
 	if bufferSize == 0 {
-		glog.Fatal("unexpected zero buffer size")
+		log.Fatal("unexpected zero buffer size")
 	}
 
 	batchCount := blockSize / bufferSize
 	if blockSize%bufferSize != 0 {
-		glog.Fatalf("unexpected block size %d buffer size %d", blockSize, bufferSize)
+		log.Fatalf("unexpected block size %d buffer size %d", blockSize, bufferSize)
 	}
 
 	for b := int64(0); b < batchCount; b++ {

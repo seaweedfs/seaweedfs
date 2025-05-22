@@ -21,7 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/images"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -103,11 +103,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err == filer_pb.ErrNotFound {
-			glog.V(2).Infof("Not found %s: %v", path, err)
+			log.V(1).Infof("Not found %s: %v", path, err)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadNotFound).Inc()
 			w.WriteHeader(http.StatusNotFound)
 		} else {
-			glog.Errorf("Internal %s: %v", path, err)
+			log.Errorf("Internal %s: %v", path, err)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadInternal).Inc()
 			w.WriteHeader(http.StatusInternalServerError)
 		}
@@ -244,7 +244,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			defer mem.Free(data)
 			err := filer.ReadAll(data, fs.filer.MasterClient, entry.GetChunks())
 			if err != nil {
-				glog.Errorf("failed to read %s: %v", path, err)
+				log.Errorf("failed to read %s: %v", path, err)
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
@@ -260,7 +260,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				_, err := writer.Write(entry.Content[offset : offset+size])
 				if err != nil {
 					stats.FilerHandlerCounter.WithLabelValues(stats.ErrorWriteEntry).Inc()
-					glog.Errorf("failed to write entry content: %v", err)
+					log.Errorf("failed to write entry content: %v", err)
 				}
 				return err
 			}, nil
@@ -273,7 +273,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				Name:      name,
 			}); err != nil {
 				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadCache).Inc()
-				glog.Errorf("CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
+				log.Errorf("CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
 				return nil, fmt.Errorf("cache %s: %v", entry.FullPath, err)
 			} else {
 				chunks = resp.Entry.GetChunks()
@@ -283,14 +283,14 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		streamFn, err := filer.PrepareStreamContentWithThrottler(fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
-			glog.Errorf("failed to prepare stream content %s: %v", r.URL, err)
+			log.Errorf("failed to prepare stream content %s: %v", r.URL, err)
 			return nil, err
 		}
 		return func(writer io.Writer) error {
 			err := streamFn(writer)
 			if err != nil {
 				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
-				glog.Errorf("failed to stream content %s: %v", r.URL, err)
+				log.Errorf("failed to stream content %s: %v", r.URL, err)
 			}
 			return err
 		}, nil

@@ -14,7 +14,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	environ "github.com/ydb-platform/ydb-go-sdk-auth-environ"
@@ -69,7 +69,7 @@ func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix
 	store.dirBuckets = dirBuckets
 	store.SupportBucketTable = useBucketPrefix
 	if store.SupportBucketTable {
-		glog.V(0).Infof("enabled BucketPrefix")
+		log.V(3).Infof("enabled BucketPrefix")
 	}
 	store.dbs = make(map[string]bool)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -203,7 +203,7 @@ func (store *YdbStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) 
 	dir, name := fullpath.DirAndName()
 	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
 	query := withPragma(tablePathPrefix, deleteQuery)
-	glog.V(4).Infof("DeleteEntry %s, tablePathPrefix %s, shortDir %s", fullpath, *tablePathPrefix, *shortDir)
+	log.V(-1).Infof("DeleteEntry %s, tablePathPrefix %s, shortDir %s", fullpath, *tablePathPrefix, *shortDir)
 	queryParams := table.NewQueryParameters(
 		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
 		table.ValueParam("$name", types.UTF8Value(name)))
@@ -251,7 +251,7 @@ func (store *YdbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath
 		if chunkLimit > maxChunk {
 			chunkLimit = maxChunk
 		}
-		glog.V(4).Infof("startFileName %s, restLimit %d, chunkLimit %d", startFileName, restLimit, chunkLimit)
+		log.V(-1).Infof("startFileName %s, restLimit %d, chunkLimit %d", startFileName, restLimit, chunkLimit)
 
 		queryParams := table.NewQueryParameters(
 			table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
@@ -268,14 +268,14 @@ func (store *YdbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath
 				return nil
 			}
 			truncated = res.CurrentResultSet().Truncated()
-			glog.V(4).Infof("truncated %v, entryCount %d", truncated, entryCount)
+			log.V(-1).Infof("truncated %v, entryCount %d", truncated, entryCount)
 			for res.NextRow() {
 				if err := res.ScanNamed(
 					named.OptionalWithDefault("name", &name),
 					named.OptionalWithDefault("meta", &data)); err != nil {
 					return fmt.Errorf("list scanNamed %s : %v", dir, err)
 				}
-				glog.V(8).Infof("name %s, fullpath %s", name, util.NewFullPath(dir, name))
+				log.V(-1).Infof("name %s, fullpath %s", name, util.NewFullPath(dir, name))
 				lastFileName = name
 				entry := &filer.Entry{
 					FullPath: util.NewFullPath(dir, name),
@@ -345,7 +345,7 @@ func (store *YdbStore) OnBucketCreation(bucket string) {
 	defer store.dbsLock.Unlock()
 
 	if err := store.createTable(context.Background(), prefix); err != nil {
-		glog.Errorf("createTable %s: %v", prefix, err)
+		log.Errorf("createTable %s: %v", prefix, err)
 	}
 
 	if store.dbs == nil {
@@ -362,14 +362,14 @@ func (store *YdbStore) OnBucketDeletion(bucket string) {
 	defer store.dbsLock.Unlock()
 
 	prefix := path.Join(store.tablePathPrefix, bucket)
-	glog.V(4).Infof("deleting table %s", prefix)
+	log.V(-1).Infof("deleting table %s", prefix)
 
 	if err := store.deleteTable(context.Background(), prefix); err != nil {
-		glog.Errorf("deleteTable %s: %v", prefix, err)
+		log.Errorf("deleteTable %s: %v", prefix, err)
 	}
 
 	if err := store.DB.Scheme().RemoveDirectory(context.Background(), prefix); err != nil {
-		glog.Errorf("remove directory %s: %v", prefix, err)
+		log.Errorf("remove directory %s: %v", prefix, err)
 	}
 
 	if store.dbs == nil {
@@ -393,7 +393,7 @@ func (store *YdbStore) deleteTable(ctx context.Context, prefix string) error {
 	}); err != nil {
 		return err
 	}
-	glog.V(4).Infof("deleted table %s", prefix)
+	log.V(-1).Infof("deleted table %s", prefix)
 
 	return nil
 }
@@ -406,11 +406,11 @@ func (store *YdbStore) getPrefix(ctx context.Context, dir *string) (tablePathPre
 	}
 
 	prefixBuckets := store.dirBuckets + "/"
-	glog.V(4).Infof("dir: %s, prefixBuckets: %s", *dir, prefixBuckets)
+	log.V(-1).Infof("dir: %s, prefixBuckets: %s", *dir, prefixBuckets)
 	if strings.HasPrefix(*dir, prefixBuckets) {
 		// detect bucket
 		bucketAndDir := (*dir)[len(prefixBuckets):]
-		glog.V(4).Infof("bucketAndDir: %s", bucketAndDir)
+		log.V(-1).Infof("bucketAndDir: %s", bucketAndDir)
 		var bucket string
 		if t := strings.Index(bucketAndDir, "/"); t > 0 {
 			bucket = bucketAndDir[:t]
@@ -428,9 +428,9 @@ func (store *YdbStore) getPrefix(ctx context.Context, dir *string) (tablePathPre
 		if _, found := store.dbs[bucket]; !found {
 			if err := store.createTable(ctx, tablePathPrefixWithBucket); err == nil {
 				store.dbs[bucket] = true
-				glog.V(4).Infof("created table %s", tablePathPrefixWithBucket)
+				log.V(-1).Infof("created table %s", tablePathPrefixWithBucket)
 			} else {
-				glog.Errorf("createTable %s: %v", tablePathPrefixWithBucket, err)
+				log.Errorf("createTable %s: %v", tablePathPrefixWithBucket, err)
 			}
 		}
 		tablePathPrefix = &tablePathPrefixWithBucket
@@ -441,7 +441,7 @@ func (store *YdbStore) getPrefix(ctx context.Context, dir *string) (tablePathPre
 func (store *YdbStore) ensureTables(ctx context.Context) error {
 	prefixFull := store.tablePathPrefix
 
-	glog.V(4).Infof("creating base table %s", prefixFull)
+	log.V(-1).Infof("creating base table %s", prefixFull)
 	baseTable := path.Join(prefixFull, abstract_sql.DEFAULT_TABLE)
 	if err := store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
 		return s.CreateTable(ctx, baseTable, createTableOptions()...)
@@ -449,17 +449,17 @@ func (store *YdbStore) ensureTables(ctx context.Context) error {
 		return fmt.Errorf("failed to create base table %s: %v", baseTable, err)
 	}
 
-	glog.V(4).Infof("creating bucket tables")
+	log.V(-1).Infof("creating bucket tables")
 	if store.SupportBucketTable {
 		store.dbsLock.Lock()
 		defer store.dbsLock.Unlock()
 		for bucket := range store.dbs {
-			glog.V(4).Infof("creating bucket table %s", bucket)
+			log.V(-1).Infof("creating bucket table %s", bucket)
 			bucketTable := path.Join(prefixFull, bucket, abstract_sql.DEFAULT_TABLE)
 			if err := store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
 				return s.CreateTable(ctx, bucketTable, createTableOptions()...)
 			}); err != nil {
-				glog.Errorf("failed to create bucket table %s: %v", bucketTable, err)
+				log.Errorf("failed to create bucket table %s: %v", bucketTable, err)
 			}
 		}
 	}

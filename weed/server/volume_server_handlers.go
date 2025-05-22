@@ -10,7 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
@@ -56,12 +56,12 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		for vs.concurrentDownloadLimit != 0 && inFlightDownloadSize > vs.concurrentDownloadLimit {
 			select {
 			case <-r.Context().Done():
-				glog.V(4).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
+				log.V(-1).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
 				w.WriteHeader(util.HttpStatusCancelled)
 				vs.inFlightDownloadDataLimitCond.L.Unlock()
 				return
 			default:
-				glog.V(4).Infof("wait because inflight download data %d > %d", inFlightDownloadSize, vs.concurrentDownloadLimit)
+				log.V(-1).Infof("wait because inflight download data %d > %d", inFlightDownloadSize, vs.concurrentDownloadLimit)
 				vs.inFlightDownloadDataLimitCond.Wait()
 			}
 			inFlightDownloadSize = atomic.LoadInt64(&vs.inFlightDownloadDataSize)
@@ -83,11 +83,11 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 				if startTime.Add(vs.inflightUploadDataTimeout).Before(time.Now()) {
 					vs.inFlightUploadDataLimitCond.L.Unlock()
 					err := fmt.Errorf("reject because inflight upload data %d > %d, and wait timeout", inFlightUploadDataSize, vs.concurrentUploadLimit)
-					glog.V(1).Infof("too many requests: %v", err)
+					log.V(2).Infof("too many requests: %v", err)
 					writeJsonError(w, r, http.StatusTooManyRequests, err)
 					return
 				}
-				glog.V(4).Infof("wait because inflight upload data %d > %d", inFlightUploadDataSize, vs.concurrentUploadLimit)
+				log.V(-1).Infof("wait because inflight upload data %d > %d", inFlightUploadDataSize, vs.concurrentUploadLimit)
 				vs.inFlightUploadDataLimitCond.Wait()
 				inFlightUploadDataSize = atomic.LoadInt64(&vs.inFlightUploadDataSize)
 			}
@@ -149,7 +149,7 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 		vs.inFlightDownloadDataLimitCond.L.Lock()
 		inFlightDownloadSize := atomic.LoadInt64(&vs.inFlightDownloadDataSize)
 		for vs.concurrentDownloadLimit != 0 && inFlightDownloadSize > vs.concurrentDownloadLimit {
-			glog.V(4).Infof("wait because inflight download data %d > %d", inFlightDownloadSize, vs.concurrentDownloadLimit)
+			log.V(-1).Infof("wait because inflight download data %d > %d", inFlightDownloadSize, vs.concurrentDownloadLimit)
 			vs.inFlightDownloadDataLimitCond.Wait()
 			inFlightDownloadSize = atomic.LoadInt64(&vs.inFlightDownloadDataSize)
 		}
@@ -182,17 +182,17 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 
 	tokenStr := security.GetJwt(r)
 	if tokenStr == "" {
-		glog.V(1).Infof("missing jwt from %s", r.RemoteAddr)
+		log.V(2).Infof("missing jwt from %s", r.RemoteAddr)
 		return false
 	}
 
 	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFileIdClaims{})
 	if err != nil {
-		glog.V(1).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
+		log.V(2).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
 		return false
 	}
 	if !token.Valid {
-		glog.V(1).Infof("jwt invalid from %s: %v", r.RemoteAddr, tokenStr)
+		log.V(2).Infof("jwt invalid from %s: %v", r.RemoteAddr, tokenStr)
 		return false
 	}
 
@@ -202,6 +202,6 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 		}
 		return sc.Fid == vid+","+fid
 	}
-	glog.V(1).Infof("unexpected jwt from %s: %v", r.RemoteAddr, tokenStr)
+	log.V(2).Infof("unexpected jwt from %s: %v", r.RemoteAddr, tokenStr)
 	return false
 }

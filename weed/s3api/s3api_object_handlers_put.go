@@ -14,7 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
@@ -25,7 +25,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("PutObjectHandler %s %s", bucket, object)
+	log.V(0).Infof("PutObjectHandler %s %s", bucket, object)
 
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
@@ -99,7 +99,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	proxyReq, err := http.NewRequest(http.MethodPut, uploadUrl, body)
 
 	if err != nil {
-		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
+		log.Errorf("NewRequest %s: %v", uploadUrl, err)
 		return "", s3err.ErrInternalError
 	}
 
@@ -125,7 +125,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	resp, postErr := s3a.client.Do(proxyReq)
 
 	if postErr != nil {
-		glog.Errorf("post to filer: %v", postErr)
+		log.Errorf("post to filer: %v", postErr)
 		return "", s3err.ErrInternalError
 	}
 	defer resp.Body.Close()
@@ -134,17 +134,17 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
-		glog.Errorf("upload to filer response read %d: %v", resp.StatusCode, ra_err)
+		log.Errorf("upload to filer response read %d: %v", resp.StatusCode, ra_err)
 		return etag, s3err.ErrInternalError
 	}
 	var ret weed_server.FilerPostResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
-		glog.Errorf("failing to read upload to %s : %v", uploadUrl, string(resp_body))
+		log.Errorf("failing to read upload to %s : %v", uploadUrl, string(resp_body))
 		return "", s3err.ErrInternalError
 	}
 	if ret.Error != "" {
-		glog.Errorf("upload to filer error: %v", ret.Error)
+		log.Errorf("upload to filer error: %v", ret.Error)
 		return "", filerErrorToS3Error(ret.Error)
 	}
 	stats_collect.RecordBucketActiveTime(bucket)

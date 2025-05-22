@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -74,7 +74,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		ev.datFileSize = volumeInfo.DatFileSize
 		ev.ExpireAtSec = volumeInfo.ExpireAtSec
 	} else {
-		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, dataBaseFileName)
+		log.Warningf("vif file not found,volumeId:%d, filename:%s", vid, dataBaseFileName)
 		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
 	}
 

@@ -20,17 +20,17 @@
 //
 // Basic examples:
 //
-//	glog.Info("Prepare to repel boarders")
+//	log.Info("Prepare to repel boarders")
 //
-//	glog.Fatalf("Initialization failed: %s", err)
+//	log.Fatalf("Initialization failed: %s", err)
 //
 // See the documentation for the V function for an explanation of these examples:
 //
-//	if glog.V(2) {
-//		glog.Info("Starting transaction...")
+//	if log.V(1) {
+//		log.Info("Starting transaction...")
 //	}
 //
-//	glog.V(2).Infoln("Processed", nItems, "elements")
+//	log.V(1).Infoln("Processed", nItems, "elements")
 //
 // Log output is buffered and written periodically using Flush. Programs
 // should call Flush before exiting to guarantee all log output is written.
@@ -740,7 +740,7 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 
 // timeoutFlush calls Flush and returns when it completes or after timeout
 // elapses, whichever happens first.  This is needed because the hooks invoked
-// by Flush may deadlock when glog.Fatal is called from a hook that holds
+// by Flush may deadlock when log.Fatal is called from a hook that holds
 // a lock.
 func timeoutFlush(timeout time.Duration) {
 	done := make(chan bool, 1)
@@ -989,11 +989,11 @@ type Verbose bool
 // and Infof. These methods will write to the Info log if called.
 // Thus, one may write either
 //
-//	if glog.V(2) { glog.Info("log this") }
+//	if log.V(1) { log.Info("log this") }
 //
 // or
 //
-//	glog.V(2).Info("log this")
+//	log.V(1).Info("log this")
 //
 // The second form is shorter but the first is cheaper if logging is off because it does
 // not evaluate its arguments.

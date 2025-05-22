@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
@@ -104,7 +104,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 						}
 						return err
 					}); err != nil {
-						glog.Errorf("failed to renew lock: %v", err)
+						log.Errorf("failed to renew lock: %v", err)
 						l.isLocked.Store(false)
 						return
 					} else {

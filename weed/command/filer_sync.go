@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication"
@@ -133,13 +133,13 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	// read a filer signature
 	aFilerSignature, aFilerErr := replication.ReadFilerSignature(grpcDialOption, filerA)
 	if aFilerErr != nil {
-		glog.Errorf("get filer 'a' signature %d error from %s to %s: %v", aFilerSignature, *syncOptions.filerA, *syncOptions.filerB, aFilerErr)
+		log.Errorf("get filer 'a' signature %d error from %s to %s: %v", aFilerSignature, *syncOptions.filerA, *syncOptions.filerB, aFilerErr)
 		return true
 	}
 	// read b filer signature
 	bFilerSignature, bFilerErr := replication.ReadFilerSignature(grpcDialOption, filerB)
 	if bFilerErr != nil {
-		glog.Errorf("get filer 'b' signature %d error from %s to %s: %v", bFilerSignature, *syncOptions.filerA, *syncOptions.filerB, bFilerErr)
+		log.Errorf("get filer 'b' signature %d error from %s to %s: %v", bFilerSignature, *syncOptions.filerA, *syncOptions.filerB, bFilerErr)
 		return true
 	}
 
@@ -148,7 +148,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		// set synchronization start timestamp to offset
 		initOffsetError := initOffsetFromTsMs(grpcDialOption, filerB, aFilerSignature, *syncOptions.bFromTsMs, getSignaturePrefixByPath(*syncOptions.aPath))
 		if initOffsetError != nil {
-			glog.Errorf("init offset from timestamp %d error from %s to %s: %v", *syncOptions.bFromTsMs, *syncOptions.filerA, *syncOptions.filerB, initOffsetError)
+			log.Errorf("init offset from timestamp %d error from %s to %s: %v", *syncOptions.bFromTsMs, *syncOptions.filerA, *syncOptions.filerB, initOffsetError)
 			os.Exit(2)
 		}
 		for {
@@ -174,7 +174,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 				aFilerSignature,
 				bFilerSignature)
 			if err != nil {
-				glog.Errorf("sync from %s to %s: %v", *syncOptions.filerA, *syncOptions.filerB, err)
+				log.Errorf("sync from %s to %s: %v", *syncOptions.filerA, *syncOptions.filerB, err)
 				time.Sleep(1747 * time.Millisecond)
 			}
 		}
@@ -185,7 +185,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		// set synchronization start timestamp to offset
 		initOffsetError := initOffsetFromTsMs(grpcDialOption, filerA, bFilerSignature, *syncOptions.aFromTsMs, getSignaturePrefixByPath(*syncOptions.bPath))
 		if initOffsetError != nil {
-			glog.Errorf("init offset from timestamp %d error from %s to %s: %v", *syncOptions.aFromTsMs, *syncOptions.filerB, *syncOptions.filerA, initOffsetError)
+			log.Errorf("init offset from timestamp %d error from %s to %s: %v", *syncOptions.aFromTsMs, *syncOptions.filerB, *syncOptions.filerA, initOffsetError)
 			os.Exit(2)
 		}
 		go func() {
@@ -212,7 +212,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 					bFilerSignature,
 					aFilerSignature)
 				if err != nil {
-					glog.Errorf("sync from %s to %s: %v", *syncOptions.filerB, *syncOptions.filerA, err)
+					log.Errorf("sync from %s to %s: %v", *syncOptions.filerB, *syncOptions.filerA, err)
 					time.Sleep(2147 * time.Millisecond)
 				}
 			}
@@ -236,7 +236,7 @@ func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAdd
 	if setOffsetErr != nil {
 		return setOffsetErr
 	}
-	glog.Infof("setOffset from timestamp ms success! start offset: %d from %s to %s", fromTsNs, *syncOptions.filerA, *syncOptions.filerB)
+	log.Infof("setOffset from timestamp ms success! start offset: %d from %s to %s", fromTsNs, *syncOptions.filerA, *syncOptions.filerB)
 	return nil
 }
 
@@ -250,7 +250,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 		return err
 	}
 
-	glog.V(0).Infof("start sync %s(%d) => %s(%d) from %v(%d)", sourceFiler, sourceFilerSignature, targetFiler, targetFilerSignature, time.Unix(0, sourceFilerOffsetTsNs), sourceFilerOffsetTsNs)
+	log.V(3).Infof("start sync %s(%d) => %s(%d) from %v(%d)", sourceFiler, sourceFilerSignature, targetFiler, targetFilerSignature, time.Unix(0, sourceFilerOffsetTsNs), sourceFilerOffsetTsNs)
 
 	// create filer sink
 	filerSource := &source.FilerSource{}
@@ -273,7 +273,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 	}
 
 	if concurrency < 0 || concurrency > 1024 {
-		glog.Warningf("invalid concurrency value, using default: %d", DefaultConcurrencyLimit)
+		log.Warningf("invalid concurrency value, using default: %d", DefaultConcurrencyLimit)
 		concurrency = DefaultConcurrencyLimit
 	}
 	processor := NewMetadataProcessor(processEventFn, concurrency, sourceFilerOffsetTsNs)
@@ -290,7 +290,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 		}
 		// use processor.processedTsWatermark instead of the lastTsNs from the most recent job
 		now := time.Now().UnixNano()
-		glog.V(0).Infof("sync %s to %s progressed to %v %0.2f/sec", sourceFiler, targetFiler, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		log.V(3).Infof("sync %s to %s progressed to %v %0.2f/sec", sourceFiler, targetFiler, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
 		lastLogTsNs = now
 		// collect synchronous offset
 		statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(offsetTsNs))
@@ -397,7 +397,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		}
 
 		if debug {
-			glog.V(0).Infof("received %v", resp)
+			log.V(3).Infof("received %v", resp)
 		}
 
 		if isMultipartUploadDir(resp.Directory + "/") {

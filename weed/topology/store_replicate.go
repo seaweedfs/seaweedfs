@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -34,7 +34,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 		// this is the initial request
 		remoteLocations, err = GetWritableRemoteReplications(s, grpcDialOption, volumeId, masterFn)
 		if err != nil {
-			glog.V(0).Infoln(err)
+			log.V(3).Infoln(err)
 			return
 		}
 	}
@@ -57,7 +57,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
 			err = fmt.Errorf("failed to write to local disk: %v", err)
-			glog.V(0).Infoln(err)
+			log.V(3).Infoln(err)
 			return
 		}
 	}
@@ -93,7 +93,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 				err := json.Unmarshal(n.Pairs, &tmpMap)
 				if err != nil {
 					stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorUnmarshalPairs).Inc()
-					glog.V(0).Infoln("Unmarshal pairs error:", err)
+					log.V(3).Infoln("Unmarshal pairs error:", err)
 				}
 				for k, v := range tmpMap {
 					pairMap[needle.PairNamePrefix+k] = v
@@ -118,12 +118,12 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 
 			uploader, err := operation.NewUploader()
 			if err != nil {
-				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
+				log.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
 				return err
 			}
 			_, err = uploader.UploadData(n.Data, uploadOption)
 			if err != nil {
-				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
+				log.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
 			}
 			return err
 		})
@@ -131,7 +131,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
-			glog.V(0).Infoln(err)
+			log.V(3).Infoln(err)
 			return false, err
 		}
 	}
@@ -147,14 +147,14 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 	if r.FormValue("type") != "replicate" {
 		remoteLocations, err = GetWritableRemoteReplications(store, grpcDialOption, volumeId, masterFn)
 		if err != nil {
-			glog.V(0).Infoln(err)
+			log.V(3).Infoln(err)
 			return
 		}
 	}
 
 	size, err = store.DeleteVolumeNeedle(volumeId, n)
 	if err != nil {
-		glog.V(0).Infoln("delete error:", err)
+		log.V(3).Infoln("delete error:", err)
 		return
 	}
 

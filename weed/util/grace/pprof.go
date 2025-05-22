@@ -5,14 +5,14 @@ import (
 	"runtime"
 	"runtime/pprof"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 func SetupProfiling(cpuProfile, memProfile string) {
 	if cpuProfile != "" {
 		f, err := os.Create(cpuProfile)
 		if err != nil {
-			glog.Fatal(err)
+			log.Fatal(err)
 		}
 		runtime.SetBlockProfileRate(1)
 		runtime.SetMutexProfileFraction(1)
@@ -44,7 +44,7 @@ func SetupProfiling(cpuProfile, memProfile string) {
 		runtime.MemProfileRate = 1
 		f, err := os.Create(memProfile)
 		if err != nil {
-			glog.Fatal(err)
+			log.Fatal(err)
 		}
 		OnInterrupt(func() {
 			pprof.WriteHeapProfile(f)

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/viant/ptrie"
 	"google.golang.org/protobuf/proto"
@@ -111,11 +111,11 @@ func AfterEntryDeserialization(chunks []*FileChunk) {
 func CreateEntry(client SeaweedFilerClient, request *CreateEntryRequest) error {
 	resp, err := client.CreateEntry(context.Background(), request)
 	if err != nil {
-		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
+		log.V(2).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
 		return fmt.Errorf("CreateEntry: %v", err)
 	}
 	if resp.Error != "" {
-		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, resp.Error)
+		log.V(2).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, resp.Error)
 		return fmt.Errorf("CreateEntry : %v", resp.Error)
 	}
 	return nil
@@ -124,7 +124,7 @@ func CreateEntry(client SeaweedFilerClient, request *CreateEntryRequest) error {
 func UpdateEntry(client SeaweedFilerClient, request *UpdateEntryRequest) error {
 	_, err := client.UpdateEntry(context.Background(), request)
 	if err != nil {
-		glog.V(1).Infof("update entry %s/%s :%v", request.Directory, request.Entry.Name, err)
+		log.V(2).Infof("update entry %s/%s :%v", request.Directory, request.Entry.Name, err)
 		return fmt.Errorf("UpdateEntry: %v", err)
 	}
 	return nil
@@ -136,7 +136,7 @@ func LookupEntry(client SeaweedFilerClient, request *LookupDirectoryEntryRequest
 		if err == ErrNotFound || strings.Contains(err.Error(), ErrNotFound.Error()) {
 			return nil, ErrNotFound
 		}
-		glog.V(3).Infof("read %s/%v: %v", request.Directory, request.Name, err)
+		log.V(0).Infof("read %s/%v: %v", request.Directory, request.Name, err)
 		return nil, fmt.Errorf("LookupEntry1: %v", err)
 	}
 	if resp.Entry == nil {

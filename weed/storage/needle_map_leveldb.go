@@ -16,7 +16,7 @@ import (
 
 	"github.com/syndtr/goleveldb/leveldb"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -43,16 +43,16 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
-		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
+		log.V(2).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateLevelDbFile(dbFileName, indexFile)
-		glog.V(1).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
+		log.V(2).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	if stat, err := indexFile.Stat(); err != nil {
-		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
+		log.Fatalf("stat file %s: %v", indexFile.Name(), err)
 	} else {
 		m.indexFileOffset = stat.Size()
 	}
-	glog.V(1).Infof("Opening %s...", dbFileName)
+	log.V(2).Infof("Opening %s...", dbFileName)
 
 	if m.ldbTimeout == 0 {
 		if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
@@ -63,12 +63,12 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 				return
 			}
 		}
-		glog.V(0).Infof("Loading %s... , watermark: %d", dbFileName, getWatermark(m.db))
+		log.V(3).Infof("Loading %s... , watermark: %d", dbFileName, getWatermark(m.db))
 		m.recordCount = uint64(m.indexFileOffset / NeedleMapEntrySize)
 		watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
 		err = setWatermark(m.db, watermark)
 		if err != nil {
-			glog.Fatalf("set watermark for %s error: %s\n", dbFileName, err)
+			log.Fatalf("set watermark for %s error: %s\n", dbFileName, err)
 			return
 		}
 	}
@@ -97,7 +97,7 @@ func isLevelDbFresh(dbFileName string, indexFile *os.File) bool {
 	dbStat, dbStatErr := dbLogFile.Stat()
 	indexStat, indexStatErr := indexFile.Stat()
 	if dbStatErr != nil || indexStatErr != nil {
-		glog.V(0).Infof("Can not stat file: %v and %v", dbStatErr, indexStatErr)
+		log.V(3).Infof("Can not stat file: %v and %v", dbStatErr, indexStatErr)
 		return false
 	}
 
@@ -113,13 +113,13 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 
 	watermark := getWatermark(db)
 	if stat, err := indexFile.Stat(); err != nil {
-		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
+		log.Fatalf("stat file %s: %v", indexFile.Name(), err)
 		return err
 	} else {
 		if watermark*NeedleMapEntrySize > uint64(stat.Size()) {
-			glog.Warningf("wrong watermark %d for filesize %d", watermark, stat.Size())
+			log.Warningf("wrong watermark %d for filesize %d", watermark, stat.Size())
 		}
-		glog.V(0).Infof("generateLevelDbFile %s, watermark %d, num of entries:%d", dbFileName, watermark, (uint64(stat.Size())-watermark*NeedleMapEntrySize)/NeedleMapEntrySize)
+		log.V(3).Infof("generateLevelDbFile %s, watermark %d, num of entries:%d", dbFileName, watermark, (uint64(stat.Size())-watermark*NeedleMapEntrySize)/NeedleMapEntrySize)
 	}
 	return idx.WalkIndexFile(indexFile, watermark, func(key NeedleId, offset Offset, size Size) error {
 		if !offset.IsZero() && size.IsValid() {
@@ -175,7 +175,7 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 		watermark = 0
 	} else {
 		watermark = (m.recordCount / watermarkBatchSize) * watermarkBatchSize
-		glog.V(1).Infof("put cnt:%d for %s,watermark: %d", m.recordCount, m.dbFileName, watermark)
+		log.V(2).Infof("put cnt:%d for %s,watermark: %d", m.recordCount, m.dbFileName, watermark)
 	}
 	return levelDbWrite(m.db, key, offset, size, watermark == 0, watermark)
 }
@@ -183,14 +183,14 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 func getWatermark(db *leveldb.DB) uint64 {
 	data, err := db.Get(watermarkKey, nil)
 	if err != nil || len(data) != 8 {
-		glog.V(1).Infof("read previous watermark from db: %v, %d", err, len(data))
+		log.V(2).Infof("read previous watermark from db: %v, %d", err, len(data))
 		return 0
 	}
 	return util.BytesToUint64(data)
 }
 
 func setWatermark(db *leveldb.DB, watermark uint64) error {
-	glog.V(3).Infof("set watermark %d", watermark)
+	log.V(0).Infof("set watermark %d", watermark)
 	var wmBytes = make([]byte, 8)
 	util.Uint64toBytes(wmBytes, watermark)
 	if err := db.Put(watermarkKey, wmBytes, nil); err != nil {
@@ -252,16 +252,16 @@ func (m *LevelDbNeedleMap) Close() {
 	if m.indexFile != nil {
 		indexFileName := m.indexFile.Name()
 		if err := m.indexFile.Sync(); err != nil {
-			glog.Warningf("sync file %s failed: %v", indexFileName, err)
+			log.Warningf("sync file %s failed: %v", indexFileName, err)
 		}
 		if err := m.indexFile.Close(); err != nil {
-			glog.Warningf("close index file %s failed: %v", indexFileName, err)
+			log.Warningf("close index file %s failed: %v", indexFileName, err)
 		}
 	}
 
 	if m.db != nil {
 		if err := m.db.Close(); err != nil {
-			glog.Warningf("close levelDB failed: %v", err)
+			log.Warningf("close levelDB failed: %v", err)
 		}
 	}
 	if m.ldbTimeout > 0 {
@@ -309,7 +309,7 @@ func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *
 
 	stat, e := indexFile.Stat()
 	if e != nil {
-		glog.Fatalf("stat file %s: %v", indexFile.Name(), e)
+		log.Fatalf("stat file %s: %v", indexFile.Name(), e)
 		return e
 	}
 	m.indexFileOffset = stat.Size()
@@ -319,7 +319,7 @@ func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *
 	watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
 	err = setWatermark(db, uint64(watermark))
 	if err != nil {
-		glog.Fatalf("setting watermark failed %s: %v", indexFile.Name(), err)
+		log.Fatalf("setting watermark failed %s: %v", indexFile.Name(), err)
 		return err
 	}
 	v.nm = m
@@ -335,7 +335,7 @@ func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *
 }
 
 func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) (err error) {
-	glog.V(0).Infof("loading idx to leveldb from offset %d for file: %s", startFrom, indexFile.Name())
+	log.V(3).Infof("loading idx to leveldb from offset %d for file: %s", startFrom, indexFile.Name())
 	dbFileName := v.FileName(".cpldb")
 	db, dbErr := leveldb.OpenFile(dbFileName, nil)
 	defer func() {
@@ -404,14 +404,14 @@ func reloadLdb(m *LevelDbNeedleMap) (err error) {
 	if m.db != nil {
 		return nil
 	}
-	glog.V(1).Infof("reloading leveldb %s", m.dbFileName)
+	log.V(2).Infof("reloading leveldb %s", m.dbFileName)
 	m.accessFlag = 1
 	if m.db, err = leveldb.OpenFile(m.dbFileName, m.ldbOpts); err != nil {
 		if errors.IsCorrupted(err) {
 			m.db, err = leveldb.RecoverFile(m.dbFileName, m.ldbOpts)
 		}
 		if err != nil {
-			glog.Fatalf("RecoverFile %s failed:%v", m.dbFileName, err)
+			log.Fatalf("RecoverFile %s failed:%v", m.dbFileName, err)
 			return err
 		}
 	}
@@ -422,7 +422,7 @@ func unloadLdb(m *LevelDbNeedleMap) (err error) {
 	m.ldbAccessLock.Lock()
 	defer m.ldbAccessLock.Unlock()
 	if m.db != nil {
-		glog.V(1).Infof("reached max idle count, unload leveldb, %s", m.dbFileName)
+		log.V(2).Infof("reached max idle count, unload leveldb, %s", m.dbFileName)
 		m.db.Close()
 		m.db = nil
 	}
@@ -430,26 +430,26 @@ func unloadLdb(m *LevelDbNeedleMap) (err error) {
 }
 
 func lazyLoadingRoutine(m *LevelDbNeedleMap) (err error) {
-	glog.V(1).Infof("lazyLoadingRoutine %s", m.dbFileName)
+	log.V(2).Infof("lazyLoadingRoutine %s", m.dbFileName)
 	var accessRecord int64
 	accessRecord = 1
 	for {
 		select {
 		case exit := <-m.exitChan:
 			if exit {
-				glog.V(1).Infof("exit from lazyLoadingRoutine")
+				log.V(2).Infof("exit from lazyLoadingRoutine")
 				return nil
 			}
 		case <-time.After(time.Hour * 1):
-			glog.V(1).Infof("timeout %s", m.dbFileName)
+			log.V(2).Infof("timeout %s", m.dbFileName)
 			if m.accessFlag == 0 {
 				accessRecord++
-				glog.V(1).Infof("accessRecord++")
+				log.V(2).Infof("accessRecord++")
 				if accessRecord >= m.ldbTimeout {
 					unloadLdb(m)
 				}
 			} else {
-				glog.V(1).Infof("reset accessRecord %s", m.dbFileName)
+				log.V(2).Infof("reset accessRecord %s", m.dbFileName)
 				// reset accessRecord
 				accessRecord = 0
 			}

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -38,7 +38,7 @@ func (wfs *WFS) subscribeFilerConfEvents() (*meta_cache.MetadataFollower, error)
 	})
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
-			glog.V(0).Infof("fuse filer conf %s not found", confFullName)
+			log.V(3).Infof("fuse filer conf %s not found", confFullName)
 		} else {
 			return nil, err
 		}

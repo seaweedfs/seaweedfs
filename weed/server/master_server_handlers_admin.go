@@ -10,7 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend/memory_map"
@@ -61,12 +61,12 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		var err error
 		gcThreshold, err = strconv.ParseFloat(gcString, 32)
 		if err != nil {
-			glog.V(0).Infof("garbageThreshold %s is not a valid float number: %v", gcString, err)
+			log.V(3).Infof("garbageThreshold %s is not a valid float number: %v", gcString, err)
 			writeJsonError(w, r, http.StatusNotAcceptable, fmt.Errorf("garbageThreshold %s is not a valid float number", gcString))
 			return
 		}
 	}
-	// glog.Infoln("garbageThreshold =", gcThreshold)
+	// log.Infoln("garbageThreshold =", gcThreshold)
 	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.option.MaxParallelVacuumPerServer, 0, "", ms.preallocateSize, false)
 	ms.dirStatusHandler(w, r)
 }
@@ -78,7 +78,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 		writeJsonError(w, r, http.StatusNotAcceptable, err)
 		return
 	}
-	glog.V(0).Infof("volumeGrowHandler received %v from %v", option.String(), r.RemoteAddr)
+	log.V(3).Infof("volumeGrowHandler received %v from %v", option.String(), r.RemoteAddr)
 
 	if count, err = strconv.ParseUint(r.FormValue("count"), 10, 32); err == nil {
 		replicaCount := int64(count * uint64(option.ReplicaPlacement.GetCopyCount()))

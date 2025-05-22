@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"math"
 	"time"
@@ -19,7 +19,7 @@ type statsCache struct {
 
 func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.StatfsOut) (code fuse.Status) {
 
-	// glog.V(4).Infof("reading fs stats")
+	// log.V(-1).Infof("reading fs stats")
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
@@ -32,13 +32,13 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 				DiskType:    string(wfs.option.DiskType),
 			}
 
-			glog.V(4).Infof("reading filer stats: %+v", request)
+			log.V(-1).Infof("reading filer stats: %+v", request)
 			resp, err := client.Statistics(context.Background(), request)
 			if err != nil {
-				glog.V(0).Infof("reading filer stats %v: %v", request, err)
+				log.V(3).Infof("reading filer stats %v: %v", request, err)
 				return err
 			}
-			glog.V(4).Infof("read filer stats: %+v", resp)
+			log.V(-1).Infof("read filer stats: %+v", resp)
 
 			wfs.stats.TotalSize = resp.TotalSize
 			wfs.stats.UsedSize = resp.UsedSize
@@ -48,7 +48,7 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("filer Statistics: %v", err)
+			log.V(3).Infof("filer Statistics: %v", err)
 			return fuse.OK
 		}
 	}

@@ -21,7 +21,7 @@ import (
 	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/object"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 )
@@ -66,11 +66,11 @@ func newRcloneBackendStorage(configuration backend.StringProperties, configPrefi
 	fsPath := fmt.Sprintf("%s:", s.remoteName)
 	s.fs, err = fs.NewFs(ctx, fsPath)
 	if err != nil {
-		glog.Errorf("failed to instantiate Rclone filesystem: %s", err)
+		log.Errorf("failed to instantiate Rclone filesystem: %s", err)
 		return
 	}
 
-	glog.V(0).Infof("created backend storage rclone.%s for remote name %s", s.id, s.remoteName)
+	log.V(3).Infof("created backend storage rclone.%s for remote name %s", s.id, s.remoteName)
 	return
 }
 
@@ -118,7 +118,7 @@ func (s *RcloneBackendStorage) CopyFile(f *os.File, fn func(progressed int64, pe
 		return key, 0, err
 	}
 
-	glog.V(1).Infof("copy dat file of %s to remote rclone.%s as %s", f.Name(), s.id, key)
+	log.V(2).Infof("copy dat file of %s to remote rclone.%s as %s", f.Name(), s.id, key)
 
 	util.Retry("upload via Rclone", func() error {
 		size, err = uploadViaRclone(s.fs, f.Name(), key, fn)
@@ -164,7 +164,7 @@ func uploadViaRclone(rfs fs.Fs, filename string, key string, fn func(progressed 
 }
 
 func (s *RcloneBackendStorage) DownloadFile(filename string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
-	glog.V(1).Infof("download dat file of %s from remote rclone.%s as %s", filename, s.id, key)
+	log.V(2).Infof("download dat file of %s from remote rclone.%s as %s", filename, s.id, key)
 
 	util.Retry("download via Rclone", func() error {
 		size, err = downloadViaRclone(s.fs, filename, key, fn)
@@ -216,7 +216,7 @@ func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed
 }
 
 func (s *RcloneBackendStorage) DeleteFile(key string) (err error) {
-	glog.V(1).Infof("delete dat file %s from remote", key)
+	log.V(2).Infof("delete dat file %s from remote", key)
 
 	util.Retry("delete via Rclone", func() error {
 		err = deleteViaRclone(s.fs, key)

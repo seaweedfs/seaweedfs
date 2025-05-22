@@ -7,7 +7,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 // CopyFileRange copies data from one file to another from and to specified offsets.
@@ -62,7 +62,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 		return 0, fuse.EISDIR
 	}
 
-	glog.V(4).Infof(
+	log.V(-1).Infof(
 		"CopyFileRange %s fhIn %d -> %s fhOut %d, [%d,%d) -> [%d,%d)",
 		fhIn.FullPath(), fhIn.fh,
 		fhOut.FullPath(), fhOut.fh,
@@ -73,7 +73,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	data := make([]byte, in.Len)
 	totalRead, err := readDataByFileHandle(data, fhIn, int64(in.OffIn))
 	if err != nil {
-		glog.Warningf("file handle read %s %d: %v", fhIn.FullPath(), totalRead, err)
+		log.Warningf("file handle read %s %d: %v", fhIn.FullPath(), totalRead, err)
 		return 0, fuse.EIO
 	}
 	data = data[:totalRead]

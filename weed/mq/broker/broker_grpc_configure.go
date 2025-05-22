@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -36,7 +36,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	var readErr, assignErr error
 	resp, readErr = b.fca.ReadTopicConfFromFiler(t)
 	if readErr != nil {
-		glog.V(0).Infof("read topic %s conf: %v", request.Topic, readErr)
+		log.V(3).Infof("read topic %s conf: %v", request.Topic, readErr)
 	}
 
 	if resp != nil {
@@ -47,13 +47,13 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	}
 
 	if readErr == nil && assignErr == nil && len(resp.BrokerPartitionAssignments) == int(request.PartitionCount) {
-		glog.V(0).Infof("existing topic partitions %d: %+v", len(resp.BrokerPartitionAssignments), resp.BrokerPartitionAssignments)
+		log.V(3).Infof("existing topic partitions %d: %+v", len(resp.BrokerPartitionAssignments), resp.BrokerPartitionAssignments)
 		return
 	}
 
 	if resp != nil && len(resp.BrokerPartitionAssignments) > 0 {
 		if cancelErr := b.assignTopicPartitionsToBrokers(ctx, request.Topic, resp.BrokerPartitionAssignments, false); cancelErr != nil {
-			glog.V(1).Infof("cancel old topic %s partitions assignments %v : %v", request.Topic, resp.BrokerPartitionAssignments, cancelErr)
+			log.V(2).Infof("cancel old topic %s partitions assignments %v : %v", request.Topic, resp.BrokerPartitionAssignments, cancelErr)
 		}
 	}
 	resp = &mq_pb.ConfigureTopicResponse{}
@@ -70,7 +70,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 
 	b.PubBalancer.OnPartitionChange(request.Topic, resp.BrokerPartitionAssignments)
 
-	glog.V(0).Infof("ConfigureTopic: topic %s partition assignments: %v", request.Topic, resp.BrokerPartitionAssignments)
+	log.V(3).Infof("ConfigureTopic: topic %s partition assignments: %v", request.Topic, resp.BrokerPartitionAssignments)
 
 	return resp, err
 }

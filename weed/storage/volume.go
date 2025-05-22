@@ -15,7 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 type Volume struct {
@@ -121,7 +121,7 @@ func (v *Volume) FileStat() (datSize uint64, idxSize uint64, modTime time.Time) 
 	if e == nil {
 		return uint64(datFileSize), v.nm.IndexFileSize(), modTime
 	}
-	glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
+	log.V(3).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
 	return // -1 causes integer overflow and the volume to become unwritable.
 }
 
@@ -141,7 +141,7 @@ func (v *Volume) doIsEmpty() (bool, error) {
 	} else {
 		datFileSize, _, e := v.DataBackend.GetStat()
 		if e != nil {
-			glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
+			log.V(3).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
 			return false, fmt.Errorf("v.DataBackend.GetStat(): %v", e)
 		}
 		if datFileSize > super_block.SuperBlockSize {
@@ -211,12 +211,12 @@ func (v *Volume) SyncToDisk() {
 	defer v.dataFileAccessLock.Unlock()
 	if v.nm != nil {
 		if err := v.nm.Sync(); err != nil {
-			glog.Warningf("Volume Close fail to sync volume idx %d", v.Id)
+			log.Warningf("Volume Close fail to sync volume idx %d", v.Id)
 		}
 	}
 	if v.DataBackend != nil {
 		if err := v.DataBackend.Sync(); err != nil {
-			glog.Warningf("Volume Close fail to sync volume %d", v.Id)
+			log.Warningf("Volume Close fail to sync volume %d", v.Id)
 		}
 	}
 }
@@ -232,19 +232,19 @@ func (v *Volume) Close() {
 func (v *Volume) doClose() {
 	for v.isCommitCompacting {
 		time.Sleep(521 * time.Millisecond)
-		glog.Warningf("Volume Close wait for compaction %d", v.Id)
+		log.Warningf("Volume Close wait for compaction %d", v.Id)
 	}
 
 	if v.nm != nil {
 		if err := v.nm.Sync(); err != nil {
-			glog.Warningf("Volume Close fail to sync volume idx %d", v.Id)
+			log.Warningf("Volume Close fail to sync volume idx %d", v.Id)
 		}
 		v.nm.Close()
 		v.nm = nil
 	}
 	if v.DataBackend != nil {
 		if err := v.DataBackend.Close(); err != nil {
-			glog.Warningf("Volume Close fail to sync volume %d", v.Id)
+			log.Warningf("Volume Close fail to sync volume %d", v.Id)
 		}
 		v.DataBackend = nil
 		stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
@@ -270,9 +270,9 @@ func (v *Volume) expired(contentSize uint64, volumeSizeLimit uint64) bool {
 	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
 		return false
 	}
-	glog.V(2).Infof("volume %d now:%v lastModified:%v", v.Id, time.Now().Unix(), v.lastModifiedTsSeconds)
+	log.V(1).Infof("volume %d now:%v lastModified:%v", v.Id, time.Now().Unix(), v.lastModifiedTsSeconds)
 	livedMinutes := (time.Now().Unix() - int64(v.lastModifiedTsSeconds)) / 60
-	glog.V(2).Infof("volume %d ttl:%v lived:%v", v.Id, v.Ttl, livedMinutes)
+	log.V(1).Infof("volume %d ttl:%v lived:%v", v.Id, v.Ttl, livedMinutes)
 	if int64(v.Ttl.Minutes()) < livedMinutes {
 		return true
 	}
@@ -298,7 +298,7 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 func (v *Volume) collectStatus() (maxFileKey types.NeedleId, datFileSize int64, modTime time.Time, fileCount, deletedCount, deletedSize uint64, ok bool) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
-	glog.V(4).Infof("collectStatus volume %d", v.Id)
+	log.V(-1).Infof("collectStatus volume %d", v.Id)
 
 	if v.nm == nil || v.DataBackend == nil {
 		return

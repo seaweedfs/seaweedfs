@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/redis/go-redis/v9"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 const maxNameBatchSizeLimit = 1000000
@@ -31,7 +31,7 @@ func insertChild(ctx context.Context, redisStore *UniversalRedis3Store, key stri
 	nameList := LoadItemList([]byte(data), key, client, store, maxNameBatchSizeLimit)
 
 	if err := nameList.WriteName(name); err != nil {
-		glog.Errorf("add %s %s: %v", key, name, err)
+		log.Errorf("add %s %s: %v", key, name, err)
 		return err
 	}
 
@@ -100,7 +100,7 @@ func removeChildren(ctx context.Context, redisStore *UniversalRedis3Store, key s
 
 	if err = nameList.ListNames("", func(name string) bool {
 		if err := onDeleteFn(name); err != nil {
-			glog.Errorf("delete %s child %s: %v", key, name, err)
+			log.Errorf("delete %s child %s: %v", key, name, err)
 			return false
 		}
 		return true

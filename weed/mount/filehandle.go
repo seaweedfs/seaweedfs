@@ -2,7 +2,7 @@ package mount
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
@@ -77,10 +77,10 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 		var resolveManifestErr error
 		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks)
 		if resolveManifestErr != nil {
-			glog.Warningf("failed to resolve manifest chunks in %+v", entry)
+			log.Warningf("failed to resolve manifest chunks in %+v", entry)
 		}
 	} else {
-		glog.Fatalf("setting file handle entry to nil")
+		log.Fatalf("setting file handle entry to nil")
 	}
 	fh.entry.SetEntry(entry)
 }

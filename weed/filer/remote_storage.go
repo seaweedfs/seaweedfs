@@ -12,7 +12,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/viant/ptrie"
 )
@@ -43,7 +43,7 @@ func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *F
 		if err == filer_pb.ErrNotFound {
 			return nil
 		}
-		glog.Errorf("read remote storage %s: %v", DirectoryEtcRemote, err)
+		log.Errorf("read remote storage %s: %v", DirectoryEtcRemote, err)
 		return
 	}
 
@@ -125,7 +125,7 @@ func UnmarshalRemoteStorageMappings(oldContent []byte) (mappings *remote_pb.Remo
 	}
 	if len(oldContent) > 0 {
 		if err = proto.Unmarshal(oldContent, mappings); err != nil {
-			glog.Warningf("unmarshal existing mappings: %v", err)
+			log.Warningf("unmarshal existing mappings: %v", err)
 		}
 	}
 	return

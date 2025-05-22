@@ -10,7 +10,7 @@ import (
 	"math"
 	"os"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -49,7 +49,7 @@ func main() {
 	vid := uint32(*volumeId)
 	servers := pb.ServerAddresses(*serversStr).ToAddresses()
 	if len(servers) < 2 {
-		glog.Fatalf("You must specify more than 1 server\n")
+		log.Fatalf("You must specify more than 1 server\n")
 	}
 	var referenceServer pb.ServerAddress
 	var maxOffset int64
@@ -57,7 +57,7 @@ func main() {
 	for _, addr := range servers {
 		files, offset, err := getVolumeFiles(vid, addr)
 		if err != nil {
-			glog.Fatalf("Failed to copy idx from volume server %s\n", err)
+			log.Fatalf("Failed to copy idx from volume server %s\n", err)
 		}
 		allFiles[addr] = files
 		if offset > maxOffset {
@@ -103,7 +103,7 @@ func main() {
 				id, err = getNeedleFileId(vid, nid, addr)
 			}
 			if err != nil {
-				glog.Fatalf("Failed to get needle info %d from volume server %s\n", nid, err)
+				log.Fatalf("Failed to get needle info %d from volume server %s\n", nid, err)
 			}
 			fmt.Println(id, addr, diffMsg)
 		}

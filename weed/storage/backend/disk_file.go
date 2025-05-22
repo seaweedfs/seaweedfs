@@ -1,7 +1,7 @@
 package backend
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
 	"os"
@@ -25,7 +25,7 @@ type DiskFile struct {
 func NewDiskFile(f *os.File) *DiskFile {
 	stat, err := f.Stat()
 	if err != nil {
-		glog.Fatalf("stat file %s: %v", f.Name(), err)
+		log.Fatalf("stat file %s: %v", f.Name(), err)
 	}
 	offset := stat.Size()
 	if offset%NeedlePaddingSize != 0 {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -51,7 +51,7 @@ func openMetaStore(dbFolder string) filer.VirtualFilerStore {
 	}
 
 	if err := store.Initialize(config, ""); err != nil {
-		glog.Fatalf("Failed to initialize metadata cache store for %s: %+v", store.GetName(), err)
+		log.Fatalf("Failed to initialize metadata cache store for %s: %+v", store.GetName(), err)
 	}
 
 	return filer.NewFilerStoreWrapper(store)
@@ -74,7 +74,7 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 
 	entry, err := mc.localStore.FindEntry(ctx, oldPath)
 	if err != nil && err != filer_pb.ErrNotFound {
-		glog.Errorf("Metacache: find entry error: %v", err)
+		log.Errorf("Metacache: find entry error: %v", err)
 		return err
 	}
 	if entry != nil {
@@ -84,7 +84,7 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 				// leave the update to the following InsertEntry operation
 			} else {
 				ctx = context.WithValue(ctx, "OP", "MV")
-				glog.V(3).Infof("DeleteEntry %s", oldPath)
+				log.V(0).Infof("DeleteEntry %s", oldPath)
 				if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
 					return err
 				}
@@ -97,7 +97,7 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 	if newEntry != nil {
 		newDir, _ := newEntry.DirAndName()
 		if mc.isCachedFn(util.FullPath(newDir)) {
-			glog.V(3).Infof("InsertEntry %s/%s", newDir, newEntry.Name())
+			log.V(0).Infof("InsertEntry %s/%s", newDir, newEntry.Name())
 			if err := mc.localStore.InsertEntry(ctx, newEntry); err != nil {
 				return err
 			}
@@ -143,7 +143,7 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 
 	if !mc.isCachedFn(dirPath) {
 		// if this request comes after renaming, it should be fine
-		glog.Warningf("unsynchronized dir: %v", dirPath)
+		log.Warningf("unsynchronized dir: %v", dirPath)
 	}
 
 	_, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *filer.Entry) bool {

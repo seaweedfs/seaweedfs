@@ -7,14 +7,14 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
 
-	glog.V(1).Infof("AtomicRenameEntry %v", req)
+	log.V(2).Infof("AtomicRenameEntry %v", req)
 
 	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
 	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
@@ -50,7 +50,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 
 func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest, stream filer_pb.SeaweedFiler_StreamRenameEntryServer) (err error) {
 
-	glog.V(1).Infof("StreamRenameEntry %v", req)
+	log.V(2).Infof("StreamRenameEntry %v", req)
 
 	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
 	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
@@ -122,7 +122,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb
 	currentDirPath := oldParent.Child(entry.Name())
 	newDirPath := newParent.Child(newName)
 
-	glog.V(1).Infof("moving folder %s => %s", currentDirPath, newDirPath)
+	log.V(2).Infof("moving folder %s => %s", currentDirPath, newDirPath)
 
 	lastFileName := ""
 	includeLastFile := false
@@ -154,10 +154,10 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
 
-	glog.V(1).Infof("moving entry %s => %s", oldPath, newPath)
+	log.V(2).Infof("moving entry %s => %s", oldPath, newPath)
 
 	if oldPath == newPath {
-		glog.V(1).Infof("skip moving entry %s => %s", oldPath, newPath)
+		log.V(2).Infof("skip moving entry %s => %s", oldPath, newPath)
 		return nil
 	}
 

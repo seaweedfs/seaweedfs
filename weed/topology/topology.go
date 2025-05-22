@@ -17,7 +17,7 @@ import (
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -143,16 +143,16 @@ func (t *Topology) DoBarrier() bool {
 		return true
 	}
 
-	glog.V(0).Infof("raft do barrier")
+	log.V(3).Infof("raft do barrier")
 	barrier := t.HashicorpRaft.Barrier(2 * time.Minute)
 	if err := barrier.Error(); err != nil {
-		glog.Errorf("failed to wait for barrier, error %s", err)
+		log.Errorf("failed to wait for barrier, error %s", err)
 		return false
 
 	}
 
 	t.barrierDone = true
-	glog.V(0).Infof("raft do barrier success")
+	log.V(3).Infof("raft do barrier success")
 	return true
 }
 
@@ -326,7 +326,7 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 }
 
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
-	glog.Infof("removing volume info: %+v from %v", v, dn.id)
+	log.Infof("removing volume info: %+v from %v", v, dn.id)
 	if v.ReplicaPlacement.GetCopyCount() > 1 {
 		stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(0)
 	}
@@ -397,7 +397,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		if vi, err := storage.NewVolumeInfo(v); err == nil {
 			volumeInfos = append(volumeInfos, vi)
 		} else {
-			glog.V(0).Infof("Fail to convert joined volume information: %v", err)
+			log.V(3).Infof("Fail to convert joined volume information: %v", err)
 		}
 	}
 	// find out the delta volumes
@@ -422,7 +422,7 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	for _, v := range newVolumes {
 		vi, err := storage.NewVolumeInfoFromShort(v)
 		if err != nil {
-			glog.V(0).Infof("NewVolumeInfoFromShort %v: %v", v, err)
+			log.V(3).Infof("NewVolumeInfoFromShort %v: %v", v, err)
 			continue
 		}
 		newVis = append(newVis, vi)
@@ -430,7 +430,7 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	for _, v := range deletedVolumes {
 		vi, err := storage.NewVolumeInfoFromShort(v)
 		if err != nil {
-			glog.V(0).Infof("NewVolumeInfoFromShort %v: %v", v, err)
+			log.V(3).Infof("NewVolumeInfoFromShort %v: %v", v, err)
 			continue
 		}
 		oldVis = append(oldVis, vi)
@@ -455,15 +455,15 @@ func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {
 	dc := t.GetOrCreateDataCenter(dcName)
 	rack := dc.GetOrCreateRack(rackName)
 	rack.LinkChildNode(dn)
-	glog.Infof("[%s] reLink To topo  ", dn.Id())
+	log.Infof("[%s] reLink To topo  ", dn.Id())
 }
 
 func (t *Topology) DisableVacuum() {
-	glog.V(0).Infof("DisableVacuum")
+	log.V(3).Infof("DisableVacuum")
 	t.isDisableVacuum = true
 }
 
 func (t *Topology) EnableVacuum() {
-	glog.V(0).Infof("EnableVacuum")
+	log.V(3).Infof("EnableVacuum")
 	t.isDisableVacuum = false
 }

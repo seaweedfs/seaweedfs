@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -41,7 +41,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 			return nil
 		})
 		if err != nil {
-			glog.V(2).Infof("delete directory %s: %v", p, err)
+			log.V(1).Infof("delete directory %s: %v", p, err)
 			return fmt.Errorf("delete directory %s: %v", p, err)
 		}
 	}
@@ -74,12 +74,12 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 		for {
 			entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "", "")
 			if err != nil {
-				glog.Errorf("list folder %s: %v", entry.FullPath, err)
+				log.Errorf("list folder %s: %v", entry.FullPath, err)
 				return fmt.Errorf("list folder %s: %v", entry.FullPath, err)
 			}
 			if lastFileName == "" && !isRecursive && len(entries) > 0 {
 				// only for first iteration in the loop
-				glog.V(2).Infof("deleting a folder %s has children: %+v ...", entry.FullPath, entries[0].Name())
+				log.V(1).Infof("deleting a folder %s has children: %+v ...", entry.FullPath, entries[0].Name())
 				return fmt.Errorf("%s: %s", MsgFailDelNonEmptyFolder, entry.FullPath)
 			}
 
@@ -110,7 +110,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 		}
 	}
 
-	glog.V(3).Infof("deleting directory %v delete chunks: %v", entry.FullPath, shouldDeleteChunks)
+	log.V(0).Infof("deleting directory %v delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
 	if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %v", storeDeletionErr)
@@ -124,7 +124,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shouldDeleteChunks bool, isFromOtherCluster bool, signatures []int32) (err error) {
 
-	glog.V(3).Infof("deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
+	log.V(0).Infof("deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
 	if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %v", storeDeletionErr)
@@ -143,7 +143,7 @@ func (f *Filer) DoDeleteCollection(collectionName string) (err error) {
 			Name: collectionName,
 		})
 		if err != nil {
-			glog.Infof("delete collection %s: %v", collectionName, err)
+			log.Infof("delete collection %s: %v", collectionName, err)
 		}
 		return err
 	})
@@ -153,7 +153,7 @@ func (f *Filer) DoDeleteCollection(collectionName string) (err error) {
 func (f *Filer) maybeDeleteHardLinks(hardLinkIds []HardLinkId) {
 	for _, hardLinkId := range hardLinkIds {
 		if err := f.Store.DeleteHardLink(context.Background(), hardLinkId); err != nil {
-			glog.Errorf("delete hard link id %d : %v", hardLinkId, err)
+			log.Errorf("delete hard link id %d : %v", hardLinkId, err)
 		}
 	}
 }

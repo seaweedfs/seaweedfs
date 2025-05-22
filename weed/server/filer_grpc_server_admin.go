@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -100,7 +100,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		MinorVersion:       util.MINOR_VERSION,
 	}
 
-	glog.V(4).Infof("GetFilerConfiguration: %v", t)
+	log.V(-1).Infof("GetFilerConfiguration: %v", t)
 
 	return t, nil
 }

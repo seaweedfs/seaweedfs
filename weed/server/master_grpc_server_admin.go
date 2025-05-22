@@ -10,7 +10,7 @@ import (
 
 	"github.com/seaweedfs/raft"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -90,7 +90,7 @@ func (locks *AdminLocks) isLocked(lockName string) (clientName string, message s
 	if !found {
 		return "", "", false
 	}
-	glog.V(4).Infof("isLocked %v: %v", adminLock.lastClient, adminLock.lastMessage)
+	log.V(-1).Infof("isLocked %v: %v", adminLock.lastClient, adminLock.lastMessage)
 	return adminLock.lastClient, adminLock.lastMessage, adminLock.accessLockTime.Add(LockDuration).After(time.Now())
 }
 
@@ -132,7 +132,7 @@ func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.Leas
 	}
 
 	if lastClient, lastMessage, isLocked := ms.adminLocks.isLocked(req.LockName); isLocked {
-		glog.V(4).Infof("LeaseAdminToken %v", lastClient)
+		log.V(-1).Infof("LeaseAdminToken %v", lastClient)
 		if req.PreviousToken != 0 && ms.adminLocks.isValidToken(req.LockName, time.Unix(0, req.PreviousLockTime), req.PreviousToken) {
 			// for renew
 			ts, token := ms.adminLocks.generateToken(req.LockName, req.ClientName)

@@ -7,12 +7,12 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) (code fuse.Status) {
-	glog.V(4).Infof("GetAttr %v", input.NodeId)
+	log.V(-1).Infof("GetAttr %v", input.NodeId)
 	if input.NodeId == 1 {
 		wfs.setRootAttr(out)
 		return fuse.OK
@@ -57,7 +57,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	}
 
 	if size, ok := input.GetSize(); ok {
-		glog.V(4).Infof("%v setattr set size=%v chunks=%d", path, size, len(entry.GetChunks()))
+		log.V(-1).Infof("%v setattr set size=%v chunks=%d", path, size, len(entry.GetChunks()))
 		if size < filer.FileSize(entry) {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
@@ -69,10 +69,10 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 					int64Size = int64(size) - chunk.Offset
 					if int64Size > 0 {
 						chunks = append(chunks, chunk)
-						glog.V(4).Infof("truncated chunk %+v from %d to %d\n", chunk.GetFileIdString(), chunk.Size, int64Size)
+						log.V(-1).Infof("truncated chunk %+v from %d to %d\n", chunk.GetFileIdString(), chunk.Size, int64Size)
 						chunk.Size = uint64(int64Size)
 					} else {
-						glog.V(4).Infof("truncated whole chunk %+v\n", chunk.GetFileIdString())
+						log.V(-1).Infof("truncated whole chunk %+v\n", chunk.GetFileIdString())
 						truncatedChunks = append(truncatedChunks, chunk)
 					}
 				} else {
@@ -96,7 +96,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 			entry.WormEnforcedAtTsNs = time.Now().UnixNano()
 		}
 
-		// glog.V(4).Infof("setAttr mode %o", mode)
+		// log.V(-1).Infof("setAttr mode %o", mode)
 		entry.Attributes.FileMode = chmod(entry.Attributes.FileMode, mode)
 		if input.NodeId == 1 {
 			wfs.option.MountMode = os.FileMode(chmod(uint32(wfs.option.MountMode), mode))

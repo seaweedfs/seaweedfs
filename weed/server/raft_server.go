@@ -17,8 +17,8 @@ import (
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 type RaftServerOption struct {
@@ -55,7 +55,7 @@ func (s StateMachine) Save() ([]byte, error) {
 	state := topology.MaxVolumeIdCommand{
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
 	}
-	glog.V(1).Infof("Save raft state %+v", state)
+	log.V(2).Infof("Save raft state %+v", state)
 	return json.Marshal(state)
 }
 
@@ -65,7 +65,7 @@ func (s StateMachine) Recovery(data []byte) error {
 	if err != nil {
 		return err
 	}
-	glog.V(1).Infof("Recovery raft state %+v", state)
+	log.V(2).Infof("Recovery raft state %+v", state)
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
 	return nil
 }
@@ -79,7 +79,7 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 	}
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
 
-	glog.V(1).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
+	log.V(2).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
 	return nil
 }
 
@@ -108,7 +108,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		topo:       option.Topo,
 	}
 
-	if glog.V(4) {
+	if log.V(-1).Info != nil {
 		raft.SetLogLevel(2)
 	}
 
@@ -116,7 +116,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 
 	var err error
 	transporter := raft.NewGrpcTransporter(option.GrpcDialOption)
-	glog.V(0).Infof("Starting RaftServer with %v", option.ServerAddr)
+	log.V(3).Infof("Starting RaftServer with %v", option.ServerAddr)
 
 	// always clear previous log to avoid server is promotable
 	os.RemoveAll(path.Join(s.dataDir, "log"))
@@ -132,7 +132,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	stateMachine := StateMachine{topo: option.Topo}
 	s.raftServer, err = raft.NewServer(string(s.serverAddr), s.dataDir, transporter, stateMachine, option.Topo, s.serverAddr.ToGrpcAddress())
 	if err != nil {
-		glog.V(0).Infoln(err)
+		log.V(3).Infoln(err)
 		return nil, err
 	}
 	heartbeatInterval := time.Duration(float64(option.HeartbeatInterval) * (rand.Float64()*0.25 + 1))
@@ -155,17 +155,17 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	for existsPeerName := range s.raftServer.Peers() {
 		if existingPeer, found := s.peers[existsPeerName]; !found {
 			if err := s.raftServer.RemovePeer(existsPeerName); err != nil {
-				glog.V(0).Infoln(err)
+				log.V(3).Infoln(err)
 				return nil, err
 			} else {
-				glog.V(0).Infof("removing old peer: %s", existingPeer)
+				log.V(3).Infof("removing old peer: %s", existingPeer)
 			}
 		}
 	}
 
 	s.GrpcServer = raft.NewGrpcServer(s.raftServer)
 
-	glog.V(0).Infof("current cluster leader: %v", s.raftServer.Leader())
+	log.V(3).Infof("current cluster leader: %v", s.raftServer.Leader())
 
 	return s, nil
 }
@@ -187,13 +187,13 @@ func (s *RaftServer) Peers() (members []string) {
 
 func (s *RaftServer) DoJoinCommand() {
 
-	glog.V(0).Infoln("Initializing new cluster")
+	log.V(3).Infoln("Initializing new cluster")
 
 	if _, err := s.raftServer.Do(&raft.DefaultJoinCommand{
 		Name:             s.raftServer.Name(),
 		ConnectionString: s.serverAddr.ToGrpcAddress(),
 	}); err != nil {
-		glog.Errorf("fail to send join command: %v", err)
+		log.Errorf("fail to send join command: %v", err)
 	}
 
 }

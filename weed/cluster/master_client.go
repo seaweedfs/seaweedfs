@@ -3,7 +3,7 @@ package cluster
 import (
 	"context"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"google.golang.org/grpc"
@@ -17,7 +17,7 @@ func ListExistingPeerUpdates(master pb.ServerAddress, grpcDialOption grpc.DialOp
 			FilerGroup: filerGroup,
 		})
 
-		glog.V(0).Infof("the cluster has %d %s\n", len(resp.ClusterNodes), clientType)
+		log.V(3).Infof("the cluster has %d %s\n", len(resp.ClusterNodes), clientType)
 		for _, node := range resp.ClusterNodes {
 			existingNodes = append(existingNodes, &master_pb.ClusterNodeUpdate{
 				NodeType:    FilerType,
@@ -28,7 +28,7 @@ func ListExistingPeerUpdates(master pb.ServerAddress, grpcDialOption grpc.DialOp
 		}
 		return err
 	}); grpcErr != nil {
-		glog.V(0).Infof("connect to %s: %v", master, grpcErr)
+		log.V(3).Infof("connect to %s: %v", master, grpcErr)
 	}
 	return
 }

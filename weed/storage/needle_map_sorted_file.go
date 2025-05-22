@@ -3,7 +3,7 @@ package storage
 import (
 	"os"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -21,18 +21,18 @@ func NewSortedFileNeedleMap(indexBaseFileName string, indexFile *os.File) (m *So
 	m.indexFile = indexFile
 	fileName := indexBaseFileName + ".sdx"
 	if !isSortedFileFresh(fileName, indexFile) {
-		glog.V(0).Infof("Start to Generate %s from %s", fileName, indexFile.Name())
+		log.V(3).Infof("Start to Generate %s from %s", fileName, indexFile.Name())
 		erasure_coding.WriteSortedFileFromIdx(indexBaseFileName, ".sdx")
-		glog.V(0).Infof("Finished Generating %s from %s", fileName, indexFile.Name())
+		log.V(3).Infof("Finished Generating %s from %s", fileName, indexFile.Name())
 	}
-	glog.V(1).Infof("Opening %s...", fileName)
+	log.V(2).Infof("Opening %s...", fileName)
 
 	if m.dbFile, err = os.OpenFile(indexBaseFileName+".sdx", os.O_RDWR, 0); err != nil {
 		return
 	}
 	dbStat, _ := m.dbFile.Stat()
 	m.dbFileSize = dbStat.Size()
-	glog.V(1).Infof("Loading %s...", indexFile.Name())
+	log.V(2).Infof("Loading %s...", indexFile.Name())
 	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
 	if indexLoadError != nil {
 		_ = m.dbFile.Close()
@@ -52,7 +52,7 @@ func isSortedFileFresh(dbFileName string, indexFile *os.File) bool {
 	dbStat, dbStatErr := dbFile.Stat()
 	indexStat, indexStatErr := indexFile.Stat()
 	if dbStatErr != nil || indexStatErr != nil {
-		glog.V(0).Infof("Can not stat file: %v and %v", dbStatErr, indexStatErr)
+		log.V(3).Infof("Can not stat file: %v and %v", dbStatErr, indexStatErr)
 		return false
 	}
 

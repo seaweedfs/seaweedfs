@@ -2,7 +2,7 @@ package sub_coordinator
 
 import (
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"sync"
 	"time"
@@ -290,7 +290,7 @@ func (m *Market) ConfirmAdjustment(adjustment *Adjustment) {
 	} else {
 		m.unassignPartitionSlot(adjustment.partition)
 	}
-	glog.V(1).Infof("ConfirmAdjustment %+v", adjustment)
+	log.V(2).Infof("ConfirmAdjustment %+v", adjustment)
 	m.Status()
 }
 
@@ -300,12 +300,12 @@ func (m *Market) unassignPartitionSlot(partition topic.Partition) {
 
 	partitionSlot, exists := m.partitions[partition]
 	if !exists {
-		glog.V(0).Infof("partition %+v slot is not tracked", partition)
+		log.V(3).Infof("partition %+v slot is not tracked", partition)
 		return
 	}
 
 	if partitionSlot.AssignedTo == nil {
-		glog.V(0).Infof("partition %+v slot is not assigned to any consumer", partition)
+		log.V(3).Infof("partition %+v slot is not assigned to any consumer", partition)
 		return
 	}
 
@@ -319,7 +319,7 @@ func (m *Market) unassignPartitionSlot(partition topic.Partition) {
 		}
 	}
 
-	glog.V(0).Infof("partition %+v slot not found in assigned consumer", partition)
+	log.V(3).Infof("partition %+v slot not found in assigned consumer", partition)
 
 }
 
@@ -329,18 +329,18 @@ func (m *Market) confirmAssignPartition(partition topic.Partition, consumerInsta
 
 	partitionSlot, exists := m.partitions[partition]
 	if !exists {
-		glog.V(0).Infof("partition %+v slot is not tracked", partition)
+		log.V(3).Infof("partition %+v slot is not tracked", partition)
 		return
 	}
 
 	if partitionSlot.AssignedTo != nil {
-		glog.V(0).Infof("partition %+v slot is already assigned to %+v", partition, partitionSlot.AssignedTo.InstanceId)
+		log.V(3).Infof("partition %+v slot is already assigned to %+v", partition, partitionSlot.AssignedTo.InstanceId)
 		return
 	}
 
 	consumerInstance, exists := m.consumerInstances[consumerInstanceId]
 	if !exists {
-		glog.V(0).Infof("consumer %+v is not tracked", consumerInstanceId)
+		log.V(3).Infof("consumer %+v is not tracked", consumerInstanceId)
 		return
 	}
 
@@ -353,15 +353,15 @@ func (m *Market) Status() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	glog.V(1).Infof("Market has %d partitions and %d consumer instances", len(m.partitions), len(m.consumerInstances))
+	log.V(2).Infof("Market has %d partitions and %d consumer instances", len(m.partitions), len(m.consumerInstances))
 	for partition, slot := range m.partitions {
 		if slot.AssignedTo == nil {
-			glog.V(1).Infof("Partition %+v is not assigned to any consumer", partition)
+			log.V(2).Infof("Partition %+v is not assigned to any consumer", partition)
 		} else {
-			glog.V(1).Infof("Partition %+v is assigned to consumer %+v", partition, slot.AssignedTo.InstanceId)
+			log.V(2).Infof("Partition %+v is assigned to consumer %+v", partition, slot.AssignedTo.InstanceId)
 		}
 	}
 	for _, consumer := range m.consumerInstances {
-		glog.V(1).Infof("Consumer %+v has %d partitions", consumer.InstanceId, len(consumer.AssignedPartitions))
+		log.V(2).Infof("Consumer %+v has %d partitions", consumer.InstanceId, len(consumer.AssignedPartitions))
 	}
 }

@@ -12,7 +12,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
@@ -105,7 +105,7 @@ func ResolveOneChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, c
 func fetchWholeChunk(bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool) error {
 	urlStrings, err := lookupFileIdFn(fileId)
 	if err != nil {
-		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
+		log.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
 		return err
 	}
 	err = retriedStreamFetchChunkData(bytesBuffer, urlStrings, "", cipherKey, isGzipped, true, 0, 0)
@@ -118,7 +118,7 @@ func fetchWholeChunk(bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFi
 func fetchChunkRange(buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64) (int, error) {
 	urlStrings, err := lookupFileIdFn(fileId)
 	if err != nil {
-		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
+		log.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
 		return 0, err
 	}
 	return util_http.RetriedFetchChunkData(buffer, urlStrings, cipherKey, isGzipped, false, offset)
@@ -158,7 +158,7 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, jwt stri
 				break
 			}
 			if err != nil {
-				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
+				log.V(3).Infof("read %s failed, err: %v", urlString, err)
 			} else {
 				break
 			}
@@ -168,7 +168,7 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, jwt stri
 			break
 		}
 		if err != nil && shouldRetry {
-			glog.V(0).Infof("retry reading in %v", waitTime)
+			log.V(3).Infof("retry reading in %v", waitTime)
 			time.Sleep(waitTime)
 		} else {
 			break

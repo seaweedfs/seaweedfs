@@ -11,7 +11,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -62,9 +62,9 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			SkipCheckParentDirectory: true,
 		}
 
-		glog.V(1).Infof("mkdir: %v", request)
+		log.V(2).Infof("mkdir: %v", request)
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
+			log.V(3).Infof("mkdir %s: %v", entryFullPath, err)
 			return err
 		}
 
@@ -75,7 +75,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		return nil
 	})
 
-	glog.V(3).Infof("mkdir %s: %v", entryFullPath, err)
+	log.V(0).Infof("mkdir %s: %v", entryFullPath, err)
 
 	if err != nil {
 		return fuse.EIO
@@ -105,11 +105,11 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 	entryFullPath := dirFullPath.Child(name)
 
-	glog.V(3).Infof("remove directory: %v", entryFullPath)
+	log.V(0).Infof("remove directory: %v", entryFullPath)
 	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
 	err := filer_pb.Remove(wfs, string(dirFullPath), name, true, false, ignoreRecursiveErr, false, []int32{wfs.signature})
 	if err != nil {
-		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
+		log.V(3).Infof("remove %s: %v", entryFullPath, err)
 		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 			return fuse.Status(syscall.ENOTEMPTY)
 		}

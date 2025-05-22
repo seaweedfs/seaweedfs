@@ -1,7 +1,7 @@
 package weed_server
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -34,7 +34,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 
 	urlStrings, err := fs.filer.MasterClient.GetLookupFileIdFunction()(fileId)
 	if err != nil {
-		glog.Errorf("locate %s: %v", fileId, err)
+		log.Errorf("locate %s: %v", fileId, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -46,7 +46,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 
 	proxyReq, err := http.NewRequest(r.Method, urlStrings[rand.IntN(len(urlStrings))], r.Body)
 	if err != nil {
-		glog.Errorf("NewRequest %s: %v", urlStrings[0], err)
+		log.Errorf("NewRequest %s: %v", urlStrings[0], err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -63,7 +63,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 	proxyResponse, postErr := util_http.GetGlobalHttpClient().Do(proxyReq)
 
 	if postErr != nil {
-		glog.Errorf("post to filer: %v", postErr)
+		log.Errorf("post to filer: %v", postErr)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

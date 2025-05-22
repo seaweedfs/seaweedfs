@@ -2,7 +2,7 @@ package s3api
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -49,7 +49,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		metadataFollowOption.ClientEpoch++
 		return pb.WithFilerClientFollowMetadata(s3a, metadataFollowOption, processEventFn)
 	}, func(err error) bool {
-		glog.V(0).Infof("iam follow metadata changes: %v", err)
+		log.V(3).Infof("iam follow metadata changes: %v", err)
 		return true
 	})
 }
@@ -60,7 +60,7 @@ func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content []byte) 
 		if err := s3a.iam.LoadS3ApiConfigurationFromBytes(content); err != nil {
 			return err
 		}
-		glog.V(0).Infof("updated %s/%s", dir, filename)
+		log.V(3).Infof("updated %s/%s", dir, filename)
 	}
 	return nil
 }
@@ -71,7 +71,7 @@ func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, conte
 		if err := s3a.cb.LoadS3ApiConfigurationFromBytes(content); err != nil {
 			return err
 		}
-		glog.V(0).Infof("updated %s/%s", dir, filename)
+		log.V(3).Infof("updated %s/%s", dir, filename)
 	}
 	return nil
 }
@@ -81,10 +81,10 @@ func (s3a *S3ApiServer) onBucketMetadataChange(dir string, oldEntry *filer_pb.En
 	if dir == s3a.option.BucketsPath {
 		if newEntry != nil {
 			s3a.bucketRegistry.LoadBucketMetadata(newEntry)
-			glog.V(0).Infof("updated bucketMetadata %s/%s", dir, newEntry)
+			log.V(3).Infof("updated bucketMetadata %s/%s", dir, newEntry)
 		} else {
 			s3a.bucketRegistry.RemoveBucketMetadata(oldEntry)
-			glog.V(0).Infof("remove bucketMetadata  %s/%s", dir, newEntry)
+			log.V(3).Infof("remove bucketMetadata  %s/%s", dir, newEntry)
 		}
 	}
 	return nil

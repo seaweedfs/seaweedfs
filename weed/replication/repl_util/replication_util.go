@@ -2,7 +2,7 @@ package repl_util
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -25,9 +25,9 @@ func CopyFromChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerS
 				writeErr = writeFunc(data)
 			})
 			if err != nil {
-				glog.V(1).Infof("read from %s: %v", fileUrl, err)
+				log.V(2).Infof("read from %s: %v", fileUrl, err)
 			} else if writeErr != nil {
-				glog.V(1).Infof("copy from %s: %v", fileUrl, writeErr)
+				log.V(2).Infof("copy from %s: %v", fileUrl, writeErr)
 			} else {
 				break
 			}

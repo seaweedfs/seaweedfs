@@ -22,7 +22,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -117,12 +117,12 @@ func runMaster(cmd *Command, args []string) bool {
 		os.MkdirAll(*m.metaFolder, 0755)
 	}
 	if err := util.TestFolderWritable(util.ResolvePath(*m.metaFolder)); err != nil {
-		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
+		log.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
 
 	masterWhiteList := util.StringSplit(*m.whiteList, ",")
 	if *m.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
-		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
+		log.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
 
 	switch {
@@ -160,10 +160,10 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), masterPeers)
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
-	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
+	log.V(3).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0)
 	if e != nil {
-		glog.Fatalf("Master startup error: %v", e)
+		log.Fatalf("Master startup error: %v", e)
 	}
 
 	// start raftServer
@@ -183,12 +183,12 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	var err error
 	if *masterOption.raftHashicorp {
 		if raftServer, err = weed_server.NewHashicorpRaftServer(raftServerOption); err != nil {
-			glog.Fatalf("NewHashicorpRaftServer: %s", err)
+			log.Fatalf("NewHashicorpRaftServer: %s", err)
 		}
 	} else {
 		raftServer, err = weed_server.NewRaftServer(raftServerOption)
 		if raftServer == nil {
-			glog.Fatalf("please verify %s is writable, see https://github.com/seaweedfs/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
+			log.Fatalf("please verify %s is writable, see https://github.com/seaweedfs/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 		}
 	}
 	ms.SetRaftServer(raftServer)
@@ -201,7 +201,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	grpcPort := *masterOption.portGrpc
 	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOption.ipBind, grpcPort, 0)
 	if err != nil {
-		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
+		log.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
 	master_pb.RegisterSeaweedServer(grpcS, ms)
@@ -211,7 +211,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		protobuf.RegisterRaftServer(grpcS, raftServer)
 	}
 	reflection.Register(grpcS)
-	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
+	log.V(3).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)
 	}
@@ -279,7 +279,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 }
 
 func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers string) (masterAddress pb.ServerAddress, cleanedPeers []pb.ServerAddress) {
-	glog.V(0).Infof("current: %s:%d peers:%s", masterIp, masterPort, peers)
+	log.V(3).Infof("current: %s:%d peers:%s", masterIp, masterPort, peers)
 	masterAddress = pb.NewServerAddress(masterIp, masterPort, masterGrpcPort)
 	cleanedPeers = pb.ServerAddresses(peers).ToAddresses()
 
@@ -295,7 +295,7 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 		cleanedPeers = append(cleanedPeers, masterAddress)
 	}
 	if len(cleanedPeers)%2 == 0 {
-		glog.Fatalf("Only odd number of masters are supported: %+v", cleanedPeers)
+		log.Fatalf("Only odd number of masters are supported: %+v", cleanedPeers)
 	}
 	return
 }

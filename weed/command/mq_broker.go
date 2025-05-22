@@ -5,7 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/broker"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -79,13 +79,13 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 		Port:               *mqBrokerOpt.port,
 	}, grpcDialOption)
 	if err != nil {
-		glog.Fatalf("failed to create new message broker for queue server: %v", err)
+		log.Fatalf("failed to create new message broker for queue server: %v", err)
 	}
 
 	// start grpc listener
 	grpcL, _, err := util.NewIpAndLocalListeners("", *mqBrokerOpt.port, 0)
 	if err != nil {
-		glog.Fatalf("failed to listen on grpc port %d: %v", *mqBrokerOpt.port, err)
+		log.Fatalf("failed to listen on grpc port %d: %v", *mqBrokerOpt.port, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.msg_broker"))
 	mq_pb.RegisterSeaweedMessagingServer(grpcS, qs)

@@ -6,7 +6,7 @@ package sub
 import (
 	"context"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"gocloud.dev/pubsub"
@@ -41,38 +41,38 @@ func QueueDeclareAndBind(conn *amqp.Connection, exchangeUrl string, queueUrl str
 	queueNameDLX := "DLX." + queueName
 	ch, err := conn.Channel()
 	if err != nil {
-		glog.Error(err)
+		log.Error(err)
 		return err
 	}
 	defer ch.Close()
 	if err := ch.ExchangeDeclare(
 		exchangeNameDLX, "fanout", true, false, false, false, nil); err != nil {
-		glog.Error(err)
+		log.Error(err)
 		return err
 	}
 	if err := ch.ExchangeDeclare(
 		exchangeName, "fanout", true, false, false, false, nil); err != nil {
-		glog.Error(err)
+		log.Error(err)
 		return err
 	}
 	if _, err := ch.QueueDeclare(
 		queueName, true, false, false, false,
 		amqp.Table{"x-dead-letter-exchange": exchangeNameDLX}); err != nil {
-		glog.Error(err)
+		log.Error(err)
 		return err
 	}
 	if err := ch.QueueBind(queueName, "", exchangeName, false, nil); err != nil {
-		glog.Error(err)
+		log.Error(err)
 		return err
 	}
 	if _, err := ch.QueueDeclare(
 		queueNameDLX, true, false, false, false,
 		amqp.Table{"x-dead-letter-exchange": exchangeName, "x-message-ttl": 600000}); err != nil {
-		glog.Error(err)
+		log.Error(err)
 		return err
 	}
 	if err := ch.QueueBind(queueNameDLX, "", exchangeNameDLX, false, nil); err != nil {
-		glog.Error(err)
+		log.Error(err)
 		return err
 	}
 	return nil
@@ -90,7 +90,7 @@ func (k *GoCDKPubSubInput) GetName() string {
 func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix string) error {
 	topicUrl := configuration.GetString(prefix + "topic_url")
 	k.subURL = configuration.GetString(prefix + "sub_url")
-	glog.V(0).Infof("notification.gocdk_pub_sub.sub_url: %v", k.subURL)
+	log.V(3).Infof("notification.gocdk_pub_sub.sub_url: %v", k.subURL)
 	sub, err := pubsub.OpenSubscription(context.Background(), k.subURL)
 	if err != nil {
 		return err
@@ -127,7 +127,7 @@ func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.Event
 			k.sub.Shutdown(ctx)
 			conn, err = amqp.Dial(os.Getenv("RABBIT_SERVER_URL"))
 			if err != nil {
-				glog.Error(err)
+				log.Error(err)
 				time.Sleep(time.Second)
 				return
 			}
@@ -135,7 +135,7 @@ func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.Event
 			return
 		}
 		// This is permanent cached sub err
-		glog.Fatal(err)
+		log.Fatal(err)
 	}
 	onFailureFn = func() {
 		if msg.Nackable() {
@@ -143,11 +143,11 @@ func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.Event
 			var delivery amqp.Delivery
 			if msg.As(&delivery) {
 				isRedelivered = delivery.Redelivered
-				glog.Warningf("onFailureFn() metadata: %+v, redelivered: %v", msg.Metadata, delivery.Redelivered)
+				log.Warningf("onFailureFn() metadata: %+v, redelivered: %v", msg.Metadata, delivery.Redelivered)
 			}
 			if isRedelivered {
 				if err := delivery.Nack(false, false); err != nil {
-					glog.Error(err)
+					log.Error(err)
 				}
 			} else {
 				msg.Nack()

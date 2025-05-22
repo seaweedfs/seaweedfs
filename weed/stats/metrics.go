@@ -13,7 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/client_golang/prometheus/push"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 // Readonly volume types
@@ -406,14 +406,14 @@ func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {
 		return
 	}
 
-	glog.V(0).Infof("%s server sends metrics to %s every %d seconds", name, addr, intervalSeconds)
+	log.V(3).Infof("%s server sends metrics to %s every %d seconds", name, addr, intervalSeconds)
 
 	pusher := push.New(addr, name).Gatherer(Gather).Grouping("instance", instance)
 
 	for {
 		err := pusher.Push()
 		if err != nil && !strings.HasPrefix(err.Error(), "unexpected status code 200") {
-			glog.V(0).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
+			log.V(3).Infof("could not push metrics to prometheus push gateway %s: %v", addr, err)
 		}
 		if intervalSeconds <= 0 {
 			intervalSeconds = 15
@@ -435,7 +435,7 @@ func StartMetricsServer(ip string, port int) {
 		return
 	}
 	http.Handle("/metrics", promhttp.HandlerFor(Gather, promhttp.HandlerOpts{}))
-	glog.Fatal(http.ListenAndServe(JoinHostPort(ip, port), nil))
+	log.Fatal(http.ListenAndServe(JoinHostPort(ip, port), nil))
 }
 
 func SourceName(port uint32) string {
@@ -461,7 +461,7 @@ func DeleteCollectionMetrics(collection string) {
 	c += VolumeServerVolumeGauge.DeletePartialMatch(labels)
 	c += VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(labels)
 
-	glog.V(0).Infof("delete collection metrics, %s: %d", collection, c)
+	log.V(3).Infof("delete collection metrics, %s: %d", collection, c)
 }
 
 func bucketMetricTTLControl() {
@@ -482,7 +482,7 @@ func bucketMetricTTLControl() {
 				c += S3BucketTrafficSentBytesCounter.DeletePartialMatch(labels)
 				c += S3DeletedObjectsCounter.DeletePartialMatch(labels)
 				c += S3UploadedObjectsCounter.DeletePartialMatch(labels)
-				glog.V(0).Infof("delete inactive bucket metrics, %s: %d", bucket, c)
+				log.V(3).Infof("delete inactive bucket metrics, %s: %d", bucket, c)
 			}
 		}
 

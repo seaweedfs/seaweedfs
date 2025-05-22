@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -306,7 +306,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 
 		if targetAddress != existingLocation {
 			copiedShardIds = shardIdsToCopy
-			glog.V(0).Infof("%s ec volume %d deletes shards %+v", existingLocation, volumeId, copiedShardIds)
+			log.V(3).Infof("%s ec volume %d deletes shards %+v", existingLocation, volumeId, copiedShardIds)
 		}
 
 		return nil

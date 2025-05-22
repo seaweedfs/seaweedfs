@@ -13,7 +13,7 @@ import (
 
 	"slices"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -130,7 +130,7 @@ func (fs *FilerServer) uploadReaderToChunks(reader io.Reader, startOffset int64,
 				fileChunksSize := len(fileChunks) + len(chunks)
 				for _, chunk := range chunks {
 					fileChunks = append(fileChunks, chunk)
-					glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d)", fileName, fileChunksSize, chunk.FileId, offset, offset+int64(chunk.Size))
+					log.V(-1).Infof("uploaded %s chunk %d to %s [%d,%d)", fileName, fileChunksSize, chunk.FileId, offset, offset+int64(chunk.Size))
 				}
 				fileChunksLock.Unlock()
 			}
@@ -148,9 +148,9 @@ func (fs *FilerServer) uploadReaderToChunks(reader io.Reader, startOffset int64,
 	wg.Wait()
 
 	if uploadErr != nil {
-		glog.V(0).Infof("upload file %s error: %v", fileName, uploadErr)
+		log.V(3).Infof("upload file %s error: %v", fileName, uploadErr)
 		for _, chunk := range fileChunks {
-			glog.V(4).Infof("purging failed uploaded %s chunk %s [%d,%d)", fileName, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
+			log.V(-1).Infof("purging failed uploaded %s chunk %s [%d,%d)", fileName, chunk.FileId, chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 		fs.filer.DeleteUncommittedChunks(fileChunks)
 		return nil, md5Hash, 0, uploadErr, nil
@@ -205,14 +205,14 @@ func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, ch
 		// assign one file id for one chunk
 		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(so)
 		if uploadErr != nil {
-			glog.V(4).Infof("retry later due to assign error: %v", uploadErr)
+			log.V(-1).Infof("retry later due to assign error: %v", uploadErr)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssignRetry).Inc()
 			return uploadErr
 		}
 		// upload the chunk to the volume server
 		uploadResult, uploadErr, _ = fs.doUpload(urlLocation, dataReader, fileName, contentType, nil, auth)
 		if uploadErr != nil {
-			glog.V(4).Infof("retry later due to upload error: %v", uploadErr)
+			log.V(-1).Infof("retry later due to upload error: %v", uploadErr)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkDoUploadRetry).Inc()
 			fid, _ := filer_pb.ToFileIdObject(fileId)
 			fileChunk := filer_pb.FileChunk{
@@ -226,7 +226,7 @@ func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, ch
 		return nil
 	})
 	if err != nil {
-		glog.Errorf("upload error: %v", err)
+		log.Errorf("upload error: %v", err)
 		return failedFileChunks, err
 	}
 

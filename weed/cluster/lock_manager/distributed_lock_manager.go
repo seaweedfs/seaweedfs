@@ -2,7 +2,7 @@ package lock_manager
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"time"
 )
@@ -56,7 +56,7 @@ func (dlm *DistributedLockManager) FindLockOwner(key string) (owner string, move
 	}
 	if movedTo != dlm.Host {
 		servers := dlm.LockRing.GetSnapshot()
-		glog.V(0).Infof("lock %s not on current %s but on %s from %v", key, dlm.Host, movedTo, servers)
+		log.V(3).Infof("lock %s not on current %s but on %s from %v", key, dlm.Host, movedTo, servers)
 		return
 	}
 	owner, err = dlm.lockManager.GetLockOwner(key)

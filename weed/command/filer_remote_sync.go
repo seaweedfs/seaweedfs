@@ -2,7 +2,7 @@ package command
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
@@ -94,7 +94,7 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 			return followUpdatesAndUploadToRemote(&remoteSyncOptions, filerSource, dir)
 		}, func(err error) bool {
 			if err != nil {
-				glog.Errorf("synchronize %s: %v", dir, err)
+				log.Errorf("synchronize %s: %v", dir, err)
 			}
 			return true
 		})

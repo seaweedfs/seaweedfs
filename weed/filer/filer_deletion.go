@@ -7,7 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -58,10 +58,10 @@ func (f *Filer) loopProcessingDeletion() {
 				_, err := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
 				if err != nil {
 					if !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
-						glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
+						log.V(3).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
 					}
 				} else {
-					glog.V(2).Infof("deleting fileIds %+v", toDeleteFileIds)
+					log.V(1).Infof("deleting fileIds %+v", toDeleteFileIds)
 				}
 			}
 		})
@@ -92,7 +92,7 @@ func (f *Filer) doDeleteChunks(chunks []*filer_pb.FileChunk) {
 		}
 		dataChunks, manifestResolveErr := ResolveOneChunkManifest(f.MasterClient.LookupFileId, chunk)
 		if manifestResolveErr != nil {
-			glog.V(0).Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
+			log.V(3).Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
 		for _, dChunk := range dataChunks {
 			f.fileIdDeletionQueue.EnQueue(dChunk.GetFileIdString())
@@ -118,7 +118,7 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 
 	toDelete, err := MinusChunks(f.MasterClient.GetLookupFileIdFunction(), oldChunks, newChunks)
 	if err != nil {
-		glog.Errorf("Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s", newChunks, oldChunks)
+		log.Errorf("Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s", newChunks, oldChunks)
 		return
 	}
 	f.DeleteChunksNotRecursive(toDelete)

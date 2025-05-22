@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"reflect"
@@ -64,13 +64,13 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 	v.SetConfigFile(*metaBackup.backupFilerConfig)
 
 	if err := v.ReadInConfig(); err != nil { // Handle errors reading the config file
-		glog.Fatalf("Failed to load %s file: %v\nPlease use this command to generate the a %s.toml file\n"+
+		log.Fatalf("Failed to load %s file: %v\nPlease use this command to generate the a %s.toml file\n"+
 			"    weed scaffold -config=%s -output=.\n\n\n",
 			*metaBackup.backupFilerConfig, err, "backup_filer", "filer")
 	}
 
 	if err := metaBackup.initStore(v); err != nil {
-		glog.V(0).Infof("init backup filer store: %v", err)
+		log.V(3).Infof("init backup filer store: %v", err)
 		return true
 	}
 
@@ -81,13 +81,13 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 	}
 
 	if *metaBackup.restart || missingPreviousBackup {
-		glog.V(0).Infof("traversing metadata tree...")
+		log.V(3).Infof("traversing metadata tree...")
 		startTime := time.Now()
 		if err := metaBackup.traverseMetadata(); err != nil {
-			glog.Errorf("traverse meta data: %v", err)
+			log.Errorf("traverse meta data: %v", err)
 			return true
 		}
-		glog.V(0).Infof("metadata copied up to %v", startTime)
+		log.V(3).Infof("metadata copied up to %v", startTime)
 		if err := metaBackup.setOffset(startTime); err != nil {
 			startTime = time.Now()
 		}
@@ -96,7 +96,7 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 	for {
 		err := metaBackup.streamMetadataBackup()
 		if err != nil {
-			glog.Errorf("filer meta backup from %s: %v", *metaBackup.filerAddress, err)
+			log.Errorf("filer meta backup from %s: %v", *metaBackup.filerAddress, err)
 			time.Sleep(1747 * time.Millisecond)
 		}
 	}
@@ -111,9 +111,9 @@ func (metaBackup *FilerMetaBackupOptions) initStore(v *viper.Viper) error {
 		if v.GetBool(store.GetName() + ".enabled") {
 			store = reflect.New(reflect.ValueOf(store).Elem().Type()).Interface().(filer.FilerStore)
 			if err := store.Initialize(v, store.GetName()+"."); err != nil {
-				glog.Fatalf("failed to initialize store for %s: %+v", store.GetName(), err)
+				log.Fatalf("failed to initialize store for %s: %+v", store.GetName(), err)
 			}
-			glog.V(0).Infof("configured filer store to %s", store.GetName())
+			log.V(3).Infof("configured filer store to %s", store.GetName())
 			hasDefaultStoreConfigured = true
 			metaBackup.store = filer.NewFilerStoreWrapper(store)
 			break
@@ -155,7 +155,7 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 	if err != nil {
 		startTime = time.Now()
 	}
-	glog.V(0).Infof("streaming from %v", startTime)
+	log.V(3).Infof("streaming from %v", startTime)
 
 	store := metaBackup.store
 
@@ -192,7 +192,7 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 
 	processEventFnWithOffset := pb.AddOffsetFunc(eachEntryFunc, 3*time.Second, func(counter int64, lastTsNs int64) error {
 		lastTime := time.Unix(0, lastTsNs)
-		glog.V(0).Infof("meta backup %s progressed to %v %0.2f/sec", *metaBackup.filerAddress, lastTime, float64(counter)/float64(3))
+		log.V(3).Infof("meta backup %s progressed to %v %0.2f/sec", *metaBackup.filerAddress, lastTime, float64(counter)/float64(3))
 		return metaBackup.setOffset(lastTime)
 	})
 

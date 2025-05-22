@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -324,44 +324,44 @@ func (fo *FilerOptions) startFiler() {
 		AllowedOrigins:        strings.Split(*fo.allowedOrigins, ","),
 	})
 	if nfs_err != nil {
-		glog.Fatalf("Filer startup error: %v", nfs_err)
+		log.Fatalf("Filer startup error: %v", nfs_err)
 	}
 
 	if *fo.publicPort != 0 {
 		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
-		glog.V(0).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
+		log.V(3).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
 		publicListener, localPublicListener, e := util.NewIpAndLocalListeners(*fo.bindIp, *fo.publicPort, 0)
 		if e != nil {
-			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
+			log.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
 		}
 		go func() {
 			if e := http.Serve(publicListener, publicVolumeMux); e != nil {
-				glog.Fatalf("Volume server fail to serve public: %v", e)
+				log.Fatalf("Volume server fail to serve public: %v", e)
 			}
 		}()
 		if localPublicListener != nil {
 			go func() {
 				if e := http.Serve(localPublicListener, publicVolumeMux); e != nil {
-					glog.Errorf("Volume server fail to serve public: %v", e)
+					log.Errorf("Volume server fail to serve public: %v", e)
 				}
 			}()
 		}
 	}
 
-	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.Version(), *fo.ip, *fo.port)
+	log.V(3).Infof("Start Seaweed Filer %s at %s:%d", util.Version(), *fo.ip, *fo.port)
 	filerListener, filerLocalListener, e := util.NewIpAndLocalListeners(
 		*fo.bindIp, *fo.port,
 		time.Duration(10)*time.Second,
 	)
 	if e != nil {
-		glog.Fatalf("Filer listener error: %v", e)
+		log.Fatalf("Filer listener error: %v", e)
 	}
 
 	// starting grpc server
 	grpcPort := *fo.portGrpc
 	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*fo.bindIp, grpcPort, 0)
 	if err != nil {
-		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
+		log.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
@@ -378,13 +378,13 @@ func (fo *FilerOptions) startFiler() {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-filer-%d.sock", *fo.port)
 		}
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
+			log.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
 		go func() {
 			// start on local unix socket
 			filerSocketListener, err := net.Listen("unix", localSocket)
 			if err != nil {
-				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+				log.Fatalf("Failed to listen on %s: %v", localSocket, err)
 			}
 			httpS.Serve(filerSocketListener)
 		}()
@@ -402,14 +402,14 @@ func (fo *FilerOptions) startFiler() {
 			RefreshDuration: security.CredRefreshingInterval,
 		}
 		if fo.certProvider, err = pemfile.NewProvider(pemfileOptions); err != nil {
-			glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
+			log.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
 		}
 
 		caCertPool := x509.NewCertPool()
 		if caCertFile != "" {
 			caCertFile, err := os.ReadFile(caCertFile)
 			if err != nil {
-				glog.Fatalf("error reading CA certificate: %v", err)
+				log.Fatalf("error reading CA certificate: %v", err)
 			}
 			caCertPool.AppendCertsFromPEM(caCertFile)
 		}
@@ -428,23 +428,23 @@ func (fo *FilerOptions) startFiler() {
 		if filerLocalListener != nil {
 			go func() {
 				if err := httpS.ServeTLS(filerLocalListener, "", ""); err != nil {
-					glog.Errorf("Filer Fail to serve: %v", e)
+					log.Errorf("Filer Fail to serve: %v", e)
 				}
 			}()
 		}
 		if err := httpS.ServeTLS(filerListener, "", ""); err != nil {
-			glog.Fatalf("Filer Fail to serve: %v", e)
+			log.Fatalf("Filer Fail to serve: %v", e)
 		}
 	} else {
 		if filerLocalListener != nil {
 			go func() {
 				if err := httpS.Serve(filerLocalListener); err != nil {
-					glog.Errorf("Filer Fail to serve: %v", e)
+					log.Errorf("Filer Fail to serve: %v", e)
 				}
 			}()
 		}
 		if err := httpS.Serve(filerListener); err != nil {
-			glog.Fatalf("Filer Fail to serve: %v", e)
+			log.Fatalf("Filer Fail to serve: %v", e)
 		}
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -51,7 +51,7 @@ func (store *CassandraStore) initialize(keyspace string, hosts []string, usernam
 	}
 	store.cluster.Keyspace = keyspace
 	store.cluster.Timeout = time.Duration(timeout) * time.Millisecond
-	glog.V(0).Infof("timeout = %d", timeout)
+	log.V(3).Infof("timeout = %d", timeout)
 	fallback := gocql.RoundRobinHostPolicy()
 	if localDC != "" {
 		fallback = gocql.DCAwareRoundRobinPolicy(localDC)
@@ -61,7 +61,7 @@ func (store *CassandraStore) initialize(keyspace string, hosts []string, usernam
 
 	store.session, err = store.cluster.CreateSession()
 	if err != nil {
-		glog.V(0).Infof("Failed to open cassandra store, hosts %v, keyspace %s", hosts, keyspace)
+		log.V(3).Infof("Failed to open cassandra store, hosts %v, keyspace %s", hosts, keyspace)
 	}
 
 	// set directory hash
@@ -72,7 +72,7 @@ func (store *CassandraStore) initialize(keyspace string, hosts []string, usernam
 		dirHash := util.Md5String([]byte(dir))[:4]
 		store.superLargeDirectoryHash[dir] = dirHash
 		if existingDir, found := existingHash[dirHash]; found {
-			glog.Fatalf("directory %s has the same hash as %s", dir, existingDir)
+			log.Fatalf("directory %s has the same hash as %s", dir, existingDir)
 		}
 		existingHash[dirHash] = dir
 	}
@@ -202,7 +202,7 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, dirPath u
 		lastFileName = name
 		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			log.V(3).Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
 		if !eachEntryFunc(entry) {
@@ -210,7 +210,7 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, dirPath u
 		}
 	}
 	if err = iter.Close(); err != nil {
-		glog.V(0).Infof("list iterator close: %v", err)
+		log.V(3).Infof("list iterator close: %v", err)
 	}
 
 	return lastFileName, err

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -25,7 +25,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		return nil, fmt.Errorf("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, so.Collection, so.DataCenter)
 	}
 
-	glog.V(4).Infof("write %s to %v", r.URL.Path, urlLocation)
+	log.V(-1).Infof("write %s to %v", r.URL.Path, urlLocation)
 
 	// Note: encrypt(gzip(data)), encrypt data first, then gzip
 

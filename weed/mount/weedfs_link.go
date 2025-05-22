@@ -8,7 +8,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -105,7 +105,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	newEntryPath := newParentPath.Child(name)
 
 	if err != nil {
-		glog.V(0).Infof("Link %v -> %s: %v", oldEntryPath, newEntryPath, err)
+		log.V(3).Infof("Link %v -> %s: %v", oldEntryPath, newEntryPath, err)
 		return fuse.EIO
 	}
 

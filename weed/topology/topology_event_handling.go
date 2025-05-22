@@ -9,7 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 )
 
@@ -83,7 +83,7 @@ func (t *Topology) SetVolumeCrowded(volumeInfo storage.VolumeInfo) {
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	dn.IsTerminating = true
 	for _, v := range dn.GetVolumes() {
-		glog.V(0).Infoln("Removing Volume", v.Id, "from the dead volume server", dn.Id())
+		log.V(3).Infoln("Removing Volume", v.Id, "from the dead volume server", dn.Id())
 		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.SetVolumeUnavailable(dn, v.Id)

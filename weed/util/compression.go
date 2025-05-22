@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	// "github.com/klauspost/compress/zstd"
 )
 
@@ -31,7 +31,7 @@ func MaybeDecompressData(input []byte) []byte {
 	uncompressed, err := DecompressData(input)
 	if err != nil {
 		if err != UnsupportedCompression {
-			glog.Errorf("decompressed data: %v", err)
+			log.Errorf("decompressed data: %v", err)
 		}
 		return input
 	}

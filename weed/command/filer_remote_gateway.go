@@ -3,7 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -115,7 +115,7 @@ func runFilerRemoteGateway(cmd *Command, args []string) bool {
 		return remoteGatewayOptions.followBucketUpdatesAndUploadToRemote(filerSource)
 	}, func(err error) bool {
 		if err != nil {
-			glog.Errorf("synchronize %s: %v", remoteGatewayOptions.bucketsDir, err)
+			log.Errorf("synchronize %s: %v", remoteGatewayOptions.bucketsDir, err)
 		}
 		return true
 	})

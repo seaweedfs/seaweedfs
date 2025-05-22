@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	ui "github.com/seaweedfs/seaweedfs/weed/server/filer_ui"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -43,7 +43,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	entries, shouldDisplayLoadMore, err := fs.filer.ListDirectoryEntries(context.Background(), util.FullPath(path), lastFileName, false, int64(limit), "", namePattern, namePatternExclude)
 
 	if err != nil {
-		glog.V(0).Infof("listDirectory %s %s %d: %s", path, lastFileName, limit, err)
+		log.V(3).Infof("listDirectory %s %s %d: %s", path, lastFileName, limit, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -58,7 +58,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		emptyFolder = false
 	}
 
-	glog.V(4).Infof("listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
+	log.V(-1).Infof("listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
 
 	if r.Header.Get("Accept") == "application/json" {
 		writeJsonQuiet(w, r, http.StatusOK, struct {
@@ -103,7 +103,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		fs.option.ShowUIDirectoryDelete,
 	})
 	if err != nil {
-		glog.V(0).Infof("Template Execute Error: %v", err)
+		log.V(3).Infof("Template Execute Error: %v", err)
 	}
 
 }

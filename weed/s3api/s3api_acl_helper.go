@@ -5,7 +5,7 @@ import (
 	"encoding/xml"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -42,7 +42,7 @@ func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucke
 
 		//owner should present && owner is immutable
 		if *acp.Owner.ID != ownerId {
-			glog.V(3).Infof("set acl denied! owner account is not consistent, request account id: %s, expect account id: %s", accountId, ownerId)
+			log.V(0).Infof("set acl denied! owner account is not consistent, request account id: %s, expect account id: %s", accountId, ownerId)
 			return nil, s3err.ErrAccessDenied
 		}
 
@@ -266,41 +266,41 @@ func ValidateAndTransferGrants(accountManager AccountManager, grants []*s3.Grant
 	for _, grant := range grants {
 		grantee := grant.Grantee
 		if grantee == nil || grantee.Type == nil {
-			glog.Warning("invalid grantee! grantee or granteeType is nil")
+			log.Warning("invalid grantee! grantee or granteeType is nil")
 			return nil, s3err.ErrInvalidRequest
 		}
 
 		switch *grantee.Type {
 		case s3_constants.GrantTypeGroup:
 			if grantee.URI == nil {
-				glog.Warning("invalid group grantee! group URI is nil")
+				log.Warning("invalid group grantee! group URI is nil")
 				return nil, s3err.ErrInvalidRequest
 			}
 			ok := s3_constants.ValidateGroup(*grantee.URI)
 			if !ok {
-				glog.Warningf("invalid group grantee! group name[%s] is not valid", *grantee.URI)
+				log.Warningf("invalid group grantee! group name[%s] is not valid", *grantee.URI)
 				return nil, s3err.ErrInvalidRequest
 			}
 			result = append(result, grant)
 		case s3_constants.GrantTypeCanonicalUser:
 			if grantee.ID == nil {
-				glog.Warning("invalid canonical grantee! account id is nil")
+				log.Warning("invalid canonical grantee! account id is nil")
 				return nil, s3err.ErrInvalidRequest
 			}
 			name := accountManager.GetAccountNameById(*grantee.ID)
 			if len(name) == 0 {
-				glog.Warningf("invalid canonical grantee! account id[%s] is not exists", *grantee.ID)
+				log.Warningf("invalid canonical grantee! account id[%s] is not exists", *grantee.ID)
 				return nil, s3err.ErrInvalidRequest
 			}
 			result = append(result, grant)
 		case s3_constants.GrantTypeAmazonCustomerByEmail:
 			if grantee.EmailAddress == nil {
-				glog.Warning("invalid email grantee! email address is nil")
+				log.Warning("invalid email grantee! email address is nil")
 				return nil, s3err.ErrInvalidRequest
 			}
 			accountId := accountManager.GetAccountIdByEmail(*grantee.EmailAddress)
 			if len(accountId) == 0 {
-				glog.Warningf("invalid email grantee! email address[%s] is not exists", *grantee.EmailAddress)
+				log.Warningf("invalid email grantee! email address[%s] is not exists", *grantee.EmailAddress)
 				return nil, s3err.ErrInvalidRequest
 			}
 			result = append(result, &s3.Grant{
@@ -389,7 +389,7 @@ func SetAcpGrantsHeader(r *http.Request, acpGrants []*s3.Grant) {
 		if err == nil {
 			r.Header.Set(s3_constants.ExtAmzAclKey, string(a))
 		} else {
-			glog.Warning("Marshal acp grants err", err)
+			log.Warning("Marshal acp grants err", err)
 		}
 	}
 }
@@ -422,7 +422,7 @@ func AssembleEntryWithAcp(objectEntry *filer_pb.Entry, objectOwner string, grant
 	if len(grants) > 0 {
 		grantsBytes, err := json.Marshal(grants)
 		if err != nil {
-			glog.Warning("assemble acp to entry:", err)
+			log.Warning("assemble acp to entry:", err)
 			return s3err.ErrInvalidRequest
 		}
 		objectEntry.Extended[s3_constants.ExtAmzAclKey] = grantsBytes

@@ -10,7 +10,7 @@ import (
 
 	"github.com/cognusion/imaging"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 
 	_ "golang.org/x/image/webp"
 )
@@ -55,7 +55,7 @@ func Resized(ext string, read io.ReadSeeker, width, height int, mode string) (re
 		}
 		return bytes.NewReader(buf.Bytes()), dstImage.Bounds().Dx(), dstImage.Bounds().Dy()
 	} else {
-		glog.Error(err)
+		log.Error(err)
 	}
 	return read, 0, 0
 }

@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -93,7 +93,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 
 	uploader, err := operation.NewUploader()
 	if err != nil {
-		glog.V(0).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), err)
+		log.V(3).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), err)
 		return "", fmt.Errorf("upload data: %v", err)
 	}
 
@@ -120,18 +120,18 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 			if fs.writeChunkByFiler {
 				fileUrl = fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.address, fileId)
 			}
-			glog.V(4).Infof("replicating %s to %s header:%+v", filename, fileUrl, header)
+			log.V(-1).Infof("replicating %s to %s header:%+v", filename, fileUrl, header)
 			return fileUrl
 		},
 		resp.Body,
 	)
 
 	if err != nil {
-		glog.V(0).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), err)
+		log.V(3).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), err)
 		return "", fmt.Errorf("upload data: %v", err)
 	}
 	if uploadResult.Error != "" {
-		glog.V(0).Infof("upload failure %v: %v", filename, err)
+		log.V(3).Infof("upload failure %v: %v", filename, err)
 		return "", fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
 

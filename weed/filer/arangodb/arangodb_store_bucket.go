@@ -7,7 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 var _ filer.BucketAware = (*ArangodbStore)(nil)
@@ -18,7 +18,7 @@ func (store *ArangodbStore) OnBucketCreation(bucket string) {
 	// create the collection && add to cache
 	_, err := store.ensureBucket(timeout, bucket)
 	if err != nil {
-		glog.Errorf("bucket create %s: %v", bucket, err)
+		log.Errorf("bucket create %s: %v", bucket, err)
 	}
 }
 func (store *ArangodbStore) OnBucketDeletion(bucket string) {
@@ -26,12 +26,12 @@ func (store *ArangodbStore) OnBucketDeletion(bucket string) {
 	defer cancel()
 	collection, err := store.ensureBucket(timeout, bucket)
 	if err != nil {
-		glog.Errorf("bucket delete %s: %v", bucket, err)
+		log.Errorf("bucket delete %s: %v", bucket, err)
 		return
 	}
 	err = collection.Remove(timeout)
 	if err != nil && !driver.IsNotFound(err) {
-		glog.Errorf("bucket delete %s: %v", bucket, err)
+		log.Errorf("bucket delete %s: %v", bucket, err)
 		return
 	}
 	store.mu.Lock()

@@ -25,7 +25,7 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -212,14 +212,14 @@ func (s3opt *S3Options) startS3Server() bool {
 			filerBucketsPath = resp.DirBuckets
 			filerGroup = resp.FilerGroup
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
-			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
+			log.V(3).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *s3opt.filer, filerAddress.ToGrpcAddress())
+			log.V(3).Infof("wait to connect to filer %s grpc address %s", *s3opt.filer, filerAddress.ToGrpcAddress())
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("connected to filer %s grpc address %s", *s3opt.filer, filerAddress.ToGrpcAddress())
+			log.V(3).Infof("connected to filer %s grpc address %s", *s3opt.filer, filerAddress.ToGrpcAddress())
 			break
 		}
 	}
@@ -246,7 +246,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		FilerGroup:                filerGroup,
 	})
 	if s3ApiServer_err != nil {
-		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
+		log.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
 
 	httpS := &http.Server{Handler: router}
@@ -264,13 +264,13 @@ func (s3opt *S3Options) startS3Server() bool {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-s3-%d.sock", *s3opt.port)
 		}
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
+			log.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
 		go func() {
 			// start on local unix socket
 			s3SocketListener, err := net.Listen("unix", localSocket)
 			if err != nil {
-				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+				log.Fatalf("Failed to listen on %s: %v", localSocket, err)
 			}
 			httpS.Serve(s3SocketListener)
 		}()
@@ -280,7 +280,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	s3ApiListener, s3ApiLocalListener, err := util.NewIpAndLocalListeners(
 		*s3opt.bindIp, *s3opt.port, time.Duration(*s3opt.idleTimeout)*time.Second)
 	if err != nil {
-		glog.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
+		log.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
 	}
 
 	if len(*s3opt.auditLogConfig) > 0 {
@@ -294,7 +294,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	grpcPort := *s3opt.portGrpc
 	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*s3opt.bindIp, grpcPort, 0)
 	if err != nil {
-		glog.Fatalf("s3 failed to listen on grpc port %d: %v", grpcPort, err)
+		log.Fatalf("s3 failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.s3"))
 	s3_pb.RegisterSeaweedS3Server(grpcS, s3ApiServer)
@@ -311,7 +311,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			RefreshDuration: security.CredRefreshingInterval,
 		}
 		if s3opt.certProvider, err = pemfile.NewProvider(pemfileOptions); err != nil {
-			glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
+			log.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
 		}
 
 		caCertPool := x509.NewCertPool()
@@ -319,7 +319,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			// load CA certificate file and add it to list of client CAs
 			caCertFile, err := ioutil.ReadFile(*s3opt.tlsCACertificate)
 			if err != nil {
-				glog.Fatalf("error reading CA certificate: %v", err)
+				log.Fatalf("error reading CA certificate: %v", err)
 			}
 			caCertPool.AppendCertsFromPEM(caCertFile)
 		}
@@ -336,49 +336,49 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 		err = security.FixTlsConfig(util.GetViper(), httpS.TLSConfig)
 		if err != nil {
-			glog.Fatalf("error with tls config: %v", err)
+			log.Fatalf("error with tls config: %v", err)
 		}
 		if *s3opt.portHttps == 0 {
-			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
+			log.V(3).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
 			if s3ApiLocalListener != nil {
 				go func() {
 					if err = httpS.ServeTLS(s3ApiLocalListener, "", ""); err != nil {
-						glog.Fatalf("S3 API Server Fail to serve: %v", err)
+						log.Fatalf("S3 API Server Fail to serve: %v", err)
 					}
 				}()
 			}
 			if err = httpS.ServeTLS(s3ApiListener, "", ""); err != nil {
-				glog.Fatalf("S3 API Server Fail to serve: %v", err)
+				log.Fatalf("S3 API Server Fail to serve: %v", err)
 			}
 		} else {
-			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.portHttps)
+			log.V(3).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.portHttps)
 			s3ApiListenerHttps, s3ApiLocalListenerHttps, _ := util.NewIpAndLocalListeners(
                 *s3opt.bindIp, *s3opt.portHttps, time.Duration(*s3opt.idleTimeout)*time.Second)
 			if s3ApiLocalListenerHttps != nil {
 				go func() {
 					if err = httpS.ServeTLS(s3ApiLocalListenerHttps, "", ""); err != nil {
-						glog.Fatalf("S3 API Server Fail to serve: %v", err)
+						log.Fatalf("S3 API Server Fail to serve: %v", err)
 					}
 				}()
 			}
 			go func() {
 				if err = httpS.ServeTLS(s3ApiListenerHttps, "", ""); err != nil {
-					glog.Fatalf("S3 API Server Fail to serve: %v", err)
+					log.Fatalf("S3 API Server Fail to serve: %v", err)
 				}
 			}()
 		}
 	}
 	if *s3opt.tlsPrivateKey == "" || *s3opt.portHttps > 0 {
-		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.Version(), *s3opt.port)
+		log.V(3).Infof("Start Seaweed S3 API Server %s at http port %d", util.Version(), *s3opt.port)
 		if s3ApiLocalListener != nil {
 			go func() {
 				if err = httpS.Serve(s3ApiLocalListener); err != nil {
-					glog.Fatalf("S3 API Server Fail to serve: %v", err)
+					log.Fatalf("S3 API Server Fail to serve: %v", err)
 				}
 			}()
 		}
 		if err = httpS.Serve(s3ApiListener); err != nil {
-			glog.Fatalf("S3 API Server Fail to serve: %v", err)
+			log.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
 	}
 

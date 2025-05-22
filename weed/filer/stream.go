@@ -11,7 +11,7 @@ import (
 
 	"slices"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -81,7 +81,7 @@ func noJwtFunc(string) string {
 }
 
 func PrepareStreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, jwtFunc VolumeServerJwtFunction, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64) (DoStreamContent, error) {
-	glog.V(4).Infof("prepare to stream content for chunks: %d", len(chunks))
+	log.V(-1).Infof("prepare to stream content for chunks: %d", len(chunks))
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
 
 	fileId2Url := make(map[string][]string)
@@ -95,15 +95,15 @@ func PrepareStreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunc
 			if err == nil && len(urlStrings) > 0 {
 				break
 			}
-			glog.V(4).Infof("waiting for chunk: %s", chunkView.FileId)
+			log.V(-1).Infof("waiting for chunk: %s", chunkView.FileId)
 			time.Sleep(backoff)
 		}
 		if err != nil {
-			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+			log.V(2).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return nil, err
 		} else if len(urlStrings) == 0 {
 			errUrlNotFound := fmt.Errorf("operation LookupFileId %s failed, err: urls not found", chunkView.FileId)
-			glog.Error(errUrlNotFound)
+			log.Error(errUrlNotFound)
 			return nil, errUrlNotFound
 		}
 		fileId2Url[chunkView.FileId] = urlStrings
@@ -117,7 +117,7 @@ func PrepareStreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunc
 			if offset < chunkView.ViewOffset {
 				gap := chunkView.ViewOffset - offset
 				remaining -= gap
-				glog.V(4).Infof("zero [%d,%d)", offset, chunkView.ViewOffset)
+				log.V(-1).Infof("zero [%d,%d)", offset, chunkView.ViewOffset)
 				err := writeZero(writer, gap)
 				if err != nil {
 					return fmt.Errorf("write zero [%d,%d)", offset, chunkView.ViewOffset)
@@ -139,7 +139,7 @@ func PrepareStreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunc
 			downloadThrottler.MaybeSlowdown(int64(chunkView.ViewSize))
 		}
 		if remaining > 0 {
-			glog.V(4).Infof("zero [%d,%d)", offset, offset+remaining)
+			log.V(-1).Infof("zero [%d,%d)", offset, offset+remaining)
 			err := writeZero(writer, remaining)
 			if err != nil {
 				return fmt.Errorf("write zero [%d,%d)", offset, offset+remaining)
@@ -191,7 +191,7 @@ func ReadAll(buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer
 		chunkView := x.Value
 		urlStrings, err := lookupFileIdFn(chunkView.FileId)
 		if err != nil {
-			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+			log.V(2).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return err
 		}
 
@@ -319,13 +319,13 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 	if c.bufferOffset <= offset && offset < c.bufferOffset+int64(len(c.buffer)) {
 		return nil
 	}
-	// glog.V(2).Infof("c.chunkView: %v buffer:[%d,%d) offset:%d totalSize:%d", c.chunkView, c.bufferOffset, c.bufferOffset+int64(len(c.buffer)), offset, c.totalSize)
+	// log.V(1).Infof("c.chunkView: %v buffer:[%d,%d) offset:%d totalSize:%d", c.chunkView, c.bufferOffset, c.bufferOffset+int64(len(c.buffer)), offset, c.totalSize)
 
 	// find a possible chunk view
 	p := c.chunkView
 	for p != nil {
 		chunk := p.Value
-		// glog.V(2).Infof("prepareBufferFor check chunk:[%d,%d)", chunk.ViewOffset, chunk.ViewOffset+int64(chunk.ViewSize))
+		// log.V(1).Infof("prepareBufferFor check chunk:[%d,%d)", chunk.ViewOffset, chunk.ViewOffset+int64(chunk.ViewSize))
 		if insideChunk(offset, chunk) {
 			if c.isBufferEmpty() || c.bufferOffset != chunk.ViewOffset {
 				c.chunkView = p
@@ -345,7 +345,7 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	urlStrings, err := c.lookupFileId(chunkView.FileId)
 	if err != nil {
-		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+		log.V(2).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 		return err
 	}
 	var buffer bytes.Buffer
@@ -358,7 +358,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 			break
 		}
 		if err != nil {
-			glog.V(1).Infof("read %s failed, err: %v", chunkView.FileId, err)
+			log.V(2).Infof("read %s failed, err: %v", chunkView.FileId, err)
 			buffer.Reset()
 		} else {
 			break
@@ -371,7 +371,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	c.bufferOffset = chunkView.ViewOffset
 	c.chunk = chunkView.FileId
 
-	// glog.V(0).Infof("fetched %s [%d,%d)", chunkView.FileId, chunkView.ViewOffset, chunkView.ViewOffset+int64(chunkView.ViewSize))
+	// log.V(3).Infof("fetched %s [%d,%d)", chunkView.FileId, chunkView.ViewOffset, chunkView.ViewOffset+int64(chunkView.ViewSize))
 
 	return nil
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
@@ -76,14 +76,14 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 	})
 
 	if err != nil {
-		glog.V(1).Infof("LookupFileId volume id %s: %v", vid, err)
+		log.V(2).Infof("LookupFileId volume id %s: %v", vid, err)
 		return nil, fmt.Errorf("LookupFileId volume id %s: %v", vid, err)
 	}
 
 	locations := vid2Locations[vid]
 
 	if locations == nil || len(locations.Locations) == 0 {
-		glog.V(1).Infof("LookupFileId locate volume id %s: %v", vid, err)
+		log.V(2).Infof("LookupFileId locate volume id %s: %v", vid, err)
 		return nil, fmt.Errorf("LookupFileId locate volume id %s: %v", vid, err)
 	}
 
@@ -118,7 +118,7 @@ func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Hea
 	for _, fileUrl := range fileUrls {
 		filename, header, resp, err = util_http.DownloadFile(fileUrl, "")
 		if err != nil {
-			glog.V(1).Infof("fail to read from %s: %v", fileUrl, err)
+			log.V(2).Infof("fail to read from %s: %v", fileUrl, err)
 		} else {
 			break
 		}

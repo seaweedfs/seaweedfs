@@ -1,7 +1,7 @@
 package topology
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -115,7 +115,7 @@ func (t *Topology) RegisterEcShards(ecShardInfos *erasure_coding.EcVolumeInfo, d
 }
 
 func (t *Topology) UnRegisterEcShards(ecShardInfos *erasure_coding.EcVolumeInfo, dn *DataNode) {
-	glog.Infof("removing ec shard info:%+v", ecShardInfos)
+	log.Infof("removing ec shard info:%+v", ecShardInfos)
 	t.ecShardMapLock.Lock()
 	defer t.ecShardMapLock.Unlock()
 

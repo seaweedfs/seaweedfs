@@ -11,7 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -30,14 +30,14 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v != nil {
 
-		glog.V(0).Infof("volume %d already exists. deleted before copying...", req.VolumeId)
+		log.V(3).Infof("volume %d already exists. deleted before copying...", req.VolumeId)
 
 		err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false)
 		if err != nil {
 			return fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, err)
 		}
 
-		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
+		log.V(3).Infof("deleted existing volume %d before copying.", req.VolumeId)
 	}
 
 	// the master will not start compaction for read-only volumes, so it is safe to just copy files directly
@@ -96,7 +96,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			}
 			return nil
 		}); grpcErr != nil {
-			glog.V(0).Infof("connect to %s: %v", vs.GetMaster(context.Background()), grpcErr)
+			log.V(3).Infof("connect to %s: %v", vs.GetMaster(context.Background()), grpcErr)
 		}
 
 		if preallocateSize > 0 && !hasRemoteDatFile {
@@ -192,7 +192,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	if err = stream.Send(&volume_server_pb.VolumeCopyResponse{
 		LastAppendAtNs: volFileInfoResp.DatFileTimestampSeconds * uint64(time.Second),
 	}); err != nil {
-		glog.Errorf("send response: %v", err)
+		log.Errorf("send response: %v", err)
 	}
 
 	return err
@@ -257,7 +257,7 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 }
 
 func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler, isAppend bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
-	glog.V(4).Infof("writing to %s", fileName)
+	log.V(-1).Infof("writing to %s", fileName)
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	if isAppend {
 		flags = os.O_WRONLY | os.O_CREATE

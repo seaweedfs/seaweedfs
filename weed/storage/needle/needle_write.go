@@ -3,7 +3,7 @@ package needle
 import (
 	"bytes"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -112,7 +112,7 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 		defer func(w backend.BackendStorageFile, off int64) {
 			if err != nil {
 				if te := w.Truncate(end); te != nil {
-					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.Name(), end, te)
+					log.V(3).Infof("Failed to truncate %s back to %d with error: %v", w.Name(), end, te)
 				}
 			}
 		}(w, end)
@@ -147,7 +147,7 @@ func WriteNeedleBlob(w backend.BackendStorageFile, dataSlice []byte, size Size, 
 		defer func(w backend.BackendStorageFile, off int64) {
 			if err != nil {
 				if te := w.Truncate(end); te != nil {
-					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.Name(), end, te)
+					log.V(3).Infof("Failed to truncate %s back to %d with error: %v", w.Name(), end, te)
 				}
 			}
 		}(w, end)

@@ -2,7 +2,7 @@ package weed_server
 
 import (
 	"github.com/cenkalti/backoff/v4"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"net/http"
@@ -42,7 +42,7 @@ func (s *RaftServer) HealthzHandler(w http.ResponseWriter, r *http.Request) {
 		expBackoff.MaxElapsedTime = 5 * time.Second
 		isLocked, err := backoff.RetryWithData(s.topo.IsChildLocked, expBackoff)
 		if err != nil {
-			glog.Errorf("HealthzHandler: %+v", err)
+			log.Errorf("HealthzHandler: %+v", err)
 		}
 		if isLocked {
 			w.WriteHeader(http.StatusLocked)

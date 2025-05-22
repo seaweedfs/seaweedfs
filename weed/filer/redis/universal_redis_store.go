@@ -10,7 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -179,7 +179,7 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, dirP
 		entry, err := store.FindEntry(ctx, path)
 		lastFileName = fileName
 		if err != nil {
-			glog.V(0).Infof("list %s : %v", path, err)
+			log.V(3).Infof("list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
 				continue
 			}

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/gorilla/mux"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,10 +93,10 @@ func WriteResponse(w http.ResponseWriter, r *http.Request, statusCode int, respo
 	}
 	w.WriteHeader(statusCode)
 	if response != nil {
-		glog.V(4).Infof("status %d %s: %s", statusCode, mType, string(response))
+		log.V(-1).Infof("status %d %s: %s", statusCode, mType, string(response))
 		_, err := w.Write(response)
 		if err != nil {
-			glog.V(0).Infof("write err: %v", err)
+			log.V(3).Infof("write err: %v", err)
 		}
 		w.(http.Flusher).Flush()
 	}
@@ -104,6 +104,6 @@ func WriteResponse(w http.ResponseWriter, r *http.Request, statusCode int, respo
 
 // If none of the http routes match respond with MethodNotAllowed
 func NotFoundHandler(w http.ResponseWriter, r *http.Request) {
-	glog.V(0).Infof("unsupported %s %s", r.Method, r.RequestURI)
+	log.V(3).Infof("unsupported %s %s", r.Method, r.RequestURI)
 	WriteErrorResponse(w, r, ErrMethodNotAllowed)
 }

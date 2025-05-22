@@ -3,7 +3,7 @@ package filer_pb
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"io"
 	"sync"
 	"time"
@@ -70,7 +70,7 @@ func processOneDirectory(filerClient FilerClient, parentPath util.FullPath, queu
 }
 
 func StreamBfs(client SeaweedFilerClient, dir util.FullPath, olderThanTsNs int64, fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
-	glog.V(0).Infof("TraverseBfsMetadata %v if before %v", dir, time.Unix(0, olderThanTsNs))
+	log.V(3).Infof("TraverseBfsMetadata %v if before %v", dir, time.Unix(0, olderThanTsNs))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream, err := client.TraverseBfsMetadata(ctx, &TraverseBfsMetadataRequest{

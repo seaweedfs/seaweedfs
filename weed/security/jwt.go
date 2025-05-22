@@ -7,7 +7,7 @@ import (
 	"time"
 
 	jwt "github.com/golang-jwt/jwt/v5"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 type EncodedJwt string
@@ -42,7 +42,7 @@ func GenJwtForVolumeServer(signingKey SigningKey, expiresAfterSec int, fileId st
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	encoded, e := t.SignedString([]byte(signingKey))
 	if e != nil {
-		glog.V(0).Infof("Failed to sign claims %+v: %v", t.Claims, e)
+		log.V(3).Infof("Failed to sign claims %+v: %v", t.Claims, e)
 		return ""
 	}
 	return EncodedJwt(encoded)
@@ -64,7 +64,7 @@ func GenJwtForFilerServer(signingKey SigningKey, expiresAfterSec int) EncodedJwt
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	encoded, e := t.SignedString([]byte(signingKey))
 	if e != nil {
-		glog.V(0).Infof("Failed to sign claims %+v: %v", t.Claims, e)
+		log.V(3).Infof("Failed to sign claims %+v: %v", t.Claims, e)
 		return ""
 	}
 	return EncodedJwt(encoded)

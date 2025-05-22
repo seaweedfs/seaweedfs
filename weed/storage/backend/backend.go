@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
@@ -52,7 +52,7 @@ func LoadConfiguration(config *util.ViperProxy) {
 	for backendTypeName := range config.GetStringMap(StorageBackendPrefix) {
 		backendStorageFactory, found := BackendStorageFactories[StorageType(backendTypeName)]
 		if !found {
-			glog.Fatalf("backend storage type %s not found", backendTypeName)
+			log.Fatalf("backend storage type %s not found", backendTypeName)
 		}
 		for backendStorageId := range config.GetStringMap(StorageBackendPrefix + "." + backendTypeName) {
 			if !config.GetBool(StorageBackendPrefix + "." + backendTypeName + "." + backendStorageId + ".enabled") {
@@ -64,7 +64,7 @@ func LoadConfiguration(config *util.ViperProxy) {
 			backendStorage, buildErr := backendStorageFactory.BuildStorage(config,
 				StorageBackendPrefix+"."+backendTypeName+"."+backendStorageId+".", backendStorageId)
 			if buildErr != nil {
-				glog.Fatalf("fail to create backend storage %s.%s", backendTypeName, backendStorageId)
+				log.Fatalf("fail to create backend storage %s.%s", backendTypeName, backendStorageId)
 			}
 			BackendStorages[backendTypeName+"."+backendStorageId] = backendStorage
 			if backendStorageId == "default" {
@@ -81,7 +81,7 @@ func LoadFromPbStorageBackends(storageBackends []*master_pb.StorageBackend) {
 	for _, storageBackend := range storageBackends {
 		backendStorageFactory, found := BackendStorageFactories[StorageType(storageBackend.Type)]
 		if !found {
-			glog.Warningf("storage type %s not found", storageBackend.Type)
+			log.Warningf("storage type %s not found", storageBackend.Type)
 			continue
 		}
 		if _, found := BackendStorages[storageBackend.Type+"."+storageBackend.Id]; found {
@@ -89,7 +89,7 @@ func LoadFromPbStorageBackends(storageBackends []*master_pb.StorageBackend) {
 		}
 		backendStorage, buildErr := backendStorageFactory.BuildStorage(newProperties(storageBackend.Properties), "", storageBackend.Id)
 		if buildErr != nil {
-			glog.Fatalf("fail to create backend storage %s.%s", storageBackend.Type, storageBackend.Id)
+			log.Fatalf("fail to create backend storage %s.%s", storageBackend.Type, storageBackend.Id)
 		}
 		BackendStorages[storageBackend.Type+"."+storageBackend.Id] = backendStorage
 		if storageBackend.Id == "default" {

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -246,7 +246,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond, true); err != nil {
 		// mark all replicas as writable
 		if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, true, false); err != nil {
-			glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
+			log.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
 		}
 
 		return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, err)
@@ -268,7 +268,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 			return nil
 		})
 		if err != nil {
-			glog.Errorf("update volume %d replication on %s: %v", vid, locations[0].Url, err)
+			log.Errorf("update volume %d replication on %s: %v", vid, locations[0].Url, err)
 		}
 	}
 

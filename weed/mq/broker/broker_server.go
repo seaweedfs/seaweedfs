@@ -3,7 +3,7 @@ package broker
 import (
 	"context"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -89,12 +89,12 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 			time.Sleep(time.Millisecond * 237)
 		}
 		self := option.BrokerAddress()
-		glog.V(0).Infof("broker %s found filer %s", self, mqBroker.currentFiler)
+		log.V(3).Infof("broker %s found filer %s", self, mqBroker.currentFiler)
 
 		newBrokerBalancerCh := make(chan string, 1)
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
 		mqBroker.lockAsBalancer = lockClient.StartLongLivedLock(pub_balancer.LockBrokerBalancer, string(self), func(newLockOwner string) {
-			glog.V(0).Infof("broker %s found balanacer %s", self, newLockOwner)
+			log.V(3).Infof("broker %s found balanacer %s", self, newLockOwner)
 			newBrokerBalancerCh <- newLockOwner
 		})
 		mqBroker.KeepConnectedToBrokerBalancer(newBrokerBalancerCh)

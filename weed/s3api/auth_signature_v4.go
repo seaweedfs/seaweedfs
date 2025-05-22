@@ -37,7 +37,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -169,7 +169,7 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 		// Trying with prefix before main path.
 
 		// Get canonical request.
-		glog.V(4).Infof("Forwarded Prefix: %s", forwardedPrefix)
+		log.V(-1).Infof("Forwarded Prefix: %s", forwardedPrefix)
 
 		canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, forwardedPrefix+req.URL.Path, req.Method)
 		errCode = iam.genAndCompareSignatureV4(canonicalRequest, cred.SecretKey, t, signV4Values)
@@ -193,7 +193,7 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 func (iam *IdentityAccessManagement) genAndCompareSignatureV4(canonicalRequest, secretKey string, t time.Time, signV4Values signValues) s3err.ErrorCode {
 	// Get string to sign from canonical request.
 	stringToSign := getStringToSign(canonicalRequest, t, signV4Values.Credential.getScope())
-	glog.V(4).Infof("String to Sign:\n%s", stringToSign)
+	log.V(-1).Infof("String to Sign:\n%s", stringToSign)
 	// Calculate signature.
 	newSignature := iam.getSignature(
 		secretKey,
@@ -202,7 +202,7 @@ func (iam *IdentityAccessManagement) genAndCompareSignatureV4(canonicalRequest, 
 		signV4Values.Credential.scope.service,
 		stringToSign,
 	)
-	glog.V(4).Infof("Signature:\n%s", newSignature)
+	log.V(-1).Infof("Signature:\n%s", newSignature)
 
 	// Verify if signature match.
 	if !compareSignatureV4(newSignature, signV4Values.Signature) {
@@ -805,7 +805,7 @@ func getCanonicalRequest(extractedSignedHeaders http.Header, payload, queryStr, 
 		payload,
 	}, "\n")
 
-	glog.V(4).Infof("Canonical Request:\n%s", canonicalRequest)
+	log.V(-1).Infof("Canonical Request:\n%s", canonicalRequest)
 	return canonicalRequest
 }
 

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -169,7 +169,7 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate entry") {
 		// now the insert failed possibly due to duplication constraints
 		sqlInsert = "falls back to update"
-		glog.V(1).Infof("insert %s %s: %v", entry.FullPath, sqlInsert, err)
+		log.V(2).Infof("insert %s %s: %v", entry.FullPath, sqlInsert, err)
 		res, err = db.ExecContext(ctx, store.GetSqlUpdate(bucket), meta, util.HashStringToLong(dir), name, dir)
 	}
 	if err != nil {
@@ -277,7 +277,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 		}
 	}
 
-	glog.V(4).Infof("delete %s SQL %s %d", string(shortPath), store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)))
+	log.V(-1).Infof("delete %s SQL %s %d", string(shortPath), store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)))
 	res, err := db.ExecContext(ctx, store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)), string(shortPath))
 	if err != nil {
 		return fmt.Errorf("deleteFolderChildren %s: %s", fullpath, err)
@@ -312,7 +312,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		var name string
 		var data []byte
 		if err = rows.Scan(&name, &data); err != nil {
-			glog.V(0).Infof("scan %s : %v", dirPath, err)
+			log.V(3).Infof("scan %s : %v", dirPath, err)
 			return lastFileName, fmt.Errorf("scan %s: %v", dirPath, err)
 		}
 		lastFileName = name
@@ -321,7 +321,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 			FullPath: util.NewFullPath(string(dirPath), name),
 		}
 		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
-			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
+			log.V(3).Infof("scan decode %s : %v", entry.FullPath, err)
 			return lastFileName, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}
 

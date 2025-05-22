@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/redis/go-redis/v9"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util/skiplist"
 	"google.golang.org/protobuf/proto"
 )
@@ -27,7 +27,7 @@ func (m *SkipListElementStore) SaveElement(id int64, element *skiplist.SkipListE
 	key := fmt.Sprintf("%s%d", m.Prefix, id)
 	data, err := proto.Marshal(element)
 	if err != nil {
-		glog.Errorf("marshal %s: %v", key, err)
+		log.Errorf("marshal %s: %v", key, err)
 	}
 	return m.client.Set(context.Background(), key, data, 0).Err()
 }

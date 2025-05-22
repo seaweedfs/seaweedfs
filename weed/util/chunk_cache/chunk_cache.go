@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
@@ -66,13 +66,13 @@ func (c *TieredChunkCache) IsInCache(fileId string, lockNeeded bool) (answer boo
 
 	item := c.memCache.cache.Get(fileId)
 	if item != nil {
-		glog.V(4).Infof("fileId %s is in memcache", fileId)
+		log.V(-1).Infof("fileId %s is in memcache", fileId)
 		return true
 	}
 
 	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {
-		glog.V(4).Infof("failed to parse file id %s", fileId)
+		log.V(-1).Infof("failed to parse file id %s", fileId)
 		return false
 	}
 
@@ -80,7 +80,7 @@ func (c *TieredChunkCache) IsInCache(fileId string, lockNeeded bool) (answer boo
 		for k, v := range diskCacheLayer.diskCaches {
 			_, ok := v.nm.Get(fid.Key)
 			if ok {
-				glog.V(4).Infof("fileId %s is in diskCaches[%d].volume[%d]", fileId, i, k)
+				log.V(-1).Infof("fileId %s is in diskCaches[%d].volume[%d]", fileId, i, k)
 				return true
 			}
 		}
@@ -100,7 +100,7 @@ func (c *TieredChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64
 	if minSize <= c.onDiskCacheSizeLimit0 {
 		n, err = c.memCache.readChunkAt(data, fileId, offset)
 		if err != nil {
-			glog.Errorf("failed to read from memcache: %s", err)
+			log.Errorf("failed to read from memcache: %s", err)
 		}
 		if n == int(len(data)) {
 			return n, nil
@@ -109,7 +109,7 @@ func (c *TieredChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64
 
 	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {
-		glog.Errorf("failed to parse file id %s", fileId)
+		log.Errorf("failed to parse file id %s", fileId)
 		return 0, nil
 	}
 
@@ -143,9 +143,9 @@ func (c *TieredChunkCache) SetChunk(fileId string, data []byte) {
 	c.Lock()
 	defer c.Unlock()
 
-	glog.V(4).Infof("SetChunk %s size %d\n", fileId, len(data))
+	log.V(-1).Infof("SetChunk %s size %d\n", fileId, len(data))
 	if c.IsInCache(fileId, false) {
-		glog.V(4).Infof("fileId %s is already in cache", fileId)
+		log.V(-1).Infof("fileId %s is already in cache", fileId)
 		return
 	}
 
@@ -160,7 +160,7 @@ func (c *TieredChunkCache) doSetChunk(fileId string, data []byte) {
 
 	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {
-		glog.Errorf("failed to parse file id %s", fileId)
+		log.Errorf("failed to parse file id %s", fileId)
 		return
 	}
 

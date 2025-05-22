@@ -3,7 +3,7 @@ package util
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"strconv"
 	"strings"
 )
@@ -61,7 +61,7 @@ func MustParseMinFreeSpace(minFreeSpace string, minFreeSpacePercent string) (spa
 		if vv, e := ParseMinFreeSpace(freeString); e == nil {
 			spaces = append(spaces, *vv)
 		} else {
-			glog.Fatalf("The value specified in -minFreeSpace not a valid value %s", freeString)
+			log.Fatalf("The value specified in -minFreeSpace not a valid value %s", freeString)
 		}
 	}
 

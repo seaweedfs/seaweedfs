@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
@@ -32,7 +32,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 	err := pb.WithFilerClient(false, 0, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		content, err := filer.ReadInsideFiler(client, s3_constants.CircuitBreakerConfigDir, s3_constants.CircuitBreakerConfigFile)
 		if errors.Is(err, filer_pb.ErrNotFound) {
-			glog.Infof("s3 circuit breaker not configured")
+			log.Infof("s3 circuit breaker not configured")
 			return nil
 		}
 		if err != nil {
@@ -42,7 +42,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 	})
 
 	if err != nil {
-		glog.Infof("s3 circuit breaker not configured correctly: %v", err)
+		log.Infof("s3 circuit breaker not configured correctly: %v", err)
 	}
 
 	return cb
@@ -51,7 +51,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 func (cb *CircuitBreaker) LoadS3ApiConfigurationFromBytes(content []byte) error {
 	cbCfg := &s3_pb.S3CircuitBreakerConfig{}
 	if err := filer.ParseS3ConfigurationFromBytes(content, cbCfg); err != nil {
-		glog.Warningf("unmarshal error: %v", err)
+		log.Warningf("unmarshal error: %v", err)
 		return fmt.Errorf("unmarshal error: %v", err)
 	}
 	if err := cb.loadCircuitBreakerConfig(cbCfg); err != nil {

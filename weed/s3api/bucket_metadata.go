@@ -3,7 +3,7 @@ package s3api
 import (
 	"encoding/json"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -57,7 +57,7 @@ func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
 	}
 	err := br.init()
 	if err != nil {
-		glog.Fatal("init bucket registry failed", err)
+		log.Fatal("init bucket registry failed", err)
 		return nil
 	}
 	return br
@@ -80,7 +80,7 @@ func (r *BucketRegistry) LoadBucketMetadata(entry *filer_pb.Entry) {
 
 func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *BucketMetaData {
 	entryJson, _ := json.Marshal(entry)
-	glog.V(3).Infof("build bucket metadata,entry=%s", entryJson)
+	log.V(0).Infof("build bucket metadata,entry=%s", entryJson)
 	bucketMetadata := &BucketMetaData{
 		Name: entry.Name,
 
@@ -102,7 +102,7 @@ func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *
 			if valid {
 				bucketMetadata.ObjectOwnership = ownership
 			} else {
-				glog.Warningf("Invalid ownership: %s, bucket: %s", ownership, bucketMetadata.Name)
+				log.Warningf("Invalid ownership: %s, bucket: %s", ownership, bucketMetadata.Name)
 			}
 		}
 
@@ -113,7 +113,7 @@ func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *
 			ownerAccountId := string(acpOwnerBytes)
 			ownerAccountName := accountManager.GetAccountNameById(ownerAccountId)
 			if ownerAccountName == "" {
-				glog.Warningf("owner[id=%s] is invalid, bucket: %s", ownerAccountId, bucketMetadata.Name)
+				log.Warningf("owner[id=%s] is invalid, bucket: %s", ownerAccountId, bucketMetadata.Name)
 			} else {
 				bucketMetadata.Owner = &s3.Owner{
 					ID:          &ownerAccountId,
@@ -129,7 +129,7 @@ func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *
 			if err == nil {
 				bucketMetadata.Acl = grants
 			} else {
-				glog.Warningf("Unmarshal ACP grants: %s(%v), bucket: %s", string(acpGrantsBytes), err, bucketMetadata.Name)
+				log.Warningf("Unmarshal ACP grants: %s(%v), bucket: %s", string(acpGrantsBytes), err, bucketMetadata.Name)
 			}
 		}
 	}

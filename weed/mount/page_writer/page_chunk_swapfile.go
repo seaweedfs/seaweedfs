@@ -1,7 +1,7 @@
 package page_writer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
@@ -53,7 +53,7 @@ func (sf *SwapFile) NewSwapFileChunk(logicChunkIndex LogicChunkIndex) (tc *SwapF
 		var err error
 		sf.file, err = os.CreateTemp(sf.dir, "")
 		if err != nil {
-			glog.Errorf("create swap file: %v", err)
+			log.Errorf("create swap file: %v", err)
 			return nil
 		}
 	}
@@ -108,7 +108,7 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n in
 	n, err = sc.swapfile.file.WriteAt(src, int64(sc.actualChunkIndex)*sc.swapfile.chunkSize+innerOffset)
 	sc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
 	if err != nil {
-		glog.Errorf("failed to write swap file %s: %v", sc.swapfile.file.Name(), err)
+		log.Errorf("failed to write swap file %s: %v", sc.swapfile.file.Name(), err)
 	}
 	//sc.memChunk.WriteDataAt(src, offset, tsNs)
 	sc.activityScore.MarkWrite()
@@ -135,7 +135,7 @@ func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop in
 				if err == io.EOF && n == int(logicStop-logicStart) {
 					err = nil
 				}
-				glog.Errorf("failed to reading swap file %s: %v", sc.swapfile.file.Name(), err)
+				log.Errorf("failed to reading swap file %s: %v", sc.swapfile.file.Name(), err)
 				break
 			}
 			maxStop = max(maxStop, logicStop)

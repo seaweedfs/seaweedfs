@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/storage"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
@@ -48,7 +48,7 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 		found := false
 		projectID, found = os.LookupEnv("GOOGLE_CLOUD_PROJECT")
 		if !found {
-			glog.Warningf("need to specific GOOGLE_CLOUD_PROJECT env variable")
+			log.Warningf("need to specific GOOGLE_CLOUD_PROJECT env variable")
 		}
 	}
 

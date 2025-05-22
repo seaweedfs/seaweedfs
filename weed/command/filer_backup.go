@@ -3,7 +3,7 @@ package command
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
@@ -78,7 +78,7 @@ func runFilerBackup(cmd *Command, args []string) bool {
 		clientEpoch++
 		err := doFilerBackup(grpcDialOption, &filerBackupOptions, clientId, clientEpoch)
 		if err != nil {
-			glog.Errorf("backup from %s: %v", *filerBackupOptions.filer, err)
+			log.Errorf("backup from %s: %v", *filerBackupOptions.filer, err)
 			time.Sleep(1747 * time.Millisecond)
 		}
 	}
@@ -118,14 +118,14 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	if timeAgo.Milliseconds() == 0 {
 		lastOffsetTsNs, err := getOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId))
 		if err != nil {
-			glog.V(0).Infof("starting from %v", startFrom)
+			log.V(3).Infof("starting from %v", startFrom)
 		} else {
 			startFrom = time.Unix(0, lastOffsetTsNs)
-			glog.V(0).Infof("resuming from %v", startFrom)
+			log.V(3).Infof("resuming from %v", startFrom)
 		}
 	} else {
 		startFrom = time.Now().Add(-timeAgo)
-		glog.V(0).Infof("start time is set to %v", startFrom)
+		log.V(3).Infof("start time is set to %v", startFrom)
 	}
 
 	// create filer sink
@@ -146,7 +146,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 				return nil
 			}
 			if errors.Is(err, http.ErrNotFound) {
-				glog.V(0).Infof("got 404 error, ignore it: %s", err.Error())
+				log.V(3).Infof("got 404 error, ignore it: %s", err.Error())
 				return nil
 			}
 			return err
@@ -156,7 +156,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	}
 
 	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {
-		glog.V(0).Infof("backup %s progressed to %v %0.2f/sec", sourceFiler, time.Unix(0, lastTsNs), float64(counter)/float64(3))
+		log.V(3).Infof("backup %s progressed to %v %0.2f/sec", sourceFiler, time.Unix(0, lastTsNs), float64(counter)/float64(3))
 		return setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId), lastTsNs)
 	})
 
@@ -167,7 +167,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 				time.Sleep(time.Hour * 24)
 				key := util.Join(targetPath, now.Add(-1*time.Hour*24*time.Duration(*filerBackupOptions.retentionDays)).Format("2006-01-02"))
 				_ = dataSink.DeleteEntry(util.Join(targetPath, key), true, true, nil)
-				glog.V(0).Infof("incremental backup delete directory:%s", key)
+				log.V(3).Infof("incremental backup delete directory:%s", key)
 			}
 		}()
 	}

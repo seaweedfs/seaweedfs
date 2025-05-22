@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -57,7 +57,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		}
 		// use processor.processedTsWatermark instead of the lastTsNs from the most recent job
 		now := time.Now().UnixNano()
-		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		log.V(3).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
 		lastLogTsNs = now
 		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, offsetTsNs)
 	})
@@ -103,10 +103,10 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			}
 			if remoteLoc, found := mappings.Mappings[mountedDir]; found {
 				if remoteStorageMountLocation.Bucket != remoteLoc.Bucket || remoteStorageMountLocation.Path != remoteLoc.Path {
-					glog.Fatalf("Unexpected mount changes %+v => %+v", remoteStorageMountLocation, remoteLoc)
+					log.Fatalf("Unexpected mount changes %+v => %+v", remoteStorageMountLocation, remoteLoc)
 				}
 			} else {
-				glog.V(0).Infof("unmounted %s exiting ...", mountedDir)
+				log.V(3).Infof("unmounted %s exiting ...", mountedDir)
 				os.Exit(0)
 			}
 		}
@@ -142,17 +142,17 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			if !filer.HasData(message.NewEntry) {
 				return nil
 			}
-			glog.V(2).Infof("create: %+v", resp)
+			log.V(1).Infof("create: %+v", resp)
 			if !shouldSendToRemote(message.NewEntry) {
-				glog.V(2).Infof("skipping creating: %+v", resp)
+				log.V(1).Infof("skipping creating: %+v", resp)
 				return nil
 			}
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
 			if message.NewEntry.IsDirectory {
-				glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
+				log.V(3).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
-			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
+			log.V(3).Infof("create %s", remote_storage.FormatLocation(dest))
 			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
 			if writeErr != nil {
 				return writeErr
@@ -160,13 +160,13 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if filer_pb.IsDelete(resp) {
-			glog.V(2).Infof("delete: %+v", resp)
+			log.V(1).Infof("delete: %+v", resp)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 			if message.OldEntry.IsDirectory {
-				glog.V(0).Infof("rmdir  %s", remote_storage.FormatLocation(dest))
+				log.V(3).Infof("rmdir  %s", remote_storage.FormatLocation(dest))
 				return client.RemoveDirectory(dest)
 			}
-			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
+			log.V(3).Infof("delete %s", remote_storage.FormatLocation(dest))
 			return client.DeleteFile(dest)
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
@@ -176,7 +176,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
 			if !shouldSendToRemote(message.NewEntry) {
-				glog.V(2).Infof("skipping updating: %+v", resp)
+				log.V(1).Infof("skipping updating: %+v", resp)
 				return nil
 			}
 			if message.NewEntry.IsDirectory {
@@ -184,12 +184,12 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			}
 			if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
 				if filer.IsSameData(message.OldEntry, message.NewEntry) {
-					glog.V(2).Infof("update meta: %+v", resp)
+					log.V(1).Infof("update meta: %+v", resp)
 					return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
 				}
 			}
-			glog.V(2).Infof("update: %+v", resp)
-			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
+			log.V(1).Infof("update: %+v", resp)
+			log.V(3).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 			if err := client.DeleteFile(oldDest); err != nil {
 				if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
 					return nil
@@ -211,7 +211,7 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource *so
 	var writeErr error
 	err = util.Retry("writeFile", func() error {
 		reader := filer.NewFileReader(filerSource, newEntry)
-		glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
+		log.V(3).Infof("create %s", remote_storage.FormatLocation(dest))
 		remoteEntry, writeErr = client.WriteFile(dest, newEntry, reader)
 		if writeErr != nil {
 			return writeErr
@@ -219,7 +219,7 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource *so
 		return nil
 	})
 	if err != nil {
-		glog.Errorf("write to %s: %v", dest, err)
+		log.Errorf("write to %s: %v", dest, err)
 	}
 	return
 }
@@ -232,7 +232,7 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 	if timeAgo == 0 {
 		mountedDirEntry, err := filer_pb.GetEntry(filerClient, util.FullPath(mountedDir))
 		if err != nil {
-			glog.V(0).Infof("get mounted directory %s: %v", mountedDir, err)
+			log.V(3).Infof("get mounted directory %s: %v", mountedDir, err)
 			return time.Now()
 		}
 
@@ -240,7 +240,7 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 		if mountedDirEntry != nil {
 			if err == nil && mountedDirEntry.Attributes.Crtime < lastOffsetTsNs/1000000 {
 				lastOffsetTs = time.Unix(0, lastOffsetTsNs)
-				glog.V(0).Infof("resume from %v", lastOffsetTs)
+				log.V(3).Infof("resume from %v", lastOffsetTs)
 			} else {
 				lastOffsetTs = time.Unix(mountedDirEntry.Attributes.Crtime, 0)
 			}

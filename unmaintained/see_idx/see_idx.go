@@ -9,7 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
@@ -36,7 +36,7 @@ func main() {
 	}
 	indexFile, err := os.OpenFile(path.Join(*fixVolumePath, fileName+".idx"), os.O_RDONLY, 0644)
 	if err != nil {
-		glog.Fatalf("Create Volume Index [ERROR] %s\n", err)
+		log.Fatalf("Create Volume Index [ERROR] %s\n", err)
 	}
 	defer indexFile.Close()
 

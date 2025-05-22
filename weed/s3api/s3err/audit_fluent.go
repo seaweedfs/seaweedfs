@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/fluent/fluent-logger-golang/fluent"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 type AccessLogExtend struct {
@@ -57,12 +57,12 @@ var (
 func InitAuditLog(config string) {
 	configContent, readErr := os.ReadFile(config)
 	if readErr != nil {
-		glog.Errorf("fail to read fluent config %s : %v", config, readErr)
+		log.Errorf("fail to read fluent config %s : %v", config, readErr)
 		return
 	}
 	fluentConfig := &fluent.Config{}
 	if err := json.Unmarshal(configContent, fluentConfig); err != nil {
-		glog.Errorf("fail to parse fluent config %s : %v", string(configContent), err)
+		log.Errorf("fail to parse fluent config %s : %v", string(configContent), err)
 		return
 	}
 	if len(fluentConfig.TagPrefix) == 0 && len(environment) > 0 {
@@ -71,13 +71,13 @@ func InitAuditLog(config string) {
 	fluentConfig.Async = true
 	fluentConfig.AsyncResultCallback = func(data []byte, err error) {
 		if err != nil {
-			glog.Warning("Error while posting log: ", err)
+			log.Warningf("Error while posting log: %v", err)
 		}
 	}
 	var err error
 	Logger, err = fluent.New(*fluentConfig)
 	if err != nil {
-		glog.Errorf("fail to load fluent config: %v", err)
+		log.Errorf("fail to load fluent config: %v", err)
 	}
 }
 
@@ -170,15 +170,15 @@ func PostLog(r *http.Request, HTTPStatusCode int, errorCode ErrorCode) {
 		return
 	}
 	if err := Logger.Post(tag, *GetAccessLog(r, HTTPStatusCode, errorCode)); err != nil {
-		glog.Warning("Error while posting log: ", err)
+		log.Warningf("Error while posting log: %v", err)
 	}
 }
 
-func PostAccessLog(log AccessLog) {
-	if Logger == nil || len(log.Key) == 0 {
+func PostAccessLog(accessLog AccessLog) {
+	if Logger == nil || len(accessLog.Key) == 0 {
 		return
 	}
-	if err := Logger.Post(tag, log); err != nil {
-		glog.Warning("Error while posting log: ", err)
+	if err := Logger.Post(tag, accessLog); err != nil {
+		log.Warningf("Error while posting log: %v", err)
 	}
 }

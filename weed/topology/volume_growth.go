@@ -12,7 +12,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -115,7 +115,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 		if res, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			result = append(result, res...)
 		} else {
-			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
+			log.V(3).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
 			return result, e
 		}
 	}
@@ -128,7 +128,7 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 		return nil, e
 	}
 	for !topo.LastLeaderChangeTime.Add(constants.VolumePulseSeconds * 2).Before(time.Now()) {
-		glog.V(0).Infof("wait for volume servers to join back")
+		log.V(3).Infof("wait for volume servers to join back")
 		time.Sleep(constants.VolumePulseSeconds / 2)
 	}
 	vid, raftErr := topo.NextVolumeId()
@@ -266,9 +266,9 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 				DiskType:         option.DiskType.String(),
 				ModifiedAtSecond: time.Now().Unix(),
 			})
-			glog.V(0).Infof("Created Volume %d on %s", vid, server.NodeImpl.String())
+			log.V(3).Infof("Created Volume %d on %s", vid, server.NodeImpl.String())
 		} else {
-			glog.Warningf("Failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)
+			log.Warningf("Failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)
 			growErr = fmt.Errorf("failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)
 			break
 		}
@@ -279,14 +279,14 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 			server := servers[i]
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)
-			glog.V(0).Infof("Registered Volume %d on %s", vid, server.NodeImpl.String())
+			log.V(3).Infof("Registered Volume %d on %s", vid, server.NodeImpl.String())
 		}
 	} else {
 		// cleaning up created volume replicas
 		for i, vi := range createdVolumes {
 			server := servers[i]
 			if err := DeleteVolume(server, grpcDialOption, vi.Id); err != nil {
-				glog.Warningf("Failed to clean up volume %d on %s", vid, server.NodeImpl.String())
+				log.Warningf("Failed to clean up volume %d on %s", vid, server.NodeImpl.String())
 			}
 		}
 	}

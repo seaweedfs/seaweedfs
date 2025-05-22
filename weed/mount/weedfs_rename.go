@@ -10,7 +10,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -170,7 +170,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return fuse.EPERM
 	}
 
-	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
+	log.V(-1).Infof("dir Rename %s => %s", oldPath, newPath)
 
 	// update remote filer
 	err := wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
@@ -207,7 +207,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 			}
 
 			if err = wfs.handleRenameResponse(ctx, resp); err != nil {
-				glog.V(0).Infof("dir Rename %s => %s : %v", oldPath, newPath, err)
+				log.V(3).Infof("dir Rename %s => %s : %v", oldPath, newPath, err)
 				return err
 			}
 
@@ -217,7 +217,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 	})
 	if err != nil {
-		glog.V(0).Infof("Link: %v", err)
+		log.V(3).Infof("Link: %v", err)
 		return
 	}
 
@@ -228,7 +228,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamRenameEntryResponse) error {
 	// comes from filer StreamRenameEntry, can only be create or delete entry
 
-	glog.V(4).Infof("dir Rename %+v", resp.EventNotification)
+	log.V(-1).Infof("dir Rename %+v", resp.EventNotification)
 
 	if resp.EventNotification.NewEntry != nil {
 		// with new entry, the old entry name also exists. This is the first step to create new entry

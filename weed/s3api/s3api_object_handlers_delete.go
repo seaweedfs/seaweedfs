@@ -14,7 +14,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -27,7 +27,7 @@ const (
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
+	log.V(0).Infof("DeleteObjectHandler %s %s", bucket, object)
 
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
 	dir, name := target.DirAndName()
@@ -109,7 +109,7 @@ type DeleteObjectsResponse struct {
 func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("DeleteMultipleObjectsHandler %s", bucket)
+	log.V(0).Infof("DeleteMultipleObjectsHandler %s", bucket)
 
 	deleteXMLBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -211,7 +211,7 @@ func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerCli
 			continue
 		}
 		if err := doDeleteEntry(client, parentDir, dirName, false, false); err != nil {
-			glog.V(4).Infof("directory %s has %d deletion but still not empty: %v", dir, directoriesWithDeletion[dir], err)
+			log.V(-1).Infof("directory %s has %d deletion but still not empty: %v", dir, directoriesWithDeletion[dir], err)
 		} else {
 			newDirectoriesWithDeletion[parentDir]++
 		}

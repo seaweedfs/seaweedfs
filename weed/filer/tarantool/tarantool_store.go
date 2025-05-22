@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	weed_util "github.com/seaweedfs/seaweedfs/weed/util"
@@ -260,39 +260,39 @@ func (store *TarantoolStore) ListDirectoryEntries(ctx context.Context, dirPath w
 	}
 
 	if len(results) < 1 {
-		glog.Errorf("Can't find results, data is empty")
+		log.Errorf("Can't find results, data is empty")
 		return
 	}
 
 	rows, ok := results[0].([]interface{})
 	if !ok {
-		glog.Errorf("Can't convert results[0] to list")
+		log.Errorf("Can't convert results[0] to list")
 		return
 	}
 
 	for _, result := range rows {
 		row, ok := result.([]interface{})
 		if !ok {
-			glog.Errorf("Can't convert result to list")
+			log.Errorf("Can't convert result to list")
 			return
 		}
 
 		if len(row) < 5 {
-			glog.Errorf("Length of result is less than needed: %v", len(row))
+			log.Errorf("Length of result is less than needed: %v", len(row))
 			return
 		}
 
 		nameRaw := row[2]
 		name, ok := nameRaw.(string)
 		if !ok {
-			glog.Errorf("Can't convert name field to string. Actual type: %v, value: %v", reflect.TypeOf(nameRaw), nameRaw)
+			log.Errorf("Can't convert name field to string. Actual type: %v, value: %v", reflect.TypeOf(nameRaw), nameRaw)
 			return
 		}
 
 		dataRaw := row[4]
 		data, ok := dataRaw.(string)
 		if !ok {
-			glog.Errorf("Can't convert data field to string. Actual type: %v, value: %v", reflect.TypeOf(dataRaw), dataRaw)
+			log.Errorf("Can't convert data field to string. Actual type: %v, value: %v", reflect.TypeOf(dataRaw), dataRaw)
 			return
 		}
 
@@ -302,7 +302,7 @@ func (store *TarantoolStore) ListDirectoryEntries(ctx context.Context, dirPath w
 		lastFileName = name
 		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData([]byte(data))); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			log.V(3).Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
 		if !eachEntryFunc(entry) {

@@ -97,6 +97,7 @@ require (
 	go.etcd.io/etcd/client/v3 v3.5.18
 	go.mongodb.org/mongo-driver v1.17.3
 	go.opencensus.io v0.24.0 // indirect
+	go.uber.org/zap v1.27.0
 	gocloud.dev v0.41.0
 	gocloud.dev/pubsub/natspubsub v0.41.0
 	gocloud.dev/pubsub/rabbitpubsub v0.41.0
@@ -356,7 +357,6 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/term v0.32.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250324211829-b45e905df463 // indirect

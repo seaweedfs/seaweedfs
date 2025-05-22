@@ -8,7 +8,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -98,11 +98,11 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	fileFullPath := fh.FullPath()
 	dir, name := fileFullPath.DirAndName()
 	// send the data to the OS
-	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.fh)
+	log.V(-1).Infof("doFlush %s fh %d", fileFullPath, fh.fh)
 
 	if !wfs.IsOverQuota {
 		if err := fh.dirtyPages.FlushData(); err != nil {
-			glog.Errorf("%v doFlush: %v", fileFullPath, err)
+			log.Errorf("%v doFlush: %v", fileFullPath, err)
 			return fuse.EIO
 		}
 	}
@@ -141,9 +141,9 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 			SkipCheckParentDirectory: true,
 		}
 
-		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
+		log.V(-1).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
 		//for i, chunk := range entry.GetChunks() {
-		//	glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fileFullPath, i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
+		//	log.V(-1).Infof("%s chunks %d: %v [%d,%d)", fileFullPath, i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
 		//}
 
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
@@ -152,7 +152,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), chunks)
 		if manifestErr != nil {
 			// not good, but should be ok
-			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
+			log.V(3).Infof("MaybeManifestize: %v", manifestErr)
 		}
 		entry.Chunks = append(chunks, manifestChunks...)
 
@@ -160,7 +160,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.Errorf("fh flush create %s: %v", fileFullPath, err)
+			log.Errorf("fh flush create %s: %v", fileFullPath, err)
 			return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
 		}
 
@@ -174,7 +174,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	}
 
 	if err != nil {
-		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
+		log.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
 		return fuse.EIO
 	}
 

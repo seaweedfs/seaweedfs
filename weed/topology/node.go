@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -76,7 +76,7 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption
 	}
 	n.RUnlock()
 	if len(candidates) < numberOfNodes {
-		glog.V(0).Infoln(n.Id(), "failed to pick", numberOfNodes, "from ", len(candidates), "node candidates")
+		log.V(3).Infoln(n.Id(), "failed to pick", numberOfNodes, "from ", len(candidates), "node candidates")
 		return nil, nil, errors.New("Not enough data nodes found!")
 	}
 
@@ -247,7 +247,7 @@ func (n *NodeImpl) doLinkChildNode(node Node) {
 		}
 		n.UpAdjustMaxVolumeId(node.GetMaxVolumeId())
 		node.SetParent(n)
-		glog.V(0).Infoln(n, "adds child", node.Id())
+		log.V(3).Infoln(n, "adds child", node.Id())
 	}
 }
 
@@ -261,7 +261,7 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 		for dt, du := range node.GetDiskUsages().negative().usages {
 			n.UpAdjustDiskUsageDelta(dt, du)
 		}
-		glog.V(0).Infoln(n, "removes", node.Id())
+		log.V(3).Infoln(n, "removes", node.Id())
 	}
 }
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -73,7 +73,7 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 		for {
 			if isLocked {
 				if err := lock.AttemptToLock(lock_manager.LiveLockTTL); err != nil {
-					glog.V(0).Infof("Lost lock %s: %v", key, err)
+					log.V(3).Infof("Lost lock %s: %v", key, err)
 					isLocked = false
 				}
 			} else {
@@ -82,7 +82,7 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 				}
 			}
 			if lockOwner != lock.LockOwner() && lock.LockOwner() != "" {
-				glog.V(0).Infof("Lock owner changed from %s to %s", lockOwner, lock.LockOwner())
+				log.V(3).Infof("Lock owner changed from %s to %s", lockOwner, lock.LockOwner())
 				onLockOwnerChange(lock.LockOwner())
 				lockOwner = lock.LockOwner()
 			}
@@ -102,7 +102,7 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) {
 		return lock.AttemptToLock(lockDuration)
 	}, func(err error) (shouldContinue bool) {
 		if err != nil {
-			glog.Warningf("create lock %s: %s", lock.key, err)
+			log.Warningf("create lock %s: %s", lock.key, err)
 		}
 		return lock.renewToken == ""
 	})

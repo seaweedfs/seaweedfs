@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -38,7 +38,7 @@ func (hm *HomeManager) EnsureHomeDirectory(user *User) error {
 		return fmt.Errorf("user has no home directory configured")
 	}
 
-	glog.V(0).Infof("Ensuring home directory exists for user %s: %s", user.Username, user.HomeDir)
+	log.V(3).Infof("Ensuring home directory exists for user %s: %s", user.Username, user.HomeDir)
 
 	// Check if home directory exists and create it if needed
 	err := hm.createDirectoryIfNotExists(user.HomeDir, user)
@@ -54,7 +54,7 @@ func (hm *HomeManager) EnsureHomeDirectory(user *User) error {
 	// Only add permissions if not already present
 	if _, exists := user.Permissions[user.HomeDir]; !exists {
 		user.Permissions[user.HomeDir] = []string{"all"}
-		glog.V(0).Infof("Added full permissions for user %s to home directory %s",
+		log.V(3).Infof("Added full permissions for user %s to home directory %s",
 			user.Username, user.HomeDir)
 	}
 
@@ -102,7 +102,7 @@ func (hm *HomeManager) createSingleDirectory(dirPath string, user *User) error {
 
 		if err != nil || resp.Entry == nil {
 			// Directory doesn't exist, create it
-			glog.V(0).Infof("Creating directory %s for user %s", dirPath, user.Username)
+			log.V(3).Infof("Creating directory %s for user %s", dirPath, user.Username)
 
 			err = filer_pb.Mkdir(hm, string(dir), name, func(entry *filer_pb.Entry) {
 				// Set appropriate permissions
@@ -133,7 +133,7 @@ func (hm *HomeManager) createSingleDirectory(dirPath string, user *User) error {
 
 			// Update ownership if needed
 			if resp.Entry.Attributes.Uid != user.Uid || resp.Entry.Attributes.Gid != user.Gid {
-				glog.V(0).Infof("Updating ownership of directory %s for user %s", dirPath, user.Username)
+				log.V(3).Infof("Updating ownership of directory %s for user %s", dirPath, user.Username)
 
 				entry := resp.Entry
 				entry.Attributes.Uid = user.Uid
@@ -145,7 +145,7 @@ func (hm *HomeManager) createSingleDirectory(dirPath string, user *User) error {
 				})
 
 				if updateErr != nil {
-					glog.Warningf("Failed to update directory ownership: %v", updateErr)
+					log.Warningf("Failed to update directory ownership: %v", updateErr)
 				}
 			}
 		}

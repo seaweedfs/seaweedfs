@@ -20,7 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
@@ -174,7 +174,7 @@ func clearName(name string) (string, error) {
 
 func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm os.FileMode) error {
 
-	glog.V(2).Infof("WebDavFileSystem.Mkdir %v", fullDirPath)
+	log.V(1).Infof("WebDavFileSystem.Mkdir %v", fullDirPath)
 
 	if !strings.HasSuffix(fullDirPath, "/") {
 		fullDirPath += "/"
@@ -208,7 +208,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 			Signatures: []int32{fs.signature},
 		}
 
-		glog.V(1).Infof("mkdir: %v", request)
+		log.V(2).Infof("mkdir: %v", request)
 		if err := filer_pb.CreateEntry(client, request); err != nil {
 			return fmt.Errorf("mkdir %s/%s: %v", dir, name, err)
 		}
@@ -218,7 +218,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 }
 
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
-	glog.V(2).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
+	log.V(1).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
 
 	var err error
 	if fullFilePath, err = clearName(fullFilePath); err != nil {
@@ -305,14 +305,14 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 
 func (fs *WebDavFileSystem) RemoveAll(ctx context.Context, name string) error {
 
-	glog.V(2).Infof("WebDavFileSystem.RemoveAll %v", name)
+	log.V(1).Infof("WebDavFileSystem.RemoveAll %v", name)
 
 	return fs.removeAll(ctx, name)
 }
 
 func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string) error {
 
-	glog.V(2).Infof("WebDavFileSystem.Rename %v to %v", oldName, newName)
+	log.V(1).Infof("WebDavFileSystem.Rename %v to %v", oldName, newName)
 
 	var err error
 	if oldName, err = clearName(oldName); err != nil {
@@ -397,7 +397,7 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 }
 
 func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-	glog.V(2).Infof("WebDavFileSystem.Stat %v", name)
+	log.V(1).Infof("WebDavFileSystem.Stat %v", name)
 
 	return fs.stat(ctx, name)
 }
@@ -405,7 +405,7 @@ func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo,
 func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
 	uploader, uploaderErr := operation.NewUploader()
 	if uploaderErr != nil {
-		glog.V(0).Infof("upload data %v: %v", f.name, uploaderErr)
+		log.V(3).Infof("upload data %v: %v", f.name, uploaderErr)
 		return nil, fmt.Errorf("upload data: %v", uploaderErr)
 	}
 
@@ -432,11 +432,11 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 	)
 
 	if flushErr != nil {
-		glog.V(0).Infof("upload data %v: %v", f.name, flushErr)
+		log.V(3).Infof("upload data %v: %v", f.name, flushErr)
 		return nil, fmt.Errorf("upload data: %v", flushErr)
 	}
 	if uploadResult.Error != "" {
-		glog.V(0).Infof("upload failure %v: %v", f.name, flushErr)
+		log.V(3).Infof("upload failure %v: %v", f.name, flushErr)
 		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
 	return uploadResult.ToPbFileChunk(fileId, offset, tsNs), nil
@@ -444,7 +444,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 
 func (f *WebDavFile) Write(buf []byte) (int, error) {
 
-	glog.V(2).Infof("WebDavFileSystem.Write %v", f.name)
+	log.V(1).Infof("WebDavFileSystem.Write %v", f.name)
 
 	fullPath := util.FullPath(f.name)
 	dir, _ := fullPath.DirAndName()
@@ -471,7 +471,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 			if flushErr != nil {
 				if f.entry.Attributes.Mtime == 0 {
 					if err := f.fs.removeAll(ctx, f.name); err != nil {
-						glog.Errorf("bufWriter.Flush remove file error: %+v", f.name)
+						log.Errorf("bufWriter.Flush remove file error: %+v", f.name)
 					}
 				}
 				return fmt.Errorf("%s upload result: %v", f.name, flushErr)
@@ -487,7 +487,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 			manifestedChunks, manifestErr := filer.MaybeManifestize(f.saveDataAsChunk, f.entry.GetChunks())
 			if manifestErr != nil {
 				// not good, but should be ok
-				glog.V(0).Infof("file %s close MaybeManifestize: %v", f.name, manifestErr)
+				log.V(3).Infof("file %s close MaybeManifestize: %v", f.name, manifestErr)
 			} else {
 				f.entry.Chunks = manifestedChunks
 			}
@@ -515,7 +515,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	if err == nil {
 		f.entry.Attributes.FileSize = uint64(max(f.off+int64(written), int64(f.entry.Attributes.FileSize)))
-		glog.V(3).Infof("WebDavFileSystem.Write %v: written [%d,%d)", f.name, f.off, f.off+int64(len(buf)))
+		log.V(0).Infof("WebDavFileSystem.Write %v: written [%d,%d)", f.name, f.off, f.off+int64(len(buf)))
 		f.off += int64(written)
 	}
 
@@ -524,7 +524,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 func (f *WebDavFile) Close() error {
 
-	glog.V(2).Infof("WebDavFileSystem.Close %v", f.name)
+	log.V(1).Infof("WebDavFileSystem.Close %v", f.name)
 	if f.bufWriter == nil {
 		return nil
 	}
@@ -540,7 +540,7 @@ func (f *WebDavFile) Close() error {
 
 func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 
-	glog.V(2).Infof("WebDavFileSystem.Read %v", f.name)
+	log.V(1).Infof("WebDavFileSystem.Read %v", f.name)
 
 	if f.entry == nil {
 		f.entry, err = filer_pb.GetEntry(f.fs, util.FullPath(f.name))
@@ -566,11 +566,11 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 
 	readSize, err = f.reader.ReadAt(p, f.off)
 
-	glog.V(3).Infof("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+int64(readSize))
+	log.V(0).Infof("WebDavFileSystem.Read %v: [%d,%d)", f.name, f.off, f.off+int64(readSize))
 	f.off += int64(readSize)
 
 	if err != nil && err != io.EOF {
-		glog.Errorf("file read %s: %v", f.name, err)
+		log.Errorf("file read %s: %v", f.name, err)
 	}
 
 	return
@@ -579,7 +579,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 
 func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
-	glog.V(2).Infof("WebDavFileSystem.Readdir %v count %d", f.name, count)
+	log.V(1).Infof("WebDavFileSystem.Readdir %v count %d", f.name, count)
 
 	dir, _ := util.FullPath(f.name).DirAndName()
 
@@ -595,7 +595,7 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 		if !strings.HasSuffix(fi.name, "/") && fi.IsDir() {
 			fi.name += "/"
 		}
-		glog.V(4).Infof("entry: %v", fi.name)
+		log.V(-1).Infof("entry: %v", fi.name)
 		ret = append(ret, &fi)
 		return nil
 	})
@@ -625,7 +625,7 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
 func (f *WebDavFile) Seek(offset int64, whence int) (int64, error) {
 
-	glog.V(2).Infof("WebDavFile.Seek %v %v %v", f.name, offset, whence)
+	log.V(1).Infof("WebDavFile.Seek %v %v %v", f.name, offset, whence)
 
 	ctx := context.Background()
 
@@ -646,7 +646,7 @@ func (f *WebDavFile) Seek(offset int64, whence int) (int64, error) {
 
 func (f *WebDavFile) Stat() (os.FileInfo, error) {
 
-	glog.V(2).Infof("WebDavFile.Stat %v", f.name)
+	log.V(1).Infof("WebDavFile.Stat %v", f.name)
 
 	ctx := context.Background()
 

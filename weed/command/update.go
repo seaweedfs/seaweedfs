@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"golang.org/x/net/context/ctxhttp"
@@ -86,7 +86,7 @@ func runUpdate(cmd *Command, args []string) bool {
 
 	if *updateOpt.dir != "" {
 		if err := util.TestFolderWritable(util.ResolvePath(*updateOpt.dir)); err != nil {
-			glog.Fatalf("Check Folder(-dir) Writable %s : %s", *updateOpt.dir, err)
+			log.Fatalf("Check Folder(-dir) Writable %s : %s", *updateOpt.dir, err)
 			return false
 		}
 	} else {
@@ -101,16 +101,16 @@ func runUpdate(cmd *Command, args []string) bool {
 
 	if runtime.GOOS == "windows" {
 		if target == path {
-			glog.Fatalf("On windows, name of the new weed shouldn't be same to the original name.")
+			log.Fatalf("On windows, name of the new weed shouldn't be same to the original name.")
 			return false
 		}
 	}
 
-	glog.V(0).Infof("new weed will be saved to %s", target)
+	log.V(3).Infof("new weed will be saved to %s", target)
 
 	_, err := downloadRelease(context.Background(), target, *updateOpt.Version)
 	if err != nil {
-		glog.Errorf("unable to download weed: %v", err)
+		log.Errorf("unable to download weed: %v", err)
 		return false
 	}
 	return true
@@ -125,14 +125,14 @@ func downloadRelease(ctx context.Context, target string, ver string) (version st
 
 	if rel.Version == currentVersion {
 		if ver == "0" {
-			glog.V(0).Infof("weed is up to date")
+			log.V(3).Infof("weed is up to date")
 		} else {
-			glog.V(0).Infof("no need to download the same version of weed ")
+			log.V(3).Infof("no need to download the same version of weed ")
 		}
 		return currentVersion, nil
 	}
 
-	glog.V(0).Infof("download version: %s", rel.Version)
+	log.V(3).Infof("download version: %s", rel.Version)
 
 	largeDiskSuffix := ""
 	if util.VolumeSizeLimitGB == 8000 {
@@ -165,7 +165,7 @@ func downloadRelease(ctx context.Context, target string, ver string) (version st
 	md5Ctx.Write(buf)
 	binaryMd5 := md5Ctx.Sum(nil)
 	if hex.EncodeToString(binaryMd5) != string(md5Val[0:32]) {
-		glog.Errorf("md5:'%s' '%s'", hex.EncodeToString(binaryMd5), string(md5Val[0:32]))
+		log.Errorf("md5:'%s' '%s'", hex.EncodeToString(binaryMd5), string(md5Val[0:32]))
 		err = fmt.Errorf("binary md5sum doesn't match")
 		return "", err
 	}
@@ -174,7 +174,7 @@ func downloadRelease(ctx context.Context, target string, ver string) (version st
 	if err != nil {
 		return "", err
 	} else {
-		glog.V(0).Infof("successfully updated weed to version %v\n", rel.Version)
+		log.V(3).Infof("successfully updated weed to version %v\n", rel.Version)
 	}
 
 	return rel.Version, nil
@@ -228,7 +228,7 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 	}
 	if ver == "0" {
 		release = releaseList[0]
-		glog.V(0).Infof("latest version is %v\n", release.TagName)
+		log.V(3).Infof("latest version is %v\n", release.TagName)
 	} else {
 		for _, r := range releaseList {
 			if r.TagName == ver {
@@ -287,7 +287,7 @@ func getGithubDataFile(ctx context.Context, assets []Asset, suffix string) (file
 		return "", nil, fmt.Errorf("unable to find file with suffix %v", suffix)
 	}
 
-	glog.V(0).Infof("download %v\n", filename)
+	log.V(3).Infof("download %v\n", filename)
 	data, err = getGithubData(ctx, url)
 	if err != nil {
 		return "", nil, err
@@ -310,9 +310,9 @@ func extractToFile(buf []byte, filename, target string) error {
 		hdr, terr := trd.Next()
 		if terr != nil {
 			if hdr != nil {
-				glog.Errorf("uncompress file(%s) failed:%s", hdr.Name, terr)
+				log.Errorf("uncompress file(%s) failed:%s", hdr.Name, terr)
 			} else {
-				glog.Errorf("uncompress file is nil, failed:%s", terr)
+				log.Errorf("uncompress file is nil, failed:%s", terr)
 			}
 
 			return terr
@@ -371,6 +371,6 @@ func extractToFile(buf []byte, filename, target string) error {
 		return err
 	}
 
-	glog.V(0).Infof("saved %d bytes in %v\n", n, target)
+	log.V(3).Infof("saved %d bytes in %v\n", n, target)
 	return os.Chmod(target, mode)
 }

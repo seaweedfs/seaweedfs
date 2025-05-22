@@ -10,13 +10,13 @@ import (
 
 	"github.com/cognusion/imaging"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 func Cropped(ext string, read io.ReadSeeker, x1, y1, x2, y2 int) (cropped io.ReadSeeker, err error) {
 	srcImage, _, err := image.Decode(read)
 	if err != nil {
-		glog.Error(err)
+		log.Error(err)
 		return read, err
 	}
 
@@ -32,15 +32,15 @@ func Cropped(ext string, read io.ReadSeeker, x1, y1, x2, y2 int) (cropped io.Rea
 	switch ext {
 	case ".jpg", ".jpeg":
 		if err = jpeg.Encode(&buf, dstImage, nil); err != nil {
-			glog.Error(err)
+			log.Error(err)
 		}
 	case ".png":
 		if err = png.Encode(&buf, dstImage); err != nil {
-			glog.Error(err)
+			log.Error(err)
 		}
 	case ".gif":
 		if err = gif.Encode(&buf, dstImage, nil); err != nil {
-			glog.Error(err)
+			log.Error(err)
 		}
 	}
 	return bytes.NewReader(buf.Bytes()), err

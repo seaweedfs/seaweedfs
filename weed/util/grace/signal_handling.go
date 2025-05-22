@@ -4,7 +4,7 @@
 package grace
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"os"
 	"os/signal"
 	"reflect"
@@ -45,7 +45,7 @@ func init() {
 			} else {
 				interruptHookLock.RLock()
 				for _, hook := range interruptHooks {
-					glog.V(4).Infof("exec interrupt hook func name:%s", GetFunctionName(hook))
+					log.V(-1).Infof("exec interrupt hook func name:%s", GetFunctionName(hook))
 					hook()
 				}
 				interruptHookLock.RUnlock()

@@ -5,19 +5,18 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/pkg/sftp"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/auth"
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"golang.org/x/crypto/ssh"
 	"google.golang.org/grpc"
 )
@@ -60,7 +59,7 @@ func NewSFTPService(options *SFTPServiceOptions) *SFTPService {
 	// Initialize user store
 	userStore, err := user.NewFileStore(options.UserStoreFile)
 	if err != nil {
-		glog.Fatalf("Failed to initialize user store: %v", err)
+		log.Fatalf("Failed to initialize user store: %v", err)
 	}
 	service.userStore = userStore
 
@@ -166,7 +165,7 @@ func (s *SFTPService) Serve(listener net.Listener) error {
 		return fmt.Errorf("failed to create SSH config: %v", err)
 	}
 
-	glog.V(0).Infof("Starting Seaweed SFTP service on %s", listener.Addr().String())
+	log.V(3).Infof("Starting Seaweed SFTP service on %s", listener.Addr().String())
 
 	for {
 		conn, err := listener.Accept()
@@ -247,7 +246,7 @@ func (s *SFTPService) addHostKey(config *ssh.ServerConfig, keyPath string) error
 		return fmt.Errorf("failed to parse host key %s: %v", keyPath, err)
 	}
 	config.AddHostKey(signer)
-	glog.V(0).Infof("Added host key %s (%s)", keyPath, signer.PublicKey().Type())
+	log.V(3).Infof("Added host key %s (%s)", keyPath, signer.PublicKey().Type())
 	return nil
 }
 
@@ -259,7 +258,7 @@ func (s *SFTPService) handleSSHConnection(conn net.Conn, config *ssh.ServerConfi
 	// Perform SSH handshake
 	sshConn, chans, reqs, err := ssh.NewServerConn(conn, config)
 	if err != nil {
-		glog.Errorf("Failed to handshake: %v", err)
+		log.Errorf("Failed to handshake: %v", err)
 		conn.Close()
 		return
 	}
@@ -275,13 +274,13 @@ func (s *SFTPService) handleSSHConnection(conn net.Conn, config *ssh.ServerConfi
 	go s.monitorConnection(ctx, sshConn)
 
 	username := sshConn.Permissions.Extensions["username"]
-	glog.V(0).Infof("New SSH connection from %s (%s) as user %s",
+	log.V(3).Infof("New SSH connection from %s (%s) as user %s",
 		sshConn.RemoteAddr(), sshConn.ClientVersion(), username)
 
 	// Get user from store
 	sftpUser, err := s.authManager.GetUser(username)
 	if err != nil {
-		glog.Errorf("Failed to retrieve user %s: %v", username, err)
+		log.Errorf("Failed to retrieve user %s: %v", username, err)
 		sshConn.Close()
 		return
 	}
@@ -297,7 +296,7 @@ func (s *SFTPService) handleSSHConnection(conn net.Conn, config *ssh.ServerConfi
 
 	// Ensure home directory exists with proper permissions
 	if err := s.homeManager.EnsureHomeDirectory(sftpUser); err != nil {
-		glog.Errorf("Failed to ensure home directory for user %s: %v", username, err)
+		log.Errorf("Failed to ensure home directory for user %s: %v", username, err)
 		// We don't close the connection here, as the user might still be able to access other directories
 	}
 
@@ -328,11 +327,11 @@ func (s *SFTPService) monitorConnection(ctx context.Context, sshConn *ssh.Server
 			_, _, err := sshConn.SendRequest("keepalive@openssh.com", true, nil)
 			if err != nil {
 				missedCount++
-				glog.V(0).Infof("Keep-alive missed for %s: %v (%d/%d)",
+				log.V(3).Infof("Keep-alive missed for %s: %v (%d/%d)",
 					sshConn.RemoteAddr(), err, missedCount, s.options.ClientAliveCountMax)
 
 				if missedCount >= s.options.ClientAliveCountMax {
-					glog.Warningf("Closing unresponsive connection from %s", sshConn.RemoteAddr())
+					log.Warningf("Closing unresponsive connection from %s", sshConn.RemoteAddr())
 					sshConn.Close()
 					return
 				}
@@ -352,7 +351,7 @@ func (s *SFTPService) handleChannel(newChannel ssh.NewChannel, fs *SftpServer) {
 
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
-		glog.Errorf("Could not accept channel: %v", err)
+		log.Errorf("Could not accept channel: %v", err)
 		return
 	}
 
@@ -387,8 +386,8 @@ func (s *SFTPService) handleSFTP(channel ssh.Channel, fs *SftpServer) {
 
 	if err := server.Serve(); err == io.EOF {
 		server.Close()
-		glog.V(0).Info("SFTP client exited session.")
+		log.V(3).Info("SFTP client exited session.")
 	} else if err != nil {
-		glog.Errorf("SFTP server finished with error: %v", err)
+		log.Errorf("SFTP server finished with error: %v", err)
 	}
 }

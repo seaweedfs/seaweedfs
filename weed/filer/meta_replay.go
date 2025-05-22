@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -15,7 +15,7 @@ func Replay(filerStore FilerStore, resp *filer_pb.SubscribeMetadataResponse) err
 	var newEntry *Entry
 	if message.OldEntry != nil {
 		oldPath = util.NewFullPath(resp.Directory, message.OldEntry.Name)
-		glog.V(4).Infof("deleting %v", oldPath)
+		log.V(-1).Infof("deleting %v", oldPath)
 		if err := filerStore.DeleteEntry(context.Background(), oldPath); err != nil {
 			return err
 		}
@@ -27,7 +27,7 @@ func Replay(filerStore FilerStore, resp *filer_pb.SubscribeMetadataResponse) err
 			dir = message.NewParentPath
 		}
 		key := util.NewFullPath(dir, message.NewEntry.Name)
-		glog.V(4).Infof("creating %v", key)
+		log.V(-1).Infof("creating %v", key)
 		newEntry = FromPbEntry(dir, message.NewEntry)
 		if err := filerStore.InsertEntry(context.Background(), newEntry); err != nil {
 			return err

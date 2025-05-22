@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -38,7 +38,7 @@ func main() {
 			return nil
 		}
 		name := event.EventNotification.NewEntry.Name
-		glog.V(0).Infof("=> %s ts:%+v", name, time.Unix(0, event.TsNs))
+		log.V(3).Infof("=> %s ts:%+v", name, time.Unix(0, event.TsNs))
 		id := name[4:]
 		if x, err := strconv.Atoi(id); err == nil {
 			if x != expected {
@@ -59,7 +59,7 @@ func startGenerateMetadata() {
 
 		for i := 0; i < *n; i++ {
 			name := fmt.Sprintf("file%d", i)
-			glog.V(0).Infof("write %s/%s", *dir, name)
+			log.V(3).Infof("write %s/%s", *dir, name)
 			if err := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
 				Directory: *dir,
 				Entry: &filer_pb.Entry{

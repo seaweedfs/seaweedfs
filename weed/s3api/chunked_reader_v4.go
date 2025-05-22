@@ -33,7 +33,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
@@ -65,9 +65,9 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	switch contentSha256Header {
 	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
 	case streamingContentSHA256:
-		glog.V(3).Infof("streaming content sha256")
+		log.V(0).Infof("streaming content sha256")
 	case streamingUnsignedPayload:
-		glog.V(3).Infof("streaming unsigned payload")
+		log.V(0).Infof("streaming unsigned payload")
 	default:
 		return nil, "", "", time.Time{}, s3err.ErrContentSHA256Mismatch
 	}
@@ -148,7 +148,7 @@ var errMalformedEncoding = errors.New("malformed chunked encoding")
 // out of HTTP "chunked" format before returning it.
 // The s3ChunkedReader returns io.EOF when the final 0-length chunk is read.
 func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.ReadCloser, s3err.ErrorCode) {
-	glog.V(3).Infof("creating a new newSignV4ChunkedReader")
+	log.V(0).Infof("creating a new newSignV4ChunkedReader")
 
 	contentSha256Header := req.Header.Get("X-Amz-Content-Sha256")
 	authorizationHeader := req.Header.Get("Authorization")
@@ -161,13 +161,13 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	switch contentSha256Header {
 	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
 	case streamingContentSHA256:
-		glog.V(3).Infof("streaming content sha256")
+		log.V(0).Infof("streaming content sha256")
 		ident, seedSignature, region, seedDate, errCode = iam.calculateSeedSignature(req)
 		if errCode != s3err.ErrNone {
 			return nil, errCode
 		}
 	case streamingUnsignedPayload:
-		glog.V(3).Infof("streaming unsigned payload")
+		log.V(0).Infof("streaming unsigned payload")
 		if authorizationHeader != "" {
 			// We do not need to pass the seed signature to the Reader as each chunk is not signed,
 			// but we do compute it to verify the caller has the correct permissions.
@@ -183,7 +183,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	checksumAlgorithm, err := extractChecksumAlgorithm(amzTrailerHeader)
 
 	if err != nil {
-		glog.V(3).Infof("error extracting checksum algorithm: %v", err)
+		log.V(0).Infof("error extracting checksum algorithm: %v", err)
 		return nil, s3err.ErrInvalidRequest
 	}
 
@@ -378,7 +378,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 
 			if extractedCheckSumAlgorithm.String() != cr.checkSumAlgorithm {
 				errorMessage := fmt.Sprintf("checksum algorithm in trailer '%s' does not match the one advertised in the header '%s'", extractedCheckSumAlgorithm.String(), cr.checkSumAlgorithm)
-				glog.V(3).Info(errorMessage)
+				log.V(0).Info(errorMessage)
 				cr.err = errors.New(errorMessage)
 				return 0, cr.err
 			}
@@ -387,7 +387,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			base64Checksum := base64.StdEncoding.EncodeToString(computedChecksum)
 			if string(extractedChecksum) != base64Checksum {
 				// TODO: Return BadDigest
-				glog.V(3).Infof("payload checksum '%s' does not match provided checksum '%s'", base64Checksum, string(extractedChecksum))
+				log.V(0).Infof("payload checksum '%s' does not match provided checksum '%s'", base64Checksum, string(extractedChecksum))
 				cr.err = errors.New("payload checksum does not match")
 				return 0, cr.err
 			}

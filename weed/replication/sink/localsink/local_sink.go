@@ -2,7 +2,7 @@ package localsink
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
@@ -45,7 +45,7 @@ func (localsink *LocalSink) initialize(dir string, isIncremental bool) error {
 func (localsink *LocalSink) Initialize(configuration util.Configuration, prefix string) error {
 	dir := configuration.GetString(prefix + "directory")
 	isIncremental := configuration.GetBool(prefix + "is_incremental")
-	glog.V(4).Infof("sink.local.directory: %v", dir)
+	log.V(-1).Infof("sink.local.directory: %v", dir)
 	return localsink.initialize(dir, isIncremental)
 }
 
@@ -61,9 +61,9 @@ func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeCh
 	if localsink.isMultiPartEntry(key) {
 		return nil
 	}
-	glog.V(4).Infof("Delete Entry key: %s", key)
+	log.V(-1).Infof("Delete Entry key: %s", key)
 	if err := os.Remove(key); err != nil {
-		glog.V(0).Infof("remove entry key %s: %s", key, err)
+		log.V(3).Infof("remove entry key %s: %s", key, err)
 	}
 	return nil
 }
@@ -72,7 +72,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	if entry.IsDirectory || localsink.isMultiPartEntry(key) {
 		return nil
 	}
-	glog.V(4).Infof("Create Entry key: %s", key)
+	log.V(-1).Infof("Create Entry key: %s", key)
 
 	totalSize := filer.FileSize(entry)
 	chunkViews := filer.ViewFromChunks(localsink.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
@@ -80,7 +80,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	dir := filepath.Dir(key)
 
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		glog.V(4).Infof("Create Directory key: %s", dir)
+		log.V(-1).Infof("Create Directory key: %s", dir)
 		if err = os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
@@ -102,7 +102,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 		return err
 	}
 	if fi.Mode() != mode {
-		glog.V(4).Infof("Modify file mode: %o -> %o", fi.Mode(), mode)
+		log.V(-1).Infof("Modify file mode: %o -> %o", fi.Mode(), mode)
 		if err := dstFile.Chmod(mode); err != nil {
 			return err
 		}
@@ -128,7 +128,7 @@ func (localsink *LocalSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, ne
 	if localsink.isMultiPartEntry(key) {
 		return true, nil
 	}
-	glog.V(4).Infof("Update Entry key: %s", key)
+	log.V(-1).Infof("Update Entry key: %s", key)
 	// do delete and create
 	foundExistingEntry = util.FileExists(key)
 	err = localsink.CreateEntry(key, newEntry, signatures)

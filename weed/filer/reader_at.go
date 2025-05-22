@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"sync"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -47,7 +47,7 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 
 					locations = resp.LocationsMap[vid]
 					if locations == nil || len(locations.Locations) == 0 {
-						glog.V(0).Infof("failed to locate %s", fileId)
+						log.V(3).Infof("failed to locate %s", fileId)
 						return fmt.Errorf("failed to locate %s", fileId)
 					}
 					vicCacheLock.Lock()
@@ -113,7 +113,7 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 	c.chunkViews.Lock.RLock()
 	defer c.chunkViews.Lock.RUnlock()
 
-	// glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
+	// log.V(-1).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
 	n, _, err = c.doReadAt(p, offset)
 	return
 }
@@ -125,7 +125,7 @@ func (c *ChunkReadAt) ReadAtWithTime(p []byte, offset int64) (n int, ts int64, e
 	c.chunkViews.Lock.RLock()
 	defer c.chunkViews.Lock.RUnlock()
 
-	// glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
+	// log.V(-1).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
 	return c.doReadAt(p, offset)
 }
 
@@ -143,7 +143,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err err
 		}
 		if startOffset < chunk.ViewOffset {
 			gap := chunk.ViewOffset - startOffset
-			glog.V(4).Infof("zero [%d,%d)", startOffset, chunk.ViewOffset)
+			log.V(-1).Infof("zero [%d,%d)", startOffset, chunk.ViewOffset)
 			n += zero(p, startOffset-offset, gap)
 			startOffset, remaining = chunk.ViewOffset, remaining-gap
 			if remaining <= 0 {
@@ -155,12 +155,12 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err err
 		if chunkStart >= chunkStop {
 			continue
 		}
-		// glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.ViewOffset-chunk.Offset, chunk.ViewOffset-chunk.Offset+int64(chunk.ViewSize))
+		// log.V(-1).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.ViewOffset-chunk.Offset, chunk.ViewOffset-chunk.Offset+int64(chunk.ViewSize))
 		bufferOffset := chunkStart - chunk.ViewOffset + chunk.OffsetInChunk
 		ts = chunk.ModifiedTsNs
 		copied, err := c.readChunkSliceAt(p[startOffset-offset:chunkStop-chunkStart+startOffset-offset], chunk, nextChunks, uint64(bufferOffset))
 		if err != nil {
-			glog.Errorf("fetching chunk %+v: %v\n", chunk, err)
+			log.Errorf("fetching chunk %+v: %v\n", chunk, err)
 			return copied, ts, err
 		}
 
@@ -168,7 +168,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err err
 		startOffset, remaining = startOffset+int64(copied), remaining-int64(copied)
 	}
 
-	// glog.V(4).Infof("doReadAt [%d,%d), n:%v, err:%v", offset, offset+int64(len(p)), n, err)
+	// log.V(-1).Infof("doReadAt [%d,%d), n:%v, err:%v", offset, offset+int64(len(p)), n, err)
 
 	// zero the remaining bytes if a gap exists at the end of the last chunk (or a fully sparse file)
 	if err == nil && remaining > 0 {
@@ -178,7 +178,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err err
 			startOffset -= offset
 		}
 		if delta > 0 {
-			glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+delta, c.fileSize)
+			log.V(-1).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+delta, c.fileSize)
 			n += zero(p, startOffset, delta)
 		}
 	}

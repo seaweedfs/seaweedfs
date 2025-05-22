@@ -2,7 +2,7 @@ package page_writer
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
 	"sync/atomic"
@@ -34,7 +34,7 @@ type SealedChunk struct {
 func (sc *SealedChunk) FreeReference(messageOnFree string) {
 	sc.referenceCounter--
 	if sc.referenceCounter == 0 {
-		glog.V(4).Infof("Free sealed chunk: %s", messageOnFree)
+		log.V(-1).Infof("Free sealed chunk: %s", messageOnFree)
 		sc.chunk.FreeResource()
 	}
 }
@@ -131,7 +131,7 @@ func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64, tsNs int64) (maxS
 	sealedChunk, found := up.sealedChunks[logicChunkIndex]
 	if found {
 		maxStop = sealedChunk.chunk.ReadDataAt(p, off, tsNs)
-		glog.V(4).Infof("%s read sealed memchunk [%d,%d)", up.filepath, off, maxStop)
+		log.V(-1).Infof("%s read sealed memchunk [%d,%d)", up.filepath, off, maxStop)
 	}
 
 	// read from writable chunks last
@@ -140,7 +140,7 @@ func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64, tsNs int64) (maxS
 		return
 	}
 	writableMaxStop := writableChunk.ReadDataAt(p, off, tsNs)
-	glog.V(4).Infof("%s read writable memchunk [%d,%d)", up.filepath, off, writableMaxStop)
+	log.V(-1).Infof("%s read writable memchunk [%d,%d)", up.filepath, off, writableMaxStop)
 	maxStop = max(maxStop, writableMaxStop)
 
 	return
@@ -168,7 +168,7 @@ func (up *UploadPipeline) maybeMoveToSealed(memChunk PageChunk, logicChunkIndex 
 
 func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex LogicChunkIndex) {
 	atomic.AddInt32(&up.uploaderCount, 1)
-	glog.V(4).Infof("%s uploaderCount %d ++> %d", up.filepath, up.uploaderCount-1, up.uploaderCount)
+	log.V(-1).Infof("%s uploaderCount %d ++> %d", up.filepath, up.uploaderCount-1, up.uploaderCount)
 
 	if oldMemChunk, found := up.sealedChunks[logicChunkIndex]; found {
 		oldMemChunk.FreeReference(fmt.Sprintf("%s replace chunk %d", up.filepath, logicChunkIndex))
@@ -188,7 +188,7 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 
 		// notify waiting process
 		atomic.AddInt32(&up.uploaderCount, -1)
-		glog.V(4).Infof("%s uploaderCount %d --> %d", up.filepath, up.uploaderCount+1, up.uploaderCount)
+		log.V(-1).Infof("%s uploaderCount %d --> %d", up.filepath, up.uploaderCount+1, up.uploaderCount)
 		// Lock and Unlock are not required,
 		// but it may signal multiple times during one wakeup,
 		// and the waiting goroutine may miss some of them!

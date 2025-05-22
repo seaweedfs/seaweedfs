@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -37,7 +37,7 @@ func (store *MongodbStore) KvGet(ctx context.Context, key []byte) (value []byte,
 	var where = bson.M{"directory": dir, "name": name}
 	err = store.connect.Database(store.database).Collection(store.collectionName).FindOne(ctx, where).Decode(&data)
 	if err != mongo.ErrNoDocuments && err != nil {
-		glog.Errorf("kv get: %v", err)
+		log.Errorf("kv get: %v", err)
 		return nil, filer.ErrKvNotFound
 	}
 

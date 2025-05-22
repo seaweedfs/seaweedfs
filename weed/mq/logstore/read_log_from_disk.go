@@ -3,7 +3,7 @@ package logstore
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -71,7 +71,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				continue
 			}
 			if chunk.IsChunkManifest {
-				glog.Warningf("this should not happen. unexpected chunk manifest in %s/%s", partitionDir, entry.Name)
+				log.Warningf("this should not happen. unexpected chunk manifest in %s/%s", partitionDir, entry.Name)
 				return
 			}
 			urlStrings, err = lookupFileIdFn(chunk.FileId)

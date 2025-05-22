@@ -3,7 +3,7 @@ package command
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -43,7 +43,7 @@ func (option *RemoteGatewayOptions) followBucketUpdatesAndUploadToRemote(filerSo
 			return nil
 		}
 		now := time.Now().UnixNano()
-		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		log.V(3).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
 		lastLogTsNs = now
 		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), option.bucketsDir, offsetTsNs)
 	})
@@ -78,12 +78,12 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 		}
 		if option.mappings.PrimaryBucketStorageName != "" && *option.createBucketAt == "" {
 			*option.createBucketAt = option.mappings.PrimaryBucketStorageName
-			glog.V(0).Infof("%s is set as the primary remote storage", *option.createBucketAt)
+			log.V(3).Infof("%s is set as the primary remote storage", *option.createBucketAt)
 		}
 		if len(option.mappings.Mappings) == 1 && *option.createBucketAt == "" {
 			for k := range option.mappings.Mappings {
 				*option.createBucketAt = k
-				glog.V(0).Infof("%s is set as the only remote storage", *option.createBucketAt)
+				log.V(3).Infof("%s is set as the only remote storage", *option.createBucketAt)
 			}
 		}
 		if *option.createBucketAt == "" {
@@ -132,7 +132,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			bucketName = remoteLocation.Bucket
 		}
 
-		glog.V(0).Infof("create bucket %s", bucketName)
+		log.V(3).Infof("create bucket %s", bucketName)
 		if err := client.CreateBucket(bucketName); err != nil {
 			return fmt.Errorf("create bucket %s in %s: %v", bucketName, remoteConf.Name, err)
 		}
@@ -150,7 +150,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			return fmt.Errorf("findRemoteStorageClient %s: %v", entry.Name, err)
 		}
 
-		glog.V(0).Infof("delete remote bucket %s", remoteStorageMountLocation.Bucket)
+		log.V(3).Infof("delete remote bucket %s", remoteStorageMountLocation.Bucket)
 		if err := client.DeleteBucket(remoteStorageMountLocation.Bucket); err != nil {
 			return fmt.Errorf("delete remote bucket %s: %v", remoteStorageMountLocation.Bucket, err)
 		}
@@ -219,17 +219,17 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			if err != nil {
 				return err
 			}
-			glog.V(2).Infof("create: %+v", resp)
+			log.V(1).Infof("create: %+v", resp)
 			if !shouldSendToRemote(message.NewEntry) {
-				glog.V(2).Infof("skipping creating: %+v", resp)
+				log.V(1).Infof("skipping creating: %+v", resp)
 				return nil
 			}
 			dest := toRemoteStorageLocation(bucket, util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
 			if message.NewEntry.IsDirectory {
-				glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
+				log.V(3).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
-			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
+			log.V(3).Infof("create %s", remote_storage.FormatLocation(dest))
 			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
 			if writeErr != nil {
 				return writeErr
@@ -248,13 +248,13 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			if err != nil {
 				return err
 			}
-			glog.V(2).Infof("delete: %+v", resp)
+			log.V(1).Infof("delete: %+v", resp)
 			dest := toRemoteStorageLocation(bucket, util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 			if message.OldEntry.IsDirectory {
-				glog.V(0).Infof("rmdir  %s", remote_storage.FormatLocation(dest))
+				log.V(3).Infof("rmdir  %s", remote_storage.FormatLocation(dest))
 				return client.RemoveDirectory(dest)
 			}
-			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
+			log.V(3).Infof("delete %s", remote_storage.FormatLocation(dest))
 			return client.DeleteFile(dest)
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
@@ -278,7 +278,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			newBucket, newRemoteStorageMountLocation, newRemoteStorage, newOk := option.detectBucketInfo(message.NewParentPath)
 			if oldOk && newOk {
 				if !shouldSendToRemote(message.NewEntry) {
-					glog.V(2).Infof("skipping updating: %+v", resp)
+					log.V(1).Infof("skipping updating: %+v", resp)
 					return nil
 				}
 				client, err := remote_storage.GetRemoteStorage(oldRemoteStorage)
@@ -292,7 +292,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 						return nil
 					}
 					if message.OldEntry.RemoteEntry != nil && filer.IsSameData(message.OldEntry, message.NewEntry) {
-						glog.V(2).Infof("update meta: %+v", resp)
+						log.V(1).Infof("update meta: %+v", resp)
 						oldDest := toRemoteStorageLocation(oldBucket, util.NewFullPath(resp.Directory, message.OldEntry.Name), oldRemoteStorageMountLocation)
 						return client.UpdateFileMetadata(oldDest, message.OldEntry, message.NewEntry)
 					} else {
@@ -316,14 +316,14 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				if message.OldEntry.IsDirectory {
 					return client.RemoveDirectory(oldDest)
 				}
-				glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
+				log.V(3).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 				if err := client.DeleteFile(oldDest); err != nil {
 					return err
 				}
 			}
 			if newOk {
 				if !shouldSendToRemote(message.NewEntry) {
-					glog.V(2).Infof("skipping updating: %+v", resp)
+					log.V(1).Infof("skipping updating: %+v", resp)
 					return nil
 				}
 				client, err := remote_storage.GetRemoteStorage(newRemoteStorage)
@@ -375,13 +375,13 @@ func (option *RemoteGatewayOptions) detectBucketInfo(actualDir string) (bucket u
 	var isMounted bool
 	remoteStorageMountLocation, isMounted = option.mappings.Mappings[string(bucket)]
 	if !isMounted {
-		glog.Warningf("%s is not mounted", bucket)
+		log.Warningf("%s is not mounted", bucket)
 		return "", nil, nil, false
 	}
 	var hasClient bool
 	remoteConf, hasClient = option.remoteConfs[remoteStorageMountLocation.Name]
 	if !hasClient {
-		glog.Warningf("%s mounted to un-configured %+v", bucket, remoteStorageMountLocation)
+		log.Warningf("%s mounted to un-configured %+v", bucket, remoteStorageMountLocation)
 		return "", nil, nil, false
 	}
 	return bucket, remoteStorageMountLocation, remoteConf, true
@@ -422,7 +422,7 @@ func (option *RemoteGatewayOptions) collectRemoteStorageConf() (err error) {
 	}, "", false, math.MaxUint32)
 
 	if option.mappings.PrimaryBucketStorageName == "" && len(option.remoteConfs) == 1 {
-		glog.V(0).Infof("%s is set to the default remote storage", lastConfName)
+		log.V(3).Infof("%s is set to the default remote storage", lastConfName)
 		option.mappings.PrimaryBucketStorageName = lastConfName
 	}
 

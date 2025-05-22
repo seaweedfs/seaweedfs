@@ -10,7 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 const (
@@ -72,7 +72,7 @@ func (vc *vidMap) isSameDataCenter(loc *Location) bool {
 func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
-		glog.V(1).Infof("Unknown volume id %s", vid)
+		log.V(2).Infof("Unknown volume id %s", vid)
 		return nil, err
 	}
 
@@ -117,7 +117,7 @@ func (vc *vidMap) LookupFileId(fileId string) (fullUrls []string, err error) {
 func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
-		glog.V(1).Infof("Unknown volume id %s", vid)
+		log.V(2).Infof("Unknown volume id %s", vid)
 		return nil, fmt.Errorf("Unknown volume id %s", vid)
 	}
 	foundLocations, found := vc.GetLocations(uint32(id))
@@ -128,7 +128,7 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 }
 
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
-	// glog.V(4).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
+	// log.V(-1).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
 	locations, found = vc.getLocations(vid)
 	if found && len(locations) > 0 {
 		return locations, found
@@ -170,7 +170,7 @@ func (vc *vidMap) addLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
 
-	glog.V(4).Infof("+ volume id %d: %+v", vid, location)
+	log.V(-1).Infof("+ volume id %d: %+v", vid, location)
 
 	locations, found := vc.vid2Locations[vid]
 	if !found {
@@ -192,7 +192,7 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
 
-	glog.V(4).Infof("+ ec volume id %d: %+v", vid, location)
+	log.V(-1).Infof("+ ec volume id %d: %+v", vid, location)
 
 	locations, found := vc.ecVid2Locations[vid]
 	if !found {
@@ -218,7 +218,7 @@ func (vc *vidMap) deleteLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
 
-	glog.V(4).Infof("- volume id %d: %+v", vid, location)
+	log.V(-1).Infof("- volume id %d: %+v", vid, location)
 
 	locations, found := vc.vid2Locations[vid]
 	if !found {
@@ -241,7 +241,7 @@ func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
 
-	glog.V(4).Infof("- ec volume id %d: %+v", vid, location)
+	log.V(-1).Infof("- ec volume id %d: %+v", vid, location)
 
 	locations, found := vc.ecVid2Locations[vid]
 	if !found {

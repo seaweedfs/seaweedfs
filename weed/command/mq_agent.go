@@ -5,7 +5,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
 	"google.golang.org/grpc/reflection"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -62,9 +62,9 @@ func (mqAgentOpt *MessageQueueAgentOptions) startQueueAgent() bool {
 	// start grpc listener
 	grpcL, _, err := util.NewIpAndLocalListeners(*mqAgentOpt.ip, *mqAgentOpt.port, 0)
 	if err != nil {
-		glog.Fatalf("failed to listen on grpc port %d: %v", *mqAgentOpt.port, err)
+		log.Fatalf("failed to listen on grpc port %d: %v", *mqAgentOpt.port, err)
 	}
-	glog.Infof("Start Seaweed Message Queue Agent on %s:%d", *mqAgentOpt.ip, *mqAgentOpt.port)
+	log.Infof("Start Seaweed Message Queue Agent on %s:%d", *mqAgentOpt.ip, *mqAgentOpt.port)
 	grpcS := pb.NewGrpcServer()
 	mq_agent_pb.RegisterSeaweedMessagingAgentServer(grpcS, agentServer)
 	reflection.Register(grpcS)

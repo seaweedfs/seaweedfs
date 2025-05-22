@@ -3,7 +3,7 @@ package needle
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -42,7 +42,7 @@ func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size Size, versi
 	}
 	if err != nil {
 		fileSize, _, _ := r.GetStat()
-		glog.Errorf("%s read %d dataSize %d offset %d fileSize %d: %v", r.Name(), n, dataSize, offset, fileSize, err)
+		log.Errorf("%s read %d dataSize %d offset %d fileSize %d: %v", r.Name(), n, dataSize, offset, fileSize, err)
 	}
 	return dataSlice, err
 
@@ -55,7 +55,7 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 		// cookie is not always passed in for this API. Use size to do preliminary checking.
 		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorSizeMismatchOffsetSize).Inc()
-			glog.Errorf("entry not found1: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
+			log.Errorf("entry not found1: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 			return ErrorSizeMismatch
 		}
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorSizeMismatch).Inc()
@@ -238,7 +238,7 @@ func (n *Needle) ReadNeedleBody(r backend.BackendStorageFile, version Version, o
 		err = nil
 	}
 	if err != nil {
-		glog.Errorf("%s read %d bodyLength %d offset %d: %v", r.Name(), readCount, bodyLength, offset, err)
+		log.Errorf("%s read %d bodyLength %d offset %d: %v", r.Name(), readCount, bodyLength, offset, err)
 		return
 	}
 

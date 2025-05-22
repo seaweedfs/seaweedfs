@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/viant/ptrie"
@@ -12,7 +12,7 @@ import (
 
 func (fs *FilerServer) TraverseBfsMetadata(req *filer_pb.TraverseBfsMetadataRequest, stream filer_pb.SeaweedFiler_TraverseBfsMetadataServer) error {
 
-	glog.V(0).Infof("TraverseBfsMetadata %v", req)
+	log.V(3).Infof("TraverseBfsMetadata %v", req)
 
 	excludedTrie := ptrie.New[bool]()
 	for _, excluded := range req.ExcludedPrefixes {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"syscall"
@@ -26,7 +26,7 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 			Signatures: []int32{wfs.signature},
 		}
 
-		glog.V(1).Infof("save entry: %v", request)
+		log.V(2).Infof("save entry: %v", request)
 		_, err := client.UpdateEntry(context.Background(), request)
 		if err != nil {
 			return fmt.Errorf("UpdateEntry dir %s: %v", path, err)
@@ -39,7 +39,7 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 		return nil
 	})
 	if err != nil {
-		glog.Errorf("saveEntry %s: %v", path, err)
+		log.Errorf("saveEntry %s: %v", path, err)
 		return fuse.EIO
 	}
 

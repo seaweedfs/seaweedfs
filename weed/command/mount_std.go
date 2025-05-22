@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mount"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/mount/unmount"
@@ -81,13 +81,13 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("failed to talk to filer %v: %v", filerAddresses, err)
-			glog.V(0).Infof("wait for %d seconds ...", i+1)
+			log.V(3).Infof("failed to talk to filer %v: %v", filerAddresses, err)
+			log.V(3).Infof("wait for %d seconds ...", i+1)
 			time.Sleep(time.Duration(i+1) * time.Second)
 		}
 	}
 	if err != nil {
-		glog.Errorf("failed to talk to filer %v: %v", filerAddresses, err)
+		log.Errorf("failed to talk to filer %v: %v", filerAddresses, err)
 		return true
 	}
 
@@ -111,11 +111,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		*option.localSocket = fmt.Sprintf("/tmp/seaweedfs-mount-%d.sock", mountDirHash)
 	}
 	if err := os.Remove(*option.localSocket); err != nil && !os.IsNotExist(err) {
-		glog.Fatalf("Failed to remove %s, error: %s", *option.localSocket, err.Error())
+		log.Fatalf("Failed to remove %s, error: %s", *option.localSocket, err.Error())
 	}
 	montSocketListener, err := net.Listen("unix", *option.localSocket)
 	if err != nil {
-		glog.Fatalf("Failed to listen on %s: %v", *option.localSocket, err)
+		log.Fatalf("Failed to listen on %s: %v", *option.localSocket, err)
 	}
 
 	// detect mount folder mode
@@ -158,7 +158,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// Ensure target mount point availability
 	if isValid := checkMountPointAvailable(dir); !isValid {
-		glog.Fatalf("Target mount point is not available: %s, please check!", dir)
+		log.Fatalf("Target mount point is not available: %s, please check!", dir)
 		return true
 	}
 
@@ -262,7 +262,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	server, err := fuse.NewServer(seaweedFileSystem, dir, fuseMountOptions)
 	if err != nil {
-		glog.Fatalf("Mount fail: %v", err)
+		log.Fatalf("Mount fail: %v", err)
 	}
 	grace.OnInterrupt(func() {
 		unmount.Unmount(dir)
@@ -279,8 +279,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		return false
 	}
 
-	glog.V(0).Infof("mounted %s%s to %v", *option.filer, mountRoot, dir)
-	glog.V(0).Infof("This is SeaweedFS version %s %s %s", util.Version(), runtime.GOOS, runtime.GOARCH)
+	log.V(3).Infof("mounted %s%s to %v", *option.filer, mountRoot, dir)
+	log.V(3).Infof("This is SeaweedFS version %s %s %s", util.Version(), runtime.GOOS, runtime.GOARCH)
 
 	server.Serve()
 

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
@@ -53,7 +53,7 @@ func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
 }
 
 func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
-	glog.V(2).Infof("key %v offset %d size %d disk_size %d compressed %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed())
+	log.V(1).Infof("key %v offset %d size %d disk_size %d compressed %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed())
 	if n.Size.IsValid() {
 		if pe := scanner.nm.Set(n.Id, types.ToOffset(offset), n.Size); pe != nil {
 			return fmt.Errorf("saved %d with error %v", n.Size, pe)
@@ -64,7 +64,7 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 				return fmt.Errorf("saved deleted %d with error %v", n.Size, pe)
 			}
 		} else {
-			glog.V(2).Infof("skipping deleted file ...")
+			log.V(1).Infof("skipping deleted file ...")
 			return scanner.nm.Delete(n.Id)
 		}
 	}
@@ -163,19 +163,19 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 	if err := storage.ScanVolumeFile(basepath, collection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		err := fmt.Errorf("scan .dat File: %v", err)
 		if *fixIgnoreError {
-			glog.Error(err)
+			log.Error(err)
 		} else {
-			glog.Fatal(err)
+			log.Fatal(err)
 		}
 	}
 
 	if err := SaveToIdx(scanner, indexFileName); err != nil {
 		err := fmt.Errorf("save to .idx File: %v", err)
 		if *fixIgnoreError {
-			glog.Error(err)
+			log.Error(err)
 		} else {
 			os.Remove(indexFileName)
-			glog.Fatal(err)
+			log.Fatal(err)
 		}
 	}
 }

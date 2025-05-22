@@ -3,7 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"io"
@@ -16,7 +16,7 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string, stop
 
 	self := string(b.option.BrokerAddress())
 
-	glog.V(0).Infof("broker %s connects to balancer %s", self, brokerBalancer)
+	log.V(3).Infof("broker %s connects to balancer %s", self, brokerBalancer)
 	if brokerBalancer == "" {
 		return fmt.Errorf("no balancer found")
 	}
@@ -59,7 +59,7 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string, stop
 				}
 				return fmt.Errorf("send stats message to balancer %s: %v", brokerBalancer, err)
 			}
-			// glog.V(3).Infof("sent stats: %+v", stats)
+			// log.V(0).Infof("sent stats: %+v", stats)
 
 			time.Sleep(time.Millisecond*5000 + time.Duration(rand.Intn(1000))*time.Millisecond)
 		}
@@ -82,7 +82,7 @@ func (b *MessageQueueBroker) KeepConnectedToBrokerBalancer(newBrokerBalancerCh c
 					for {
 						err := b.BrokerConnectToBalancer(newBrokerBalancer, thisRunStopChan)
 						if err != nil {
-							glog.V(0).Infof("connect to balancer %s: %v", newBrokerBalancer, err)
+							log.V(3).Infof("connect to balancer %s: %v", newBrokerBalancer, err)
 							time.Sleep(time.Second)
 						} else {
 							break

@@ -2,7 +2,7 @@ package pub_balancer
 
 import (
 	cmap "github.com/orcaman/concurrent-map/v2"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"math/rand"
@@ -30,7 +30,7 @@ func AllocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], p
 
 	EnsureAssignmentsToActiveBrokers(brokers, 1, assignments)
 
-	glog.V(0).Infof("allocate topic partitions %d: %v", len(assignments), assignments)
+	log.V(3).Infof("allocate topic partitions %d: %v", len(assignments), assignments)
 	return
 }
 
@@ -78,7 +78,7 @@ func pickBrokersExcluded(brokers []string, count int, excludedLeadBroker string,
 
 // EnsureAssignmentsToActiveBrokers ensures the assignments are assigned to active brokers
 func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string, *BrokerStats], followerCount int, assignments []*mq_pb.BrokerPartitionAssignment) (hasChanges bool) {
-	glog.V(0).Infof("EnsureAssignmentsToActiveBrokers: activeBrokers: %v, followerCount: %d, assignments: %v", activeBrokers.Count(), followerCount, assignments)
+	log.V(3).Infof("EnsureAssignmentsToActiveBrokers: activeBrokers: %v, followerCount: %d, assignments: %v", activeBrokers.Count(), followerCount, assignments)
 
 	candidates := make([]string, 0, activeBrokers.Count())
 	for brokerStatsItem := range activeBrokers.IterBuffered() {
@@ -122,6 +122,6 @@ func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string, *
 
 	}
 
-	glog.V(0).Infof("EnsureAssignmentsToActiveBrokers: activeBrokers: %v, followerCount: %d, assignments: %v hasChanges: %v", activeBrokers.Count(), followerCount, assignments, hasChanges)
+	log.V(3).Infof("EnsureAssignmentsToActiveBrokers: activeBrokers: %v, followerCount: %d, assignments: %v hasChanges: %v", activeBrokers.Count(), followerCount, assignments, hasChanges)
 	return
 }

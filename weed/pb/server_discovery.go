@@ -1,7 +1,7 @@
 package pb
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"reflect"
 )
 
@@ -28,10 +28,10 @@ func (sd *ServerDiscovery) RefreshBySrvIfAvailable() {
 	}
 	newList, err := sd.srvRecord.LookUp()
 	if err != nil {
-		glog.V(0).Infof("failed to lookup SRV for %s: %v", *sd.srvRecord, err)
+		log.V(3).Infof("failed to lookup SRV for %s: %v", *sd.srvRecord, err)
 	}
 	if newList == nil || len(newList) == 0 {
-		glog.V(0).Infof("looked up SRV for %s, but found no well-formed names", *sd.srvRecord)
+		log.V(3).Infof("looked up SRV for %s, but found no well-formed names", *sd.srvRecord)
 		return
 	}
 	if !reflect.DeepEqual(sd.list, newList) {

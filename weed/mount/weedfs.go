@@ -183,7 +183,7 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 
 func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.Status) {
 
-	// glog.V(3).Infof("read entry cache miss %s", fullpath)
+	// log.V(0).Infof("read entry cache miss %s", fullpath)
 	dir, name := fullpath.DirAndName()
 
 	// return a valid entry for the mount root

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -245,7 +245,7 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
 	// Log the actions
-	glog.V(3).Infof("PutUserPolicy: actions=%v", actions)
+	log.V(0).Infof("PutUserPolicy: actions=%v", actions)
 	for _, ident := range s3cfg.Identities {
 		if userName != ident.Name {
 			continue
@@ -332,14 +332,14 @@ func GetActions(policy *PolicyDocument) ([]string, error) {
 			// Parse "arn:aws:s3:::my-bucket/shared/*"
 			res := strings.Split(resource, ":")
 			if len(res) != 6 || res[0] != "arn" || res[1] != "aws" || res[2] != "s3" {
-				glog.Infof("not a valid resource: %s", res)
+				log.Infof("not a valid resource: %s", res)
 				continue
 			}
 			for _, action := range statement.Action {
 				// Parse "s3:Get*"
 				act := strings.Split(action, ":")
 				if len(act) != 2 || act[0] != "s3" {
-					glog.Infof("not a valid action: %s", act)
+					log.Infof("not a valid action: %s", act)
 					continue
 				}
 				statementAction := MapToStatementAction(act[1])
@@ -423,7 +423,7 @@ func handleImplicitUsername(r *http.Request, values url.Values) {
 	// "AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;
 	// host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8",
 	// the "test1" will be extracted as the username
-	glog.V(4).Infof("Authorization field: %v", r.Header["Authorization"][0])
+	log.V(-1).Infof("Authorization field: %v", r.Header["Authorization"][0])
 	s := strings.Split(r.Header["Authorization"][0], "Credential=")
 	if len(s) < 2 {
 		return
@@ -452,7 +452,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	glog.V(4).Infof("DoActions: %+v", values)
+	log.V(-1).Infof("DoActions: %+v", values)
 	var response interface{}
 	var iamError *IamError
 	changed := true
@@ -477,7 +477,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "UpdateUser":
 		response, iamError = iama.UpdateUser(s3cfg, values)
 		if iamError != nil {
-			glog.Errorf("UpdateUser: %+v", iamError.Error)
+			log.Errorf("UpdateUser: %+v", iamError.Error)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
@@ -497,7 +497,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "CreatePolicy":
 		response, iamError = iama.CreatePolicy(s3cfg, values)
 		if iamError != nil {
-			glog.Errorf("CreatePolicy:  %+v", iamError.Error)
+			log.Errorf("CreatePolicy:  %+v", iamError.Error)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
@@ -505,7 +505,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		var iamError *IamError
 		response, iamError = iama.PutUserPolicy(s3cfg, values)
 		if iamError != nil {
-			glog.Errorf("PutUserPolicy:  %+v", iamError.Error)
+			log.Errorf("PutUserPolicy:  %+v", iamError.Error)
 
 			writeIamErrorResponse(w, r, iamError)
 			return

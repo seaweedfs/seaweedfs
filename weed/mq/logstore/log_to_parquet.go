@@ -160,7 +160,7 @@ func readAllLogFiles(filerClient filer_pb.FilerClient, partitionDir string, time
 		}
 		logTime, err := time.Parse(topic.TIME_FORMAT, entry.Name)
 		if err != nil {
-			// glog.Warningf("parse log time %s: %v", entry.Name, err)
+			// log.Warningf("parse log time %s: %v", entry.Name, err)
 			return nil
 		}
 		if maxTsNs > 0 && logTime.UnixNano() <= maxTsNs {

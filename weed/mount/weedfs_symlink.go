@@ -10,7 +10,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -62,7 +62,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 		return nil
 	})
 	if err != nil {
-		glog.V(0).Infof("Symlink %s => %s: %v", entryFullPath, target, err)
+		log.V(3).Infof("Symlink %s => %s: %v", entryFullPath, target, err)
 		return fuse.EIO
 	}
 

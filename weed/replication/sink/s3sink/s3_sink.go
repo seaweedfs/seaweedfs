@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
@@ -76,24 +76,24 @@ func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string
 	s3sink.uploaderPartSizeMb = configuration.GetInt(prefix + "uploader_part_size")
 	s3sink.uploaderConcurrency = configuration.GetInt(prefix + "uploader_concurrency")
 
-	glog.V(0).Infof("sink.s3.region: %v", s3sink.region)
-	glog.V(0).Infof("sink.s3.bucket: %v", s3sink.bucket)
-	glog.V(0).Infof("sink.s3.directory: %v", s3sink.dir)
-	glog.V(0).Infof("sink.s3.endpoint: %v", s3sink.endpoint)
-	glog.V(0).Infof("sink.s3.acl: %v", s3sink.acl)
-	glog.V(0).Infof("sink.s3.is_incremental: %v", s3sink.isIncremental)
-	glog.V(0).Infof("sink.s3.s3_disable_content_md5_validation: %v", s3sink.s3DisableContentMD5Validation)
-	glog.V(0).Infof("sink.s3.s3_force_path_style: %v", s3sink.s3ForcePathStyle)
-	glog.V(0).Infof("sink.s3.keep_part_size: %v", s3sink.keepPartSize)
+	log.V(3).Infof("sink.s3.region: %v", s3sink.region)
+	log.V(3).Infof("sink.s3.bucket: %v", s3sink.bucket)
+	log.V(3).Infof("sink.s3.directory: %v", s3sink.dir)
+	log.V(3).Infof("sink.s3.endpoint: %v", s3sink.endpoint)
+	log.V(3).Infof("sink.s3.acl: %v", s3sink.acl)
+	log.V(3).Infof("sink.s3.is_incremental: %v", s3sink.isIncremental)
+	log.V(3).Infof("sink.s3.s3_disable_content_md5_validation: %v", s3sink.s3DisableContentMD5Validation)
+	log.V(3).Infof("sink.s3.s3_force_path_style: %v", s3sink.s3ForcePathStyle)
+	log.V(3).Infof("sink.s3.keep_part_size: %v", s3sink.keepPartSize)
 	if s3sink.uploaderMaxUploadParts > s3manager.MaxUploadParts {
 		s3sink.uploaderMaxUploadParts = s3manager.MaxUploadParts
-		glog.Warningf("uploader_max_upload_parts is greater than the maximum number of parts allowed when uploading multiple parts to Amazon S3")
-		glog.V(0).Infof("sink.s3.uploader_max_upload_parts: %v => %v", s3sink.uploaderMaxUploadParts, s3manager.MaxUploadParts)
+		log.Warningf("uploader_max_upload_parts is greater than the maximum number of parts allowed when uploading multiple parts to Amazon S3")
+		log.V(3).Infof("sink.s3.uploader_max_upload_parts: %v => %v", s3sink.uploaderMaxUploadParts, s3manager.MaxUploadParts)
 	} else {
-		glog.V(0).Infof("sink.s3.uploader_max_upload_parts: %v", s3sink.uploaderMaxUploadParts)
+		log.V(3).Infof("sink.s3.uploader_max_upload_parts: %v", s3sink.uploaderMaxUploadParts)
 	}
-	glog.V(0).Infof("sink.s3.uploader_part_size_mb: %v", s3sink.uploaderPartSizeMb)
-	glog.V(0).Infof("sink.s3.uploader_concurrency: %v", s3sink.uploaderConcurrency)
+	log.V(3).Infof("sink.s3.uploader_part_size_mb: %v", s3sink.uploaderPartSizeMb)
+	log.V(3).Infof("sink.s3.uploader_concurrency: %v", s3sink.uploaderConcurrency)
 
 	return s3sink.initialize(
 		configuration.GetString(prefix+"aws_access_key_id"),
@@ -141,9 +141,9 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 	result, err := s3sink.conn.DeleteObject(input)
 
 	if err == nil {
-		glog.V(2).Infof("[%s] delete %s: %v", s3sink.bucket, key, result)
+		log.V(1).Infof("[%s] delete %s: %v", s3sink.bucket, key, result)
 	} else {
-		glog.Errorf("[%s] delete %s: %v", s3sink.bucket, key, err)
+		log.Errorf("[%s] delete %s: %v", s3sink.bucket, key, err)
 	}
 
 	return err

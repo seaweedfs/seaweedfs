@@ -2,7 +2,7 @@ package filer
 
 import (
 	"bytes"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -43,7 +43,7 @@ func (f *Filer) maybeReloadFilerConfiguration(event *filer_pb.SubscribeMetadataR
 		return
 	}
 
-	glog.V(0).Infof("procesing %v", event)
+	log.V(3).Infof("procesing %v", event)
 	if entry.Name == FilerConfName {
 		f.reloadFilerConfiguration(entry)
 	}
@@ -62,7 +62,7 @@ func (f *Filer) reloadFilerConfiguration(entry *filer_pb.Entry) {
 	fc := NewFilerConf()
 	err := fc.loadFromChunks(f, entry.Content, entry.GetChunks(), FileSize(entry))
 	if err != nil {
-		glog.Errorf("read filer conf chunks: %v", err)
+		log.Errorf("read filer conf chunks: %v", err)
 		return
 	}
 	f.FilerConf = fc
@@ -74,7 +74,7 @@ func (f *Filer) LoadFilerConf() {
 		return fc.loadFromFiler(f)
 	})
 	if err != nil {
-		glog.Errorf("read filer conf: %v", err)
+		log.Errorf("read filer conf: %v", err)
 		return
 	}
 	f.FilerConf = fc
@@ -85,7 +85,7 @@ func (f *Filer) LoadFilerConf() {
 // //////////////////////////////////
 func (f *Filer) LoadRemoteStorageConfAndMapping() {
 	if err := f.RemoteStorage.LoadRemoteStorageConfigurationsAndMapping(f); err != nil {
-		glog.Errorf("read remote conf and mapping: %v", err)
+		log.Errorf("read remote conf and mapping: %v", err)
 		return
 	}
 }

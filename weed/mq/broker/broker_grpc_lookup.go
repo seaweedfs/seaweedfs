@@ -3,7 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -28,7 +28,7 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 	conf := &mq_pb.ConfigureTopicResponse{}
 	ret.Topic = request.Topic
 	if conf, err = b.fca.ReadTopicConfFromFiler(t); err != nil {
-		glog.V(0).Infof("lookup topic %s conf: %v", request.Topic, err)
+		log.V(3).Infof("lookup topic %s conf: %v", request.Topic, err)
 	} else {
 		err = b.ensureTopicActiveAssignments(t, conf)
 		ret.BrokerPartitionAssignments = conf.BrokerPartitionAssignments

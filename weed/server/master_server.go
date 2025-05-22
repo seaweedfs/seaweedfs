@@ -22,7 +22,7 @@ import (
 	"github.com/seaweedfs/raft"
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
@@ -125,11 +125,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 
 	seq := ms.createSequencer(option)
 	if nil == seq {
-		glog.Fatalf("create sequencer failed.")
+		log.Fatalf("create sequencer failed.")
 	}
 	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, 5, replicationAsMin)
 	ms.vg = topology.NewDefaultVolumeGrowth()
-	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
+	log.V(3).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
 
 	ms.guard = security.NewGuard(append(ms.option.WhiteList, whiteList...), signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
@@ -178,10 +178,10 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	if raftServer.raftServer != nil {
 		ms.Topo.RaftServer = raftServer.raftServer
 		ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
-			glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
+			log.V(3).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
 			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
 			if ms.Topo.RaftServer.Leader() != "" {
-				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
+				log.V(3).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 				ms.Topo.LastLeaderChangeTime = time.Now()
 			}
 		})
@@ -194,7 +194,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	ms.Topo.RaftServerAccessLock.Unlock()
 
 	if ms.Topo.IsLeader() {
-		glog.V(0).Infof("%s I am the leader!", raftServerName)
+		log.V(3).Infof("%s I am the leader!", raftServerName)
 	} else {
 		var raftServerLeader string
 		ms.Topo.RaftServerAccessLock.RLock()
@@ -206,7 +206,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			raftServerLeader = string(raftServerLeaderAddr)
 		}
 		ms.Topo.RaftServerAccessLock.RUnlock()
-		glog.V(0).Infof("%s %s - is the leader.", raftServerName, raftServerLeader)
+		log.V(3).Infof("%s %s - is the leader.", raftServerName, raftServerLeader)
 	}
 }
 
@@ -233,7 +233,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// proxy to leader
-		glog.V(4).Infoln("proxying to leader", raftServerLeader)
+		log.V(-1).Infoln("proxying to leader", raftServerLeader)
 		proxy := httputil.NewSingleHostReverseProxy(targetUrl)
 		director := proxy.Director
 		proxy.Director = func(req *http.Request) {
@@ -254,7 +254,7 @@ func (ms *MasterServer) startAdminScripts() {
 	if adminScripts == "" {
 		return
 	}
-	glog.V(0).Infof("adminScripts: %v", adminScripts)
+	log.V(3).Infof("adminScripts: %v", adminScripts)
 
 	v.SetDefault("master.maintenance.sleep_minutes", 17)
 	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
@@ -313,12 +313,12 @@ func processEachCmd(reg *regexp.Regexp, line string, commandEnv *shell.CommandEn
 	for _, c := range shell.Commands {
 		if c.Name() == cmd {
 			if c.HasTag(shell.ResourceHeavy) {
-				glog.Warningf("%s is resource heavy and should not run on master", cmd)
+				log.Warningf("%s is resource heavy and should not run on master", cmd)
 				continue
 			}
-			glog.V(0).Infof("executing: %s %v", cmd, args)
+			log.V(3).Infof("executing: %s %v", cmd, args)
 			if err := c.Do(args, commandEnv, os.Stdout); err != nil {
-				glog.V(0).Infof("error: %v", err)
+				log.V(3).Infof("error: %v", err)
 			}
 		}
 	}
@@ -328,14 +328,14 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 	var seq sequence.Sequencer
 	v := util.GetViper()
 	seqType := strings.ToLower(v.GetString(SequencerType))
-	glog.V(1).Infof("[%s] : [%s]", SequencerType, seqType)
+	log.V(2).Infof("[%s] : [%s]", SequencerType, seqType)
 	switch strings.ToLower(seqType) {
 	case "snowflake":
 		var err error
 		snowflakeId := v.GetInt(SequencerSnowflakeId)
 		seq, err = sequence.NewSnowflakeSequencer(string(option.Master), snowflakeId)
 		if err != nil {
-			glog.Error(err)
+			log.Error(err)
 			seq = nil
 		}
 	case "raft":
@@ -353,7 +353,7 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 	if update.NodeType != cluster.MasterType || ms.Topo.HashicorpRaft == nil {
 		return
 	}
-	glog.V(4).Infof("OnPeerUpdate: %+v", update)
+	log.V(-1).Infof("OnPeerUpdate: %+v", update)
 
 	peerAddress := pb.ServerAddress(update.Address)
 	peerName := string(peerAddress)
@@ -368,7 +368,7 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 			}
 		}
 		if !raftServerFound {
-			glog.V(0).Infof("adding new raft server: %s", peerName)
+			log.V(3).Infof("adding new raft server: %s", peerName)
 			ms.Topo.HashicorpRaft.AddVoter(
 				hashicorpRaft.ServerID(peerName),
 				hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
@@ -378,7 +378,7 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 			ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Second)
 			defer cancel()
 			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
-				glog.V(0).Infof("master %s didn't respond to pings. remove raft server", peerName)
+				log.V(3).Infof("master %s didn't respond to pings. remove raft server", peerName)
 				if err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 					_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
 						Id:    peerName,
@@ -386,11 +386,11 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 					})
 					return err
 				}); err != nil {
-					glog.Warningf("failed removing old raft server: %v", err)
+					log.Warningf("failed removing old raft server: %v", err)
 					return err
 				}
 			} else {
-				glog.V(0).Infof("master %s successfully responded to ping", peerName)
+				log.V(3).Infof("master %s successfully responded to ping", peerName)
 			}
 			return nil
 		})
@@ -408,7 +408,7 @@ func (ms *MasterServer) Shutdown() {
 }
 
 func (ms *MasterServer) Reload() {
-	glog.V(0).Infoln("Reload master server...")
+	log.V(3).Infoln("Reload master server...")
 
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()

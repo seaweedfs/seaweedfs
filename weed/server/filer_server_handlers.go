@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -97,7 +97,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		fs.inFlightDataLimitCond.L.Lock()
 		inFlightDataSize := atomic.LoadInt64(&fs.inFlightDataSize)
 		for fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit {
-			glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, fs.option.ConcurrentUploadLimit)
+			log.V(-1).Infof("wait because inflight data %d > %d", inFlightDataSize, fs.option.ConcurrentUploadLimit)
 			fs.inFlightDataLimitCond.Wait()
 			inFlightDataSize = atomic.LoadInt64(&fs.inFlightDataSize)
 		}
@@ -211,17 +211,17 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 
 	tokenStr := security.GetJwt(r)
 	if tokenStr == "" {
-		glog.V(1).Infof("missing jwt from %s", r.RemoteAddr)
+		log.V(2).Infof("missing jwt from %s", r.RemoteAddr)
 		return false
 	}
 
 	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFilerClaims{})
 	if err != nil {
-		glog.V(1).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
+		log.V(2).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
 		return false
 	}
 	if !token.Valid {
-		glog.V(1).Infof("jwt invalid from %s: %v", r.RemoteAddr, tokenStr)
+		log.V(2).Infof("jwt invalid from %s: %v", r.RemoteAddr, tokenStr)
 		return false
 	} else {
 		return true
@@ -231,7 +231,7 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS "+util.VERSION)
 	if _, err := fs.filer.Store.FindEntry(context.Background(), filer.TopicsDir); err != nil && err != filer_pb.ErrNotFound {
-		glog.Warningf("filerHealthzHandler FindEntry: %+v", err)
+		log.Warningf("filerHealthzHandler FindEntry: %+v", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	} else {
 		w.WriteHeader(http.StatusOK)

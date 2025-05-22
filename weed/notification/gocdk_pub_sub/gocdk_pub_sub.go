@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	// _ "gocloud.dev/pubsub/azuresb"
@@ -78,13 +78,13 @@ func (k *GoCDKPubSub) doReconnect() {
 			k.topic.Shutdown(context.Background())
 			k.topicLock.RUnlock()
 			for {
-				glog.Info("Try reconnect")
+				log.Info("Try reconnect")
 				conn, err := amqp.Dial(os.Getenv("RABBIT_SERVER_URL"))
 				if err == nil {
 					k.setTopic(rabbitpubsub.OpenTopic(conn, getPath(k.topicURL), nil))
 					break
 				}
-				glog.Error(err)
+				log.Error(err)
 				time.Sleep(time.Second)
 			}
 		}(conn)
@@ -93,10 +93,10 @@ func (k *GoCDKPubSub) doReconnect() {
 
 func (k *GoCDKPubSub) Initialize(configuration util.Configuration, prefix string) error {
 	k.topicURL = configuration.GetString(prefix + "topic_url")
-	glog.V(0).Infof("notification.gocdk_pub_sub.topic_url: %v", k.topicURL)
+	log.V(3).Infof("notification.gocdk_pub_sub.topic_url: %v", k.topicURL)
 	topic, err := pubsub.OpenTopic(context.Background(), k.topicURL)
 	if err != nil {
-		glog.Fatalf("Failed to open topic: %v", err)
+		log.Fatalf("Failed to open topic: %v", err)
 	}
 	k.setTopic(topic)
 	return nil

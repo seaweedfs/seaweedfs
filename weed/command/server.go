@@ -9,7 +9,7 @@ import (
 
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
@@ -281,14 +281,14 @@ func runServer(cmd *Command, args []string) bool {
 	folders := strings.Split(*volumeDataFolders, ",")
 
 	if *masterOptions.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
-		glog.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
+		log.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
 	}
 
 	if *masterOptions.metaFolder == "" {
 		*masterOptions.metaFolder = folders[0]
 	}
 	if err := util.TestFolderWritable(util.ResolvePath(*masterOptions.metaFolder)); err != nil {
-		glog.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterOptions.metaFolder, err)
+		log.Fatalf("Check Meta Folder (-mdir=\"%s\") Writable: %s", *masterOptions.metaFolder, err)
 	}
 	filerOptions.defaultLevelDbDirectory = masterOptions.metaFolder
 

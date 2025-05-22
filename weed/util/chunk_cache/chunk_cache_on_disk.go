@@ -7,7 +7,7 @@ import (
 
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -63,7 +63,7 @@ func LoadOrCreateChunkCacheVolume(fileName string, preallocate int64) (*ChunkCac
 		return nil, fmt.Errorf("cannot write cache index %s.idx: %v", v.fileName, err)
 	}
 
-	glog.V(1).Infoln("loading leveldb", v.fileName+".ldb")
+	log.V(2).Infoln("loading leveldb", v.fileName+".ldb")
 	opts := &opt.Options{
 		BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
 		WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
@@ -92,9 +92,9 @@ func (v *ChunkCacheVolume) doReset() {
 	v.Shutdown()
 	os.Truncate(v.fileName+".dat", 0)
 	os.Truncate(v.fileName+".idx", 0)
-	glog.V(4).Infof("cache removeAll %s ...", v.fileName+".ldb")
+	log.V(-1).Infof("cache removeAll %s ...", v.fileName+".ldb")
 	os.RemoveAll(v.fileName + ".ldb")
-	glog.V(4).Infof("cache removed %s", v.fileName+".ldb")
+	log.V(-1).Infof("cache removed %s", v.fileName+".ldb")
 }
 
 func (v *ChunkCacheVolume) Reset() (*ChunkCacheVolume, error) {

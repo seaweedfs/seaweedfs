@@ -13,7 +13,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -26,7 +26,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 	bucket := mux.Vars(r)["bucket"]
 
-	glog.V(3).Infof("PostPolicyBucketHandler %s", bucket)
+	log.V(0).Infof("PostPolicyBucketHandler %s", bucket)
 
 	reader, err := r.MultipartReader()
 	if err != nil {

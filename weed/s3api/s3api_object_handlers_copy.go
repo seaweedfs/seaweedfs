@@ -10,7 +10,7 @@ import (
 
 	"modernc.org/strutil"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -35,7 +35,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	srcBucket, srcObject := pathToBucketAndObject(cpSrcPath)
 
-	glog.V(3).Infof("CopyObjectHandler %s %s => %s %s", srcBucket, srcObject, dstBucket, dstObject)
+	log.V(0).Infof("CopyObjectHandler %s %s => %s %s", srcBucket, srcObject, dstBucket, dstObject)
 
 	replaceMeta, replaceTagging := replaceDirective(r.Header)
 
@@ -50,7 +50,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		entry.Extended, err = processMetadataBytes(r.Header, entry.Extended, replaceMeta, replaceTagging)
 		entry.Attributes.Mtime = time.Now().Unix()
 		if err != nil {
-			glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, err)
+			log.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
 			return
 		}
@@ -100,7 +100,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
-	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
+	log.V(1).Infof("copy from %s to %s", srcUrl, dstUrl)
 	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
 	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body, destination, dstBucket)
 
@@ -162,7 +162,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	glog.V(3).Infof("CopyObjectPartHandler %s %s => %s part %d", srcBucket, srcObject, dstBucket, partID)
+	log.V(0).Infof("CopyObjectPartHandler %s %s => %s part %d", srcBucket, srcObject, dstBucket, partID)
 
 	// check partID with maximum part ID for multipart objects
 	if partID > globalMaxPartID {
@@ -184,7 +184,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	defer util_http.CloseResponse(resp)
 	defer dataReader.Close()
 
-	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
+	log.V(1).Infof("copy from %s to %s", srcUrl, dstUrl)
 	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
 	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader, destination, dstBucket)
 

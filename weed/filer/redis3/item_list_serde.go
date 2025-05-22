@@ -2,7 +2,7 @@ package redis3
 
 import (
 	"github.com/redis/go-redis/v9"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util/skiplist"
 	"google.golang.org/protobuf/proto"
 )
@@ -22,7 +22,7 @@ func LoadItemList(data []byte, prefix string, client redis.UniversalClient, stor
 
 	message := &skiplist.SkipListProto{}
 	if err := proto.Unmarshal(data, message); err != nil {
-		glog.Errorf("loading skiplist: %v", err)
+		log.Errorf("loading skiplist: %v", err)
 	}
 	nl.skipList.MaxNewLevel = int(message.MaxNewLevel)
 	nl.skipList.MaxLevel = int(message.MaxLevel)
@@ -69,7 +69,7 @@ func (nl *ItemList) ToBytes() []byte {
 	}
 	data, err := proto.Marshal(message)
 	if err != nil {
-		glog.Errorf("marshal skiplist: %v", err)
+		log.Errorf("marshal skiplist: %v", err)
 	}
 	return data
 }

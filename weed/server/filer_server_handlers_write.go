@@ -11,7 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -46,7 +46,7 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 
 	assignResult, ae := operation.Assign(fs.filer.GetMaster, fs.grpcDialOption, ar, altRequest)
 	if ae != nil {
-		glog.Errorf("failing to assign a file id: %v", ae)
+		log.Errorf("failing to assign a file id: %v", ae)
 		err = ae
 		return
 	}
@@ -93,14 +93,14 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		if err == ErrReadOnly {
 			w.WriteHeader(http.StatusInsufficientStorage)
 		} else {
-			glog.V(1).Infoln("post", r.RequestURI, ":", err.Error())
+			log.V(2).Infoln("post", r.RequestURI, ":", err.Error())
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 		return
 	}
 
 	if util.FullPath(r.URL.Path).IsLongerFileName(so.MaxFileNameLength) {
-		glog.V(1).Infoln("post", r.RequestURI, ": ", "entry name too long")
+		log.V(2).Infoln("post", r.RequestURI, ": ", "entry name too long")
 		w.WriteHeader(http.StatusRequestURITooLong)
 		return
 	}
@@ -128,7 +128,7 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 	src := r.URL.Query().Get("mv.from")
 	dst := r.URL.Path
 
-	glog.V(2).Infof("FilerServer.move %v to %v", src, dst)
+	log.V(1).Infof("FilerServer.move %v to %v", src, dst)
 
 	var err error
 	if src, err = clearName(src); err != nil {
@@ -232,7 +232,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil, 0)
 	if err != nil && err != filer_pb.ErrNotFound {
-		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
+		log.V(2).Infoln("deleting", objectPath, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
@@ -261,7 +261,7 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	if ttlSeconds == 0 {
 		ttl, err := needle.ReadTTL(rule.GetTtl())
 		if err != nil {
-			glog.Errorf("fail to parse %s ttl setting %s: %v", rule.LocationPrefix, rule.Ttl, err)
+			log.Errorf("fail to parse %s ttl setting %s: %v", rule.LocationPrefix, rule.Ttl, err)
 		}
 		ttlSeconds = int32(ttl.Minutes()) * 60
 	}
@@ -284,7 +284,7 @@ func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplicatio
 
 	ttl, err := needle.ReadTTL(qTtl)
 	if err != nil {
-		glog.Errorf("fail to parse ttl %s: %v", qTtl, err)
+		log.Errorf("fail to parse ttl %s: %v", qTtl, err)
 	}
 
 	so, err := fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)

@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/aws/aws-sdk-go/service/iam"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -20,13 +20,13 @@ func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, iamError *Iam
 
 	if iamError == nil {
 		// Do nothing if there is no error
-		glog.Errorf("No error found")
+		log.Errorf("No error found")
 		return
 	}
 
 	errCode := iamError.Code
 	errMsg := iamError.Error.Error()
-	glog.Errorf("Response %+v", errMsg)
+	log.Errorf("Response %+v", errMsg)
 
 	errorResp := newErrorResponse(errCode, errMsg)
 	internalErrorResponse := newErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error")

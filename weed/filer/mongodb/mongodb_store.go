@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"go.mongodb.org/mongo-driver/bson"
@@ -187,7 +187,7 @@ func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath
 	var where = bson.M{"directory": dir, "name": name}
 	err = store.connect.Database(store.database).Collection(store.collectionName).FindOne(ctx, where).Decode(&data)
 	if err != mongo.ErrNoDocuments && err != nil {
-		glog.Errorf("find %s: %v", fullpath, err)
+		log.Errorf("find %s: %v", fullpath, err)
 		return nil, filer_pb.ErrNotFound
 	}
 
@@ -264,7 +264,7 @@ func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 		lastFileName = data.Name
 		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data.Meta)); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			log.V(3).Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
 
@@ -275,7 +275,7 @@ func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 	}
 
 	if err := cur.Close(ctx); err != nil {
-		glog.V(0).Infof("list iterator close: %v", err)
+		log.V(3).Infof("list iterator close: %v", err)
 	}
 
 	return lastFileName, err

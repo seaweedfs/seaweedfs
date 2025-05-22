@@ -12,7 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
@@ -117,7 +117,7 @@ func (mc *MasterClient) WaitUntilConnected(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			glog.V(0).Infof("Connection wait stopped: %v", ctx.Err())
+			log.V(3).Infof("Connection wait stopped: %v", ctx.Err())
 			return
 		default:
 			if mc.getCurrentMaster() != "" {
@@ -130,11 +130,11 @@ func (mc *MasterClient) WaitUntilConnected(ctx context.Context) {
 }
 
 func (mc *MasterClient) KeepConnectedToMaster(ctx context.Context) {
-	glog.V(1).Infof("%s.%s masterClient bootstraps with masters %v", mc.FilerGroup, mc.clientType, mc.masters)
+	log.V(2).Infof("%s.%s masterClient bootstraps with masters %v", mc.FilerGroup, mc.clientType, mc.masters)
 	for {
 		select {
 		case <-ctx.Done():
-			glog.V(0).Infof("Connection to masters stopped: %v", ctx.Err())
+			log.V(3).Infof("Connection to masters stopped: %v", ctx.Err())
 			return
 		default:
 			mc.tryAllMasters(ctx)
@@ -158,14 +158,14 @@ func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddres
 			leader = resp.Leader
 			return nil
 		}); grpcErr != nil {
-			glog.V(0).Infof("connect to %s: %v", master, grpcErr)
+			log.V(3).Infof("connect to %s: %v", master, grpcErr)
 		}
 		if leader != "" {
-			glog.V(0).Infof("existing leader is %s", leader)
+			log.V(3).Infof("existing leader is %s", leader)
 			return
 		}
 	}
-	glog.V(0).Infof("No existing leader found!")
+	log.V(3).Infof("No existing leader found!")
 	return
 }
 
@@ -177,7 +177,7 @@ func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 		for nextHintedLeader != "" {
 			select {
 			case <-ctx.Done():
-				glog.V(0).Infof("Connection attempt to all masters stopped: %v", ctx.Err())
+				log.V(3).Infof("Connection attempt to all masters stopped: %v", ctx.Err())
 				return
 			default:
 				nextHintedLeader = mc.tryConnectToMaster(ctx, nextHintedLeader)
@@ -188,7 +188,7 @@ func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 }
 
 func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.ServerAddress) (nextHintedLeader pb.ServerAddress) {
-	glog.V(1).Infof("%s.%s masterClient Connecting to master %v", mc.FilerGroup, mc.clientType, master)
+	log.V(2).Infof("%s.%s masterClient Connecting to master %v", mc.FilerGroup, mc.clientType, master)
 	stats.MasterClientConnectCounter.WithLabelValues("total").Inc()
 	gprcErr := pb.WithMasterClient(true, master, mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithCancel(ctx)
@@ -196,7 +196,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 
 		stream, err := client.KeepConnected(ctx)
 		if err != nil {
-			glog.V(1).Infof("%s.%s masterClient failed to keep connected to %s: %v", mc.FilerGroup, mc.clientType, master, err)
+			log.V(2).Infof("%s.%s masterClient failed to keep connected to %s: %v", mc.FilerGroup, mc.clientType, master, err)
 			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToKeepConnected).Inc()
 			return err
 		}
@@ -209,15 +209,15 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			ClientAddress: string(mc.clientHost),
 			Version:       util.Version(),
 		}); err != nil {
-			glog.V(0).Infof("%s.%s masterClient failed to send to %s: %v", mc.FilerGroup, mc.clientType, master, err)
+			log.V(3).Infof("%s.%s masterClient failed to send to %s: %v", mc.FilerGroup, mc.clientType, master, err)
 			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToSend).Inc()
 			return err
 		}
-		glog.V(1).Infof("%s.%s masterClient Connected to %v", mc.FilerGroup, mc.clientType, master)
+		log.V(2).Infof("%s.%s masterClient Connected to %v", mc.FilerGroup, mc.clientType, master)
 
 		resp, err := stream.Recv()
 		if err != nil {
-			glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
+			log.V(3).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
 			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
 			return err
 		}
@@ -225,7 +225,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 		// check if it is the leader to determine whether to reset the vidMap
 		if resp.VolumeLocation != nil {
 			if resp.VolumeLocation.Leader != "" && string(master) != resp.VolumeLocation.Leader {
-				glog.V(0).Infof("master %v redirected to leader %v", master, resp.VolumeLocation.Leader)
+				log.V(3).Infof("master %v redirected to leader %v", master, resp.VolumeLocation.Leader)
 				nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
 				stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
 				return nil
@@ -240,7 +240,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 		for {
 			resp, err := stream.Recv()
 			if err != nil {
-				glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
+				log.V(3).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
 				stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
 				return err
 			}
@@ -248,7 +248,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			if resp.VolumeLocation != nil {
 				// maybe the leader is changed
 				if resp.VolumeLocation.Leader != "" && string(mc.GetMaster(ctx)) != resp.VolumeLocation.Leader {
-					glog.V(0).Infof("currentMaster %v redirected to leader %v", mc.GetMaster(ctx), resp.VolumeLocation.Leader)
+					log.V(3).Infof("currentMaster %v redirected to leader %v", mc.GetMaster(ctx), resp.VolumeLocation.Leader)
 					nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
 					stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
 					return nil
@@ -262,9 +262,9 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 				if mc.OnPeerUpdate != nil {
 					if update.FilerGroup == mc.FilerGroup {
 						if update.IsAdd {
-							glog.V(0).Infof("+ %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
+							log.V(3).Infof("+ %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
 						} else {
-							glog.V(0).Infof("- %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
+							log.V(3).Infof("- %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
 						}
 						stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
 						mc.OnPeerUpdate(update, time.Now())
@@ -273,21 +273,21 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 				mc.OnPeerUpdateLock.RUnlock()
 			}
 			if err := ctx.Err(); err != nil {
-				glog.V(0).Infof("Connection attempt to master stopped: %v", err)
+				log.V(3).Infof("Connection attempt to master stopped: %v", err)
 				return err
 			}
 		}
 	})
 	if gprcErr != nil {
 		stats.MasterClientConnectCounter.WithLabelValues(stats.Failed).Inc()
-		glog.V(1).Infof("%s.%s masterClient failed to connect with master %v: %v", mc.FilerGroup, mc.clientType, master, gprcErr)
+		log.V(2).Infof("%s.%s masterClient failed to connect with master %v: %v", mc.FilerGroup, mc.clientType, master, gprcErr)
 	}
 	return
 }
 
 func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	if resp.VolumeLocation.IsEmptyUrl() {
-		glog.V(0).Infof("updateVidMap ignore short heartbeat: %+v", resp)
+		log.V(3).Infof("updateVidMap ignore short heartbeat: %+v", resp)
 		return
 	}
 	// process new volume location
@@ -298,22 +298,22 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		GrpcPort:   int(resp.VolumeLocation.GrpcPort),
 	}
 	for _, newVid := range resp.VolumeLocation.NewVids {
-		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
+		log.V(1).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
 		mc.addLocation(newVid, loc)
 	}
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
-		glog.V(2).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
+		log.V(1).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
 		mc.deleteLocation(deletedVid, loc)
 	}
 	for _, newEcVid := range resp.VolumeLocation.NewEcVids {
-		glog.V(2).Infof("%s.%s: %s masterClient adds ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, newEcVid)
+		log.V(1).Infof("%s.%s: %s masterClient adds ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, newEcVid)
 		mc.addEcLocation(newEcVid, loc)
 	}
 	for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
-		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
+		log.V(1).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
 	}
-	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add: %d, del: %d, add ec: %d del ec: %d",
+	log.V(2).Infof("updateVidMap(%s) %s.%s: %s volume add: %d, del: %d, add ec: %d del ec: %d",
 		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,
 		len(resp.VolumeLocation.NewVids), len(resp.VolumeLocation.DeletedVids),
 		len(resp.VolumeLocation.NewEcVids), len(resp.VolumeLocation.DeletedEcVids))

@@ -14,7 +14,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -166,11 +166,11 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	if location := s.FindFreeLocation(func(location *DiskLocation) bool {
 		return location.DiskType == diskType
 	}); location != nil {
-		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
+		log.V(3).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
 		if volume, err := NewVolume(location.Directory, location.IdxDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb, ldbTimeout); err == nil {
 			location.SetVolume(vid, volume)
-			glog.V(0).Infof("add volume %d", vid)
+			log.V(3).Infof("add volume %d", vid)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
 				Id:               uint32(vid),
 				Collection:       collection,
@@ -276,12 +276,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 					deleteVids = append(deleteVids, v.Id)
 					shouldDeleteVolume = true
 				} else {
-					glog.V(0).Infof("volume %d is expired", v.Id)
+					log.V(3).Infof("volume %d is expired", v.Id)
 				}
 				if v.lastIoError != nil {
 					deleteVids = append(deleteVids, v.Id)
 					shouldDeleteVolume = true
-					glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
+					log.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
 				}
 			}
 
@@ -329,10 +329,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				found, err := location.deleteVolumeById(vid, false)
 				if err == nil {
 					if found {
-						glog.V(0).Infof("volume %d is deleted", vid)
+						log.V(3).Infof("volume %d is deleted", vid)
 					}
 				} else {
-					glog.Warningf("delete volume %d: %v", vid, err)
+					log.Warningf("delete volume %d: %v", vid, err)
 				}
 			}
 			location.volumesLock.Unlock()
@@ -401,7 +401,7 @@ func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeE
 			err := location.deleteEcVolumeById(ev.VolumeId)
 			if err != nil {
 				ecShards = append(ecShards, messages...)
-				glog.Errorf("delete EcVolume err %d: %v", ev.VolumeId, err)
+				log.Errorf("delete EcVolume err %d: %v", ev.VolumeId, err)
 				continue
 			}
 			// No need for additional lock here since we only need the messages
@@ -440,7 +440,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCook
 		_, _, isUnchanged, err = v.writeNeedle2(n, checkCookie, fsync || s.isStopping)
 		return
 	}
-	glog.V(0).Infoln("volume", i, "not found!")
+	log.V(3).Infoln("volume", i, "not found!")
 	err = fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 	return
 }
@@ -513,7 +513,7 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 func (s *Store) MountVolume(i needle.VolumeId) error {
 	for _, location := range s.Locations {
 		if found := location.LoadVolume(i, s.NeedleMapKind); found == true {
-			glog.V(0).Infof("mount volume %d", i)
+			log.V(3).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
 				Id:               uint32(v.Id),
@@ -547,7 +547,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 	for _, location := range s.Locations {
 		err := location.UnloadVolume(i)
 		if err == nil {
-			glog.V(0).Infof("UnmountVolume %d", i)
+			log.V(3).Infof("UnmountVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
 		} else if err == ErrVolumeNotFound {
@@ -574,7 +574,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool) error {
 	for _, location := range s.Locations {
 		err := location.DeleteVolume(i, onlyEmpty)
 		if err == nil {
-			glog.V(0).Infof("DeleteVolume %d", i)
+			log.V(3).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
 		} else if err == ErrVolumeNotFound {
@@ -582,7 +582,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool) error {
 		} else if err == ErrVolumeNotEmpty {
 			return fmt.Errorf("DeleteVolume %d: %v", i, err)
 		} else {
-			glog.Errorf("DeleteVolume %d: %v", i, err)
+			log.Errorf("DeleteVolume %d: %v", i, err)
 		}
 	}
 
@@ -654,7 +654,7 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 			}
 			newMaxVolumeCount = newMaxVolumeCount + maxVolumeCount
 			atomic.StoreInt32(&diskLocation.MaxVolumeCount, maxVolumeCount)
-			glog.V(4).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
+			log.V(-1).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
 				diskLocation.Directory, maxVolumeCount, unclaimedSpaces/1024/1024, unusedSpace/1024/1024, volumeSizeLimit/1024/1024)
 			hasChanges = hasChanges || currentMaxVolumeCount != atomic.LoadInt32(&diskLocation.MaxVolumeCount)
 		} else {

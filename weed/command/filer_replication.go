@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/replication"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sub"
@@ -42,10 +42,10 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	for _, input := range sub.NotificationInputs {
 		if config.GetBool("notification." + input.GetName() + ".enabled") {
 			if err := input.Initialize(config, "notification."+input.GetName()+"."); err != nil {
-				glog.Fatalf("Failed to initialize notification input for %s: %+v",
+				log.Fatalf("Failed to initialize notification input for %s: %+v",
 					input.GetName(), err)
 			}
-			glog.V(0).Infof("Configure notification input to %s", input.GetName())
+			log.V(3).Infof("Configure notification input to %s", input.GetName())
 			notificationInput = input
 			break
 		}
@@ -63,7 +63,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 			fromDir := config.GetString("source.filer.directory")
 			toDir := config.GetString("sink.filer.directory")
 			if strings.HasPrefix(toDir, fromDir) {
-				glog.Fatalf("recursive replication! source directory %s includes the sink directory %s", fromDir, toDir)
+				log.Fatalf("recursive replication! source directory %s includes the sink directory %s", fromDir, toDir)
 			}
 		}
 	}
@@ -83,7 +83,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	for {
 		key, m, onSuccessFn, onFailureFn, err := notificationInput.ReceiveMessage()
 		if err != nil {
-			glog.Errorf("receive %s: %+v", key, err)
+			log.Errorf("receive %s: %+v", key, err)
 			if onFailureFn != nil {
 				onFailureFn()
 			}
@@ -97,19 +97,19 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 			continue
 		}
 		if m.OldEntry != nil && m.NewEntry == nil {
-			glog.V(1).Infof("delete: %s", key)
+			log.V(2).Infof("delete: %s", key)
 		} else if m.OldEntry == nil && m.NewEntry != nil {
-			glog.V(1).Infof("add: %s", key)
+			log.V(2).Infof("add: %s", key)
 		} else {
-			glog.V(1).Infof("modify: %s", key)
+			log.V(2).Infof("modify: %s", key)
 		}
 		if err = replicator.Replicate(context.Background(), key, m); err != nil {
-			glog.Errorf("replicate %s: %+v", key, err)
+			log.Errorf("replicate %s: %+v", key, err)
 			if onFailureFn != nil {
 				onFailureFn()
 			}
 		} else {
-			glog.V(1).Infof("replicated %s", key)
+			log.V(2).Infof("replicated %s", key)
 			if onSuccessFn != nil {
 				onSuccessFn()
 			}
@@ -123,10 +123,10 @@ func findSink(config *util.ViperProxy) sink.ReplicationSink {
 	for _, sk := range sink.Sinks {
 		if config.GetBool("sink." + sk.GetName() + ".enabled") {
 			if err := sk.Initialize(config, "sink."+sk.GetName()+"."); err != nil {
-				glog.Fatalf("Failed to initialize sink for %s: %+v",
+				log.Fatalf("Failed to initialize sink for %s: %+v",
 					sk.GetName(), err)
 			}
-			glog.V(0).Infof("Configure sink to %s", sk.GetName())
+			log.V(3).Infof("Configure sink to %s", sk.GetName())
 			dataSink = sk
 			break
 		}
@@ -141,7 +141,7 @@ func validateOneEnabledInput(config *util.ViperProxy) {
 			if enabledInput == "" {
 				enabledInput = input.GetName()
 			} else {
-				glog.Fatalf("Notification input is enabled for both %s and %s", enabledInput, input.GetName())
+				log.Fatalf("Notification input is enabled for both %s and %s", enabledInput, input.GetName())
 			}
 		}
 	}

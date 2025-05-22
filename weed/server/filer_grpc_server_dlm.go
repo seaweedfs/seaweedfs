@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc/codes"
@@ -20,7 +20,7 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 	var movedTo pb.ServerAddress
 	expiredAtNs := time.Now().Add(time.Duration(req.SecondsToLock) * time.Second).UnixNano()
 	resp.LockOwner, resp.RenewToken, movedTo, err = fs.filer.Dlm.LockWithTimeout(req.Name, expiredAtNs, req.RenewToken, req.Owner)
-	glog.V(3).Infof("lock %s %v %v %v, isMoved=%v %v", req.Name, req.SecondsToLock, req.RenewToken, req.Owner, req.IsMoved, movedTo)
+	log.V(0).Infof("lock %s %v %v %v, isMoved=%v %v", req.Name, req.SecondsToLock, req.RenewToken, req.Owner, req.IsMoved, movedTo)
 	if movedTo != "" && movedTo != fs.option.Host && !req.IsMoved {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			secondResp, err := client.DistributedLock(context.Background(), &filer_pb.LockRequest{
@@ -100,7 +100,7 @@ func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLock
 	}
 
 	if owner == "" {
-		glog.V(0).Infof("find lock %s moved to %v: %v", req.Name, movedTo, err)
+		log.V(3).Infof("find lock %s moved to %v: %v", req.Name, movedTo, err)
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("lock %s not found", req.Name))
 	}
 	if err != nil {
@@ -145,7 +145,7 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 			return err
 		}); err != nil {
 			// it may not be worth retrying, since the lock may have expired
-			glog.Errorf("transfer lock %v to %v: %v", lock.Key, server, err)
+			log.Errorf("transfer lock %v to %v: %v", lock.Key, server, err)
 		}
 	}
 

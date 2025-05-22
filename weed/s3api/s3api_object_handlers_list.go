@@ -5,7 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -50,7 +50,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
+	log.V(0).Infof("ListObjectsV2Handler %s", bucket)
 
 	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys := getListObjectsV2Args(r.URL.Query())
 
@@ -104,7 +104,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
+	log.V(0).Infof("ListObjectsV1Handler %s", bucket)
 
 	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys := getListObjectsV1Args(r.URL.Query())
 
@@ -312,7 +312,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
-	// glog.V(4).Infof("doListFilerEntries dir: %s, prefix: %s, marker %s, maxKeys: %d, prefixEndsOnDelimiter: %+v", dir, prefix, marker, cursor.maxKeys, cursor.prefixEndsOnDelimiter)
+	// log.V(-1).Infof("doListFilerEntries dir: %s, prefix: %s, marker %s, maxKeys: %d, prefixEndsOnDelimiter: %+v", dir, prefix, marker, cursor.maxKeys, cursor.prefixEndsOnDelimiter)
 	if prefix == "/" && delimiter == "/" {
 		return
 	}
@@ -382,7 +382,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 		}
 		if entry.IsDirectory {
-			// glog.V(4).Infof("List Dir Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
+			// log.V(-1).Infof("List Dir Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
 			if entry.Name == s3_constants.MultipartUploadsFolder { // FIXME no need to apply to all directories. this extra also affects maxKeys
 				continue
 			}
@@ -410,7 +410,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				var isEmpty bool
 				if !s3a.option.AllowEmptyFolder && entry.IsOlderDir() {
 					//if isEmpty, err = s3a.ensureDirectoryAllEmpty(client, dir, entry.Name); err != nil {
-					//	glog.Errorf("check empty folder %s: %v", dir, err)
+					//	log.Errorf("check empty folder %s: %v", dir, err)
 					//}
 				}
 				if !isEmpty {
@@ -419,7 +419,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 		} else {
 			eachEntryFn(dir, entry)
-			// glog.V(4).Infof("List File Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
+			// log.V(-1).Infof("List File Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
 		}
 		if cursor.prefixEndsOnDelimiter {
 			cursor.prefixEndsOnDelimiter = false
@@ -462,8 +462,8 @@ func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, 
 
 func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerClient, parentDir, name string) (isEmpty bool, err error) {
 	// println("+ ensureDirectoryAllEmpty", dir, name)
-	glog.V(4).Infof("+ isEmpty %s/%s", parentDir, name)
-	defer glog.V(4).Infof("- isEmpty %s/%s %v", parentDir, name, isEmpty)
+	log.V(-1).Infof("+ isEmpty %s/%s", parentDir, name)
+	defer log.V(-1).Infof("- isEmpty %s/%s %v", parentDir, name, isEmpty)
 	var fileCounter int
 	var subDirs []string
 	currentDir := parentDir + "/" + name
@@ -480,7 +480,7 @@ func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFile
 			}
 			startFrom = entry.Name
 			isExhausted = isExhausted || isLast
-			glog.V(4).Infof("    * %s/%s isLast: %t", currentDir, startFrom, isLast)
+			log.V(-1).Infof("    * %s/%s isLast: %t", currentDir, startFrom, isLast)
 			return nil
 		}, startFrom, false, 8)
 		if !foundEntry {
@@ -506,7 +506,7 @@ func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFile
 		}
 	}
 
-	glog.V(1).Infof("deleting empty folder %s", currentDir)
+	log.V(2).Infof("deleting empty folder %s", currentDir)
 	if err = doDeleteEntry(filerClient, parentDir, name, true, false); err != nil {
 		return
 	}

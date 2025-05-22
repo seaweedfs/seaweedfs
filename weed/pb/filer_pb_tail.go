@@ -3,7 +3,7 @@ package pb
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -87,20 +87,20 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			if err := processEventFn(resp); err != nil {
 				switch option.EventErrorType {
 				case TrivialOnError:
-					glog.Errorf("process %v: %v", resp, err)
+					log.Errorf("process %v: %v", resp, err)
 				case FatalOnError:
-					glog.Fatalf("process %v: %v", resp, err)
+					log.Fatalf("process %v: %v", resp, err)
 				case RetryForeverOnError:
 					util.RetryUntil("followMetaUpdates", func() error {
 						return processEventFn(resp)
 					}, func(err error) bool {
-						glog.Errorf("process %v: %v", resp, err)
+						log.Errorf("process %v: %v", resp, err)
 						return true
 					})
 				case DontLogError:
 					// pass
 				default:
-					glog.Errorf("process %v: %v", resp, err)
+					log.Errorf("process %v: %v", resp, err)
 				}
 			}
 			option.StartTsNs = resp.TsNs

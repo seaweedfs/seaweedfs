@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
@@ -94,7 +94,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			nodeCount++
 		})
 		if nodeCount < erasure_coding.ParityShardsCount {
-			glog.V(0).Infof("skip erasure coding with %d nodes, less than recommended %d nodes", nodeCount, erasure_coding.ParityShardsCount)
+			log.V(3).Infof("skip erasure coding with %d nodes, less than recommended %d nodes", nodeCount, erasure_coding.ParityShardsCount)
 			return nil
 		}
 	}
@@ -275,13 +275,13 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 						if good, found := vidMap[v.Id]; found {
 							if good {
 								if diskInfo.FreeVolumeCount < 2 {
-									glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
+									log.V(3).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
 									vidMap[v.Id] = false
 								}
 							}
 						} else {
 							if diskInfo.FreeVolumeCount < 2 {
-								glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
+								log.V(3).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
 								vidMap[v.Id] = false
 							} else {
 								vidMap[v.Id] = true

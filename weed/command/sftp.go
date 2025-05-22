@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -110,14 +110,14 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 			}
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			filerGroup = resp.FilerGroup
-			glog.V(0).Infof("SFTP read filer configuration, using filer at: %s", filerAddress)
+			log.V(3).Infof("SFTP read filer configuration, using filer at: %s", filerAddress)
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("Waiting to connect to filer %s grpc address %s...", *sftpOpt.filer, filerAddress.ToGrpcAddress())
+			log.V(3).Infof("Waiting to connect to filer %s grpc address %s...", *sftpOpt.filer, filerAddress.ToGrpcAddress())
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("Connected to filer %s grpc address %s", *sftpOpt.filer, filerAddress.ToGrpcAddress())
+			log.V(3).Infof("Connected to filer %s grpc address %s", *sftpOpt.filer, filerAddress.ToGrpcAddress())
 			break
 		}
 	}
@@ -154,16 +154,16 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-sftp-%d.sock", *sftpOpt.port)
 		}
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
+			log.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
 		go func() {
 			// start on local unix socket
 			sftpSocketListener, err := net.Listen("unix", localSocket)
 			if err != nil {
-				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+				log.Fatalf("Failed to listen on %s: %v", localSocket, err)
 			}
 			if err := service.Serve(sftpSocketListener); err != nil {
-				glog.Fatalf("Failed to serve SFTP on socket %s: %v", localSocket, err)
+				log.Fatalf("Failed to serve SFTP on socket %s: %v", localSocket, err)
 			}
 		}()
 	}
@@ -172,21 +172,21 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 	listenAddress := fmt.Sprintf("%s:%d", *sftpOpt.bindIp, *sftpOpt.port)
 	sftpListener, sftpLocalListener, err := util.NewIpAndLocalListeners(*sftpOpt.bindIp, *sftpOpt.port, time.Duration(10)*time.Second)
 	if err != nil {
-		glog.Fatalf("SFTP server listener on %s error: %v", listenAddress, err)
+		log.Fatalf("SFTP server listener on %s error: %v", listenAddress, err)
 	}
 
-	glog.V(0).Infof("Start Seaweed SFTP Server %s at %s", util.Version(), listenAddress)
+	log.V(3).Infof("Start Seaweed SFTP Server %s at %s", util.Version(), listenAddress)
 
 	if sftpLocalListener != nil {
 		go func() {
 			if err := service.Serve(sftpLocalListener); err != nil {
-				glog.Fatalf("SFTP Server failed to serve on local listener: %v", err)
+				log.Fatalf("SFTP Server failed to serve on local listener: %v", err)
 			}
 		}()
 	}
 
 	if err := service.Serve(sftpListener); err != nil {
-		glog.Fatalf("SFTP Server failed to serve: %v", err)
+		log.Fatalf("SFTP Server failed to serve: %v", err)
 	}
 
 	return true

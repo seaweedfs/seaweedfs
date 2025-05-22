@@ -42,7 +42,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/sqlite"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/tarantool"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/ydb"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/notification"
 	_ "github.com/seaweedfs/seaweedfs/weed/notification/aws_sqs"
 	_ "github.com/seaweedfs/seaweedfs/weed/notification/gocdk_pub_sub"
@@ -143,7 +143,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	option.Masters.RefreshBySrvIfAvailable()
 	if len(option.Masters.GetInstances()) == 0 {
-		glog.Fatal("master list is required!")
+		log.Fatal("master list is required!")
 	}
 
 	if !util.LoadConfiguration("filer", false) {
@@ -153,15 +153,15 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		if os.IsNotExist(err) {
 			os.MkdirAll(option.DefaultLevelDbDir, 0755)
 		}
-		glog.V(0).Infof("default to create filer store dir in %s", option.DefaultLevelDbDir)
+		log.V(3).Infof("default to create filer store dir in %s", option.DefaultLevelDbDir)
 	} else {
-		glog.Warningf("skipping default store dir in %s", option.DefaultLevelDbDir)
+		log.Warningf("skipping default store dir in %s", option.DefaultLevelDbDir)
 	}
 	util.LoadConfiguration("notification", false)
 
 	v.SetDefault("filer.options.max_file_name_length", 255)
 	maxFilenameLength := v.GetUint32("filer.options.max_file_name_length")
-	glog.V(0).Infof("max_file_name_length %d", maxFilenameLength)
+	log.V(3).Infof("max_file_name_length %d", maxFilenameLength)
 	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, func() {
 		if atomic.LoadInt64(&fs.listenersWaits) > 0 {
 			fs.listenersCond.Broadcast()
@@ -201,9 +201,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	existingNodes := fs.filer.ListExistingPeerUpdates(context.Background())
 	startFromTime := time.Now().Add(-filer.LogFlushInterval)
 	if isFresh {
-		glog.V(0).Infof("%s bootstrap from peers %+v", option.Host, existingNodes)
+		log.V(3).Infof("%s bootstrap from peers %+v", option.Host, existingNodes)
 		if err := fs.filer.MaybeBootstrapFromOnePeer(option.Host, existingNodes, startFromTime); err != nil {
-			glog.Fatalf("%s bootstrap from %+v: %v", option.Host, existingNodes, err)
+			log.Fatalf("%s bootstrap from %+v: %v", option.Host, existingNodes, err)
 		}
 	}
 	fs.filer.AggregateFromPeers(option.Host, existingNodes, startFromTime)
@@ -246,7 +246,7 @@ func (fs *FilerServer) checkWithMaster() {
 }
 
 func (fs *FilerServer) Reload() {
-	glog.V(0).Infoln("Reload filer server...")
+	log.V(3).Infoln("Reload filer server...")
 
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()

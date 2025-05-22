@@ -11,7 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -159,11 +159,11 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
 	vl.vid2location[v.Id].Set(dn)
-	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
+	// log.V(-1).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
 		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
 			if vInfo.ReadOnly {
-				glog.V(1).Infof("vid %d removed from writable", v.Id)
+				log.V(2).Infof("vid %d removed from writable", v.Id)
 				vl.removeFromWritable(v.Id)
 				vl.readonlyVolumes.Add(v.Id, dn)
 				return
@@ -171,7 +171,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 				vl.readonlyVolumes.Remove(v.Id, dn)
 			}
 		} else {
-			glog.V(1).Infof("vid %d removed from writable", v.Id)
+			log.V(2).Infof("vid %d removed from writable", v.Id)
 			vl.removeFromWritable(v.Id)
 			vl.readonlyVolumes.Remove(v.Id, dn)
 			return
@@ -226,15 +226,15 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 		vl.setVolumeWritable(vid)
 	} else {
 		if !isEnoughCopies {
-			glog.V(0).Infof("volume %d does not have enough copies", vid)
+			log.V(3).Infof("volume %d does not have enough copies", vid)
 		}
 		if !isAllWritable {
-			glog.V(0).Infof("volume %d are not all writable", vid)
+			log.V(3).Infof("volume %d are not all writable", vid)
 		}
 		if isOversizedVolume {
-			glog.V(1).Infof("volume %d are oversized", vid)
+			log.V(2).Infof("volume %d are oversized", vid)
 		}
-		glog.V(0).Infof("volume %d remove from writable", vid)
+		log.V(3).Infof("volume %d remove from writable", vid)
 		vl.removeFromWritable(vid)
 	}
 }
@@ -402,7 +402,7 @@ func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
 	}
 	vl.removeFromCrowded(vid)
 	if toDeleteIndex >= 0 {
-		glog.V(0).Infoln("Volume", vid, "becomes unwritable")
+		log.V(3).Infoln("Volume", vid, "becomes unwritable")
 		vl.writables = append(vl.writables[0:toDeleteIndex], vl.writables[toDeleteIndex+1:]...)
 		return true
 	}
@@ -414,7 +414,7 @@ func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
 			return false
 		}
 	}
-	glog.V(0).Infoln("Volume", vid, "becomes writable")
+	log.V(3).Infoln("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
 	return true
 }
@@ -453,7 +453,7 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 			vl.readonlyVolumes.Remove(vid, dn)
 			vl.oversizedVolumes.Remove(vid, dn)
 			if location.Length() < vl.rp.GetCopyCount() {
-				glog.V(0).Infoln("Volume", vid, "has", location.Length(), "replica, less than required", vl.rp.GetCopyCount())
+				log.V(3).Infoln("Volume", vid, "has", location.Length(), "replica, less than required", vl.rp.GetCopyCount())
 				return vl.removeFromWritable(vid)
 			}
 		}
@@ -493,14 +493,14 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid needle.VolumeId) bool {
 
 	wasWritable := vl.removeFromWritable(vid)
 	if wasWritable {
-		glog.V(0).Infof("Volume %d reaches full capacity.", vid)
+		log.V(3).Infof("Volume %d reaches full capacity.", vid)
 	}
 	return wasWritable
 }
 
 func (vl *VolumeLayout) removeFromCrowded(vid needle.VolumeId) {
 	if _, ok := vl.crowded[vid]; ok {
-		glog.V(0).Infoln("Volume", vid, "becomes uncrowded")
+		log.V(3).Infoln("Volume", vid, "becomes uncrowded")
 		delete(vl.crowded, vid)
 	}
 }
@@ -508,7 +508,7 @@ func (vl *VolumeLayout) removeFromCrowded(vid needle.VolumeId) {
 func (vl *VolumeLayout) setVolumeCrowded(vid needle.VolumeId) {
 	if _, ok := vl.crowded[vid]; !ok {
 		vl.crowded[vid] = struct{}{}
-		glog.V(0).Infoln("Volume", vid, "becomes crowded")
+		log.V(3).Infoln("Volume", vid, "becomes crowded")
 	}
 }
 

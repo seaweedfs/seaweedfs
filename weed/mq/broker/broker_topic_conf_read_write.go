@@ -2,7 +2,7 @@ package broker
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -13,12 +13,12 @@ func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partitio
 	// get or generate a local partition
 	conf, readConfErr := b.fca.ReadTopicConfFromFiler(t)
 	if readConfErr != nil {
-		glog.Errorf("topic %v not found: %v", t, readConfErr)
+		log.Errorf("topic %v not found: %v", t, readConfErr)
 		return nil, fmt.Errorf("topic %v not found: %v", t, readConfErr)
 	}
 	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
 	if getOrGenError != nil {
-		glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
+		log.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
 		return nil, fmt.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
 	}
 	return localTopicPartition, nil
@@ -55,7 +55,7 @@ func (b *MessageQueueBroker) ensureTopicActiveAssignments(t topic.Topic, conf *m
 	// also fix assignee broker if invalid
 	hasChanges := pub_balancer.EnsureAssignmentsToActiveBrokers(b.PubBalancer.Brokers, 1, conf.BrokerPartitionAssignments)
 	if hasChanges {
-		glog.V(0).Infof("topic %v partition updated assignments: %v", t, conf.BrokerPartitionAssignments)
+		log.V(3).Infof("topic %v partition updated assignments: %v", t, conf.BrokerPartitionAssignments)
 		if err = b.fca.SaveTopicConfToFiler(t, conf); err != nil {
 			return err
 		}

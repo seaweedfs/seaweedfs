@@ -1,7 +1,7 @@
 package skiplist
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -18,7 +18,7 @@ func LoadNameList(data []byte, store ListStore, batchSize int) *NameList {
 
 	message := &SkipListProto{}
 	if err := proto.Unmarshal(data, message); err != nil {
-		glog.Errorf("loading skiplist: %v", err)
+		log.Errorf("loading skiplist: %v", err)
 	}
 	nl.skipList.MaxNewLevel = int(message.MaxNewLevel)
 	nl.skipList.MaxLevel = int(message.MaxLevel)
@@ -65,7 +65,7 @@ func (nl *NameList) ToBytes() []byte {
 	}
 	data, err := proto.Marshal(message)
 	if err != nil {
-		glog.Errorf("marshal skiplist: %v", err)
+		log.Errorf("marshal skiplist: %v", err)
 	}
 	return data
 }

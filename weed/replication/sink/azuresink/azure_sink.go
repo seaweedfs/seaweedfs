@@ -12,7 +12,7 @@ import (
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
@@ -64,7 +64,7 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	// Use your Storage account's name and key to create a credential object.
 	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
 	if err != nil {
-		glog.Fatalf("failed to create Azure credential with account name:%s: %v", accountName, err)
+		log.Fatalf("failed to create Azure credential with account name:%s: %v", accountName, err)
 	}
 
 	// Create a request pipeline that is used to process HTTP(S) requests and responses.
@@ -118,7 +118,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 
 	res, err := appendBlobURL.Create(context.Background(), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, accessCondition, azblob.BlobTagsMap{}, azblob.ClientProvidedKeyOptions{}, azblob.ImmutabilityPolicyOptions{})
 	if res != nil && res.StatusCode() == http.StatusPreconditionFailed {
-		glog.V(0).Infof("skip overwriting %s/%s: %v", g.container, key, err)
+		log.V(3).Infof("skip overwriting %s/%s: %v", g.container, key, err)
 		return nil
 	}
 	if err != nil {

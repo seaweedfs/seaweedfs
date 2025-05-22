@@ -1,7 +1,7 @@
 package s3api
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 
@@ -54,7 +54,7 @@ func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *htt
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketTagging.html
 func (s3a *S3ApiServer) GetBucketTaggingHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("GetBucketTagging %s", bucket)
+	log.V(0).Infof("GetBucketTagging %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)

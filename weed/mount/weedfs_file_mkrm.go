@@ -8,7 +8,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -82,9 +82,9 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 			SkipCheckParentDirectory: true,
 		}
 
-		glog.V(1).Infof("mknod: %v", request)
+		log.V(2).Infof("mknod: %v", request)
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("mknod %s: %v", entryFullPath, err)
+			log.V(3).Infof("mknod %s: %v", entryFullPath, err)
 			return err
 		}
 
@@ -95,7 +95,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return nil
 	})
 
-	glog.V(3).Infof("mknod %s: %v", entryFullPath, err)
+	log.V(0).Infof("mknod %s: %v", entryFullPath, err)
 
 	if err != nil {
 		return fuse.EIO
@@ -135,17 +135,17 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 
 	// first, ensure the filer store can correctly delete
-	glog.V(3).Infof("remove file: %v", entryFullPath)
+	log.V(0).Infof("remove file: %v", entryFullPath)
 	isDeleteData := entry != nil && entry.HardLinkCounter <= 1
 	err := filer_pb.Remove(wfs, string(dirFullPath), name, isDeleteData, false, false, false, []int32{wfs.signature})
 	if err != nil {
-		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
+		log.V(3).Infof("remove %s: %v", entryFullPath, err)
 		return fuse.OK
 	}
 
 	// then, delete meta cache
 	if err = wfs.metaCache.DeleteEntry(context.Background(), entryFullPath); err != nil {
-		glog.V(3).Infof("local DeleteEntry %s: %v", entryFullPath, err)
+		log.V(0).Infof("local DeleteEntry %s: %v", entryFullPath, err)
 		return fuse.EIO
 	}
 

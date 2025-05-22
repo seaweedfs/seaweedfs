@@ -1,7 +1,7 @@
 package util
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"net"
 	"time"
 
@@ -113,7 +113,7 @@ func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipLis
 	if host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" && host != "[::]" && host != "[::1]" {
 		listener, err = net.Listen("tcp", JoinHostPort("localhost", port))
 		if err != nil {
-			glog.V(0).Infof("skip starting on %s:%d: %v", host, port, err)
+			log.V(3).Infof("skip starting on %s:%d: %v", host, port, err)
 			return ipListener, nil, nil
 		}
 

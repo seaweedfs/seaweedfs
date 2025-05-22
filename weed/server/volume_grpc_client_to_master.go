@@ -16,7 +16,7 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -40,7 +40,7 @@ func (vs *VolumeServer) checkWithMaster() (err error) {
 			if err == nil {
 				return
 			} else {
-				glog.V(0).Infof("checkWithMaster %s: %v", master, err)
+				log.V(3).Infof("checkWithMaster %s: %v", master, err)
 			}
 		}
 		time.Sleep(1790 * time.Millisecond)
@@ -49,7 +49,7 @@ func (vs *VolumeServer) checkWithMaster() (err error) {
 
 func (vs *VolumeServer) heartbeat() {
 
-	glog.V(0).Infof("Volume server start with seed master nodes: %v", vs.SeedMasterNodes)
+	log.V(3).Infof("Volume server start with seed master nodes: %v", vs.SeedMasterNodes)
 	vs.store.SetDataCenter(vs.dataCenter)
 	vs.store.SetRack(vs.rack)
 
@@ -68,7 +68,7 @@ func (vs *VolumeServer) heartbeat() {
 			vs.store.MasterAddress = master
 			newLeader, err = vs.doHeartbeat(master, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
-				glog.V(0).Infof("heartbeat to %s error: %v", master, err)
+				log.V(3).Infof("heartbeat to %s error: %v", master, err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
 				newLeader = ""
 				vs.store.MasterAddress = ""
@@ -103,10 +103,10 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 	client := master_pb.NewSeaweedClient(grpcConnection)
 	stream, err := client.SendHeartbeat(ctx)
 	if err != nil {
-		glog.V(0).Infof("SendHeartbeat to %s: %v", masterAddress, err)
+		log.V(3).Infof("SendHeartbeat to %s: %v", masterAddress, err)
 		return "", err
 	}
-	glog.V(0).Infof("Heartbeat to: %v", masterAddress)
+	log.V(3).Infof("Heartbeat to: %v", masterAddress)
 	vs.currentMaster = masterAddress
 
 	doneChan := make(chan error, 1)
@@ -127,7 +127,7 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 						}
 					}
 				}
-				glog.Errorf("Shut down Volume Server due to duplicate volume directories: %v", duplicateDir)
+				log.Errorf("Shut down Volume Server due to duplicate volume directories: %v", duplicateDir)
 				os.Exit(1)
 			}
 			volumeOptsChanged := false
@@ -142,13 +142,13 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 			if volumeOptsChanged {
 				if vs.store.MaybeAdjustVolumeMax() {
 					if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
-						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs.currentMaster, err)
+						log.V(3).Infof("Volume Server Failed to talk with master %s: %v", vs.currentMaster, err)
 						return
 					}
 				}
 			}
 			if in.GetLeader() != "" && string(vs.currentMaster) != in.GetLeader() {
-				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), vs.currentMaster)
+				log.V(3).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), vs.currentMaster)
 				newLeader = pb.ServerAddress(in.GetLeader())
 				doneChan <- nil
 				return
@@ -157,12 +157,12 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 	}()
 
 	if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
-		glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
+		log.V(3).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
 		return "", err
 	}
 
 	if err = stream.Send(vs.store.CollectErasureCodingHeartbeat()); err != nil {
-		glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
+		log.V(3).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
 		return "", err
 	}
 
@@ -186,9 +186,9 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 					&volumeMessage,
 				},
 			}
-			glog.V(0).Infof("volume server %s:%d adds volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
+			log.V(3).Infof("volume server %s:%d adds volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
 			if err = stream.Send(deltaBeat); err != nil {
-				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
+				log.V(3).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
 		case ecShardMessage := <-vs.store.NewEcShardsChan:
@@ -201,10 +201,10 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 					&ecShardMessage,
 				},
 			}
-			glog.V(0).Infof("volume server %s:%d adds ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id,
+			log.V(3).Infof("volume server %s:%d adds ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id,
 				erasure_coding.ShardBits(ecShardMessage.EcIndexBits).ShardIds())
 			if err = stream.Send(deltaBeat); err != nil {
-				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
+				log.V(3).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
 		case volumeMessage := <-vs.store.DeletedVolumesChan:
@@ -217,9 +217,9 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 					&volumeMessage,
 				},
 			}
-			glog.V(0).Infof("volume server %s:%d deletes volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
+			log.V(3).Infof("volume server %s:%d deletes volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
 			if err = stream.Send(deltaBeat); err != nil {
-				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
+				log.V(3).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
 		case ecShardMessage := <-vs.store.DeletedEcShardsChan:
@@ -232,23 +232,23 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 					&ecShardMessage,
 				},
 			}
-			glog.V(0).Infof("volume server %s:%d deletes ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id,
+			log.V(3).Infof("volume server %s:%d deletes ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id,
 				erasure_coding.ShardBits(ecShardMessage.EcIndexBits).ShardIds())
 			if err = stream.Send(deltaBeat); err != nil {
-				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
+				log.V(3).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
 		case <-volumeTickChan.C:
-			glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
+			log.V(-1).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
 			vs.store.MaybeAdjustVolumeMax()
 			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
-				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
+				log.V(3).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
 				return "", err
 			}
 		case <-ecShardTickChan.C:
-			glog.V(4).Infof("volume server %s:%d ec heartbeat", vs.store.Ip, vs.store.Port)
+			log.V(-1).Infof("volume server %s:%d ec heartbeat", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(vs.store.CollectErasureCodingHeartbeat()); err != nil {
-				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
+				log.V(3).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
 				return "", err
 			}
 		case err = <-doneChan:
@@ -265,9 +265,9 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 				Volumes:      volumeMessages,
 				HasNoVolumes: len(volumeMessages) == 0,
 			}
-			glog.V(1).Infof("volume server %s:%d stops and deletes all volumes", vs.store.Ip, vs.store.Port)
+			log.V(2).Infof("volume server %s:%d stops and deletes all volumes", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(emptyBeat); err != nil {
-				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
+				log.V(3).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
 			return

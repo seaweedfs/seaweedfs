@@ -1,7 +1,7 @@
 package command
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -46,7 +46,7 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		if err := util.Retry("metadata processor", func() error {
 			return t.fn(resp)
 		}); err != nil {
-			glog.Errorf("process %v: %v", resp, err)
+			log.Errorf("process %v: %v", resp, err)
 		}
 
 		t.activeJobsLock.Lock()

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -143,7 +143,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl)
 		if shouldGrow && !vl.HasGrowRequest() {
-			glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
+			log.V(3).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
 			if err != nil && ms.Topo.AvailableSpaceFor(option) <= 0 {
 				err = fmt.Errorf("%s and no free volumes left for %s", err.Error(), option.String())
 			}

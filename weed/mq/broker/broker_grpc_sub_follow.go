@@ -3,7 +3,7 @@ package broker
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -34,7 +34,7 @@ func (b *MessageQueueBroker) SubscribeFollowMe(stream mq_pb.SeaweedMessaging_Sub
 				err = nil
 				break
 			}
-			glog.V(0).Infof("topic %v partition %v subscribe stream error: %v", initMessage.Topic, initMessage.Partition, err)
+			log.V(3).Infof("topic %v partition %v subscribe stream error: %v", initMessage.Topic, initMessage.Partition, err)
 			break
 		}
 
@@ -43,10 +43,10 @@ func (b *MessageQueueBroker) SubscribeFollowMe(stream mq_pb.SeaweedMessaging_Sub
 			lastOffset = ackMessage.TsNs
 			// println("sub follower got offset", lastOffset)
 		} else if closeMessage := req.GetClose(); closeMessage != nil {
-			glog.V(0).Infof("topic %v partition %v subscribe stream closed: %v", initMessage.Topic, initMessage.Partition, closeMessage)
+			log.V(3).Infof("topic %v partition %v subscribe stream closed: %v", initMessage.Topic, initMessage.Partition, closeMessage)
 			return nil
 		} else {
-			glog.Errorf("unknown message: %v", req)
+			log.Errorf("unknown message: %v", req)
 		}
 	}
 
@@ -56,7 +56,7 @@ func (b *MessageQueueBroker) SubscribeFollowMe(stream mq_pb.SeaweedMessaging_Sub
 		err = b.saveConsumerGroupOffset(t, p, initMessage.ConsumerGroup, lastOffset)
 	}
 
-	glog.V(0).Infof("shut down follower for %v offset %d", initMessage, lastOffset)
+	log.V(3).Infof("shut down follower for %v offset %d", initMessage, lastOffset)
 
 	return err
 }
@@ -90,7 +90,7 @@ func (b *MessageQueueBroker) saveConsumerGroupOffset(t topic.Topic, p topic.Part
 	util.Uint64toBytes(offsetBytes, uint64(offset))
 
 	return b.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		glog.V(0).Infof("saving topic %s partition %v consumer group %s offset %d", t, p, consumerGroup, offset)
+		log.V(3).Infof("saving topic %s partition %v consumer group %s offset %d", t, p, consumerGroup, offset)
 		return filer.SaveInsideFiler(client, partitionDir, offsetFileName, offsetBytes)
 	})
 }

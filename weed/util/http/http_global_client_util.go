@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 var ErrNotFound = fmt.Errorf("not found")
@@ -281,7 +281,7 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 	// drains the response body to avoid memory leak
 	data, _ := io.ReadAll(reader)
 	if len(data) != 0 {
-		glog.V(1).Infof("%s reader has remaining %d bytes", contentEncoding, len(data))
+		log.V(2).Infof("%s reader has remaining %d bytes", contentEncoding, len(data))
 	}
 	return n, err
 }
@@ -363,7 +363,7 @@ func readEncryptedUrl(fileUrl, jwt string, cipherKey []byte, isContentCompressed
 	if isContentCompressed {
 		decryptedData, err = util.DecompressData(decryptedData)
 		if err != nil {
-			glog.V(0).Infof("unzip decrypt %s: %v", fileUrl, err)
+			log.V(3).Infof("unzip decrypt %s: %v", fileUrl, err)
 		}
 	}
 	if len(decryptedData) < int(offset)+size {
@@ -423,7 +423,7 @@ func CloseResponse(resp *http.Response) {
 	io.Copy(io.Discard, reader)
 	resp.Body.Close()
 	if reader.BytesRead > 0 {
-		glog.V(1).Infof("response leftover %d bytes", reader.BytesRead)
+		log.V(2).Infof("response leftover %d bytes", reader.BytesRead)
 	}
 }
 
@@ -432,7 +432,7 @@ func CloseRequest(req *http.Request) {
 	io.Copy(io.Discard, reader)
 	req.Body.Close()
 	if reader.BytesRead > 0 {
-		glog.V(1).Infof("request leftover %d bytes", reader.BytesRead)
+		log.V(2).Infof("request leftover %d bytes", reader.BytesRead)
 	}
 }
 
@@ -467,13 +467,13 @@ func RetriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte,
 				break
 			}
 			if err != nil {
-				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
+				log.V(3).Infof("read %s failed, err: %v", urlString, err)
 			} else {
 				break
 			}
 		}
 		if err != nil && shouldRetry {
-			glog.V(0).Infof("retry reading in %v", waitTime)
+			log.V(3).Infof("retry reading in %v", waitTime)
 			time.Sleep(waitTime)
 		} else {
 			break

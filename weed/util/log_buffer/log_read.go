@@ -7,7 +7,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -57,7 +57,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		if bytesBuf != nil {
 			readSize = bytesBuf.Len()
 		}
-		glog.V(4).Infof("%s ReadFromBuffer at %v batch %d. Read bytes %v batch %d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, batchIndex)
+		log.V(-1).Infof("%s ReadFromBuffer at %v batch %d. Read bytes %v batch %d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, batchIndex)
 		if bytesBuf == nil {
 			if batchIndex >= 0 {
 				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), batchIndex)
@@ -93,14 +93,14 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			size := util.BytesToUint32(buf[pos : pos+4])
 			if pos+4+int(size) > len(buf) {
 				err = ResumeError
-				glog.Errorf("LoopProcessLogData: %s read buffer %v read %d entries [%d,%d) from [0,%d)", readerName, lastReadPosition, batchSize, pos, pos+int(size)+4, len(buf))
+				log.Errorf("LoopProcessLogData: %s read buffer %v read %d entries [%d,%d) from [0,%d)", readerName, lastReadPosition, batchSize, pos, pos+int(size)+4, len(buf))
 				return
 			}
 			entryData := buf[pos+4 : pos+4+int(size)]
 
 			logEntry := &filer_pb.LogEntry{}
 			if err = proto.Unmarshal(entryData, logEntry); err != nil {
-				glog.Errorf("unexpected unmarshal mq_pb.Message: %v", err)
+				log.Errorf("unexpected unmarshal mq_pb.Message: %v", err)
 				pos += 4 + int(size)
 				continue
 			}
@@ -112,11 +112,11 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			lastReadPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
 
 			if isDone, err = eachLogDataFn(logEntry); err != nil {
-				glog.Errorf("LoopProcessLogData: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
+				log.Errorf("LoopProcessLogData: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
 				return
 			}
 			if isDone {
-				glog.V(0).Infof("LoopProcessLogData2: %s process log entry %d", readerName, batchSize+1)
+				log.V(3).Infof("LoopProcessLogData2: %s process log entry %d", readerName, batchSize+1)
 				return
 			}
 
@@ -126,7 +126,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 
 		}
 
-		glog.V(4).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startPosition, lastReadPosition, batchSize)
+		log.V(-1).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startPosition, lastReadPosition, batchSize)
 	}
 
 }

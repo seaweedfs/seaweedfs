@@ -10,7 +10,7 @@ import (
 	"runtime"
 
 	"github.com/prometheus/procfs"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -26,7 +26,7 @@ func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_serve
 	resp.GarbageRatio = garbageRatio
 
 	if err != nil {
-		glog.V(3).Infof("check volume %d: %v", req.VolumeId, err)
+		log.V(0).Infof("check volume %d: %v", req.VolumeId, err)
 	}
 
 	return resp, err
@@ -62,15 +62,15 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 
 	stats.VolumeServerVacuumingCompactCounter.WithLabelValues(strconv.FormatBool(err == nil && sendErr == nil)).Inc()
 	if err != nil {
-		glog.Errorf("failed compact volume %d: %v", req.VolumeId, err)
+		log.Errorf("failed compact volume %d: %v", req.VolumeId, err)
 		return err
 	}
 	if sendErr != nil {
-		glog.Errorf("failed compact volume %d report progress: %v", req.VolumeId, sendErr)
+		log.Errorf("failed compact volume %d report progress: %v", req.VolumeId, sendErr)
 		return sendErr
 	}
 
-	glog.V(1).Infof("compact volume %d", req.VolumeId)
+	log.V(2).Infof("compact volume %d", req.VolumeId)
 	return nil
 
 }
@@ -86,9 +86,9 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 	readOnly, volumeSize, err := vs.store.CommitCompactVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
-		glog.Errorf("failed commit volume %d: %v", req.VolumeId, err)
+		log.Errorf("failed commit volume %d: %v", req.VolumeId, err)
 	} else {
-		glog.V(1).Infof("commit volume %d", req.VolumeId)
+		log.V(2).Infof("commit volume %d", req.VolumeId)
 	}
 	stats.VolumeServerVacuumingCommitCounter.WithLabelValues(strconv.FormatBool(err == nil)).Inc()
 	resp.IsReadOnly = readOnly
@@ -104,9 +104,9 @@ func (vs *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_ser
 	err := vs.store.CommitCleanupVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
-		glog.Errorf("failed cleanup volume %d: %v", req.VolumeId, err)
+		log.Errorf("failed cleanup volume %d: %v", req.VolumeId, err)
 	} else {
-		glog.V(1).Infof("cleanup volume %d", req.VolumeId)
+		log.V(2).Infof("cleanup volume %d", req.VolumeId)
 	}
 
 	return resp, err

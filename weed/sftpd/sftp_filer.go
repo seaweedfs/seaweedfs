@@ -17,7 +17,7 @@ import (
 
 	"github.com/pkg/sftp"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
@@ -90,7 +90,7 @@ func (fs *SftpServer) withTimeoutContext(fn func(ctx context.Context) error) err
 // ==================== Command Dispatcher ====================
 
 func (fs *SftpServer) dispatchCmd(r *sftp.Request) error {
-	glog.V(0).Infof("Dispatch: %s %s", r.Method, r.Filepath)
+	log.V(3).Infof("Dispatch: %s %s", r.Method, r.Filepath)
 	switch r.Method {
 	case "Remove":
 		return fs.removeEntry(r)
@@ -196,7 +196,7 @@ func (fs *SftpServer) putFile(filepath string, data []byte, user *user.User) err
 
 		if err != nil {
 			// Log the error but don't fail the whole operation
-			glog.Errorf("Failed to update file ownership for %s: %v", filepath, err)
+			log.Errorf("Failed to update file ownership for %s: %v", filepath, err)
 		}
 	}
 

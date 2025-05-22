@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -36,15 +36,15 @@ func GetEntry(filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry
 			Name:      name,
 		}
 
-		// glog.V(3).Infof("read %s request: %v", fullFilePath, request)
+		// log.V(0).Infof("read %s request: %v", fullFilePath, request)
 		resp, err := LookupEntry(client, request)
 		if err != nil {
-			glog.V(3).Infof("read %s %v: %v", fullFilePath, resp, err)
+			log.V(0).Infof("read %s %v: %v", fullFilePath, resp, err)
 			return err
 		}
 
 		if resp.Entry == nil {
-			// glog.V(3).Infof("read %s entry: %v", fullFilePath, entry)
+			// log.V(0).Infof("read %s entry: %v", fullFilePath, entry)
 			return nil
 		}
 
@@ -117,7 +117,7 @@ func doSeaweedList(client SeaweedFilerClient, fullDirPath util.FullPath, prefix 
 		InclusiveStartFrom: inclusive,
 	}
 
-	glog.V(4).Infof("read directory: %v", request)
+	log.V(-1).Infof("read directory: %v", request)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream, err := client.ListEntries(ctx, request)
@@ -165,14 +165,14 @@ func Exists(filerClient FilerClient, parentDirectoryPath string, entryName strin
 			Name:      entryName,
 		}
 
-		glog.V(4).Infof("exists entry %v/%v: %v", parentDirectoryPath, entryName, request)
+		log.V(-1).Infof("exists entry %v/%v: %v", parentDirectoryPath, entryName, request)
 		resp, err := LookupEntry(client, request)
 		if err != nil {
 			if err == ErrNotFound {
 				exists = false
 				return nil
 			}
-			glog.V(0).Infof("exists entry %v: %v", request, err)
+			log.V(3).Infof("exists entry %v: %v", request, err)
 			return fmt.Errorf("exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
 		}
 
@@ -193,9 +193,9 @@ func Touch(filerClient FilerClient, parentDirectoryPath string, entryName string
 			Entry:     entry,
 		}
 
-		glog.V(4).Infof("touch entry %v/%v: %v", parentDirectoryPath, entryName, request)
+		log.V(-1).Infof("touch entry %v/%v: %v", parentDirectoryPath, entryName, request)
 		if err := UpdateEntry(client, request); err != nil {
-			glog.V(0).Infof("touch exists entry %v: %v", request, err)
+			log.V(3).Infof("touch exists entry %v: %v", request, err)
 			return fmt.Errorf("touch exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
 		}
 
@@ -232,9 +232,9 @@ func DoMkdir(client SeaweedFilerClient, parentDirectoryPath string, dirName stri
 		Entry:     entry,
 	}
 
-	glog.V(1).Infof("mkdir: %v", request)
+	log.V(2).Infof("mkdir: %v", request)
 	if err := CreateEntry(client, request); err != nil {
-		glog.V(0).Infof("mkdir %v: %v", request, err)
+		log.V(3).Infof("mkdir %v: %v", request, err)
 		return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
 	}
 
@@ -266,9 +266,9 @@ func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string
 			Entry:     entry,
 		}
 
-		glog.V(1).Infof("create file: %s/%s", parentDirectoryPath, fileName)
+		log.V(2).Infof("create file: %s/%s", parentDirectoryPath, fileName)
 		if err := CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("create file %v:%v", request, err)
+			log.V(3).Infof("create file %v:%v", request, err)
 			return fmt.Errorf("create file %s/%s: %v", parentDirectoryPath, fileName, err)
 		}
 

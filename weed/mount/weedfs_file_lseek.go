@@ -7,7 +7,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 )
 
 // These are non-POSIX extensions
@@ -42,7 +42,7 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 	fileSize := int64(filer.FileSize(fh.GetEntry().GetEntry()))
 	offset := max(int64(in.Offset), 0)
 
-	glog.V(4).Infof(
+	log.V(-1).Infof(
 		"Lseek %s fh %d in [%d,%d], whence %d",
 		fh.FullPath(), fh.fh, offset, fileSize, in.Whence,
 	)

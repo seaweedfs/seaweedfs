@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -28,7 +28,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	readSize := nv.Size
 	if readSize.IsDeleted() {
 		if readOption != nil && readOption.ReadDeleted && readSize != TombstoneFileSize {
-			glog.V(3).Infof("reading deleted %s", n.String())
+			log.V(0).Infof("reading deleted %s", n.String())
 			readSize = -readSize
 		} else {
 			return -1, ErrorDeleted
@@ -118,7 +118,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	readSize := nv.Size
 	if readSize.IsDeleted() {
 		if readOption != nil && readOption.ReadDeleted && readSize != TombstoneFileSize {
-			glog.V(3).Infof("reading deleted %s", n.String())
+			log.V(0).Infof("reading deleted %s", n.String())
 			readSize = -readSize
 		} else {
 			return ErrorDeleted
@@ -253,7 +253,7 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 		if volumeFileScanner.ReadNeedleBody() {
 			// println("needle", n.Id.String(), "offset", offset, "size", n.Size, "rest", rest)
 			if needleBody, err = n.ReadNeedleBody(datBackend, version, offset+NeedleHeaderSize, rest); err != nil {
-				glog.V(0).Infof("cannot read needle head [%d, %d) body [%d, %d) body length %d: %v", offset, offset+NeedleHeaderSize, offset+NeedleHeaderSize, offset+NeedleHeaderSize+rest, rest, err)
+				log.V(3).Infof("cannot read needle head [%d, %d) body [%d, %d) body length %d: %v", offset, offset+NeedleHeaderSize, offset+NeedleHeaderSize, offset+NeedleHeaderSize+rest, rest, err)
 				// err = fmt.Errorf("cannot read needle body: %v", err)
 				// return
 			}
@@ -263,18 +263,18 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 			return nil
 		}
 		if err != nil {
-			glog.V(0).Infof("visit needle error: %v", err)
+			log.V(3).Infof("visit needle error: %v", err)
 			return fmt.Errorf("visit needle error: %v", err)
 		}
 		offset += NeedleHeaderSize + rest
-		glog.V(4).Infof("==> new entry offset %d", offset)
+		log.V(-1).Infof("==> new entry offset %d", offset)
 		if n, nh, rest, err = needle.ReadNeedleHeader(datBackend, version, offset); err != nil {
 			if err == io.EOF {
 				return nil
 			}
 			return fmt.Errorf("cannot read needle header at offset %d: %v", offset, err)
 		}
-		glog.V(4).Infof("new entry needle size:%d rest:%d", n.Size, rest)
+		log.V(-1).Infof("new entry needle size:%d rest:%d", n.Size, rest)
 	}
 	return nil
 }

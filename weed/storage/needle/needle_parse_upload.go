@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -113,7 +113,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		form, fe := r.MultipartReader()
 
 		if fe != nil {
-			glog.V(0).Infoln("MultipartReader [ERROR]", fe)
+			log.V(3).Infoln("MultipartReader [ERROR]", fe)
 			e = fe
 			return
 		}
@@ -121,7 +121,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		// first multi-part item
 		part, fe := form.NextPart()
 		if fe != nil {
-			glog.V(0).Infoln("Reading Multi part [ERROR]", fe)
+			log.V(3).Infoln("Reading Multi part [ERROR]", fe)
 			e = fe
 			return
 		}
@@ -133,7 +133,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 
 		dataSize, e = pu.bytesBuffer.ReadFrom(io.LimitReader(part, sizeLimit+1))
 		if e != nil {
-			glog.V(0).Infoln("Reading Content [ERROR]", e)
+			log.V(3).Infoln("Reading Content [ERROR]", e)
 			return
 		}
 		if dataSize == sizeLimit+1 {
@@ -158,7 +158,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 				pu.bytesBuffer.Reset()
 				dataSize2, fe2 := pu.bytesBuffer.ReadFrom(io.LimitReader(part2, sizeLimit+1))
 				if fe2 != nil {
-					glog.V(0).Infoln("Reading Content [ERROR]", fe2)
+					log.V(3).Infoln("Reading Content [ERROR]", fe2)
 					e = fe2
 					return
 				}
@@ -215,7 +215,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		dataSize, e = pu.bytesBuffer.ReadFrom(io.LimitReader(r.Body, sizeLimit+1))
 
 		if e != nil {
-			glog.V(0).Infoln("Reading Content [ERROR]", e)
+			log.V(3).Infoln("Reading Content [ERROR]", e)
 			return
 		}
 		if dataSize == sizeLimit+1 {

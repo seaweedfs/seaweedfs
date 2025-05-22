@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
@@ -80,9 +80,9 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	if option.Config != "" {
 		grace.OnReload(func() {
 			if err := s3ApiServer.iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
-				glog.Errorf("fail to load config file %s: %v", option.Config, err)
+				log.Errorf("fail to load config file %s: %v", option.Config, err)
 			} else {
-				glog.V(0).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
+				log.V(3).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
 			}
 		})
 	}

@@ -5,7 +5,7 @@ import (
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -48,11 +48,11 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 		)
 
 		if err != nil {
-			glog.V(0).Infof("upload data %v: %v", filename, err)
+			log.V(3).Infof("upload data %v: %v", filename, err)
 			return nil, fmt.Errorf("upload data: %v", err)
 		}
 		if uploadResult.Error != "" {
-			glog.V(0).Infof("upload failure %v: %v", filename, err)
+			log.V(3).Infof("upload failure %v: %v", filename, err)
 			return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 		}
 

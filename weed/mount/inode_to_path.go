@@ -2,7 +2,7 @@ package mount
 
 import (
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
 	"time"
@@ -126,7 +126,7 @@ func (i *InodeToPath) GetInode(path util.FullPath) (uint64, bool) {
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
 	if !found {
-		// glog.Fatalf("GetInode unknown inode for %s", path)
+		// log.Fatalf("GetInode unknown inode for %s", path)
 		// this could be the parent for mount point
 	}
 	return inode, found
@@ -155,8 +155,8 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	inode, found := i.path2inode[fullpath]
 	if !found {
 		// https://github.com/seaweedfs/seaweedfs/issues/4968
-		// glog.Fatalf("MarkChildrenCached not found inode %v", fullpath)
-		glog.Warningf("MarkChildrenCached not found inode %v", fullpath)
+		// log.Fatalf("MarkChildrenCached not found inode %v", fullpath)
+		log.Warningf("MarkChildrenCached not found inode %v", fullpath)
 		return
 	}
 	path, found := i.inode2path[inode]
@@ -263,7 +263,7 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 			entry.nlookup++
 		}
 	} else {
-		glog.Errorf("MovePath %s to %s: sourceInode %d not found", sourcePath, targetPath, sourceInode)
+		log.Errorf("MovePath %s to %s: sourceInode %d not found", sourcePath, targetPath, sourceInode)
 	}
 	return
 }

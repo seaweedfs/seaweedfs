@@ -9,7 +9,7 @@ import (
 
 	redsync "github.com/go-redsync/redsync/v4"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -151,7 +151,7 @@ func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dir
 		entry, err := store.FindEntry(ctx, path)
 		lastFileName = fileName
 		if err != nil {
-			glog.V(0).Infof("list %s : %v", path, err)
+			log.V(3).Infof("list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
 				return true
 			}

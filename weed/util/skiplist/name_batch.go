@@ -1,7 +1,7 @@
 package skiplist
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/log"
 	"google.golang.org/protobuf/proto"
 	"slices"
 	"strings"
@@ -63,7 +63,7 @@ func LoadNameBatch(data []byte) *NameBatch {
 	if len(data) > 0 {
 		err := proto.Unmarshal(data, t)
 		if err != nil {
-			glog.Errorf("unmarshal into NameBatchData{} : %v", err)
+			log.Errorf("unmarshal into NameBatchData{} : %v", err)
 			return nil
 		}
 	}
