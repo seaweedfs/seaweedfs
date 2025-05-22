@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"strconv"
@@ -108,6 +109,9 @@ func runFuse(cmd *Command, args []string) bool {
 		case "child":
 			masterProcess = false
 			if parsed, err := strconv.ParseInt(parameter.value, 10, 64); err == nil {
+				if parsed > math.MaxInt || parsed <= 0 {
+					panic(fmt.Errorf("parent PID %s is invalid", err))
+				}
 				mountOptions.fuseCommandPid = int(parsed)
 			} else {
 				panic(fmt.Errorf("parent PID %s is invalid", err))
