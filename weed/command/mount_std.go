@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -267,6 +268,15 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	grace.OnInterrupt(func() {
 		unmount.Unmount(dir)
 	})
+
+	if mountOptions.fuseCommandPid != 0 {
+		// send a signal to the parent process to notify that the mount is ready
+		err = syscall.Kill(mountOptions.fuseCommandPid, syscall.SIGUSR1)
+		if err != nil {
+			fmt.Printf("failed to notify parent process: %v\n", err)
+			return false
+		}
+	}
 
 	grpcS := pb.NewGrpcServer()
 	mount_pb.RegisterSeaweedMountServer(grpcS, seaweedFileSystem)
