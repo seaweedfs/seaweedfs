@@ -138,7 +138,7 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 		}
 
 		mountToDirIsEmpty := true
-		listErr := filer_pb.SeaweedList(client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		listErr := filer_pb.SeaweedList(context.Background(), client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
 			mountToDirIsEmpty = false
 			return nil
 		}, "", false, 1)

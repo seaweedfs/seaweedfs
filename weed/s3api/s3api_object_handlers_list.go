@@ -471,7 +471,7 @@ func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFile
 	var isExhausted bool
 	var foundEntry bool
 	for fileCounter == 0 && !isExhausted && err == nil {
-		err = filer_pb.SeaweedList(filerClient, currentDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		err = filer_pb.SeaweedList(context.Background(), filerClient, currentDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 			foundEntry = true
 			if entry.IsOlderDir() {
 				subDirs = append(subDirs, entry.Name)

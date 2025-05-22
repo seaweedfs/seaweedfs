@@ -88,6 +88,7 @@ func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir stri
 
 	// find existing directory, and ensure the directory is empty
 	err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		ctx := context.Background()
 		parent, name := util.FullPath(dir).DirAndName()
 		lookupResp, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parent,
@@ -99,12 +100,12 @@ func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir stri
 
 		oldEntry := lookupResp.Entry
 
-		deleteError := filer_pb.DoRemove(client, parent, name, true, true, true, false, nil)
+		deleteError := filer_pb.DoRemove(ctx, client, parent, name, true, true, true, false, nil)
 		if deleteError != nil {
 			return fmt.Errorf("delete %s: %v", dir, deleteError)
 		}
 
-		mkdirErr := filer_pb.DoMkdir(client, parent, name, func(entry *filer_pb.Entry) {
+		mkdirErr := filer_pb.DoMkdir(ctx, client, parent, name, func(entry *filer_pb.Entry) {
 			entry.Attributes = oldEntry.Attributes
 			entry.Extended = oldEntry.Extended
 			entry.Attributes.Crtime = time.Now().Unix()

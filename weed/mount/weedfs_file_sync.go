@@ -159,7 +159,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
-		if err := filer_pb.CreateEntry(client, request); err != nil {
+		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 			return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
 		}

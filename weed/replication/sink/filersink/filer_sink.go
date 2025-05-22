@@ -95,7 +95,7 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 	dir, name := util.FullPath(key).DirAndName()
 
 	glog.V(4).Infof("delete entry: %v", key)
-	err := filer_pb.Remove(fs, dir, name, deleteIncludeChunks, true, true, true, signatures)
+	err := filer_pb.Remove(context.Background(), fs, dir, name, deleteIncludeChunks, true, true, true, signatures)
 	if err != nil {
 		glog.V(0).Infof("delete entry %s: %v", key, err)
 		return fmt.Errorf("delete entry %s: %v", key, err)
@@ -115,7 +115,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			Name:      name,
 		}
 		// glog.V(1).Infof("lookup: %v", lookupRequest)
-		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
+		if resp, err := filer_pb.LookupEntry(context.Background(), client, lookupRequest); err == nil {
 			if filer.ETag(resp.Entry) == filer.ETag(entry) {
 				glog.V(3).Infof("already replicated %s", key)
 				return nil
@@ -152,7 +152,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 		}
 
 		glog.V(3).Infof("create: %v", request)
-		if err := filer_pb.CreateEntry(client, request); err != nil {
+		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			glog.V(0).Infof("create entry %s: %v", key, err)
 			return fmt.Errorf("create entry %s: %v", key, err)
 		}
@@ -175,7 +175,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		glog.V(4).Infof("lookup entry: %v", request)
-		resp, err := filer_pb.LookupEntry(client, request)
+		resp, err := filer_pb.LookupEntry(context.Background(), client, request)
 		if err != nil {
 			glog.V(0).Infof("lookup %s: %v", key, err)
 			return err
