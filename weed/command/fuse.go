@@ -110,11 +110,11 @@ func runFuse(cmd *Command, args []string) bool {
 			masterProcess = false
 			if parsed, err := strconv.ParseInt(parameter.value, 10, 64); err == nil {
 				if parsed > math.MaxInt || parsed <= 0 {
-					panic(fmt.Errorf("parent PID %s is invalid", err))
+					panic(fmt.Errorf("parent PID %d is invalid", parsed))
 				}
 				mountOptions.fuseCommandPid = int(parsed)
 			} else {
-				panic(fmt.Errorf("parent PID %s is invalid", err))
+				panic(fmt.Errorf("parent PID %s is invalid: %w", parameter.value, err))
 			}
 		case "arg0":
 			mountOptions.dir = &parameter.value
