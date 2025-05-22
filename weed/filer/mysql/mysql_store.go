@@ -1,9 +1,12 @@
 package mysql
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"fmt"
 	"github.com/go-sql-driver/mysql"
+	"os"
 	"strings"
 	"time"
 
@@ -15,7 +18,8 @@ import (
 )
 
 const (
-	CONNECTION_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_bin"
+	CONNECTION_URL_PATTERN     = "%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_bin"
+	CONNECTION_TLS_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_bin&tls=mysql-tls"
 )
 
 func init() {
@@ -44,11 +48,15 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 		configuration.GetInt(prefix+"connection_max_open"),
 		configuration.GetInt(prefix+"connection_max_lifetime_seconds"),
 		configuration.GetBool(prefix+"interpolateParams"),
+		configuration.GetBool(prefix+"enable_tls"),
+		configuration.GetString(prefix+"ca_crt"),
+		configuration.GetString(prefix+"client_crt"),
+		configuration.GetString(prefix+"client_key"),
 	)
 }
 
 func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database string, maxIdle, maxOpen,
-	maxLifetimeSeconds int, interpolateParams bool) (err error) {
+	maxLifetimeSeconds int, interpolateParams bool, enableTls bool, caCrtDir string, clientCrtDir string, clientKeyDir string) (err error) {
 
 	store.SupportBucketTable = false
 	if !enableUpsert {
@@ -60,8 +68,39 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
+	if enableTls {
+		// 1. 加载 CA 证书（验证服务器证书）
+		rootCertPool := x509.NewCertPool()
+		pem, err := os.ReadFile(caCrtDir)
+		if err != nil {
+			return err
+		}
+		if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
+			return fmt.Errorf("failed to append root certificate")
+		}
+
+		clientCert := make([]tls.Certificate, 0)
+		if cert, err := tls.LoadX509KeyPair(clientCrtDir, clientKeyDir); err == nil {
+			clientCert = append(clientCert, cert)
+		}
+
+		tlsConfig := &tls.Config{
+			RootCAs:      rootCertPool,
+			Certificates: clientCert,
+			MinVersion:   tls.VersionTLS12,
+		}
+		err = mysql.RegisterTLSConfig("mysql-tls", tlsConfig)
+		if err != nil {
+			return err
+		}
+	}
+
 	if dsn == "" {
-		dsn = fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
+		pattern := CONNECTION_URL_PATTERN
+		if enableTls {
+			pattern = CONNECTION_TLS_URL_PATTERN
+		}
+		dsn = fmt.Sprintf(pattern, user, password, hostname, port, database)
 		if interpolateParams {
 			dsn += "&interpolateParams=true"
 		}
