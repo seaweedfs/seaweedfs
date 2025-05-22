@@ -3,8 +3,10 @@ package command
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -105,6 +107,11 @@ func runFuse(cmd *Command, args []string) bool {
 		switch parameter.name {
 		case "child":
 			masterProcess = false
+			if parsed, err := strconv.ParseInt(parameter.value, 10, 64); err == nil {
+				mountOptions.fuseCommandPid = int(parsed)
+			} else {
+				panic(fmt.Errorf("parent PID %s is invalid", err))
+			}
 		case "arg0":
 			mountOptions.dir = &parameter.value
 		case "filer":
@@ -211,7 +218,12 @@ func runFuse(cmd *Command, args []string) bool {
 			panic(err)
 		}
 
-		argv := append(os.Args, "-o", "child")
+		// pass our PID to the child process
+		pid := os.Getpid()
+		argv := append(os.Args, "-o", "child="+strconv.Itoa(pid))
+
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGUSR1)
 
 		attr := os.ProcAttr{}
 		attr.Env = os.Environ()
@@ -228,7 +240,10 @@ func runFuse(cmd *Command, args []string) bool {
 			panic(fmt.Errorf("master process can not release child process: %s", err))
 		}
 
-		return true
+		select {
+		case <-c:
+			return true
+		}
 	}
 
 	if fusermountPath != "" {
