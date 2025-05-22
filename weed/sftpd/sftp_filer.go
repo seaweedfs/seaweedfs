@@ -12,7 +12,6 @@ import (
 	"os"
 	"path"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -377,8 +376,14 @@ type EnhancedFileInfo struct {
 	gid uint32
 }
 
+// FileStat represents file statistics in a platform-independent way
+type FileStat struct {
+	Uid uint32
+	Gid uint32
+}
+
 func (fi *EnhancedFileInfo) Sys() interface{} {
-	return &syscall.Stat_t{Uid: fi.uid, Gid: fi.gid}
+	return &FileStat{Uid: fi.uid, Gid: fi.gid}
 }
 
 func (fi *EnhancedFileInfo) Owner() (uid, gid int) {
