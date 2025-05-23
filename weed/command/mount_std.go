@@ -271,7 +271,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	if mountOptions.fuseCommandPid != 0 {
 		// send a signal to the parent process to notify that the mount is ready
-		err = syscall.Kill(mountOptions.fuseCommandPid, syscall.SIGUSR1)
+		err = syscall.Kill(mountOptions.fuseCommandPid, syscall.SIGTERM)
 		if err != nil {
 			fmt.Printf("failed to notify parent process: %v\n", err)
 			return false
