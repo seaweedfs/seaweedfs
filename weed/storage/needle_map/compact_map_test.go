@@ -150,7 +150,7 @@ func TestOverflow(t *testing.T) {
 		t.Fatalf("expecting 5 entries now: %+v", cs.overflow)
 	}
 
-	_, x, _ := cs.findOverflowEntry(5)
+	x, _ := cs.findOverflowEntry(5)
 	if x.Key != 5 {
 		t.Fatalf("expecting entry 5 now: %+v", x)
 	}
