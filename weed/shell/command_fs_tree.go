@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -55,7 +56,7 @@ func treeTraverseDirectory(writer io.Writer, filerClient filer_pb.FilerClient, d
 
 	prefix.addMarker(level)
 
-	err = filer_pb.ReadDirAllEntries(filerClient, dir, name, func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.ReadDirAllEntries(context.Background(), filerClient, dir, name, func(entry *filer_pb.Entry, isLast bool) error {
 		if level < 0 && name != "" {
 			if entry.Name != name {
 				return nil

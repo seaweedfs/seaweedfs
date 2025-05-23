@@ -52,7 +52,7 @@ func TraverseBfs(filerClient FilerClient, parentPath util.FullPath, fn func(pare
 
 func processOneDirectory(filerClient FilerClient, parentPath util.FullPath, queue *util.Queue[util.FullPath], jobQueueWg *sync.WaitGroup, fn func(parentPath util.FullPath, entry *Entry)) (err error) {
 
-	return ReadDirAllEntries(filerClient, parentPath, "", func(entry *Entry, isLast bool) error {
+	return ReadDirAllEntries(context.Background(), filerClient, parentPath, "", func(entry *Entry, isLast bool) error {
 
 		fn(parentPath, entry)
 

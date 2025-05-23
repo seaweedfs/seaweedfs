@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -66,7 +67,7 @@ func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 	dir, name := util.FullPath(path).DirAndName()
 	entryCount := 0
 
-	err = filer_pb.ReadDirAllEntries(commandEnv, util.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.ReadDirAllEntries(context.Background(), commandEnv, util.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) error {
 
 		if !showHidden && strings.HasPrefix(entry.Name, ".") {
 			return nil

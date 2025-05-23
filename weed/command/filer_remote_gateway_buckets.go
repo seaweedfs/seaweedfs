@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -408,7 +409,7 @@ func (option *RemoteGatewayOptions) collectRemoteStorageConf() (err error) {
 
 	option.remoteConfs = make(map[string]*remote_pb.RemoteConf)
 	var lastConfName string
-	err = filer_pb.List(option, filer.DirectoryEtcRemote, "", func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.List(context.Background(), option, filer.DirectoryEtcRemote, "", func(entry *filer_pb.Entry, isLast bool) error {
 		if !strings.HasSuffix(entry.Name, filer.REMOTE_STORAGE_CONF_SUFFIX) {
 			return nil
 		}

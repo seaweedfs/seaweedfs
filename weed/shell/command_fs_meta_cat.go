@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"google.golang.org/protobuf/proto"
@@ -49,7 +50,7 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 			Name:      name,
 			Directory: dir,
 		}
-		respLookupEntry, err := filer_pb.LookupEntry(client, request)
+		respLookupEntry, err := filer_pb.LookupEntry(context.Background(), client, request)
 		if err != nil {
 			return err
 		}

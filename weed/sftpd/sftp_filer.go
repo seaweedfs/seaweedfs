@@ -12,7 +12,6 @@ import (
 	"os"
 	"path"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -322,7 +321,7 @@ func (fs *SftpServer) makeDir(r *sftp.Request) error {
 		return err
 	}
 	// default mode and ownership
-	err := filer_pb.Mkdir(fs, string(dir), name, func(entry *filer_pb.Entry) {
+	err := filer_pb.Mkdir(context.Background(), fs, string(dir), name, func(entry *filer_pb.Entry) {
 		mode := uint32(0755 | os.ModeDir)
 		if strings.HasPrefix(r.Filepath, fs.user.HomeDir) {
 			mode = uint32(0700 | os.ModeDir)
@@ -377,8 +376,14 @@ type EnhancedFileInfo struct {
 	gid uint32
 }
 
+// FileStat represents file statistics in a platform-independent way
+type FileStat struct {
+	Uid uint32
+	Gid uint32
+}
+
 func (fi *EnhancedFileInfo) Sys() interface{} {
-	return &syscall.Stat_t{Uid: fi.uid, Gid: fi.gid}
+	return &FileStat{Uid: fi.uid, Gid: fi.gid}
 }
 
 func (fi *EnhancedFileInfo) Owner() (uid, gid int) {

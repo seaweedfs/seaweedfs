@@ -41,7 +41,7 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	if localEntry == nil {
 		// glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
-		entry, err := filer_pb.GetEntry(wfs, fullFilePath)
+		entry, err := filer_pb.GetEntry(context.Background(), wfs, fullFilePath)
 		if err != nil {
 			glog.V(1).Infof("dir GetEntry %s: %v", fullFilePath, err)
 			return fuse.ENOENT
