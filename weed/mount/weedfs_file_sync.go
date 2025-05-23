@@ -148,7 +148,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
 
-		chunks, _ := filer.CompactFileChunks(wfs.LookupFn(), nonManifestChunks)
+		chunks, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
 		chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), chunks)
 		if manifestErr != nil {
 			// not good, but should be ok

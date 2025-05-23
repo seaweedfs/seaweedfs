@@ -70,7 +70,7 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 }
 
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, contentLength int64) {
-	ctx := context.Background()
+	ctx := r.Context()
 
 	destination := r.RequestURI
 	if finalDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader); finalDestination != "" {
@@ -78,7 +78,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 	}
 
 	query := r.URL.Query()
-	so, err := fs.detectStorageOption0(destination,
+	so, err := fs.detectStorageOption0(ctx, destination,
 		query.Get("collection"),
 		query.Get("replication"),
 		query.Get("ttl"),
@@ -240,7 +240,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication string, ttlSeconds int32, diskType, dataCenter, rack, dataNode string) (*operation.StorageOption, error) {
+func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCollection, qReplication string, ttlSeconds int32, diskType, dataCenter, rack, dataNode string) (*operation.StorageOption, error) {
 
 	rule := fs.filer.FilerConf.MatchStorageRule(requestURI)
 
@@ -280,14 +280,14 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}, nil
 }
 
-func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, diskType string, fsync string, dataCenter, rack, dataNode, saveInside string) (*operation.StorageOption, error) {
+func (fs *FilerServer) detectStorageOption0(ctx context.Context, requestURI, qCollection, qReplication string, qTtl string, diskType string, fsync string, dataCenter, rack, dataNode, saveInside string) (*operation.StorageOption, error) {
 
 	ttl, err := needle.ReadTTL(qTtl)
 	if err != nil {
 		glog.Errorf("fail to parse ttl %s: %v", qTtl, err)
 	}
 
-	so, err := fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)
+	so, err := fs.detectStorageOption(ctx, requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)
 	if so != nil {
 		if fsync == "false" {
 			so.Fsync = false

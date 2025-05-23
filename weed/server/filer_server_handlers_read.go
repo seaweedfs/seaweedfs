@@ -89,14 +89,14 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 }
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
-
+	ctx := r.Context()
 	path := r.URL.Path
 	isForDirectory := strings.HasSuffix(path, "/")
 	if isForDirectory && len(path) > 1 {
 		path = path[:len(path)-1]
 	}
 
-	entry, err := fs.filer.FindEntry(context.Background(), util.FullPath(path))
+	entry, err := fs.filer.FindEntry(ctx, util.FullPath(path))
 	if err != nil {
 		if path == "/" {
 			fs.listDirectoryHandler(w, r)
@@ -147,6 +147,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	if query.Get("metadata") == "true" {
 		if query.Get("resolveManifest") == "true" {
 			if entry.Chunks, _, err = filer.ResolveChunkManifest(
+				ctx,
 				fs.filer.MasterClient.GetLookupFileIdFunction(),
 				entry.GetChunks(), 0, math.MaxInt64); err != nil {
 				err = fmt.Errorf("failed to resolve chunk manifest, err: %s", err.Error())
@@ -242,7 +243,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		if shouldResize {
 			data := mem.Allocate(int(totalSize))
 			defer mem.Free(data)
-			err := filer.ReadAll(data, fs.filer.MasterClient, entry.GetChunks())
+			err := filer.ReadAll(ctx, data, fs.filer.MasterClient, entry.GetChunks())
 			if err != nil {
 				glog.Errorf("failed to read %s: %v", path, err)
 				w.WriteHeader(http.StatusInternalServerError)
@@ -280,7 +281,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		streamFn, err := filer.PrepareStreamContentWithThrottler(fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
+		streamFn, err := filer.PrepareStreamContentWithThrottler(ctx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
 			glog.Errorf("failed to prepare stream content %s: %v", r.URL, err)

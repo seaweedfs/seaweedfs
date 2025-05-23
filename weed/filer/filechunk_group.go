@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"context"
 	"io"
 	"sync"
 
@@ -89,7 +90,7 @@ func (group *ChunkGroup) SetChunks(chunks []*filer_pb.FileChunk) error {
 			continue
 		}
 
-		resolvedChunks, err := ResolveOneChunkManifest(group.lookupFn, chunk)
+		resolvedChunks, err := ResolveOneChunkManifest(context.Background(), group.lookupFn, chunk)
 		if err != nil {
 			return err
 		}

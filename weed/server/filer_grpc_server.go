@@ -142,12 +142,12 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 
 	resp = &filer_pb.CreateEntryResponse{}
 
-	chunks, garbage, err2 := fs.cleanupChunks(util.Join(req.Directory, req.Entry.Name), nil, req.Entry)
+	chunks, garbage, err2 := fs.cleanupChunks(ctx, util.Join(req.Directory, req.Entry.Name), nil, req.Entry)
 	if err2 != nil {
 		return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry cleanupChunks %s %s: %v", req.Directory, req.Entry.Name, err2)
 	}
 
-	so, err := fs.detectStorageOption(string(util.NewFullPath(req.Directory, req.Entry.Name)), "", "", 0, "", "", "", "")
+	so, err := fs.detectStorageOption(ctx, string(util.NewFullPath(req.Directory, req.Entry.Name)), "", "", 0, "", "", "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
 
-	chunks, garbage, err2 := fs.cleanupChunks(fullpath, entry, req.Entry)
+	chunks, garbage, err2 := fs.cleanupChunks(ctx, fullpath, entry, req.Entry)
 	if err2 != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("UpdateEntry cleanupChunks %s: %v", fullpath, err2)
 	}
@@ -201,11 +201,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	return &filer_pb.UpdateEntryResponse{}, err
 }
 
-func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
+func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, existingEntry *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
 
 	// remove old chunks if not included in the new ones
 	if existingEntry != nil {
-		garbage, err = filer.MinusChunks(fs.lookupFileId, existingEntry.GetChunks(), newEntry.GetChunks())
+		garbage, err = filer.MinusChunks(ctx, fs.lookupFileId, existingEntry.GetChunks(), newEntry.GetChunks())
 		if err != nil {
 			return newEntry.GetChunks(), nil, fmt.Errorf("MinusChunks: %v", err)
 		}
@@ -214,11 +214,11 @@ func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry
 	// files with manifest chunks are usually large and append only, skip calculating covered chunks
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(newEntry.GetChunks())
 
-	chunks, coveredChunks := filer.CompactFileChunks(fs.lookupFileId, nonManifestChunks)
+	chunks, coveredChunks := filer.CompactFileChunks(ctx, fs.lookupFileId, nonManifestChunks)
 	garbage = append(garbage, coveredChunks...)
 
 	if newEntry.Attributes != nil {
-		so, _ := fs.detectStorageOption(fullpath,
+		so, _ := fs.detectStorageOption(ctx, fullpath,
 			"",
 			"",
 			newEntry.Attributes.TtlSec,
@@ -271,7 +271,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	}
 
 	entry.Chunks = append(entry.GetChunks(), req.Chunks...)
-	so, err := fs.detectStorageOption(string(fullpath), "", "", entry.TtlSec, "", "", "", "")
+	so, err := fs.detectStorageOption(ctx, string(fullpath), "", "", entry.TtlSec, "", "", "", "")
 	if err != nil {
 		glog.Warningf("detectStorageOption: %v", err)
 		return &filer_pb.AppendToEntryResponse{}, err
@@ -305,7 +305,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		req.DiskType = fs.option.DiskType
 	}
 
-	so, err := fs.detectStorageOption(req.Path, req.Collection, req.Replication, req.TtlSec, req.DiskType, req.DataCenter, req.Rack, req.DataNode)
+	so, err := fs.detectStorageOption(ctx, req.Path, req.Collection, req.Replication, req.TtlSec, req.DiskType, req.DataCenter, req.Rack, req.DataNode)
 	if err != nil {
 		glog.V(3).Infof("AssignVolume: %v", err)
 		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume: %v", err)}, nil

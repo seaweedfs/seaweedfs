@@ -97,7 +97,7 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []in
 	}
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
 	wc := g.client.Bucket(g.bucket).Object(key).NewWriter(context.Background())
 	defer wc.Close()

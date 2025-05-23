@@ -14,7 +14,7 @@ import (
 // curl -X PUT -H "Seaweed-Name1: value1" http://localhost:8888/path/to/a/file?tagging
 func (fs *FilerServer) PutTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
-	ctx := context.Background()
+	ctx := r.Context()
 
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {

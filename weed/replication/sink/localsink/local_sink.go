@@ -1,6 +1,7 @@
 package localsink
 
 import (
+	"context"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -75,7 +76,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	glog.V(4).Infof("Create Entry key: %s", key)
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(localsink.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews := filer.ViewFromChunks(context.Background(), localsink.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
 	dir := filepath.Dir(key)
 

@@ -105,7 +105,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	}
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
 	// Create a URL that references a to-be-created blob in your
 	// Azure Storage account's container.
