@@ -69,7 +69,6 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 	}
 
 	if enableTls {
-		// 1. 加载 CA 证书（验证服务器证书）
 		rootCertPool := x509.NewCertPool()
 		pem, err := os.ReadFile(caCrtDir)
 		if err != nil {
