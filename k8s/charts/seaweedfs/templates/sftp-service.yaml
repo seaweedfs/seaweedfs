@@ -14,24 +14,17 @@ metadata:
     {{- toYaml .Values.sftp.annotations | nindent 4 }}
 {{- end }}
 spec:
-  type: {{ .Values.sftp.service.type | default "ClusterIP" }}
   internalTrafficPolicy: {{ .Values.sftp.internalTrafficPolicy | default "Cluster" }}
   ports:
   - name: "swfs-sftp"
     port: {{ .Values.sftp.port }}
     targetPort: {{ .Values.sftp.port }}
     protocol: TCP
-    {{- if and (eq (.Values.sftp.service.type | default "ClusterIP") "NodePort") .Values.sftp.service.nodePort }}
-    nodePort: {{ .Values.sftp.service.nodePort }}
-    {{- end }}
 {{- if .Values.sftp.metricsPort }}
   - name: "metrics"
     port: {{ .Values.sftp.metricsPort }}
     targetPort: {{ .Values.sftp.metricsPort }}
     protocol: TCP
-    {{- if and (eq (.Values.sftp.service.type | default "ClusterIP") "NodePort") .Values.sftp.service.metricsNodePort }}
-    nodePort: {{ .Values.sftp.service.metricsNodePort }}
-    {{- end }}
 {{- end }}
   selector:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
