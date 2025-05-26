@@ -2,6 +2,7 @@
 package sftpd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -82,7 +83,7 @@ func (fs *SftpServer) EnsureHomeDirectory() error {
 	dir, name := util.FullPath(fs.user.HomeDir).DirAndName()
 
 	// Create the directory with proper permissions using filer_pb.Mkdir
-	err = filer_pb.Mkdir(fs, dir, name, func(entry *filer_pb.Entry) {
+	err = filer_pb.Mkdir(context.Background(), fs, dir, name, func(entry *filer_pb.Entry) {
 		mode := uint32(0700 | os.ModeDir) // Default to private permissions for home dirs
 		entry.Attributes.FileMode = mode
 		entry.Attributes.Uid = fs.user.Uid
