@@ -100,10 +100,6 @@ func maybeAddAuth(req *http.Request, jwt string) {
 	}
 }
 
-func reqWithRequestId(req *http.Request, ctx context.Context) {
-	req.Header.Set(util.RequestIdHttpHeader, util.GetRequestID(ctx))
-}
-
 func Delete(url string, jwt string) error {
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	maybeAddAuth(req, jwt)
@@ -311,7 +307,7 @@ func ReadUrlAsStreamAuthenticated(ctx context.Context, fileUrl, jwt string, ciph
 	} else {
 		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 	}
-	reqWithRequestId(req, ctx)
+	util.ReqWithRequestId(req, ctx)
 
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {

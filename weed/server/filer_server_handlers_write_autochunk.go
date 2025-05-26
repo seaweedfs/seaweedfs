@@ -306,7 +306,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 
 	// maybe compact entry chunks
-	mergedChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(so), mergedChunks)
+	mergedChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), mergedChunks)
 	if replyerr != nil {
 		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
 		return
@@ -348,7 +348,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	return filerResult, replyerr
 }
 
-func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
+func (fs *FilerServer) saveAsChunk(ctx context.Context, so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
 
 	return func(reader io.Reader, name string, offset int64, tsNs int64) (*filer_pb.FileChunk, error) {
 		var fileId string
@@ -356,7 +356,7 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 
 		err := util.Retry("saveAsChunk", func() error {
 			// assign one file id for one chunk
-			assignedFileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
+			assignedFileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so)
 			if assignErr != nil {
 				return assignErr
 			}
@@ -380,7 +380,7 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 			}
 
 			var uploadErr error
-			uploadResult, uploadErr, _ = uploader.Upload(reader, uploadOption)
+			uploadResult, uploadErr, _ = uploader.Upload(ctx, reader, uploadOption)
 			if uploadErr != nil {
 				return uploadErr
 			}

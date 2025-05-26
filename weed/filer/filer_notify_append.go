@@ -58,7 +58,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		WritableVolumeCount: rule.VolumeGrowthCount,
 	}
 
-	assignResult, err := operation.Assign(f.GetMaster, f.GrpcDialOption, assignRequest)
+	assignResult, err := operation.Assign(context.Background(), f.GetMaster, f.GrpcDialOption, assignRequest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("AssignVolume: %v", err)
 	}
@@ -83,7 +83,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}
 
-	uploadResult, err := uploader.UploadData(data, uploadOption)
+	uploadResult, err := uploader.UploadData(context.Background(), data, uploadOption)
 	if err != nil {
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}

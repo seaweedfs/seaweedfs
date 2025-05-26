@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
@@ -57,7 +56,7 @@ func (fs *FilerServer) PutTaggingHandler(w http.ResponseWriter, r *http.Request)
 // curl -X DELETE http://localhost:8888/path/to/a/file?tagging
 func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
-	ctx := context.Background()
+	ctx := r.Context()
 
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
