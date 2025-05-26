@@ -102,7 +102,7 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.41.0
 	golang.org/x/crypto v0.38.0
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
-	golang.org/x/image v0.24.0
+	golang.org/x/image v0.26.0
 	golang.org/x/net v0.40.0
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sys v0.33.0
@@ -129,7 +129,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.67
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.78.2
-	github.com/cognusion/imaging v1.0.1
+	github.com/cognusion/imaging v1.0.2
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/getsentry/sentry-go v0.31.1
 	github.com/golang-jwt/jwt/v5 v5.2.2
