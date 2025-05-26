@@ -54,6 +54,10 @@ enabled = false
 # dsn will take priority over "hostname, port, username, password, database".
 # [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
 dsn = "root@tcp(localhost:3306)/seaweedfs?collation=utf8mb4_bin"
+enable_tls = false
+ca_crt = ""                # ca.crt dir when enable_tls set true
+client_crt = ""            # mysql client.crt dir when enable_tls set true
+client_key = ""            # mysql client.key dir when enable_tls set true
 hostname = "localhost"
 port = 3306
 username = "root"

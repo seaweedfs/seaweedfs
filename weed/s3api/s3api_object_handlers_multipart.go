@@ -93,7 +93,6 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 	}
 	stats_collect.RecordBucketActiveTime(bucket)
 	stats_collect.S3UploadedObjectsCounter.WithLabelValues(bucket).Inc()
-
 	writeSuccessResponseXML(w, r, response)
 
 }

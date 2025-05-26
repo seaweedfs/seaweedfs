@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -13,7 +14,7 @@ import (
 )
 
 var loadBucketMetadataFromFiler = func(r *BucketRegistry, bucketName string) (*BucketMetaData, error) {
-	entry, err := filer_pb.GetEntry(r.s3a, util.NewFullPath(r.s3a.option.BucketsPath, bucketName))
+	entry, err := filer_pb.GetEntry(context.Background(), r.s3a, util.NewFullPath(r.s3a.option.BucketsPath, bucketName))
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +65,7 @@ func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
 }
 
 func (r *BucketRegistry) init() error {
-	err := filer_pb.List(r.s3a, r.s3a.option.BucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
+	err := filer_pb.List(context.Background(), r.s3a, r.s3a.option.BucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
 		r.LoadBucketMetadata(entry)
 		return nil
 	}, "", false, math.MaxUint32)

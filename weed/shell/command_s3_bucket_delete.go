@@ -66,6 +66,6 @@ func (c *commandS3BucketDelete) Do(args []string, commandEnv *CommandEnv, writer
 		return
 	}
 
-	return filer_pb.Remove(commandEnv, filerBucketsPath, *bucketName, false, true, true, false, nil)
+	return filer_pb.Remove(context.Background(), commandEnv, filerBucketsPath, *bucketName, false, true, true, false, nil)
 
 }

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -86,7 +87,7 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 				if hasChanges {
 					println("Updating", parentPath, entry.Name)
 					if *isForce {
-						if updateErr := filer_pb.UpdateEntry(client, &filer_pb.UpdateEntryRequest{
+						if updateErr := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
 							Directory: string(parentPath),
 							Entry:     entry,
 						}); updateErr != nil {

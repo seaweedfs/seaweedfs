@@ -53,7 +53,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 		wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
-		if err := filer_pb.CreateEntry(client, request); err != nil {
+		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			return fmt.Errorf("symlink %s: %v", entryFullPath, err)
 		}
 
