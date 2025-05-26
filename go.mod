@@ -142,7 +142,7 @@ require (
 	github.com/parquet-go/parquet-go v0.24.0
 	github.com/pkg/sftp v1.13.7
 	github.com/rabbitmq/amqp091-go v1.10.0
-	github.com/rclone/rclone v1.69.1
+	github.com/rclone/rclone v1.69.3
 	github.com/rdleal/intervalst v1.4.1
 	github.com/redis/go-redis/v9 v9.8.0
 	github.com/schollz/progressbar/v3 v3.18.0
@@ -224,7 +224,7 @@ require (
 	github.com/d4l3k/messagediff v1.2.1 // indirect
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2 // indirect
 	github.com/dropbox/dropbox-sdk-go-unofficial/v6 v6.0.5 // indirect
-	github.com/ebitengine/purego v0.8.1 // indirect
+	github.com/ebitengine/purego v0.8.3 // indirect
 	github.com/elastic/gosigar v0.14.2 // indirect
 	github.com/emersion/go-message v0.18.0 // indirect
 	github.com/emersion/go-textwrapper v0.0.0-20200911093747-65d896831594 // indirect
