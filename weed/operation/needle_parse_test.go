@@ -2,6 +2,7 @@ package operation
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -58,7 +59,7 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 			PairMap:           nil,
 			Jwt:               "",
 		}
-		uploadResult, err, data := uploader.Upload(bytes.NewReader([]byte(textContent)), uploadOption)
+		uploadResult, err, data := uploader.Upload(context.Background(), bytes.NewReader([]byte(textContent)), uploadOption)
 		if len(data) != len(textContent) {
 			t.Errorf("data actual %d expected %d", len(data), len(textContent))
 		}
@@ -86,7 +87,7 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 			PairMap:           nil,
 			Jwt:               "",
 		}
-		uploader.Upload(bytes.NewReader(gzippedData), uploadOption)
+		uploader.Upload(context.Background(), bytes.NewReader(gzippedData), uploadOption)
 	}
 
 	/*

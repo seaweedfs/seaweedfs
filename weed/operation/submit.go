@@ -62,7 +62,7 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []*
 		Ttl:         pref.Ttl,
 		DiskType:    pref.DiskType,
 	}
-	ret, err := Assign(masterFn, grpcDialOption, ar)
+	ret, err := Assign(context.Background(), masterFn, grpcDialOption, ar)
 	if err != nil {
 		for index := range files {
 			results[index].Error = err.Error()
@@ -155,7 +155,7 @@ func (fi *FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, j
 				Ttl:         fi.Pref.Ttl,
 				DiskType:    fi.Pref.DiskType,
 			}
-			ret, err = Assign(masterFn, grpcDialOption, ar)
+			ret, err = Assign(context.Background(), masterFn, grpcDialOption, ar)
 			if err != nil {
 				return
 			}
@@ -169,7 +169,7 @@ func (fi *FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, j
 					Ttl:         fi.Pref.Ttl,
 					DiskType:    fi.Pref.DiskType,
 				}
-				ret, err = Assign(masterFn, grpcDialOption, ar)
+				ret, err = Assign(context.Background(), masterFn, grpcDialOption, ar)
 				if err != nil {
 					// delete all uploaded chunks
 					cm.DeleteChunks(masterFn, usePublicUrl, grpcDialOption)
@@ -223,7 +223,7 @@ func (fi *FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, j
 			return 0, e
 		}
 
-		ret, e, _ := uploader.Upload(fi.Reader, uploadOption)
+		ret, e, _ := uploader.Upload(context.Background(), fi.Reader, uploadOption)
 		if e != nil {
 			return 0, e
 		}
@@ -267,7 +267,7 @@ func uploadOneChunk(filename string, reader io.Reader, masterFn GetMasterFn,
 		return 0, uploaderError
 	}
 
-	uploadResult, uploadError, _ := uploader.Upload(reader, uploadOption)
+	uploadResult, uploadError, _ := uploader.Upload(context.Background(), reader, uploadOption)
 	if uploadError != nil {
 		return 0, uploadError
 	}
@@ -299,6 +299,6 @@ func uploadChunkedFileManifest(fileUrl string, manifest *ChunkManifest, jwt secu
 		return e
 	}
 
-	_, e = uploader.UploadData(buf, uploadOption)
+	_, e = uploader.UploadData(context.Background(), buf, uploadOption)
 	return e
 }

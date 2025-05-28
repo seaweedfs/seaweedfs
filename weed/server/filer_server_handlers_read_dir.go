@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -18,7 +17,7 @@ import (
 // sub directories are listed on the first page, when "lastFileName"
 // is empty.
 func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
-
+	ctx := r.Context()
 	if fs.option.ExposeDirectoryData == false {
 		writeJsonError(w, r, http.StatusForbidden, errors.New("ui is disabled"))
 		return
@@ -40,7 +39,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	namePattern := r.FormValue("namePattern")
 	namePatternExclude := r.FormValue("namePatternExclude")
 
-	entries, shouldDisplayLoadMore, err := fs.filer.ListDirectoryEntries(context.Background(), util.FullPath(path), lastFileName, false, int64(limit), "", namePattern, namePatternExclude)
+	entries, shouldDisplayLoadMore, err := fs.filer.ListDirectoryEntries(ctx, util.FullPath(path), lastFileName, false, int64(limit), "", namePattern, namePatternExclude)
 
 	if err != nil {
 		glog.V(0).Infof("listDirectory %s %s %d: %s", path, lastFileName, limit, err)

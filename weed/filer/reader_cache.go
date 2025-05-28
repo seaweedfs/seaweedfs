@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -169,7 +170,7 @@ func (s *SingleChunkCacher) startCaching() {
 
 	s.cacheStartedCh <- struct{}{} // means this has been started
 
-	urlStrings, err := s.parent.lookupFileIdFn(s.chunkFileId)
+	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
 	if err != nil {
 		s.err = fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err)
 		return
@@ -177,7 +178,7 @@ func (s *SingleChunkCacher) startCaching() {
 
 	s.data = mem.Allocate(s.chunkSize)
 
-	_, s.err = util_http.RetriedFetchChunkData(s.data, urlStrings, s.cipherKey, s.isGzipped, true, 0)
+	_, s.err = util_http.RetriedFetchChunkData(context.Background(), s.data, urlStrings, s.cipherKey, s.isGzipped, true, 0)
 	if s.err != nil {
 		mem.Free(s.data)
 		s.data = nil

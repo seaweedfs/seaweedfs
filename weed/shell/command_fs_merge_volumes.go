@@ -351,7 +351,7 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 		jwt = security.GenJwtForVolumeServer(security.SigningKey(signingKey), expiresAfterSec, toFid.String())
 	}
 
-	_, err, _ = uploader.Upload(reader, &operation.UploadOption{
+	_, err, _ = uploader.Upload(context.Background(), reader, &operation.UploadOption{
 		UploadUrl:         uploadURL,
 		Filename:          filename,
 		IsInputCompressed: isCompressed,

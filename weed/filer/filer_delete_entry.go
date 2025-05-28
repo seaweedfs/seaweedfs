@@ -36,7 +36,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 			// A case not handled:
 			// what if the chunk is in a different collection?
 			if shouldDeleteChunks {
-				f.maybeDeleteHardLinks(hardLinkIds)
+				f.maybeDeleteHardLinks(ctx, hardLinkIds)
 			}
 			return nil
 		})
@@ -53,7 +53,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	}
 
 	if shouldDeleteChunks && !isDeleteCollection {
-		f.DeleteChunks(p, entry.GetChunks())
+		f.DeleteChunks(ctx, p, entry.GetChunks())
 	}
 
 	if isDeleteCollection {
@@ -117,7 +117,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	}
 
 	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
-	f.DeleteChunks(entry.FullPath, chunksToDelete)
+	f.DeleteChunks(ctx, entry.FullPath, chunksToDelete)
 
 	return nil
 }
@@ -150,9 +150,9 @@ func (f *Filer) DoDeleteCollection(collectionName string) (err error) {
 
 }
 
-func (f *Filer) maybeDeleteHardLinks(hardLinkIds []HardLinkId) {
+func (f *Filer) maybeDeleteHardLinks(ctx context.Context, hardLinkIds []HardLinkId) {
 	for _, hardLinkId := range hardLinkIds {
-		if err := f.Store.DeleteHardLink(context.Background(), hardLinkId); err != nil {
+		if err := f.Store.DeleteHardLink(ctx, hardLinkId); err != nil {
 			glog.Errorf("delete hard link id %d : %v", hardLinkId, err)
 		}
 	}
