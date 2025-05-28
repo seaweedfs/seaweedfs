@@ -75,7 +75,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				glog.Warningf("this should not happen. unexpected chunk manifest in %s/%s", partitionDir, entry.Name)
 				return
 			}
-			urlStrings, err = lookupFileIdFn(chunk.FileId)
+			urlStrings, err = lookupFileIdFn(context.Background(), chunk.FileId)
 			if err != nil {
 				err = fmt.Errorf("lookup %s: %v", chunk.FileId, err)
 				return

@@ -28,9 +28,9 @@ type FilerCatOptions struct {
 }
 
 func (fco *FilerCatOptions) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
-	return func(fileId string) (targetUrls []string, err error) {
+	return func(ctx context.Context, fileId string) (targetUrls []string, err error) {
 		vid := filer.VolumeId(fileId)
-		resp, err := fco.filerClient.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
+		resp, err := fco.filerClient.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
 			VolumeIds: []string{vid},
 		})
 		if err != nil {

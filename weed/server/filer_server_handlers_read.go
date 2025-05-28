@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -269,7 +268,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		chunks := entry.GetChunks()
 		if entry.IsInRemoteOnly() {
 			dir, name := entry.FullPath.DirAndName()
-			if resp, err := fs.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+			if resp, err := fs.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 				Directory: dir,
 				Name:      name,
 			}); err != nil {

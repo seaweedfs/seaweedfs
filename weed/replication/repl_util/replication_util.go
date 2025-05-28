@@ -13,7 +13,7 @@ func CopyFromChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerS
 	for x := chunkViews.Front(); x != nil; x = x.Next {
 		chunk := x.Value
 
-		fileUrls, err := filerSource.LookupFileId(chunk.FileId)
+		fileUrls, err := filerSource.LookupFileId(context.Background(), chunk.FileId)
 		if err != nil {
 			return err
 		}

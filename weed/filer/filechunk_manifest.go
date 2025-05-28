@@ -104,7 +104,7 @@ func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 
 // TODO fetch from cache for weed mount?
 func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool) error {
-	urlStrings, err := lookupFileIdFn(fileId)
+	urlStrings, err := lookupFileIdFn(ctx, fileId)
 	if err != nil {
 		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
 		return err
@@ -117,7 +117,7 @@ func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileI
 }
 
 func fetchChunkRange(buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64) (int, error) {
-	urlStrings, err := lookupFileIdFn(fileId)
+	urlStrings, err := lookupFileIdFn(context.Background(), fileId)
 	if err != nil {
 		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
 		return 0, err

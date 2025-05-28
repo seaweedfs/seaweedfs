@@ -55,7 +55,7 @@ func (fs *FilerSource) DoInitialize(address, grpcAddress string, dir string, rea
 	return nil
 }
 
-func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) {
+func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls []string, err error) {
 
 	vid2Locations := make(map[string]*filer_pb.Locations)
 
@@ -63,7 +63,7 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 
 	err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
+		resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
 			VolumeIds: []string{vid},
 		})
 		if err != nil {
@@ -110,7 +110,7 @@ func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Hea
 		return util_http.DownloadFile("http://"+fs.address+"/?proxyChunkId="+fileId, "")
 	}
 
-	fileUrls, err := fs.LookupFileId(fileId)
+	fileUrls, err := fs.LookupFileId(context.Background(), fileId)
 	if err != nil {
 		return "", nil, nil, err
 	}

@@ -170,7 +170,7 @@ func (s *SingleChunkCacher) startCaching() {
 
 	s.cacheStartedCh <- struct{}{} // means this has been started
 
-	urlStrings, err := s.parent.lookupFileIdFn(s.chunkFileId)
+	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
 	if err != nil {
 		s.err = fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err)
 		return

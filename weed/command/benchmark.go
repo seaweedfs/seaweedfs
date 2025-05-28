@@ -288,7 +288,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		start := time.Now()
 		var bytesRead int
 		var err error
-		urls, err := b.masterClient.LookupFileId(fid)
+		urls, err := b.masterClient.LookupFileId(context.Background(), fid)
 		if err != nil {
 			s.failed++
 			println("!!!! ", fid, " location not found!!!!!")

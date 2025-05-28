@@ -121,7 +121,7 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 	return resp, nil
 }
 
-func (fs *FilerServer) lookupFileId(fileId string) (targetUrls []string, err error) {
+func (fs *FilerServer) lookupFileId(ctx context.Context, fileId string) (targetUrls []string, err error) {
 	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {
 		return nil, err

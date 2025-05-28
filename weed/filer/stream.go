@@ -92,7 +92,7 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 		var urlStrings []string
 		var err error
 		for _, backoff := range getLookupFileIdBackoffSchedule {
-			urlStrings, err = masterClient.GetLookupFileIdFunction()(chunkView.FileId)
+			urlStrings, err = masterClient.GetLookupFileIdFunction()(ctx, chunkView.FileId)
 			if err == nil && len(urlStrings) > 0 {
 				break
 			}
@@ -180,8 +180,8 @@ func writeZero(w io.Writer, size int64) (err error) {
 
 func ReadAll(ctx context.Context, buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) error {
 
-	lookupFileIdFn := func(fileId string) (targetUrls []string, err error) {
-		return masterClient.LookupFileId(fileId)
+	lookupFileIdFn := func(ctx context.Context, fileId string) (targetUrls []string, err error) {
+		return masterClient.LookupFileId(ctx, fileId)
 	}
 
 	chunkViews := ViewFromChunks(ctx, lookupFileIdFn, chunks, 0, int64(len(buffer)))
@@ -190,7 +190,7 @@ func ReadAll(ctx context.Context, buffer []byte, masterClient *wdclient.MasterCl
 
 	for x := chunkViews.Front(); x != nil; x = x.Next {
 		chunkView := x.Value
-		urlStrings, err := lookupFileIdFn(chunkView.FileId)
+		urlStrings, err := lookupFileIdFn(ctx, chunkView.FileId)
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return err
@@ -241,8 +241,8 @@ func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupF
 
 func NewChunkStreamReaderFromFiler(ctx context.Context, masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	lookupFileIdFn := func(fileId string) (targetUrl []string, err error) {
-		return masterClient.LookupFileId(fileId)
+	lookupFileIdFn := func(ctx context.Context, fileId string) (targetUrl []string, err error) {
+		return masterClient.LookupFileId(ctx, fileId)
 	}
 
 	return doNewChunkStreamReader(ctx, lookupFileIdFn, chunks)
@@ -344,7 +344,7 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 }
 
 func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
-	urlStrings, err := c.lookupFileId(chunkView.FileId)
+	urlStrings, err := c.lookupFileId(context.Background(), chunkView.FileId)
 	if err != nil {
 		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 		return err

@@ -378,7 +378,7 @@ func iterateLogEntries(filerClient filer_pb.FilerClient, logFile *filer_pb.Entry
 	return err
 }
 
-func eachFile(entry *filer_pb.Entry, lookupFileIdFn func(fileId string) (targetUrls []string, err error), eachLogEntryFn log_buffer.EachLogEntryFuncType) (processedTsNs int64, err error) {
+func eachFile(entry *filer_pb.Entry, lookupFileIdFn func(ctx context.Context, fileId string) (targetUrls []string, err error), eachLogEntryFn log_buffer.EachLogEntryFuncType) (processedTsNs int64, err error) {
 	if len(entry.Content) > 0 {
 		// skip .offset files
 		return
@@ -392,7 +392,7 @@ func eachFile(entry *filer_pb.Entry, lookupFileIdFn func(fileId string) (targetU
 			fmt.Printf("this should not happen. unexpected chunk manifest in %s", entry.Name)
 			return
 		}
-		urlStrings, err = lookupFileIdFn(chunk.FileId)
+		urlStrings, err = lookupFileIdFn(context.Background(), chunk.FileId)
 		if err != nil {
 			err = fmt.Errorf("lookup %s: %v", chunk.FileId, err)
 			return
