@@ -51,14 +51,3 @@ func (a *PasswordAuthenticator) Authenticate(conn ssh.ConnMetadata, password []b
 
 	return nil, fmt.Errorf("authentication failed")
 }
-
-// ValidatePassword checks if the provided password is valid for the user
-func ValidatePassword(store user.Store, username string, password []byte) bool {
-	user, err := store.GetUser(username)
-	if err != nil {
-		return false
-	}
-
-	// Compare plaintext password
-	return string(password) == user.Password
-}

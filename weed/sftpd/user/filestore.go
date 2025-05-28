@@ -17,6 +17,39 @@ type FileStore struct {
 	mu       sync.RWMutex
 }
 
+// Store defines the interface for user storage and retrieval
+type Store interface {
+	// GetUser retrieves a user by username
+	GetUser(username string) (*User, error)
+
+	// ValidatePassword checks if the password is valid for the user
+	ValidatePassword(username string, password []byte) bool
+
+	// ValidatePublicKey checks if the public key is valid for the user
+	ValidatePublicKey(username string, keyData string) bool
+
+	// GetUserPermissions returns the permissions for a user on a path
+	GetUserPermissions(username string, path string) []string
+
+	// SaveUser saves or updates a user
+	SaveUser(user *User) error
+
+	// DeleteUser removes a user
+	DeleteUser(username string) error
+
+	// ListUsers returns all usernames
+	ListUsers() ([]string, error)
+}
+
+// UserNotFoundError is returned when a user is not found
+type UserNotFoundError struct {
+	Username string
+}
+
+func (e *UserNotFoundError) Error() string {
+	return fmt.Sprintf("user not found: %s", e.Username)
+}
+
 // NewFileStore creates a new user store from a JSON file
 func NewFileStore(filePath string) (*FileStore, error) {
 	store := &FileStore{
@@ -128,7 +161,7 @@ func (s *FileStore) ValidatePublicKey(username string, keyData string) bool {
 	}
 
 	for _, key := range user.PublicKeys {
-		if key == keyData {
+		if subtle.ConstantTimeCompare([]byte(key), []byte(keyData)) == 1 {
 			return true
 		}
 	}

@@ -9,6 +9,7 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: master
 {{- if .Values.master.annotations }}
   annotations:
     {{- toYaml .Values.master.annotations | nindent 4 }}
@@ -54,9 +55,8 @@ spec:
       affinity:
         {{ tpl .Values.master.affinity . | nindent 8 | trim }}
       {{- end }}
-      {{- with .Values.master.topologySpreadConstraints }}
-      topologySpreadConstraints:
-        {{- toYaml . | nindent 8 }}
+      {{- if .Values.master.topologySpreadConstraints }}
+      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "master") | nindent 6 }}
       {{- end }}
       {{- if .Values.master.tolerations }}
       tolerations:

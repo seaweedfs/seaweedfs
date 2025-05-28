@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,10 +13,8 @@ import (
 	"github.com/pkg/sftp"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/auth"
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/crypto/ssh"
 	"google.golang.org/grpc"
 )
@@ -27,7 +24,6 @@ type SFTPService struct {
 	options     SFTPServiceOptions
 	userStore   user.Store
 	authManager *auth.Manager
-	homeManager *user.HomeManager
 }
 
 // SFTPServiceOptions contains all configuration options for the SFTP service.
@@ -64,98 +60,10 @@ func NewSFTPService(options *SFTPServiceOptions) *SFTPService {
 	}
 	service.userStore = userStore
 
-	// Initialize file system helper for permission checking
-	fsHelper := NewFileSystemHelper(
-		options.Filer,
-		options.GrpcDialOption,
-		options.DataCenter,
-		options.FilerGroup,
-	)
-
 	// Initialize auth manager
-	service.authManager = auth.NewManager(userStore, fsHelper, options.AuthMethods)
-
-	// Initialize home directory manager
-	service.homeManager = user.NewHomeManager(fsHelper)
+	service.authManager = auth.NewManager(userStore, options.AuthMethods)
 
 	return &service
-}
-
-// FileSystemHelper implements auth.FileSystemHelper interface
-type FileSystemHelper struct {
-	filerAddr      pb.ServerAddress
-	grpcDialOption grpc.DialOption
-	dataCenter     string
-	filerGroup     string
-}
-
-func NewFileSystemHelper(filerAddr pb.ServerAddress, grpcDialOption grpc.DialOption, dataCenter, filerGroup string) *FileSystemHelper {
-	return &FileSystemHelper{
-		filerAddr:      filerAddr,
-		grpcDialOption: grpcDialOption,
-		dataCenter:     dataCenter,
-		filerGroup:     filerGroup,
-	}
-}
-
-// GetEntry implements auth.FileSystemHelper interface
-func (fs *FileSystemHelper) GetEntry(path string) (*auth.Entry, error) {
-	dir, name := util.FullPath(path).DirAndName()
-	var entry *filer_pb.Entry
-
-	err := fs.withTimeoutContext(func(ctx context.Context) error {
-		return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
-				Directory: dir,
-				Name:      name,
-			})
-			if err != nil {
-				return err
-			}
-			if resp.Entry == nil {
-				return fmt.Errorf("entry not found")
-			}
-			entry = resp.Entry
-			return nil
-		})
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &auth.Entry{
-		IsDirectory: entry.IsDirectory,
-		Attributes: &auth.EntryAttributes{
-			Uid:           entry.Attributes.GetUid(),
-			Gid:           entry.Attributes.GetGid(),
-			FileMode:      entry.Attributes.GetFileMode(),
-			SymlinkTarget: entry.Attributes.GetSymlinkTarget(),
-		},
-		IsSymlink: entry.Attributes.GetSymlinkTarget() != "",
-	}, nil
-}
-
-// Implement FilerClient interface for FileSystemHelper
-func (fs *FileSystemHelper) AdjustedUrl(location *filer_pb.Location) string {
-	return location.Url
-}
-
-func (fs *FileSystemHelper) GetDataCenter() string {
-	return fs.dataCenter
-}
-
-func (fs *FileSystemHelper) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	addr := fs.filerAddr.ToGrpcAddress()
-	return pb.WithGrpcClient(streamingMode, util.RandomInt32(), func(conn *grpc.ClientConn) error {
-		return fn(filer_pb.NewSeaweedFilerClient(conn))
-	}, addr, false, fs.grpcDialOption)
-}
-
-func (fs *FileSystemHelper) withTimeoutContext(fn func(ctx context.Context) error) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return fn(ctx)
 }
 
 // Serve accepts incoming connections on the provided listener and handles them.
@@ -212,14 +120,14 @@ func (s *SFTPService) buildSSHConfig() (*ssh.ServerConfig, error) {
 			keyPath := filepath.Join(s.options.HostKeysFolder, file.Name())
 			if err := s.addHostKey(config, keyPath); err != nil {
 				// Log the error but continue with other keys
-				log.Printf("Warning: failed to add host key %s: %v", keyPath, err)
+				glog.V(0).Info(fmt.Sprintf("Failed to add host key %s: %v", keyPath, err))
 				continue
 			}
 			hostKeysAdded++
 		}
 
 		if hostKeysAdded == 0 {
-			log.Printf("Warning: no valid host keys found in folder %s", s.options.HostKeysFolder)
+			glog.V(0).Info(fmt.Sprintf("Warning: no valid host keys found in folder %s", s.options.HostKeysFolder))
 		}
 	}
 
@@ -296,7 +204,7 @@ func (s *SFTPService) handleSSHConnection(conn net.Conn, config *ssh.ServerConfi
 	)
 
 	// Ensure home directory exists with proper permissions
-	if err := s.homeManager.EnsureHomeDirectory(sftpUser); err != nil {
+	if err := userFs.EnsureHomeDirectory(); err != nil {
 		glog.Errorf("Failed to ensure home directory for user %s: %v", username, err)
 		// We don't close the connection here, as the user might still be able to access other directories
 	}
