@@ -2,11 +2,12 @@ package needle_map
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/sequence"
-	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"log"
 	"os"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func TestSnowflakeSequencer(t *testing.T) {
@@ -65,15 +66,15 @@ func TestIssue52(t *testing.T) {
 
 func TestCompactMap(t *testing.T) {
 	m := NewCompactMap()
-	for i := uint32(0); i < 100*batch; i += 2 {
+	for i := uint32(0); i < 100*MaxSectionBucketSize; i += 2 {
 		m.Set(NeedleId(i), ToOffset(int64(i)), Size(i))
 	}
 
-	for i := uint32(0); i < 100*batch; i += 37 {
+	for i := uint32(0); i < 100*MaxSectionBucketSize; i += 37 {
 		m.Delete(NeedleId(i))
 	}
 
-	for i := uint32(0); i < 10*batch; i += 3 {
+	for i := uint32(0); i < 10*MaxSectionBucketSize; i += 3 {
 		m.Set(NeedleId(i), ToOffset(int64(i+11)), Size(i+5))
 	}
 
@@ -83,7 +84,7 @@ func TestCompactMap(t *testing.T) {
 	//		}
 	//	}
 
-	for i := uint32(0); i < 10*batch; i++ {
+	for i := uint32(0); i < 10*MaxSectionBucketSize; i++ {
 		v, ok := m.Get(NeedleId(i))
 		if i%3 == 0 {
 			if !ok {
@@ -103,7 +104,7 @@ func TestCompactMap(t *testing.T) {
 		}
 	}
 
-	for i := uint32(10 * batch); i < 100*batch; i++ {
+	for i := uint32(10 * MaxSectionBucketSize); i < 100*MaxSectionBucketSize; i++ {
 		v, ok := m.Get(NeedleId(i))
 		if i%37 == 0 {
 			if ok && v.Size.IsValid() {
