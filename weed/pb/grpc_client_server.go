@@ -127,8 +127,8 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
-		md, _ := metadata.FromIncomingContext(ctx)
-		idList := md.Get(util.RequestIDKey)
+		incomingMd, _ := metadata.FromIncomingContext(ctx)
+		idList := incomingMd.Get(util.RequestIDKey)
 		var reqID string
 		if len(idList) > 0 {
 			reqID = idList[0]
@@ -136,6 +136,11 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 		if reqID == "" {
 			reqID = uuid.New().String()
 		}
+
+		ctx = metadata.NewOutgoingContext(ctx,
+			metadata.New(map[string]string{
+				util.RequestIDKey: reqID,
+			}))
 
 		ctx = util.WithRequestID(ctx, reqID)
 		grpc.SetTrailer(ctx, metadata.Pairs(util.RequestIDKey, reqID))
