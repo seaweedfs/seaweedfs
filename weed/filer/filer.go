@@ -197,6 +197,10 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		return fmt.Errorf("entry name too long")
 	}
 
+	if entry.IsDirectory() {
+		entry.Attr.TtlSec = 0
+	}
+
 	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
 
 	/*
