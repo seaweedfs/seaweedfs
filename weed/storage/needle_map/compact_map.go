@@ -91,15 +91,19 @@ func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset
 			oldOffset.OffsetHigher, oldOffset.OffsetLower, oldSize = oldValue.OffsetHigher, oldValue.OffsetLower, oldValue.Size
 		}
 		cs.setOverflowEntry(skey, offset, size)
+<<<<<<< Updated upstream
 		return
+=======
+	} else {
+		// if we maxed out our values bucket, pin its capacity to minimize memory usage
+		if len(cs.values) == MaxSectionBucketSize {
+			bucket := make([]SectionalNeedleValue, len(cs.values))
+			copy(bucket, cs.values)
+			cs.values = bucket
+		}
+>>>>>>> Stashed changes
 	}
 
-	// if we maxed out our values bucket, pin its capacity to minimize memory usage
-	if len(cs.values) == MaxSectionBucketSize {
-		bucket := make([]SectionalNeedleValue, len(cs.values))
-		copy(bucket, cs.values)
-		cs.values = bucket
-	}
 	return
 }
 
