@@ -8,7 +8,8 @@ import (
 )
 
 const (
-	MaxSectionBucketSize = 10000
+	MaxSectionBucketSize = 1024 * 8
+	LookBackWindowSize   = 1024 // how many entries to look back when inserting into a section
 )
 
 type SectionalNeedleId uint32
@@ -61,6 +62,7 @@ func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset
 		lkey = cs.values[len(cs.values)-1].Key
 	}
 
+	hasAdded := false
 	switch {
 	case len(cs.values) < MaxSectionBucketSize && lkey <= skey:
 		// non-overflow insert
@@ -70,30 +72,33 @@ func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset
 			Size:         size,
 			OffsetHigher: offset.OffsetHigher,
 		})
+		hasAdded = true
 	case len(cs.values) < MaxSectionBucketSize:
 		// still has capacity and only partially out of order
-		lookBackIndex := len(cs.values) - 128
+		lookBackIndex := len(cs.values) - LookBackWindowSize
 		if lookBackIndex < 0 {
 			lookBackIndex = 0
 		}
-		for ; lookBackIndex < len(cs.values); lookBackIndex++ {
-			if cs.values[lookBackIndex].Key >= skey {
-				break
+		if cs.values[lookBackIndex].Key <= skey {
+			for ; lookBackIndex < len(cs.values); lookBackIndex++ {
+				if cs.values[lookBackIndex].Key >= skey {
+					break
+				}
 			}
+			cs.values = append(cs.values, SectionalNeedleValue{})
+			copy(cs.values[lookBackIndex+1:], cs.values[lookBackIndex:])
+			cs.values[lookBackIndex].Key, cs.values[lookBackIndex].Size = skey, size
+			cs.values[lookBackIndex].OffsetLower, cs.values[lookBackIndex].OffsetHigher = offset.OffsetLower, offset.OffsetHigher
+			hasAdded = true
 		}
-		cs.values = append(cs.values, SectionalNeedleValue{})
-		copy(cs.values[lookBackIndex+1:], cs.values[lookBackIndex:])
-		cs.values[lookBackIndex].Key, cs.values[lookBackIndex].Size = skey, size
-		cs.values[lookBackIndex].OffsetLower, cs.values[lookBackIndex].OffsetHigher = offset.OffsetLower, offset.OffsetHigher
-	default:
-		// overflow insert
+	}
+
+	// overflow insert
+	if !hasAdded {
 		if oldValue, found := cs.findOverflowEntry(skey); found {
 			oldOffset.OffsetHigher, oldOffset.OffsetLower, oldSize = oldValue.OffsetHigher, oldValue.OffsetLower, oldValue.Size
 		}
 		cs.setOverflowEntry(skey, offset, size)
-<<<<<<< Updated upstream
-		return
-=======
 	} else {
 		// if we maxed out our values bucket, pin its capacity to minimize memory usage
 		if len(cs.values) == MaxSectionBucketSize {
@@ -101,7 +106,6 @@ func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset
 			copy(bucket, cs.values)
 			cs.values = bucket
 		}
->>>>>>> Stashed changes
 	}
 
 	return
