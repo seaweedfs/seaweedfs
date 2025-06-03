@@ -116,7 +116,13 @@ connection_max_open = 100
 connection_max_lifetime_seconds = 0
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
-upsertQuery = """UPSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4)"""
+upsertQuery = """
+  INSERT INTO "%[1]s" (dirhash, name, directory, meta)
+    VALUES($1, $2, $3, $4)
+    ON CONFLICT (dirhash, name) DO UPDATE SET
+      directory=EXCLUDED.directory,
+      meta=EXCLUDED.meta
+"""
 
 [postgres2]
 enabled = false
@@ -141,7 +147,13 @@ connection_max_open = 100
 connection_max_lifetime_seconds = 0
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
-upsertQuery = """UPSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4)"""
+upsertQuery = """
+  INSERT INTO "%[1]s" (dirhash, name, directory, meta)
+    VALUES($1, $2, $3, $4)
+    ON CONFLICT (dirhash, name) DO UPDATE SET
+      directory=EXCLUDED.directory,
+      meta=EXCLUDED.meta
+"""
 
 [cassandra2]
 # CREATE TABLE filemeta (
