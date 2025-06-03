@@ -219,3 +219,23 @@ func TestCompactSection_Get(t *testing.T) {
 		t.Error(uint64(nv3.Size))
 	}
 }
+
+// Test after putting 1 ~ LookBackWindowSize*3 items in sequential order, but missing item LookBackWindowSize
+// insert the item LookBackWindowSize in the middle of the sequence
+func TestCompactSection_PutOutOfOrderItemBeyondLookBackWindow(t *testing.T) {
+	m := NewCompactMap()
+
+	// put 1 ~ 10
+	for i := 1; i <= LookBackWindowSize*3; i++ {
+		if i != LookBackWindowSize {
+			m.Set(NeedleId(i), ToOffset(int64(i)), Size(i))
+		}
+	}
+
+	m.Set(NeedleId(LookBackWindowSize), ToOffset(int64(LookBackWindowSize)), Size(LookBackWindowSize))
+
+	// check if 8 is in the right place
+	if v, ok := m.Get(NeedleId(LookBackWindowSize)); !ok || v.Offset != ToOffset(LookBackWindowSize) || v.Size != Size(LookBackWindowSize) {
+		t.Fatalf("expected to find LookBackWindowSize at offset %d with size %d, but got %v", LookBackWindowSize, LookBackWindowSize, v)
+	}
+}
