@@ -2,6 +2,7 @@ package needle_map
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 
@@ -9,14 +10,23 @@ import (
 )
 
 const (
-	SegmentChunkSize = 25000
+	MaxCompactKey    = math.MaxUint16
+	SegmentChunkSize = 50000 // should be <= MaxCompactKey
 )
 
+type CompactKey uint16
+type CompactOffset [types.OffsetSize]byte
+type CompactNeedleValue struct {
+	key    CompactKey
+	offset CompactOffset
+	size   types.Size
+}
+
 type CompactMapSegment struct {
-	// TODO: maybe a compact-er structure for needle values?
-	list     []NeedleValue
-	firstKey types.NeedleId
-	lastKey  types.NeedleId
+	list     []CompactNeedleValue
+	chunk    int
+	firstKey CompactKey
+	lastKey  CompactKey
 }
 
 type CompactMap struct {
@@ -25,12 +35,35 @@ type CompactMap struct {
 	segments map[int]*CompactMapSegment
 }
 
+func (ck CompactKey) Key(chunk int) types.NeedleId {
+	return (types.NeedleId(SegmentChunkSize) * types.NeedleId(chunk)) + types.NeedleId(ck)
+}
+
+func OffsetToCompact(offset types.Offset) CompactOffset {
+	var co CompactOffset
+	types.OffsetToBytes(co[:], offset)
+	return co
+}
+
+func (co CompactOffset) Offset() types.Offset {
+	return types.BytesToOffset(co[:])
+}
+
+func (cnv CompactNeedleValue) NeedleValue(chunk int) NeedleValue {
+	key := cnv.key.Key(chunk)
+	return NeedleValue{
+		Key:    key,
+		Offset: cnv.offset.Offset(),
+		Size:   cnv.size,
+	}
+}
+
 func newCompactMapSegment(chunk int) *CompactMapSegment {
-	startKey := types.NeedleId(chunk * SegmentChunkSize)
 	return &CompactMapSegment{
-		list:     []NeedleValue{},
-		firstKey: startKey + SegmentChunkSize - 1,
-		lastKey:  startKey,
+		list:     []CompactNeedleValue{},
+		chunk:    chunk,
+		firstKey: MaxCompactKey,
+		lastKey:  0,
 	}
 }
 
@@ -42,41 +75,49 @@ func (cs *CompactMapSegment) cap() int {
 	return cap(cs.list)
 }
 
-// bsearchKey returns the NeedleValue index for a given ID key.
+func (cs *CompactMapSegment) compactKey(key types.NeedleId) CompactKey {
+	return CompactKey(key - (types.NeedleId(SegmentChunkSize) * types.NeedleId(cs.chunk)))
+}
+
+// bsearchKey returns the CompactNeedleValue index for a given ID key.
 // If the key is not found, it returns the index where it should be inserted instead.
 func (cs *CompactMapSegment) bsearchKey(key types.NeedleId) (int, bool) {
+	ck := cs.compactKey(key)
+
 	switch {
 	case len(cs.list) == 0:
 		return 0, false
-	case key == cs.firstKey:
+	case ck == cs.firstKey:
 		return 0, true
-	case key <= cs.firstKey:
+	case ck <= cs.firstKey:
 		return 0, false
-	case key == cs.lastKey:
+	case ck == cs.lastKey:
 		return len(cs.list) - 1, true
-	case key > cs.lastKey:
+	case ck > cs.lastKey:
 		return len(cs.list), false
 	}
 
 	i := sort.Search(len(cs.list), func(i int) bool {
-		return cs.list[i].Key >= key
+		return cs.list[i].key >= ck
 	})
-	return i, cs.list[i].Key == key
+	return i, cs.list[i].key == ck
 }
 
-// set inserts/updates a NeedleValue.
+// set inserts/updates a CompactNeedleValue.
 // If the operation is an update, returns the overwritten value's previous offset and size.
 func (cs *CompactMapSegment) set(key types.NeedleId, offset types.Offset, size types.Size) (oldOffset types.Offset, oldSize types.Size) {
 	i, found := cs.bsearchKey(key)
 	if found {
 		// update
-		oldOffset.OffsetLower = cs.list[i].Offset.OffsetLower
-		oldOffset.OffsetHigher = cs.list[i].Offset.OffsetHigher
-		oldSize = cs.list[i].Size
+		o := cs.list[i].offset.Offset()
+		oldOffset.OffsetLower = o.OffsetLower
+		oldOffset.OffsetHigher = o.OffsetHigher
+		oldSize = cs.list[i].size
 
-		cs.list[i].Size = size
-		cs.list[i].Offset.OffsetLower = offset.OffsetLower
-		cs.list[i].Offset.OffsetHigher = offset.OffsetHigher
+		o.OffsetLower = offset.OffsetLower
+		o.OffsetHigher = offset.OffsetHigher
+		cs.list[i].offset = OffsetToCompact(o)
+		cs.list[i].size = size
 		return
 	}
 
@@ -86,32 +127,33 @@ func (cs *CompactMapSegment) set(key types.NeedleId, offset types.Offset, size t
 	}
 	if len(cs.list) == SegmentChunkSize-1 {
 		// if we max out our segment storage, pin its capacity to minimize memory usage
-		nl := make([]NeedleValue, SegmentChunkSize, SegmentChunkSize)
+		nl := make([]CompactNeedleValue, SegmentChunkSize, SegmentChunkSize)
 		copy(nl, cs.list[:i])
 		copy(nl[i+1:], cs.list[i:])
 		cs.list = nl
 	} else {
-		cs.list = append(cs.list, NeedleValue{})
+		cs.list = append(cs.list, CompactNeedleValue{})
 		copy(cs.list[i+1:], cs.list[i:])
 	}
 
-	cs.list[i] = NeedleValue{
-		Key:    key,
-		Offset: offset,
-		Size:   size,
+	ck := cs.compactKey(key)
+	cs.list[i] = CompactNeedleValue{
+		key:    ck,
+		offset: OffsetToCompact(offset),
+		size:   size,
 	}
-	if key < cs.firstKey {
-		cs.firstKey = key
+	if ck < cs.firstKey {
+		cs.firstKey = ck
 	}
-	if key > cs.lastKey {
-		cs.lastKey = key
+	if ck > cs.lastKey {
+		cs.lastKey = ck
 	}
 
 	return
 }
 
 // get seeks a map entry by key. Returns an entry pointer, with a boolean specifiying if the entry was found.
-func (cs *CompactMapSegment) get(key types.NeedleId) (*NeedleValue, bool) {
+func (cs *CompactMapSegment) get(key types.NeedleId) (*CompactNeedleValue, bool) {
 	if i, found := cs.bsearchKey(key); found {
 		return &cs.list[i], true
 	}
@@ -122,9 +164,9 @@ func (cs *CompactMapSegment) get(key types.NeedleId) (*NeedleValue, bool) {
 // delete deletes a map entry by key. Returns the entries' previous Size, if available.
 func (cs *CompactMapSegment) delete(key types.NeedleId) types.Size {
 	if i, found := cs.bsearchKey(key); found {
-		if cs.list[i].Size > 0 && cs.list[i].Size.IsValid() {
-			ret := cs.list[i].Size
-			cs.list[i].Size = -cs.list[i].Size
+		if cs.list[i].size > 0 && cs.list[i].size.IsValid() {
+			ret := cs.list[i].size
+			cs.list[i].size = -cs.list[i].size
 			return ret
 		}
 	}
@@ -188,7 +230,11 @@ func (cm *CompactMap) Get(key types.NeedleId) (*NeedleValue, bool) {
 	defer cm.RUnlock()
 
 	cs := cm.segmentForKey(key)
-	return cs.get(key)
+	if cnv, found := cs.get(key); found {
+		nv := cnv.NeedleValue(cs.chunk)
+		return &nv, true
+	}
+	return nil, false
 }
 
 // Delete deletes a map entry by key. Returns the entries' previous Size, if available.
@@ -212,7 +258,9 @@ func (cm *CompactMap) AscendingVisit(visit func(NeedleValue) error) error {
 	sort.Ints(chunks)
 
 	for _, c := range chunks {
-		for _, nv := range cm.segments[c].list {
+		cs := cm.segments[c]
+		for _, cnv := range cs.list {
+			nv := cnv.NeedleValue(cs.chunk)
 			if err := visit(nv); err != nil {
 				return err
 			}

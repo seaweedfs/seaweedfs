@@ -11,12 +11,12 @@ import (
 
 func TestSegmentBsearchKey(t *testing.T) {
 	testSegment := &CompactMapSegment{
-		list: []NeedleValue{
-			NeedleValue{Key: 10},
-			NeedleValue{Key: 20},
-			NeedleValue{Key: 21},
-			NeedleValue{Key: 26},
-			NeedleValue{Key: 30},
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 10},
+			CompactNeedleValue{key: 20},
+			CompactNeedleValue{key: 21},
+			CompactNeedleValue{key: 26},
+			CompactNeedleValue{key: 30},
 		},
 		firstKey: 10,
 		lastKey:  30,
@@ -116,10 +116,10 @@ func TestSegmentBsearchKey(t *testing.T) {
 
 func TestSegmentSet(t *testing.T) {
 	testSegment := &CompactMapSegment{
-		list: []NeedleValue{
-			NeedleValue{Key: 10, Offset: types.Uint32ToOffset(0), Size: 100},
-			NeedleValue{Key: 20, Offset: types.Uint32ToOffset(100), Size: 200},
-			NeedleValue{Key: 30, Offset: types.Uint32ToOffset(300), Size: 300},
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 10, offset: OffsetToCompact(types.Uint32ToOffset(0)), size: 100},
+			CompactNeedleValue{key: 20, offset: OffsetToCompact(types.Uint32ToOffset(100)), size: 200},
+			CompactNeedleValue{key: 30, offset: OffsetToCompact(types.Uint32ToOffset(300)), size: 300},
 		},
 		firstKey: 10,
 		lastKey:  30,
@@ -173,13 +173,13 @@ func TestSegmentSet(t *testing.T) {
 	}
 
 	wantSegment := &CompactMapSegment{
-		list: []NeedleValue{
-			NeedleValue{Key: 5, Offset: types.Uint32ToOffset(1000), Size: 123},
-			NeedleValue{Key: 10, Offset: types.Uint32ToOffset(0), Size: 100},
-			NeedleValue{Key: 20, Offset: types.Uint32ToOffset(100), Size: 200},
-			NeedleValue{Key: 25, Offset: types.Uint32ToOffset(8000), Size: 789},
-			NeedleValue{Key: 30, Offset: types.Uint32ToOffset(9000), Size: 999},
-			NeedleValue{Key: 51, Offset: types.Uint32ToOffset(7000), Size: 456},
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 5, offset: OffsetToCompact(types.Uint32ToOffset(1000)), size: 123},
+			CompactNeedleValue{key: 10, offset: OffsetToCompact(types.Uint32ToOffset(0)), size: 100},
+			CompactNeedleValue{key: 20, offset: OffsetToCompact(types.Uint32ToOffset(100)), size: 200},
+			CompactNeedleValue{key: 25, offset: OffsetToCompact(types.Uint32ToOffset(8000)), size: 789},
+			CompactNeedleValue{key: 30, offset: OffsetToCompact(types.Uint32ToOffset(9000)), size: 999},
+			CompactNeedleValue{key: 51, offset: OffsetToCompact(types.Uint32ToOffset(7000)), size: 456},
 		},
 		firstKey: 5,
 		lastKey:  51,
@@ -213,7 +213,7 @@ func TestSegmentSetOrdering(t *testing.T) {
 		t.Errorf("expected size %d, got %d", want, got)
 	}
 	for i := 1; i < cs.len(); i++ {
-		if ka, kb := cs.list[i-1].Key, cs.list[i].Key; ka >= kb {
+		if ka, kb := cs.list[i-1].key, cs.list[i].key; ka >= kb {
 			t.Errorf("found out of order entries at (%d, %d) = (%d, %d)", i-1, i, ka, kb)
 		}
 	}
@@ -221,10 +221,10 @@ func TestSegmentSetOrdering(t *testing.T) {
 
 func TestSegmentGet(t *testing.T) {
 	testSegment := &CompactMapSegment{
-		list: []NeedleValue{
-			NeedleValue{Key: 10, Offset: types.Uint32ToOffset(0), Size: 100},
-			NeedleValue{Key: 20, Offset: types.Uint32ToOffset(100), Size: 200},
-			NeedleValue{Key: 30, Offset: types.Uint32ToOffset(300), Size: 300},
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 10, offset: OffsetToCompact(types.Uint32ToOffset(0)), size: 100},
+			CompactNeedleValue{key: 20, offset: OffsetToCompact(types.Uint32ToOffset(100)), size: 200},
+			CompactNeedleValue{key: 30, offset: OffsetToCompact(types.Uint32ToOffset(300)), size: 300},
 		},
 		firstKey: 10,
 		lastKey:  30,
@@ -233,7 +233,7 @@ func TestSegmentGet(t *testing.T) {
 	testCases := []struct {
 		name      string
 		key       types.NeedleId
-		wantValue *NeedleValue
+		wantValue *CompactNeedleValue
 		wantFound bool
 	}{
 		{
@@ -277,11 +277,11 @@ func TestSegmentGet(t *testing.T) {
 
 func TestSegmentDelete(t *testing.T) {
 	testSegment := &CompactMapSegment{
-		list: []NeedleValue{
-			NeedleValue{Key: 10, Offset: types.Uint32ToOffset(0), Size: 100},
-			NeedleValue{Key: 20, Offset: types.Uint32ToOffset(100), Size: 200},
-			NeedleValue{Key: 30, Offset: types.Uint32ToOffset(300), Size: 300},
-			NeedleValue{Key: 40, Offset: types.Uint32ToOffset(600), Size: 400},
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 10, offset: OffsetToCompact(types.Uint32ToOffset(0)), size: 100},
+			CompactNeedleValue{key: 20, offset: OffsetToCompact(types.Uint32ToOffset(100)), size: 200},
+			CompactNeedleValue{key: 30, offset: OffsetToCompact(types.Uint32ToOffset(300)), size: 300},
+			CompactNeedleValue{key: 40, offset: OffsetToCompact(types.Uint32ToOffset(600)), size: 400},
 		},
 		firstKey: 10,
 		lastKey:  40,
@@ -317,11 +317,11 @@ func TestSegmentDelete(t *testing.T) {
 	}
 
 	wantSegment := &CompactMapSegment{
-		list: []NeedleValue{
-			NeedleValue{Key: 10, Offset: types.Uint32ToOffset(0), Size: 100},
-			NeedleValue{Key: 20, Offset: types.Uint32ToOffset(100), Size: -200},
-			NeedleValue{Key: 30, Offset: types.Uint32ToOffset(300), Size: 300},
-			NeedleValue{Key: 40, Offset: types.Uint32ToOffset(600), Size: -400},
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 10, offset: OffsetToCompact(types.Uint32ToOffset(0)), size: 100},
+			CompactNeedleValue{key: 20, offset: OffsetToCompact(types.Uint32ToOffset(100)), size: -200},
+			CompactNeedleValue{key: 30, offset: OffsetToCompact(types.Uint32ToOffset(300)), size: 300},
+			CompactNeedleValue{key: 40, offset: OffsetToCompact(types.Uint32ToOffset(600)), size: -400},
 		},
 		firstKey: 10,
 		lastKey:  40,
@@ -343,8 +343,9 @@ func TestSegmentForKey(t *testing.T) {
 			name: "first segment",
 			key:  12,
 			want: &CompactMapSegment{
-				list:     []NeedleValue{},
-				firstKey: SegmentChunkSize - 1,
+				list:     []CompactNeedleValue{},
+				chunk:    0,
+				firstKey: MaxCompactKey,
 				lastKey:  0,
 			},
 		},
@@ -352,18 +353,20 @@ func TestSegmentForKey(t *testing.T) {
 			name: "second segment, gapless",
 			key:  SegmentChunkSize + 34,
 			want: &CompactMapSegment{
-				list:     []NeedleValue{},
-				firstKey: (2 * SegmentChunkSize) - 1,
-				lastKey:  SegmentChunkSize,
+				list:     []CompactNeedleValue{},
+				chunk:    1,
+				firstKey: MaxCompactKey,
+				lastKey:  0,
 			},
 		},
 		{
 			name: "gapped segment",
 			key:  (5 * SegmentChunkSize) + 56,
 			want: &CompactMapSegment{
-				list:     []NeedleValue{},
-				firstKey: (6 * SegmentChunkSize) - 1,
-				lastKey:  5 * SegmentChunkSize,
+				list:     []CompactNeedleValue{},
+				chunk:    5,
+				firstKey: MaxCompactKey,
+				lastKey:  0,
 			},
 		},
 	}
@@ -380,19 +383,22 @@ func TestSegmentForKey(t *testing.T) {
 	wantMap := &CompactMap{
 		segments: map[int]*CompactMapSegment{
 			0: &CompactMapSegment{
-				list:     []NeedleValue{},
-				firstKey: SegmentChunkSize - 1,
+				list:     []CompactNeedleValue{},
+				chunk:    0,
+				firstKey: MaxCompactKey,
 				lastKey:  0,
 			},
 			1: &CompactMapSegment{
-				list:     []NeedleValue{},
-				firstKey: (2 * SegmentChunkSize) - 1,
-				lastKey:  SegmentChunkSize,
+				list:     []CompactNeedleValue{},
+				chunk:    1,
+				firstKey: MaxCompactKey,
+				lastKey:  0,
 			},
 			5: &CompactMapSegment{
-				list:     []NeedleValue{},
-				firstKey: (6 * SegmentChunkSize) - 1,
-				lastKey:  5 * SegmentChunkSize,
+				list:     []CompactNeedleValue{},
+				chunk:    5,
+				firstKey: MaxCompactKey,
+				lastKey:  0,
 			},
 		},
 	}
