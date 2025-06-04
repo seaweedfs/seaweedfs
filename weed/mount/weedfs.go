@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"errors"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"math/rand"
 	"os"
 	"path"
@@ -231,7 +232,7 @@ func (wfs *WFS) ClearCacheDir() {
 }
 
 func (option *Option) setupUniqueCacheDirectory() {
-	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + string(option.FilerAddresses[0]) + option.FilerMountRootPath + util.Version()))[0:8]
+	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + string(option.FilerAddresses[0]) + option.FilerMountRootPath + version.Version()))[0:8]
 	option.uniqueCacheDirForRead = path.Join(option.CacheDirForRead, cacheUniqueId)
 	os.MkdirAll(option.uniqueCacheDirForRead, os.FileMode(0777)&^option.Umask)
 	option.uniqueCacheDirForWrite = filepath.Join(path.Join(option.CacheDirForWrite, cacheUniqueId), "swap")

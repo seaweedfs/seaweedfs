@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"os"
 	"os/user"
@@ -65,7 +66,7 @@ func runWebDav(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 
 	listenAddress := fmt.Sprintf("%s:%d", *webDavStandaloneOptions.ipBind, *webDavStandaloneOptions.port)
-	glog.V(0).Infof("Starting Seaweed WebDav Server %s at %s", util.Version(), listenAddress)
+	glog.V(0).Infof("Starting Seaweed WebDav Server %s at %s", version.Version(), listenAddress)
 
 	return webDavStandaloneOptions.startWebDav()
 
@@ -136,12 +137,12 @@ func (wo *WebDavOption) startWebDav() bool {
 	}
 
 	if *wo.tlsPrivateKey != "" {
-		glog.V(0).Infof("Start Seaweed WebDav Server %s at https %s", util.Version(), listenAddress)
+		glog.V(0).Infof("Start Seaweed WebDav Server %s at https %s", version.Version(), listenAddress)
 		if err = httpS.ServeTLS(webDavListener, *wo.tlsCertificate, *wo.tlsPrivateKey); err != nil {
 			glog.Fatalf("WebDav Server Fail to serve: %v", err)
 		}
 	} else {
-		glog.V(0).Infof("Start Seaweed WebDav Server %s at http %s", util.Version(), listenAddress)
+		glog.V(0).Infof("Start Seaweed WebDav Server %s at http %s", version.Version(), listenAddress)
 		if err = httpS.Serve(webDavListener); err != nil {
 			glog.Fatalf("WebDav Server Fail to serve: %v", err)
 		}

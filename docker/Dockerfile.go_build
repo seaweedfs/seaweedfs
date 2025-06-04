@@ -6,7 +6,7 @@ ARG BRANCH=${BRANCH:-master}
 ARG TAGS
 RUN cd /go/src/github.com/seaweedfs/seaweedfs && git checkout $BRANCH
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
-  && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(git rev-parse --short HEAD)" \
+  && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && CGO_ENABLED=0 go install -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}"
 
 FROM alpine AS final

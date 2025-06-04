@@ -2,13 +2,12 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -37,7 +36,7 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 
 	statusRecorder := stats.NewStatusResponseWriter(w)
 	w = statusRecorder
-	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS Volume "+version.VERSION)
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -57,7 +56,7 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 			select {
 			case <-r.Context().Done():
 				glog.V(4).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
-				w.WriteHeader(util.HttpStatusCancelled)
+				w.WriteHeader(version.HttpStatusCancelled)
 				vs.inFlightDownloadDataLimitCond.L.Unlock()
 				return
 			default:
@@ -130,7 +129,7 @@ func getContentLength(r *http.Request) int64 {
 func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
 	statusRecorder := stats.NewStatusResponseWriter(w)
 	w = statusRecorder
-	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS Volume "+version.VERSION)
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")

@@ -3,6 +3,7 @@ package wdclient
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"math/rand"
 	"sync"
 	"time"
@@ -208,7 +209,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			Rack:          mc.rack,
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
-			Version:       util.Version(),
+			Version:       version.Version(),
 		}); err != nil {
 			glog.V(0).Infof("%s.%s masterClient failed to send to %s: %v", mc.FilerGroup, mc.clientType, master, err)
 			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToSend).Inc()

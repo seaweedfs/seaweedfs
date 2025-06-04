@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"time"
 
@@ -9,7 +10,6 @@ import (
 
 	ui "github.com/seaweedfs/seaweedfs/weed/server/master_ui"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +29,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 			Counters          *stats.ServerStats
 			VolumeSizeLimitMB uint32
 		}{
-			util.Version(),
+			version.Version(),
 			ms.Topo.ToInfo(),
 			ms.Topo.RaftServer,
 			infos,
@@ -46,7 +46,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 			Counters          *stats.ServerStats
 			VolumeSizeLimitMB uint32
 		}{
-			util.Version(),
+			version.Version(),
 			ms.Topo.ToInfo(),
 			ms.Topo.HashicorpRaft,
 			infos,

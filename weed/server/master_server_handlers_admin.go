@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
@@ -18,7 +19,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -49,7 +49,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.Version()
+	m["Version"] = version.Version()
 	m["Topology"] = ms.Topo.ToInfo()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
@@ -104,7 +104,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 
 func (ms *MasterServer) volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.Version()
+	m["Version"] = version.Version()
 	m["Volumes"] = ms.Topo.ToVolumeMap()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
@@ -204,7 +204,7 @@ func (ms *MasterServer) collectionInfoHandler(w http.ResponseWriter, r *http.Req
 		for i, volumeLayout := range volumeLayouts {
 			volumeLayoutStats := volumeLayout.Stats()
 			m := make(map[string]interface{})
-			m["Version"] = util.Version()
+			m["Version"] = version.Version()
 			m["Collection"] = collectionName
 			m["TotalSize"] = volumeLayoutStats.TotalSize
 			m["FileCount"] = volumeLayoutStats.FileCount
@@ -216,7 +216,7 @@ func (ms *MasterServer) collectionInfoHandler(w http.ResponseWriter, r *http.Req
 	} else {
 		//prepare the json response
 		collectionStats := map[string]interface{}{
-			"Version":     util.Version(),
+			"Version":     version.Version(),
 			"Collection":  collectionName,
 			"TotalSize":   uint64(0),
 			"FileCount":   uint64(0),

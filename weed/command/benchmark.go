@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"io"
 	"math"
 	"math/rand"
@@ -115,7 +116,7 @@ func runBenchmark(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	b.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("This is SeaweedFS version %s %s %s\n", version.Version(), runtime.GOOS, runtime.GOARCH)
 	if *b.maxCpu < 1 {
 		*b.maxCpu = runtime.NumCPU()
 	}

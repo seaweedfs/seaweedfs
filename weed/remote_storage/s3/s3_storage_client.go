@@ -2,6 +2,7 @@ package s3
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"io"
 	"reflect"
 
@@ -53,7 +54,7 @@ func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.R
 		sess.Handlers.Sign.PushBackNamed(v4.SignRequestHandler)
 	}
 	sess.Handlers.Build.PushBack(func(r *request.Request) {
-		r.HTTPRequest.Header.Set("User-Agent", "SeaweedFS/"+util.VERSION_NUMBER)
+		r.HTTPRequest.Header.Set("User-Agent", "SeaweedFS/"+version.VERSION_NUMBER)
 	})
 	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)

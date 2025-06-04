@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net"
 	"os"
 	"runtime"
@@ -175,7 +176,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 		glog.Fatalf("SFTP server listener on %s error: %v", listenAddress, err)
 	}
 
-	glog.V(0).Infof("Start Seaweed SFTP Server %s at %s", util.Version(), listenAddress)
+	glog.V(0).Infof("Start Seaweed SFTP Server %s at %s", version.Version(), listenAddress)
 
 	if sftpLocalListener != nil {
 		go func() {

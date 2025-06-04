@@ -2,9 +2,8 @@ package command
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"runtime"
-
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var cmdVersion = &Command{
@@ -19,6 +18,6 @@ func runVersion(cmd *Command, args []string) bool {
 		cmd.Usage()
 	}
 
-	fmt.Printf("version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("version %s %s %s\n", version.Version(), runtime.GOOS, runtime.GOARCH)
 	return true
 }

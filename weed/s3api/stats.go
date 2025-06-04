@@ -1,13 +1,13 @@
 package s3api
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func track(f http.HandlerFunc, action string) http.HandlerFunc {
@@ -17,7 +17,7 @@ func track(f http.HandlerFunc, action string) http.HandlerFunc {
 		defer inFlightGauge.Dec()
 
 		bucket, _ := s3_constants.GetBucketAndObject(r)
-		w.Header().Set("Server", "SeaweedFS "+util.VERSION)
+		w.Header().Set("Server", "SeaweedFS "+version.VERSION)
 		recorder := stats_collect.NewStatusResponseWriter(w)
 		start := time.Now()
 		f(recorder, r)

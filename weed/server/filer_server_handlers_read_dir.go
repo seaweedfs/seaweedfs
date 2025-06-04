@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"errors"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"strconv"
 	"strings"
@@ -69,7 +70,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 			ShouldDisplayLoadMore bool
 			EmptyFolder           bool
 		}{
-			util.Version(),
+			version.Version(),
 			path,
 			entries,
 			limit,
@@ -91,7 +92,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		EmptyFolder           bool
 		ShowDirectoryDelete   bool
 	}{
-		util.Version(),
+		version.Version(),
 		path,
 		ui.ToBreadcrumb(path),
 		entries,
