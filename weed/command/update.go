@@ -10,7 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
+	swv "github.com/seaweedfs/seaweedfs/weed/util/version"
 	"io"
 	"net/http"
 	"os"
@@ -118,7 +118,7 @@ func runUpdate(cmd *Command, args []string) bool {
 }
 
 func downloadRelease(ctx context.Context, target string, ver string) (version string, err error) {
-	currentVersion := version.VERSION_NUMBER
+	currentVersion := swv.VERSION_NUMBER
 	rel, err := GitHubLatestRelease(ctx, ver, "seaweedfs", "seaweedfs")
 	if err != nil {
 		return "", err
