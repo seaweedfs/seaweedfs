@@ -1,5 +1,15 @@
 package needle_map
 
+/* CompactMap is an in-memory map of needle indeces, optimized for memory usage.
+ *
+ * It's implemented as a map of sorted indeces segments, which are in turn accessed through binary
+ * search. This guarantees a best-case scenario (ordered inserts/updates) of O(N) and a worst case
+ * scenario of O(log n) runtime, with memory usage unaffected by insert ordering.
+ *
+ * Note that even at O(log n), the clock time for both reads and writes is very low, so CompactMap
+ * will seldom bottleneck index operations.
+ */
+
 import (
 	"fmt"
 	"math"
