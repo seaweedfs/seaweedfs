@@ -1,330 +1,284 @@
 package needle_map
 
+/* CompactMap is an in-memory map of needle indeces, optimized for memory usage.
+ *
+ * It's implemented as a map of sorted indeces segments, which are in turn accessed through binary
+ * search. This guarantees a best-case scenario (ordered inserts/updates) of O(N) and a worst case
+ * scenario of O(log n) runtime, with memory usage unaffected by insert ordering.
+ *
+ * Note that even at O(log n), the clock time for both reads and writes is very low, so CompactMap
+ * will seldom bottleneck index operations.
+ */
+
 import (
+	"fmt"
+	"math"
+	"slices"
 	"sort"
 	"sync"
 
-	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 const (
-	MaxSectionBucketSize = 1024 * 8
-	LookBackWindowSize   = 1024 // how many entries to look back when inserting into a section
+	MaxCompactKey    = math.MaxUint16
+	SegmentChunkSize = 50000 // should be <= MaxCompactKey
 )
 
-type SectionalNeedleId uint32
-
-const SectionalNeedleIdLimit = 1<<32 - 1
-
-type SectionalNeedleValue struct {
-	Key          SectionalNeedleId
-	OffsetLower  OffsetLower `comment:"Volume offset"` //since aligned to 8 bytes, range is 4G*8=32G
-	Size         Size        `comment:"Size of the data portion"`
-	OffsetHigher OffsetHigher
+type CompactKey uint16
+type CompactOffset [types.OffsetSize]byte
+type CompactNeedleValue struct {
+	key    CompactKey
+	offset CompactOffset
+	size   types.Size
 }
 
-type CompactSection struct {
+type Chunk uint64
+type CompactMapSegment struct {
+	list     []CompactNeedleValue
+	chunk    Chunk
+	firstKey CompactKey
+	lastKey  CompactKey
+}
+
+type CompactMap struct {
 	sync.RWMutex
-	values   []SectionalNeedleValue
-	overflow Overflow
-	start    NeedleId
-	end      NeedleId
+
+	segments map[Chunk]*CompactMapSegment
 }
 
-type Overflow []SectionalNeedleValue
+func (ck CompactKey) Key(chunk Chunk) types.NeedleId {
+	return (types.NeedleId(SegmentChunkSize) * types.NeedleId(chunk)) + types.NeedleId(ck)
+}
 
-func NewCompactSection(start NeedleId) *CompactSection {
-	return &CompactSection{
-		values:   make([]SectionalNeedleValue, 0),
-		overflow: Overflow(make([]SectionalNeedleValue, 0)),
-		start:    start,
+func OffsetToCompact(offset types.Offset) CompactOffset {
+	var co CompactOffset
+	types.OffsetToBytes(co[:], offset)
+	return co
+}
+
+func (co CompactOffset) Offset() types.Offset {
+	return types.BytesToOffset(co[:])
+}
+
+func (cnv CompactNeedleValue) NeedleValue(chunk Chunk) NeedleValue {
+	return NeedleValue{
+		Key:    cnv.key.Key(chunk),
+		Offset: cnv.offset.Offset(),
+		Size:   cnv.size,
 	}
 }
 
-// return old entry size
-func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset Offset, oldSize Size) {
-	cs.Lock()
-	defer cs.Unlock()
-
-	if key > cs.end {
-		cs.end = key
+func newCompactMapSegment(chunk Chunk) *CompactMapSegment {
+	return &CompactMapSegment{
+		list:     []CompactNeedleValue{},
+		chunk:    chunk,
+		firstKey: MaxCompactKey,
+		lastKey:  0,
 	}
-	skey := SectionalNeedleId(key - cs.start)
-	if i := cs.binarySearchValues(skey); i >= 0 {
+}
+
+func (cs *CompactMapSegment) len() int {
+	return len(cs.list)
+}
+
+func (cs *CompactMapSegment) cap() int {
+	return cap(cs.list)
+}
+
+func (cs *CompactMapSegment) compactKey(key types.NeedleId) CompactKey {
+	return CompactKey(key - (types.NeedleId(SegmentChunkSize) * types.NeedleId(cs.chunk)))
+}
+
+// bsearchKey returns the CompactNeedleValue index for a given ID key.
+// If the key is not found, it returns the index where it should be inserted instead.
+func (cs *CompactMapSegment) bsearchKey(key types.NeedleId) (int, bool) {
+	ck := cs.compactKey(key)
+
+	switch {
+	case len(cs.list) == 0:
+		return 0, false
+	case ck == cs.firstKey:
+		return 0, true
+	case ck <= cs.firstKey:
+		return 0, false
+	case ck == cs.lastKey:
+		return len(cs.list) - 1, true
+	case ck > cs.lastKey:
+		return len(cs.list), false
+	}
+
+	i := sort.Search(len(cs.list), func(i int) bool {
+		return cs.list[i].key >= ck
+	})
+	return i, cs.list[i].key == ck
+}
+
+// set inserts/updates a CompactNeedleValue.
+// If the operation is an update, returns the overwritten value's previous offset and size.
+func (cs *CompactMapSegment) set(key types.NeedleId, offset types.Offset, size types.Size) (oldOffset types.Offset, oldSize types.Size) {
+	i, found := cs.bsearchKey(key)
+	if found {
 		// update
-		oldOffset.OffsetHigher, oldOffset.OffsetLower, oldSize = cs.values[i].OffsetHigher, cs.values[i].OffsetLower, cs.values[i].Size
-		cs.values[i].OffsetHigher, cs.values[i].OffsetLower, cs.values[i].Size = offset.OffsetHigher, offset.OffsetLower, size
+		o := cs.list[i].offset.Offset()
+		oldOffset.OffsetLower = o.OffsetLower
+		oldOffset.OffsetHigher = o.OffsetHigher
+		oldSize = cs.list[i].size
+
+		o.OffsetLower = offset.OffsetLower
+		o.OffsetHigher = offset.OffsetHigher
+		cs.list[i].offset = OffsetToCompact(o)
+		cs.list[i].size = size
 		return
 	}
 
-	var lkey SectionalNeedleId
-	if len(cs.values) > 0 {
-		lkey = cs.values[len(cs.values)-1].Key
+	// insert
+	if len(cs.list) >= SegmentChunkSize {
+		panic(fmt.Sprintf("attempted to write more than %d entries on CompactMapSegment %p!!!", SegmentChunkSize, cs))
 	}
-
-	hasAdded := false
-	switch {
-	case len(cs.values) < MaxSectionBucketSize && lkey <= skey:
-		// non-overflow insert
-		cs.values = append(cs.values, SectionalNeedleValue{
-			Key:          skey,
-			OffsetLower:  offset.OffsetLower,
-			Size:         size,
-			OffsetHigher: offset.OffsetHigher,
-		})
-		hasAdded = true
-	case len(cs.values) < MaxSectionBucketSize:
-		// still has capacity and only partially out of order
-		lookBackIndex := len(cs.values) - LookBackWindowSize
-		if lookBackIndex < 0 {
-			lookBackIndex = 0
-		}
-		if cs.values[lookBackIndex].Key <= skey {
-			for ; lookBackIndex < len(cs.values); lookBackIndex++ {
-				if cs.values[lookBackIndex].Key >= skey {
-					break
-				}
-			}
-			cs.values = append(cs.values, SectionalNeedleValue{})
-			copy(cs.values[lookBackIndex+1:], cs.values[lookBackIndex:])
-			cs.values[lookBackIndex].Key, cs.values[lookBackIndex].Size = skey, size
-			cs.values[lookBackIndex].OffsetLower, cs.values[lookBackIndex].OffsetHigher = offset.OffsetLower, offset.OffsetHigher
-			hasAdded = true
-		}
-	}
-
-	// overflow insert
-	if !hasAdded {
-		if oldValue, found := cs.findOverflowEntry(skey); found {
-			oldOffset.OffsetHigher, oldOffset.OffsetLower, oldSize = oldValue.OffsetHigher, oldValue.OffsetLower, oldValue.Size
-		}
-		cs.setOverflowEntry(skey, offset, size)
+	if len(cs.list) == SegmentChunkSize-1 {
+		// if we max out our segment storage, pin its capacity to minimize memory usage
+		nl := make([]CompactNeedleValue, SegmentChunkSize, SegmentChunkSize)
+		copy(nl, cs.list[:i])
+		copy(nl[i+1:], cs.list[i:])
+		cs.list = nl
 	} else {
-		// if we maxed out our values bucket, pin its capacity to minimize memory usage
-		if len(cs.values) == MaxSectionBucketSize {
-			bucket := make([]SectionalNeedleValue, len(cs.values))
-			copy(bucket, cs.values)
-			cs.values = bucket
-		}
+		cs.list = append(cs.list, CompactNeedleValue{})
+		copy(cs.list[i+1:], cs.list[i:])
+	}
+
+	ck := cs.compactKey(key)
+	cs.list[i] = CompactNeedleValue{
+		key:    ck,
+		offset: OffsetToCompact(offset),
+		size:   size,
+	}
+	if ck < cs.firstKey {
+		cs.firstKey = ck
+	}
+	if ck > cs.lastKey {
+		cs.lastKey = ck
 	}
 
 	return
 }
 
-func (cs *CompactSection) setOverflowEntry(skey SectionalNeedleId, offset Offset, size Size) {
-	needleValue := SectionalNeedleValue{Key: skey, OffsetLower: offset.OffsetLower, Size: size, OffsetHigher: offset.OffsetHigher}
-	insertCandidate := sort.Search(len(cs.overflow), func(i int) bool {
-		return cs.overflow[i].Key >= needleValue.Key
-	})
-
-	if insertCandidate != len(cs.overflow) && cs.overflow[insertCandidate].Key == needleValue.Key {
-		cs.overflow[insertCandidate] = needleValue
-		return
+// get seeks a map entry by key. Returns an entry pointer, with a boolean specifiying if the entry was found.
+func (cs *CompactMapSegment) get(key types.NeedleId) (*CompactNeedleValue, bool) {
+	if i, found := cs.bsearchKey(key); found {
+		return &cs.list[i], true
 	}
 
-	cs.overflow = append(cs.overflow, SectionalNeedleValue{})
-	copy(cs.overflow[insertCandidate+1:], cs.overflow[insertCandidate:])
-	cs.overflow[insertCandidate] = needleValue
+	return nil, false
 }
 
-func (cs *CompactSection) findOverflowEntry(key SectionalNeedleId) (nv SectionalNeedleValue, found bool) {
-	foundCandidate := sort.Search(len(cs.overflow), func(i int) bool {
-		return cs.overflow[i].Key >= key
-	})
-	if foundCandidate != len(cs.overflow) && cs.overflow[foundCandidate].Key == key {
-		return cs.overflow[foundCandidate], true
-	}
-	return nv, false
-}
-
-func (cs *CompactSection) deleteOverflowEntry(key SectionalNeedleId) {
-	length := len(cs.overflow)
-	deleteCandidate := sort.Search(length, func(i int) bool {
-		return cs.overflow[i].Key >= key
-	})
-	if deleteCandidate != length && cs.overflow[deleteCandidate].Key == key {
-		if cs.overflow[deleteCandidate].Size.IsValid() {
-			cs.overflow[deleteCandidate].Size = -cs.overflow[deleteCandidate].Size
+// delete deletes a map entry by key. Returns the entries' previous Size, if available.
+func (cs *CompactMapSegment) delete(key types.NeedleId) types.Size {
+	if i, found := cs.bsearchKey(key); found {
+		if cs.list[i].size > 0 && cs.list[i].size.IsValid() {
+			ret := cs.list[i].size
+			cs.list[i].size = -cs.list[i].size
+			return ret
 		}
 	}
+
+	return types.Size(0)
 }
 
-// return old entry size
-func (cs *CompactSection) Delete(key NeedleId) Size {
-	cs.Lock()
-	defer cs.Unlock()
-	ret := Size(0)
-	if key > cs.end {
-		return ret
+func NewCompactMap() *CompactMap {
+	return &CompactMap{
+		segments: map[Chunk]*CompactMapSegment{},
 	}
-	skey := SectionalNeedleId(key - cs.start)
-	if i := cs.binarySearchValues(skey); i >= 0 {
-		if cs.values[i].Size > 0 && cs.values[i].Size.IsValid() {
-			ret = cs.values[i].Size
-			cs.values[i].Size = -cs.values[i].Size
-		}
-	}
-	if v, found := cs.findOverflowEntry(skey); found {
-		cs.deleteOverflowEntry(skey)
-		ret = v.Size
-	}
-	return ret
 }
-func (cs *CompactSection) Get(key NeedleId) (*NeedleValue, bool) {
-	cs.RLock()
-	defer cs.RUnlock()
-	if key > cs.end {
-		return nil, false
+
+func (cm *CompactMap) Len() int {
+	l := 0
+	for _, s := range cm.segments {
+		l += s.len()
 	}
-	skey := SectionalNeedleId(key - cs.start)
-	if v, ok := cs.findOverflowEntry(skey); ok {
-		nv := toNeedleValue(v, cs)
-		return &nv, true
+	return l
+}
+
+func (cm *CompactMap) Cap() int {
+	c := 0
+	for _, s := range cm.segments {
+		c += s.cap()
 	}
-	if i := cs.binarySearchValues(skey); i >= 0 {
-		nv := toNeedleValue(cs.values[i], cs)
+	return c
+}
+
+func (cm *CompactMap) String() string {
+	if cm.Len() == 0 {
+		return "empty"
+	}
+	return fmt.Sprintf(
+		"%d/%d elements on %d segments, %.02f%% efficiency",
+		cm.Len(), cm.Cap(), len(cm.segments),
+		float64(100)*float64(cm.Len())/float64(cm.Cap()))
+}
+
+func (cm *CompactMap) segmentForKey(key types.NeedleId) *CompactMapSegment {
+	chunk := Chunk(key / SegmentChunkSize)
+	if cs, ok := cm.segments[chunk]; ok {
+		return cs
+	}
+
+	cs := newCompactMapSegment(chunk)
+	cm.segments[chunk] = cs
+	return cs
+}
+
+// Set inserts/updates a NeedleValue.
+// If the operation is an update, returns the overwritten value's previous offset and size.
+func (cm *CompactMap) Set(key types.NeedleId, offset types.Offset, size types.Size) (oldOffset types.Offset, oldSize types.Size) {
+	cm.RLock()
+	defer cm.RUnlock()
+
+	cs := cm.segmentForKey(key)
+	return cs.set(key, offset, size)
+}
+
+// Get seeks a map entry by key. Returns an entry pointer, with a boolean specifiying if the entry was found.
+func (cm *CompactMap) Get(key types.NeedleId) (*NeedleValue, bool) {
+	cm.RLock()
+	defer cm.RUnlock()
+
+	cs := cm.segmentForKey(key)
+	if cnv, found := cs.get(key); found {
+		nv := cnv.NeedleValue(cs.chunk)
 		return &nv, true
 	}
 	return nil, false
 }
-func (cs *CompactSection) binarySearchValues(key SectionalNeedleId) int {
-	x := sort.Search(len(cs.values), func(i int) bool {
-		return cs.values[i].Key >= key
-	})
-	if x >= len(cs.values) {
-		return -1
-	}
-	if cs.values[x].Key > key {
-		return -2
-	}
-	return x
+
+// Delete deletes a map entry by key. Returns the entries' previous Size, if available.
+func (cm *CompactMap) Delete(key types.NeedleId) types.Size {
+	cm.RLock()
+	defer cm.RUnlock()
+
+	cs := cm.segmentForKey(key)
+	return cs.delete(key)
 }
 
-// This map assumes mostly inserting increasing keys
-// This map assumes mostly inserting increasing keys
-type CompactMap struct {
-	list []*CompactSection
-}
-
-func NewCompactMap() *CompactMap {
-	return &CompactMap{}
-}
-
-func (cm *CompactMap) Set(key NeedleId, offset Offset, size Size) (oldOffset Offset, oldSize Size) {
-	x := cm.binarySearchCompactSection(key)
-	if x < 0 || (key-cm.list[x].start) > SectionalNeedleIdLimit {
-		// println(x, "adding to existing", len(cm.list), "sections, starting", key)
-		cs := NewCompactSection(key)
-		cm.list = append(cm.list, cs)
-		x = len(cm.list) - 1
-		//keep compact section sorted by start
-		for x >= 0 {
-			if x > 0 && cm.list[x-1].start > key {
-				cm.list[x] = cm.list[x-1]
-				// println("shift", x, "start", cs.start, "to", x-1)
-				x = x - 1
-			} else {
-				cm.list[x] = cs
-				// println("cs", x, "start", cs.start)
-				break
-			}
-		}
-	}
-	// println(key, "set to section[", x, "].start", cm.list[x].start)
-	return cm.list[x].Set(key, offset, size)
-}
-func (cm *CompactMap) Delete(key NeedleId) Size {
-	x := cm.binarySearchCompactSection(key)
-	if x < 0 {
-		return Size(0)
-	}
-	return cm.list[x].Delete(key)
-}
-func (cm *CompactMap) Get(key NeedleId) (*NeedleValue, bool) {
-	x := cm.binarySearchCompactSection(key)
-	if x < 0 {
-		return nil, false
-	}
-	return cm.list[x].Get(key)
-}
-func (cm *CompactMap) binarySearchCompactSection(key NeedleId) int {
-	l, h := 0, len(cm.list)-1
-	if h < 0 {
-		return -5
-	}
-	if cm.list[h].start <= key {
-		if len(cm.list[h].values) < MaxSectionBucketSize || key <= cm.list[h].end {
-			return h
-		}
-		return -4
-	}
-	for l <= h {
-		m := (l + h) / 2
-		if key < cm.list[m].start {
-			h = m - 1
-		} else { // cm.list[m].start <= key
-			if cm.list[m+1].start <= key {
-				l = m + 1
-			} else {
-				return m
-			}
-		}
-	}
-	return -3
-}
-
-// Visit visits all entries or stop if any error when visiting
+// AscendingVisit runs a function on all entries, in ascending key order. Returns any errors hit while visiting.
 func (cm *CompactMap) AscendingVisit(visit func(NeedleValue) error) error {
-	for _, cs := range cm.list {
-		cs.RLock()
-		var i, j int
-		for i, j = 0, 0; i < len(cs.overflow) && j < len(cs.values); {
-			if cs.overflow[i].Key < cs.values[j].Key {
-				if err := visit(toNeedleValue(cs.overflow[i], cs)); err != nil {
-					cs.RUnlock()
-					return err
-				}
-				i++
-			} else if cs.overflow[i].Key == cs.values[j].Key {
-				j++
-			} else {
-				if err := visit(toNeedleValue(cs.values[j], cs)); err != nil {
-					cs.RUnlock()
-					return err
-				}
-				j++
-			}
-		}
-		for ; i < len(cs.overflow); i++ {
-			if err := visit(toNeedleValue(cs.overflow[i], cs)); err != nil {
-				cs.RUnlock()
+	cm.RLock()
+	defer cm.RUnlock()
+
+	chunks := []Chunk{}
+	for c := range cm.segments {
+		chunks = append(chunks, c)
+	}
+	slices.Sort(chunks)
+
+	for _, c := range chunks {
+		cs := cm.segments[c]
+		for _, cnv := range cs.list {
+			nv := cnv.NeedleValue(cs.chunk)
+			if err := visit(nv); err != nil {
 				return err
 			}
 		}
-		for ; j < len(cs.values); j++ {
-			if err := visit(toNeedleValue(cs.values[j], cs)); err != nil {
-				cs.RUnlock()
-				return err
-			}
-		}
-		cs.RUnlock()
 	}
 	return nil
-}
-
-func toNeedleValue(snv SectionalNeedleValue, cs *CompactSection) NeedleValue {
-	offset := Offset{
-		OffsetHigher: snv.OffsetHigher,
-		OffsetLower:  snv.OffsetLower,
-	}
-	return NeedleValue{Key: NeedleId(snv.Key) + cs.start, Offset: offset, Size: snv.Size}
-}
-
-func (nv NeedleValue) toSectionalNeedleValue(cs *CompactSection) SectionalNeedleValue {
-	return SectionalNeedleValue{
-		Key:          SectionalNeedleId(nv.Key - cs.start),
-		OffsetLower:  nv.Offset.OffsetLower,
-		Size:         nv.Size,
-		OffsetHigher: nv.Offset.OffsetHigher,
-	}
 }

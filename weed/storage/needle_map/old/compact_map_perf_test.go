@@ -31,7 +31,7 @@ func TestMemoryUsage(t *testing.T) {
 
 	startTime := time.Now()
 	for i := 0; i < 10; i++ {
-		indexFile, ie := os.OpenFile("../../../test/data/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
+		indexFile, ie := os.OpenFile("../../../../test/data/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
 		if ie != nil {
 			log.Fatalln(ie)
 		}
@@ -43,7 +43,6 @@ func TestMemoryUsage(t *testing.T) {
 
 		PrintMemUsage(totalRowCount)
 		now := time.Now()
-		fmt.Printf("\tCompactMap = %s", m.String())
 		fmt.Printf("\tTaken = %v\n", now.Sub(startTime))
 		startTime = now
 	}
