@@ -3,6 +3,7 @@ package needle_map
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"sync"
 
@@ -22,9 +23,10 @@ type CompactNeedleValue struct {
 	size   types.Size
 }
 
+type Chunk uint64
 type CompactMapSegment struct {
 	list     []CompactNeedleValue
-	chunk    int
+	chunk    Chunk
 	firstKey CompactKey
 	lastKey  CompactKey
 }
@@ -32,10 +34,10 @@ type CompactMapSegment struct {
 type CompactMap struct {
 	sync.RWMutex
 
-	segments map[int]*CompactMapSegment
+	segments map[Chunk]*CompactMapSegment
 }
 
-func (ck CompactKey) Key(chunk int) types.NeedleId {
+func (ck CompactKey) Key(chunk Chunk) types.NeedleId {
 	return (types.NeedleId(SegmentChunkSize) * types.NeedleId(chunk)) + types.NeedleId(ck)
 }
 
@@ -49,16 +51,15 @@ func (co CompactOffset) Offset() types.Offset {
 	return types.BytesToOffset(co[:])
 }
 
-func (cnv CompactNeedleValue) NeedleValue(chunk int) NeedleValue {
-	key := cnv.key.Key(chunk)
+func (cnv CompactNeedleValue) NeedleValue(chunk Chunk) NeedleValue {
 	return NeedleValue{
-		Key:    key,
+		Key:    cnv.key.Key(chunk),
 		Offset: cnv.offset.Offset(),
 		Size:   cnv.size,
 	}
 }
 
-func newCompactMapSegment(chunk int) *CompactMapSegment {
+func newCompactMapSegment(chunk Chunk) *CompactMapSegment {
 	return &CompactMapSegment{
 		list:     []CompactNeedleValue{},
 		chunk:    chunk,
@@ -176,7 +177,7 @@ func (cs *CompactMapSegment) delete(key types.NeedleId) types.Size {
 
 func NewCompactMap() *CompactMap {
 	return &CompactMap{
-		segments: map[int]*CompactMapSegment{},
+		segments: map[Chunk]*CompactMapSegment{},
 	}
 }
 
@@ -197,6 +198,9 @@ func (cm *CompactMap) Cap() int {
 }
 
 func (cm *CompactMap) String() string {
+	if cm.Len() == 0 {
+		return "empty"
+	}
 	return fmt.Sprintf(
 		"%d/%d elements on %d segments, %.02f%% efficiency",
 		cm.Len(), cm.Cap(), len(cm.segments),
@@ -204,7 +208,7 @@ func (cm *CompactMap) String() string {
 }
 
 func (cm *CompactMap) segmentForKey(key types.NeedleId) *CompactMapSegment {
-	chunk := int(key / SegmentChunkSize)
+	chunk := Chunk(key / SegmentChunkSize)
 	if cs, ok := cm.segments[chunk]; ok {
 		return cs
 	}
@@ -251,11 +255,11 @@ func (cm *CompactMap) AscendingVisit(visit func(NeedleValue) error) error {
 	cm.RLock()
 	defer cm.RUnlock()
 
-	chunks := []int{}
+	chunks := []Chunk{}
 	for c := range cm.segments {
 		chunks = append(chunks, c)
 	}
-	sort.Ints(chunks)
+	slices.Sort(chunks)
 
 	for _, c := range chunks {
 		cs := cm.segments[c]

@@ -381,7 +381,7 @@ func TestSegmentForKey(t *testing.T) {
 	}
 
 	wantMap := &CompactMap{
-		segments: map[int]*CompactMapSegment{
+		segments: map[Chunk]*CompactMapSegment{
 			0: &CompactMapSegment{
 				list:     []CompactNeedleValue{},
 				chunk:    0,
@@ -438,7 +438,7 @@ func TestAscendingVisit(t *testing.T) {
 	}
 }
 
-func TestOrdering(t *testing.T) {
+func TestRandomInsert(t *testing.T) {
 	count := 8 * SegmentChunkSize
 	keys := []types.NeedleId{}
 	for i := 0; i < count; i++ {
