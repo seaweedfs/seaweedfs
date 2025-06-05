@@ -5,11 +5,12 @@ package needle_map
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/stretchr/testify/assert"
 	"log"
 	"os"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/stretchr/testify/assert"
 )
 
 func Test5bytesIndexLoading(t *testing.T) {
