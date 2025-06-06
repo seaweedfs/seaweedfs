@@ -1,6 +1,7 @@
 package memory_map
 
 import (
+	"fmt"
 	"os"
 	"time"
 )
@@ -59,4 +60,9 @@ func (mmf *MemoryMappedFile) Name() string {
 
 func (mm *MemoryMappedFile) Sync() error {
 	return nil
+}
+
+func (mm *MemoryMappedFile) SetModTime(modTime time.Time) error {
+	// Memory mapped file does not support modifying file modification time
+	return fmt.Errorf("memory mapped file does not support modifying file modification time")
 }

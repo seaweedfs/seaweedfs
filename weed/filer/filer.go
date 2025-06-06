@@ -19,7 +19,9 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -324,6 +326,7 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 			return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
 		}
 	}
+	f.UpdateVolumeLastModifiedTime(ctx, entry)
 	return f.Store.UpdateEntry(ctx, entry)
 }
 
@@ -347,7 +350,7 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 	}
 	entry, err = f.Store.FindEntry(ctx, p)
 	if entry != nil && entry.TtlSec > 0 {
-		if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
+		if entry.Mtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 			f.Store.DeleteOneEntry(ctx, entry)
 			return nil, filer_pb.ErrNotFound
 		}
@@ -363,7 +366,7 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			return false
 		default:
 			if entry.TtlSec > 0 {
-				if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
+				if entry.Mtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 					f.Store.DeleteOneEntry(ctx, entry)
 					expiredCount++
 					return true
@@ -381,4 +384,57 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 func (f *Filer) Shutdown() {
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	f.Store.Shutdown()
+}
+
+func (f *Filer) UpdateVolumeLastModifiedTime(ctx context.Context, entry *Entry) error {
+	if entry == nil || len(entry.GetChunks()) == 0 {
+		return nil
+	}
+	// 设置为最小时间戳
+	var lastModifiedTsNs int64 = 0
+
+	// 收集所有需要更新的 volume
+	volumeIds := make(map[uint32]struct{})
+	for _, chunk := range entry.GetChunks() {
+		if chunk.FileId == "" {
+			continue
+		}
+		if chunk.ModifiedTsNs > lastModifiedTsNs {
+			lastModifiedTsNs = chunk.ModifiedTsNs
+		}
+		volumeIds[uint32(chunk.Fid.VolumeId)] = struct{}{}
+	}
+
+	// 更新每个 volume 的最后修改时间
+	vids := make([]string, 0, len(volumeIds))
+	for volumeId := range volumeIds {
+		vids = append(vids, fmt.Sprintf("%d", volumeId))
+	}
+	lookupFunc := LookupByMasterClientFn(f.MasterClient)
+	lookup, err := lookupFunc(vids)
+	if err != nil {
+		glog.V(1).Infof("lookup volume %d: %v", vids, err)
+		return err
+	}
+	for volumeId := range volumeIds {
+		locations := lookup[fmt.Sprintf("%d", volumeId)].Locations
+		for _, loc := range locations {
+			err := operation.WithVolumeServerClient(false, pb.NewServerAddressWithGrpcPort(loc.Url, int(loc.GrpcPort)), f.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+				_, err := client.UpdateVolumeLastModified(ctx, &volume_server_pb.UpdateVolumeLastModifiedRequest{
+					VolumeId:              volumeId,
+					LastModifiedTsSeconds: lastModifiedTsNs / 1e9,
+					IsReplicate:           false,
+				})
+				return err
+			})
+			if err != nil {
+				glog.Errorf("update volume %d last modified time: %v", volumeId, err)
+				continue
+			}
+			break
+		}
+
+	}
+
+	return nil
 }
