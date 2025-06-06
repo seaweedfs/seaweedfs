@@ -106,13 +106,15 @@ func TestWriteNeedle_CompatibilityWithLegacy(t *testing.T) {
 
 			// New
 			newBuf := &bytes.Buffer{}
+			offset := uint64(0)
+			dummyWriter := &mockBackendWriter{buf: &bytes.Buffer{}} // not used for actual output
 			switch version {
 			case Version1:
-				_, _, _, err = writeNeedleV1(&mockBackendWriter{buf: newBuf}, n)
+				_, _, _, err = writeNeedleV1(dummyWriter, n, offset, newBuf)
 			case Version2:
-				_, _, _, err = writeNeedleV2(&mockBackendWriter{buf: newBuf}, n)
+				_, _, _, err = writeNeedleV2(dummyWriter, n, offset, newBuf)
 			case Version3:
-				_, _, _, err = writeNeedleV3(&mockBackendWriter{buf: newBuf}, n)
+				_, _, _, err = writeNeedleV3(dummyWriter, n, offset, newBuf)
 			}
 			if err != nil {
 				t.Fatalf("writeNeedleV%d failed: %v", version, err)
