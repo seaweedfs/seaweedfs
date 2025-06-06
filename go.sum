@@ -1129,6 +1129,8 @@ github.com/hanwen/go-fuse/v2 v2.7.2 h1:SbJP1sUP+n1UF8NXBA14BuojmTez+mDgOk0bC057H
 github.com/hanwen/go-fuse/v2 v2.7.2/go.mod h1:ugNaD/iv5JYyS1Rcvi57Wz7/vrLQJo10mmketmoef48=
 github.com/hanwen/go-fuse/v2 v2.7.3-0.20250601105303-9314d425b353 h1:toy8RzDiBBL4n37gLeqo+ePdcM2M6Fg/LpwX1wZLLoU=
 github.com/hanwen/go-fuse/v2 v2.7.3-0.20250601105303-9314d425b353/go.mod h1:yE6D2PqWwm3CbYRxFXV9xUd8Md5d6NG0WBs5spCswmI=
+github.com/hanwen/go-fuse/v2 v2.7.3-0.20250605191109-50f6569d1a7d h1:XuIObrEyEA4ujlzIkIASZuI1CD7yGuxZrzo3vc2DQhk=
+github.com/hanwen/go-fuse/v2 v2.7.3-0.20250605191109-50f6569d1a7d/go.mod h1:yE6D2PqWwm3CbYRxFXV9xUd8Md5d6NG0WBs5spCswmI=
 github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
 github.com/hashicorp/errwrap v1.1.0 h1:OxrOeh75EUXMY8TBjag2fzXGZ40LB6IKw45YeGUDY2I=
 github.com/hashicorp/errwrap v1.1.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
