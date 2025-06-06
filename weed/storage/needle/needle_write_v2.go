@@ -1,37 +1,16 @@
 package needle
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/util/buffer_pool"
 )
 
-func writeNeedleV2(w backend.BackendStorageFile, n *Needle) (offset uint64, size Size, actualSize int64, err error) {
-	if end, _, e := w.GetStat(); e == nil {
-		defer func(w backend.BackendStorageFile, off int64) {
-			if err != nil {
-				if te := w.Truncate(end); te != nil {
-					// handle error
-				}
-			}
-		}(w, end)
-		offset = uint64(end)
-	} else {
-		err = fmt.Errorf("Cannot Read Current Volume Position: %w", e)
-		return
-	}
-	if offset >= MaxPossibleVolumeSize && len(n.Data) != 0 {
-		err = fmt.Errorf("Volume Size %d Exceeded %d", offset, MaxPossibleVolumeSize)
-		return
-	}
-
-	bytesBuffer := buffer_pool.SyncPoolGetBuffer()
-	defer buffer_pool.SyncPoolPutBuffer(bytesBuffer)
-
+func writeNeedleV2(w backend.BackendStorageFile, n *Needle, offset uint64, bytesBuffer *bytes.Buffer) (offsetOut uint64, size Size, actualSize int64, err error) {
 	bytesBuffer.Reset()
 	header := make([]byte, NeedleHeaderSize+TimestampSize)
 	CookieToBytes(header[0:CookieSize], n.Cookie)
