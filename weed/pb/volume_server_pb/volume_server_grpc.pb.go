@@ -61,6 +61,7 @@ const (
 	VolumeServer_Query_FullMethodName                       = "/volume_server_pb.VolumeServer/Query"
 	VolumeServer_VolumeNeedleStatus_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeNeedleStatus"
 	VolumeServer_Ping_FullMethodName                        = "/volume_server_pb.VolumeServer/Ping"
+	VolumeServer_UpdateVolumeLastModified_FullMethodName    = "/volume_server_pb.VolumeServer/UpdateVolumeLastModified"
 )
 
 // VolumeServerClient is the client API for VolumeServer service.
@@ -115,6 +116,7 @@ type VolumeServerClient interface {
 	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[QueriedStripe], error)
 	VolumeNeedleStatus(ctx context.Context, in *VolumeNeedleStatusRequest, opts ...grpc.CallOption) (*VolumeNeedleStatusResponse, error)
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	UpdateVolumeLastModified(ctx context.Context, in *UpdateVolumeLastModifiedRequest, opts ...grpc.CallOption) (*UpdateVolumeLastModifiedResponse, error)
 }
 
 type volumeServerClient struct {
@@ -635,6 +637,16 @@ func (c *volumeServerClient) Ping(ctx context.Context, in *PingRequest, opts ...
 	return out, nil
 }
 
+func (c *volumeServerClient) UpdateVolumeLastModified(ctx context.Context, in *UpdateVolumeLastModifiedRequest, opts ...grpc.CallOption) (*UpdateVolumeLastModifiedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateVolumeLastModifiedResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_UpdateVolumeLastModified_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VolumeServerServer is the server API for VolumeServer service.
 // All implementations must embed UnimplementedVolumeServerServer
 // for forward compatibility.
@@ -687,6 +699,7 @@ type VolumeServerServer interface {
 	Query(*QueryRequest, grpc.ServerStreamingServer[QueriedStripe]) error
 	VolumeNeedleStatus(context.Context, *VolumeNeedleStatusRequest) (*VolumeNeedleStatusResponse, error)
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	UpdateVolumeLastModified(context.Context, *UpdateVolumeLastModifiedRequest) (*UpdateVolumeLastModifiedResponse, error)
 	mustEmbedUnimplementedVolumeServerServer()
 }
 
@@ -822,6 +835,9 @@ func (UnimplementedVolumeServerServer) VolumeNeedleStatus(context.Context, *Volu
 }
 func (UnimplementedVolumeServerServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedVolumeServerServer) UpdateVolumeLastModified(context.Context, *UpdateVolumeLastModifiedRequest) (*UpdateVolumeLastModifiedResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateVolumeLastModified not implemented")
 }
 func (UnimplementedVolumeServerServer) mustEmbedUnimplementedVolumeServerServer() {}
 func (UnimplementedVolumeServerServer) testEmbeddedByValue()                      {}
@@ -1530,6 +1546,24 @@ func _VolumeServer_Ping_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_UpdateVolumeLastModified_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateVolumeLastModifiedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).UpdateVolumeLastModified(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_UpdateVolumeLastModified_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).UpdateVolumeLastModified(ctx, req.(*UpdateVolumeLastModifiedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VolumeServer_ServiceDesc is the grpc.ServiceDesc for VolumeServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1664,6 +1698,10 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _VolumeServer_Ping_Handler,
+		},
+		{
+			MethodName: "UpdateVolumeLastModified",
+			Handler:    _VolumeServer_UpdateVolumeLastModified_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

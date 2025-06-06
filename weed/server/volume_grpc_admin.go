@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
 func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server_pb.DeleteCollectionRequest) (*volume_server_pb.DeleteCollectionResponse, error) {
@@ -354,4 +355,40 @@ func (vs *VolumeServer) Ping(ctx context.Context, req *volume_server_pb.PingRequ
 	}
 	resp.StopTimeNs = time.Now().UnixNano()
 	return
+}
+
+func (vs *VolumeServer) UpdateVolumeLastModified(ctx context.Context, req *volume_server_pb.UpdateVolumeLastModifiedRequest) (*volume_server_pb.UpdateVolumeLastModifiedResponse, error) {
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
+	if v == nil {
+		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
+	}
+	v.SetLastModifiedTime(req.LastModifiedTsSeconds)
+	glog.V(1).Infof("update volume %d last modified time to %d (replicate)", req.VolumeId, req.LastModifiedTsSeconds)
+
+	// 如果是副本操作，直接更新本地
+	if req.IsReplicate {
+		return &volume_server_pb.UpdateVolumeLastModifiedResponse{}, nil
+	}
+
+	// 如果不是副本操作，使用grpc接口同步到其他副本
+	remoteLocations, err := topology.GetWritableRemoteReplications(vs.store, vs.grpcDialOption, v.Id, vs.GetMaster)
+	if err != nil {
+		glog.Errorf("failed to get remote locations for volume %d: %v", v.Id, err)
+		return nil, err
+	}
+	for _, location := range remoteLocations {
+		err = pb.WithVolumeServerClient(false, location.ServerAddress(), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+			_, err := client.UpdateVolumeLastModified(ctx, &volume_server_pb.UpdateVolumeLastModifiedRequest{
+				VolumeId:              uint32(v.Id),
+				LastModifiedTsSeconds: req.LastModifiedTsSeconds,
+				IsReplicate:           true,
+			})
+			return err
+		})
+		if err != nil {
+			glog.Errorf("failed to update volume %d last modified time on %s: %v", v.Id, location.Url, err)
+		}
+	}
+
+	return &volume_server_pb.UpdateVolumeLastModifiedResponse{}, nil
 }

@@ -113,6 +113,8 @@ service VolumeServer {
     rpc Ping (PingRequest) returns (PingResponse) {
     }
 
+    rpc UpdateVolumeLastModified (UpdateVolumeLastModifiedRequest) returns (UpdateVolumeLastModifiedResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -632,4 +634,13 @@ message PingResponse {
     int64 start_time_ns = 1;
     int64 remote_time_ns = 2;
     int64 stop_time_ns = 3;
+}
+
+message UpdateVolumeLastModifiedRequest {
+    uint32 volume_id = 1;
+    int64 last_modified_ts_seconds = 2;
+    bool is_replicate = 3;  // 标识是否是副本操作
+}
+
+message UpdateVolumeLastModifiedResponse {
 }
