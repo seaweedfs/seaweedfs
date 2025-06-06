@@ -34,15 +34,24 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 
 	switch version {
 	case Version1:
-		return writeNeedleV1(w, n, offset, bytesBuffer)
+		size, actualSize, err = writeNeedleV1(n, offset, bytesBuffer)
 	case Version2:
-		return writeNeedleV2(w, n, offset, bytesBuffer)
+		size, actualSize, err = writeNeedleV2(n, offset, bytesBuffer)
 	case Version3:
-		return writeNeedleV3(w, n, offset, bytesBuffer)
+		size, actualSize, err = writeNeedleV3(n, offset, bytesBuffer)
 	default:
 		err = fmt.Errorf("unsupported version: %d", version)
 		return
 	}
+
+	if err == nil {
+		_, err = w.WriteAt(bytesBuffer.Bytes(), int64(offset))
+		if err != nil {
+			err = fmt.Errorf("failed to write %d bytes to %s at offset %d: %w", actualSize, w.Name(), offset, err)
+		}
+	}
+
+	return offset, size, actualSize, err
 }
 
 func WriteNeedleBlob(w backend.BackendStorageFile, dataSlice []byte, size Size, appendAtNs uint64, version Version) (offset uint64, err error) {

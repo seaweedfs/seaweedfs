@@ -2,15 +2,13 @@ package needle
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 
-	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func writeNeedleV3(w backend.BackendStorageFile, n *Needle, offset uint64, bytesBuffer *bytes.Buffer) (offsetOut uint64, size Size, actualSize int64, err error) {
+func writeNeedleV3(n *Needle, offset uint64, bytesBuffer *bytes.Buffer) (size Size, actualSize int64, err error) {
 	bytesBuffer.Reset()
 	header := make([]byte, NeedleHeaderSize+TimestampSize)
 	CookieToBytes(header[0:CookieSize], n.Cookie)
@@ -80,10 +78,5 @@ func writeNeedleV3(w backend.BackendStorageFile, n *Needle, offset uint64, bytes
 
 	size = Size(n.DataSize)
 	actualSize = GetActualSize(n.Size, Version3)
-	_, err = w.WriteAt(bytesBuffer.Bytes(), int64(offset))
-	if err != nil {
-		err = fmt.Errorf("failed to write %d bytes to %s at offset %d: %w", actualSize, w.Name(), offset, err)
-	}
-
-	return offset, size, actualSize, err
+	return size, actualSize, nil
 }
