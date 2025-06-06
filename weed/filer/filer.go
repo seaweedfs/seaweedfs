@@ -326,7 +326,9 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 			return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
 		}
 	}
-	f.UpdateVolumeLastModifiedTime(ctx, entry)
+	if entry.TtlSec > 0 {
+		f.UpdateVolumeLastModifiedTime(ctx, entry)
+	}
 	return f.Store.UpdateEntry(ctx, entry)
 }
 
