@@ -150,6 +150,9 @@ func TestReadFromFile_OptionsMatrix(t *testing.T) {
 		if nMeta.Cookie != n.Cookie || nMeta.Id != n.Id || nMeta.Size != n.Size {
 			t.Errorf("header fields mismatch: got %+v want %+v", nMeta, n)
 		}
+		if nMeta.Checksum != n.Checksum {
+			t.Errorf("checksum mismatch: got %d want %d", nMeta.Checksum, n.Checksum)
+		}
 	})
 
 	t.Run("ReadHeader+ReadData", func(t *testing.T) {

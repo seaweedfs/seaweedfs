@@ -1,12 +1,11 @@
 package needle
 
 import (
-	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/seaweedfs/seaweedfs/weed/util"
-	"io"
 )
 
 // ReadNeedleData uses a needle without n.Data to read the content
@@ -33,57 +32,12 @@ func (n *Needle) ReadNeedleData(r backend.BackendStorageFile, volumeOffset int64
 }
 
 // ReadNeedleMeta fills all metadata except the n.Data
-func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size Size, version Version) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("panic occurred: %+v", r)
-		}
-	}()
-
-	bytes := make([]byte, NeedleHeaderSize+DataSizeSize)
-
-	count, err := r.ReadAt(bytes, offset)
-	if err == io.EOF && count == NeedleHeaderSize+DataSizeSize {
-		err = nil
-	}
-	if count != NeedleHeaderSize+DataSizeSize || err != nil {
-		return err
-	}
-	n.ParseNeedleHeader(bytes)
-	if n.Size != size {
-		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
-			return ErrorSizeMismatch
-		}
-	}
-	n.DataSize = util.BytesToUint32(bytes[NeedleHeaderSize : NeedleHeaderSize+DataSizeSize])
-	startOffset := offset + NeedleHeaderSize
-	if size.IsValid() {
-		startOffset = offset + NeedleHeaderSize + DataSizeSize + int64(n.DataSize)
-	}
-	dataSize := GetActualSize(size, version)
-	stopOffset := offset + dataSize
-	metaSize := stopOffset - startOffset
-	metaSlice := make([]byte, int(metaSize))
-
-	count, err = r.ReadAt(metaSlice, startOffset)
-	if err != nil && int64(count) == metaSize {
-		err = nil
-	}
-	if err != nil {
-		return err
-	}
-
-	var index int
-	if size.IsValid() {
-		index, err = n.readNeedleDataVersion2NonData(metaSlice)
-	}
-
-	n.Checksum = CRC(util.BytesToUint32(metaSlice[index : index+NeedleChecksumSize]))
-	if version == Version3 {
-		n.AppendAtNs = util.BytesToUint64(metaSlice[index+NeedleChecksumSize : index+NeedleChecksumSize+TimestampSize])
-	}
-	return err
-
+func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size Size, version Version) error {
+	return n.ReadFromFile(r, offset, size, version, NeedleReadOptions{
+		ReadHeader: true,
+		ReadMeta:   true,
+		ReadData:   false,
+	})
 }
 
 func min(x, y int64) int64 {
