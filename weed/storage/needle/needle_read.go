@@ -96,21 +96,12 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 }
 
 // ReadData hydrates the needle from the file, with only n.Id is set.
-func (n *Needle) ReadData(r backend.BackendStorageFile, offset int64, size Size, version Version) (err error) {
-	bytes, err := ReadNeedleBlob(r, offset, size, version)
-	if err != nil {
-		return err
-	}
-	err = n.ReadBytes(bytes, offset, size, version)
-	if err == ErrorSizeMismatch && OffsetSize == 4 {
-		offset = offset + int64(MaxPossibleVolumeSize)
-		bytes, err = ReadNeedleBlob(r, offset, size, version)
-		if err != nil {
-			return err
-		}
-		err = n.ReadBytes(bytes, offset, size, version)
-	}
-	return err
+func (n *Needle) ReadData(r backend.BackendStorageFile, offset int64, size Size, version Version) error {
+	return n.ReadFromFile(r, offset, size, version, NeedleReadOptions{
+		ReadHeader: true,
+		ReadData:   true,
+		ReadMeta:   true,
+	})
 }
 
 func (n *Needle) ParseNeedleHeader(bytes []byte) {
