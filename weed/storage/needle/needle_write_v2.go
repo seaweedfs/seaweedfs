@@ -9,6 +9,13 @@ import (
 )
 
 func writeNeedleV2(n *Needle, offset uint64, bytesBuffer *bytes.Buffer) (size Size, actualSize int64, err error) {
+	return writeNeedleCommon(n, offset, bytesBuffer, Version2, func(n *Needle, header []byte, bytesBuffer *bytes.Buffer, padding int) {
+		util.Uint32toBytes(header[0:NeedleChecksumSize], uint32(n.Checksum))
+		bytesBuffer.Write(header[0 : NeedleChecksumSize+padding])
+	})
+}
+
+func writeNeedleCommon(n *Needle, offset uint64, bytesBuffer *bytes.Buffer, version Version, writeFooter func(n *Needle, header []byte, bytesBuffer *bytes.Buffer, padding int)) (size Size, actualSize int64, err error) {
 	bytesBuffer.Reset()
 	header := make([]byte, NeedleHeaderSize+TimestampSize)
 	CookieToBytes(header[0:CookieSize], n.Cookie)
@@ -71,11 +78,9 @@ func writeNeedleV2(n *Needle, offset uint64, bytesBuffer *bytes.Buffer) (size Si
 			bytesBuffer.Write(n.Pairs)
 		}
 	}
-	padding := PaddingLength(n.Size, Version2)
-	util.Uint32toBytes(header[0:NeedleChecksumSize], uint32(n.Checksum))
-	bytesBuffer.Write(header[0 : NeedleChecksumSize+padding])
-
+	padding := PaddingLength(n.Size, version)
+	writeFooter(n, header, bytesBuffer, int(padding))
 	size = Size(n.DataSize)
-	actualSize = GetActualSize(n.Size, Version2)
+	actualSize = GetActualSize(n.Size, version)
 	return size, actualSize, nil
 }
