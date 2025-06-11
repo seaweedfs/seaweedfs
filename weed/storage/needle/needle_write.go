@@ -32,23 +32,14 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 		buffer_pool.SyncPoolPutBuffer(bytesBuffer)
 	}()
 
-	switch version {
-	case Version1:
-		size, actualSize, err = writeNeedleV1(n, offset, bytesBuffer)
-	case Version2:
-		size, actualSize, err = writeNeedleV2(n, offset, bytesBuffer)
-	case Version3:
-		size, actualSize, err = writeNeedleV3(n, offset, bytesBuffer)
-	default:
-		err = fmt.Errorf("unsupported version: %d", version)
+	size, actualSize, err = writeNeedleByVersion(version, n, offset, bytesBuffer)
+	if err != nil {
 		return
 	}
 
-	if err == nil {
-		_, err = w.WriteAt(bytesBuffer.Bytes(), int64(offset))
-		if err != nil {
-			err = fmt.Errorf("failed to write %d bytes to %s at offset %d: %w", actualSize, w.Name(), offset, err)
-		}
+	_, err = w.WriteAt(bytesBuffer.Bytes(), int64(offset))
+	if err != nil {
+		err = fmt.Errorf("failed to write %d bytes to %s at offset %d: %w", actualSize, w.Name(), offset, err)
 	}
 
 	return offset, size, actualSize, err
