@@ -169,7 +169,7 @@ func (store *RocksDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 
 	iter := store.db.NewIterator(ro)
 	defer iter.Close()
-	err = enumerate(iter, directoryPrefix, nil, false, -1, func(key, value []byte) bool {
+	err = enumerate(iter, directoryPrefix, nil, false, -1, "", func(key, value []byte) bool {
 		batch.Delete(key)
 		return true
 	})
@@ -186,23 +186,16 @@ func (store *RocksDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 	return nil
 }
 
-func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey bool, limit int64, fn func(key, value []byte) bool) (err error) {
+func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey bool, limit int64, startFileName string, fn func(key, value []byte) bool) (err error) {
 
 	if len(lastKey) == 0 {
 		iter.Seek(prefix)
 	} else {
 		iter.Seek(lastKey)
-		if !includeLastKey {
-			if iter.Valid() {
-				if bytes.Equal(iter.Key().Data(), lastKey) {
-					iter.Next()
-				}
-			}
-		}
 	}
 
 	i := int64(0)
-	for ; iter.Valid(); iter.Next() {
+	for iter.Valid() {
 
 		if limit > 0 {
 			i++
@@ -217,12 +210,23 @@ func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey 
 			break
 		}
 
+		fileName := getNameFromKey(key)
+		if fileName == "" {
+			iter.Next()
+			continue
+		}
+		if fileName == startFileName && !includeLastKey {
+			iter.Next()
+			continue
+		}
+
 		ret := fn(key, iter.Value().Data())
 
 		if !ret {
 			break
 		}
 
+		iter.Next()
 	}
 
 	if err := iter.Err(); err != nil {
@@ -249,7 +253,7 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 
 	iter := store.db.NewIterator(ro)
 	defer iter.Close()
-	err = enumerate(iter, directoryPrefix, lastFileStart, includeStartFile, limit, func(key, value []byte) bool {
+	err = enumerate(iter, directoryPrefix, lastFileStart, includeStartFile, limit, startFileName, func(key, value []byte) bool {
 		fileName := getNameFromKey(key)
 		if fileName == "" {
 			return true
