@@ -177,38 +177,22 @@ func (n *Needle) readNeedleDataVersion2NonData(bytes []byte) (index int, err err
 
 func ReadNeedleHeader(r backend.BackendStorageFile, version Version, offset int64) (n *Needle, bytes []byte, bodyLength int64, err error) {
 	n = new(Needle)
-	if version == Version1 || version == Version2 || version == Version3 {
-		bytes = make([]byte, NeedleHeaderSize)
 
-		var count int
-		count, err = r.ReadAt(bytes, offset)
-		if err == io.EOF && count == NeedleHeaderSize {
-			err = nil
-		}
-		if count <= 0 || err != nil {
-			return nil, bytes, 0, err
-		}
+	bytes = make([]byte, NeedleHeaderSize)
 
-		n.ParseNeedleHeader(bytes)
-		bodyLength = NeedleBodyLength(n.Size, version)
+	var count int
+	count, err = r.ReadAt(bytes, offset)
+	if err == io.EOF && count == NeedleHeaderSize {
+		err = nil
 	}
+	if count <= 0 || err != nil {
+		return nil, bytes, 0, err
+	}
+
+	n.ParseNeedleHeader(bytes)
+	bodyLength = NeedleBodyLength(n.Size, version)
 
 	return
-}
-
-func PaddingLength(needleSize Size, version Version) Size {
-	if version == Version3 {
-		// this is same value as version2, but just listed here for clarity
-		return NeedlePaddingSize - ((NeedleHeaderSize + needleSize + NeedleChecksumSize + TimestampSize) % NeedlePaddingSize)
-	}
-	return NeedlePaddingSize - ((NeedleHeaderSize + needleSize + NeedleChecksumSize) % NeedlePaddingSize)
-}
-
-func NeedleBodyLength(needleSize Size, version Version) int64 {
-	if version == Version3 {
-		return int64(needleSize) + NeedleChecksumSize + TimestampSize + int64(PaddingLength(needleSize, version))
-	}
-	return int64(needleSize) + NeedleChecksumSize + int64(PaddingLength(needleSize, version))
 }
 
 // n should be a needle already read the header

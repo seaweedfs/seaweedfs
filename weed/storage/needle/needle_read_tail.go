@@ -33,3 +33,18 @@ func (n *Needle) readNeedleTail(needleBody []byte, version Version) error {
 	}
 	return nil
 }
+
+func PaddingLength(needleSize Size, version Version) Size {
+	if version == Version3 {
+		// this is same value as version2, but just listed here for clarity
+		return NeedlePaddingSize - ((NeedleHeaderSize + needleSize + NeedleChecksumSize + TimestampSize) % NeedlePaddingSize)
+	}
+	return NeedlePaddingSize - ((NeedleHeaderSize + needleSize + NeedleChecksumSize) % NeedlePaddingSize)
+}
+
+func NeedleBodyLength(needleSize Size, version Version) int64 {
+	if version == Version3 {
+		return int64(needleSize) + NeedleChecksumSize + TimestampSize + int64(PaddingLength(needleSize, version))
+	}
+	return int64(needleSize) + NeedleChecksumSize + int64(PaddingLength(needleSize, version))
+}
