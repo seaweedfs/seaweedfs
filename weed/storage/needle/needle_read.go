@@ -61,36 +61,17 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorSizeMismatch).Inc()
 		return fmt.Errorf("entry not found: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 	}
-	switch version {
-	case Version1:
+	if version == Version1 {
 		n.Data = bytes[NeedleHeaderSize : NeedleHeaderSize+size]
-		// fallthrough to checksum logic below
-	case Version2:
+	} else {
 		err := n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(size)])
 		if err != nil && err != io.EOF {
 			return err
 		}
-	case Version3:
-		err := n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(size)])
-		if err != nil && err != io.EOF {
-			return err
-		}
-		tsOffset := NeedleHeaderSize + size + NeedleChecksumSize
-		n.AppendAtNs = util.BytesToUint64(bytes[tsOffset : tsOffset+TimestampSize])
-	default:
-		return fmt.Errorf("unsupported version %d", version)
 	}
-	if size > 0 {
-		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
-		newChecksum := NewCRC(n.Data)
-		if checksum != newChecksum.Value() && checksum != uint32(newChecksum) {
-			// the crc.Value() function is to be deprecated. this double checking is for backward compatibility
-			// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
-			// and switch appeared in version 3.09.
-			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
-			return errors.New("CRC error! Data On Disk Corrupted")
-		}
-		n.Checksum = newChecksum
+	err = n.readNeedleTail(bytes[NeedleHeaderSize+size:], version)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -260,14 +241,11 @@ func (n *Needle) ReadNeedleBodyBytes(needleBody []byte, version Version) (err er
 	switch version {
 	case Version1:
 		n.Data = needleBody[:n.Size]
-		n.Checksum = NewCRC(n.Data)
+		err = n.readNeedleTail(needleBody[n.Size:], version)
 	case Version2, Version3:
 		err = n.readNeedleDataVersion2(needleBody[0:n.Size])
-		n.Checksum = NewCRC(n.Data)
-
-		if version == Version3 {
-			tsOffset := n.Size + NeedleChecksumSize
-			n.AppendAtNs = util.BytesToUint64(needleBody[tsOffset : tsOffset+TimestampSize])
+		if err == nil {
+			err = n.readNeedleTail(needleBody[n.Size:], version)
 		}
 	default:
 		err = fmt.Errorf("unsupported version %d!", version)
