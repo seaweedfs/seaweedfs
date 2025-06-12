@@ -46,9 +46,6 @@ func (c *commandVolumeCopy) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(args); err != nil {
-		return
-	}
 	if *noLock {
 		commandEnv.noLock = true
 	} else if err = commandEnv.confirmIsLocked(args); err != nil {
