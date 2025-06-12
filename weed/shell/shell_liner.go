@@ -75,14 +75,14 @@ func RunShell(options ShellOptions) {
 		}
 	}
 
+	stat, _ := os.Stdin.Stat()
+	var prefix string
+	if (stat.Mode() & os.ModeCharDevice) == 0 {
+		prefix = ""
+	} else {
+		prefix = "> "
+	}
 	for {
-		stat, _ := os.Stdin.Stat()
-		var prefix string
-		if (stat.Mode() & os.ModeCharDevice) == 0 {
-			prefix = ""
-		} else {
-			prefix = "> "
-		}
 		cmd, err := line.Prompt(prefix)
 		if err != nil {
 			if err != io.EOF {
@@ -92,8 +92,11 @@ func RunShell(options ShellOptions) {
 		}
 
 		for _, c := range util.StringSplit(cmd, ";") {
-			glog.V(0).Infof("%s%s", "> ", cmd)
-			fmt.Printf("%s%s\n", "> ", cmd)
+			if c == "" {
+				break
+			}
+			glog.V(0).Infof("%s%s", "> ", c)
+			fmt.Printf("%s%s\n", "> ", c)
 			if processEachCmd(reg, c, commandEnv) {
 				return
 			}
