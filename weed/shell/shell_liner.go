@@ -3,11 +3,6 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"io"
 	"math/rand"
 	"os"
@@ -15,6 +10,13 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
 	"github.com/peterh/liner"
 )
@@ -66,16 +68,22 @@ func RunShell(options ShellOptions) {
 			}
 			return nil
 		})
-		fmt.Printf("master: %s ", *options.Masters)
+		glog.V(0).Infof("master: %s ", *options.Masters)
 		if len(filers) > 0 {
-			fmt.Printf("filers: %v", filers)
+			glog.V(0).Infof("filers: %v", filers)
 			commandEnv.option.FilerAddress = filers[rand.Intn(len(filers))]
 		}
-		fmt.Println()
 	}
 
 	for {
-		cmd, err := line.Prompt("> ")
+		stat, _ := os.Stdin.Stat()
+		var prefix string
+		if (stat.Mode() & os.ModeCharDevice) == 0 {
+			prefix = ""
+		} else {
+			prefix = "> "
+		}
+		cmd, err := line.Prompt(prefix)
 		if err != nil {
 			if err != io.EOF {
 				fmt.Printf("%v\n", err)
@@ -84,6 +92,8 @@ func RunShell(options ShellOptions) {
 		}
 
 		for _, c := range util.StringSplit(cmd, ";") {
+			glog.V(0).Infof("%s%s", "> ", cmd)
+			fmt.Printf("%s%s\n", "> ", cmd)
 			if processEachCmd(reg, c, commandEnv) {
 				return
 			}
@@ -116,13 +126,14 @@ func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool
 			for _, c := range Commands {
 				if c.Name() == cmd || c.Name() == "fs."+cmd {
 					if err := c.Do(args, commandEnv, os.Stdout); err != nil {
-						fmt.Fprintf(os.Stderr, "error: %v\n", err)
+						glog.V(0).Infof("error: %v", err)
+						fmt.Printf("error: %v\n", err)
 					}
 					foundCommand = true
 				}
 			}
 			if !foundCommand {
-				fmt.Fprintf(os.Stderr, "unknown command: %v\n", cmd)
+				glog.V(0).Infof("unknown command: %v", cmd)
 			}
 		}
 
@@ -132,7 +143,7 @@ func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool
 
 func printGenericHelp() {
 	msg :=
-		`Type:	"help <command>" for help on <command>. Most commands support "<command> -h" also for options. 
+		`Type:	"help <command>" for help on <command>. Most commands support "<command> -h" also for options.
 `
 	fmt.Print(msg)
 
