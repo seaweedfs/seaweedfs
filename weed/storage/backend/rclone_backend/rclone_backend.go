@@ -7,12 +7,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/rclone/rclone/fs/config/configfile"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"os"
 	"text/template"
 	"time"
+
+	"github.com/rclone/rclone/fs/config/configfile"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/google/uuid"
 
@@ -300,4 +301,9 @@ func (rcloneBackendStorageFile RcloneBackendStorageFile) Name() string {
 
 func (rcloneBackendStorageFile RcloneBackendStorageFile) Sync() error {
 	return nil
+}
+
+func (rcloneBackendStorageFile RcloneBackendStorageFile) SetModTime(modTime time.Time) error {
+	// Rclone backend may support modifying file time, but needs specific implementation
+	return fmt.Errorf("Rclone backend does not support modifying file modification time")
 }

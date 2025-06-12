@@ -366,3 +366,13 @@ func (v *Volume) PersistReadOnly(readOnly bool) {
 	v.volumeInfo.ReadOnly = readOnly
 	v.SaveVolumeInfo()
 }
+
+func (v *Volume) SetLastModifiedTime(lastModifiedTsSeconds int64) {
+	v.lastModifiedTsSeconds = uint64(lastModifiedTsSeconds)
+	if v.DataBackend != nil {
+		if err := v.DataBackend.SetModTime(time.Unix(lastModifiedTsSeconds, 0)); err != nil {
+			glog.Errorf("failed to set mod time for volume %d: %v", v.Id, err)
+		}
+	}
+	v.SaveVolumeInfo()
+}
