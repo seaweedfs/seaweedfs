@@ -3,11 +3,11 @@ package mount
 import (
 	"context"
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -71,19 +72,21 @@ type WFS struct {
 	fuse.RawFileSystem
 	mount_pb.UnimplementedSeaweedMountServer
 	fs.Inode
-	option            *Option
-	metaCache         *meta_cache.MetaCache
-	stats             statsCache
-	chunkCache        *chunk_cache.TieredChunkCache
-	signature         int32
-	concurrentWriters *util.LimitedConcurrentExecutor
-	inodeToPath       *InodeToPath
-	fhMap             *FileHandleToInode
-	dhMap             *DirectoryHandleToInode
-	fuseServer        *fuse.Server
-	IsOverQuota       bool
-	fhLockTable       *util.LockTable[FileHandleId]
-	FilerConf         *filer.FilerConf
+	option               *Option
+	metaCache            *meta_cache.MetaCache
+	stats                statsCache
+	chunkCache           *chunk_cache.TieredChunkCache
+	signature            int32
+	concurrentWriters    *util.LimitedConcurrentExecutor
+	copyBufferPool       sync.Pool
+	concurrentCopiersSem chan struct{}
+	inodeToPath          *InodeToPath
+	fhMap                *FileHandleToInode
+	dhMap                *DirectoryHandleToInode
+	fuseServer           *fuse.Server
+	IsOverQuota          bool
+	fhLockTable          *util.LockTable[FileHandleId]
+	FilerConf            *filer.FilerConf
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -139,6 +142,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 
 	if wfs.option.ConcurrentWriters > 0 {
 		wfs.concurrentWriters = util.NewLimitedConcurrentExecutor(wfs.option.ConcurrentWriters)
+		wfs.concurrentCopiersSem = make(chan struct{}, wfs.option.ConcurrentWriters)
+	}
+	wfs.copyBufferPool.New = func() any {
+		return make([]byte, option.ChunkSizeLimit)
 	}
 	return wfs
 }
@@ -183,7 +190,6 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 }
 
 func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.Status) {
-
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 	dir, name := fullpath.DirAndName()
 
