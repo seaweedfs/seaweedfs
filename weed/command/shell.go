@@ -1,9 +1,8 @@
 package command
 
 import (
-	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/shell"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -59,7 +58,7 @@ func runShell(command *Command, args []string) bool {
 		filerAddress = viper.GetString("cluster." + cluster + ".filer")
 	}
 	shellOptions.FilerAddress = pb.ServerAddress(filerAddress)
-	fmt.Printf("master: %s filer: %s\n", *shellOptions.Masters, shellOptions.FilerAddress)
+	glog.V(1).Infof("master: %s filer: %s\n", *shellOptions.Masters, shellOptions.FilerAddress)
 
 	shell.RunShell(shellOptions)
 
