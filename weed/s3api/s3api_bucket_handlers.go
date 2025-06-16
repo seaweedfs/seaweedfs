@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -329,7 +330,15 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 	}
 
 	response := Lifecycle{}
-	for locationPrefix, internalTtl := range ttls {
+	// Sort locationPrefixes to ensure consistent ordering of lifecycle rules
+	var locationPrefixes []string
+	for locationPrefix := range ttls {
+		locationPrefixes = append(locationPrefixes, locationPrefix)
+	}
+	sort.Strings(locationPrefixes)
+
+	for _, locationPrefix := range locationPrefixes {
+		internalTtl := ttls[locationPrefix]
 		ttl, _ := needle.ReadTTL(internalTtl)
 		days := int(ttl.Minutes() / 60 / 24)
 		if days == 0 {
