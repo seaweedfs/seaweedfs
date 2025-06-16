@@ -10,7 +10,7 @@ const HttpStatusCancelled = 499
 
 var (
 	MAJOR_VERSION  = int32(3)
-	MINOR_VERSION  = int32(90)
+	MINOR_VERSION  = int32(91)
 	VERSION_NUMBER = fmt.Sprintf("%d.%02d", MAJOR_VERSION, MINOR_VERSION)
 	VERSION        = util.SizeLimit + " " + VERSION_NUMBER
 	COMMIT         = ""
