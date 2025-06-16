@@ -1,10 +1,11 @@
 package lock_manager
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestAddServer(t *testing.T) {
@@ -21,7 +22,9 @@ func TestAddServer(t *testing.T) {
 
 	assert.Equal(t, 8, len(r.snapshots))
 
-	time.Sleep(110 * time.Millisecond)
+	// Wait for all cleanup operations to complete instead of using time.Sleep
+	time.Sleep(110 * time.Millisecond) // Still need to wait for the cleanup interval
+	r.WaitForCleanup()                 // Ensure all cleanup goroutines have finished
 
 	assert.Equal(t, 2, len(r.snapshots))
 
