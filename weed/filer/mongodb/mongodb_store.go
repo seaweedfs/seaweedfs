@@ -234,16 +234,24 @@ func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 		"directory": string(dirPath),
 	}
 
+	nameQuery := bson.M{}
+
 	if len(prefix) > 0 {
-		where["name"].(bson.M)["$regex"] = "^" + regexp.QuoteMeta(prefix)
+		nameQuery["$regex"] = "^" + regexp.QuoteMeta(prefix)
 	}
 
-	if includeStartFile {
-		where["name"].(bson.M)["$gte"] = startFileName
-	} else {
-		where["name"].(bson.M)["$gt"] = startFileName
+	if len(startFileName) > 0 {
+		if includeStartFile {
+			nameQuery["$gte"] = startFileName
+		} else {
+			nameQuery["$gt"] = startFileName
+		}
 	}
-		
+
+	if len(nameQuery) > 0 {
+		where["name"] = nameQuery
+	}
+
 	optLimit := int64(limit)
 	opts := &options.FindOptions{Limit: &optLimit, Sort: bson.M{"name": 1}}
 	cur, err := store.connect.Database(store.database).Collection(store.collectionName).Find(ctx, where, opts)
