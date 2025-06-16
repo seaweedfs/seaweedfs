@@ -41,11 +41,14 @@ func (c *commandVolumeCopy) Do(args []string, commandEnv *CommandEnv, writer io.
 	volumeIdInt := volCopyCommand.Int("volumeId", 0, "the volume id")
 	sourceNodeStr := volCopyCommand.String("source", "", "the source volume server <host>:<port>")
 	targetNodeStr := volCopyCommand.String("target", "", "the target volume server <host>:<port>")
+	noLock := volCopyCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 	if err = volCopyCommand.Parse(args); err != nil {
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(args); err != nil {
+	if *noLock {
+		commandEnv.noLock = true
+	} else if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
 
