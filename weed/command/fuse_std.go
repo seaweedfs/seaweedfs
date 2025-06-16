@@ -193,6 +193,13 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("readOnly: %s", err))
 			}
+		case "disableXAttr":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+
+				mountOptions.disableXAttr = &parsed
+			} else {
+				panic(fmt.Errorf("disableXAttr: %s", err))
+			}
 		case "cpuprofile":
 			mountCpuProfile = &parameter.value
 		case "memprofile":
