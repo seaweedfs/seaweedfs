@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
 	"time"
 
@@ -107,7 +108,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		balanceCollections = collectCollectionsForVolumeIds(topologyInfo, volumeIds)
 	} else {
 		// apply to all volumes for the given collection
-		volumeIds, err = collectVolumeIdsForEcEncode(commandEnv, *collection, *fullPercentage, *quietPeriod)
+		volumeIds, err = collectVolumeIdsForEcEncode(commandEnv, *collection, nil, *fullPercentage, *quietPeriod)
 		if err != nil {
 			return err
 		}
@@ -250,7 +251,7 @@ func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, 
 
 }
 
-func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
+func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, sourceDiskType *types.DiskType, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 	// collect topology information
 	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
@@ -270,7 +271,8 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 				if v.RemoteStorageName != "" && v.RemoteStorageKey != "" {
 					continue
 				}
-				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
+				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds &&
+					(sourceDiskType == nil || types.ToDiskType(v.DiskType) == *sourceDiskType) {
 					if float64(v.Size) > fullPercentage/100*float64(volumeSizeLimitMb)*1024*1024 {
 						if good, found := vidMap[v.Id]; found {
 							if good {
