@@ -1,12 +1,13 @@
 package backend
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
 	"os"
 	"runtime"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 var (
@@ -122,4 +123,12 @@ func (df *DiskFile) Sync() error {
 		return nil
 	}
 	return df.File.Sync()
+}
+
+func (df *DiskFile) SetModTime(modTime time.Time) error {
+	if df.File == nil {
+		return os.ErrClosed
+	}
+	df.modTime = modTime
+	return os.Chtimes(df.fullFilePath, modTime, modTime)
 }

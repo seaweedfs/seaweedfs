@@ -198,3 +198,8 @@ func (s3backendStorageFile S3BackendStorageFile) Name() string {
 func (s3backendStorageFile S3BackendStorageFile) Sync() error {
 	return nil
 }
+
+func (s3backendStorageFile S3BackendStorageFile) SetModTime(modTime time.Time) error {
+	// S3 backend does not support modifying file modification time
+	return fmt.Errorf("S3 backend does not support modifying file modification time")
+}

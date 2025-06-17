@@ -2,9 +2,9 @@ package storage
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
-	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -62,20 +62,21 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 		}
 	}
 	count = int(n.DataSize)
-	if !n.HasTtl() {
-		return
-	}
-	ttlMinutes := n.Ttl.Minutes()
-	if ttlMinutes == 0 {
-		return
-	}
-	if !n.HasLastModifiedDate() {
-		return
-	}
-	if time.Now().Before(time.Unix(0, int64(n.AppendAtNs)).Add(time.Duration(ttlMinutes) * time.Minute)) {
-		return
-	}
-	return -1, ErrorNotFound
+	return count, nil
+	// if !n.HasTtl() {
+	// 	return
+	// }
+	// ttlMinutes := n.Ttl.Minutes()
+	// if ttlMinutes == 0 {
+	// 	return
+	// }
+	// if !n.HasLastModifiedDate() {
+	// 	return
+	// }
+	// if time.Now().Before(time.Unix(0, int64(n.AppendAtNs)).Add(time.Duration(ttlMinutes) * time.Minute)) {
+	// 	return
+	// }
+	// return -1, ErrorNotFound
 }
 
 // read needle at a specific offset
