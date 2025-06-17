@@ -3,8 +3,9 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -65,12 +66,13 @@ func sendNeedlesSince(stream volume_server_pb.VolumeServer_VolumeTailSenderServe
 
 	if isLastOne {
 		// need to heart beat to the client to ensure the connection health
-		sendErr := stream.Send(&volume_server_pb.VolumeTailSenderResponse{IsLastChunk: true})
+		sendErr := stream.Send(&volume_server_pb.VolumeTailSenderResponse{IsLastChunk: true, Version: uint32(v.Version())})
 		return lastTimestampNs, sendErr
 	}
 
 	scanner := &VolumeFileScanner4Tailing{
-		stream: stream,
+		stream:  stream,
+		version: uint32(v.Version()),
 	}
 
 	err = storage.ScanVolumeFileFrom(v.Version(), v.DataBackend, foundOffset.ToActualOffset(), scanner)
@@ -101,6 +103,7 @@ func (vs *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serv
 type VolumeFileScanner4Tailing struct {
 	stream                   volume_server_pb.VolumeServer_VolumeTailSenderServer
 	lastProcessedTimestampNs uint64
+	version                  uint32
 }
 
 func (scanner *VolumeFileScanner4Tailing) VisitSuperBlock(superBlock super_block.SuperBlock) error {
@@ -126,6 +129,7 @@ func (scanner *VolumeFileScanner4Tailing) VisitNeedle(n *needle.Needle, offset i
 			NeedleHeader: needleHeader,
 			NeedleBody:   needleBody[i:stopOffset],
 			IsLastChunk:  isLastChunk,
+			Version:      scanner.version,
 		})
 		if sendErr != nil {
 			return sendErr

@@ -341,6 +341,7 @@ message VolumeTailSenderResponse {
     bytes needle_header = 1;
     bytes needle_body = 2;
     bool is_last_chunk = 3;
+    uint32 version = 4;
 }
 
 message VolumeTailReceiverRequest {
