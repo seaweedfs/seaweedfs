@@ -70,7 +70,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		Rack:               req.Rack,
 		DataNode:           req.DataNode,
 		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
-		Version:            uint32(needle.CurrentVersion),
+		Version:            uint32(needle.GetCurrentVersion()),
 	}
 
 	if !ms.Topo.DataCenterExists(option.DataCenter) {

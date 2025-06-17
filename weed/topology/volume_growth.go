@@ -264,7 +264,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 				Collection:       option.Collection,
 				ReplicaPlacement: option.ReplicaPlacement,
 				Ttl:              option.Ttl,
-				Version:          needle.CurrentVersion,
+				Version:          needle.GetCurrentVersion(),
 				DiskType:         option.DiskType.String(),
 				ModifiedAtSecond: time.Now().Unix(),
 			})

@@ -18,7 +18,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 		return e
 	}
 	if datSize == 0 {
-		v.SuperBlock.Version = needle.CurrentVersion
+		v.SuperBlock.Version = needle.GetCurrentVersion()
 		_, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0)
 		if e != nil && os.IsPermission(e) {
 			//read-only, but zero length - recreate it!

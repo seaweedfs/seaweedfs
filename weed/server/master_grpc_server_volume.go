@@ -343,7 +343,7 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 		Rack:               req.Rack,
 		DataNode:           req.DataNode,
 		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
-		Version:            uint32(needle.CurrentVersion),
+		Version:            uint32(needle.GetCurrentVersion()),
 	}
 	volumeGrowRequest := topology.VolumeGrowRequest{
 		Option: &volumeGrowOption,

@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -10,7 +12,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
-	"time"
 )
 
 func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
@@ -23,7 +24,7 @@ func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 	v.volumeInfo, v.hasRemoteFile, found, err = volume_info.MaybeLoadVolumeInfo(v.FileName(".vif"))
 
 	if v.volumeInfo.Version == 0 {
-		v.volumeInfo.Version = uint32(needle.CurrentVersion)
+		v.volumeInfo.Version = uint32(needle.GetCurrentVersion())
 	}
 
 	if v.hasRemoteFile {

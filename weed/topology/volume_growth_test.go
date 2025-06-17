@@ -3,8 +3,9 @@ package topology
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -104,7 +105,7 @@ func setup(topologyLayout string) *Topology {
 					vi := storage.VolumeInfo{
 						Id:      needle.VolumeId(int64(m["id"].(float64))),
 						Size:    uint64(m["size"].(float64)),
-						Version: needle.CurrentVersion,
+						Version: needle.GetCurrentVersion(),
 					}
 					if mVal, ok := m["collection"]; ok {
 						vi.Collection = mVal.(string)

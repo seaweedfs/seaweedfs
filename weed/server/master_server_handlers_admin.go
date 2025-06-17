@@ -177,7 +177,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		Rack:               r.FormValue("rack"),
 		DataNode:           r.FormValue("dataNode"),
 		MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
-		Version:            uint32(needle.CurrentVersion),
+		Version:            uint32(needle.GetCurrentVersion()),
 	}
 	return volumeGrowOption, nil
 }
