@@ -55,6 +55,9 @@ func TailVolumeFromSource(volumeServer pb.ServerAddress, grpcDialOption grpc.Dia
 			needleHeader := resp.NeedleHeader
 			needleBody := resp.NeedleBody
 			version := needle.Version(resp.Version)
+			if version == 0 {
+				version = needle.GetCurrentVersion()
+			}
 
 			if len(needleHeader) == 0 {
 				continue
