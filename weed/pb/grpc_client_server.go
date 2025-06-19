@@ -3,14 +3,16 @@ package pb
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
-	"google.golang.org/grpc/metadata"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -128,7 +130,7 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
 		incomingMd, _ := metadata.FromIncomingContext(ctx)
-		idList := incomingMd.Get(util.RequestIDKey)
+		idList := incomingMd.Get(request_id.RequestIDKey)
 		var reqID string
 		if len(idList) > 0 {
 			reqID = idList[0]
@@ -139,11 +141,12 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 
 		ctx = metadata.NewOutgoingContext(ctx,
 			metadata.New(map[string]string{
-				util.RequestIDKey: reqID,
+				request_id.RequestIDKey: reqID,
 			}))
 
-		ctx = util.WithRequestID(ctx, reqID)
-		grpc.SetTrailer(ctx, metadata.Pairs(util.RequestIDKey, reqID))
+		ctx = request_id.Set(ctx, reqID)
+
+		grpc.SetTrailer(ctx, metadata.Pairs(request_id.RequestIDKey, reqID))
 
 		return handler(ctx, req)
 	}
