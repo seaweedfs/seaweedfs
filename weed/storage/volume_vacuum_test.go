@@ -72,7 +72,7 @@ func TestLDBIndexCompaction(t *testing.T) {
 func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, needleMapKind, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, needleMapKind, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -115,7 +115,7 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 
 	v.Close()
 
-	v, err = NewVolume(dir, dir, "", 1, needleMapKind, nil, nil, 0, 0, 0)
+	v, err = NewVolume(dir, dir, "", 1, needleMapKind, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume reloading: %v", err)
 	}

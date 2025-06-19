@@ -14,7 +14,7 @@ import (
 func TestFirstInvalidIndex(t *testing.T) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
