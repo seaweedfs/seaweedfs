@@ -277,8 +277,8 @@ func (store *YdbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath
 		}
 		rest := limit - entryCount
 		chunkLimit := rest
-		if chunkLimit > defaultMaxListChunk {
-			chunkLimit = defaultMaxListChunk
+		if chunkLimit > int64(store.maxListChunk) {
+			chunkLimit = int64(store.maxListChunk)
 		}
 		var rowCount int64
 
