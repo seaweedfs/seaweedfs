@@ -60,6 +60,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 	diskType := types.ToDiskType(req.DiskType)
 
+	ver := needle.GetCurrentVersion()
 	option := &topology.VolumeGrowOption{
 		Collection:         req.Collection,
 		ReplicaPlacement:   replicaPlacement,
@@ -70,7 +71,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		Rack:               req.Rack,
 		DataNode:           req.DataNode,
 		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
-		Version:            uint32(needle.GetCurrentVersion()),
+		Version:            uint32(ver),
 	}
 
 	if !ms.Topo.DataCenterExists(option.DataCenter) {
