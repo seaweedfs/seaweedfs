@@ -30,26 +30,35 @@ func (fm *FileMeta) queryParameters(ttlSec int32) *table.QueryParameters {
 		table.ValueParam("$dir_hash", types.Int64Value(fm.DirHash)),
 		table.ValueParam("$directory", types.UTF8Value(fm.Directory)),
 		table.ValueParam("$name", types.UTF8Value(fm.Name)),
-		table.ValueParam("$meta", types.StringValue(fm.Meta)),
+		table.ValueParam("$meta", types.BytesValue(fm.Meta)),
 		table.ValueParam("$expire_at", expireAtValue))
 }
 
-func createTableOptions() []options.CreateTableOption {
+func (store *YdbStore) createTableOptions() []options.CreateTableOption {
 	columnUnit := options.TimeToLiveUnitSeconds
 	return []options.CreateTableOption{
-		options.WithColumn("dir_hash", types.Optional(types.TypeInt64)),
-		options.WithColumn("directory", types.Optional(types.TypeUTF8)),
-		options.WithColumn("name", types.Optional(types.TypeUTF8)),
-		options.WithColumn("meta", types.Optional(types.TypeString)),
+		options.WithColumn("dir_hash", types.TypeInt64),
+		options.WithColumn("directory", types.TypeUTF8),
+		options.WithColumn("name", types.TypeUTF8),
+		options.WithColumn("meta", types.TypeString),
 		options.WithColumn("expire_at", types.Optional(types.TypeUint32)),
-		options.WithPrimaryKeyColumn("dir_hash", "name"),
+		options.WithPrimaryKeyColumn("dir_hash", "directory", "name"),
 		options.WithTimeToLiveSettings(options.TimeToLiveSettings{
 			ColumnName: "expire_at",
 			ColumnUnit: &columnUnit,
 			Mode:       options.TimeToLiveModeValueSinceUnixEpoch},
 		),
+		options.WithPartitioningSettings(
+			options.WithPartitioningBy([]string{"dir_hash", "name"}),
+			options.WithPartitioningBySize(store.partitionBySizeEnabled),
+			options.WithPartitionSizeMb(store.partitionSizeMb),
+			options.WithPartitioningByLoad(store.partitionByLoadEnabled),
+			options.WithMinPartitionsCount(store.minPartitionsCount),
+			options.WithMaxPartitionsCount(store.maxPartitionsCount),
+		),
 	}
 }
+
 func withPragma(prefix *string, query string) *string {
 	queryWithPragma := fmt.Sprintf(query, *prefix)
 	return &queryWithPragma
