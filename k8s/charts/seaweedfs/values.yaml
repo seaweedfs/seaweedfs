@@ -56,6 +56,7 @@ master:
   port: 9333
   grpcPort: 19333
   metricsPort: 9327
+  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
   ipBind: "0.0.0.0"
   volumePreallocate: false
   volumeSizeLimitMB: 1000
@@ -74,6 +75,13 @@ master:
 
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
+
+  # Custom command line arguments to add to the master command
+  # Example to fix IPv6 metrics connectivity issues:
+  # extraArgs: ["-metricsIp", "0.0.0.0"]
+  # Example with multiple args:
+  # extraArgs: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
 
   config: |-
     # Enter any extra configuration for master.toml here.
@@ -277,6 +285,7 @@ volume:
   port: 8080
   grpcPort: 18080
   metricsPort: 9327
+  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
   ipBind: "0.0.0.0"
   replicas: 1
   loggingOverrideLevel: null
@@ -288,6 +297,13 @@ volume:
   fileSizeLimitMB: null
   # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
   minFreeSpacePercent: 7
+
+  # Custom command line arguments to add to the volume command
+  # Example to fix IPv6 metrics connectivity issues:
+  # extraArgs: ["-metricsIp", "0.0.0.0"]
+  # Example with multiple args:
+  # extraArgs: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
 
   # For each data disk you may use ANY storage-class, example with local-path-provisioner
   # Annotations are optional.
@@ -520,6 +536,7 @@ filer:
   port: 8888
   grpcPort: 18888
   metricsPort: 9327
+  metricsIp: ""  # Metrics listen IP. If empty, defaults to bindIp
   loggingOverrideLevel: null
   filerGroup: ""
   # prefer to read and write to volumes in this data center (not set by default)
@@ -546,6 +563,13 @@ filer:
 
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
+
+  # Custom command line arguments to add to the filer command
+  # Example to fix IPv6 metrics connectivity issues:
+  # extraArgs: ["-metricsIp", "0.0.0.0"]
+  # Example with multiple args:
+  # extraArgs: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
 
   # Add a custom notification.toml to configure filer notifications
   # Example:

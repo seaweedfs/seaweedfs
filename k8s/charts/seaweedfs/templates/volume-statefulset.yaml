@@ -150,6 +150,9 @@ spec:
                 {{- if .Values.volume.metricsPort }}
                 -metricsPort={{ .Values.volume.metricsPort }} \
                 {{- end }}
+                {{- if .Values.volume.metricsIp }}
+                -metricsIp={{ .Values.volume.metricsIp }} \
+                {{- end }}
                 -dir {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}/{{$dir.name}}{{end}} \
                 {{- if .Values.volume.idx }}
                 -dir.idx=/idx \
@@ -183,7 +186,10 @@ spec:
                 -minFreeSpacePercent={{ .Values.volume.minFreeSpacePercent }} \
                 -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-volume.{{ .Release.Namespace }} \
                 -compactionMBps={{ .Values.volume.compactionMBps }} \
-                -mserver={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
+                -mserver={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }} \
+                {{- range .Values.volume.extraArgs }}
+                {{ . }} \
+                {{- end }}
           volumeMounts:
             {{- range $dir := .Values.volume.dataDirs }}
             {{- if not ( eq $dir.type "custom" ) }}
