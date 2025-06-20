@@ -130,7 +130,7 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
 		incomingMd, _ := metadata.FromIncomingContext(ctx)
-		idList := incomingMd.Get(request_id.RequestIDKey)
+		idList := incomingMd.Get(request_id.AmzRequestIDHeader)
 		var reqID string
 		if len(idList) > 0 {
 			reqID = idList[0]
@@ -141,12 +141,12 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 
 		ctx = metadata.NewOutgoingContext(ctx,
 			metadata.New(map[string]string{
-				request_id.RequestIDKey: reqID,
+				request_id.AmzRequestIDHeader: reqID,
 			}))
 
 		ctx = request_id.Set(ctx, reqID)
 
-		grpc.SetTrailer(ctx, metadata.Pairs(request_id.RequestIDKey, reqID))
+		grpc.SetTrailer(ctx, metadata.Pairs(request_id.AmzRequestIDHeader, reqID))
 
 		return handler(ctx, req)
 	}

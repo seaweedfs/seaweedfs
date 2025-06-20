@@ -429,18 +429,18 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 
 func requestIDMiddleware(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		reqID := r.Header.Get(request_id.RequestIdHttpHeader)
+		reqID := r.Header.Get(request_id.AmzRequestIDHeader)
 		if reqID == "" {
 			reqID = uuid.New().String()
 		}
 
-		ctx := context.WithValue(r.Context(), request_id.RequestIDKey, reqID)
+		ctx := context.WithValue(r.Context(), request_id.AmzRequestIDHeader, reqID)
 		ctx = metadata.NewOutgoingContext(ctx,
 			metadata.New(map[string]string{
-				request_id.RequestIDKey: reqID,
+				request_id.AmzRequestIDHeader: reqID,
 			}))
 
-		w.Header().Set(request_id.RequestIdHttpHeader, reqID)
+		w.Header().Set(request_id.AmzRequestIDHeader, reqID)
 		h(w, r.WithContext(ctx))
 	}
 }
