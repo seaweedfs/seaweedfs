@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/valyala/bytebufferpool"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -15,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
+	"github.com/valyala/bytebufferpool"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -359,7 +361,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		req.Header.Set("Authorization", "BEARER "+string(option.Jwt))
 	}
 
-	util.ReqWithRequestId(req, ctx)
+	request_id.InjectToRequest(ctx, req)
 
 	// print("+")
 	resp, post_err := uploader.httpClient.Do(req)
