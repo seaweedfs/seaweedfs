@@ -190,6 +190,7 @@ spec:
               -encryptVolumeData \
               {{- end }}
               -ip=${POD_IP} \
+              -ip.bind={{ .Values.filer.ipBind }} \
               {{- if .Values.filer.filerGroup}}
               -filerGroup={{ .Values.filer.filerGroup}} \
               {{- end }}
