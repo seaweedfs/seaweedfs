@@ -61,8 +61,6 @@ master:
   volumePreallocate: false
   volumeSizeLimitMB: 1000
   loggingOverrideLevel: null
-  # number of seconds between heartbeats, default 5
-  pulseSeconds: null
   # threshold to vacuum and reclaim spaces, default 0.3 (30%)
   garbageThreshold: null
   # Prometheus push interval in seconds, default 15
@@ -75,6 +73,18 @@ master:
 
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
+
+  # Resume previous state on start master server
+  resumeState: false
+  # Use Hashicorp Raft
+  raftHashicorp: false
+  # Whether to bootstrap the Raft cluster. Only use it when use Hashicorp Raft
+  raftBootstrap: false
+
+  # election timeout of master servers
+  electionTimeout: "10s"
+  # heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)
+  heartbeatInterval: "300ms"
 
   # Custom command line arguments to add to the master command
   # Example to fix IPv6 metrics connectivity issues:
