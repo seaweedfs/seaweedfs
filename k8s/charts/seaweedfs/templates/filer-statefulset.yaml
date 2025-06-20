@@ -162,6 +162,9 @@ spec:
               {{- if .Values.filer.metricsPort }}
               -metricsPort={{ .Values.filer.metricsPort }} \
               {{- end }}
+              {{- if .Values.filer.metricsIp }}
+              -metricsIp={{ .Values.filer.metricsIp }} \
+              {{- end }}
               {{- if .Values.filer.redirectOnRead }}
               -redirectOnRead \
               {{- end }}
@@ -219,7 +222,10 @@ spec:
               -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
               {{- end }}
               {{- end }}
-              -master={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
+              -master={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }} \
+              {{- range .Values.filer.extraArgs }}
+              {{ . }} \
+              {{- end }}
           volumeMounts:
             {{- if (or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "persistentVolumeClaim") (eq .Values.filer.logs.type "emptyDir")) }}
             - name: seaweedfs-filer-log-volume
