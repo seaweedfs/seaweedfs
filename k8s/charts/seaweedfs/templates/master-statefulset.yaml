@@ -164,8 +164,20 @@ spec:
               {{- if .Values.master.disableHttp }}
               -disableHttp \
               {{- end }}
-              {{- if .Values.master.pulseSeconds }}
-              -pulseSeconds={{ .Values.master.pulseSeconds }} \
+              {{- if .Values.master.resumeState }}
+              -resumeState \
+              {{- end }}
+              {{- if .Values.master.raftHashicorp }}
+              -raftHashicorp \
+              {{- end }}
+              {{- if .Values.master.raftBootstrap }}
+              -raftBootstrap \
+              {{- end }}
+              {{- if .Values.master.electionTimeout }}
+              -electionTimeout={{ .Values.master.electionTimeout }} \
+              {{- end }}
+              {{- if .Values.master.heartbeatInterval }}
+              -heartbeatInterval={{ .Values.master.heartbeatInterval }} \
               {{- end }}
               {{- if .Values.master.garbageThreshold }}
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
