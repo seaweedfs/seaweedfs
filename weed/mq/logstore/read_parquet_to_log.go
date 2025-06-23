@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
+	"math"
+	"strings"
+
 	"github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
@@ -13,9 +17,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/protobuf/proto"
-	"io"
-	"math"
-	"strings"
 )
 
 var (
@@ -42,10 +43,6 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 		WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
 		RecordTypeEnd()
 
-	parquetSchema, err := schema.ToParquetSchema(t.Name, recordType)
-	if err != nil {
-		return nil
-	}
 	parquetLevels, err := schema.ToParquetLevels(recordType)
 	if err != nil {
 		return nil
@@ -61,11 +58,12 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 		readerAt := filer.NewChunkReaderAtFromClient(readerCache, chunkViews, int64(fileSize))
 
 		// create parquet reader
-		parquetReader := parquet.NewReader(readerAt, parquetSchema)
+		parquetReader := parquet.NewReader(readerAt)
 		rows := make([]parquet.Row, 128)
 		for {
 			rowCount, readErr := parquetReader.ReadRows(rows)
 
+			// Process the rows first, even if EOF is returned
 			for i := 0; i < rowCount; i++ {
 				row := rows[i]
 				// convert parquet row to schema_pb.RecordValue
@@ -99,11 +97,15 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 				}
 			}
 
+			// Check for end conditions after processing rows
 			if readErr != nil {
 				if readErr == io.EOF {
 					return processedTsNs, nil
 				}
 				return processedTsNs, readErr
+			}
+			if rowCount == 0 {
+				return processedTsNs, nil
 			}
 		}
 		return
