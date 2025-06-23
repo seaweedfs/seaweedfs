@@ -137,7 +137,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.8.0
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
-	github.com/minio/crc64nvme v1.0.1
+	github.com/minio/crc64nvme v1.0.2
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.25.1
 	github.com/pkg/sftp v1.13.7
