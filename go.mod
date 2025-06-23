@@ -5,9 +5,9 @@ go 1.24
 toolchain go1.24.1
 
 require (
-	cloud.google.com/go v0.121.0 // indirect
+	cloud.google.com/go v0.121.1 // indirect
 	cloud.google.com/go/pubsub v1.49.0
-	cloud.google.com/go/storage v1.54.0
+	cloud.google.com/go/storage v1.55.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.38.1
@@ -357,7 +357,7 @@ require (
 	go.etcd.io/bbolt v1.4.0 // indirect
 	go.etcd.io/etcd/api/v3 v3.6.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
-	go.opentelemetry.io/contrib/detectors/gcp v1.35.0 // indirect
+	go.opentelemetry.io/contrib/detectors/gcp v1.36.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect
 	go.opentelemetry.io/otel v1.36.0 // indirect
@@ -369,7 +369,7 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/term v0.32.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250505200425-f936aa4a68b2 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20250512202823-5a2f75b736a9 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250603155806-513f23925822 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/validator.v2 v2.0.1 // indirect
