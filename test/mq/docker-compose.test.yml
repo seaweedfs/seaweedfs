@@ -1,0 +1,333 @@
+version: '3.9'
+
+services:
+  # Master cluster for coordination and metadata
+  master0:
+    image: chrislusf/seaweedfs:local
+    container_name: test-master0
+    ports:
+      - "19333:9333"
+      - "29333:19333"
+    command: >
+      master 
+      -v=1 
+      -volumeSizeLimitMB=100 
+      -resumeState=false 
+      -ip=master0 
+      -port=9333 
+      -peers=master0:9333,master1:9334,master2:9335 
+      -mdir=/tmp/master0
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+    networks:
+      - seaweedmq-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  master1:
+    image: chrislusf/seaweedfs:local
+    container_name: test-master1
+    ports:
+      - "19334:9334"
+      - "29334:19334"
+    command: >
+      master 
+      -v=1 
+      -volumeSizeLimitMB=100 
+      -resumeState=false 
+      -ip=master1 
+      -port=9334 
+      -peers=master0:9333,master1:9334,master2:9335 
+      -mdir=/tmp/master1
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+    networks:
+      - seaweedmq-test
+    depends_on:
+      - master0
+
+  master2:
+    image: chrislusf/seaweedfs:local
+    container_name: test-master2
+    ports:
+      - "19335:9335"
+      - "29335:19335"
+    command: >
+      master 
+      -v=1 
+      -volumeSizeLimitMB=100 
+      -resumeState=false 
+      -ip=master2 
+      -port=9335 
+      -peers=master0:9333,master1:9334,master2:9335 
+      -mdir=/tmp/master2
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+    networks:
+      - seaweedmq-test
+    depends_on:
+      - master0
+
+  # Volume servers for data storage
+  volume1:
+    image: chrislusf/seaweedfs:local
+    container_name: test-volume1
+    ports:
+      - "18080:8080"
+      - "28080:18080"
+    command: >
+      volume 
+      -v=1
+      -dataCenter=dc1 
+      -rack=rack1 
+      -mserver=master0:9333,master1:9334,master2:9335 
+      -port=8080 
+      -ip=volume1 
+      -publicUrl=localhost:18080 
+      -preStopSeconds=1
+      -dir=/tmp/volume1
+    networks:
+      - seaweedmq-test
+    depends_on:
+      master0:
+        condition: service_healthy
+
+  volume2:
+    image: chrislusf/seaweedfs:local
+    container_name: test-volume2
+    ports:
+      - "18081:8081"
+      - "28081:18081"
+    command: >
+      volume 
+      -v=1
+      -dataCenter=dc1 
+      -rack=rack2 
+      -mserver=master0:9333,master1:9334,master2:9335 
+      -port=8081 
+      -ip=volume2 
+      -publicUrl=localhost:18081 
+      -preStopSeconds=1
+      -dir=/tmp/volume2
+    networks:
+      - seaweedmq-test
+    depends_on:
+      master0:
+        condition: service_healthy
+
+  volume3:
+    image: chrislusf/seaweedfs:local
+    container_name: test-volume3
+    ports:
+      - "18082:8082"
+      - "28082:18082"
+    command: >
+      volume 
+      -v=1
+      -dataCenter=dc2 
+      -rack=rack1 
+      -mserver=master0:9333,master1:9334,master2:9335 
+      -port=8082 
+      -ip=volume3 
+      -publicUrl=localhost:18082 
+      -preStopSeconds=1
+      -dir=/tmp/volume3
+    networks:
+      - seaweedmq-test
+    depends_on:
+      master0:
+        condition: service_healthy
+
+  # Filer servers for metadata
+  filer1:
+    image: chrislusf/seaweedfs:local
+    container_name: test-filer1
+    ports:
+      - "18888:8888"
+      - "28888:18888"
+    command: >
+      filer 
+      -v=1
+      -defaultReplicaPlacement=100 
+      -iam 
+      -master=master0:9333,master1:9334,master2:9335 
+      -port=8888 
+      -ip=filer1
+      -dataCenter=dc1
+    networks:
+      - seaweedmq-test
+    depends_on:
+      master0:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  filer2:
+    image: chrislusf/seaweedfs:local
+    container_name: test-filer2
+    ports:
+      - "18889:8889"
+      - "28889:18889"
+    command: >
+      filer 
+      -v=1
+      -defaultReplicaPlacement=100 
+      -iam 
+      -master=master0:9333,master1:9334,master2:9335 
+      -port=8889 
+      -ip=filer2
+      -dataCenter=dc2
+    networks:
+      - seaweedmq-test
+    depends_on:
+      filer1:
+        condition: service_healthy
+
+  # Message Queue Brokers
+  broker1:
+    image: chrislusf/seaweedfs:local
+    container_name: test-broker1
+    ports:
+      - "17777:17777"
+    command: >
+      mq.broker 
+      -v=1
+      -master=master0:9333,master1:9334,master2:9335 
+      -port=17777 
+      -ip=broker1
+      -dataCenter=dc1
+      -rack=rack1
+    networks:
+      - seaweedmq-test
+    depends_on:
+      filer1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "17777"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  broker2:
+    image: chrislusf/seaweedfs:local
+    container_name: test-broker2
+    ports:
+      - "17778:17778"
+    command: >
+      mq.broker 
+      -v=1
+      -master=master0:9333,master1:9334,master2:9335 
+      -port=17778 
+      -ip=broker2
+      -dataCenter=dc1
+      -rack=rack2
+    networks:
+      - seaweedmq-test
+    depends_on:
+      broker1:
+        condition: service_healthy
+
+  broker3:
+    image: chrislusf/seaweedfs:local
+    container_name: test-broker3
+    ports:
+      - "17779:17779"
+    command: >
+      mq.broker 
+      -v=1
+      -master=master0:9333,master1:9334,master2:9335 
+      -port=17779 
+      -ip=broker3
+      -dataCenter=dc2
+      -rack=rack1
+    networks:
+      - seaweedmq-test
+    depends_on:
+      broker1:
+        condition: service_healthy
+
+  # Test runner container
+  test-runner:
+    build:
+      context: ../../
+      dockerfile: test/mq/Dockerfile.test
+    container_name: test-runner
+    volumes:
+      - ../../:/app
+      - /tmp/test-results:/test-results
+    working_dir: /app
+    environment:
+      - SEAWEED_MASTERS=master0:9333,master1:9334,master2:9335
+      - SEAWEED_BROKERS=broker1:17777,broker2:17778,broker3:17779
+      - SEAWEED_FILERS=filer1:8888,filer2:8889
+      - TEST_RESULTS_DIR=/test-results
+      - GO_TEST_TIMEOUT=30m
+    networks:
+      - seaweedmq-test
+    depends_on:
+      broker1:
+        condition: service_healthy
+      broker2:
+        condition: service_started
+      broker3:
+        condition: service_started
+    command: >
+      sh -c "
+        echo 'Waiting for cluster to be ready...' &&
+        sleep 30 &&
+        echo 'Running integration tests...' &&
+        go test -v -timeout=30m ./test/mq/integration/... -args -test.parallel=4
+      "
+
+  # Monitoring and metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: test-prometheus
+    ports:
+      - "19090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - seaweedmq-test
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: test-grafana
+    ports:
+      - "13000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - seaweedmq-test
+
+networks:
+  seaweedmq-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  grafana-storage: 

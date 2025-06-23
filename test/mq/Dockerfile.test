@@ -1,0 +1,37 @@
+FROM golang:1.21-alpine
+
+# Install necessary tools
+RUN apk add --no-cache \
+    curl \
+    netcat-openbsd \
+    bash \
+    git \
+    build-base
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the entire source code
+COPY . .
+
+# Install test dependencies
+RUN go install github.com/onsi/ginkgo/v2/ginkgo@latest
+RUN go install github.com/stretchr/testify@latest
+
+# Build the weed binary for testing
+RUN go build -o weed weed/weed.go
+
+# Create test results directory
+RUN mkdir -p /test-results
+
+# Set up environment
+ENV CGO_ENABLED=1
+ENV GOOS=linux
+ENV GO111MODULE=on
+
+# Entry point for running tests
+ENTRYPOINT ["/bin/bash"] 

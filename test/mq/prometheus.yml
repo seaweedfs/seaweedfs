@@ -1,0 +1,54 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # SeaweedFS Masters
+  - job_name: 'seaweedfs-master'
+    static_configs:
+      - targets: 
+        - 'master0:9333'
+        - 'master1:9334'
+        - 'master2:9335'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # SeaweedFS Volume Servers
+  - job_name: 'seaweedfs-volume'
+    static_configs:
+      - targets:
+        - 'volume1:8080'
+        - 'volume2:8081'
+        - 'volume3:8082'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # SeaweedFS Filers
+  - job_name: 'seaweedfs-filer'
+    static_configs:
+      - targets:
+        - 'filer1:8888'
+        - 'filer2:8889'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # SeaweedMQ Brokers
+  - job_name: 'seaweedmq-broker'
+    static_configs:
+      - targets:
+        - 'broker1:17777'
+        - 'broker2:17778'
+        - 'broker3:17779'
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+
+  # Docker containers
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['localhost:9323']
+    metrics_path: '/metrics'
+    scrape_interval: 30s 
