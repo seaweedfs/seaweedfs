@@ -1,0 +1,262 @@
+version: '3.8'
+
+services:
+  # Masters
+  master0:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "19333:19333"
+      - "9333:9333"
+    volumes:
+      - /tmp/seaweedfs-test/master0:/data
+    command: "master -port=9333 -mdir=/data -peers=master0:9333,master1:9334,master2:9335 -defaultReplication=001"
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 7
+      WEED_MASTER_VOLUME_GROWTH_COPY_2: 6
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 3
+    networks:
+      - seaweedfs-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  master1:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "19334:9334"
+      - "9334:9334"
+    volumes:
+      - /tmp/seaweedfs-test/master1:/data
+    command: "master -port=9334 -mdir=/data -peers=master0:9333,master1:9334,master2:9335 -defaultReplication=001"
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 7
+      WEED_MASTER_VOLUME_GROWTH_COPY_2: 6
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 3
+    networks:
+      - seaweedfs-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9334/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  master2:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "19335:9335"
+      - "9335:9335"
+    volumes:
+      - /tmp/seaweedfs-test/master2:/data
+    command: "master -port=9335 -mdir=/data -peers=master0:9333,master1:9334,master2:9335 -defaultReplication=001"
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 7
+      WEED_MASTER_VOLUME_GROWTH_COPY_2: 6
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 3
+    networks:
+      - seaweedfs-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9335/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Volume Servers
+  volume1:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "18080:8080"
+      - "8080:8080"
+    volumes:
+      - /tmp/seaweedfs-test/volume1:/data
+    command: "volume -port=8080 -mserver=master0:9333,master1:9334,master2:9335 -dir=/data"
+    depends_on:
+      master0:
+        condition: service_healthy
+      master1:
+        condition: service_healthy
+      master2:
+        condition: service_healthy
+    networks:
+      - seaweedfs-test
+    environment:
+      WEED_VOLUME_MAX: 100
+
+  volume2:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "18081:8081"
+      - "8081:8081"
+    volumes:
+      - /tmp/seaweedfs-test/volume2:/data
+    command: "volume -port=8081 -mserver=master0:9333,master1:9334,master2:9335 -dir=/data"
+    depends_on:
+      master0:
+        condition: service_healthy
+      master1:
+        condition: service_healthy
+      master2:
+        condition: service_healthy
+    networks:
+      - seaweedfs-test
+    environment:
+      WEED_VOLUME_MAX: 100
+
+  volume3:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "18082:8082"
+      - "8082:8082"
+    volumes:
+      - /tmp/seaweedfs-test/volume3:/data
+    command: "volume -port=8082 -mserver=master0:9333,master1:9334,master2:9335 -dir=/data"
+    depends_on:
+      master0:
+        condition: service_healthy
+      master1:
+        condition: service_healthy
+      master2:
+        condition: service_healthy
+    networks:
+      - seaweedfs-test
+    environment:
+      WEED_VOLUME_MAX: 100
+
+  # Filers
+  filer1:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "18888:8888"
+      - "8888:8888"
+    volumes:
+      - /tmp/seaweedfs-test/filer1:/data
+    command: "filer -port=8888 -master=master0:9333,master1:9334,master2:9335"
+    depends_on:
+      - volume1
+      - volume2
+      - volume3
+    networks:
+      - seaweedfs-test
+    environment:
+      WEED_LEVELDB2_DIR: "/data/filerldb2"
+
+  filer2:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "18889:8889"
+      - "8889:8889"
+    volumes:
+      - /tmp/seaweedfs-test/filer2:/data
+    command: "filer -port=8889 -master=master0:9333,master1:9334,master2:9335"
+    depends_on:
+      - volume1
+      - volume2
+      - volume3
+    networks:
+      - seaweedfs-test
+    environment:
+      WEED_LEVELDB2_DIR: "/data/filerldb2"
+
+  # Message Queue Brokers
+  broker1:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "17777:17777"
+    volumes:
+      - /tmp/seaweedfs-test/broker1:/data
+    command: "mq.broker -port=17777 -filer=filer1:8888,filer2:8889"
+    depends_on:
+      - filer1
+      - filer2
+    networks:
+      - seaweedfs-test
+    environment:
+      WEED_MQ_BROKER_CPU_PERCENT: 80
+
+  broker2:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "17778:17778"
+    volumes:
+      - /tmp/seaweedfs-test/broker2:/data
+    command: "mq.broker -port=17778 -filer=filer1:8888,filer2:8889"
+    depends_on:
+      - filer1
+      - filer2
+    networks:
+      - seaweedfs-test
+    environment:
+      WEED_MQ_BROKER_CPU_PERCENT: 80
+
+  broker3:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "17779:17779"
+    volumes:
+      - /tmp/seaweedfs-test/broker3:/data
+    command: "mq.broker -port=17779 -filer=filer1:8888,filer2:8889"
+    depends_on:
+      - filer1
+      - filer2
+    networks:
+      - seaweedfs-test
+    environment:
+      WEED_MQ_BROKER_CPU_PERCENT: 80
+
+  # Test Runner
+  test-runner:
+    image: seaweedfs-test-runner
+    volumes:
+      - ../..:/workspace
+      - /tmp/test-results:/test-results
+    working_dir: /workspace
+    networks:
+      - seaweedfs-test
+    environment:
+      - SEAWEED_MASTERS=master0:9333,master1:9334,master2:9335
+      - SEAWEED_BROKERS=broker1:17777,broker2:17778,broker3:17779
+      - SEAWEED_FILERS=filer1:8888,filer2:8889
+      - GO111MODULE=on
+      - CGO_ENABLED=0
+    depends_on:
+      - broker1
+      - broker2
+      - broker3
+
+  # Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "19090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - seaweedfs-test
+    depends_on:
+      - master0
+      - master1
+      - master2
+      - volume1
+      - volume2
+      - volume3
+      - filer1
+      - filer2
+      - broker1
+      - broker2
+      - broker3
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "13000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    networks:
+      - seaweedfs-test
+    depends_on:
+      - prometheus
+
+networks:
+  seaweedfs-test:
+    driver: bridge 

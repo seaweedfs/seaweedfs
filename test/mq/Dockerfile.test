@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine
+FROM golang:1.24-alpine
 
 # Install necessary tools
 RUN apk add --no-cache \
@@ -9,21 +9,22 @@ RUN apk add --no-cache \
     build-base
 
 # Set working directory
-WORKDIR /app
+WORKDIR /workspace
 
 # Copy go mod files first for better caching
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the entire source code
-COPY . .
+# Copy only the necessary source code for building and testing
+COPY weed/ ./weed/
+COPY test/mq/integration/ ./test/mq/integration/
 
 # Install test dependencies
 RUN go install github.com/onsi/ginkgo/v2/ginkgo@latest
-RUN go install github.com/stretchr/testify@latest
+# Note: testify is a library, not a binary, so it's installed via go mod download
 
-# Build the weed binary for testing
-RUN go build -o weed weed/weed.go
+# Build the weed binary for testing (optional - tests can use external cluster)
+RUN cd weed && go build -o ../weed .
 
 # Create test results directory
 RUN mkdir -p /test-results
@@ -32,6 +33,9 @@ RUN mkdir -p /test-results
 ENV CGO_ENABLED=1
 ENV GOOS=linux
 ENV GO111MODULE=on
+
+# Default working directory for tests
+WORKDIR /workspace
 
 # Entry point for running tests
 ENTRYPOINT ["/bin/bash"] 

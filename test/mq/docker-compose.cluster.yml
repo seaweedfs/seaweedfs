@@ -1,0 +1,167 @@
+version: '3.8'
+
+services:
+  # Masters
+  master0:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "19333:9333"
+    volumes:
+      - /tmp/seaweedfs-test/master0:/data
+    command: "master -port=9333 -mdir=/data -peers=master0:9333,master1:9334,master2:9335 -ip=master0 -defaultReplication=001"
+    networks:
+      - seaweedfs-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  master1:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "19334:9334"
+    volumes:
+      - /tmp/seaweedfs-test/master1:/data
+    command: "master -port=9334 -mdir=/data -peers=master0:9333,master1:9334,master2:9335 -ip=master1 -defaultReplication=001"
+    networks:
+      - seaweedfs-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9334/cluster/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  master2:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "19335:9335"
+    volumes:
+      - /tmp/seaweedfs-test/master2:/data
+    command: "master -port=9335 -mdir=/data -peers=master0:9333,master1:9334,master2:9335 -ip=master2 -defaultReplication=001"
+    networks:
+      - seaweedfs-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9335/cluster/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Volume Servers
+  volume1:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "18080:8080"
+    volumes:
+      - /tmp/seaweedfs-test/volume1:/data
+    command: "volume -port=8080 -mserver=master0:9333,master1:9334,master2:9335 -dir=/data"
+    depends_on:
+      - master0
+      - master1
+      - master2
+    networks:
+      - seaweedfs-test
+
+  volume2:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "18081:8081"
+    volumes:
+      - /tmp/seaweedfs-test/volume2:/data
+    command: "volume -port=8081 -mserver=master0:9333,master1:9334,master2:9335 -dir=/data"
+    depends_on:
+      - master0
+      - master1
+      - master2
+    networks:
+      - seaweedfs-test
+
+  volume3:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "18082:8082"
+    volumes:
+      - /tmp/seaweedfs-test/volume3:/data
+    command: "volume -port=8082 -mserver=master0:9333,master1:9334,master2:9335 -dir=/data"
+    depends_on:
+      - master0
+      - master1
+      - master2
+    networks:
+      - seaweedfs-test
+
+  # Filers
+  filer1:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "18888:8888"
+    volumes:
+      - /tmp/seaweedfs-test/filer1:/data
+    command: "filer -port=8888 -master=master0:9333,master1:9334,master2:9335"
+    depends_on:
+      - volume1
+      - volume2
+      - volume3
+    networks:
+      - seaweedfs-test
+
+  filer2:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "18889:8889"
+    volumes:
+      - /tmp/seaweedfs-test/filer2:/data
+    command: "filer -port=8889 -master=master0:9333,master1:9334,master2:9335"
+    depends_on:
+      - volume1
+      - volume2
+      - volume3
+    networks:
+      - seaweedfs-test
+
+  # Message Queue Brokers
+  broker1:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "17777:17777"
+    volumes:
+      - /tmp/seaweedfs-test/broker1:/data
+    command: "mq.broker -port=17777 -master=master0:9333,master1:9334,master2:9335"
+    depends_on:
+      - filer1
+      - filer2
+    networks:
+      - seaweedfs-test
+
+  broker2:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "17778:17778"
+    volumes:
+      - /tmp/seaweedfs-test/broker2:/data
+    command: "mq.broker -port=17778 -master=master0:9333,master1:9334,master2:9335"
+    depends_on:
+      - filer1
+      - filer2
+    networks:
+      - seaweedfs-test
+
+  broker3:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "17779:17779"
+    volumes:
+      - /tmp/seaweedfs-test/broker3:/data
+    command: "mq.broker -port=17779 -master=master0:9333,master1:9334,master2:9335"
+    depends_on:
+      - filer1
+      - filer2
+    networks:
+      - seaweedfs-test
+
+networks:
+  seaweedfs-test:
+    driver: bridge 

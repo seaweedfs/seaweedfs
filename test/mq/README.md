@@ -43,31 +43,75 @@ The test environment consists of:
 
 ### Basic Usage
 
+Choose one of three approaches:
+
+#### Option 1: Quick Cluster Setup (Fastest)
+Just starts a SeaweedMQ cluster - no test runner, no build required.
+
+1. **Start Cluster**:
+   ```bash
+   cd test/mq
+   make up-cluster
+   ```
+
+2. **Test manually** or with your own code against:
+   - Masters: http://localhost:19333, http://localhost:19334, http://localhost:19335
+   - Brokers: localhost:17777, localhost:17778, localhost:17779
+   - Filers: http://localhost:18888, http://localhost:18889
+
+#### Option 2: Use Production Images (Recommended for testing)
+Uses official SeaweedFS images from Docker Hub with test runner.
+
 1. **Start Test Environment**:
    ```bash
    cd test/mq
-   make up
+   make up-prod
    ```
 
-2. **Run All Tests**:
+2. **Run Tests**:
+   ```bash
+   make test-basic      # Basic pub/sub tests
+   ```
+
+#### Option 3: Build from Source (Development)
+Builds SeaweedFS from your local source code to test latest changes.
+
+1. **Start Test Environment**:
+   ```bash
+   cd test/mq
+   make up  # This will build and start
+   ```
+
+2. **Run Tests**:
+   ```bash
+   make test-basic      # Basic pub/sub tests
+   ```
+
+#### Common Commands
+
+3. **Run All Tests**:
    ```bash
    make test
    ```
 
-3. **Run Specific Test Categories**:
+4. **Run Specific Test Categories**:
    ```bash
-   make test-basic      # Basic pub/sub tests
    make test-performance # Performance tests
    make test-failover   # Failover tests
    make test-agent      # Agent tests
    ```
 
-4. **Quick Smoke Test**:
+5. **Quick Smoke Test**:
    ```bash
    make smoke-test
    ```
 
-5. **Clean Up**:
+6. **Check Health**:
+   ```bash
+   make health
+   ```
+
+7. **Clean Up**:
    ```bash
    make down
    ```
