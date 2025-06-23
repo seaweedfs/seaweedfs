@@ -25,6 +25,7 @@ func AllocateVolume(dn *DataNode, grpcDialOption grpc.DialOption, vid needle.Vol
 			Preallocate:        option.Preallocate,
 			MemoryMapMaxSizeMb: option.MemoryMapMaxSizeMb,
 			DiskType:           string(option.DiskType),
+			Version:            option.Version,
 		})
 		return allocateErr
 	})

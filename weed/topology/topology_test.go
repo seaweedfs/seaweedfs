@@ -49,7 +49,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 				DeletedByteCount: 34524,
 				ReadOnly:         false,
 				ReplicaPlacement: uint32(0),
-				Version:          uint32(needle.CurrentVersion),
+				Version:          uint32(needle.GetCurrentVersion()),
 				Ttl:              0,
 			}
 			volumeMessages = append(volumeMessages, volumeMessage)
@@ -65,7 +65,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 				DeletedByteCount: 34524,
 				ReadOnly:         false,
 				ReplicaPlacement: uint32(0),
-				Version:          uint32(needle.CurrentVersion),
+				Version:          uint32(needle.GetCurrentVersion()),
 				Ttl:              0,
 				DiskType:         "ssd",
 			}
@@ -94,7 +94,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 				DeletedByteCount: 345240,
 				ReadOnly:         false,
 				ReplicaPlacement: uint32(0),
-				Version:          uint32(needle.CurrentVersion),
+				Version:          uint32(needle.GetCurrentVersion()),
 				Ttl:              0,
 			}
 			volumeMessages = append(volumeMessages, volumeMessage)
@@ -117,7 +117,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 			Id:               uint32(3),
 			Collection:       "",
 			ReplicaPlacement: uint32(0),
-			Version:          uint32(needle.CurrentVersion),
+			Version:          uint32(needle.GetCurrentVersion()),
 			Ttl:              0,
 		}
 		topo.IncrementalSyncDataNodeRegistration(
@@ -191,7 +191,7 @@ func TestAddRemoveVolume(t *testing.T) {
 		DeleteCount:      23,
 		DeletedByteCount: 45,
 		ReadOnly:         false,
-		Version:          needle.CurrentVersion,
+		Version:          needle.GetCurrentVersion(),
 		ReplicaPlacement: &super_block.ReplicaPlacement{},
 		Ttl:              needle.EMPTY_TTL,
 	}

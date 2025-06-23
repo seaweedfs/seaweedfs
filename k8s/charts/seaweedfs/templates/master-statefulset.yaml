@@ -157,18 +157,36 @@ spec:
               {{- if .Values.master.metricsPort }}
               -metricsPort={{ .Values.master.metricsPort }} \
               {{- end }}
+              {{- if .Values.master.metricsIp }}
+              -metricsIp={{ .Values.master.metricsIp }} \
+              {{- end }}
               -volumeSizeLimitMB={{ .Values.master.volumeSizeLimitMB }} \
               {{- if .Values.master.disableHttp }}
               -disableHttp \
               {{- end }}
-              {{- if .Values.master.pulseSeconds }}
-              -pulseSeconds={{ .Values.master.pulseSeconds }} \
+              {{- if .Values.master.resumeState }}
+              -resumeState \
+              {{- end }}
+              {{- if .Values.master.raftHashicorp }}
+              -raftHashicorp \
+              {{- end }}
+              {{- if .Values.master.raftBootstrap }}
+              -raftBootstrap \
+              {{- end }}
+              {{- if .Values.master.electionTimeout }}
+              -electionTimeout={{ .Values.master.electionTimeout }} \
+              {{- end }}
+              {{- if .Values.master.heartbeatInterval }}
+              -heartbeatInterval={{ .Values.master.heartbeatInterval }} \
               {{- end }}
               {{- if .Values.master.garbageThreshold }}
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
               {{- end }}
               -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master.{{ .Release.Namespace }} \
-              -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+              -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }} \
+              {{- range .Values.master.extraArgs }}
+              {{ . }} \
+              {{- end }}
           volumeMounts:
             - name : data-{{ .Release.Namespace }}
               mountPath: /data

@@ -265,7 +265,7 @@ func (vl *VolumeLayout) isCrowdedVolume(v *storage.VolumeInfo) bool {
 
 func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
 	return !vl.isOversized(v) &&
-		v.Version == needle.CurrentVersion &&
+		v.Version == needle.GetCurrentVersion() &&
 		!v.ReadOnly
 }
 

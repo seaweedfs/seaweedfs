@@ -3,10 +3,11 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -166,6 +167,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 			return nil, fmt.Errorf("Failed to parse int64 preallocate = %s: %v", r.FormValue("preallocate"), err)
 		}
 	}
+	ver := needle.GetCurrentVersion()
 	volumeGrowOption := &topology.VolumeGrowOption{
 		Collection:         r.FormValue("collection"),
 		ReplicaPlacement:   replicaPlacement,
@@ -176,6 +178,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		Rack:               r.FormValue("rack"),
 		DataNode:           r.FormValue("dataNode"),
 		MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
+		Version:            uint32(ver),
 	}
 	return volumeGrowOption, nil
 }

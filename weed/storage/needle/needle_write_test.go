@@ -59,7 +59,7 @@ func TestAppend(t *testing.T) {
 	datBackend := backend.NewDiskFile(tempFile)
 	defer datBackend.Close()
 
-	offset, _, _, _ := n.Append(datBackend, CurrentVersion)
+	offset, _, _, _ := n.Append(datBackend, GetCurrentVersion())
 	if offset != uint64(fileSize) {
 		t.Errorf("Fail to Append Needle.")
 	}

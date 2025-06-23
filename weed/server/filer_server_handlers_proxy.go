@@ -3,9 +3,10 @@ package weed_server
 import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
+
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -54,7 +55,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 
 	proxyReq.Header.Set("Host", r.Host)
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
-	util.ReqWithRequestId(proxyReq, ctx)
+	request_id.InjectToRequest(ctx, proxyReq)
 
 	for header, values := range r.Header {
 		for _, value := range values {

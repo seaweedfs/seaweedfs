@@ -3,12 +3,13 @@ package topology
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 	"math/rand/v2"
 	"reflect"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 
 	"google.golang.org/grpc"
 
@@ -66,6 +67,7 @@ type VolumeGrowOption struct {
 	Rack               string                        `json:"rack,omitempty"`
 	DataNode           string                        `json:"dataNode,omitempty"`
 	MemoryMapMaxSizeMb uint32                        `json:"memoryMapMaxSizeMb,omitempty"`
+	Version            uint32                        `json:"version,omitempty"`
 }
 
 type VolumeGrowth struct {
@@ -262,7 +264,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 				Collection:       option.Collection,
 				ReplicaPlacement: option.ReplicaPlacement,
 				Ttl:              option.Ttl,
-				Version:          needle.CurrentVersion,
+				Version:          needle.Version(option.Version),
 				DiskType:         option.DiskType.String(),
 				ModifiedAtSecond: time.Now().Unix(),
 			})

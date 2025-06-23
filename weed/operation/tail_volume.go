@@ -3,8 +3,9 @@ package operation
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -53,6 +54,10 @@ func TailVolumeFromSource(volumeServer pb.ServerAddress, grpcDialOption grpc.Dia
 
 			needleHeader := resp.NeedleHeader
 			needleBody := resp.NeedleBody
+			version := needle.Version(resp.Version)
+			if version == 0 {
+				version = needle.GetCurrentVersion()
+			}
 
 			if len(needleHeader) == 0 {
 				continue
@@ -72,7 +77,7 @@ func TailVolumeFromSource(volumeServer pb.ServerAddress, grpcDialOption grpc.Dia
 
 			n := new(needle.Needle)
 			n.ParseNeedleHeader(needleHeader)
-			err = n.ReadNeedleBodyBytes(needleBody, needle.CurrentVersion)
+			err = n.ReadNeedleBodyBytes(needleBody, version)
 			if err != nil {
 				return err
 			}

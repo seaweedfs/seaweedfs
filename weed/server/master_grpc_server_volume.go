@@ -333,6 +333,8 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 	if req.DataCenter != "" && !ms.Topo.DataCenterExists(req.DataCenter) {
 		return nil, fmt.Errorf("data center not exists")
 	}
+
+	ver := needle.GetCurrentVersion()
 	volumeGrowOption := topology.VolumeGrowOption{
 		Collection:         req.Collection,
 		ReplicaPlacement:   replicaPlacement,
@@ -343,6 +345,7 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 		Rack:               req.Rack,
 		DataNode:           req.DataNode,
 		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
+		Version:            uint32(ver),
 	}
 	volumeGrowRequest := topology.VolumeGrowRequest{
 		Option: &volumeGrowOption,

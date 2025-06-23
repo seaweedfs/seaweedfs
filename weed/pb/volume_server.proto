@@ -180,6 +180,7 @@ message AllocateVolumeRequest {
     string ttl = 5;
     uint32 memory_map_max_size_mb = 6;
     string disk_type = 7;
+    uint32 version = 8;
 }
 message AllocateVolumeResponse {
 }
@@ -195,6 +196,7 @@ message VolumeSyncStatusResponse {
     uint64 tail_offset = 6;
     uint32 compact_revision = 7;
     uint64 idx_file_size = 8;
+    uint32 version = 9;
 }
 
 message VolumeIncrementalCopyRequest {
@@ -339,6 +341,7 @@ message VolumeTailSenderResponse {
     bytes needle_header = 1;
     bytes needle_body = 2;
     bool is_last_chunk = 3;
+    uint32 version = 4;
 }
 
 message VolumeTailReceiverRequest {
@@ -442,6 +445,7 @@ message ReadVolumeFileStatusResponse {
     string collection = 8;
     string disk_type = 9;
     VolumeInfo volume_info = 10;
+    uint32 version = 11;
 }
 
 message DiskStatus {

@@ -10,7 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
-func (v *Volume) maybeWriteSuperBlock() error {
+func (v *Volume) maybeWriteSuperBlock(ver needle.Version) error {
 
 	datSize, _, e := v.DataBackend.GetStat()
 	if e != nil {
@@ -18,7 +18,7 @@ func (v *Volume) maybeWriteSuperBlock() error {
 		return e
 	}
 	if datSize == 0 {
-		v.SuperBlock.Version = needle.CurrentVersion
+		v.SuperBlock.Version = ver
 		_, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0)
 		if e != nil && os.IsPermission(e) {
 			//read-only, but zero length - recreate it!
