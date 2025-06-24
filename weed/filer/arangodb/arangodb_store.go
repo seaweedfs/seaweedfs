@@ -233,7 +233,7 @@ func (store *ArangodbStore) FindEntry(ctx context.Context, fullpath util.FullPat
 		if driver.IsNotFound(err) {
 			return nil, filer_pb.ErrNotFound
 		}
-		glog.Errorf("find %s: %v", fullpath, err)
+		glog.ErrorfCtx(ctx, "find %s: %v", fullpath, err)
 		return nil, filer_pb.ErrNotFound
 	}
 	if len(data.Meta) == 0 {
@@ -257,7 +257,7 @@ func (store *ArangodbStore) DeleteEntry(ctx context.Context, fullpath util.FullP
 	}
 	_, err = targetCollection.RemoveDocument(ctx, hashString(string(fullpath)))
 	if err != nil && !driver.IsNotFound(err) {
-		glog.Errorf("find %s: %v", fullpath, err)
+		glog.ErrorfCtx(ctx, "find %s: %v", fullpath, err)
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
 	return nil
@@ -331,7 +331,7 @@ sort d.name asc
 		converted := arrayToBytes(data.Meta)
 		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(converted)); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			glog.V(0).InfofCtx(ctx, "list %s : %v", entry.FullPath, err)
 			break
 		}
 
