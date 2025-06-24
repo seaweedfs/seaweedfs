@@ -1,9 +1,15 @@
 .PHONY: help build test test-basic test-performance test-failover test-agent clean up down logs
 
-# Detect architecture
+# Detect architecture and Docker platform compatibility
 ARCH := $(shell uname -m)
+OS := $(shell uname -s)
 ifeq ($(ARCH),arm64)
-    DOCKER_PLATFORM := linux/arm64
+    ifeq ($(OS),Darwin)
+        # On Apple Silicon macOS, use native arm64 for better performance
+        DOCKER_PLATFORM := linux/arm64
+    else
+        DOCKER_PLATFORM := linux/arm64
+    endif
 else
     DOCKER_PLATFORM := linux/amd64
 endif
@@ -14,8 +20,10 @@ help:
 	@echo ""
 	@echo "Available targets:"
 	@echo "  build          - Build SeaweedFS Docker images"
-	@echo "  test           - Run all integration tests"
-	@echo "  test-basic     - Run basic pub/sub tests"
+	@echo "  test           - Run all integration tests (in Docker)"
+	@echo "  test-basic     - Run basic pub/sub tests (in Docker)"
+	@echo "  test-native    - Run all tests natively (no Docker test container)"
+	@echo "  test-basic-native - Run basic tests natively (recommended for Apple Silicon)"
 	@echo "  test-performance - Run performance tests"
 	@echo "  test-failover  - Run failover tests"
 	@echo "  test-agent     - Run agent tests"
@@ -28,10 +36,10 @@ help:
 
 # Build SeaweedFS Docker images
 build:
-	@echo "Building SeaweedFS Docker image..."
-	cd ../.. && docker build --platform linux/arm64 -f docker/Dockerfile.go_build -t chrislusf/seaweedfs:local .
-	@echo "Building test runner image..."
-	cd ../.. && docker build --platform linux/arm64 -f test/mq/Dockerfile.test -t seaweedfs-test-runner .
+	@echo "Building SeaweedFS Docker image for $(DOCKER_PLATFORM)..."
+	cd ../.. && docker build --platform $(DOCKER_PLATFORM) -f docker/Dockerfile.go_build -t chrislusf/seaweedfs:local .
+	@echo "Building test runner image for $(DOCKER_PLATFORM)..."
+	cd ../.. && docker build --platform $(DOCKER_PLATFORM) -f test/mq/Dockerfile.test -t seaweedfs-test-runner .
 
 # Start the test environment
 up: build
@@ -69,8 +77,8 @@ up-prod: build-test-runner
 
 # Build only the test runner image (for production setup)
 build-test-runner:
-	@echo "Building test runner image..."
-	cd ../.. && docker build --platform linux/arm64 -f test/mq/Dockerfile.test -t seaweedfs-test-runner .
+	@echo "Building test runner image for $(DOCKER_PLATFORM)..."
+	cd ../.. && docker build --platform $(DOCKER_PLATFORM) -f test/mq/Dockerfile.test -t seaweedfs-test-runner .
 
 # Start cluster only (no test runner, no build required)
 up-cluster:
@@ -140,13 +148,29 @@ test-agent: up
 	docker-compose -f docker-compose.test.yml run --rm test-runner \
 		sh -c "go test -v -timeout=10m ./test/mq/integration/ -run TestAgent"
 
-# Development targets
-test-dev:
+# Development targets (run tests natively without Docker container)
+test-dev: up-cluster
 	@echo "Running tests in development mode (using local binaries)..."
 	SEAWEED_MASTERS="localhost:19333,localhost:19334,localhost:19335" \
 	SEAWEED_BROKERS="localhost:17777,localhost:17778,localhost:17779" \
 	SEAWEED_FILERS="localhost:18888,localhost:18889" \
+	go test -v -timeout=10m ./integration/...
+
+# Native test running (no Docker container for tests)
+test-native: up
+	@echo "Running tests natively (without Docker container for tests)..."
+	cd ../.. && SEAWEED_MASTERS="localhost:19333,localhost:19334,localhost:19335" \
+	SEAWEED_BROKERS="localhost:17777,localhost:17778,localhost:17779" \
+	SEAWEED_FILERS="localhost:18888,localhost:18889" \
 	go test -v -timeout=10m ./test/mq/integration/...
+
+# Basic native tests
+test-basic-native: up
+	@echo "Running basic tests natively..."
+	cd ../.. && SEAWEED_MASTERS="localhost:19333,localhost:19334,localhost:19335" \
+	SEAWEED_BROKERS="localhost:17777,localhost:17778,localhost:17779" \
+	SEAWEED_FILERS="localhost:18888,localhost:18889" \
+	go test -v -timeout=10m ./test/mq/integration/ -run TestBasic
 
 # Quick smoke test
 smoke-test: up
