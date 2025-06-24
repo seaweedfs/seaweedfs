@@ -2,13 +2,14 @@ package weed_server
 
 import (
 	"context"
+	"io"
+	"math"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"io"
-	"math"
 )
 
 const MergeChunkMinCount int = 1000
@@ -57,7 +58,7 @@ func (fs *FilerServer) mergeChunks(ctx context.Context, so *operation.StorageOpt
 
 	garbage, err := filer.MinusChunks(ctx, fs.lookupFileId, inputChunks, mergedChunks)
 	if err != nil {
-		glog.Errorf("Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s",
+		glog.ErrorfCtx(ctx, "Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s",
 			mergedChunks, inputChunks)
 		return mergedChunks, err
 	}

@@ -46,7 +46,7 @@ func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.Stor
 
 	assignResult, ae := operation.Assign(ctx, fs.filer.GetMaster, fs.grpcDialOption, ar, altRequest)
 	if ae != nil {
-		glog.Errorf("failing to assign a file id: %v", ae)
+		glog.ErrorfCtx(ctx, "failing to assign a file id: %v", ae)
 		err = ae
 		return
 	}
@@ -93,14 +93,14 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		if err == ErrReadOnly {
 			w.WriteHeader(http.StatusInsufficientStorage)
 		} else {
-			glog.V(1).Infoln("post", r.RequestURI, ":", err.Error())
+			glog.V(1).InfolnCtx(ctx, "post", r.RequestURI, ":", err.Error())
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 		return
 	}
 
 	if util.FullPath(r.URL.Path).IsLongerFileName(so.MaxFileNameLength) {
-		glog.V(1).Infoln("post", r.RequestURI, ": ", "entry name too long")
+		glog.V(1).InfolnCtx(ctx, "post", r.RequestURI, ": ", "entry name too long")
 		w.WriteHeader(http.StatusRequestURITooLong)
 		return
 	}
@@ -128,7 +128,7 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 	src := r.URL.Query().Get("mv.from")
 	dst := r.URL.Path
 
-	glog.V(2).Infof("FilerServer.move %v to %v", src, dst)
+	glog.V(2).InfofCtx(ctx, "FilerServer.move %v to %v", src, dst)
 
 	var err error
 	if src, err = clearName(src); err != nil {
@@ -261,7 +261,7 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 	if ttlSeconds == 0 {
 		ttl, err := needle.ReadTTL(rule.GetTtl())
 		if err != nil {
-			glog.Errorf("fail to parse %s ttl setting %s: %v", rule.LocationPrefix, rule.Ttl, err)
+			glog.ErrorfCtx(ctx, "fail to parse %s ttl setting %s: %v", rule.LocationPrefix, rule.Ttl, err)
 		}
 		ttlSeconds = int32(ttl.Minutes()) * 60
 	}
@@ -284,7 +284,7 @@ func (fs *FilerServer) detectStorageOption0(ctx context.Context, requestURI, qCo
 
 	ttl, err := needle.ReadTTL(qTtl)
 	if err != nil {
-		glog.Errorf("fail to parse ttl %s: %v", qTtl, err)
+		glog.ErrorfCtx(ctx, "fail to parse ttl %s: %v", qTtl, err)
 	}
 
 	so, err := fs.detectStorageOption(ctx, requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)

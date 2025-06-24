@@ -100,7 +100,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		MinorVersion:       version.MINOR_VERSION,
 	}
 
-	glog.V(4).Infof("GetFilerConfiguration: %v", t)
+	glog.V(4).InfofCtx(ctx, "GetFilerConfiguration: %v", t)
 
 	return t, nil
 }

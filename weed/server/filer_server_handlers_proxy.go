@@ -36,7 +36,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 	ctx := r.Context()
 	urlStrings, err := fs.filer.MasterClient.GetLookupFileIdFunction()(ctx, fileId)
 	if err != nil {
-		glog.Errorf("locate %s: %v", fileId, err)
+		glog.ErrorfCtx(ctx, "locate %s: %v", fileId, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -48,7 +48,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 
 	proxyReq, err := http.NewRequest(r.Method, urlStrings[rand.IntN(len(urlStrings))], r.Body)
 	if err != nil {
-		glog.Errorf("NewRequest %s: %v", urlStrings[0], err)
+		glog.ErrorfCtx(ctx, "NewRequest %s: %v", urlStrings[0], err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -66,7 +66,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 	proxyResponse, postErr := util_http.GetGlobalHttpClient().Do(proxyReq)
 
 	if postErr != nil {
-		glog.Errorf("post to filer: %v", postErr)
+		glog.ErrorfCtx(ctx, "post to filer: %v", postErr)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
