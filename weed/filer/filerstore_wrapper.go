@@ -192,7 +192,7 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 		// remove hard link
 		op := ctx.Value("OP")
 		if op != "MV" {
-			glog.V(4).Infof("DeleteHardLink %s", existingEntry.FullPath)
+			glog.V(4).InfofCtx(ctx, "DeleteHardLink %s", existingEntry.FullPath)
 			if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
 				return err
 			}
@@ -215,7 +215,7 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 		// remove hard link
 		op := ctx.Value("OP")
 		if op != "MV" {
-			glog.V(4).Infof("DeleteHardLink %s", existingEntry.FullPath)
+			glog.V(4).InfofCtx(ctx, "DeleteHardLink %s", existingEntry.FullPath)
 			if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
 				return err
 			}

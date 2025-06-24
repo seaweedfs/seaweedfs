@@ -220,19 +220,19 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 			}
 		}
 
-		glog.V(4).Infof("InsertEntry %s: new entry: %v", entry.FullPath, entry.Name())
+		glog.V(4).InfofCtx(ctx, "InsertEntry %s: new entry: %v", entry.FullPath, entry.Name())
 		if err := f.Store.InsertEntry(ctx, entry); err != nil {
-			glog.Errorf("insert entry %s: %v", entry.FullPath, err)
+			glog.ErrorfCtx(ctx, "insert entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 		}
 	} else {
 		if o_excl {
-			glog.V(3).Infof("EEXIST: entry %s already exists", entry.FullPath)
+			glog.V(3).InfofCtx(ctx, "EEXIST: entry %s already exists", entry.FullPath)
 			return fmt.Errorf("EEXIST: entry %s already exists", entry.FullPath)
 		}
-		glog.V(4).Infof("UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
+		glog.V(4).InfofCtx(ctx, "UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
 		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
-			glog.Errorf("update entry %s: %v", entry.FullPath, err)
+			glog.ErrorfCtx(ctx, "update entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
 		}
 	}
@@ -241,7 +241,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 
 	f.deleteChunksIfNotNew(ctx, oldEntry, entry)
 
-	glog.V(4).Infof("CreateEntry %s: created", entry.FullPath)
+	glog.V(4).InfofCtx(ctx, "CreateEntry %s: created", entry.FullPath)
 
 	return nil
 }
@@ -256,7 +256,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 	// fmt.Printf("%d dirPath: %+v\n", level, dirPath)
 
 	// check the store directly
-	glog.V(4).Infof("find uncached directory: %s", dirPath)
+	glog.V(4).InfofCtx(ctx, "find uncached directory: %s", dirPath)
 	dirEntry, _ := f.FindEntry(ctx, util.FullPath(dirPath))
 
 	// no such existing directory
@@ -291,11 +291,11 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 			},
 		}
 
-		glog.V(2).Infof("create directory: %s %v", dirPath, dirEntry.Mode)
+		glog.V(2).InfofCtx(ctx, "create directory: %s %v", dirPath, dirEntry.Mode)
 		mkdirErr := f.Store.InsertEntry(ctx, dirEntry)
 		if mkdirErr != nil {
 			if fEntry, err := f.FindEntry(ctx, util.FullPath(dirPath)); err == filer_pb.ErrNotFound || fEntry == nil {
-				glog.V(3).Infof("mkdir %s: %v", dirPath, mkdirErr)
+				glog.V(3).InfofCtx(ctx, "mkdir %s: %v", dirPath, mkdirErr)
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 			}
 		} else {
@@ -305,7 +305,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		}
 
 	} else if !dirEntry.IsDirectory() {
-		glog.Errorf("CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
+		glog.ErrorfCtx(ctx, "CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
 		return fmt.Errorf("%s is a file", dirPath)
 	}
 
@@ -316,11 +316,11 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 	if oldEntry != nil {
 		entry.Attr.Crtime = oldEntry.Attr.Crtime
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
-			glog.Errorf("existing %s is a directory", oldEntry.FullPath)
+			glog.ErrorfCtx(ctx, "existing %s is a directory", oldEntry.FullPath)
 			return fmt.Errorf("existing %s is a directory", oldEntry.FullPath)
 		}
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
-			glog.Errorf("existing %s is a file", oldEntry.FullPath)
+			glog.ErrorfCtx(ctx, "existing %s is a file", oldEntry.FullPath)
 			return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
 		}
 	}

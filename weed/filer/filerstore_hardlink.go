@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -31,7 +32,7 @@ func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry
 
 	// remove old hard link
 	if err == nil && len(existingEntry.HardLinkId) != 0 && bytes.Compare(existingEntry.HardLinkId, entry.HardLinkId) != 0 {
-		glog.V(4).Infof("handleUpdateToHardLinks DeleteHardLink %s", entry.FullPath)
+		glog.V(4).InfofCtx(ctx, "handleUpdateToHardLinks DeleteHardLink %s", entry.FullPath)
 		if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
 			return err
 		}
@@ -50,7 +51,7 @@ func (fsw *FilerStoreWrapper) setHardLink(ctx context.Context, entry *Entry) err
 		return encodeErr
 	}
 
-	glog.V(4).Infof("setHardLink %v nlink:%d", entry.FullPath, entry.HardLinkCounter)
+	glog.V(4).InfofCtx(ctx, "setHardLink %v nlink:%d", entry.FullPath, entry.HardLinkCounter)
 
 	return fsw.KvPut(ctx, key, newBlob)
 }
@@ -63,16 +64,16 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 
 	value, err := fsw.KvGet(ctx, key)
 	if err != nil {
-		glog.Errorf("read %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
+		glog.ErrorfCtx(ctx, "read %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
 		return err
 	}
 
 	if err = entry.DecodeAttributesAndChunks(value); err != nil {
-		glog.Errorf("decode %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
+		glog.ErrorfCtx(ctx, "decode %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
 		return err
 	}
 
-	glog.V(4).Infof("maybeReadHardLink %v nlink:%d", entry.FullPath, entry.HardLinkCounter)
+	glog.V(4).InfofCtx(ctx, "maybeReadHardLink %v nlink:%d", entry.FullPath, entry.HardLinkCounter)
 
 	return nil
 }
@@ -94,7 +95,7 @@ func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId Har
 
 	entry.HardLinkCounter--
 	if entry.HardLinkCounter <= 0 {
-		glog.V(4).Infof("DeleteHardLink KvDelete %v", key)
+		glog.V(4).InfofCtx(ctx, "DeleteHardLink KvDelete %v", key)
 		return fsw.KvDelete(ctx, key)
 	}
 
@@ -103,7 +104,7 @@ func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId Har
 		return encodeErr
 	}
 
-	glog.V(4).Infof("DeleteHardLink KvPut %v", key)
+	glog.V(4).InfofCtx(ctx, "DeleteHardLink KvPut %v", key)
 	return fsw.KvPut(ctx, key, newBlob)
 
 }

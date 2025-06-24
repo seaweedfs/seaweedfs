@@ -47,7 +47,7 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 
 					locations = resp.LocationsMap[vid]
 					if locations == nil || len(locations.Locations) == 0 {
-						glog.V(0).Infof("failed to locate %s", fileId)
+						glog.V(0).InfofCtx(ctx, "failed to locate %s", fileId)
 						return fmt.Errorf("failed to locate %s", fileId)
 					}
 					vicCacheLock.Lock()
