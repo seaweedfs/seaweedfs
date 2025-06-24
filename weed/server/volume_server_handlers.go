@@ -54,29 +54,26 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		stats.ReadRequest()
 		inFlightDownloadSize := atomic.LoadInt64(&vs.inFlightDownloadDataSize)
 		stats.VolumeServerInFlightDownloadSize.Set(float64(atomic.LoadInt64(&vs.inFlightDownloadDataSize)))
-		if vs.concurrentDownloadLimit != 0 {
-			var timerDownload *time.Timer
-			for inFlightDownloadSize > vs.concurrentDownloadLimit {
-				stats.VolumeServerHandlerCounter.WithLabelValues(stats.DownloadLimitCond).Inc()
-				glog.V(4).Infof("request %s wait because inflight download data %d > %d",
-					r.URL.Path, inFlightDownloadSize, vs.concurrentDownloadLimit)
-				vid, _, _, _, _ := parseURLPath(r.URL.Path)
-				volumeId, err := needle.NewVolumeId(vid)
-				if err != nil {
-					glog.V(1).Infof("parsing vid %s: %v", r.URL.Path, err)
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-				volume := vs.store.GetVolume(volumeId)
-				if volume.ReplicaPlacement.HasReplication() && r.URL.Query().Get(reqIsProxied) != "true" {
-					vs.proxyReqToTargetServer(w, r)
-					return
-				}
-				if timerDownload == nil {
-					timerDownload = time.NewTimer(vs.inflightDownloadDataTimeout)
-					defer timerDownload.Stop()
-				}
+		if vs.concurrentDownloadLimit != 0 && inFlightDownloadSize > vs.concurrentDownloadLimit {
+			stats.VolumeServerHandlerCounter.WithLabelValues(stats.DownloadLimitCond).Inc()
+			glog.V(4).Infof("request %s wait because inflight download data %d > %d",
+				r.URL.Path, inFlightDownloadSize, vs.concurrentDownloadLimit)
+			vid, _, _, _, _ := parseURLPath(r.URL.Path)
+			volumeId, err := needle.NewVolumeId(vid)
+			if err != nil {
+				glog.V(1).Infof("parsing vid %s: %v", r.URL.Path, err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			volume := vs.store.GetVolume(volumeId)
+			if volume.ReplicaPlacement.HasReplication() && r.URL.Query().Get(reqIsProxied) != "true" {
+				vs.proxyReqToTargetServer(w, r)
+				return
+			}
 
+			timerDownload := time.NewTimer(vs.inflightDownloadDataTimeout)
+			defer timerDownload.Stop()
+			for inFlightDownloadSize > vs.concurrentDownloadLimit {
 				switch util.WaitWithTimeout(r.Context(), vs.inFlightDownloadDataLimitCond, timerDownload) {
 				case http.StatusTooManyRequests:
 					err = fmt.Errorf("request %s because inflight download data %d > %d, and wait timeout",
