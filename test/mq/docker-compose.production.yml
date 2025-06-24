@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Masters
   master0:
@@ -17,7 +15,7 @@ services:
     networks:
       - seaweedfs-test
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      test: ["CMD", "wget", "-q", "--spider", "http://master0:9333/cluster/status"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -37,7 +35,7 @@ services:
     networks:
       - seaweedfs-test
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9334/cluster/status"]
+      test: ["CMD", "wget", "-q", "--spider", "http://master1:9334/cluster/status"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -57,7 +55,7 @@ services:
     networks:
       - seaweedfs-test
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9335/cluster/status"]
+      test: ["CMD", "wget", "-q", "--spider", "http://master2:9335/cluster/status"]
       interval: 10s
       timeout: 5s
       retries: 3
