@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   # Master cluster for coordination and metadata
   master0:
@@ -9,8 +7,8 @@ services:
       - "19333:9333"
       - "29333:19333"
     command: >
-      master 
       -v=1 
+      master 
       -volumeSizeLimitMB=100 
       -resumeState=false 
       -ip=master0 
@@ -24,7 +22,7 @@ services:
     networks:
       - seaweedmq-test
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      test: ["CMD", "wget", "-q", "--spider", "http://master0:9333/cluster/status"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -36,8 +34,8 @@ services:
       - "19334:9334"
       - "29334:19334"
     command: >
-      master 
       -v=1 
+      master 
       -volumeSizeLimitMB=100 
       -resumeState=false 
       -ip=master1 
@@ -60,8 +58,8 @@ services:
       - "19335:9335"
       - "29335:19335"
     command: >
-      master 
       -v=1 
+      master 
       -volumeSizeLimitMB=100 
       -resumeState=false 
       -ip=master2 
@@ -85,8 +83,8 @@ services:
       - "18080:8080"
       - "28080:18080"
     command: >
-      volume 
       -v=1
+      volume 
       -dataCenter=dc1 
       -rack=rack1 
       -mserver=master0:9333,master1:9334,master2:9335 
@@ -108,8 +106,8 @@ services:
       - "18081:8081"
       - "28081:18081"
     command: >
-      volume 
       -v=1
+      volume 
       -dataCenter=dc1 
       -rack=rack2 
       -mserver=master0:9333,master1:9334,master2:9335 
@@ -131,8 +129,8 @@ services:
       - "18082:8082"
       - "28082:18082"
     command: >
-      volume 
       -v=1
+      volume 
       -dataCenter=dc2 
       -rack=rack1 
       -mserver=master0:9333,master1:9334,master2:9335 
@@ -155,8 +153,8 @@ services:
       - "18888:8888"
       - "28888:18888"
     command: >
-      filer 
       -v=1
+      filer 
       -defaultReplicaPlacement=100 
       -iam 
       -master=master0:9333,master1:9334,master2:9335 
@@ -169,7 +167,7 @@ services:
       master0:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://filer1:8888/"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -181,8 +179,8 @@ services:
       - "18889:8889"
       - "28889:18889"
     command: >
-      filer 
       -v=1
+      filer 
       -defaultReplicaPlacement=100 
       -iam 
       -master=master0:9333,master1:9334,master2:9335 
@@ -202,8 +200,8 @@ services:
     ports:
       - "17777:17777"
     command: >
-      mq.broker 
       -v=1
+      mq.broker 
       -master=master0:9333,master1:9334,master2:9335 
       -port=17777 
       -ip=broker1
@@ -226,8 +224,8 @@ services:
     ports:
       - "17778:17778"
     command: >
-      mq.broker 
       -v=1
+      mq.broker 
       -master=master0:9333,master1:9334,master2:9335 
       -port=17778 
       -ip=broker2
@@ -245,8 +243,8 @@ services:
     ports:
       - "17779:17779"
     command: >
-      mq.broker 
       -v=1
+      mq.broker 
       -master=master0:9333,master1:9334,master2:9335 
       -port=17779 
       -ip=broker3
