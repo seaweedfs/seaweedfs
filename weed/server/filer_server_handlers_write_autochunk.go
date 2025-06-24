@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -240,7 +241,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 	mode, err := strconv.ParseUint(modeStr, 8, 32)
 	if err != nil {
-		glog.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
+		glog.ErrorfCtx(ctx, "Invalid mode format: %s, use 0660 by default", modeStr)
 		mode = 0660
 	}
 
@@ -257,7 +258,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	if isAppend || isOffsetWrite {
 		existingEntry, findErr := fs.filer.FindEntry(ctx, util.FullPath(path))
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
-			glog.V(0).Infof("failing to find %s: %v", path, findErr)
+			glog.V(0).InfofCtx(ctx, "failing to find %s: %v", path, findErr)
 		}
 		entry = existingEntry
 	}
@@ -280,7 +281,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		}
 
 	} else {
-		glog.V(4).Infoln("saving", path)
+		glog.V(4).InfolnCtx(ctx, "saving", path)
 		newChunks = fileChunks
 		entry = &filer.Entry{
 			FullPath: util.FullPath(path),
@@ -302,14 +303,14 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	// maybe concatenate small chunks into one whole chunk
 	mergedChunks, replyerr = fs.maybeMergeChunks(ctx, so, newChunks)
 	if replyerr != nil {
-		glog.V(0).Infof("merge chunks %s: %v", r.RequestURI, replyerr)
+		glog.V(0).InfofCtx(ctx, "merge chunks %s: %v", r.RequestURI, replyerr)
 		mergedChunks = newChunks
 	}
 
 	// maybe compact entry chunks
 	mergedChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), mergedChunks)
 	if replyerr != nil {
-		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
+		glog.V(0).InfofCtx(ctx, "manifestize %s: %v", r.RequestURI, replyerr)
 		return
 	}
 	entry.Chunks = mergedChunks
@@ -344,7 +345,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	if dbErr != nil {
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
-		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)
+		glog.V(0).InfofCtx(ctx, "failing to write %s to filer server : %v", path, dbErr)
 	}
 	return filerResult, replyerr
 }
@@ -404,7 +405,7 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 	}
 	mode, err := strconv.ParseUint(modeStr, 8, 32)
 	if err != nil {
-		glog.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
+		glog.ErrorfCtx(ctx, "Invalid mode format: %s, use 0660 by default", modeStr)
 		mode = 0660
 	}
 
@@ -420,7 +421,7 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 		return
 	}
 
-	glog.V(4).Infoln("mkdir", path)
+	glog.V(4).InfolnCtx(ctx, "mkdir", path)
 	entry := &filer.Entry{
 		FullPath: util.FullPath(path),
 		Attr: filer.Attr{
@@ -440,7 +441,7 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil, false, so.MaxFileNameLength); dbErr != nil {
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
-		glog.V(0).Infof("failing to create dir %s on filer server : %v", path, dbErr)
+		glog.V(0).InfofCtx(ctx, "failing to create dir %s on filer server : %v", path, dbErr)
 	}
 	return filerResult, replyerr
 }

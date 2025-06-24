@@ -249,7 +249,7 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 			// println("list", entry.FullPath, "chunks", len(entry.GetChunks()))
 			if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(iter.Value())); decodeErr != nil {
 				err = decodeErr
-				glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+				glog.V(0).InfofCtx(ctx, "list %s : %v", entry.FullPath, err)
 				break
 			}
 			if err := iter.Next(); !eachEntryFunc(entry) || err != nil {

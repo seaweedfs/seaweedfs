@@ -151,7 +151,7 @@ func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dir
 		entry, err := store.FindEntry(ctx, path)
 		lastFileName = fileName
 		if err != nil {
-			glog.V(0).Infof("list %s : %v", path, err)
+			glog.V(0).InfofCtx(ctx, "list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
 				return true
 			}

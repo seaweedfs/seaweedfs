@@ -111,11 +111,11 @@ func AfterEntryDeserialization(chunks []*FileChunk) {
 func CreateEntry(ctx context.Context, client SeaweedFilerClient, request *CreateEntryRequest) error {
 	resp, err := client.CreateEntry(ctx, request)
 	if err != nil {
-		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
+		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
 		return fmt.Errorf("CreateEntry: %v", err)
 	}
 	if resp.Error != "" {
-		glog.V(1).Infof("create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, resp.Error)
+		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, resp.Error)
 		return fmt.Errorf("CreateEntry : %v", resp.Error)
 	}
 	return nil
@@ -124,7 +124,7 @@ func CreateEntry(ctx context.Context, client SeaweedFilerClient, request *Create
 func UpdateEntry(ctx context.Context, client SeaweedFilerClient, request *UpdateEntryRequest) error {
 	_, err := client.UpdateEntry(ctx, request)
 	if err != nil {
-		glog.V(1).Infof("update entry %s/%s :%v", request.Directory, request.Entry.Name, err)
+		glog.V(1).InfofCtx(ctx, "update entry %s/%s :%v", request.Directory, request.Entry.Name, err)
 		return fmt.Errorf("UpdateEntry: %v", err)
 	}
 	return nil
@@ -136,7 +136,7 @@ func LookupEntry(ctx context.Context, client SeaweedFilerClient, request *Lookup
 		if err == ErrNotFound || strings.Contains(err.Error(), ErrNotFound.Error()) {
 			return nil, ErrNotFound
 		}
-		glog.V(3).Infof("read %s/%v: %v", request.Directory, request.Name, err)
+		glog.V(3).InfofCtx(ctx, "read %s/%v: %v", request.Directory, request.Name, err)
 		return nil, fmt.Errorf("LookupEntry1: %v", err)
 	}
 	if resp.Entry == nil {

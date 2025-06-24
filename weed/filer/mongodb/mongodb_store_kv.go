@@ -3,6 +3,7 @@ package mongodb
 import (
 	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"go.mongodb.org/mongo-driver/bson"
@@ -37,7 +38,7 @@ func (store *MongodbStore) KvGet(ctx context.Context, key []byte) (value []byte,
 	var where = bson.M{"directory": dir, "name": name}
 	err = store.connect.Database(store.database).Collection(store.collectionName).FindOne(ctx, where).Decode(&data)
 	if err != mongo.ErrNoDocuments && err != nil {
-		glog.Errorf("kv get: %v", err)
+		glog.ErrorfCtx(ctx, "kv get: %v", err)
 		return nil, filer.ErrKvNotFound
 	}
 

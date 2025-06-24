@@ -187,7 +187,7 @@ func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath
 	var where = bson.M{"directory": dir, "name": name}
 	err = store.connect.Database(store.database).Collection(store.collectionName).FindOne(ctx, where).Decode(&data)
 	if err != mongo.ErrNoDocuments && err != nil {
-		glog.Errorf("find %s: %v", fullpath, err)
+		glog.ErrorfCtx(ctx, "find %s: %v", fullpath, err)
 		return nil, filer_pb.ErrNotFound
 	}
 
@@ -272,7 +272,7 @@ func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 		lastFileName = data.Name
 		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data.Meta)); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			glog.V(0).InfofCtx(ctx, "list %s : %v", entry.FullPath, err)
 			break
 		}
 
@@ -283,7 +283,7 @@ func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 	}
 
 	if err := cur.Close(ctx); err != nil {
-		glog.V(0).Infof("list iterator close: %v", err)
+		glog.V(0).InfofCtx(ctx, "list iterator close: %v", err)
 	}
 
 	return lastFileName, err

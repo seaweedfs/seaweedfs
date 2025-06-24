@@ -25,7 +25,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		return nil, fmt.Errorf("fail to allocate volume for %s, collection:%s, datacenter:%s", r.URL.Path, so.Collection, so.DataCenter)
 	}
 
-	glog.V(4).Infof("write %s to %v", r.URL.Path, urlLocation)
+	glog.V(4).InfofCtx(ctx, "write %s to %v", r.URL.Path, urlLocation)
 
 	// Note: encrypt(gzip(data)), encrypt data first, then gzip
 

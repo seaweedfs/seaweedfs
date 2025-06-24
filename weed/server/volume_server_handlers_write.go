@@ -18,7 +18,7 @@ import (
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if e := r.ParseForm(); e != nil {
-		glog.V(0).Infoln("form parse error:", e)
+		glog.V(0).InfolnCtx(ctx, "form parse error:", e)
 		writeJsonError(w, r, http.StatusBadRequest, e)
 		return
 	}
@@ -26,7 +26,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, ve := needle.NewVolumeId(vid)
 	if ve != nil {
-		glog.V(0).Infoln("NewVolumeId error:", ve)
+		glog.V(0).InfolnCtx(ctx, "NewVolumeId error:", ve)
 		writeJsonError(w, r, http.StatusBadRequest, ve)
 		return
 	}

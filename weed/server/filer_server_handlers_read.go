@@ -102,11 +102,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err == filer_pb.ErrNotFound {
-			glog.V(2).Infof("Not found %s: %v", path, err)
+			glog.V(2).InfofCtx(ctx, "Not found %s: %v", path, err)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadNotFound).Inc()
 			w.WriteHeader(http.StatusNotFound)
 		} else {
-			glog.Errorf("Internal %s: %v", path, err)
+			glog.ErrorfCtx(ctx, "Internal %s: %v", path, err)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadInternal).Inc()
 			w.WriteHeader(http.StatusInternalServerError)
 		}
@@ -244,7 +244,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			defer mem.Free(data)
 			err := filer.ReadAll(ctx, data, fs.filer.MasterClient, entry.GetChunks())
 			if err != nil {
-				glog.Errorf("failed to read %s: %v", path, err)
+				glog.ErrorfCtx(ctx, "failed to read %s: %v", path, err)
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
@@ -260,7 +260,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				_, err := writer.Write(entry.Content[offset : offset+size])
 				if err != nil {
 					stats.FilerHandlerCounter.WithLabelValues(stats.ErrorWriteEntry).Inc()
-					glog.Errorf("failed to write entry content: %v", err)
+					glog.ErrorfCtx(ctx, "failed to write entry content: %v", err)
 				}
 				return err
 			}, nil
@@ -273,7 +273,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				Name:      name,
 			}); err != nil {
 				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadCache).Inc()
-				glog.Errorf("CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
+				glog.ErrorfCtx(ctx, "CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
 				return nil, fmt.Errorf("cache %s: %v", entry.FullPath, err)
 			} else {
 				chunks = resp.Entry.GetChunks()
@@ -283,14 +283,14 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		streamFn, err := filer.PrepareStreamContentWithThrottler(ctx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
-			glog.Errorf("failed to prepare stream content %s: %v", r.URL, err)
+			glog.ErrorfCtx(ctx, "failed to prepare stream content %s: %v", r.URL, err)
 			return nil, err
 		}
 		return func(writer io.Writer) error {
 			err := streamFn(writer)
 			if err != nil {
 				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
-				glog.Errorf("failed to stream content %s: %v", r.URL, err)
+				glog.ErrorfCtx(ctx, "failed to stream content %s: %v", r.URL, err)
 			}
 			return err
 		}, nil
