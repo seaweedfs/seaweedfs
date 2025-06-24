@@ -25,7 +25,7 @@ func (store *ElasticStore) KvDelete(ctx context.Context, key []byte) (err error)
 			return nil
 		}
 	}
-	glog.Errorf("delete key(id:%s) %v.", string(key), err)
+	glog.ErrorfCtx(ctx, "delete key(id:%s) %v.", string(key), err)
 	return fmt.Errorf("delete key %v", err)
 }
 
@@ -44,7 +44,7 @@ func (store *ElasticStore) KvGet(ctx context.Context, key []byte) (value []byte,
 			return esEntry.Value, nil
 		}
 	}
-	glog.Errorf("find key(%s),%v.", string(key), err)
+	glog.ErrorfCtx(ctx, "find key(%s),%v.", string(key), err)
 	return value, filer.ErrKvNotFound
 }
 
@@ -52,7 +52,7 @@ func (store *ElasticStore) KvPut(ctx context.Context, key []byte, value []byte) 
 	esEntry := &ESKVEntry{value}
 	val, err := jsoniter.Marshal(esEntry)
 	if err != nil {
-		glog.Errorf("insert key(%s) %v.", string(key), err)
+		glog.ErrorfCtx(ctx, "insert key(%s) %v.", string(key), err)
 		return fmt.Errorf("insert key %v", err)
 	}
 	_, err = store.client.Index().

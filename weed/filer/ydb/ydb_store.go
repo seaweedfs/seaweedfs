@@ -6,13 +6,14 @@ package ydb
 import (
 	"context"
 	"fmt"
-	"github.com/ydb-platform/ydb-go-sdk/v3/query"
-	"github.com/ydb-platform/ydb-go-sdk/v3/table/options"
 	"os"
 	"path"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ydb-platform/ydb-go-sdk/v3/query"
+	"github.com/ydb-platform/ydb-go-sdk/v3/table/options"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
@@ -234,7 +235,7 @@ func (store *YdbStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) 
 	dir, name := fullpath.DirAndName()
 	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
 	q := withPragma(tablePathPrefix, deleteQuery)
-	glog.V(4).Infof("DeleteEntry %s, tablePathPrefix %s, shortDir %s", fullpath, *tablePathPrefix, *shortDir)
+	glog.V(4).InfofCtx(ctx, "DeleteEntry %s, tablePathPrefix %s, shortDir %s", fullpath, *tablePathPrefix, *shortDir)
 	queryParams := table.NewQueryParameters(
 		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
 		table.ValueParam("$directory", types.UTF8Value(*shortDir)),
@@ -433,7 +434,7 @@ func (store *YdbStore) deleteTable(ctx context.Context, prefix string) error {
 	}); err != nil {
 		return err
 	}
-	glog.V(4).Infof("deleted table %s", prefix)
+	glog.V(4).InfofCtx(ctx, "deleted table %s", prefix)
 
 	return nil
 }
@@ -446,11 +447,11 @@ func (store *YdbStore) getPrefix(ctx context.Context, dir *string) (tablePathPre
 	}
 
 	prefixBuckets := store.dirBuckets + "/"
-	glog.V(4).Infof("dir: %s, prefixBuckets: %s", *dir, prefixBuckets)
+	glog.V(4).InfofCtx(ctx, "dir: %s, prefixBuckets: %s", *dir, prefixBuckets)
 	if strings.HasPrefix(*dir, prefixBuckets) {
 		// detect bucket
 		bucketAndDir := (*dir)[len(prefixBuckets):]
-		glog.V(4).Infof("bucketAndDir: %s", bucketAndDir)
+		glog.V(4).InfofCtx(ctx, "bucketAndDir: %s", bucketAndDir)
 		var bucket string
 		if t := strings.Index(bucketAndDir, "/"); t > 0 {
 			bucket = bucketAndDir[:t]
@@ -465,17 +466,17 @@ func (store *YdbStore) getPrefix(ctx context.Context, dir *string) (tablePathPre
 		defer store.dbsLock.Unlock()
 
 		if _, found := store.dbs[bucket]; !found {
-			glog.V(4).Infof("bucket %q not in cache, verifying existence via DescribeTable", bucket)
+			glog.V(4).InfofCtx(ctx, "bucket %q not in cache, verifying existence via DescribeTable", bucket)
 			tablePath := path.Join(store.tablePathPrefix, bucket, abstract_sql.DEFAULT_TABLE)
 			err2 := store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
 				_, err3 := s.DescribeTable(ctx, tablePath)
 				return err3
 			})
 			if err2 != nil {
-				glog.V(4).Infof("bucket %q not found (DescribeTable %s failed)", bucket, tablePath)
+				glog.V(4).InfofCtx(ctx, "bucket %q not found (DescribeTable %s failed)", bucket, tablePath)
 				return
 			}
-			glog.V(4).Infof("bucket %q exists, adding to cache", bucket)
+			glog.V(4).InfofCtx(ctx, "bucket %q exists, adding to cache", bucket)
 			store.dbs[bucket] = true
 		}
 		bucketPrefix := path.Join(store.tablePathPrefix, bucket)
@@ -487,7 +488,7 @@ func (store *YdbStore) getPrefix(ctx context.Context, dir *string) (tablePathPre
 func (store *YdbStore) ensureTables(ctx context.Context) error {
 	prefixFull := store.tablePathPrefix
 
-	glog.V(4).Infof("creating base table %s", prefixFull)
+	glog.V(4).InfofCtx(ctx, "creating base table %s", prefixFull)
 	baseTable := path.Join(prefixFull, abstract_sql.DEFAULT_TABLE)
 	if err := store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
 		return s.CreateTable(ctx, baseTable, store.createTableOptions()...)
@@ -495,17 +496,17 @@ func (store *YdbStore) ensureTables(ctx context.Context) error {
 		return fmt.Errorf("failed to create base table %s: %v", baseTable, err)
 	}
 
-	glog.V(4).Infof("creating bucket tables")
+	glog.V(4).InfofCtx(ctx, "creating bucket tables")
 	if store.SupportBucketTable {
 		store.dbsLock.Lock()
 		defer store.dbsLock.Unlock()
 		for bucket := range store.dbs {
-			glog.V(4).Infof("creating bucket table %s", bucket)
+			glog.V(4).InfofCtx(ctx, "creating bucket table %s", bucket)
 			bucketTable := path.Join(prefixFull, bucket, abstract_sql.DEFAULT_TABLE)
 			if err := store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
 				return s.CreateTable(ctx, bucketTable, store.createTableOptions()...)
 			}); err != nil {
-				glog.Errorf("failed to create bucket table %s: %v", bucketTable, err)
+				glog.ErrorfCtx(ctx, "failed to create bucket table %s: %v", bucketTable, err)
 			}
 		}
 	}

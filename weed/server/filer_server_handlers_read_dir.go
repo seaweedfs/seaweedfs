@@ -43,7 +43,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	entries, shouldDisplayLoadMore, err := fs.filer.ListDirectoryEntries(ctx, util.FullPath(path), lastFileName, false, int64(limit), "", namePattern, namePatternExclude)
 
 	if err != nil {
-		glog.V(0).Infof("listDirectory %s %s %d: %s", path, lastFileName, limit, err)
+		glog.V(0).InfofCtx(ctx, "listDirectory %s %s %d: %s", path, lastFileName, limit, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -58,7 +58,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		emptyFolder = false
 	}
 
-	glog.V(4).Infof("listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
+	glog.V(4).InfofCtx(ctx, "listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
 
 	if r.Header.Get("Accept") == "application/json" {
 		writeJsonQuiet(w, r, http.StatusOK, struct {
@@ -103,7 +103,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		fs.option.ShowUIDirectoryDelete,
 	})
 	if err != nil {
-		glog.V(0).Infof("Template Execute Error: %v", err)
+		glog.V(0).InfofCtx(ctx, "Template Execute Error: %v", err)
 	}
 
 }

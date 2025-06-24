@@ -106,7 +106,7 @@ func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool) error {
 	urlStrings, err := lookupFileIdFn(ctx, fileId)
 	if err != nil {
-		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
+		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", fileId, err)
 		return err
 	}
 	err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, "", cipherKey, isGzipped, true, 0, 0)
@@ -159,7 +159,7 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 				break
 			}
 			if err != nil {
-				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
+				glog.V(0).InfofCtx(ctx, "read %s failed, err: %v", urlString, err)
 			} else {
 				break
 			}
@@ -169,7 +169,7 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 			break
 		}
 		if err != nil && shouldRetry {
-			glog.V(0).Infof("retry reading in %v", waitTime)
+			glog.V(0).InfofCtx(ctx, "retry reading in %v", waitTime)
 			time.Sleep(waitTime)
 		} else {
 			break

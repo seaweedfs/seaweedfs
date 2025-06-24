@@ -113,7 +113,7 @@ func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 	}
 	value, err := jsoniter.Marshal(esEntry)
 	if err != nil {
-		glog.Errorf("insert entry(%s) %v.", string(entry.FullPath), err)
+		glog.ErrorfCtx(ctx, "insert entry(%s) %v.", string(entry.FullPath), err)
 		return fmt.Errorf("insert entry marshal %v", err)
 	}
 	_, err = store.client.Index().
@@ -123,7 +123,7 @@ func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 		BodyJson(string(value)).
 		Do(ctx)
 	if err != nil {
-		glog.Errorf("insert entry(%s) %v.", string(entry.FullPath), err)
+		glog.ErrorfCtx(ctx, "insert entry(%s) %v.", string(entry.FullPath), err)
 		return fmt.Errorf("insert entry %v", err)
 	}
 	return nil
@@ -152,7 +152,7 @@ func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.Ful
 		err := jsoniter.Unmarshal(searchResult.Source, esEntry)
 		return esEntry.Entry, err
 	}
-	glog.Errorf("find entry(%s),%v.", string(fullpath), err)
+	glog.ErrorfCtx(ctx, "find entry(%s),%v.", string(fullpath), err)
 	return nil, filer_pb.ErrNotFound
 }
 
@@ -178,7 +178,7 @@ func (store *ElasticStore) deleteIndex(ctx context.Context, index string) (err e
 	if elastic.IsNotFound(err) || (err == nil && deleteResult.Acknowledged) {
 		return nil
 	}
-	glog.Errorf("delete index(%s) %v.", index, err)
+	glog.ErrorfCtx(ctx, "delete index(%s) %v.", index, err)
 	return err
 }
 
@@ -193,14 +193,14 @@ func (store *ElasticStore) deleteEntry(ctx context.Context, index, id string) (e
 			return nil
 		}
 	}
-	glog.Errorf("delete entry(index:%s,_id:%s) %v.", index, id, err)
+	glog.ErrorfCtx(ctx, "delete entry(index:%s,_id:%s) %v.", index, id, err)
 	return fmt.Errorf("delete entry %v", err)
 }
 
 func (store *ElasticStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	_, err = store.ListDirectoryEntries(ctx, fullpath, "", false, math.MaxInt32, func(entry *filer.Entry) bool {
 		if err := store.DeleteEntry(ctx, entry.FullPath); err != nil {
-			glog.Errorf("elastic delete %s: %v.", entry.FullPath, err)
+			glog.ErrorfCtx(ctx, "elastic delete %s: %v.", entry.FullPath, err)
 			return false
 		}
 		return true
@@ -228,7 +228,7 @@ func (store *ElasticStore) listDirectoryEntries(
 		result := &elastic.SearchResult{}
 		if (startFileName == "" && first) || inclusive {
 			if result, err = store.search(ctx, index, parentId); err != nil {
-				glog.Errorf("search (%s,%s,%t,%d) %v.", string(fullpath), startFileName, inclusive, limit, err)
+				glog.ErrorfCtx(ctx, "search (%s,%s,%t,%d) %v.", string(fullpath), startFileName, inclusive, limit, err)
 				return
 			}
 		} else {
@@ -238,7 +238,7 @@ func (store *ElasticStore) listDirectoryEntries(
 			}
 			after := weed_util.Md5String([]byte(fullPath))
 			if result, err = store.searchAfter(ctx, index, parentId, after); err != nil {
-				glog.Errorf("searchAfter (%s,%s,%t,%d) %v.", string(fullpath), startFileName, inclusive, limit, err)
+				glog.ErrorfCtx(ctx, "searchAfter (%s,%s,%t,%d) %v.", string(fullpath), startFileName, inclusive, limit, err)
 				return
 			}
 		}

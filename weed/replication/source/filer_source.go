@@ -76,14 +76,14 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls 
 	})
 
 	if err != nil {
-		glog.V(1).Infof("LookupFileId volume id %s: %v", vid, err)
+		glog.V(1).InfofCtx(ctx, "LookupFileId volume id %s: %v", vid, err)
 		return nil, fmt.Errorf("LookupFileId volume id %s: %v", vid, err)
 	}
 
 	locations := vid2Locations[vid]
 
 	if locations == nil || len(locations.Locations) == 0 {
-		glog.V(1).Infof("LookupFileId locate volume id %s: %v", vid, err)
+		glog.V(1).InfofCtx(ctx, "LookupFileId locate volume id %s: %v", vid, err)
 		return nil, fmt.Errorf("LookupFileId locate volume id %s: %v", vid, err)
 	}
 
