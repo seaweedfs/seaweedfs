@@ -119,37 +119,39 @@ logs:
 	docker-compose -f docker-compose.test.yml logs -f
 
 # Run all integration tests
-test: up
+test:
 	@echo "Running all integration tests..."
 	docker-compose -f docker-compose.test.yml run --rm test-runner \
 		sh -c "go test -v -timeout=30m ./test/mq/integration/... -args -test.parallel=4"
 
 # Run basic pub/sub tests
-test-basic: up
-	@echo "Running basic pub/sub tests..."
-	docker-compose -f docker-compose.test.yml run --rm test-runner \
-		sh -c "go test -v -timeout=10m ./test/mq/integration/ -run TestBasic"
+test-basic:
+	@echo "Running basic pub/sub tests natively (no container restart)..."
+	cd ../.. && SEAWEED_MASTERS="localhost:19333,localhost:19334,localhost:19335" \
+	SEAWEED_BROKERS="localhost:17777,localhost:17778,localhost:17779" \
+	SEAWEED_FILERS="localhost:18888,localhost:18889" \
+	go test -v -timeout=10m ./test/mq/integration/ -run TestBasic
 
 # Run performance tests
-test-performance: up
+test-performance:
 	@echo "Running performance tests..."
 	docker-compose -f docker-compose.test.yml run --rm test-runner \
 		sh -c "go test -v -timeout=20m ./test/mq/integration/ -run TestPerformance"
 
 # Run failover tests
-test-failover: up
+test-failover:
 	@echo "Running failover tests..."
 	docker-compose -f docker-compose.test.yml run --rm test-runner \
 		sh -c "go test -v -timeout=15m ./test/mq/integration/ -run TestFailover"
 
 # Run agent tests
-test-agent: up
+test-agent:
 	@echo "Running agent tests..."
 	docker-compose -f docker-compose.test.yml run --rm test-runner \
 		sh -c "go test -v -timeout=10m ./test/mq/integration/ -run TestAgent"
 
 # Development targets (run tests natively without Docker container)
-test-dev: up-cluster
+test-dev:
 	@echo "Running tests in development mode (using local binaries)..."
 	SEAWEED_MASTERS="localhost:19333,localhost:19334,localhost:19335" \
 	SEAWEED_BROKERS="localhost:17777,localhost:17778,localhost:17779" \
@@ -157,7 +159,7 @@ test-dev: up-cluster
 	go test -v -timeout=10m ./integration/...
 
 # Native test running (no Docker container for tests)
-test-native: up
+test-native:
 	@echo "Running tests natively (without Docker container for tests)..."
 	cd ../.. && SEAWEED_MASTERS="localhost:19333,localhost:19334,localhost:19335" \
 	SEAWEED_BROKERS="localhost:17777,localhost:17778,localhost:17779" \
@@ -165,7 +167,7 @@ test-native: up
 	go test -v -timeout=10m ./test/mq/integration/...
 
 # Basic native tests
-test-basic-native: up
+test-basic-native:
 	@echo "Running basic tests natively..."
 	cd ../.. && SEAWEED_MASTERS="localhost:19333,localhost:19334,localhost:19335" \
 	SEAWEED_BROKERS="localhost:17777,localhost:17778,localhost:17779" \
@@ -173,13 +175,13 @@ test-basic-native: up
 	go test -v -timeout=10m ./test/mq/integration/ -run TestBasic
 
 # Quick smoke test
-smoke-test: up
+smoke-test:
 	@echo "Running smoke test..."
 	docker-compose -f docker-compose.test.yml run --rm test-runner \
 		sh -c "go test -v -timeout=5m ./test/mq/integration/ -run TestBasicPublishSubscribe"
 
 # Performance benchmarks
-benchmark: up
+benchmark:
 	@echo "Running performance benchmarks..."
 	docker-compose -f docker-compose.test.yml run --rm test-runner \
 		sh -c "go test -v -timeout=30m -bench=. ./test/mq/integration/..."
@@ -208,7 +210,7 @@ report:
 		sh -c "go test -v -timeout=30m ./test/mq/integration/... -json > /test-results/test-report.json"
 
 # Load testing
-load-test: up
+load-test:
 	@echo "Running load tests..."
 	docker-compose -f docker-compose.test.yml run --rm test-runner \
 		sh -c "go test -v -timeout=45m ./test/mq/integration/ -run TestLoad"

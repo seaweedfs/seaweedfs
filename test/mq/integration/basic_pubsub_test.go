@@ -16,9 +16,8 @@ func TestBasicPublishSubscribe(t *testing.T) {
 	suite := NewIntegrationTestSuite(t)
 	require.NoError(t, suite.Setup())
 
-	// Test configuration
 	namespace := "test"
-	topicName := "basic-pubsub"
+	topicName := fmt.Sprintf("basic-pubsub-%d", time.Now().UnixNano()) // Unique topic name per run
 	testSchema := CreateTestSchema()
 	messageCount := 10
 
@@ -27,12 +26,12 @@ func TestBasicPublishSubscribe(t *testing.T) {
 		Namespace:      namespace,
 		TopicName:      topicName,
 		PartitionCount: 1,
-		PublisherName:  "test-publisher",
+		PublisherName:  "basic-publisher",
 		RecordType:     testSchema,
 	}
 
 	publisher, err := suite.CreatePublisher(pubConfig)
-	require.NoError(t, err, "Failed to create publisher")
+	require.NoError(t, err)
 
 	// Create subscriber
 	subConfig := &SubscriberTestConfig{
@@ -51,6 +50,7 @@ func TestBasicPublishSubscribe(t *testing.T) {
 	// Set up message collector
 	collector := NewMessageCollector(messageCount)
 	subscriber.SetOnDataMessageFn(func(m *mq_pb.SubscribeMessageResponse_Data) {
+		t.Logf("[Subscriber] Received message with key: %s, ts: %d", string(m.Data.Key), m.Data.TsNs)
 		collector.AddMessage(TestMessage{
 			ID:        fmt.Sprintf("msg-%d", len(collector.GetMessages())),
 			Content:   m.Data.Value,
@@ -68,6 +68,7 @@ func TestBasicPublishSubscribe(t *testing.T) {
 	}()
 
 	// Wait for subscriber to be ready
+	t.Logf("[Test] Waiting for subscriber to be ready...")
 	time.Sleep(2 * time.Second)
 
 	// Publish test messages
@@ -80,12 +81,14 @@ func TestBasicPublishSubscribe(t *testing.T) {
 			RecordEnd()
 
 		key := []byte(fmt.Sprintf("key-%d", i))
+		t.Logf("[Publisher] Publishing message %d with key: %s", i, string(key))
 		err := publisher.PublishRecord(key, record)
 		require.NoError(t, err, "Failed to publish message %d", i)
 	}
 
-	// Wait for messages to be received
+	t.Logf("[Test] Waiting for messages to be received...")
 	messages := collector.WaitForMessages(30 * time.Second)
+	t.Logf("[Test] WaitForMessages returned. Received %d messages.", len(messages))
 
 	// Verify all messages were received
 	assert.Len(t, messages, messageCount, "Expected %d messages, got %d", messageCount, len(messages))
@@ -95,6 +98,8 @@ func TestBasicPublishSubscribe(t *testing.T) {
 		assert.NotEmpty(t, msg.Content, "Message %d should have content", i)
 		assert.NotEmpty(t, msg.Key, "Message %d should have key", i)
 	}
+
+	t.Logf("[Test] TestBasicPublishSubscribe completed.")
 }
 
 func TestMultipleConsumers(t *testing.T) {

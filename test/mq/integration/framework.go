@@ -37,6 +37,7 @@ type IntegrationTestSuite struct {
 	agents      map[string]*agent.MessageQueueAgent
 	publishers  map[string]*pub_client.TopicPublisher
 	subscribers map[string]*sub_client.TopicSubscriber
+	subCancels  map[string]context.CancelFunc
 	cleanupOnce sync.Once
 	t           *testing.T
 }
@@ -55,6 +56,7 @@ func NewIntegrationTestSuite(t *testing.T) *IntegrationTestSuite {
 		agents:      make(map[string]*agent.MessageQueueAgent),
 		publishers:  make(map[string]*pub_client.TopicPublisher),
 		subscribers: make(map[string]*sub_client.TopicSubscriber),
+		subCancels:  make(map[string]context.CancelFunc),
 		t:           t,
 	}
 }
@@ -75,16 +77,34 @@ func (its *IntegrationTestSuite) Setup() error {
 // Cleanup performs cleanup operations
 func (its *IntegrationTestSuite) Cleanup() {
 	its.cleanupOnce.Do(func() {
-		// Close all subscribers (they use context cancellation)
-		for name, _ := range its.subscribers {
+		// Close all subscribers first (they use context cancellation)
+		for name := range its.subscribers {
+			if cancel, ok := its.subCancels[name]; ok && cancel != nil {
+				cancel()
+				its.t.Logf("Cancelled subscriber context: %s", name)
+			}
 			its.t.Logf("Cleaned up subscriber: %s", name)
 		}
+
+		// Wait a moment for gRPC connections to close gracefully
+		time.Sleep(1 * time.Second)
 
 		// Close all publishers
 		for name, publisher := range its.publishers {
 			if publisher != nil {
-				publisher.Shutdown()
-				its.t.Logf("Cleaned up publisher: %s", name)
+				// Add timeout to prevent deadlock during shutdown
+				done := make(chan bool, 1)
+				go func(p *pub_client.TopicPublisher, n string) {
+					p.Shutdown()
+					done <- true
+				}(publisher, name)
+
+				select {
+				case <-done:
+					its.t.Logf("Cleaned up publisher: %s", name)
+				case <-time.After(5 * time.Second):
+					its.t.Logf("Publisher shutdown timed out: %s", name)
+				}
 			}
 		}
 
@@ -135,8 +155,9 @@ func (its *IntegrationTestSuite) CreateSubscriber(config *SubscriberTestConfig) 
 	}
 
 	offsetChan := make(chan sub_client.KeyedOffset, 1024)
+	ctx, cancel := context.WithCancel(context.Background())
 	subscriber := sub_client.NewTopicSubscriber(
-		context.Background(),
+		ctx,
 		its.env.Brokers,
 		subscriberConfig,
 		contentConfig,
@@ -144,6 +165,7 @@ func (its *IntegrationTestSuite) CreateSubscriber(config *SubscriberTestConfig) 
 	)
 
 	its.subscribers[config.ConsumerInstanceId] = subscriber
+	its.subCancels[config.ConsumerInstanceId] = cancel
 	return subscriber, nil
 }
 
@@ -204,6 +226,7 @@ type MessageCollector struct {
 	mutex    sync.RWMutex
 	waitCh   chan struct{}
 	expected int
+	closed   bool // protect against closing waitCh multiple times
 }
 
 // NewMessageCollector creates a new message collector
@@ -221,8 +244,9 @@ func (mc *MessageCollector) AddMessage(msg TestMessage) {
 	defer mc.mutex.Unlock()
 
 	mc.messages = append(mc.messages, msg)
-	if len(mc.messages) >= mc.expected {
+	if len(mc.messages) >= mc.expected && !mc.closed {
 		close(mc.waitCh)
+		mc.closed = true
 	}
 }
 

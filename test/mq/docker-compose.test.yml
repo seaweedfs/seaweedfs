@@ -213,7 +213,7 @@ services:
       mq.broker 
       -master=master0:9333,master1:9334,master2:9335 
       -port=17777 
-      -ip=localhost
+      -ip=127.0.0.1
       -dataCenter=dc1
       -rack=rack1
     networks:
@@ -237,7 +237,7 @@ services:
       mq.broker 
       -master=master0:9333,master1:9334,master2:9335 
       -port=17778 
-      -ip=localhost
+      -ip=127.0.0.1
       -dataCenter=dc1
       -rack=rack2
     networks:
@@ -256,7 +256,7 @@ services:
       mq.broker 
       -master=master0:9333,master1:9334,master2:9335 
       -port=17779 
-      -ip=localhost
+      -ip=127.0.0.1
       -dataCenter=dc2
       -rack=rack1
     networks:
