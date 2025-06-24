@@ -28,6 +28,7 @@ type VolumeServer struct {
 	inFlightUploadDataLimitCond   *sync.Cond
 	inFlightDownloadDataLimitCond *sync.Cond
 	inflightUploadDataTimeout     time.Duration
+	inflightDownloadDataTimeout   time.Duration
 	hasSlowRead                   bool
 	readBufferSizeMB              int
 
@@ -68,6 +69,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
 	inflightUploadDataTimeout time.Duration,
+	inflightDownloadDataTimeout time.Duration,
 	hasSlowRead bool,
 	readBufferSizeMB int,
 	ldbTimeout int64,

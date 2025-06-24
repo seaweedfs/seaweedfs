@@ -4,8 +4,15 @@ package stats
 // The naming convention is ErrorSomeThing = "error.some.thing"
 const (
 	// volume server
-	WriteToLocalDisk            = "writeToLocalDisk"
-	WriteToReplicas             = "writeToReplicas"
+	WriteToLocalDisk   = "writeToLocalDisk"
+	WriteToReplicas    = "writeToReplicas"
+	DownloadLimitCond  = "downloadLimitCond"
+	UploadLimitCond    = "uploadLimitCond"
+	ReadProxyReq       = "readProxyReq"
+	ReadRedirectReq    = "readRedirectReq"
+	EmptyReadProxyLoc  = "emptyReadProxyLoc"
+	FailedReadProxyReq = "failedReadProxyReq"
+
 	ErrorSizeMismatchOffsetSize = "errorSizeMismatchOffsetSize"
 	ErrorSizeMismatch           = "errorSizeMismatch"
 	ErrorCRC                    = "errorCRC"
