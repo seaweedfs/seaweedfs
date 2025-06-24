@@ -1,5 +1,13 @@
 .PHONY: help build test test-basic test-performance test-failover test-agent clean up down logs
 
+# Detect architecture
+ARCH := $(shell uname -m)
+ifeq ($(ARCH),arm64)
+    DOCKER_PLATFORM := linux/arm64
+else
+    DOCKER_PLATFORM := linux/amd64
+endif
+
 # Default target
 help:
 	@echo "SeaweedMQ Integration Test Suite"
@@ -21,9 +29,9 @@ help:
 # Build SeaweedFS Docker images
 build:
 	@echo "Building SeaweedFS Docker image..."
-	cd ../.. && docker build -f docker/Dockerfile.go_build -t chrislusf/seaweedfs:local .
+	cd ../.. && docker build --platform linux/arm64 -f docker/Dockerfile.go_build -t chrislusf/seaweedfs:local .
 	@echo "Building test runner image..."
-	cd ../.. && docker build -f test/mq/Dockerfile.test -t seaweedfs-test-runner .
+	cd ../.. && docker build --platform linux/arm64 -f test/mq/Dockerfile.test -t seaweedfs-test-runner .
 
 # Start the test environment
 up: build
@@ -62,7 +70,7 @@ up-prod: build-test-runner
 # Build only the test runner image (for production setup)
 build-test-runner:
 	@echo "Building test runner image..."
-	cd ../.. && docker build -f test/mq/Dockerfile.test -t seaweedfs-test-runner .
+	cd ../.. && docker build --platform linux/arm64 -f test/mq/Dockerfile.test -t seaweedfs-test-runner .
 
 # Start cluster only (no test runner, no build required)
 up-cluster:
