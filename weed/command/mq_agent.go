@@ -32,7 +32,7 @@ func init() {
 
 var cmdMqAgent = &Command{
 	UsageLine: "mq.agent [-port=16777] [-broker=<ip:port>]",
-	Short:     "<WIP> start a message queue agent",
+	Short:     "start a message queue agent",
 	Long: `start a message queue agent
 
 	The agent runs on local server to accept gRPC calls to write or read messages. 
