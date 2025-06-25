@@ -52,15 +52,40 @@ func TestAddServer(t *testing.T) {
 
 func TestLockRing(t *testing.T) {
 	r := NewLockRing(100 * time.Millisecond)
+
+	// Test initial snapshot
 	r.SetSnapshot([]pb.ServerAddress{"localhost:8080", "localhost:8081"})
-	assert.Equal(t, 1, len(r.snapshots))
+	assert.Equal(t, 1, r.GetSnapshotCount())
+	servers := r.GetSnapshot()
+	assert.Equal(t, 2, len(servers))
+	assert.Contains(t, servers, pb.ServerAddress("localhost:8080"))
+	assert.Contains(t, servers, pb.ServerAddress("localhost:8081"))
+
+	// Add another server
 	r.SetSnapshot([]pb.ServerAddress{"localhost:8080", "localhost:8081", "localhost:8082"})
-	assert.Equal(t, 2, len(r.snapshots))
+	assert.Equal(t, 2, r.GetSnapshotCount())
+	servers = r.GetSnapshot()
+	assert.Equal(t, 3, len(servers))
+	assert.Contains(t, servers, pb.ServerAddress("localhost:8082"))
+
+	// Wait for cleanup interval and add another server
 	time.Sleep(110 * time.Millisecond)
+	r.WaitForCleanup()
 	r.SetSnapshot([]pb.ServerAddress{"localhost:8080", "localhost:8081", "localhost:8082", "localhost:8083"})
-	assert.Equal(t, 3, len(r.snapshots))
+	assert.LessOrEqual(t, r.GetSnapshotCount(), 3)
+	servers = r.GetSnapshot()
+	assert.Equal(t, 4, len(servers))
+	assert.Contains(t, servers, pb.ServerAddress("localhost:8083"))
+
+	// Wait for cleanup and verify compaction
 	time.Sleep(110 * time.Millisecond)
-	assert.Equal(t, 2, len(r.snapshots))
+	r.WaitForCleanup()
+	assert.LessOrEqual(t, r.GetSnapshotCount(), 2, "Snapshots should be compacted")
+
+	// Add final server
 	r.SetSnapshot([]pb.ServerAddress{"localhost:8080", "localhost:8081", "localhost:8082", "localhost:8083", "localhost:8084"})
-	assert.Equal(t, 3, len(r.snapshots))
+	servers = r.GetSnapshot()
+	assert.Equal(t, 5, len(servers))
+	assert.Contains(t, servers, pb.ServerAddress("localhost:8084"))
+	assert.LessOrEqual(t, r.GetSnapshotCount(), 3)
 }
