@@ -184,6 +184,13 @@ func (r *LockRing) WaitForCleanup() {
 	r.cleanupWg.Wait()
 }
 
+// GetSnapshotCount safely returns the number of snapshots for testing
+func (r *LockRing) GetSnapshotCount() int {
+	r.RLock()
+	defer r.RUnlock()
+	return len(r.snapshots)
+}
+
 func hashKeyToServer(key string, servers []pb.ServerAddress) pb.ServerAddress {
 	if len(servers) == 0 {
 		return ""
