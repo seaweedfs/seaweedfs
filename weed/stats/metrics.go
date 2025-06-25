@@ -290,7 +290,7 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
 			Subsystem: "volumeServer",
-			Name:      "concurrent_upload_limit_size",
+			Name:      "concurrent_upload_limit",
 			Help:      "Limit total concurrent upload size.",
 		})
 

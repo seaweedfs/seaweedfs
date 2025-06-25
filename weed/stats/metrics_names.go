@@ -6,12 +6,12 @@ const (
 	// volume server
 	WriteToLocalDisk   = "writeToLocalDisk"
 	WriteToReplicas    = "writeToReplicas"
-	DownloadLimitCond  = "downloadLimitCond"
-	UploadLimitCond    = "uploadLimitCond"
-	ReadProxyReq       = "readProxyReq"
-	ReadRedirectReq    = "readRedirectReq"
-	EmptyReadProxyLoc  = "emptyReadProxyLoc"
-	FailedReadProxyReq = "failedReadProxyReq"
+	DownloadLimitCond  = "downloadLimitCondition"
+	UploadLimitCond    = "uploadLimitCondition"
+	ReadProxyReq       = "readProxyRequest"
+	ReadRedirectReq    = "readRedirectRequest"
+	EmptyReadProxyLoc  = "emptyReadProxyLocaction"
+	FailedReadProxyReq = "failedReadProxyRequest"
 
 	ErrorSizeMismatchOffsetSize = "errorSizeMismatchOffsetSize"
 	ErrorSizeMismatch           = "errorSizeMismatch"
