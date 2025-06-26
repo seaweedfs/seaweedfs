@@ -6,7 +6,8 @@ RUN apk add --no-cache \
     netcat-openbsd \
     bash \
     git \
-    build-base
+    build-base \
+    ca-certificates
 
 # Set working directory
 WORKDIR /workspace
@@ -19,12 +20,8 @@ RUN go mod download
 COPY weed/ ./weed/
 COPY test/mq/integration/ ./test/mq/integration/
 
-# Install test dependencies
-RUN go install github.com/onsi/ginkgo/v2/ginkgo@latest
-# Note: testify is a library, not a binary, so it's installed via go mod download
-
 # Build the weed binary for testing (optional - tests can use external cluster)
-RUN cd weed && go build -o ../weed .
+RUN cd weed && CGO_ENABLED=1 GOOS=linux go build -o ../weed .
 
 # Create test results directory
 RUN mkdir -p /test-results
@@ -37,5 +34,5 @@ ENV GO111MODULE=on
 # Default working directory for tests
 WORKDIR /workspace
 
-# Entry point for running tests
-ENTRYPOINT ["/bin/bash"] 
+# Entry point for running tests - use explicit bash
+ENTRYPOINT ["/bin/bash", "-c"] 
