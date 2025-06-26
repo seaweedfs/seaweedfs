@@ -165,7 +165,6 @@ services:
       -v=1
       filer 
       -defaultReplicaPlacement=100 
-      -iam 
       -master=master0:9333,master1:9334,master2:9335 
       -port=8888 
       -ip=filer1
@@ -191,7 +190,6 @@ services:
       -v=1
       filer 
       -defaultReplicaPlacement=100 
-      -iam 
       -master=master0:9333,master1:9334,master2:9335 
       -port=8889 
       -ip=filer2
