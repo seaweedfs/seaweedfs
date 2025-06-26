@@ -2,13 +2,14 @@ package broker
 
 import (
 	"fmt"
+	"io"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/buffered_queue"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
-	"io"
-	"time"
 )
 
 type memBuffer struct {
@@ -43,7 +44,12 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 				err = nil
 				break
 			}
-			glog.V(0).Infof("topic %v partition %v publish stream error: %v", initMessage.Topic, initMessage.Partition, err)
+			// Use appropriate logging level based on error type
+			if isConnectionError(err) {
+				glog.V(1).Infof("topic %v partition %v publish follower stream connection error (leader disconnected): %v", initMessage.Topic, initMessage.Partition, err)
+			} else {
+				glog.V(0).Infof("topic %v partition %v publish stream error: %v", initMessage.Topic, initMessage.Partition, err)
+			}
 			break
 		}
 
@@ -62,10 +68,10 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 			}
 			// println("ack", string(dataMessage.Key), dataMessage.TsNs)
 		} else if closeMessage := req.GetClose(); closeMessage != nil {
-			glog.V(0).Infof("topic %v partition %v publish stream closed: %v", initMessage.Topic, initMessage.Partition, closeMessage)
+			glog.V(1).Infof("topic %v partition %v publish stream closed: %v", initMessage.Topic, initMessage.Partition, closeMessage)
 			break
 		} else if flushMessage := req.GetFlush(); flushMessage != nil {
-			glog.V(0).Infof("topic %v partition %v publish stream flushed: %v", initMessage.Topic, initMessage.Partition, flushMessage)
+			glog.V(1).Infof("topic %v partition %v publish stream flushed: %v", initMessage.Topic, initMessage.Partition, flushMessage)
 
 			lastFlushTsNs = flushMessage.TsNs
 
@@ -124,7 +130,7 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 		glog.V(0).Infof("flushed remaining data at %v to %s size %d", mem.stopTime.UnixNano(), targetFile, len(mem.buf))
 	}
 
-	glog.V(0).Infof("shut down follower for %v %v", t, p)
+	glog.V(1).Infof("shut down follower for %v %v", t, p)
 
 	return err
 }

@@ -3,15 +3,19 @@ package broker
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"google.golang.org/grpc/peer"
 	"io"
 	"math/rand"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 // PUB
@@ -126,7 +130,12 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			if err == io.EOF {
 				break
 			}
-			glog.V(0).Infof("topic %v partition %v publish stream from %s error: %v", initMessage.Topic, initMessage.Partition, initMessage.PublisherName, err)
+			// Use appropriate logging level based on error type
+			if isConnectionError(err) {
+				glog.V(1).Infof("topic %v partition %v publish stream from %s connection error (client disconnected): %v", initMessage.Topic, initMessage.Partition, initMessage.PublisherName, err)
+			} else {
+				glog.V(0).Infof("topic %v partition %v publish stream from %s error: %v", initMessage.Topic, initMessage.Partition, initMessage.PublisherName, err)
+			}
 			break
 		}
 
@@ -145,7 +154,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		}
 	}
 
-	glog.V(0).Infof("topic %v partition %v publish stream from %s closed.", initMessage.Topic, initMessage.Partition, initMessage.PublisherName)
+	glog.V(1).Infof("topic %v partition %v publish stream from %s closed.", initMessage.Topic, initMessage.Partition, initMessage.PublisherName)
 
 	return nil
 }
@@ -163,4 +172,41 @@ func findClientAddress(ctx context.Context) string {
 		return ""
 	}
 	return pr.Addr.String()
+}
+
+// isConnectionError checks if an error is a connection-level error
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check gRPC status codes for connection errors
+	if grpcStatus, ok := status.FromError(err); ok {
+		switch grpcStatus.Code() {
+		case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled, codes.Unknown:
+			return true
+		}
+	}
+
+	// Check for common connection error patterns
+	errStr := strings.ToLower(err.Error())
+	connectionErrorPatterns := []string{
+		"eof",
+		"error reading server preface",
+		"connection refused",
+		"connection reset",
+		"broken pipe",
+		"no such host",
+		"network is unreachable",
+		"context deadline exceeded",
+		"context canceled",
+	}
+
+	for _, pattern := range connectionErrorPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
 }

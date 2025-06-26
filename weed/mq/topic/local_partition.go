@@ -3,6 +3,11 @@ package topic
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -10,9 +15,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 type LocalPartition struct {
@@ -182,7 +184,12 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 					glog.V(0).Infof("local partition %v follower %v stopped", p.Partition, p.Follower)
 					return
 				}
-				glog.Errorf("Receiving local partition %v  follower %s ack: %v", p.Partition, p.Follower, err)
+				// Use appropriate logging level based on error type
+				if isConnectionError(err) {
+					glog.V(1).Infof("local partition %v follower %s connection error (will retry): %v", p.Partition, p.Follower, err)
+				} else {
+					glog.Errorf("Receiving local partition %v  follower %s ack: %v", p.Partition, p.Follower, err)
+				}
 				return
 			}
 			atomic.StoreInt64(&p.AckTsNs, ack.AckTsNs)
@@ -241,4 +248,41 @@ func (p *LocalPartition) NotifyLogFlushed(flushTsNs int64) {
 		}
 		// println("notifying", p.Follower, "flushed at", flushTsNs)
 	}
+}
+
+// isConnectionError checks if an error is a connection-level error
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check gRPC status codes for connection errors
+	if grpcStatus, ok := status.FromError(err); ok {
+		switch grpcStatus.Code() {
+		case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled, codes.Unknown:
+			return true
+		}
+	}
+
+	// Check for common connection error patterns
+	errStr := strings.ToLower(err.Error())
+	connectionErrorPatterns := []string{
+		"eof",
+		"error reading server preface",
+		"connection refused",
+		"connection reset",
+		"broken pipe",
+		"no such host",
+		"network is unreachable",
+		"context deadline exceeded",
+		"context canceled",
+	}
+
+	for _, pattern := range connectionErrorPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
 }
