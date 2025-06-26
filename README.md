@@ -73,6 +73,7 @@ Table of Contents
 * [Installation Guide](#installation-guide)
 * [Disk Related Topics](#disk-related-topics)
 * [Benchmark](#benchmark)
+* [Enterprise](#enterprise)
 * [License](#license)
 
 # Quick Start #
@@ -648,6 +649,13 @@ Requests considered: 5587:
 Cluster Total: 369.64 MiB/s, 61.77 obj/s, 0 errors over 5m0s.
 Total Errors:0.
 ```
+
+[Back to TOC](#table-of-contents)
+
+## Enterprise ##
+
+For enterprise users, please visit [seaweedfs.com](https://seaweedfs.com) for the SeaweedFS Enterprise Edition, 
+which has a self-healing storage format with better data protection.
 
 [Back to TOC](#table-of-contents)
 
