@@ -3,12 +3,13 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	hashicorpRaft "github.com/hashicorp/raft"
 
@@ -110,6 +111,11 @@ func runMaster(cmd *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
+
+	// bind viper configuration to command line flags
+	if v := util.GetViper().GetString("master.mdir"); v != "" {
+		*m.metaFolder = v
+	}
 
 	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
