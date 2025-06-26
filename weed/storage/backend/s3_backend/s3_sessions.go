@@ -31,7 +31,8 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string, 
 	sessionsLock.Lock()
 	defer sessionsLock.Unlock()
 
-	if t, found := s3Sessions[region]; found {
+	cacheKey := fmt.Sprintf("%s|%s", region, endpoint)
+	if t, found := s3Sessions[cacheKey]; found {
 		return t, nil
 	}
 
