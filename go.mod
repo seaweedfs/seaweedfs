@@ -146,7 +146,6 @@ require (
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.10.0
 	github.com/schollz/progressbar/v3 v3.18.0
-	github.com/seaweedfs/seaweedfs/telemetry/proto v0.0.0-00010101000000-000000000000
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/tarantool/go-tarantool/v2 v2.3.2
 	github.com/tikv/client-go/v2 v2.0.7
@@ -388,5 +387,3 @@ require (
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
-
-replace github.com/seaweedfs/seaweedfs/telemetry/proto => ./telemetry/proto
