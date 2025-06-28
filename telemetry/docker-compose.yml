@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  telemetry-server:
+    build: ./server
+    ports:
+      - "8080:8080"
+    command: [
+      "./telemetry-server",
+      "-port=8080",
+      "-dashboard=false",  # Disable built-in dashboard, use Grafana
+      "-log=true",
+      "-cors=true"
+    ]
+    networks:
+      - telemetry
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - telemetry
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana-dashboard.json:/var/lib/grafana/dashboards/seaweedfs-telemetry.json
+      - ./grafana-provisioning:/etc/grafana/provisioning
+    networks:
+      - telemetry
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  telemetry:
+    driver: bridge 
