@@ -4,10 +4,6 @@
 name: Deploy Telemetry Server
 
 on:
-  push:
-    branches: [ "master" ]
-    paths:
-      - 'telemetry/**'
   workflow_dispatch:
     inputs:
       setup:
@@ -33,6 +29,7 @@ jobs:
           go-version: '1.24'
 
       - name: Build Telemetry Server
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy
         run: |
           go mod tidy
           echo "Building telemetry server..."
@@ -95,13 +92,9 @@ jobs:
               endscript
           }" > telemetry_logrotate
 
-          # Copy binary and configuration files
-          scp -i ~/.ssh/deploy_key telemetry-server $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/bin/
+          # Copy configuration files
           scp -i ~/.ssh/deploy_key telemetry/grafana-dashboard.json $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
           scp -i ~/.ssh/deploy_key telemetry/prometheus.yml $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
-
-          # Set binary permissions
-          ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "chmod +x ~/seaweedfs-telemetry/bin/telemetry-server"
 
           # Copy and install service and logrotate files
           scp -i ~/.ssh/deploy_key telemetry.service telemetry_logrotate $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
@@ -109,20 +102,19 @@ jobs:
             sudo mv ~/seaweedfs-telemetry/telemetry.service /etc/systemd/system/ && \
             sudo mv ~/seaweedfs-telemetry/telemetry_logrotate /etc/logrotate.d/seaweedfs-telemetry && \
             sudo systemctl daemon-reload && \
-            sudo systemctl enable telemetry.service && \
-            sudo systemctl start telemetry.service && \
-            sudo systemctl status telemetry.service"
+            sudo systemctl enable telemetry.service"
 
-          # Verify initial deployment
-          ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "
-            echo 'Waiting for service to start...'
-            sleep 5
-            curl -f http://localhost:8353/health || echo 'Health check failed - check service logs: sudo journalctl -u telemetry.service -f'"
+          echo "✅ First-time setup completed successfully!"
+          echo "📋 Next step: Run the deployment to install the telemetry server binary"
+          echo "   1. Go to GitHub Actions → Deploy Telemetry Server"
+          echo "   2. Click 'Run workflow'"
+          echo "   3. Check 'Deploy telemetry server to remote server'"
+          echo "   4. Click 'Run workflow'"
 
           rm -f ~/.ssh/deploy_key
 
       - name: Deploy Telemetry Server to Remote Server
-        if: (github.event_name == 'push' && contains(github.ref, 'refs/heads/master')) || (github.event_name == 'workflow_dispatch' && inputs.deploy)
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy
         env:
           SSH_PRIVATE_KEY: ${{ secrets.TELEMETRY_SSH_PRIVATE_KEY }}
           REMOTE_HOST: ${{ secrets.TELEMETRY_HOST }}

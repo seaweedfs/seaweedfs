@@ -148,14 +148,14 @@ This will:
 - Set up systemd service configuration
 - Configure log rotation
 - Upload Grafana dashboard and Prometheus configuration
+- Enable the telemetry service (but not start it yet)
+
+**Note**: The setup only prepares the infrastructure. You need to run a deployment afterward to install and start the telemetry server.
 
 
 ### 2. Deploy Updates
 
-Deployments happen automatically when:
-- Code is pushed to the `master` branch with changes in the `telemetry/` directory
-
-Or manually trigger deployment:
+To deploy updates, manually trigger deployment:
 1. Go to GitHub Actions in your repository
 2. Select "Deploy Telemetry Server" workflow
 3. Click "Run workflow"
