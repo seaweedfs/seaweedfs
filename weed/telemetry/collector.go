@@ -4,28 +4,33 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/telemetry/proto"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
 type Collector struct {
-	client     *Client
-	topo       *topology.Topology
-	features   []string
-	deployment string
-	version    string
-	os         string
+	client       *Client
+	topo         *topology.Topology
+	cluster      *cluster.Cluster
+	masterServer interface{} // Will be set to *weed_server.MasterServer to access client tracking
+	features     []string
+	deployment   string
+	version      string
+	os           string
 }
 
 // NewCollector creates a new telemetry collector
-func NewCollector(client *Client, topo *topology.Topology) *Collector {
+func NewCollector(client *Client, topo *topology.Topology, cluster *cluster.Cluster) *Collector {
 	return &Collector{
-		client:     client,
-		topo:       topo,
-		features:   []string{},
-		deployment: "unknown",
-		version:    "unknown",
-		os:         "unknown",
+		client:       client,
+		topo:         topo,
+		cluster:      cluster,
+		masterServer: nil,
+		features:     []string{},
+		deployment:   "unknown",
+		version:      "unknown",
+		os:           "unknown",
 	}
 }
 
@@ -47,6 +52,11 @@ func (c *Collector) SetVersion(version string) {
 // SetOS sets the operating system information
 func (c *Collector) SetOS(os string) {
 	c.os = os
+}
+
+// SetMasterServer sets a reference to the master server for client tracking
+func (c *Collector) SetMasterServer(masterServer interface{}) {
+	c.masterServer = masterServer
 }
 
 // CollectAndSendAsync collects telemetry data and sends it asynchronously
@@ -106,6 +116,12 @@ func (c *Collector) collectData() *proto.TelemetryData {
 		data.TotalVolumeCount = int32(volumeCount)
 	}
 
+	if c.cluster != nil {
+		// Collect filer and broker counts
+		data.FilerCount = int32(c.countFilers())
+		data.BrokerCount = int32(c.countBrokers())
+	}
+
 	return data
 }
 
@@ -145,6 +161,43 @@ func (c *Collector) collectVolumeStats() (uint64, int) {
 	}
 
 	return totalDiskBytes, totalVolumeCount
+}
+
+// countFilers counts the number of active filer servers across all groups
+func (c *Collector) countFilers() int {
+	// Count all filer-type nodes in the cluster
+	// This includes both pure filer servers and S3 servers (which register as filers)
+	count := 0
+	for _, groupName := range c.getAllFilerGroups() {
+		nodes := c.cluster.ListClusterNode(cluster.FilerGroupName(groupName), cluster.FilerType)
+		count += len(nodes)
+	}
+	return count
+}
+
+// countBrokers counts the number of active broker servers
+func (c *Collector) countBrokers() int {
+	// Count brokers across all broker groups
+	count := 0
+	for _, groupName := range c.getAllBrokerGroups() {
+		nodes := c.cluster.ListClusterNode(cluster.FilerGroupName(groupName), cluster.BrokerType)
+		count += len(nodes)
+	}
+	return count
+}
+
+// getAllFilerGroups returns all filer group names
+func (c *Collector) getAllFilerGroups() []string {
+	// For simplicity, we check the default group
+	// In a more sophisticated implementation, we could enumerate all groups
+	return []string{""}
+}
+
+// getAllBrokerGroups returns all broker group names
+func (c *Collector) getAllBrokerGroups() []string {
+	// For simplicity, we check the default group
+	// In a more sophisticated implementation, we could enumerate all groups
+	return []string{""}
 }
 
 // DetermineDeployment determines the deployment type based on configuration

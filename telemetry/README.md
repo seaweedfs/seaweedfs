@@ -137,6 +137,8 @@ The telemetry server exposes these Prometheus metrics:
 - `seaweedfs_telemetry_volume_servers{cluster_id, version, os, deployment}`: Volume servers per cluster
 - `seaweedfs_telemetry_disk_bytes{cluster_id, version, os, deployment}`: Disk usage per cluster  
 - `seaweedfs_telemetry_volume_count{cluster_id, version, os, deployment}`: Volume count per cluster
+- `seaweedfs_telemetry_filer_count{cluster_id, version, os, deployment}`: Filer servers per cluster
+- `seaweedfs_telemetry_broker_count{cluster_id, version, os, deployment}`: Broker servers per cluster
 - `seaweedfs_telemetry_cluster_info{cluster_id, version, os, deployment, features}`: Cluster metadata
 
 ### Server Metrics
@@ -274,6 +276,12 @@ sum by (version) (seaweedfs_telemetry_disk_bytes)
 
 # Volume servers by deployment type
 sum by (deployment) (seaweedfs_telemetry_volume_servers)
+
+# Filer servers by version
+sum by (version) (seaweedfs_telemetry_filer_count)
+
+# Broker servers across all clusters
+sum(seaweedfs_telemetry_broker_count)
 
 # Growth rate (weekly)
 increase(seaweedfs_telemetry_total_clusters[7d])

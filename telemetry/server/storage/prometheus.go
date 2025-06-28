@@ -17,6 +17,8 @@ type PrometheusStorage struct {
 	volumeServerCount *prometheus.GaugeVec
 	totalDiskBytes    *prometheus.GaugeVec
 	totalVolumeCount  *prometheus.GaugeVec
+	filerCount        *prometheus.GaugeVec
+	brokerCount       *prometheus.GaugeVec
 	clusterInfo       *prometheus.GaugeVec
 	telemetryReceived prometheus.Counter
 
@@ -54,6 +56,14 @@ func NewPrometheusStorage() *PrometheusStorage {
 			Name: "seaweedfs_telemetry_volume_count",
 			Help: "Total number of volumes per cluster",
 		}, []string{"cluster_id", "version", "os", "deployment"}),
+		filerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "seaweedfs_telemetry_filer_count",
+			Help: "Number of filer servers per cluster",
+		}, []string{"cluster_id", "version", "os", "deployment"}),
+		brokerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "seaweedfs_telemetry_broker_count",
+			Help: "Number of broker servers per cluster",
+		}, []string{"cluster_id", "version", "os", "deployment"}),
 		clusterInfo: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_cluster_info",
 			Help: "Cluster information (always 1, labels contain metadata)",
@@ -82,6 +92,8 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.volumeServerCount.With(labels).Set(float64(data.VolumeServerCount))
 	s.totalDiskBytes.With(labels).Set(float64(data.TotalDiskBytes))
 	s.totalVolumeCount.With(labels).Set(float64(data.TotalVolumeCount))
+	s.filerCount.With(labels).Set(float64(data.FilerCount))
+	s.brokerCount.With(labels).Set(float64(data.BrokerCount))
 
 	// Features as JSON string for the label
 	featuresJSON, _ := json.Marshal(data.Features)
@@ -224,6 +236,8 @@ func (s *PrometheusStorage) CleanupOldInstances(maxAge time.Duration) {
 			s.volumeServerCount.Delete(labels)
 			s.totalDiskBytes.Delete(labels)
 			s.totalVolumeCount.Delete(labels)
+			s.filerCount.Delete(labels)
+			s.brokerCount.Delete(labels)
 		}
 	}
 

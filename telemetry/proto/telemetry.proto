@@ -30,8 +30,14 @@ message TelemetryData {
   // Total number of volumes in the cluster
   int32 total_volume_count = 8;
   
+  // Number of filer servers in the cluster
+  int32 filer_count = 9;
+  
+  // Number of broker servers in the cluster
+  int32 broker_count = 10;
+  
   // Unix timestamp when the data was collected
-  int64 timestamp = 9;
+  int64 timestamp = 11;
 }
 
 // TelemetryRequest is sent from SeaweedFS clusters to the telemetry server

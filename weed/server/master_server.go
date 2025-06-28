@@ -142,7 +142,8 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	// Initialize telemetry after topology is created
 	if option.TelemetryEnabled && option.TelemetryUrl != "" {
 		telemetryClient := telemetry.NewClient(option.TelemetryUrl, option.TelemetryEnabled)
-		ms.telemetryCollector = telemetry.NewCollector(telemetryClient, ms.Topo)
+		ms.telemetryCollector = telemetry.NewCollector(telemetryClient, ms.Topo, ms.Cluster)
+		ms.telemetryCollector.SetMasterServer(ms)
 
 		// Set version and OS information
 		ms.telemetryCollector.SetVersion(version.VERSION_NUMBER)

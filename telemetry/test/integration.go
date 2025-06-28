@@ -156,6 +156,8 @@ func testProtobufMarshaling() error {
 		VolumeServerCount: 2,
 		TotalDiskBytes:    1000000,
 		TotalVolumeCount:  10,
+		FilerCount:        1,
+		BrokerCount:       1,
 		Timestamp:         time.Now().Unix(),
 	}
 
@@ -200,6 +202,8 @@ func testTelemetryClient() error {
 		VolumeServerCount: 3,
 		TotalDiskBytes:    1073741824, // 1GB
 		TotalVolumeCount:  50,
+		FilerCount:        2,
+		BrokerCount:       1,
 		Timestamp:         time.Now().Unix(),
 	}
 
@@ -241,6 +245,8 @@ func testMetricsEndpoint() error {
 		"seaweedfs_telemetry_volume_servers",
 		"seaweedfs_telemetry_disk_bytes",
 		"seaweedfs_telemetry_volume_count",
+		"seaweedfs_telemetry_filer_count",
+		"seaweedfs_telemetry_broker_count",
 	}
 
 	for _, metric := range expectedMetrics {
