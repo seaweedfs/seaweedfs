@@ -104,8 +104,8 @@ func init() {
 	masterOptions.raftBootstrap = cmdServer.Flag.Bool("master.raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	masterOptions.heartbeatInterval = cmdServer.Flag.Duration("master.heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	masterOptions.electionTimeout = cmdServer.Flag.Duration("master.electionTimeout", 10*time.Second, "election timeout of master servers")
-	masterOptions.telemetryUrl = cmdServer.Flag.String("master.telemetry.url", "", "telemetry server URL to send usage statistics")
-	masterOptions.telemetryEnabled = cmdServer.Flag.Bool("master.telemetry.enabled", false, "enable telemetry reporting")
+	masterOptions.telemetryUrl = cmdServer.Flag.String("master.telemetry.url", "https://telemetry.seaweedfs.com:3091/api/collect", "telemetry server URL to send usage statistics")
+	masterOptions.telemetryEnabled = cmdServer.Flag.Bool("master.telemetry", false, "enable telemetry reporting")
 
 	filerOptions.filerGroup = cmdServer.Flag.String("filer.filerGroup", "", "share metadata with other filers in the same filerGroup")
 	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
