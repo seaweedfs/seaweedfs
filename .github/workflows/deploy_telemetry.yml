@@ -35,8 +35,10 @@ jobs:
       - name: Build Telemetry Server
         run: |
           go mod tidy
-          cd telemetry/server
-          GOOS=linux GOARCH=amd64 go build -o telemetry-server main.go
+          echo "Building telemetry server..."
+          GOOS=linux GOARCH=amd64 go build -o telemetry-server ./telemetry/server/main.go
+          ls -la telemetry-server
+          echo "Build completed successfully"
 
       - name: First-time Server Setup
         if: github.event_name == 'workflow_dispatch' && inputs.setup
@@ -94,7 +96,7 @@ jobs:
           }" > telemetry_logrotate
 
           # Copy binary and configuration files
-          scp -i ~/.ssh/deploy_key telemetry/server/telemetry-server $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/bin/
+          scp -i ~/.ssh/deploy_key telemetry-server $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/bin/
           scp -i ~/.ssh/deploy_key telemetry/grafana-dashboard.json $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
           scp -i ~/.ssh/deploy_key telemetry/prometheus.yml $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
 
@@ -134,7 +136,7 @@ jobs:
 
           # Create temp directory and copy binary
           ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "mkdir -p ~/seaweedfs-telemetry/tmp"
-          scp -i ~/.ssh/deploy_key telemetry/server/telemetry-server $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/tmp/
+          scp -i ~/.ssh/deploy_key telemetry-server $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/tmp/
 
           # Copy updated configuration files
           scp -i ~/.ssh/deploy_key telemetry/grafana-dashboard.json $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
