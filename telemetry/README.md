@@ -321,7 +321,7 @@ docker-compose logs prometheus
 
 ```bash
 # Enable verbose logging in SeaweedFS
-weed master -v=2 -telemetry.enabled=true
+weed master -v=2 -telemetry=true
 
 # Check telemetry server metrics
 curl http://localhost:8080/metrics | grep seaweedfs_telemetry
