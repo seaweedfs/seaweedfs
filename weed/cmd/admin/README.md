@@ -7,7 +7,6 @@ A modern web-based administration interface for SeaweedFS clusters built with Go
 - **Dashboard**: Real-time cluster status and metrics
 - **Master Management**: Monitor master nodes and leadership status
 - **Volume Server Management**: View volume servers, capacity, and health
-- **S3 Bucket Management**: Create, delete, and manage S3 buckets with web interface
 - **System Health**: Overall cluster health monitoring
 - **Responsive Design**: Bootstrap-based UI that works on all devices
 - **Authentication**: Optional user authentication with sessions
@@ -21,7 +20,7 @@ The admin component has its own Makefile for development and building:
 
 ```bash
 # Navigate to admin directory
-cd weed/admin
+cd weed/cmd/admin
 
 # View all available targets
 make help
@@ -93,10 +92,9 @@ make fmt
 ### File Structure
 
 ```
-weed/admin/
+weed/cmd/admin/
 ├── Makefile              # Admin-specific build tasks
 ├── README.md             # This file
-├── S3_BUCKETS.md         # S3 bucket management documentation
 ├── admin.go              # Main application entry point
 ├── dash/                 # Server and handler logic
 │   ├── admin_server.go   # HTTP server setup
@@ -109,21 +107,11 @@ weed/admin/
 └── view/                 # Templates
     ├── app/              # Application templates
     │   ├── admin.templ   # Main dashboard template
-    │   ├── s3_buckets.templ # S3 bucket management template
-    │   └── *_templ.go    # Generated Go code
+    │   └── admin_templ.go # Generated Go code
     └── layout/           # Layout templates
         ├── layout.templ  # Base layout template
         └── layout_templ.go # Generated Go code
 ```
-
-### S3 Bucket Management
-
-The admin interface includes comprehensive S3 bucket management capabilities. See [S3_BUCKETS.md](S3_BUCKETS.md) for detailed documentation on:
-
-- Creating and deleting S3 buckets
-- Viewing bucket contents and metadata
-- Managing bucket permissions and settings
-- API endpoints for programmatic access
 
 ## Usage
 
@@ -174,7 +162,7 @@ docker run -p 23646:23646 seaweedfs/seaweedfs:latest admin -masters=host.docker.
 ```bash
 # Clone and setup
 git clone <seaweedfs-repo>
-cd seaweedfs/weed/admin
+cd seaweedfs/weed/cmd/admin
 
 # Install dependencies and build
 make install-deps

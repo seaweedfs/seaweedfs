@@ -64,6 +64,33 @@ type VolumeServer struct {
 	Status        string    `json:"status"`
 }
 
+// S3 Bucket management structures
+type S3Bucket struct {
+	Name         string    `json:"name"`
+	CreatedAt    time.Time `json:"created_at"`
+	Size         int64     `json:"size"`
+	ObjectCount  int64     `json:"object_count"`
+	LastModified time.Time `json:"last_modified"`
+	Region       string    `json:"region"`
+	Status       string    `json:"status"`
+}
+
+type S3Object struct {
+	Key          string    `json:"key"`
+	Size         int64     `json:"size"`
+	LastModified time.Time `json:"last_modified"`
+	ETag         string    `json:"etag"`
+	StorageClass string    `json:"storage_class"`
+}
+
+type BucketDetails struct {
+	Bucket     S3Bucket   `json:"bucket"`
+	Objects    []S3Object `json:"objects"`
+	TotalSize  int64      `json:"total_size"`
+	TotalCount int64      `json:"total_count"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
 func NewAdminServer(masterAddress, filerAddress string, templateFS http.FileSystem) *AdminServer {
 	return &AdminServer{
 		masterAddress:   masterAddress,
@@ -177,4 +204,195 @@ func (s *AdminServer) GetClusterTopology() (*ClusterTopology, error) {
 func (s *AdminServer) InvalidateCache() {
 	s.lastCacheUpdate = time.Time{}
 	s.cachedTopology = nil
+}
+
+// GetS3Buckets retrieves all S3 buckets from the filer
+func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
+	var buckets []S3Bucket
+
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// List buckets by looking at the /buckets directory
+		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+			Directory:          "/buckets",
+			Prefix:             "",
+			StartFromFileName:  "",
+			InclusiveStartFrom: false,
+			Limit:              1000,
+		})
+		if err != nil {
+			return err
+		}
+
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				if err.Error() == "EOF" {
+					break
+				}
+				return err
+			}
+
+			if resp.Entry.IsDirectory {
+				bucket := S3Bucket{
+					Name:         resp.Entry.Name,
+					CreatedAt:    time.Unix(resp.Entry.Attributes.Crtime, 0),
+					Size:         0, // Will be calculated if needed
+					ObjectCount:  0, // Will be calculated if needed
+					LastModified: time.Unix(resp.Entry.Attributes.Mtime, 0),
+					Region:       "us-east-1", // Default region
+					Status:       "active",
+				}
+				buckets = append(buckets, bucket)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to list S3 buckets: %v", err)
+	}
+
+	return buckets, nil
+}
+
+// GetBucketDetails retrieves detailed information about a specific bucket
+func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error) {
+	bucketPath := fmt.Sprintf("/buckets/%s", bucketName)
+
+	details := &BucketDetails{
+		Bucket: S3Bucket{
+			Name:   bucketName,
+			Region: "us-east-1",
+			Status: "active",
+		},
+		Objects:   []S3Object{},
+		UpdatedAt: time.Now(),
+	}
+
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// Get bucket info
+		bucketResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: "/buckets",
+			Name:      bucketName,
+		})
+		if err != nil {
+			return fmt.Errorf("bucket not found: %v", err)
+		}
+
+		details.Bucket.CreatedAt = time.Unix(bucketResp.Entry.Attributes.Crtime, 0)
+		details.Bucket.LastModified = time.Unix(bucketResp.Entry.Attributes.Mtime, 0)
+
+		// List objects in bucket (recursively)
+		return s.listBucketObjects(client, bucketPath, "", details)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return details, nil
+}
+
+// listBucketObjects recursively lists all objects in a bucket
+func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, directory, prefix string, details *BucketDetails) error {
+	stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+		Directory:          directory,
+		Prefix:             prefix,
+		StartFromFileName:  "",
+		InclusiveStartFrom: false,
+		Limit:              1000,
+	})
+	if err != nil {
+		return err
+	}
+
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return err
+		}
+
+		entry := resp.Entry
+		if entry.IsDirectory {
+			// Recursively list subdirectories
+			subDir := fmt.Sprintf("%s/%s", directory, entry.Name)
+			err := s.listBucketObjects(client, subDir, "", details)
+			if err != nil {
+				return err
+			}
+		} else {
+			// Add file object
+			objectKey := entry.Name
+			if directory != fmt.Sprintf("/buckets/%s", details.Bucket.Name) {
+				// Remove bucket prefix to get relative path
+				relativePath := directory[len(fmt.Sprintf("/buckets/%s", details.Bucket.Name))+1:]
+				objectKey = fmt.Sprintf("%s/%s", relativePath, entry.Name)
+			}
+
+			obj := S3Object{
+				Key:          objectKey,
+				Size:         int64(entry.Attributes.FileSize),
+				LastModified: time.Unix(entry.Attributes.Mtime, 0),
+				ETag:         "", // Could be calculated from chunks if needed
+				StorageClass: "STANDARD",
+			}
+
+			details.Objects = append(details.Objects, obj)
+			details.TotalSize += obj.Size
+			details.TotalCount++
+		}
+	}
+
+	// Update bucket totals
+	details.Bucket.Size = details.TotalSize
+	details.Bucket.ObjectCount = details.TotalCount
+
+	return nil
+}
+
+// CreateS3Bucket creates a new S3 bucket
+func (s *AdminServer) CreateS3Bucket(bucketName string) error {
+	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// Create bucket directory
+		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+			Directory: "/buckets",
+			Entry: &filer_pb.Entry{
+				Name:        bucketName,
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					FileMode: 0755,
+					Crtime:   time.Now().Unix(),
+					Mtime:    time.Now().Unix(),
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create bucket: %v", err)
+		}
+
+		return nil
+	})
+}
+
+// DeleteS3Bucket deletes an S3 bucket and all its contents
+func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
+	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// Delete bucket directory recursively
+		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:            "/buckets",
+			Name:                 bucketName,
+			IsDeleteData:         true,
+			IsRecursive:          true,
+			IgnoreRecursiveError: false,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to delete bucket: %v", err)
+		}
+
+		return nil
+	})
 }

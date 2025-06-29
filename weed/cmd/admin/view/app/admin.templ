@@ -2,7 +2,7 @@ package app
 
 import (
     "fmt"
-    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+    "github.com/seaweedfs/seaweedfs/weed/cmd/admin/dash"
 )
 
 templ Admin(data dash.AdminData) {
@@ -12,9 +12,6 @@ templ Admin(data dash.AdminData) {
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
-                <a href="/s3/buckets" class="btn btn-sm btn-primary">
-                    <i class="fas fa-cube me-1"></i>S3 Buckets
-                </a>
                 <button type="button" class="btn btn-sm btn-outline-secondary" 
                         hx-get="/overview" 
                         hx-target="#dashboard-content" 

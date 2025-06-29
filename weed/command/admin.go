@@ -256,13 +256,100 @@ func setupRoutes(r *gin.Engine, adminServer *dash.AdminServer, authRequired bool
 		}
 	})
 
+	// S3 Buckets management routes
+	r.GET("/s3/buckets", func(c *gin.Context) {
+		// Get S3 buckets data from the server
+		s3Data := getS3BucketsData(adminServer, c)
+
+		// Render HTML template
+		c.Header("Content-Type", "text/html")
+		s3Component := app.S3Buckets(s3Data)
+		layoutComponent := layout.Layout(c, s3Component)
+		err := layoutComponent.Render(c.Request.Context(), c.Writer)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+			return
+		}
+	})
+
+	r.GET("/s3/buckets/:bucket", func(c *gin.Context) {
+		bucketName := c.Param("bucket")
+		details, err := adminServer.GetBucketDetails(bucketName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get bucket details: " + err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, details)
+	})
+
 	// API routes for AJAX calls
 	api := r.Group("/api")
 	{
-		api.GET("/cluster/topology", adminServer.GetClusterTopologyHandler)
-		api.GET("/cluster/masters", adminServer.GetMasters)
-		api.GET("/cluster/volumes", adminServer.GetVolumeServers)
+		api.GET("/cluster/topology", func(c *gin.Context) {
+			topology, err := adminServer.GetClusterTopology()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, topology)
+		})
+		api.GET("/cluster/masters", func(c *gin.Context) {
+			// Simple master info
+			c.JSON(http.StatusOK, gin.H{"masters": []gin.H{{"address": "localhost:9333", "status": "active"}}})
+		})
+		api.GET("/cluster/volumes", func(c *gin.Context) {
+			topology, err := adminServer.GetClusterTopology()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"volume_servers": topology.VolumeServers})
+		})
 		api.GET("/admin", adminServer.ShowAdmin) // JSON API for admin data
+
+		// S3 API routes
+		s3Api := api.Group("/s3")
+		{
+			s3Api.GET("/buckets", adminServer.ListBucketsAPI)
+			s3Api.POST("/buckets", adminServer.CreateBucket)
+			s3Api.DELETE("/buckets/:bucket", adminServer.DeleteBucket)
+			s3Api.GET("/buckets/:bucket", adminServer.ShowBucketDetails)
+		}
+	}
+}
+
+// getS3BucketsData retrieves S3 buckets data from the server
+func getS3BucketsData(adminServer *dash.AdminServer, c *gin.Context) dash.S3BucketsData {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+
+	// Get S3 buckets
+	buckets, err := adminServer.GetS3Buckets()
+	if err != nil {
+		// Return empty data on error
+		return dash.S3BucketsData{
+			Username:     username,
+			Buckets:      []dash.S3Bucket{},
+			TotalBuckets: 0,
+			TotalSize:    0,
+			LastUpdated:  time.Now(),
+		}
+	}
+
+	// Calculate totals
+	var totalSize int64
+	for _, bucket := range buckets {
+		totalSize += bucket.Size
+	}
+
+	return dash.S3BucketsData{
+		Username:     username,
+		Buckets:      buckets,
+		TotalBuckets: len(buckets),
+		TotalSize:    totalSize,
+		LastUpdated:  time.Now(),
 	}
 }
 

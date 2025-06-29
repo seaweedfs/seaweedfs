@@ -1,8 +1,13 @@
 // SeaweedFS Dashboard JavaScript
 
+// Global variables
+let bucketToDelete = '';
+
 // Initialize dashboard when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     initializeDashboard();
+    initializeEventHandlers();
+    setupFormValidation();
 });
 
 function initializeDashboard() {
@@ -62,7 +67,17 @@ function setActiveNavigation() {
     
     navLinks.forEach(function(link) {
         const href = link.getAttribute('href');
-        if (href === currentPath || (currentPath === '/' && href === '/dashboard')) {
+        let isActive = false;
+        
+        if (href === currentPath) {
+            isActive = true;
+        } else if (currentPath === '/' && href === '/admin') {
+            isActive = true;
+        } else if (currentPath.startsWith('/s3/') && href === '/s3/buckets') {
+            isActive = true;
+        }
+        
+        if (isActive) {
             link.classList.add('active');
         } else {
             link.classList.remove('active');
@@ -217,4 +232,243 @@ window.Dashboard = {
     formatBytes,
     formatNumber,
     confirmAction
-}; 
+};
+
+// Initialize event handlers
+function initializeEventHandlers() {
+    // S3 Bucket Management
+    const createBucketForm = document.getElementById('createBucketForm');
+    if (createBucketForm) {
+        createBucketForm.addEventListener('submit', handleCreateBucket);
+    }
+
+    // Delete bucket buttons
+    document.addEventListener('click', function(e) {
+        if (e.target.closest('.delete-bucket-btn')) {
+            const button = e.target.closest('.delete-bucket-btn');
+            const bucketName = button.getAttribute('data-bucket-name');
+            confirmDeleteBucket(bucketName);
+        }
+    });
+}
+
+// Setup form validation
+function setupFormValidation() {
+    // Bucket name validation
+    const bucketNameInput = document.getElementById('bucketName');
+    if (bucketNameInput) {
+        bucketNameInput.addEventListener('input', validateBucketName);
+    }
+}
+
+// S3 Bucket Management Functions
+
+// Handle create bucket form submission
+async function handleCreateBucket(event) {
+    event.preventDefault();
+    
+    const form = event.target;
+    const formData = new FormData(form);
+    const bucketData = {
+        name: formData.get('name'),
+        region: formData.get('region') || 'us-east-1'
+    };
+
+    try {
+        const response = await fetch('/api/s3/buckets', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(bucketData)
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            // Success
+            showAlert('success', `Bucket "${bucketData.name}" created successfully!`);
+            
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('createBucketModal'));
+            modal.hide();
+            
+            // Reset form
+            form.reset();
+            
+            // Refresh the page after a short delay
+            setTimeout(() => {
+                location.reload();
+            }, 1500);
+        } else {
+            // Error
+            showAlert('danger', result.error || 'Failed to create bucket');
+        }
+    } catch (error) {
+        console.error('Error creating bucket:', error);
+        showAlert('danger', 'Network error occurred while creating bucket');
+    }
+}
+
+// Validate bucket name input
+function validateBucketName(event) {
+    const input = event.target;
+    const value = input.value;
+    const isValid = /^[a-z0-9.-]+$/.test(value) && value.length >= 3 && value.length <= 63;
+    
+    if (value.length > 0 && !isValid) {
+        input.setCustomValidity('Bucket name must contain only lowercase letters, numbers, dots, and hyphens (3-63 characters)');
+    } else {
+        input.setCustomValidity('');
+    }
+}
+
+// Confirm bucket deletion
+function confirmDeleteBucket(bucketName) {
+    bucketToDelete = bucketName;
+    document.getElementById('deleteBucketName').textContent = bucketName;
+    
+    const modal = new bootstrap.Modal(document.getElementById('deleteBucketModal'));
+    modal.show();
+}
+
+// Delete bucket
+async function deleteBucket() {
+    if (!bucketToDelete) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/s3/buckets/${bucketToDelete}`, {
+            method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            // Success
+            showAlert('success', `Bucket "${bucketToDelete}" deleted successfully!`);
+            
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('deleteBucketModal'));
+            modal.hide();
+            
+            // Refresh the page after a short delay
+            setTimeout(() => {
+                location.reload();
+            }, 1500);
+        } else {
+            // Error
+            showAlert('danger', result.error || 'Failed to delete bucket');
+        }
+    } catch (error) {
+        console.error('Error deleting bucket:', error);
+        showAlert('danger', 'Network error occurred while deleting bucket');
+    }
+
+    bucketToDelete = '';
+}
+
+// Refresh buckets list
+function refreshBuckets() {
+    location.reload();
+}
+
+// Export bucket list
+function exportBucketList() {
+    // Get table data
+    const table = document.getElementById('bucketsTable');
+    if (!table) return;
+
+    const rows = Array.from(table.querySelectorAll('tbody tr'));
+    const data = rows.map(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length < 6) return null; // Skip empty state row
+        
+        return {
+            name: cells[0].textContent.trim(),
+            created: cells[1].textContent.trim(),
+            objects: cells[2].textContent.trim(),
+            size: cells[3].textContent.trim(),
+            region: cells[4].textContent.trim(),
+            status: cells[5].textContent.trim()
+        };
+    }).filter(item => item !== null);
+
+    // Convert to CSV
+    const csv = [
+        ['Name', 'Created', 'Objects', 'Size', 'Region', 'Status'].join(','),
+        ...data.map(row => [
+            row.name,
+            row.created,
+            row.objects,
+            row.size,
+            row.region,
+            row.status
+        ].join(','))
+    ].join('\n');
+
+    // Download CSV
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `seaweedfs-buckets-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+// Show alert message
+function showAlert(type, message) {
+    // Remove existing alerts
+    const existingAlerts = document.querySelectorAll('.alert-floating');
+    existingAlerts.forEach(alert => alert.remove());
+
+    // Create new alert
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type} alert-dismissible fade show alert-floating`;
+    alert.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 9999;
+        min-width: 300px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    `;
+    
+    alert.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+
+    document.body.appendChild(alert);
+
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (alert.parentNode) {
+            alert.remove();
+        }
+    }, 5000);
+}
+
+// Format date for display
+function formatDate(date) {
+    return new Date(date).toLocaleString();
+}
+
+// Copy text to clipboard
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        showAlert('success', 'Copied to clipboard!');
+    }).catch(err => {
+        console.error('Failed to copy text: ', err);
+        showAlert('danger', 'Failed to copy to clipboard');
+    });
+}
+
+// Dashboard refresh functionality
+function refreshDashboard() {
+    location.reload();
+} 
