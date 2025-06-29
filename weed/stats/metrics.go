@@ -278,6 +278,38 @@ var (
 			Help:      "Resource usage",
 		}, []string{"name", "type"})
 
+	VolumeServerConcurrentDownloadLimit = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "concurrent_download_limit",
+			Help:      "Limit total concurrent download size.",
+		})
+
+	VolumeServerConcurrentUploadLimit = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "concurrent_upload_limit",
+			Help:      "Limit total concurrent upload size.",
+		})
+
+	VolumeServerInFlightDownloadSize = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "in_flight_download_size",
+			Help:      "In flight total download size.",
+		})
+
+	VolumeServerInFlightUploadSize = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "in_flight_upload_size",
+			Help:      "In flight total upload size.",
+		})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -387,6 +419,10 @@ func init() {
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
 	Gather.MustRegister(VolumeServerResourceGauge)
+	Gather.MustRegister(VolumeServerConcurrentDownloadLimit)
+	Gather.MustRegister(VolumeServerConcurrentUploadLimit)
+	Gather.MustRegister(VolumeServerInFlightDownloadSize)
+	Gather.MustRegister(VolumeServerInFlightUploadSize)
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3HandlerCounter)
