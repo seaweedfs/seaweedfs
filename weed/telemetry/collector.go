@@ -62,12 +62,6 @@ func (c *Collector) CollectAndSendAsync() {
 		return
 	}
 
-	// Only leader master should send telemetry to avoid duplicates
-	if !c.isLeader() {
-		glog.V(2).Infof("Skipping telemetry collection - not the leader master")
-		return
-	}
-
 	go func() {
 		data := c.collectData()
 		c.client.SendTelemetryAsync(data)
