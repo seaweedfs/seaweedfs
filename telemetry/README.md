@@ -84,7 +84,7 @@ go run . -port=8080 -dashboard=true
 ### 2. Configure SeaweedFS
 
 ```bash
-# Enable telemetry in SeaweedFS master (uses default telemetry.seaweedfs.com:3091)
+# Enable telemetry in SeaweedFS master (uses default telemetry.seaweedfs.com)
 weed master -telemetry=true
 
 # Or in server mode
@@ -108,7 +108,7 @@ weed master -telemetry=true -telemetry.url=http://localhost:8080/api/collect
 # Enable telemetry
 -telemetry=true
 
-# Set custom telemetry server URL (optional, defaults to telemetry.seaweedfs.com:3091)
+# Set custom telemetry server URL (optional, defaults to telemetry.seaweedfs.com)
 -telemetry.url=http://your-telemetry-server:8080/api/collect
 ```
 
