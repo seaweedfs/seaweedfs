@@ -7,16 +7,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AuthMiddleware checks if user is authenticated
-func (s *DashboardServer) AuthMiddleware() gin.HandlerFunc {
+// RequireAuth checks if user is authenticated
+func RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// If no password is set, allow all requests
-		if s.adminPassword == "" {
-			c.Set("username", s.adminUser)
-			c.Next()
-			return
-		}
-
 		session := sessions.Default(c)
 		authenticated := session.Get("authenticated")
 		username := session.Get("username")

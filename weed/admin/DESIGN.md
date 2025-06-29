@@ -1,8 +1,8 @@
-# SeaweedFS Dashboard Web Component Design
+# SeaweedFS Admin Interface Web Component Design
 
 ## Overview
 
-The SeaweedFS Dashboard is a modern web-based administration interface for SeaweedFS clusters, following the **Gin + Templ + HTMX** architecture pattern. It provides comprehensive cluster management, monitoring, and maintenance capabilities through an intuitive web interface.
+The SeaweedFS Admin Interface is a modern web-based administration interface for SeaweedFS clusters, following the **Gin + Templ + HTMX** architecture pattern. It provides comprehensive cluster management, monitoring, and maintenance capabilities through an intuitive web interface.
 
 ## Architecture
 
@@ -18,25 +18,25 @@ The SeaweedFS Dashboard is a modern web-based administration interface for Seawe
 ### Directory Structure
 
 ```
-weed/cmd/dashboard/
-├── dashboard.go              # Main entry point & router setup
-├── dash/                     # Core dashboard logic
-│   ├── dashboard_server.go   # Server struct & cluster operations
+weed/admin/
+├── admin.go                  # Main entry point & router setup
+├── dash/                     # Core admin logic
+│   ├── admin_server.go       # Server struct & cluster operations
 │   ├── handler_auth.go       # Authentication handlers
-│   ├── handler_dashboard.go  # Main dashboard handlers
+│   ├── handler_admin.go      # Main admin handlers
 │   ├── middleware.go         # Authentication middleware
 │   └── ...                   # Additional handlers
 ├── view/                     # Template components
 │   ├── layout/
 │   │   └── layout.templ      # Base layout & login form
 │   └── app/
-│       ├── dashboard.templ   # Dashboard page template
+│       ├── admin.templ       # Admin page template
 │       └── template_helpers.go # Formatting utilities
 ├── static/                   # Static assets
 │   ├── css/
-│   │   └── dashboard.css     # Custom styles
+│   │   └── admin.css         # Custom styles
 │   └── js/
-│       └── dashboard.js      # Interactive functionality
+│       └── admin.js          # Interactive functionality
 └── templates/                # Embedded templates
 ```
 
@@ -184,7 +184,7 @@ POST   /login               # Process login
 GET    /logout              # Logout
 
 // Protected endpoints
-GET    /dashboard           # Main dashboard
+GET    /admin               # Main admin interface
 GET    /overview            # Cluster overview API
 
 // Cluster management

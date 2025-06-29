@@ -9,7 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
-type DashboardData struct {
+type AdminData struct {
 	Username      string         `json:"username"`
 	ClusterStatus string         `json:"cluster_status"`
 	TotalVolumes  int            `json:"total_volumes"`
@@ -22,8 +22,8 @@ type DashboardData struct {
 	SystemHealth  string         `json:"system_health"`
 }
 
-// ShowDashboardPage displays the main dashboard
-func (s *DashboardServer) ShowDashboardPage(c *gin.Context) {
+// ShowAdmin displays the main admin page
+func (s *AdminServer) ShowAdmin(c *gin.Context) {
 	username := c.GetString("username")
 
 	// Get cluster topology
@@ -36,8 +36,8 @@ func (s *DashboardServer) ShowDashboardPage(c *gin.Context) {
 	// Get master nodes status
 	masterNodes := s.getMasterNodesStatus()
 
-	// Prepare dashboard data
-	dashboardData := DashboardData{
+	// Prepare admin data
+	adminData := AdminData{
 		Username:      username,
 		ClusterStatus: s.determineClusterStatus(topology, masterNodes),
 		TotalVolumes:  topology.TotalVolumes,
@@ -50,12 +50,12 @@ func (s *DashboardServer) ShowDashboardPage(c *gin.Context) {
 		SystemHealth:  s.determineSystemHealth(topology, masterNodes),
 	}
 
-	// For now, return JSON instead of template rendering
-	c.JSON(http.StatusOK, dashboardData)
+	// Return JSON for now - template rendering will be handled at command level
+	c.JSON(http.StatusOK, adminData)
 }
 
-// ShowOverviewPage displays cluster overview
-func (s *DashboardServer) ShowOverviewPage(c *gin.Context) {
+// ShowOverview displays cluster overview
+func (s *AdminServer) ShowOverview(c *gin.Context) {
 	topology, err := s.GetClusterTopology()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -66,41 +66,42 @@ func (s *DashboardServer) ShowOverviewPage(c *gin.Context) {
 }
 
 // getMasterNodesStatus checks status of all master nodes
-func (s *DashboardServer) getMasterNodesStatus() []MasterNode {
+func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 	var masterNodes []MasterNode
 
-	for _, masterAddr := range s.masterAddresses {
-		var isLeader bool
-		var status string
+	// Since we have a single master address, create one entry
+	var isLeader bool = true // Assume leader since it's the only master we know about
+	var status string
 
-		// Try to get leader info from this master
-		err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
-			if err != nil {
-				return err
-			}
-			isLeader = resp.IsLeader
-			return nil
-		})
-
+	// Try to get leader info from this master
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		_, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 		if err != nil {
-			status = "unreachable"
-		} else {
-			status = "active"
+			return err
 		}
+		// For now, assume this master is the leader since we can connect to it
+		isLeader = true
+		return nil
+	})
 
-		masterNodes = append(masterNodes, MasterNode{
-			Address:  string(masterAddr),
-			IsLeader: isLeader,
-			Status:   status,
-		})
+	if err != nil {
+		status = "unreachable"
+		isLeader = false
+	} else {
+		status = "active"
 	}
+
+	masterNodes = append(masterNodes, MasterNode{
+		Address:  s.masterAddress,
+		IsLeader: isLeader,
+		Status:   status,
+	})
 
 	return masterNodes
 }
 
 // determineClusterStatus analyzes cluster health
-func (s *DashboardServer) determineClusterStatus(topology *ClusterTopology, masters []MasterNode) string {
+func (s *AdminServer) determineClusterStatus(topology *ClusterTopology, masters []MasterNode) string {
 	// Check if we have an active leader
 	hasActiveLeader := false
 	for _, master := range masters {
@@ -132,7 +133,7 @@ func (s *DashboardServer) determineClusterStatus(topology *ClusterTopology, mast
 }
 
 // determineSystemHealth provides overall system health assessment
-func (s *DashboardServer) determineSystemHealth(topology *ClusterTopology, masters []MasterNode) string {
+func (s *AdminServer) determineSystemHealth(topology *ClusterTopology, masters []MasterNode) string {
 	// Simple health calculation based on active components
 	totalComponents := len(masters) + len(topology.VolumeServers)
 	activeComponents := 0

@@ -2,10 +2,10 @@ package app
 
 import (
     "fmt"
-    "github.com/seaweedfs/seaweedfs/weed/cmd/dashboard/dash"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
 
-templ Dashboard(data dash.DashboardData) {
+templ Admin(data dash.AdminData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <h1 class="h2">
             <i class="fas fa-tachometer-alt me-2"></i>Dashboard
@@ -227,7 +227,7 @@ templ Dashboard(data dash.DashboardData) {
                                         <tr>
                                             <td>{vs.ID}</td>
                                             <td>
-                                                <a href={fmt.Sprintf("http://%s", vs.PublicURL)} target="_blank">
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s", vs.PublicURL))} target="_blank">
                                                     {vs.Address}
                                                     <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                                 </a>

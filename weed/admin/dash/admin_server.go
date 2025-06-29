@@ -3,6 +3,7 @@ package dash
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -13,12 +14,11 @@ import (
 	"google.golang.org/grpc"
 )
 
-type DashboardServer struct {
-	masterAddresses []pb.ServerAddress
-	filerAddress    pb.ServerAddress
+type AdminServer struct {
+	masterAddress   string
+	filerAddress    string
+	templateFS      http.FileSystem
 	grpcDialOption  grpc.DialOption
-	adminUser       string
-	adminPassword   string
 	cacheExpiration time.Duration
 	lastCacheUpdate time.Time
 	cachedTopology  *ClusterTopology
@@ -64,45 +64,39 @@ type VolumeServer struct {
 	Status        string    `json:"status"`
 }
 
-func NewDashboardServer(
-	masterAddresses []pb.ServerAddress,
-	filerAddress pb.ServerAddress,
-	grpcDialOption grpc.DialOption,
-	adminUser, adminPassword string,
-) *DashboardServer {
-	return &DashboardServer{
-		masterAddresses: masterAddresses,
+func NewAdminServer(masterAddress, filerAddress string, templateFS http.FileSystem) *AdminServer {
+	return &AdminServer{
+		masterAddress:   masterAddress,
 		filerAddress:    filerAddress,
-		grpcDialOption:  grpcDialOption,
-		adminUser:       adminUser,
-		adminPassword:   adminPassword,
+		templateFS:      templateFS,
+		grpcDialOption:  grpc.WithInsecure(),
 		cacheExpiration: 30 * time.Second,
 	}
 }
 
 // WithMasterClient executes a function with a master client connection
-func (s *DashboardServer) WithMasterClient(f func(client master_pb.SeaweedClient) error) error {
-	return pb.WithMasterClient(false, s.masterAddresses[0], s.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+func (s *AdminServer) WithMasterClient(f func(client master_pb.SeaweedClient) error) error {
+	return pb.WithMasterClient(false, pb.ServerAddress(s.masterAddress), s.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		return f(client)
 	})
 }
 
 // WithFilerClient executes a function with a filer client connection
-func (s *DashboardServer) WithFilerClient(f func(client filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClient(false, 0, s.filerAddress, s.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+func (s *AdminServer) WithFilerClient(f func(client filer_pb.SeaweedFilerClient) error) error {
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(s.filerAddress), s.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		return f(client)
 	})
 }
 
 // WithVolumeServerClient executes a function with a volume server client connection
-func (s *DashboardServer) WithVolumeServerClient(address pb.ServerAddress, f func(client volume_server_pb.VolumeServerClient) error) error {
+func (s *AdminServer) WithVolumeServerClient(address pb.ServerAddress, f func(client volume_server_pb.VolumeServerClient) error) error {
 	return operation.WithVolumeServerClient(false, address, s.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		return f(client)
 	})
 }
 
 // GetClusterTopology returns the current cluster topology with caching
-func (s *DashboardServer) GetClusterTopology() (*ClusterTopology, error) {
+func (s *AdminServer) GetClusterTopology() (*ClusterTopology, error) {
 	now := time.Now()
 	if s.cachedTopology != nil && now.Sub(s.lastCacheUpdate) < s.cacheExpiration {
 		return s.cachedTopology, nil
@@ -180,7 +174,7 @@ func (s *DashboardServer) GetClusterTopology() (*ClusterTopology, error) {
 }
 
 // InvalidateCache forces a refresh of cached data
-func (s *DashboardServer) InvalidateCache() {
+func (s *AdminServer) InvalidateCache() {
 	s.lastCacheUpdate = time.Time{}
 	s.cachedTopology = nil
 }
