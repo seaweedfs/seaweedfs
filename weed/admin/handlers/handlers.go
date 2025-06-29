@@ -1,0 +1,220 @@
+package handlers
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
+	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+)
+
+// AdminHandlers contains all the HTTP handlers for the admin interface
+type AdminHandlers struct {
+	adminServer *dash.AdminServer
+}
+
+// NewAdminHandlers creates a new instance of AdminHandlers
+func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
+	return &AdminHandlers{
+		adminServer: adminServer,
+	}
+}
+
+// SetupRoutes configures all the routes for the admin interface
+func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, password string) {
+	// Health check (no auth required)
+	r.GET("/health", h.HealthCheck)
+
+	// Main admin interface route
+	r.GET("/", h.ShowDashboard)
+
+	// S3 Buckets management routes
+	r.GET("/s3/buckets", h.ShowS3Buckets)
+	r.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
+
+	// API routes for AJAX calls
+	api := r.Group("/api")
+	{
+		api.GET("/cluster/topology", h.GetClusterTopology)
+		api.GET("/cluster/masters", h.GetMasters)
+		api.GET("/cluster/volumes", h.GetVolumeServers)
+		api.GET("/admin", h.adminServer.ShowAdmin) // JSON API for admin data
+
+		// S3 API routes
+		s3Api := api.Group("/s3")
+		{
+			s3Api.GET("/buckets", h.adminServer.ListBucketsAPI)
+			s3Api.POST("/buckets", h.adminServer.CreateBucket)
+			s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
+			s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
+		}
+	}
+}
+
+// HealthCheck returns the health status of the admin interface
+func (h *AdminHandlers) HealthCheck(c *gin.Context) {
+	c.JSON(200, gin.H{"status": "ok"})
+}
+
+// ShowDashboard renders the main admin dashboard
+func (h *AdminHandlers) ShowDashboard(c *gin.Context) {
+	// Get admin data from the server
+	adminData := h.getAdminData(c)
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	adminComponent := app.Admin(adminData)
+	layoutComponent := layout.Layout(c, adminComponent)
+	err := layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
+// ShowS3Buckets renders the S3 buckets management page
+func (h *AdminHandlers) ShowS3Buckets(c *gin.Context) {
+	// Get S3 buckets data from the server
+	s3Data := h.getS3BucketsData(c)
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	s3Component := app.S3Buckets(s3Data)
+	layoutComponent := layout.Layout(c, s3Component)
+	err := layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
+// ShowBucketDetails returns detailed information about a specific bucket
+func (h *AdminHandlers) ShowBucketDetails(c *gin.Context) {
+	bucketName := c.Param("bucket")
+	details, err := h.adminServer.GetBucketDetails(bucketName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get bucket details: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, details)
+}
+
+// GetClusterTopology returns the cluster topology as JSON
+func (h *AdminHandlers) GetClusterTopology(c *gin.Context) {
+	topology, err := h.adminServer.GetClusterTopology()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, topology)
+}
+
+// GetMasters returns master node information
+func (h *AdminHandlers) GetMasters(c *gin.Context) {
+	// Simple master info
+	c.JSON(http.StatusOK, gin.H{"masters": []gin.H{{"address": "localhost:9333", "status": "active"}}})
+}
+
+// GetVolumeServers returns volume server information
+func (h *AdminHandlers) GetVolumeServers(c *gin.Context) {
+	topology, err := h.adminServer.GetClusterTopology()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"volume_servers": topology.VolumeServers})
+}
+
+// getS3BucketsData retrieves S3 buckets data from the server
+func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+
+	// Get S3 buckets
+	buckets, err := h.adminServer.GetS3Buckets()
+	if err != nil {
+		// Return empty data on error
+		return dash.S3BucketsData{
+			Username:     username,
+			Buckets:      []dash.S3Bucket{},
+			TotalBuckets: 0,
+			TotalSize:    0,
+			LastUpdated:  time.Now(),
+		}
+	}
+
+	// Calculate totals
+	var totalSize int64
+	for _, bucket := range buckets {
+		totalSize += bucket.Size
+	}
+
+	return dash.S3BucketsData{
+		Username:     username,
+		Buckets:      buckets,
+		TotalBuckets: len(buckets),
+		TotalSize:    totalSize,
+		LastUpdated:  time.Now(),
+	}
+}
+
+// getAdminData retrieves admin data from the server
+func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+
+	// Get cluster topology
+	topology, err := h.adminServer.GetClusterTopology()
+	if err != nil {
+		// Return default data on error
+		return dash.AdminData{
+			Username:      username,
+			ClusterStatus: "error",
+			SystemHealth:  "unknown",
+			LastUpdated:   time.Now(),
+		}
+	}
+
+	// Get master nodes status (simplified version of what's in the handler)
+	masterNodes := []dash.MasterNode{
+		{
+			Address:  "localhost:9333", // Use the configured master address
+			IsLeader: true,
+			Status:   "active",
+		},
+	}
+
+	return dash.AdminData{
+		Username:      username,
+		ClusterStatus: h.determineClusterStatus(topology, masterNodes),
+		TotalVolumes:  topology.TotalVolumes,
+		TotalFiles:    topology.TotalFiles,
+		TotalSize:     topology.TotalSize,
+		MasterNodes:   masterNodes,
+		VolumeServers: topology.VolumeServers,
+		DataCenters:   topology.DataCenters,
+		LastUpdated:   topology.UpdatedAt,
+		SystemHealth:  h.determineSystemHealth(topology, masterNodes),
+	}
+}
+
+// Helper functions
+func (h *AdminHandlers) determineClusterStatus(topology *dash.ClusterTopology, masters []dash.MasterNode) string {
+	if len(topology.VolumeServers) == 0 {
+		return "warning"
+	}
+	return "healthy"
+}
+
+func (h *AdminHandlers) determineSystemHealth(topology *dash.ClusterTopology, masters []dash.MasterNode) string {
+	if len(topology.VolumeServers) > 0 && len(masters) > 0 {
+		return "good"
+	}
+	return "fair"
+}
