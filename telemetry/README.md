@@ -35,12 +35,14 @@ message TelemetryData {
   string cluster_id = 1;           // In-memory generated UUID
   string version = 2;              // SeaweedFS version
   string os = 3;                   // Operating system
-  repeated string features = 4;     // Enabled features
-  string deployment = 5;           // Deployment type
+  // Field 4 reserved (was features)
+  // Field 5 reserved (was deployment)
   int32 volume_server_count = 6;   // Number of volume servers
   uint64 total_disk_bytes = 7;     // Total disk usage
   int32 total_volume_count = 8;    // Total volume count
-  int64 timestamp = 9;             // Collection timestamp
+  int32 filer_count = 9;           // Number of filer servers
+  int32 broker_count = 10;         // Number of broker servers
+  int64 timestamp = 11;            // Collection timestamp
 }
 ```
 
@@ -59,11 +61,11 @@ message TelemetryData {
 | `cluster_id` | In-memory UUID (changes on restart) | `a1b2c3d4-...` |
 | `version` | SeaweedFS version | `3.45` |
 | `os` | Operating system and architecture | `linux/amd64` |
-| `features` | Enabled components | `["filer", "s3api"]` |
-| `deployment` | Deployment type | `cluster` |
 | `volume_server_count` | Number of volume servers | `5` |
 | `total_disk_bytes` | Total disk usage across cluster | `1073741824` |
 | `total_volume_count` | Total number of volumes | `120` |
+| `filer_count` | Number of filer servers | `2` |
+| `broker_count` | Number of broker servers | `1` |
 | `timestamp` | When data was collected | `1640995200` |
 
 ## Quick Start
@@ -134,12 +136,12 @@ The telemetry server exposes these Prometheus metrics:
 - `seaweedfs_telemetry_active_clusters`: Active clusters (7 days)
 
 ### Per-Cluster Metrics
-- `seaweedfs_telemetry_volume_servers{cluster_id, version, os, deployment}`: Volume servers per cluster
-- `seaweedfs_telemetry_disk_bytes{cluster_id, version, os, deployment}`: Disk usage per cluster  
-- `seaweedfs_telemetry_volume_count{cluster_id, version, os, deployment}`: Volume count per cluster
-- `seaweedfs_telemetry_filer_count{cluster_id, version, os, deployment}`: Filer servers per cluster
-- `seaweedfs_telemetry_broker_count{cluster_id, version, os, deployment}`: Broker servers per cluster
-- `seaweedfs_telemetry_cluster_info{cluster_id, version, os, deployment, features}`: Cluster metadata
+- `seaweedfs_telemetry_volume_servers{cluster_id, version, os}`: Volume servers per cluster
+- `seaweedfs_telemetry_disk_bytes{cluster_id, version, os}`: Disk usage per cluster  
+- `seaweedfs_telemetry_volume_count{cluster_id, version, os}`: Volume count per cluster
+- `seaweedfs_telemetry_filer_count{cluster_id, version, os}`: Filer servers per cluster
+- `seaweedfs_telemetry_broker_count{cluster_id, version, os}`: Broker servers per cluster
+- `seaweedfs_telemetry_cluster_info{cluster_id, version, os}`: Cluster metadata
 
 ### Server Metrics
 - `seaweedfs_telemetry_reports_received_total`: Total telemetry reports received
@@ -262,7 +264,7 @@ The included Grafana dashboard provides:
 
 - **Overview**: Total and active clusters, version distribution
 - **Resource Usage**: Volume servers and disk usage over time  
-- **Deployments**: Deployment type and OS distribution
+- **Infrastructure**: Operating system distribution and server counts
 - **Growth Trends**: Historical growth patterns
 
 ### Custom Queries
@@ -274,8 +276,8 @@ seaweedfs_telemetry_active_clusters
 # Disk usage by version
 sum by (version) (seaweedfs_telemetry_disk_bytes)
 
-# Volume servers by deployment type
-sum by (deployment) (seaweedfs_telemetry_volume_servers)
+# Volume servers by operating system
+sum by (os) (seaweedfs_telemetry_volume_servers)
 
 # Filer servers by version
 sum by (version) (seaweedfs_telemetry_filer_count)
