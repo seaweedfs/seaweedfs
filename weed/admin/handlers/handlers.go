@@ -12,13 +12,16 @@ import (
 
 // AdminHandlers contains all the HTTP handlers for the admin interface
 type AdminHandlers struct {
-	adminServer *dash.AdminServer
+	adminServer  *dash.AdminServer
+	authHandlers *AuthHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
 func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
+	authHandlers := NewAuthHandlers(adminServer)
 	return &AdminHandlers{
-		adminServer: adminServer,
+		adminServer:  adminServer,
+		authHandlers: authHandlers,
 	}
 }
 
@@ -27,28 +30,66 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 	// Health check (no auth required)
 	r.GET("/health", h.HealthCheck)
 
-	// Main admin interface route
-	r.GET("/", h.ShowDashboard)
+	if authRequired {
+		// Authentication routes (no auth required)
+		r.GET("/login", h.authHandlers.ShowLogin)
+		r.POST("/login", h.authHandlers.HandleLogin(username, password))
+		r.GET("/logout", h.authHandlers.HandleLogout)
 
-	// S3 Buckets management routes
-	r.GET("/s3/buckets", h.ShowS3Buckets)
-	r.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
+		// Protected routes group
+		protected := r.Group("/")
+		protected.Use(dash.RequireAuth())
 
-	// API routes for AJAX calls
-	api := r.Group("/api")
-	{
-		api.GET("/cluster/topology", h.GetClusterTopology)
-		api.GET("/cluster/masters", h.GetMasters)
-		api.GET("/cluster/volumes", h.GetVolumeServers)
-		api.GET("/admin", h.adminServer.ShowAdmin) // JSON API for admin data
+		// Main admin interface routes
+		protected.GET("/", h.ShowDashboard)
+		protected.GET("/admin", h.ShowDashboard)
 
-		// S3 API routes
-		s3Api := api.Group("/s3")
+		// S3 Buckets management routes
+		protected.GET("/s3/buckets", h.ShowS3Buckets)
+		protected.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
+
+		// API routes for AJAX calls
+		api := protected.Group("/api")
 		{
-			s3Api.GET("/buckets", h.adminServer.ListBucketsAPI)
-			s3Api.POST("/buckets", h.adminServer.CreateBucket)
-			s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
-			s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
+			api.GET("/cluster/topology", h.GetClusterTopology)
+			api.GET("/cluster/masters", h.GetMasters)
+			api.GET("/cluster/volumes", h.GetVolumeServers)
+			api.GET("/admin", h.adminServer.ShowAdmin) // JSON API for admin data
+
+			// S3 API routes
+			s3Api := api.Group("/s3")
+			{
+				s3Api.GET("/buckets", h.adminServer.ListBucketsAPI)
+				s3Api.POST("/buckets", h.adminServer.CreateBucket)
+				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
+				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
+			}
+		}
+	} else {
+		// No authentication required - all routes are public
+		r.GET("/", h.ShowDashboard)
+		r.GET("/admin", h.ShowDashboard)
+
+		// S3 Buckets management routes
+		r.GET("/s3/buckets", h.ShowS3Buckets)
+		r.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
+
+		// API routes for AJAX calls
+		api := r.Group("/api")
+		{
+			api.GET("/cluster/topology", h.GetClusterTopology)
+			api.GET("/cluster/masters", h.GetMasters)
+			api.GET("/cluster/volumes", h.GetVolumeServers)
+			api.GET("/admin", h.adminServer.ShowAdmin) // JSON API for admin data
+
+			// S3 API routes
+			s3Api := api.Group("/s3")
+			{
+				s3Api.GET("/buckets", h.adminServer.ListBucketsAPI)
+				s3Api.POST("/buckets", h.adminServer.CreateBucket)
+				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
+				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
+			}
 		}
 	}
 }
@@ -172,12 +213,26 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 	// Get cluster topology
 	topology, err := h.adminServer.GetClusterTopology()
 	if err != nil {
-		// Return default data on error
+		// Return default data when services are not available
+		masterNodes := []dash.MasterNode{
+			{
+				Address:  "localhost:9333",
+				IsLeader: true,
+				Status:   "unreachable",
+			},
+		}
+
 		return dash.AdminData{
 			Username:      username,
-			ClusterStatus: "error",
-			SystemHealth:  "unknown",
+			ClusterStatus: "warning",
+			TotalVolumes:  0,
+			TotalFiles:    0,
+			TotalSize:     0,
+			MasterNodes:   masterNodes,
+			VolumeServers: []dash.VolumeServer{},
+			DataCenters:   []dash.DataCenter{},
 			LastUpdated:   time.Now(),
+			SystemHealth:  "poor",
 		}
 	}
 
@@ -190,7 +245,7 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 		},
 	}
 
-	return dash.AdminData{
+	adminData := dash.AdminData{
 		Username:      username,
 		ClusterStatus: h.determineClusterStatus(topology, masterNodes),
 		TotalVolumes:  topology.TotalVolumes,
@@ -202,6 +257,8 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 		LastUpdated:   topology.UpdatedAt,
 		SystemHealth:  h.determineSystemHealth(topology, masterNodes),
 	}
+
+	return adminData
 }
 
 // Helper functions

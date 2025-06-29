@@ -12,7 +12,7 @@ func (s *AdminServer) ShowLogin(c *gin.Context) {
 	// If authentication is not required, redirect to admin
 	session := sessions.Default(c)
 	if session.Get("authenticated") == true {
-		c.Redirect(http.StatusTemporaryRedirect, "/admin")
+		c.Redirect(http.StatusSeeOther, "/admin")
 		return
 	}
 
@@ -35,12 +35,12 @@ func (s *AdminServer) HandleLogin(username, password string) gin.HandlerFunc {
 			session.Set("username", loginUsername)
 			session.Save()
 
-			c.Redirect(http.StatusTemporaryRedirect, "/admin")
+			c.Redirect(http.StatusSeeOther, "/admin")
 			return
 		}
 
 		// Authentication failed
-		c.Redirect(http.StatusTemporaryRedirect, "/login?error=Invalid credentials")
+		c.Redirect(http.StatusSeeOther, "/login?error=Invalid credentials")
 	}
 }
 
@@ -49,7 +49,7 @@ func (s *AdminServer) HandleLogout(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Clear()
 	session.Save()
-	c.Redirect(http.StatusTemporaryRedirect, "/login")
+	c.Redirect(http.StatusSeeOther, "/login")
 }
 
 // Additional methods for admin functionality
