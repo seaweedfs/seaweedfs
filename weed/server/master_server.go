@@ -149,14 +149,6 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		ms.telemetryCollector.SetVersion(version.VERSION_NUMBER)
 		ms.telemetryCollector.SetOS(runtime.GOOS + "/" + runtime.GOARCH)
 
-		// Determine features and deployment type
-		features := []string{"master"}
-		if len(peers) > 1 {
-			features = append(features, "cluster")
-		}
-		ms.telemetryCollector.SetFeatures(features)
-		ms.telemetryCollector.SetDeployment(telemetry.DetermineDeployment(true, false, len(peers)))
-
 		// Start periodic telemetry collection (every 24 hours)
 		ms.telemetryCollector.StartPeriodicCollection(24 * time.Hour)
 	}

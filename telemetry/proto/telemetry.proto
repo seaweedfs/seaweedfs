@@ -15,11 +15,11 @@ message TelemetryData {
   // Operating system (e.g., "linux/amd64")
   string os = 3;
   
-  // Enabled features (e.g., ["filer", "s3api", "mq"])
-  repeated string features = 4;
+  // Field 4 reserved (was features)
+  reserved 4;
   
-  // Deployment type ("standalone", "cluster", "master-only", "volume-only")
-  string deployment = 5;
+  // Field 5 reserved (was deployment)
+  reserved 5;
   
   // Number of volume servers in the cluster
   int32 volume_server_count = 6;

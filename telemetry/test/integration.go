@@ -151,8 +151,6 @@ func testProtobufMarshaling() error {
 		ClusterId:         "test-cluster-12345",
 		Version:           "test-3.45",
 		Os:                "linux/amd64",
-		Features:          []string{"filer", "s3api"},
-		Deployment:        "test",
 		VolumeServerCount: 2,
 		TotalDiskBytes:    1000000,
 		TotalVolumeCount:  10,
@@ -197,8 +195,6 @@ func testTelemetryClient() error {
 	testData := &proto.TelemetryData{
 		Version:           "test-3.45",
 		Os:                "linux/amd64",
-		Features:          []string{"filer", "s3api", "mq"},
-		Deployment:        "integration-test",
 		VolumeServerCount: 3,
 		TotalDiskBytes:    1073741824, // 1GB
 		TotalVolumeCount:  50,

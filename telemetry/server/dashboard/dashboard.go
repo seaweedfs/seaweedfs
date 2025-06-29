@@ -123,10 +123,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 <canvas id="osChart" width="400" height="200"></canvas>
             </div>
 
-            <div class="chart-container">
-                <div class="chart-title">Deployment Types</div>
-                <canvas id="deploymentChart" width="400" height="200"></canvas>
-            </div>
+            
 
             <div class="chart-container">
                 <div class="chart-title">Volume Servers Over Time</div>
@@ -178,8 +175,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             // OS chart
             createPieChart('osChart', 'Operating System Distribution', stats.os_distribution || {});
             
-            // Deployment chart
-            createPieChart('deploymentChart', 'Deployment Types', stats.deployments || {});
+
             
             // Server count over time
             if (metrics.dates && metrics.server_counts) {

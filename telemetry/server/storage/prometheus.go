@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"sync"
 	"time"
 
@@ -47,27 +46,27 @@ func NewPrometheusStorage() *PrometheusStorage {
 		volumeServerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_volume_servers",
 			Help: "Number of volume servers per cluster",
-		}, []string{"cluster_id", "version", "os", "deployment"}),
+		}, []string{"cluster_id", "version", "os"}),
 		totalDiskBytes: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_disk_bytes",
 			Help: "Total disk usage in bytes per cluster",
-		}, []string{"cluster_id", "version", "os", "deployment"}),
+		}, []string{"cluster_id", "version", "os"}),
 		totalVolumeCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_volume_count",
 			Help: "Total number of volumes per cluster",
-		}, []string{"cluster_id", "version", "os", "deployment"}),
+		}, []string{"cluster_id", "version", "os"}),
 		filerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_filer_count",
 			Help: "Number of filer servers per cluster",
-		}, []string{"cluster_id", "version", "os", "deployment"}),
+		}, []string{"cluster_id", "version", "os"}),
 		brokerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_broker_count",
 			Help: "Number of broker servers per cluster",
-		}, []string{"cluster_id", "version", "os", "deployment"}),
+		}, []string{"cluster_id", "version", "os"}),
 		clusterInfo: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_cluster_info",
 			Help: "Cluster information (always 1, labels contain metadata)",
-		}, []string{"cluster_id", "version", "os", "deployment", "features"}),
+		}, []string{"cluster_id", "version", "os"}),
 		telemetryReceived: promauto.NewCounter(prometheus.CounterOpts{
 			Name: "seaweedfs_telemetry_reports_received_total",
 			Help: "Total number of telemetry reports received",
@@ -86,7 +85,6 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 		"cluster_id": data.ClusterId,
 		"version":    data.Version,
 		"os":         data.Os,
-		"deployment": data.Deployment,
 	}
 
 	s.volumeServerCount.With(labels).Set(float64(data.VolumeServerCount))
@@ -95,14 +93,10 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.filerCount.With(labels).Set(float64(data.FilerCount))
 	s.brokerCount.With(labels).Set(float64(data.BrokerCount))
 
-	// Features as JSON string for the label
-	featuresJSON, _ := json.Marshal(data.Features)
 	infoLabels := prometheus.Labels{
 		"cluster_id": data.ClusterId,
 		"version":    data.Version,
 		"os":         data.Os,
-		"deployment": data.Deployment,
-		"features":   string(featuresJSON),
 	}
 	s.clusterInfo.With(infoLabels).Set(1)
 
@@ -188,7 +182,6 @@ func (s *PrometheusStorage) updateStats() {
 	activeInstances := 0
 	versions := make(map[string]int)
 	osDistribution := make(map[string]int)
-	deployments := make(map[string]int)
 
 	for _, instance := range s.instances {
 		if instance.ReceivedAt.After(last30Days) {
@@ -198,7 +191,6 @@ func (s *PrometheusStorage) updateStats() {
 			activeInstances++
 			versions[instance.TelemetryData.Version]++
 			osDistribution[instance.TelemetryData.Os]++
-			deployments[instance.TelemetryData.Deployment]++
 		}
 	}
 
@@ -212,7 +204,6 @@ func (s *PrometheusStorage) updateStats() {
 		"active_instances": activeInstances,
 		"versions":         versions,
 		"os_distribution":  osDistribution,
-		"deployments":      deployments,
 	}
 }
 
@@ -231,7 +222,6 @@ func (s *PrometheusStorage) CleanupOldInstances(maxAge time.Duration) {
 				"cluster_id": instance.TelemetryData.ClusterId,
 				"version":    instance.TelemetryData.Version,
 				"os":         instance.TelemetryData.Os,
-				"deployment": instance.TelemetryData.Deployment,
 			}
 			s.volumeServerCount.Delete(labels)
 			s.totalDiskBytes.Delete(labels)

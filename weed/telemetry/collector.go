@@ -14,8 +14,6 @@ type Collector struct {
 	topo         *topology.Topology
 	cluster      *cluster.Cluster
 	masterServer interface{} // Will be set to *weed_server.MasterServer to access client tracking
-	features     []string
-	deployment   string
 	version      string
 	os           string
 }
@@ -27,21 +25,9 @@ func NewCollector(client *Client, topo *topology.Topology, cluster *cluster.Clus
 		topo:         topo,
 		cluster:      cluster,
 		masterServer: nil,
-		features:     []string{},
-		deployment:   "unknown",
 		version:      "unknown",
 		os:           "unknown",
 	}
-}
-
-// SetFeatures sets the list of enabled features
-func (c *Collector) SetFeatures(features []string) {
-	c.features = features
-}
-
-// SetDeployment sets the deployment type (standalone, cluster, etc.)
-func (c *Collector) SetDeployment(deployment string) {
-	c.deployment = deployment
 }
 
 // SetVersion sets the SeaweedFS version
@@ -82,7 +68,7 @@ func (c *Collector) StartPeriodicCollection(interval time.Duration) {
 
 	// Send initial telemetry after a short delay
 	go func() {
-		time.Sleep(30 * time.Second) // Wait for cluster to stabilize
+		time.Sleep(61 * time.Second) // Wait for cluster to stabilize
 		c.CollectAndSendAsync()
 	}()
 
@@ -99,11 +85,9 @@ func (c *Collector) StartPeriodicCollection(interval time.Duration) {
 // collectData gathers telemetry data from the topology
 func (c *Collector) collectData() *proto.TelemetryData {
 	data := &proto.TelemetryData{
-		Version:    c.version,
-		Os:         c.os,
-		Features:   c.features,
-		Deployment: c.deployment,
-		Timestamp:  time.Now().Unix(),
+		Version:   c.version,
+		Os:        c.os,
+		Timestamp: time.Now().Unix(),
 	}
 
 	if c.topo != nil {
@@ -198,21 +182,4 @@ func (c *Collector) getAllBrokerGroups() []string {
 	// For simplicity, we check the default group
 	// In a more sophisticated implementation, we could enumerate all groups
 	return []string{""}
-}
-
-// DetermineDeployment determines the deployment type based on configuration
-func DetermineDeployment(isMasterEnabled, isVolumeEnabled bool, peerCount int) string {
-	if isMasterEnabled && isVolumeEnabled {
-		if peerCount > 1 {
-			return "cluster"
-		}
-		return "standalone"
-	}
-	if isMasterEnabled {
-		return "master-only"
-	}
-	if isVolumeEnabled {
-		return "volume-only"
-	}
-	return "unknown"
 }
