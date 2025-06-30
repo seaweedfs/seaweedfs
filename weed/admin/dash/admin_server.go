@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type AdminServer struct {
@@ -96,14 +97,16 @@ func NewAdminServer(masterAddress, filerAddress string, templateFS http.FileSyst
 		masterAddress:   masterAddress,
 		filerAddress:    filerAddress,
 		templateFS:      templateFS,
-		grpcDialOption:  grpc.WithInsecure(),
+		grpcDialOption:  grpc.WithTransportCredentials(insecure.NewCredentials()),
 		cacheExpiration: 30 * time.Second,
 	}
 }
 
 // WithMasterClient executes a function with a master client connection
 func (s *AdminServer) WithMasterClient(f func(client master_pb.SeaweedClient) error) error {
-	return pb.WithMasterClient(false, pb.ServerAddress(s.masterAddress), s.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+	masterAddr := pb.ServerAddress(s.masterAddress)
+
+	return pb.WithMasterClient(false, masterAddr, s.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		return f(client)
 	})
 }
@@ -133,64 +136,10 @@ func (s *AdminServer) GetClusterTopology() (*ClusterTopology, error) {
 		UpdatedAt: now,
 	}
 
-	// Get cluster status from master
-	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		if err != nil {
-			return err
-		}
-
-		// Process topology information
-		dcMap := make(map[string]*DataCenter)
-		rackMap := make(map[string]*Rack)
-
-		for _, topologyInfo := range resp.TopologyInfo.DataCenterInfos {
-			dc := &DataCenter{
-				ID:    topologyInfo.Id,
-				Racks: []Rack{},
-			}
-			dcMap[dc.ID] = dc
-
-			for _, rackInfo := range topologyInfo.RackInfos {
-				rack := &Rack{
-					ID:    rackInfo.Id,
-					Nodes: []VolumeServer{},
-				}
-				rackMap[fmt.Sprintf("%s-%s", dc.ID, rack.ID)] = rack
-
-				for _, nodeInfo := range rackInfo.DataNodeInfos {
-					// Calculate totals from all disk infos
-					var totalVolumes, totalMaxVolumes int64
-					for _, diskInfo := range nodeInfo.DiskInfos {
-						totalVolumes += diskInfo.VolumeCount
-						totalMaxVolumes += diskInfo.MaxVolumeCount
-					}
-
-					vs := VolumeServer{
-						ID:            nodeInfo.Id,
-						Address:       nodeInfo.Id,
-						DataCenter:    dc.ID,
-						Rack:          rack.ID,
-						PublicURL:     nodeInfo.Id,
-						Volumes:       int(totalVolumes),
-						MaxVolumes:    int(totalMaxVolumes),
-						LastHeartbeat: now,
-						Status:        "active",
-					}
-					rack.Nodes = append(rack.Nodes, vs)
-					topology.VolumeServers = append(topology.VolumeServers, vs)
-					topology.TotalVolumes += vs.Volumes
-				}
-				dc.Racks = append(dc.Racks, *rack)
-			}
-			topology.DataCenters = append(topology.DataCenters, *dc)
-		}
-
-		return nil
-	})
-
+	// Use gRPC only
+	err := s.getTopologyViaGRPC(topology)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster topology: %v", err)
+		return nil, fmt.Errorf("gRPC topology request failed: %v", err)
 	}
 
 	// Cache the result
@@ -198,6 +147,82 @@ func (s *AdminServer) GetClusterTopology() (*ClusterTopology, error) {
 	s.lastCacheUpdate = now
 
 	return topology, nil
+}
+
+// getTopologyViaGRPC gets topology using gRPC (original method)
+func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
+	// Get cluster status from master
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			// Process gRPC response
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				dataCenter := DataCenter{
+					ID:    dc.Id,
+					Racks: []Rack{},
+				}
+
+				for _, rack := range dc.RackInfos {
+					rackObj := Rack{
+						ID:    rack.Id,
+						Nodes: []VolumeServer{},
+					}
+
+					for _, node := range rack.DataNodeInfos {
+						// Calculate totals from disk infos
+						var totalVolumes int64
+						var totalMaxVolumes int64
+						var totalSize int64
+						var totalFiles int64
+						var totalDiskUsage int64
+
+						for _, diskInfo := range node.DiskInfos {
+							totalVolumes += diskInfo.VolumeCount
+							totalMaxVolumes += diskInfo.MaxVolumeCount
+
+							// Sum up individual volume information
+							for _, volInfo := range diskInfo.VolumeInfos {
+								totalSize += int64(volInfo.Size)
+								totalFiles += int64(volInfo.FileCount)
+							}
+						}
+
+						vs := VolumeServer{
+							ID:            node.Id,
+							Address:       node.Id,
+							DataCenter:    dc.Id,
+							Rack:          rack.Id,
+							PublicURL:     node.Id,
+							Volumes:       int(totalVolumes),
+							MaxVolumes:    int(totalMaxVolumes),
+							DiskUsage:     totalDiskUsage,
+							DiskCapacity:  totalDiskUsage + (1000 * 1024 * 1024 * 1024), // Estimate +1TB
+							LastHeartbeat: time.Now(),
+							Status:        "active",
+						}
+
+						rackObj.Nodes = append(rackObj.Nodes, vs)
+						topology.VolumeServers = append(topology.VolumeServers, vs)
+						topology.TotalVolumes += vs.Volumes
+						topology.TotalFiles += totalFiles
+						topology.TotalSize += totalSize
+					}
+
+					dataCenter.Racks = append(dataCenter.Racks, rackObj)
+				}
+
+				topology.DataCenters = append(topology.DataCenters, dataCenter)
+			}
+		}
+
+		return nil
+	})
+
+	return err
 }
 
 // InvalidateCache forces a refresh of cached data
