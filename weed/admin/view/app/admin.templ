@@ -277,6 +277,72 @@ templ Admin(data dash.AdminData) {
             </div>
         </div>
 
+        <!-- Filer Nodes -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-folder me-2"></i>Filer Nodes
+                        </h6>
+                        <div class="dropdown no-arrow">
+                            <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                            </a>
+                            <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
+                                <div class="dropdown-header">Actions:</div>
+                                <a class="dropdown-item" href="/filer">File Browser</a>
+                                <a class="dropdown-item" href="/cluster">Topology View</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" width="100%" cellspacing="0">
+                                <thead>
+                                    <tr>
+                                        <th>Address</th>
+                                        <th>Data Center</th>
+                                        <th>Rack</th>
+                                        <th>Status</th>
+                                        <th>Last Updated</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for _, filer := range data.FilerNodes {
+                                        <tr>
+                                            <td>
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s", filer.Address))} target="_blank">
+                                                    {filer.Address}
+                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                </a>
+                                            </td>
+                                            <td>{filer.DataCenter}</td>
+                                            <td>{filer.Rack}</td>
+                                            <td>
+                                                <span class={fmt.Sprintf("badge bg-%s", getStatusColor(filer.Status))}>
+                                                    {filer.Status}
+                                                </span>
+                                            </td>
+                                            <td>{filer.LastUpdated.Format("2006-01-02 15:04:05")}</td>
+                                        </tr>
+                                    }
+                                    if len(data.FilerNodes) == 0 {
+                                        <tr>
+                                            <td colspan="5" class="text-center text-muted py-4">
+                                                <i class="fas fa-info-circle me-2"></i>
+                                                No filer nodes found
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Last Updated -->
         <div class="row">
             <div class="col-12">
