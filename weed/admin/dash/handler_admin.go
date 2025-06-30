@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
@@ -17,6 +19,7 @@ type AdminData struct {
 	TotalSize     int64          `json:"total_size"`
 	MasterNodes   []MasterNode   `json:"master_nodes"`
 	VolumeServers []VolumeServer `json:"volume_servers"`
+	FilerNodes    []FilerNode    `json:"filer_nodes"`
 	DataCenters   []DataCenter   `json:"datacenters"`
 	LastUpdated   time.Time      `json:"last_updated"`
 	SystemHealth  string         `json:"system_health"`
@@ -36,19 +39,32 @@ type CreateBucketRequest struct {
 	Region string `json:"region"`
 }
 
-// ShowAdmin displays the main admin page
-func (s *AdminServer) ShowAdmin(c *gin.Context) {
-	username := c.GetString("username")
+type FilerNode struct {
+	Address     string    `json:"address"`
+	DataCenter  string    `json:"datacenter"`
+	Rack        string    `json:"rack"`
+	Status      string    `json:"status"`
+	LastUpdated time.Time `json:"last_updated"`
+}
+
+// GetAdminData retrieves admin data as a struct (for reuse by both JSON and HTML handlers)
+func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
+	if username == "" {
+		username = "admin"
+	}
 
 	// Get cluster topology
 	topology, err := s.GetClusterTopology()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster topology: " + err.Error()})
-		return
+		glog.Errorf("Failed to get cluster topology: %v", err)
+		return AdminData{}, err
 	}
 
 	// Get master nodes status
 	masterNodes := s.getMasterNodesStatus()
+
+	// Get filer nodes status
+	filerNodes := s.getFilerNodesStatus()
 
 	// Prepare admin data
 	adminData := AdminData{
@@ -59,12 +75,26 @@ func (s *AdminServer) ShowAdmin(c *gin.Context) {
 		TotalSize:     topology.TotalSize,
 		MasterNodes:   masterNodes,
 		VolumeServers: topology.VolumeServers,
+		FilerNodes:    filerNodes,
 		DataCenters:   topology.DataCenters,
 		LastUpdated:   topology.UpdatedAt,
 		SystemHealth:  s.determineSystemHealth(topology, masterNodes),
 	}
 
-	// Return JSON for now - template rendering will be handled at command level
+	return adminData, nil
+}
+
+// ShowAdmin displays the main admin page (now uses GetAdminData)
+func (s *AdminServer) ShowAdmin(c *gin.Context) {
+	username := c.GetString("username")
+
+	adminData, err := s.GetAdminData(username)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get admin data: " + err.Error()})
+		return
+	}
+
+	// Return JSON for API calls
 	c.JSON(http.StatusOK, adminData)
 }
 
@@ -218,6 +248,42 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 	})
 
 	return masterNodes
+}
+
+// getFilerNodesStatus checks status of all filer nodes using master's ListClusterNodes
+func (s *AdminServer) getFilerNodesStatus() []FilerNode {
+	var filerNodes []FilerNode
+
+	// Get filer nodes from master using ListClusterNodes
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.FilerType,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Process each filer node
+		for _, node := range resp.ClusterNodes {
+			filerNodes = append(filerNodes, FilerNode{
+				Address:     node.Address,
+				DataCenter:  node.DataCenter,
+				Rack:        node.Rack,
+				Status:      "active", // If it's in the cluster list, it's considered active
+				LastUpdated: time.Now(),
+			})
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		glog.Errorf("Failed to get filer nodes from master %s: %v", s.masterAddress, err)
+		// Return empty list if we can't get filer info from master
+		return []FilerNode{}
+	}
+
+	return filerNodes
 }
 
 // determineClusterStatus analyzes cluster health

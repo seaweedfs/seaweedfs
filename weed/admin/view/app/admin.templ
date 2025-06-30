@@ -170,7 +170,7 @@ templ Admin(data dash.AdminData) {
                             </h3>
                         </div>
                         <div class="row">
-                            <div class="col-6">
+                            <div class="col-4">
                                 <div class="card bg-light">
                                     <div class="card-body">
                                         <h5>{fmt.Sprintf("%d", len(data.MasterNodes))}</h5>
@@ -178,11 +178,19 @@ templ Admin(data dash.AdminData) {
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-6">
+                            <div class="col-4">
                                 <div class="card bg-light">
                                     <div class="card-body">
                                         <h5>{fmt.Sprintf("%d", len(data.VolumeServers))}</h5>
                                         <small class="text-muted">Volume Servers</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h5>{fmt.Sprintf("%d", len(data.FilerNodes))}</h5>
+                                        <small class="text-muted">Filers</small>
                                     </div>
                                 </div>
                             </div>

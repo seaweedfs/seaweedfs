@@ -203,17 +203,18 @@ func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 	}
 }
 
-// getAdminData retrieves admin data from the server
+// getAdminData retrieves admin data from the server (now uses consolidated method)
 func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
 
-	// Get cluster topology
-	topology, err := h.adminServer.GetClusterTopology()
+	// Use the consolidated GetAdminData method from AdminServer
+	adminData, err := h.adminServer.GetAdminData(username)
 	if err != nil {
 		// Return default data when services are not available
+		if username == "" {
+			username = "admin"
+		}
+
 		masterNodes := []dash.MasterNode{
 			{
 				Address:  "localhost:9333",
@@ -230,32 +231,11 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 			TotalSize:     0,
 			MasterNodes:   masterNodes,
 			VolumeServers: []dash.VolumeServer{},
+			FilerNodes:    []dash.FilerNode{},
 			DataCenters:   []dash.DataCenter{},
 			LastUpdated:   time.Now(),
 			SystemHealth:  "poor",
 		}
-	}
-
-	// Get master nodes status (simplified version of what's in the handler)
-	masterNodes := []dash.MasterNode{
-		{
-			Address:  "localhost:9333", // Use the configured master address
-			IsLeader: true,
-			Status:   "active",
-		},
-	}
-
-	adminData := dash.AdminData{
-		Username:      username,
-		ClusterStatus: h.determineClusterStatus(topology, masterNodes),
-		TotalVolumes:  topology.TotalVolumes,
-		TotalFiles:    topology.TotalFiles,
-		TotalSize:     topology.TotalSize,
-		MasterNodes:   masterNodes,
-		VolumeServers: topology.VolumeServers,
-		DataCenters:   topology.DataCenters,
-		LastUpdated:   topology.UpdatedAt,
-		SystemHealth:  h.determineSystemHealth(topology, masterNodes),
 	}
 
 	return adminData
