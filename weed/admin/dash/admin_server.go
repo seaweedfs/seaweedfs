@@ -6,13 +6,15 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type AdminServer struct {
@@ -97,7 +99,7 @@ func NewAdminServer(masterAddress, filerAddress string, templateFS http.FileSyst
 		masterAddress:   masterAddress,
 		filerAddress:    filerAddress,
 		templateFS:      templateFS,
-		grpcDialOption:  grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpcDialOption:  security.LoadClientTLS(util.GetViper(), "grpc.client"),
 		cacheExpiration: 30 * time.Second,
 	}
 }
@@ -139,6 +141,7 @@ func (s *AdminServer) GetClusterTopology() (*ClusterTopology, error) {
 	// Use gRPC only
 	err := s.getTopologyViaGRPC(topology)
 	if err != nil {
+		glog.Errorf("Failed to connect to master server %s: %v", s.masterAddress, err)
 		return nil, fmt.Errorf("gRPC topology request failed: %v", err)
 	}
 
@@ -155,6 +158,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		if err != nil {
+			glog.Errorf("Failed to get volume list from master %s: %v", s.masterAddress, err)
 			return err
 		}
 
@@ -200,7 +204,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							Volumes:       int(totalVolumes),
 							MaxVolumes:    int(totalMaxVolumes),
 							DiskUsage:     totalDiskUsage,
-							DiskCapacity:  totalDiskUsage + (1000 * 1024 * 1024 * 1024), // Estimate +1TB
+							DiskCapacity:  totalMaxVolumes * int64(resp.VolumeSizeLimitMb) * 1024 * 1024,
 							LastHeartbeat: time.Now(),
 							Status:        "active",
 						}
