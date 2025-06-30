@@ -9,6 +9,7 @@ import (
 )
 
 var Commands = []*Command{
+	cmdAdmin,
 	cmdAutocomplete,
 	cmdUnautocomplete,
 	cmdBackup,
