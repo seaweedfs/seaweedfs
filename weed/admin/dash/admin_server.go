@@ -182,7 +182,6 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 						var totalMaxVolumes int64
 						var totalSize int64
 						var totalFiles int64
-						var totalDiskUsage int64
 
 						for _, diskInfo := range node.DiskInfos {
 							totalVolumes += diskInfo.VolumeCount
@@ -203,7 +202,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							PublicURL:     node.Id,
 							Volumes:       int(totalVolumes),
 							MaxVolumes:    int(totalMaxVolumes),
-							DiskUsage:     totalDiskUsage,
+							DiskUsage:     totalSize,
 							DiskCapacity:  totalMaxVolumes * int64(resp.VolumeSizeLimitMb) * 1024 * 1024,
 							LastHeartbeat: time.Now(),
 							Status:        "active",
