@@ -504,8 +504,35 @@ func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, dire
 // CreateS3Bucket creates a new S3 bucket
 func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// Create bucket directory
+		// First ensure /buckets directory exists
 		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+			Directory: "/",
+			Entry: &filer_pb.Entry{
+				Name:        "buckets",
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					FileMode: 0755,
+					Crtime:   time.Now().Unix(),
+					Mtime:    time.Now().Unix(),
+				},
+			},
+		})
+		// Ignore error if directory already exists
+		if err != nil && !strings.Contains(err.Error(), "already exists") && !strings.Contains(err.Error(), "existing entry") {
+			return fmt.Errorf("failed to create /buckets directory: %v", err)
+		}
+
+		// Check if bucket already exists
+		_, err = client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: "/buckets",
+			Name:      bucketName,
+		})
+		if err == nil {
+			return fmt.Errorf("bucket %s already exists", bucketName)
+		}
+
+		// Create bucket directory under /buckets
+		_, err = client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
 			Directory: "/buckets",
 			Entry: &filer_pb.Entry{
 				Name:        bucketName,
@@ -518,7 +545,7 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create bucket: %v", err)
+			return fmt.Errorf("failed to create bucket directory: %v", err)
 		}
 
 		return nil
