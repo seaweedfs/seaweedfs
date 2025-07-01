@@ -299,7 +299,7 @@ func readNeedleMap(baseFileName string) (*needle_map.MemDb, error) {
 
 	cm := needle_map.NewMemDb()
 	err = idx.WalkIndexFile(indexFile, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
-		if !offset.IsZero() && size != types.TombstoneFileSize {
+		if !offset.IsZero() && !size.IsDeleted() {
 			cm.Set(key, offset, size)
 		} else {
 			cm.Delete(key)
