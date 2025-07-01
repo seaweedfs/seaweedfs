@@ -48,6 +48,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/s3/buckets", h.ShowS3Buckets)
 		protected.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
 
+		// Cluster management routes
+		protected.GET("/cluster/hosts", h.ShowClusterHosts)
+		protected.GET("/cluster/volumes", h.ShowClusterVolumes)
+		protected.GET("/cluster/collections", h.ShowClusterCollections)
+
 		// API routes for AJAX calls
 		api := protected.Group("/api")
 		{
@@ -73,6 +78,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		// S3 Buckets management routes
 		r.GET("/s3/buckets", h.ShowS3Buckets)
 		r.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
+
+		// Cluster management routes
+		r.GET("/cluster/hosts", h.ShowClusterHosts)
+		r.GET("/cluster/volumes", h.ShowClusterVolumes)
+		r.GET("/cluster/collections", h.ShowClusterCollections)
 
 		// API routes for AJAX calls
 		api := r.Group("/api")
@@ -140,6 +150,87 @@ func (h *AdminHandlers) ShowBucketDetails(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, details)
+}
+
+// ShowClusterHosts renders the cluster hosts page
+func (h *AdminHandlers) ShowClusterHosts(c *gin.Context) {
+	// Get cluster hosts data
+	hostsData, err := h.adminServer.GetClusterHosts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster hosts: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	hostsData.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	hostsComponent := app.ClusterHosts(*hostsData)
+	layoutComponent := layout.Layout(c, hostsComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
+// ShowClusterVolumes renders the cluster volumes page
+func (h *AdminHandlers) ShowClusterVolumes(c *gin.Context) {
+	// Get cluster volumes data
+	volumesData, err := h.adminServer.GetClusterVolumes()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster volumes: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	volumesData.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	volumesComponent := app.ClusterVolumes(*volumesData)
+	layoutComponent := layout.Layout(c, volumesComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
+// ShowClusterCollections renders the cluster collections page
+func (h *AdminHandlers) ShowClusterCollections(c *gin.Context) {
+	// Get cluster collections data
+	collectionsData, err := h.adminServer.GetClusterCollections()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster collections: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	collectionsData.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	collectionsComponent := app.ClusterCollections(*collectionsData)
+	layoutComponent := layout.Layout(c, collectionsComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
 }
 
 // GetClusterTopology returns the cluster topology as JSON

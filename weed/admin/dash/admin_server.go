@@ -94,6 +94,53 @@ type BucketDetails struct {
 	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
+// Cluster management data structures
+type ClusterHostsData struct {
+	Username      string         `json:"username"`
+	Hosts         []VolumeServer `json:"hosts"`
+	TotalHosts    int            `json:"total_hosts"`
+	TotalVolumes  int            `json:"total_volumes"`
+	TotalCapacity int64          `json:"total_capacity"`
+	LastUpdated   time.Time      `json:"last_updated"`
+}
+
+type VolumeInfo struct {
+	ID          int    `json:"id"`
+	Server      string `json:"server"`
+	DataCenter  string `json:"datacenter"`
+	Rack        string `json:"rack"`
+	Size        int64  `json:"size"`
+	FileCount   int64  `json:"file_count"`
+	Replication string `json:"replication"`
+	Status      string `json:"status"`
+}
+
+type ClusterVolumesData struct {
+	Username     string       `json:"username"`
+	Volumes      []VolumeInfo `json:"volumes"`
+	TotalVolumes int          `json:"total_volumes"`
+	TotalSize    int64        `json:"total_size"`
+	LastUpdated  time.Time    `json:"last_updated"`
+}
+
+type CollectionInfo struct {
+	Name        string `json:"name"`
+	DataCenter  string `json:"datacenter"`
+	Replication string `json:"replication"`
+	VolumeCount int    `json:"volume_count"`
+	TTL         string `json:"ttl"`
+	DiskType    string `json:"disk_type"`
+	Status      string `json:"status"`
+}
+
+type ClusterCollectionsData struct {
+	Username         string           `json:"username"`
+	Collections      []CollectionInfo `json:"collections"`
+	TotalCollections int              `json:"total_collections"`
+	TotalVolumes     int              `json:"total_volumes"`
+	LastUpdated      time.Time        `json:"last_updated"`
+}
+
 func NewAdminServer(masterAddress, filerAddress string, templateFS http.FileSystem) *AdminServer {
 	return &AdminServer{
 		masterAddress:   masterAddress,
@@ -423,4 +470,124 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 
 		return nil
 	})
+}
+
+// GetClusterHosts retrieves cluster hosts data
+func (s *AdminServer) GetClusterHosts() (*ClusterHostsData, error) {
+	topology, err := s.GetClusterTopology()
+	if err != nil {
+		return nil, err
+	}
+
+	var totalCapacity int64
+	var totalVolumes int
+	for _, vs := range topology.VolumeServers {
+		totalCapacity += vs.DiskCapacity
+		totalVolumes += vs.Volumes
+	}
+
+	return &ClusterHostsData{
+		Hosts:         topology.VolumeServers,
+		TotalHosts:    len(topology.VolumeServers),
+		TotalVolumes:  totalVolumes,
+		TotalCapacity: totalCapacity,
+		LastUpdated:   time.Now(),
+	}, nil
+}
+
+// GetClusterVolumes retrieves cluster volumes data
+func (s *AdminServer) GetClusterVolumes() (*ClusterVolumesData, error) {
+	var volumes []VolumeInfo
+	var totalSize int64
+	volumeID := 1
+
+	// Get detailed volume information via gRPC
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							for _, volInfo := range diskInfo.VolumeInfos {
+								volume := VolumeInfo{
+									ID:          volumeID,
+									Server:      node.Id,
+									DataCenter:  dc.Id,
+									Rack:        rack.Id,
+									Size:        int64(volInfo.Size),
+									FileCount:   int64(volInfo.FileCount),
+									Replication: fmt.Sprintf("%03d", volInfo.ReplicaPlacement),
+									Status:      "active",
+								}
+								volumes = append(volumes, volume)
+								totalSize += volume.Size
+								volumeID++
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &ClusterVolumesData{
+		Volumes:      volumes,
+		TotalVolumes: len(volumes),
+		TotalSize:    totalSize,
+		LastUpdated:  time.Now(),
+	}, nil
+}
+
+// GetClusterCollections retrieves cluster collections data
+func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
+	topology, err := s.GetClusterTopology()
+	if err != nil {
+		return nil, err
+	}
+
+	// For now, create collections based on data centers
+	// In a real implementation, this would query actual collection metadata
+	var collections []CollectionInfo
+	var totalVolumes int
+
+	for _, dc := range topology.DataCenters {
+		volumeCount := 0
+		for _, vs := range topology.VolumeServers {
+			if vs.DataCenter == dc.ID {
+				volumeCount += vs.Volumes
+			}
+		}
+
+		if volumeCount > 0 {
+			collection := CollectionInfo{
+				Name:        dc.ID,
+				DataCenter:  dc.ID,
+				Replication: "001", // Default replication
+				VolumeCount: volumeCount,
+				TTL:         "",
+				DiskType:    "hdd",
+				Status:      "active",
+			}
+			collections = append(collections, collection)
+			totalVolumes += volumeCount
+		}
+	}
+
+	return &ClusterCollectionsData{
+		Collections:      collections,
+		TotalCollections: len(collections),
+		TotalVolumes:     totalVolumes,
+		LastUpdated:      time.Now(),
+	}, nil
 }

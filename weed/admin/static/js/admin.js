@@ -471,4 +471,209 @@ function copyToClipboard(text) {
 // Dashboard refresh functionality
 function refreshDashboard() {
     location.reload();
+}
+
+// Cluster management functions
+
+// Export hosts data as CSV
+function exportHosts() {
+    const table = document.getElementById('hostsTable');
+    if (!table) {
+        showErrorMessage('No hosts data to export');
+        return;
+    }
+    
+    let csv = 'Host ID,Address,Data Center,Rack,Volumes,Capacity,Usage,Status\n';
+    
+    const rows = table.querySelectorAll('tbody tr');
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 8) {
+            const rowData = [
+                cells[0].textContent.trim(),
+                cells[1].textContent.trim(),
+                cells[2].textContent.trim(),
+                cells[3].textContent.trim(),
+                cells[4].textContent.trim(),
+                cells[5].textContent.trim(),
+                cells[6].textContent.trim(),
+                cells[7].textContent.trim()
+            ];
+            csv += rowData.join(',') + '\n';
+        }
+    });
+    
+    downloadCSV(csv, 'seaweedfs-hosts.csv');
+}
+
+// Export volumes data as CSV
+function exportVolumes() {
+    const table = document.getElementById('volumesTable');
+    if (!table) {
+        showErrorMessage('No volumes data to export');
+        return;
+    }
+    
+    let csv = 'Volume ID,Server,Data Center,Rack,Size,File Count,Replication,Status\n';
+    
+    const rows = table.querySelectorAll('tbody tr');
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 8) {
+            const rowData = [
+                cells[0].textContent.trim(),
+                cells[1].textContent.trim(),
+                cells[2].textContent.trim(),
+                cells[3].textContent.trim(),
+                cells[4].textContent.trim(),
+                cells[5].textContent.trim(),
+                cells[6].textContent.trim(),
+                cells[7].textContent.trim()
+            ];
+            csv += rowData.join(',') + '\n';
+        }
+    });
+    
+    downloadCSV(csv, 'seaweedfs-volumes.csv');
+}
+
+// Export collections data as CSV
+function exportCollections() {
+    const table = document.getElementById('collectionsTable');
+    if (!table) {
+        showErrorMessage('No collections data to export');
+        return;
+    }
+    
+    let csv = 'Collection Name,Data Center,Replication,Volumes,TTL,Disk Type,Status\n';
+    
+    const rows = table.querySelectorAll('tbody tr');
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 7) {
+            const rowData = [
+                cells[0].textContent.trim(),
+                cells[1].textContent.trim(),
+                cells[2].textContent.trim(),
+                cells[3].textContent.trim(),
+                cells[4].textContent.trim(),
+                cells[5].textContent.trim(),
+                cells[6].textContent.trim()
+            ];
+            csv += rowData.join(',') + '\n';
+        }
+    });
+    
+    downloadCSV(csv, 'seaweedfs-collections.csv');
+}
+
+// Confirm delete collection
+function confirmDeleteCollection(button) {
+    const collectionName = button.getAttribute('data-collection-name');
+    document.getElementById('deleteCollectionName').textContent = collectionName;
+    
+    const modal = new bootstrap.Modal(document.getElementById('deleteCollectionModal'));
+    modal.show();
+    
+    // Set up confirm button
+    document.getElementById('confirmDeleteCollection').onclick = function() {
+        deleteCollection(collectionName);
+    };
+}
+
+// Delete collection
+async function deleteCollection(collectionName) {
+    try {
+        const response = await fetch(`/api/collections/${collectionName}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+        
+        if (response.ok) {
+            showSuccessMessage(`Collection "${collectionName}" deleted successfully`);
+            // Hide modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('deleteCollectionModal'));
+            modal.hide();
+            // Refresh page
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        } else {
+            const error = await response.json();
+            showErrorMessage(`Failed to delete collection: ${error.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error deleting collection:', error);
+        showErrorMessage('Failed to delete collection. Please try again.');
+    }
+}
+
+// Handle create collection form submission
+document.addEventListener('DOMContentLoaded', function() {
+    const createCollectionForm = document.getElementById('createCollectionForm');
+    if (createCollectionForm) {
+        createCollectionForm.addEventListener('submit', handleCreateCollection);
+    }
+});
+
+async function handleCreateCollection(event) {
+    event.preventDefault();
+    
+    const formData = new FormData(event.target);
+    const collectionData = {
+        name: formData.get('name'),
+        replication: formData.get('replication'),
+        ttl: formData.get('ttl'),
+        diskType: formData.get('diskType')
+    };
+    
+    try {
+        const response = await fetch('/api/collections', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(collectionData)
+        });
+        
+        if (response.ok) {
+            showSuccessMessage(`Collection "${collectionData.name}" created successfully`);
+            // Hide modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('createCollectionModal'));
+            modal.hide();
+            // Reset form
+            event.target.reset();
+            // Refresh page
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        } else {
+            const error = await response.json();
+            showErrorMessage(`Failed to create collection: ${error.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error creating collection:', error);
+        showErrorMessage('Failed to create collection. Please try again.');
+    }
+}
+
+// Helper function to download CSV
+function downloadCSV(csvContent, filename) {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    
+    if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    } else {
+        // Fallback for browsers that don't support download attribute
+        window.open('data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent));
+    }
 } 
