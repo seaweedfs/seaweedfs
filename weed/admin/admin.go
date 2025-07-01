@@ -32,7 +32,6 @@ func main() {
 		tlsCert      = flag.String("tlsCert", "", "Path to TLS certificate file")
 		tlsKey       = flag.String("tlsKey", "", "Path to TLS key file")
 		master       = flag.String("master", "localhost:9333", "SeaweedFS master server address")
-		filer        = flag.String("filer", "localhost:8888", "SeaweedFS filer server address")
 		authRequired = flag.Bool("auth", false, "Enable authentication")
 		username     = flag.String("username", "admin", "Admin username (only used if auth is enabled)")
 		password     = flag.String("password", "", "Admin password (only used if auth is enabled)")
