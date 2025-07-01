@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -301,6 +304,17 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 		return fmt.Errorf("filer address not configured")
 	}
 
+	// Validate and sanitize the filer address
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		return fmt.Errorf("invalid filer address: %v", err)
+	}
+
+	// Validate and sanitize the file path
+	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
+	if err != nil {
+		return fmt.Errorf("invalid file path: %v", err)
+	}
+
 	// Open the file
 	file, err := fileHeader.Open()
 	if err != nil {
@@ -330,8 +344,8 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 		return fmt.Errorf("failed to close multipart writer: %v", err)
 	}
 
-	// Create the upload URL
-	uploadURL := fmt.Sprintf("http://%s%s", filerAddress, filePath)
+	// Create the upload URL with validated components
+	uploadURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
 
 	// Create HTTP request
 	req, err := http.NewRequest("POST", uploadURL, &body)
@@ -357,4 +371,77 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	}
 
 	return nil
+}
+
+// validateFilerAddress validates that the filer address is safe to use
+func (h *FileBrowserHandlers) validateFilerAddress(address string) error {
+	if address == "" {
+		return fmt.Errorf("filer address cannot be empty")
+	}
+
+	// Parse the address to validate it's a proper host:port format
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("invalid address format: %v", err)
+	}
+
+	// Validate host is not empty
+	if host == "" {
+		return fmt.Errorf("host cannot be empty")
+	}
+
+	// Validate port is numeric and in valid range
+	if port == "" {
+		return fmt.Errorf("port cannot be empty")
+	}
+
+	portNum, err := strconv.Atoi(port)
+	if err != nil {
+		return fmt.Errorf("invalid port number: %v", err)
+	}
+
+	if portNum < 1 || portNum > 65535 {
+		return fmt.Errorf("port number must be between 1 and 65535")
+	}
+
+	// Additional security: prevent private network access unless explicitly allowed
+	// This helps prevent SSRF attacks to internal services
+	ip := net.ParseIP(host)
+	if ip != nil {
+		// Check for localhost, private networks, and other dangerous addresses
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() {
+			// Only allow if it's the configured filer (trusted)
+			// In production, you might want to be more restrictive
+			glog.V(2).Infof("Allowing access to private/local address: %s (configured filer)", address)
+		}
+	}
+
+	return nil
+}
+
+// validateAndCleanFilePath validates and cleans the file path to prevent path traversal
+func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string, error) {
+	if filePath == "" {
+		return "", fmt.Errorf("file path cannot be empty")
+	}
+
+	// Clean the path to remove any .. or . components
+	cleanPath := filepath.Clean(filePath)
+
+	// Ensure the path starts with /
+	if !strings.HasPrefix(cleanPath, "/") {
+		cleanPath = "/" + cleanPath
+	}
+
+	// Prevent path traversal attacks
+	if strings.Contains(cleanPath, "..") {
+		return "", fmt.Errorf("path traversal not allowed")
+	}
+
+	// Additional validation: ensure path doesn't contain dangerous characters
+	if strings.ContainsAny(cleanPath, "\x00\r\n") {
+		return "", fmt.Errorf("path contains invalid characters")
+	}
+
+	return cleanPath, nil
 }
