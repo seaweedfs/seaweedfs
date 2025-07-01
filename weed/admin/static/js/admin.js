@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeDashboard();
     initializeEventHandlers();
     setupFormValidation();
+    setupFileManagerEventHandlers();
 });
 
 function initializeDashboard() {
@@ -831,17 +832,217 @@ function toggleSelectAll() {
 
 // Create new folder
 function createFolder() {
-    const folderName = prompt('Enter folder name:');
-    if (folderName && folderName.trim()) {
-        // TODO: Implement folder creation API call
-        showAlert('info', 'Folder creation functionality will be implemented');
-    }
+    const modal = new bootstrap.Modal(document.getElementById('createFolderModal'));
+    modal.show();
 }
 
 // Upload file
 function uploadFile() {
-    // TODO: Implement file upload functionality
-    showAlert('info', 'File upload functionality will be implemented');
+    const modal = new bootstrap.Modal(document.getElementById('uploadFileModal'));
+    modal.show();
+}
+
+// Submit create folder form
+async function submitCreateFolder() {
+    const folderName = document.getElementById('folderName').value.trim();
+    const currentPath = document.getElementById('currentPath').value;
+    
+    if (!folderName) {
+        showErrorMessage('Please enter a folder name');
+        return;
+    }
+    
+    // Validate folder name
+    if (folderName.includes('/') || folderName.includes('\\')) {
+        showErrorMessage('Folder names cannot contain / or \\ characters');
+        return;
+    }
+    
+    // Additional validation for reserved names
+    const reservedNames = ['.', '..', 'CON', 'PRN', 'AUX', 'NUL'];
+    if (reservedNames.includes(folderName.toUpperCase())) {
+        showErrorMessage('This folder name is reserved and cannot be used');
+        return;
+    }
+    
+    // Disable the button to prevent double submission
+    const submitButton = document.querySelector('#createFolderModal .btn-primary');
+    const originalText = submitButton.innerHTML;
+    submitButton.disabled = true;
+    submitButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Creating...';
+    
+    try {
+        const response = await fetch('/api/files/create-folder', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                path: currentPath,
+                folder_name: folderName
+            })
+        });
+
+        if (response.ok) {
+            showSuccessMessage(`Folder "${folderName}" created successfully`);
+            // Hide modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('createFolderModal'));
+            modal.hide();
+            // Clear form
+            document.getElementById('folderName').value = '';
+            // Refresh page
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        } else {
+            const error = await response.json();
+            showErrorMessage(`Failed to create folder: ${error.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Create folder error:', error);
+        showErrorMessage('Failed to create folder. Please try again.');
+    } finally {
+        // Re-enable the button
+        submitButton.disabled = false;
+        submitButton.innerHTML = originalText;
+    }
+}
+
+// Submit upload file form
+async function submitUploadFile() {
+    const fileInput = document.getElementById('fileInput');
+    const currentPath = document.getElementById('uploadPath').value;
+    
+    if (!fileInput.files || fileInput.files.length === 0) {
+        showErrorMessage('Please select at least one file to upload');
+        return;
+    }
+    
+    const files = Array.from(fileInput.files);
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    
+    // Validate total file size (limit to 500MB for admin interface)
+    const maxSize = 500 * 1024 * 1024; // 500MB total
+    if (totalSize > maxSize) {
+        showErrorMessage('Total file size exceeds 500MB limit. Please select fewer or smaller files.');
+        return;
+    }
+    
+    // Validate individual file sizes
+    const maxIndividualSize = 100 * 1024 * 1024; // 100MB per file
+    const oversizedFiles = files.filter(file => file.size > maxIndividualSize);
+    if (oversizedFiles.length > 0) {
+        showErrorMessage(`Some files exceed 100MB limit: ${oversizedFiles.map(f => f.name).join(', ')}`);
+        return;
+    }
+    
+    const formData = new FormData();
+    files.forEach(file => {
+        formData.append('files', file);
+    });
+    formData.append('path', currentPath);
+    
+    // Show progress bar and disable button
+    const progressContainer = document.getElementById('uploadProgress');
+    const progressBar = progressContainer.querySelector('.progress-bar');
+    const uploadStatus = document.getElementById('uploadStatus');
+    const submitButton = document.querySelector('#uploadFileModal .btn-primary');
+    const originalText = submitButton.innerHTML;
+    
+    progressContainer.style.display = 'block';
+    progressBar.style.width = '0%';
+    progressBar.setAttribute('aria-valuenow', '0');
+    progressBar.textContent = '0%';
+    uploadStatus.textContent = `Uploading ${files.length} file(s)...`;
+    submitButton.disabled = true;
+    submitButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Uploading...';
+    
+    try {
+        const xhr = new XMLHttpRequest();
+        
+        // Handle progress
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                const percentComplete = Math.round((e.loaded / e.total) * 100);
+                progressBar.style.width = percentComplete + '%';
+                progressBar.setAttribute('aria-valuenow', percentComplete);
+                progressBar.textContent = percentComplete + '%';
+                uploadStatus.textContent = `Uploading ${files.length} file(s)... ${percentComplete}%`;
+            }
+        });
+        
+        // Handle completion
+        xhr.addEventListener('load', function() {
+            if (xhr.status === 200) {
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    
+                    if (response.uploaded > 0) {
+                        if (response.failed === 0) {
+                            showSuccessMessage(`Successfully uploaded ${response.uploaded} file(s)`);
+                        } else {
+                            showSuccessMessage(response.message);
+                            // Show details of failed uploads
+                            if (response.errors && response.errors.length > 0) {
+                                console.warn('Upload errors:', response.errors);
+                            }
+                        }
+                        
+                        // Hide modal and refresh page
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('uploadFileModal'));
+                        modal.hide();
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1000);
+                    } else {
+                        let errorMessage = response.message || 'All file uploads failed';
+                        if (response.errors && response.errors.length > 0) {
+                            errorMessage += ': ' + response.errors.join(', ');
+                        }
+                        showErrorMessage(errorMessage);
+                    }
+                } catch (e) {
+                    showErrorMessage('Upload completed but response format was unexpected');
+                }
+                progressContainer.style.display = 'none';
+            } else {
+                let errorMessage = 'Unknown error';
+                try {
+                    const error = JSON.parse(xhr.responseText);
+                    errorMessage = error.error || error.message || errorMessage;
+                } catch (e) {
+                    errorMessage = `Server returned status ${xhr.status}`;
+                }
+                showErrorMessage(`Failed to upload files: ${errorMessage}`);
+                progressContainer.style.display = 'none';
+            }
+        });
+        
+        // Handle errors
+        xhr.addEventListener('error', function() {
+            showErrorMessage('Failed to upload files. Please check your connection and try again.');
+            progressContainer.style.display = 'none';
+        });
+        
+        // Handle abort
+        xhr.addEventListener('abort', function() {
+            showErrorMessage('File upload was cancelled.');
+            progressContainer.style.display = 'none';
+        });
+        
+        // Send request
+        xhr.open('POST', '/api/files/upload');
+        xhr.send(formData);
+        
+    } catch (error) {
+        console.error('Upload error:', error);
+        showErrorMessage('Failed to upload files. Please try again.');
+        progressContainer.style.display = 'none';
+    } finally {
+        // Re-enable the button
+        submitButton.disabled = false;
+        submitButton.innerHTML = originalText;
+    }
 }
 
 // Export file list to CSV
@@ -928,6 +1129,235 @@ async function deleteFile(filePath) {
     } catch (error) {
         console.error('Delete error:', error);
         showAlert('error', 'Failed to delete file');
+    }
+}
+
+// Setup file manager specific event handlers
+function setupFileManagerEventHandlers() {
+    // Handle Enter key in folder name input
+    const folderNameInput = document.getElementById('folderName');
+    if (folderNameInput) {
+        folderNameInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                submitCreateFolder();
+            }
+        });
+    }
+    
+    // Handle file selection change to show preview
+    const fileInput = document.getElementById('fileInput');
+    if (fileInput) {
+        fileInput.addEventListener('change', function(e) {
+            updateFileListPreview();
+        });
+    }
+    
+    // Setup drag and drop for file uploads
+    setupDragAndDrop();
+    
+    // Clear form when modals are hidden
+    const createFolderModal = document.getElementById('createFolderModal');
+    if (createFolderModal) {
+        createFolderModal.addEventListener('hidden.bs.modal', function() {
+            document.getElementById('folderName').value = '';
+        });
+    }
+    
+    const uploadFileModal = document.getElementById('uploadFileModal');
+    if (uploadFileModal) {
+        uploadFileModal.addEventListener('hidden.bs.modal', function() {
+            const fileInput = document.getElementById('fileInput');
+            const progressContainer = document.getElementById('uploadProgress');
+            const fileListPreview = document.getElementById('fileListPreview');
+            fileInput.value = '';
+            progressContainer.style.display = 'none';
+            fileListPreview.style.display = 'none';
+        });
+    }
+}
+
+// Setup drag and drop functionality
+function setupDragAndDrop() {
+    const dropZone = document.querySelector('.card-body'); // Main file listing area
+    const uploadModal = document.getElementById('uploadFileModal');
+    
+    if (!dropZone || !uploadModal) return;
+    
+    // Prevent default drag behaviors
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+        document.body.addEventListener(eventName, preventDefaults, false);
+    });
+    
+    // Highlight drop zone when item is dragged over it
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, highlight, false);
+    });
+    
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, unhighlight, false);
+    });
+    
+    // Handle dropped files
+    dropZone.addEventListener('drop', handleDrop, false);
+    
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    function highlight(e) {
+        dropZone.classList.add('drag-over');
+        // Add some visual feedback
+        if (!dropZone.querySelector('.drag-overlay')) {
+            const overlay = document.createElement('div');
+            overlay.className = 'drag-overlay';
+            overlay.innerHTML = `
+                <div class="text-center p-5">
+                    <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
+                    <h5>Drop files here to upload</h5>
+                    <p class="text-muted">Release to upload files to this directory</p>
+                </div>
+            `;
+            overlay.style.cssText = `
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(255, 255, 255, 0.9);
+                border: 2px dashed #007bff;
+                border-radius: 0.375rem;
+                z-index: 1000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            `;
+            dropZone.style.position = 'relative';
+            dropZone.appendChild(overlay);
+        }
+    }
+    
+    function unhighlight(e) {
+        dropZone.classList.remove('drag-over');
+        const overlay = dropZone.querySelector('.drag-overlay');
+        if (overlay) {
+            overlay.remove();
+        }
+    }
+    
+    function handleDrop(e) {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        
+        if (files.length > 0) {
+            // Open upload modal and set files
+            const fileInput = document.getElementById('fileInput');
+            if (fileInput) {
+                // Create a new FileList-like object
+                const fileArray = Array.from(files);
+                
+                // Set files to input (this is a bit tricky with file inputs)
+                const dataTransfer = new DataTransfer();
+                fileArray.forEach(file => dataTransfer.items.add(file));
+                fileInput.files = dataTransfer.files;
+                
+                // Update preview and show modal
+                updateFileListPreview();
+                const modal = new bootstrap.Modal(uploadModal);
+                modal.show();
+            }
+        }
+    }
+}
+
+// Update file list preview when files are selected
+function updateFileListPreview() {
+    const fileInput = document.getElementById('fileInput');
+    const fileListPreview = document.getElementById('fileListPreview');
+    const selectedFilesList = document.getElementById('selectedFilesList');
+    
+    if (!fileInput.files || fileInput.files.length === 0) {
+        fileListPreview.style.display = 'none';
+        return;
+    }
+    
+    const files = Array.from(fileInput.files);
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    
+    let html = `<div class="d-flex justify-content-between align-items-center mb-2">
+        <strong>${files.length} file(s) selected</strong>
+        <small class="text-muted">Total: ${formatBytes(totalSize)}</small>
+    </div>`;
+    
+    files.forEach((file, index) => {
+        const fileIcon = getFileIconByName(file.name);
+        html += `<div class="d-flex justify-content-between align-items-center py-1 ${index > 0 ? 'border-top' : ''}">
+            <div class="d-flex align-items-center">
+                <i class="fas ${fileIcon} me-2 text-muted"></i>
+                <span class="text-truncate" style="max-width: 200px;" title="${file.name}">${file.name}</span>
+            </div>
+            <small class="text-muted">${formatBytes(file.size)}</small>
+        </div>`;
+    });
+    
+    selectedFilesList.innerHTML = html;
+    fileListPreview.style.display = 'block';
+}
+
+// Get file icon based on file name/extension
+function getFileIconByName(fileName) {
+    const ext = fileName.split('.').pop().toLowerCase();
+    
+    switch (ext) {
+        case 'jpg':
+        case 'jpeg':
+        case 'png':
+        case 'gif':
+        case 'bmp':
+        case 'svg':
+            return 'fa-image';
+        case 'mp4':
+        case 'avi':
+        case 'mov':
+        case 'wmv':
+        case 'flv':
+            return 'fa-video';
+        case 'mp3':
+        case 'wav':
+        case 'flac':
+        case 'aac':
+            return 'fa-music';
+        case 'pdf':
+            return 'fa-file-pdf';
+        case 'doc':
+        case 'docx':
+            return 'fa-file-word';
+        case 'xls':
+        case 'xlsx':
+            return 'fa-file-excel';
+        case 'ppt':
+        case 'pptx':
+            return 'fa-file-powerpoint';
+        case 'txt':
+        case 'md':
+            return 'fa-file-text';
+        case 'zip':
+        case 'rar':
+        case '7z':
+        case 'tar':
+        case 'gz':
+            return 'fa-file-archive';
+        case 'js':
+        case 'ts':
+        case 'html':
+        case 'css':
+        case 'json':
+        case 'xml':
+            return 'fa-file-code';
+        default:
+            return 'fa-file';
     }
 }
 

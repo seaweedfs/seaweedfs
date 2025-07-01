@@ -219,8 +219,13 @@ func NewAdminServer(masterAddress, filerAddress string, templateFS http.FileSyst
 		filerAddress:    filerAddress,
 		templateFS:      templateFS,
 		grpcDialOption:  security.LoadClientTLS(util.GetViper(), "grpc.client"),
-		cacheExpiration: 30 * time.Second,
+		cacheExpiration: 10 * time.Second,
 	}
+}
+
+// GetFilerAddress returns the filer address
+func (s *AdminServer) GetFilerAddress() string {
+	return s.filerAddress
 }
 
 // WithMasterClient executes a function with a master client connection

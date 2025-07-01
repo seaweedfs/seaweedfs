@@ -452,7 +452,33 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, "</small></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, "</small></div></div><!-- Create Folder Modal --><div class=\"modal fade\" id=\"createFolderModal\" tabindex=\"-1\" aria-labelledby=\"createFolderModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createFolderModalLabel\"><i class=\"fas fa-folder-plus me-2\"></i>Create New Folder</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"createFolderForm\"><div class=\"mb-3\"><label for=\"folderName\" class=\"form-label\">Folder Name</label> <input type=\"text\" class=\"form-control\" id=\"folderName\" name=\"folderName\" required placeholder=\"Enter folder name\" maxlength=\"255\"><div class=\"form-text\">Folder names cannot contain / or \\ characters.</div></div><input type=\"hidden\" id=\"currentPath\" name=\"currentPath\" value=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var26 string
+		templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(data.CurrentPath)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 279, Col: 87}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 48, "\"></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" onclick=\"submitCreateFolder()\"><i class=\"fas fa-folder-plus me-1\"></i>Create Folder</button></div></div></div></div><!-- Upload File Modal --><div class=\"modal fade\" id=\"uploadFileModal\" tabindex=\"-1\" aria-labelledby=\"uploadFileModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"uploadFileModalLabel\"><i class=\"fas fa-upload me-2\"></i>Upload Files</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"uploadFileForm\" enctype=\"multipart/form-data\"><div class=\"mb-3\"><label for=\"fileInput\" class=\"form-label\">Select Files</label> <input type=\"file\" class=\"form-control\" id=\"fileInput\" name=\"files\" multiple required><div class=\"form-text\">Choose one or more files to upload to the current directory. You can select multiple files by holding Ctrl (Cmd on Mac) while clicking.</div></div><input type=\"hidden\" id=\"uploadPath\" name=\"path\" value=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var27 string
+		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(data.CurrentPath)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 311, Col: 79}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "\"><!-- File List Preview --><div id=\"fileListPreview\" class=\"mb-3\" style=\"display: none;\"><label class=\"form-label\">Selected Files:</label><div id=\"selectedFilesList\" class=\"border rounded p-2 bg-light\"><!-- Files will be listed here --></div></div><!-- Upload Progress --><div class=\"mb-3\" id=\"uploadProgress\" style=\"display: none;\"><label class=\"form-label\">Upload Progress:</label><div class=\"progress mb-2\"><div class=\"progress-bar progress-bar-striped progress-bar-animated\" role=\"progressbar\" style=\"width: 0%\" aria-valuenow=\"0\" aria-valuemin=\"0\" aria-valuemax=\"100\">0%</div></div><div id=\"uploadStatus\" class=\"small text-muted\">Preparing upload...</div></div></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" onclick=\"submitUploadFile()\"><i class=\"fas fa-upload me-1\"></i>Upload Files</button></div></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
