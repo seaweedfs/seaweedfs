@@ -320,11 +320,77 @@ func (s *AdminServer) InvalidateCache() {
 	s.cachedTopology = nil
 }
 
-// GetS3Buckets retrieves all S3 buckets from the filer
+// GetS3Buckets retrieves all S3 buckets from the filer and collects size/object data from collections
 func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	var buckets []S3Bucket
 
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	// Build a map of collection name to collection data
+	collectionMap := make(map[string]struct {
+		Size      int64
+		FileCount int64
+	})
+
+	// Collect volume information by collection
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							for _, volInfo := range diskInfo.VolumeInfos {
+								collection := volInfo.Collection
+								if collection == "" {
+									collection = "default"
+								}
+
+								if _, exists := collectionMap[collection]; !exists {
+									collectionMap[collection] = struct {
+										Size      int64
+										FileCount int64
+									}{}
+								}
+
+								data := collectionMap[collection]
+								data.Size += int64(volInfo.Size)
+								data.FileCount += int64(volInfo.FileCount)
+								collectionMap[collection] = data
+							}
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get volume information: %v", err)
+	}
+
+	// Get filer configuration to determine FilerGroup
+	var filerGroup string
+	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		configResp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			glog.Warningf("Failed to get filer configuration: %v", err)
+			// Continue without filer group
+			return nil
+		}
+		filerGroup = configResp.FilerGroup
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get filer configuration: %v", err)
+	}
+
+	// Now list buckets from the filer and match with collection data
+	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// List buckets by looking at the /buckets directory
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 			Directory:          "/buckets",
@@ -347,11 +413,29 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 			}
 
 			if resp.Entry.IsDirectory {
+				bucketName := resp.Entry.Name
+
+				// Determine collection name for this bucket
+				var collectionName string
+				if filerGroup != "" {
+					collectionName = fmt.Sprintf("%s_%s", filerGroup, bucketName)
+				} else {
+					collectionName = bucketName
+				}
+
+				// Get size and object count from collection data
+				var size int64
+				var objectCount int64
+				if collectionData, exists := collectionMap[collectionName]; exists {
+					size = collectionData.Size
+					objectCount = collectionData.FileCount
+				}
+
 				bucket := S3Bucket{
-					Name:         resp.Entry.Name,
+					Name:         bucketName,
 					CreatedAt:    time.Unix(resp.Entry.Attributes.Crtime, 0),
-					Size:         0, // Will be calculated if needed
-					ObjectCount:  0, // Will be calculated if needed
+					Size:         size,
+					ObjectCount:  objectCount,
 					LastModified: time.Unix(resp.Entry.Attributes.Mtime, 0),
 					Status:       "active",
 				}
