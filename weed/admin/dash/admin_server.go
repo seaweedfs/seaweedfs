@@ -164,25 +164,21 @@ type ClusterMastersData struct {
 }
 
 type FilerInfo struct {
-	Address        string    `json:"address"`
-	DataCenter     string    `json:"datacenter"`
-	Rack           string    `json:"rack"`
-	Version        string    `json:"version"`
-	Uptime         string    `json:"uptime"`
-	DirectoryCount int64     `json:"directory_count"`
-	FileCount      int64     `json:"file_count"`
-	CreatedAt      time.Time `json:"created_at"`
-	LastHeartbeat  time.Time `json:"last_heartbeat"`
-	Status         string    `json:"status"`
+	Address       string    `json:"address"`
+	DataCenter    string    `json:"datacenter"`
+	Rack          string    `json:"rack"`
+	Version       string    `json:"version"`
+	Uptime        string    `json:"uptime"`
+	CreatedAt     time.Time `json:"created_at"`
+	LastHeartbeat time.Time `json:"last_heartbeat"`
+	Status        string    `json:"status"`
 }
 
 type ClusterFilersData struct {
-	Username         string      `json:"username"`
-	Filers           []FilerInfo `json:"filers"`
-	TotalFilers      int         `json:"total_filers"`
-	TotalFiles       int64       `json:"total_files"`
-	TotalDirectories int64       `json:"total_directories"`
-	LastUpdated      time.Time   `json:"last_updated"`
+	Username    string      `json:"username"`
+	Filers      []FilerInfo `json:"filers"`
+	TotalFilers int         `json:"total_filers"`
+	LastUpdated time.Time   `json:"last_updated"`
 }
 
 type FileEntry struct {
@@ -769,8 +765,6 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 // GetClusterFilers retrieves cluster filers data
 func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 	var filers []FilerInfo
-	var totalFiles int64
-	var totalDirectories int64
 
 	// Get filer information from master using ListClusterNodes
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
@@ -785,27 +779,18 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 		for _, node := range resp.ClusterNodes {
 			createdAt := time.Unix(0, node.CreatedAtNs)
 
-			// For now, use mock data for file/directory counts
-			// In a real implementation, this would query each filer for actual stats
-			fileCount := int64(1000) // Mock data
-			dirCount := int64(100)   // Mock data
-
 			filerInfo := FilerInfo{
-				Address:        node.Address,
-				DataCenter:     node.DataCenter,
-				Rack:           node.Rack,
-				Version:        node.Version,
-				Uptime:         "N/A", // Could calculate from CreatedAt
-				DirectoryCount: dirCount,
-				FileCount:      fileCount,
-				CreatedAt:      createdAt,
-				LastHeartbeat:  time.Now(), // Assume active if in cluster list
-				Status:         "active",   // If it's in the cluster list, it's considered active
+				Address:       node.Address,
+				DataCenter:    node.DataCenter,
+				Rack:          node.Rack,
+				Version:       node.Version,
+				Uptime:        "N/A", // Could calculate from CreatedAt
+				CreatedAt:     createdAt,
+				LastHeartbeat: time.Now(), // Assume active if in cluster list
+				Status:        "active",   // If it's in the cluster list, it's considered active
 			}
 
 			filers = append(filers, filerInfo)
-			totalFiles += filerInfo.FileCount
-			totalDirectories += filerInfo.DirectoryCount
 		}
 
 		return nil
@@ -816,11 +801,9 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 	}
 
 	return &ClusterFilersData{
-		Filers:           filers,
-		TotalFilers:      len(filers),
-		TotalFiles:       totalFiles,
-		TotalDirectories: totalDirectories,
-		LastUpdated:      time.Now(),
+		Filers:      filers,
+		TotalFilers: len(filers),
+		LastUpdated: time.Now(),
 	}, nil
 }
 

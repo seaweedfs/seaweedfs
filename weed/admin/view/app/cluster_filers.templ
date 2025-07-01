@@ -22,7 +22,7 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 	<div id="filers-content">
 		<!-- Summary Cards -->
 		<div class="row mb-4">
-			<div class="col-xl-3 col-md-6 mb-4">
+			<div class="col-xl-6 col-md-6 mb-4">
 				<div class="card border-left-primary shadow h-100 py-2">
 					<div class="card-body">
 						<div class="row no-gutters align-items-center">
@@ -42,7 +42,7 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 				</div>
 			</div>
 
-			<div class="col-xl-3 col-md-6 mb-4">
+			<div class="col-xl-6 col-md-6 mb-4">
 				<div class="card border-left-success shadow h-100 py-2">
 					<div class="card-body">
 						<div class="row no-gutters align-items-center">
@@ -56,46 +56,6 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 							</div>
 							<div class="col-auto">
 								<i class="fas fa-check-circle fa-2x text-gray-300"></i>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<div class="col-xl-3 col-md-6 mb-4">
-				<div class="card border-left-info shadow h-100 py-2">
-					<div class="card-body">
-						<div class="row no-gutters align-items-center">
-							<div class="col mr-2">
-								<div class="text-xs font-weight-bold text-info text-uppercase mb-1">
-									Total Files
-								</div>
-								<div class="h5 mb-0 font-weight-bold text-gray-800">
-									{ formatNumber(data.TotalFiles) }
-								</div>
-							</div>
-							<div class="col-auto">
-								<i class="fas fa-file fa-2x text-gray-300"></i>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<div class="col-xl-3 col-md-6 mb-4">
-				<div class="card border-left-warning shadow h-100 py-2">
-					<div class="card-body">
-						<div class="row no-gutters align-items-center">
-							<div class="col mr-2">
-								<div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
-									Total Directories
-								</div>
-								<div class="h5 mb-0 font-weight-bold text-gray-800">
-									{ formatNumber(data.TotalDirectories) }
-								</div>
-							</div>
-							<div class="col-auto">
-								<i class="fas fa-folder fa-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -121,8 +81,6 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 									<th>Data Center</th>
 									<th>Rack</th>
 									<th>Created At</th>
-									<th>Files</th>
-									<th>Directories</th>
 									<th>Status</th>
 									<th>Actions</th>
 								</tr>
@@ -151,16 +109,6 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 											} else {
 												<span class="text-muted">N/A</span>
 											}
-										</td>
-										<td>
-											<span class="badge bg-info text-white">
-												{ formatNumber(filer.FileCount) }
-											</span>
-										</td>
-										<td>
-											<span class="badge bg-secondary text-white">
-												{ formatNumber(filer.DirectoryCount) }
-											</span>
 										</td>
 										<td>
 											<span class={ fmt.Sprintf("badge bg-%s", getStatusColor(filer.Status)) }>
