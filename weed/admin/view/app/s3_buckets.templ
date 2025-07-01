@@ -17,10 +17,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                         data-bs-target="#createBucketModal">
                     <i class="fas fa-plus me-1"></i>Create Bucket
                 </button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" 
-                        onclick="location.reload()">
-                    <i class="fas fa-sync-alt me-1"></i>Refresh
-                </button>
+
             </div>
         </div>
     </div>
@@ -125,9 +122,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                                 <div class="dropdown-header">Actions:</div>
                                 <a class="dropdown-item" href="#" onclick="exportBucketList()">
                                     <i class="fas fa-download me-2"></i>Export List
-                                </a>
-                                <a class="dropdown-item" href="#" onclick="refreshBuckets()">
-                                    <i class="fas fa-sync-alt me-2"></i>Refresh
                                 </a>
                             </div>
                         </div>

@@ -530,6 +530,8 @@ function refreshDashboard() {
     location.reload();
 }
 
+
+
 // Cluster management functions
 
 // Export hosts data as CSV
@@ -733,4 +735,6 @@ function downloadCSV(csvContent, filename) {
         // Fallback for browsers that don't support download attribute
         window.open('data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent));
     }
-} 
+}
+
+ 
