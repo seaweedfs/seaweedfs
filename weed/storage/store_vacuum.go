@@ -18,10 +18,27 @@ func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (float64, error) {
 }
 func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compactionBytePerSecond int64, progressFn ProgressFunc) error {
 	if v := s.findVolume(vid); v != nil {
-		s := stats.NewDiskStatus(v.dir)
-		if int64(s.Free) < preallocate {
-			return fmt.Errorf("free space: %d bytes, not enough for %d bytes", s.Free, preallocate)
+		// Get current volume size for space calculation
+		volumeSize, indexSize, _ := v.FileStat()
+
+		// Calculate space needed for compaction:
+		// 1. Space for the new compacted volume (approximately same as current volume size)
+		// 2. Use the larger of preallocate or estimated volume size
+		estimatedCompactSize := int64(volumeSize + indexSize)
+		spaceNeeded := preallocate
+		if estimatedCompactSize > preallocate {
+			spaceNeeded = estimatedCompactSize
 		}
+
+		diskStatus := stats.NewDiskStatus(v.dir)
+		if int64(diskStatus.Free) < spaceNeeded {
+			return fmt.Errorf("insufficient free space for compaction: need %d bytes (volume: %d, index: %d, buffer: 10%%), but only %d bytes available",
+				spaceNeeded, volumeSize, indexSize, diskStatus.Free)
+		}
+
+		glog.V(1).Infof("volume %d compaction space check: volume=%d, index=%d, space_needed=%d, free_space=%d",
+			vid, volumeSize, indexSize, spaceNeeded, diskStatus.Free)
+
 		return v.Compact2(preallocate, compactionBytePerSecond, progressFn)
 	}
 	return fmt.Errorf("volume id %d is not found during compact", vid)
