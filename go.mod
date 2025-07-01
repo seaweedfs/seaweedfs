@@ -123,6 +123,7 @@ require (
 
 require (
 	github.com/Jille/raft-grpc-transport v1.6.1
+	github.com/a-h/templ v0.3.906
 	github.com/arangodb/go-driver v1.6.6
 	github.com/armon/go-metrics v0.4.1
 	github.com/aws/aws-sdk-go-v2 v1.36.5
@@ -188,7 +189,6 @@ require (
 	github.com/ProtonMail/go-srp v0.0.7 // indirect
 	github.com/ProtonMail/gopenpgp/v2 v2.9.0 // indirect
 	github.com/PuerkitoBio/goquery v1.10.3 // indirect
-	github.com/a-h/templ v0.3.906 // indirect
 	github.com/abbot/go-http-auth v0.4.0 // indirect
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
