@@ -12,16 +12,19 @@ import (
 
 // AdminHandlers contains all the HTTP handlers for the admin interface
 type AdminHandlers struct {
-	adminServer  *dash.AdminServer
-	authHandlers *AuthHandlers
+	adminServer     *dash.AdminServer
+	authHandlers    *AuthHandlers
+	clusterHandlers *ClusterHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
 func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	authHandlers := NewAuthHandlers(adminServer)
+	clusterHandlers := NewClusterHandlers(adminServer)
 	return &AdminHandlers{
-		adminServer:  adminServer,
-		authHandlers: authHandlers,
+		adminServer:     adminServer,
+		authHandlers:    authHandlers,
+		clusterHandlers: clusterHandlers,
 	}
 }
 
@@ -49,16 +52,16 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
 
 		// Cluster management routes
-		protected.GET("/cluster/hosts", h.ShowClusterHosts)
-		protected.GET("/cluster/volumes", h.ShowClusterVolumes)
-		protected.GET("/cluster/collections", h.ShowClusterCollections)
+		protected.GET("/cluster/hosts", h.clusterHandlers.ShowClusterHosts)
+		protected.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
+		protected.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
 
 		// API routes for AJAX calls
 		api := protected.Group("/api")
 		{
-			api.GET("/cluster/topology", h.GetClusterTopology)
-			api.GET("/cluster/masters", h.GetMasters)
-			api.GET("/cluster/volumes", h.GetVolumeServers)
+			api.GET("/cluster/topology", h.clusterHandlers.GetClusterTopology)
+			api.GET("/cluster/masters", h.clusterHandlers.GetMasters)
+			api.GET("/cluster/volumes", h.clusterHandlers.GetVolumeServers)
 			api.GET("/admin", h.adminServer.ShowAdmin) // JSON API for admin data
 
 			// S3 API routes
@@ -80,16 +83,16 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		r.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
 
 		// Cluster management routes
-		r.GET("/cluster/hosts", h.ShowClusterHosts)
-		r.GET("/cluster/volumes", h.ShowClusterVolumes)
-		r.GET("/cluster/collections", h.ShowClusterCollections)
+		r.GET("/cluster/hosts", h.clusterHandlers.ShowClusterHosts)
+		r.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
+		r.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
 
 		// API routes for AJAX calls
 		api := r.Group("/api")
 		{
-			api.GET("/cluster/topology", h.GetClusterTopology)
-			api.GET("/cluster/masters", h.GetMasters)
-			api.GET("/cluster/volumes", h.GetVolumeServers)
+			api.GET("/cluster/topology", h.clusterHandlers.GetClusterTopology)
+			api.GET("/cluster/masters", h.clusterHandlers.GetMasters)
+			api.GET("/cluster/volumes", h.clusterHandlers.GetVolumeServers)
 			api.GET("/admin", h.adminServer.ShowAdmin) // JSON API for admin data
 
 			// S3 API routes
@@ -150,113 +153,6 @@ func (h *AdminHandlers) ShowBucketDetails(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, details)
-}
-
-// ShowClusterHosts renders the cluster hosts page
-func (h *AdminHandlers) ShowClusterHosts(c *gin.Context) {
-	// Get cluster hosts data
-	hostsData, err := h.adminServer.GetClusterHosts()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster hosts: " + err.Error()})
-		return
-	}
-
-	// Set username
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
-	hostsData.Username = username
-
-	// Render HTML template
-	c.Header("Content-Type", "text/html")
-	hostsComponent := app.ClusterHosts(*hostsData)
-	layoutComponent := layout.Layout(c, hostsComponent)
-	err = layoutComponent.Render(c.Request.Context(), c.Writer)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
-		return
-	}
-}
-
-// ShowClusterVolumes renders the cluster volumes page
-func (h *AdminHandlers) ShowClusterVolumes(c *gin.Context) {
-	// Get cluster volumes data
-	volumesData, err := h.adminServer.GetClusterVolumes()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster volumes: " + err.Error()})
-		return
-	}
-
-	// Set username
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
-	volumesData.Username = username
-
-	// Render HTML template
-	c.Header("Content-Type", "text/html")
-	volumesComponent := app.ClusterVolumes(*volumesData)
-	layoutComponent := layout.Layout(c, volumesComponent)
-	err = layoutComponent.Render(c.Request.Context(), c.Writer)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
-		return
-	}
-}
-
-// ShowClusterCollections renders the cluster collections page
-func (h *AdminHandlers) ShowClusterCollections(c *gin.Context) {
-	// Get cluster collections data
-	collectionsData, err := h.adminServer.GetClusterCollections()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster collections: " + err.Error()})
-		return
-	}
-
-	// Set username
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
-	collectionsData.Username = username
-
-	// Render HTML template
-	c.Header("Content-Type", "text/html")
-	collectionsComponent := app.ClusterCollections(*collectionsData)
-	layoutComponent := layout.Layout(c, collectionsComponent)
-	err = layoutComponent.Render(c.Request.Context(), c.Writer)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
-		return
-	}
-}
-
-// GetClusterTopology returns the cluster topology as JSON
-func (h *AdminHandlers) GetClusterTopology(c *gin.Context) {
-	topology, err := h.adminServer.GetClusterTopology()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, topology)
-}
-
-// GetMasters returns master node information
-func (h *AdminHandlers) GetMasters(c *gin.Context) {
-	// Simple master info
-	c.JSON(http.StatusOK, gin.H{"masters": []gin.H{{"address": "localhost:9333", "status": "active"}}})
-}
-
-// GetVolumeServers returns volume server information
-func (h *AdminHandlers) GetVolumeServers(c *gin.Context) {
-	topology, err := h.adminServer.GetClusterTopology()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"volume_servers": topology.VolumeServers})
 }
 
 // getS3BucketsData retrieves S3 buckets data from the server

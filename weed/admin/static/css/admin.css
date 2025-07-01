@@ -169,6 +169,42 @@ main {
     box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15) !important;
 }
 
+/* Collapsible menu styles */
+.nav-link[data-bs-toggle="collapse"] {
+    position: relative;
+}
+
+.nav-link[data-bs-toggle="collapse"] .fa-chevron-down {
+    transition: transform 0.2s ease;
+}
+
+.nav-link[data-bs-toggle="collapse"][aria-expanded="true"] .fa-chevron-down {
+    transform: rotate(180deg);
+}
+
+.nav-link[data-bs-toggle="collapse"]:not(.collapsed) {
+    color: #007bff;
+}
+
+.nav-link[data-bs-toggle="collapse"]:not(.collapsed) .fa-chevron-down {
+    color: #007bff;
+}
+
+/* Submenu styles */
+.nav .nav {
+    border-left: 1px solid #e3e6f0;
+    margin-left: 0.5rem;
+}
+
+.nav .nav .nav-link {
+    font-size: 0.875rem;
+    padding-left: 1rem;
+}
+
+.nav .nav .nav-link:hover {
+    background-color: #f8f9fc;
+}
+
 /* Responsive adjustments */
 @media (max-width: 576px) {
     .card-body {

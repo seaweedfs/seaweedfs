@@ -22,6 +22,9 @@ function initializeDashboard() {
     
     // Set active navigation
     setActiveNavigation();
+    
+    // Set up submenu behavior
+    setupSubmenuBehavior();
 }
 
 // HTMX event listeners
@@ -75,6 +78,8 @@ function setActiveNavigation() {
             isActive = true;
         } else if (currentPath.startsWith('/s3/') && href === '/s3/buckets') {
             isActive = true;
+        } else if (currentPath.startsWith('/cluster/') && href.startsWith('/cluster/')) {
+            isActive = true;
         }
         
         if (isActive) {
@@ -83,6 +88,58 @@ function setActiveNavigation() {
             link.classList.remove('active');
         }
     });
+}
+
+// Set up submenu behavior
+function setupSubmenuBehavior() {
+    const currentPath = window.location.pathname;
+    
+    // If we're on a cluster page, expand the cluster submenu
+    if (currentPath.startsWith('/cluster/')) {
+        const clusterSubmenu = document.getElementById('clusterSubmenu');
+        if (clusterSubmenu) {
+            clusterSubmenu.classList.add('show');
+            
+            // Update the parent toggle button state
+            const toggleButton = document.querySelector('[data-bs-target="#clusterSubmenu"]');
+            if (toggleButton) {
+                toggleButton.classList.remove('collapsed');
+                toggleButton.setAttribute('aria-expanded', 'true');
+            }
+        }
+    }
+    
+    // Prevent submenu from collapsing when clicking on submenu items
+    const submenuLinks = document.querySelectorAll('#clusterSubmenu .nav-link');
+    submenuLinks.forEach(function(link) {
+        link.addEventListener('click', function(e) {
+            // Don't prevent the navigation, just stop the collapse behavior
+            e.stopPropagation();
+        });
+    });
+    
+    // Handle the main cluster toggle
+    const clusterToggle = document.querySelector('[data-bs-target="#clusterSubmenu"]');
+    if (clusterToggle) {
+        clusterToggle.addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            const submenu = document.getElementById('clusterSubmenu');
+            const isExpanded = submenu.classList.contains('show');
+            
+            if (isExpanded) {
+                // Collapse
+                submenu.classList.remove('show');
+                this.classList.add('collapsed');
+                this.setAttribute('aria-expanded', 'false');
+            } else {
+                // Expand
+                submenu.classList.add('show');
+                this.classList.remove('collapsed');
+                this.setAttribute('aria-expanded', 'true');
+            }
+        });
+    }
 }
 
 // Loading indicator functions

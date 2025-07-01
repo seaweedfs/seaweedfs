@@ -66,33 +66,38 @@ templ Layout(c *gin.Context, content templ.Component) {
             <div class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse">
                 <div class="position-sticky pt-3">
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
-                        <span>CLUSTER</span>
+                        <span>MAIN</span>
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
                             <a class="nav-link" href="/admin">
-                                <i class="fas fa-tachometer-alt me-2"></i>Admin
+                                <i class="fas fa-tachometer-alt me-2"></i>Dashboard
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="/cluster">
+                            <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#clusterSubmenu" aria-expanded="false" aria-controls="clusterSubmenu">
                                 <i class="fas fa-sitemap me-2"></i>Cluster
+                                <i class="fas fa-chevron-down ms-auto"></i>
                             </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="/cluster/hosts">
-                                <i class="fas fa-server me-2"></i>Hosts
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="/cluster/volumes">
-                                <i class="fas fa-database me-2"></i>Volumes
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="/cluster/collections">
-                                <i class="fas fa-layer-group me-2"></i>Collections
-                            </a>
+                            <div class="collapse" id="clusterSubmenu">
+                                <ul class="nav flex-column ms-3">
+                                    <li class="nav-item">
+                                        <a class="nav-link py-2" href="/cluster/hosts">
+                                            <i class="fas fa-server me-2"></i>Hosts
+                                        </a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a class="nav-link py-2" href="/cluster/volumes">
+                                            <i class="fas fa-database me-2"></i>Volumes
+                                        </a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a class="nav-link py-2" href="/cluster/collections">
+                                            <i class="fas fa-layer-group me-2"></i>Collections
+                                        </a>
+                                    </li>
+                                </ul>
+                            </div>
                         </li>
                     </ul>
                     
