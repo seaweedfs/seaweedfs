@@ -1,0 +1,214 @@
+package app
+
+import (
+    "fmt"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
+    <div class="container-fluid">
+        <!-- Page Header -->
+        <div class="d-sm-flex align-items-center justify-content-between mb-4">
+            <div>
+                <h1 class="h3 mb-0 text-gray-800">
+                    <i class="fas fa-users me-2"></i>Object Store Users
+                </h1>
+                <p class="mb-0 text-muted">Manage S3 API users and their access credentials</p>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-primary" 
+                        data-bs-toggle="modal" 
+                        data-bs-target="#createUserModal">
+                    <i class="fas fa-plus me-1"></i>Create User
+                </button>
+            </div>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="row mb-4">
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-primary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                    Total Users
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {fmt.Sprintf("%d", data.TotalUsers)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-users fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-success shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                    Active Users
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {fmt.Sprintf("%d", countActiveUsers(data.Users))}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-user-check fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-info shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                    Last Updated
+                                </div>
+                                <div class="h6 mb-0 font-weight-bold text-gray-800">
+                                    {data.LastUpdated.Format("15:04")}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-clock fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Users Table -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-users me-2"></i>Object Store Users
+                        </h6>
+                        <div class="dropdown no-arrow">
+                            <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                            </a>
+                            <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
+                                <div class="dropdown-header">Actions:</div>
+                                <a class="dropdown-item" href="#" onclick="exportUsers()">
+                                    <i class="fas fa-download me-2"></i>Export List
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" width="100%" cellspacing="0" id="usersTable">
+                                <thead>
+                                    <tr>
+                                        <th>Username</th>
+                                        <th>Email</th>
+                                        <th>Access Key</th>
+                                        <th>Status</th>
+                                        <th>Created</th>
+                                        <th>Last Login</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for _, user := range data.Users {
+                                        <tr>
+                                            <td>
+                                                <div class="d-flex align-items-center">
+                                                    <i class="fas fa-user me-2 text-muted"></i>
+                                                    <strong>{user.Username}</strong>
+                                                </div>
+                                            </td>
+                                            <td>{user.Email}</td>
+                                            <td>
+                                                <code class="text-muted">{user.AccessKey}</code>
+                                            </td>
+                                            <td>
+                                                <span class={fmt.Sprintf("badge bg-%s", getUserStatusColor(user.Status))}>
+                                                    {user.Status}
+                                                </span>
+                                            </td>
+                                            <td>{user.CreatedAt.Format("2006-01-02")}</td>
+                                            <td>{user.LastLogin.Format("2006-01-02")}</td>
+                                            <td>
+                                                <div class="btn-group btn-group-sm" role="group">
+                                                    <button type="button" 
+                                                            class="btn btn-outline-primary btn-sm"
+                                                            title="Edit User">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <button type="button" 
+                                                            class="btn btn-outline-danger btn-sm"
+                                                            title="Delete User">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                    if len(data.Users) == 0 {
+                                        <tr>
+                                            <td colspan="7" class="text-center text-muted py-4">
+                                                <i class="fas fa-users fa-3x mb-3 text-muted"></i>
+                                                <div>
+                                                    <h5>No users found</h5>
+                                                    <p>Create your first object store user to get started.</p>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Last Updated -->
+        <div class="row">
+            <div class="col-12">
+                <small class="text-muted">
+                    <i class="fas fa-clock me-1"></i>
+                    Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
+                </small>
+            </div>
+        </div>
+    </div>
+}
+
+// Helper functions for template
+func getUserStatusColor(status string) string {
+    switch status {
+    case "active":
+        return "success"
+    case "inactive":
+        return "warning"
+    case "suspended":
+        return "danger"
+    default:
+        return "secondary"
+    }
+}
+
+func countActiveUsers(users []dash.ObjectStoreUser) int {
+    count := 0
+    for _, user := range users {
+        if user.Status == "active" {
+            count++
+        }
+    }
+    return count
+}
+ 
