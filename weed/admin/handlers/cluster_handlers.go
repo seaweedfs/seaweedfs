@@ -102,6 +102,60 @@ func (h *ClusterHandlers) ShowClusterCollections(c *gin.Context) {
 	}
 }
 
+// ShowClusterMasters renders the cluster masters page
+func (h *ClusterHandlers) ShowClusterMasters(c *gin.Context) {
+	// Get cluster masters data
+	mastersData, err := h.adminServer.GetClusterMasters()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster masters: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	mastersData.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	mastersComponent := app.ClusterMasters(*mastersData)
+	layoutComponent := layout.Layout(c, mastersComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
+// ShowClusterFilers renders the cluster filers page
+func (h *ClusterHandlers) ShowClusterFilers(c *gin.Context) {
+	// Get cluster filers data
+	filersData, err := h.adminServer.GetClusterFilers()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster filers: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	filersData.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	filersComponent := app.ClusterFilers(*filersData)
+	layoutComponent := layout.Layout(c, filersComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
 // GetClusterTopology returns the cluster topology as JSON
 func (h *ClusterHandlers) GetClusterTopology(c *gin.Context) {
 	topology, err := h.adminServer.GetClusterTopology()

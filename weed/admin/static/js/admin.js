@@ -601,17 +601,19 @@ function exportVolumes() {
 function exportCollections() {
     const table = document.getElementById('collectionsTable');
     if (!table) {
-        showErrorMessage('No collections data to export');
+        showAlert('error', 'Collections table not found');
         return;
     }
-    
-    let csv = 'Collection Name,Data Center,Replication,Volumes,TTL,Disk Type,Status\n';
-    
-    const rows = table.querySelectorAll('tbody tr');
-    rows.forEach(row => {
+
+    const headers = ['Collection Name', 'Data Center', 'Replication', 'Volume Count', 'TTL', 'Disk Type', 'Status'];
+    const rows = [];
+
+    // Get table rows
+    const tableRows = table.querySelectorAll('tbody tr');
+    tableRows.forEach(row => {
         const cells = row.querySelectorAll('td');
         if (cells.length >= 7) {
-            const rowData = [
+            rows.push([
                 cells[0].textContent.trim(),
                 cells[1].textContent.trim(),
                 cells[2].textContent.trim(),
@@ -619,12 +621,94 @@ function exportCollections() {
                 cells[4].textContent.trim(),
                 cells[5].textContent.trim(),
                 cells[6].textContent.trim()
-            ];
-            csv += rowData.join(',') + '\n';
+            ]);
         }
     });
-    
-    downloadCSV(csv, 'seaweedfs-collections.csv');
+
+    // Generate CSV
+    const csvContent = [headers, ...rows]
+        .map(row => row.map(cell => `"${cell}"`).join(','))
+        .join('\n');
+
+    // Download
+    const filename = `seaweedfs-collections-${new Date().toISOString().split('T')[0]}.csv`;
+    downloadCSV(csvContent, filename);
+}
+
+// Export Masters to CSV
+function exportMasters() {
+    const table = document.getElementById('mastersTable');
+    if (!table) {
+        showAlert('error', 'Masters table not found');
+        return;
+    }
+
+    const headers = ['Address', 'Role', 'Version', 'Uptime', 'Last Heartbeat', 'Status'];
+    const rows = [];
+
+    // Get table rows
+    const tableRows = table.querySelectorAll('tbody tr');
+    tableRows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 6) {
+            rows.push([
+                cells[0].textContent.trim(),
+                cells[1].textContent.trim(),
+                cells[2].textContent.trim(),
+                cells[3].textContent.trim(),
+                cells[4].textContent.trim(),
+                cells[5].textContent.trim()
+            ]);
+        }
+    });
+
+    // Generate CSV
+    const csvContent = [headers, ...rows]
+        .map(row => row.map(cell => `"${cell}"`).join(','))
+        .join('\n');
+
+    // Download
+    const filename = `seaweedfs-masters-${new Date().toISOString().split('T')[0]}.csv`;
+    downloadCSV(csvContent, filename);
+}
+
+// Export Filers to CSV
+function exportFilers() {
+    const table = document.getElementById('filersTable');
+    if (!table) {
+        showAlert('error', 'Filers table not found');
+        return;
+    }
+
+    const headers = ['Address', 'Data Center', 'Version', 'Uptime', 'Files', 'Directories', 'Last Heartbeat', 'Status'];
+    const rows = [];
+
+    // Get table rows
+    const tableRows = table.querySelectorAll('tbody tr');
+    tableRows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 8) {
+            rows.push([
+                cells[0].textContent.trim(),
+                cells[1].textContent.trim(),
+                cells[2].textContent.trim(),
+                cells[3].textContent.trim(),
+                cells[4].textContent.trim(),
+                cells[5].textContent.trim(),
+                cells[6].textContent.trim(),
+                cells[7].textContent.trim()
+            ]);
+        }
+    });
+
+    // Generate CSV
+    const csvContent = [headers, ...rows]
+        .map(row => row.map(cell => `"${cell}"`).join(','))
+        .join('\n');
+
+    // Download
+    const filename = `seaweedfs-filers-${new Date().toISOString().split('T')[0]}.csv`;
+    downloadCSV(csvContent, filename);
 }
 
 // Confirm delete collection

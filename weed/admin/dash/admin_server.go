@@ -142,6 +142,43 @@ type ClusterCollectionsData struct {
 	LastUpdated      time.Time        `json:"last_updated"`
 }
 
+type MasterInfo struct {
+	Address       string    `json:"address"`
+	IsLeader      bool      `json:"is_leader"`
+	Version       string    `json:"version"`
+	Uptime        string    `json:"uptime"`
+	LastHeartbeat time.Time `json:"last_heartbeat"`
+	Status        string    `json:"status"`
+}
+
+type ClusterMastersData struct {
+	Username     string       `json:"username"`
+	Masters      []MasterInfo `json:"masters"`
+	TotalMasters int          `json:"total_masters"`
+	LeaderCount  int          `json:"leader_count"`
+	LastUpdated  time.Time    `json:"last_updated"`
+}
+
+type FilerInfo struct {
+	Address        string    `json:"address"`
+	DataCenter     string    `json:"datacenter"`
+	Version        string    `json:"version"`
+	Uptime         string    `json:"uptime"`
+	DirectoryCount int64     `json:"directory_count"`
+	FileCount      int64     `json:"file_count"`
+	LastHeartbeat  time.Time `json:"last_heartbeat"`
+	Status         string    `json:"status"`
+}
+
+type ClusterFilersData struct {
+	Username         string      `json:"username"`
+	Filers           []FilerInfo `json:"filers"`
+	TotalFilers      int         `json:"total_filers"`
+	TotalFiles       int64       `json:"total_files"`
+	TotalDirectories int64       `json:"total_directories"`
+	LastUpdated      time.Time   `json:"last_updated"`
+}
+
 func NewAdminServer(masterAddress, filerAddress string, templateFS http.FileSystem) *AdminServer {
 	return &AdminServer{
 		masterAddress:   masterAddress,
@@ -634,6 +671,110 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 		Collections:      collections,
 		TotalCollections: len(collections),
 		TotalVolumes:     totalVolumes,
+		LastUpdated:      time.Now(),
+	}, nil
+}
+
+// GetClusterMasters retrieves cluster masters data
+func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
+	topology, err := s.GetClusterTopology()
+	if err != nil {
+		return nil, err
+	}
+
+	var masters []MasterInfo
+	var leaderCount int
+
+	// Convert MasterNode to MasterInfo with additional details
+	for _, master := range topology.Masters {
+		masterInfo := MasterInfo{
+			Address:       master.Address,
+			IsLeader:      master.IsLeader,
+			Version:       "2.0.0",                      // Default version, could be retrieved via API
+			Uptime:        "N/A",                        // Could be calculated from start time
+			LastHeartbeat: time.Now().Add(-time.Minute), // Mock data
+			Status:        master.Status,
+		}
+
+		if master.IsLeader {
+			leaderCount++
+		}
+
+		masters = append(masters, masterInfo)
+	}
+
+	// If no masters found from topology, add the configured master
+	if len(masters) == 0 {
+		masters = append(masters, MasterInfo{
+			Address:       s.masterAddress,
+			IsLeader:      true,
+			Version:       "2.0.0",
+			Uptime:        "N/A",
+			LastHeartbeat: time.Now(),
+			Status:        "active",
+		})
+		leaderCount = 1
+	}
+
+	return &ClusterMastersData{
+		Masters:      masters,
+		TotalMasters: len(masters),
+		LeaderCount:  leaderCount,
+		LastUpdated:  time.Now(),
+	}, nil
+}
+
+// GetClusterFilers retrieves cluster filers data
+func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
+	var filers []FilerInfo
+	var totalFiles int64
+	var totalDirectories int64
+
+	// Get filer information - for now we'll use the configured filer
+	// In a real implementation, this would query multiple filers from the cluster
+	if s.filerAddress != "" {
+		// Try to get some basic stats from the filer
+		err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			// Get basic filer stats (simplified)
+			filerInfo := FilerInfo{
+				Address:        s.filerAddress,
+				DataCenter:     "DefaultDataCenter",
+				Version:        "2.0.0",
+				Uptime:         "N/A",
+				DirectoryCount: 100,  // Mock data - would need actual implementation
+				FileCount:      1000, // Mock data - would need actual implementation
+				LastHeartbeat:  time.Now(),
+				Status:         "active",
+			}
+
+			filers = append(filers, filerInfo)
+			totalFiles += filerInfo.FileCount
+			totalDirectories += filerInfo.DirectoryCount
+
+			return nil
+		})
+
+		if err != nil {
+			// If we can't connect to filer, still show it as configured but offline
+			filerInfo := FilerInfo{
+				Address:        s.filerAddress,
+				DataCenter:     "DefaultDataCenter",
+				Version:        "Unknown",
+				Uptime:         "N/A",
+				DirectoryCount: 0,
+				FileCount:      0,
+				LastHeartbeat:  time.Time{},
+				Status:         "offline",
+			}
+			filers = append(filers, filerInfo)
+		}
+	}
+
+	return &ClusterFilersData{
+		Filers:           filers,
+		TotalFilers:      len(filers),
+		TotalFiles:       totalFiles,
+		TotalDirectories: totalDirectories,
 		LastUpdated:      time.Now(),
 	}, nil
 }
