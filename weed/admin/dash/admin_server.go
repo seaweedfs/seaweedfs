@@ -551,37 +551,75 @@ func (s *AdminServer) GetClusterVolumes() (*ClusterVolumesData, error) {
 
 // GetClusterCollections retrieves cluster collections data
 func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
-	topology, err := s.GetClusterTopology()
+	var collections []CollectionInfo
+	var totalVolumes int
+	collectionMap := make(map[string]*CollectionInfo)
+
+	// Get actual collection information from volume data
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							for _, volInfo := range diskInfo.VolumeInfos {
+								// Extract collection name from volume info
+								// Collection name is typically stored in volume metadata
+								collectionName := volInfo.Collection
+								if collectionName == "" {
+									collectionName = "default" // Default collection for volumes without explicit collection
+								}
+
+								// Get or create collection info
+								if collection, exists := collectionMap[collectionName]; exists {
+									collection.VolumeCount++
+									totalVolumes++
+								} else {
+									newCollection := CollectionInfo{
+										Name:        collectionName,
+										DataCenter:  dc.Id,
+										Replication: fmt.Sprintf("%03d", volInfo.ReplicaPlacement),
+										VolumeCount: 1,
+										TTL:         fmt.Sprintf("%d", volInfo.Ttl),
+										DiskType:    "hdd", // Default disk type
+										Status:      "active",
+									}
+									collectionMap[collectionName] = &newCollection
+									totalVolumes++
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
 
-	// For now, create collections based on data centers
-	// In a real implementation, this would query actual collection metadata
-	var collections []CollectionInfo
-	var totalVolumes int
+	// Convert map to slice
+	for _, collection := range collectionMap {
+		collections = append(collections, *collection)
+	}
 
-	for _, dc := range topology.DataCenters {
-		volumeCount := 0
-		for _, vs := range topology.VolumeServers {
-			if vs.DataCenter == dc.ID {
-				volumeCount += vs.Volumes
-			}
-		}
-
-		if volumeCount > 0 {
-			collection := CollectionInfo{
-				Name:        dc.ID,
-				DataCenter:  dc.ID,
-				Replication: "001", // Default replication
-				VolumeCount: volumeCount,
-				TTL:         "",
-				DiskType:    "hdd",
-				Status:      "active",
-			}
-			collections = append(collections, collection)
-			totalVolumes += volumeCount
-		}
+	// If no collections found, show a message indicating no collections exist
+	if len(collections) == 0 {
+		// Return empty collections data instead of creating fake ones
+		return &ClusterCollectionsData{
+			Collections:      []CollectionInfo{},
+			TotalCollections: 0,
+			TotalVolumes:     0,
+			LastUpdated:      time.Now(),
+		}, nil
 	}
 
 	return &ClusterCollectionsData{
