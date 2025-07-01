@@ -79,9 +79,8 @@ function setActiveNavigation() {
             isActive = true;
         } else if (currentPath.startsWith('/s3/') && href === '/s3/buckets') {
             isActive = true;
-        } else if (currentPath.startsWith('/cluster/') && href.startsWith('/cluster/')) {
-            isActive = true;
         }
+        // Note: Removed the problematic cluster condition that was highlighting all submenu items
         
         if (isActive) {
             link.classList.add('active');
