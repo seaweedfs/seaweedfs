@@ -191,49 +191,58 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var14 templ.SafeURL = templ.SafeURL(fmt.Sprintf("/s3/buckets/%s", bucket.Name))
+			var templ_7745c5c3_Var14 templ.SafeURL = templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var14)))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\"><i class=\"fas fa-eye\"></i></a> <button type=\"button\" class=\"btn btn-outline-danger btn-sm delete-bucket-btn\" data-bucket-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\" class=\"btn btn-outline-success btn-sm\" title=\"Browse Files\"><i class=\"fas fa-folder-open\"></i></a> <a href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var15 string
-			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 169, Col: 89}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
+			var templ_7745c5c3_Var15 templ.SafeURL = templ.SafeURL(fmt.Sprintf("/s3/buckets/%s", bucket.Name))
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var15)))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" title=\"Delete Bucket\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\"><i class=\"fas fa-eye\"></i></a> <button type=\"button\" class=\"btn btn-outline-danger btn-sm delete-bucket-btn\" data-bucket-name=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var16 string
+			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 174, Col: 89}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "\" title=\"Delete Bucket\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if len(data.Buckets) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<tr><td colspan=\"6\" class=\"text-center text-muted py-4\"><i class=\"fas fa-cube fa-3x mb-3 text-muted\"></i><div><h5>No S3 buckets found</h5><p>Create your first bucket to get started with S3 storage.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createBucketModal\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "<tr><td colspan=\"6\" class=\"text-center text-muted py-4\"><i class=\"fas fa-cube fa-3x mb-3 text-muted\"></i><div><h5>No S3 buckets found</h5><p>Create your first bucket to get started with S3 storage.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createBucketModal\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</tbody></table></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</tbody></table></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var16 string
-		templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
+		var templ_7745c5c3_Var17 string
+		templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 206, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 211, Col: 81}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</small></div></div></div><!-- Create Bucket Modal --><div class=\"modal fade\" id=\"createBucketModal\" tabindex=\"-1\" aria-labelledby=\"createBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createBucketModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create New S3 Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createBucketForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label for=\"bucketName\" class=\"form-label\">Bucket Name</label> <input type=\"text\" class=\"form-control\" id=\"bucketName\" name=\"name\" placeholder=\"my-bucket-name\" required pattern=\"[a-z0-9.-]+\" title=\"Bucket name must contain only lowercase letters, numbers, dots, and hyphens\"><div class=\"form-text\">Bucket names must be between 3 and 63 characters, contain only lowercase letters, numbers, dots, and hyphens.</div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></form></div></div></div><!-- Delete Confirmation Modal --><div class=\"modal fade\" id=\"deleteBucketModal\" tabindex=\"-1\" aria-labelledby=\"deleteBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteBucketModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Delete Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the bucket <strong id=\"deleteBucketName\"></strong>?</p><div class=\"alert alert-warning\"><i class=\"fas fa-exclamation-triangle me-2\"></i> <strong>Warning:</strong> This action cannot be undone. All objects in the bucket will be permanently deleted.</div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteBucket()\"><i class=\"fas fa-trash me-1\"></i>Delete Bucket</button></div></div></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</small></div></div></div><!-- Create Bucket Modal --><div class=\"modal fade\" id=\"createBucketModal\" tabindex=\"-1\" aria-labelledby=\"createBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createBucketModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create New S3 Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createBucketForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label for=\"bucketName\" class=\"form-label\">Bucket Name</label> <input type=\"text\" class=\"form-control\" id=\"bucketName\" name=\"name\" placeholder=\"my-bucket-name\" required pattern=\"[a-z0-9.-]+\" title=\"Bucket name must contain only lowercase letters, numbers, dots, and hyphens\"><div class=\"form-text\">Bucket names must be between 3 and 63 characters, contain only lowercase letters, numbers, dots, and hyphens.</div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></form></div></div></div><!-- Delete Confirmation Modal --><div class=\"modal fade\" id=\"deleteBucketModal\" tabindex=\"-1\" aria-labelledby=\"deleteBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteBucketModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Delete Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the bucket <strong id=\"deleteBucketName\"></strong>?</p><div class=\"alert alert-warning\"><i class=\"fas fa-exclamation-triangle me-2\"></i> <strong>Warning:</strong> This action cannot be undone. All objects in the bucket will be permanently deleted.</div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteBucket()\"><i class=\"fas fa-trash me-1\"></i>Delete Bucket</button></div></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

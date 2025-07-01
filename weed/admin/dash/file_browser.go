@@ -42,6 +42,8 @@ type FileBrowserData struct {
 	TotalEntries int              `json:"total_entries"`
 	TotalSize    int64            `json:"total_size"`
 	LastUpdated  time.Time        `json:"last_updated"`
+	IsBucketPath bool             `json:"is_bucket_path"`
+	BucketName   string           `json:"bucket_name"`
 }
 
 // GetFileBrowser retrieves file browser data for a given path
@@ -204,6 +206,17 @@ func (s *AdminServer) GetFileBrowser(path string) (*FileBrowserData, error) {
 		}
 	}
 
+	// Check if this is a bucket path
+	isBucketPath := false
+	bucketName := ""
+	if strings.HasPrefix(path, "/buckets/") {
+		isBucketPath = true
+		pathParts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(pathParts) >= 2 {
+			bucketName = pathParts[1]
+		}
+	}
+
 	return &FileBrowserData{
 		CurrentPath:  path,
 		ParentPath:   parentPath,
@@ -212,6 +225,8 @@ func (s *AdminServer) GetFileBrowser(path string) (*FileBrowserData, error) {
 		TotalEntries: len(entries),
 		TotalSize:    totalSize,
 		LastUpdated:  time.Now(),
+		IsBucketPath: isBucketPath,
+		BucketName:   bucketName,
 	}, nil
 }
 
@@ -238,8 +253,17 @@ func (s *AdminServer) generateBreadcrumbs(path string) []BreadcrumbItem {
 			continue
 		}
 		currentPath += "/" + part
+
+		// Special handling for bucket paths
+		displayName := part
+		if len(breadcrumbs) == 1 && part == "buckets" {
+			displayName = "S3 Buckets"
+		} else if len(breadcrumbs) == 2 && strings.HasPrefix(path, "/buckets/") {
+			displayName = "📦 " + part // Add bucket icon to bucket name
+		}
+
 		breadcrumbs = append(breadcrumbs, BreadcrumbItem{
-			Name: part,
+			Name: displayName,
 			Path: currentPath,
 		})
 	}
