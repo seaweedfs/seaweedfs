@@ -10,7 +10,7 @@ The SeaweedFS Admin Interface now includes comprehensive S3 bucket management ca
 - **Status Monitoring**: Real-time bucket status and health indicators
 
 ### Bucket Operations
-- **Create Buckets**: Create new S3 buckets with region selection
+- **Create Buckets**: Create new S3 buckets
 - **Delete Buckets**: Remove buckets and all their contents (with confirmation)
 - **View Details**: Browse bucket contents and object listings
 - **Export Data**: Export bucket lists to CSV format

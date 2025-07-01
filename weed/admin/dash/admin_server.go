@@ -79,7 +79,6 @@ type S3Bucket struct {
 	Size         int64     `json:"size"`
 	ObjectCount  int64     `json:"object_count"`
 	LastModified time.Time `json:"last_modified"`
-	Region       string    `json:"region"`
 	Status       string    `json:"status"`
 }
 
@@ -387,7 +386,6 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					Size:         0, // Will be calculated if needed
 					ObjectCount:  0, // Will be calculated if needed
 					LastModified: time.Unix(resp.Entry.Attributes.Mtime, 0),
-					Region:       "us-east-1", // Default region
 					Status:       "active",
 				}
 				buckets = append(buckets, bucket)
@@ -411,7 +409,6 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	details := &BucketDetails{
 		Bucket: S3Bucket{
 			Name:   bucketName,
-			Region: "us-east-1",
 			Status: "active",
 		},
 		Objects:   []S3Object{},

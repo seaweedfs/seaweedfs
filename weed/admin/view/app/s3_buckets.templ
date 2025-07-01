@@ -135,7 +135,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                                         <th>Created</th>
                                         <th>Objects</th>
                                         <th>Size</th>
-                                        <th>Region</th>
                                         <th>Status</th>
                                         <th>Actions</th>
                                     </tr>
@@ -153,9 +152,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                                             <td>{bucket.CreatedAt.Format("2006-01-02 15:04")}</td>
                                             <td>{fmt.Sprintf("%d", bucket.ObjectCount)}</td>
                                             <td>{formatBytes(bucket.Size)}</td>
-                                            <td>
-                                                <span class="badge bg-secondary">{bucket.Region}</span>
-                                            </td>
                                             <td>
                                                 <span class={fmt.Sprintf("badge bg-%s", getBucketStatusColor(bucket.Status))}>
                                                     {bucket.Status}
@@ -180,7 +176,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     }
                                     if len(data.Buckets) == 0 {
                                         <tr>
-                                            <td colspan="7" class="text-center text-muted py-4">
+                                            <td colspan="6" class="text-center text-muted py-4">
                                                 <i class="fas fa-cube fa-3x mb-3 text-muted"></i>
                                                 <div>
                                                     <h5>No S3 buckets found</h5>
@@ -235,15 +231,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                 Bucket names must be between 3 and 63 characters, contain only lowercase letters, numbers, dots, and hyphens.
                             </div>
                         </div>
-                        <div class="mb-3">
-                            <label for="bucketRegion" class="form-label">Region</label>
-                            <select class="form-control" id="bucketRegion" name="region">
-                                <option value="us-east-1">US East (N. Virginia)</option>
-                                <option value="us-west-2">US West (Oregon)</option>
-                                <option value="eu-west-1">Europe (Ireland)</option>
-                                <option value="ap-southeast-1">Asia Pacific (Singapore)</option>
-                            </select>
-                        </div>
+
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>

@@ -86,7 +86,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</div></div><div class=\"col-auto\"><i class=\"fas fa-clock fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Buckets Table --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-cube me-2\"></i>S3 Buckets</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"fas fa-ellipsis-v fa-sm fa-fw text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"#\" onclick=\"exportBucketList()\"><i class=\"fas fa-download me-2\"></i>Export List</a></div></div></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\" id=\"bucketsTable\"><thead><tr><th>Name</th><th>Created</th><th>Objects</th><th>Size</th><th>Region</th><th>Status</th><th>Actions</th></tr></thead> <tbody>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</div></div><div class=\"col-auto\"><i class=\"fas fa-clock fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Buckets Table --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-cube me-2\"></i>S3 Buckets</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"fas fa-ellipsis-v fa-sm fa-fw text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"#\" onclick=\"exportBucketList()\"><i class=\"fas fa-download me-2\"></i>Export List</a></div></div></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\" id=\"bucketsTable\"><thead><tr><th>Name</th><th>Created</th><th>Objects</th><th>Size</th><th>Status</th><th>Actions</th></tr></thead> <tbody>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -107,7 +107,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 150, Col: 64}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 149, Col: 64}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -120,7 +120,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.CreatedAt.Format("2006-01-02 15:04"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 153, Col: 92}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 152, Col: 92}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -133,7 +133,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", bucket.ObjectCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 154, Col: 86}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 153, Col: 86}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -146,107 +146,94 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(bucket.Size))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 155, Col: 73}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 154, Col: 73}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</td><td><span class=\"badge bg-secondary\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var11 string
-			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Region)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 157, Col: 95}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
+			var templ_7745c5c3_Var11 = []any{fmt.Sprintf("badge bg-%s", getBucketStatusColor(bucket.Status))}
+			templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var11...)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</span></td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<span class=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var12 = []any{fmt.Sprintf("badge bg-%s", getBucketStatusColor(bucket.Status))}
-			templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var12...)
+			var templ_7745c5c3_Var12 string
+			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var11).String())
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 1, Col: 0}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "<span class=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var13 string
-			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var12).String())
+			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Status)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 1, Col: 0}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 157, Col: 66}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</span></td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><a href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var14 string
-			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Status)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 161, Col: 66}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
+			var templ_7745c5c3_Var14 templ.SafeURL = templ.SafeURL(fmt.Sprintf("/s3/buckets/%s", bucket.Name))
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var14)))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</span></td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><a href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\"><i class=\"fas fa-eye\"></i></a> <button type=\"button\" class=\"btn btn-outline-danger btn-sm delete-bucket-btn\" data-bucket-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var15 templ.SafeURL = templ.SafeURL(fmt.Sprintf("/s3/buckets/%s", bucket.Name))
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var15)))
+			var templ_7745c5c3_Var15 string
+			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 169, Col: 89}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\"><i class=\"fas fa-eye\"></i></a> <button type=\"button\" class=\"btn btn-outline-danger btn-sm delete-bucket-btn\" data-bucket-name=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var16 string
-			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 173, Col: 89}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "\" title=\"Delete Bucket\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" title=\"Delete Bucket\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if len(data.Buckets) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "<tr><td colspan=\"7\" class=\"text-center text-muted py-4\"><i class=\"fas fa-cube fa-3x mb-3 text-muted\"></i><div><h5>No S3 buckets found</h5><p>Create your first bucket to get started with S3 storage.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createBucketModal\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<tr><td colspan=\"6\" class=\"text-center text-muted py-4\"><i class=\"fas fa-cube fa-3x mb-3 text-muted\"></i><div><h5>No S3 buckets found</h5><p>Create your first bucket to get started with S3 storage.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createBucketModal\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</tbody></table></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</tbody></table></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var17 string
-		templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
+		var templ_7745c5c3_Var16 string
+		templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 210, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 206, Col: 81}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</small></div></div></div><!-- Create Bucket Modal --><div class=\"modal fade\" id=\"createBucketModal\" tabindex=\"-1\" aria-labelledby=\"createBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createBucketModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create New S3 Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createBucketForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label for=\"bucketName\" class=\"form-label\">Bucket Name</label> <input type=\"text\" class=\"form-control\" id=\"bucketName\" name=\"name\" placeholder=\"my-bucket-name\" required pattern=\"[a-z0-9.-]+\" title=\"Bucket name must contain only lowercase letters, numbers, dots, and hyphens\"><div class=\"form-text\">Bucket names must be between 3 and 63 characters, contain only lowercase letters, numbers, dots, and hyphens.</div></div><div class=\"mb-3\"><label for=\"bucketRegion\" class=\"form-label\">Region</label> <select class=\"form-control\" id=\"bucketRegion\" name=\"region\"><option value=\"us-east-1\">US East (N. Virginia)</option> <option value=\"us-west-2\">US West (Oregon)</option> <option value=\"eu-west-1\">Europe (Ireland)</option> <option value=\"ap-southeast-1\">Asia Pacific (Singapore)</option></select></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></form></div></div></div><!-- Delete Confirmation Modal --><div class=\"modal fade\" id=\"deleteBucketModal\" tabindex=\"-1\" aria-labelledby=\"deleteBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteBucketModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Delete Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the bucket <strong id=\"deleteBucketName\"></strong>?</p><div class=\"alert alert-warning\"><i class=\"fas fa-exclamation-triangle me-2\"></i> <strong>Warning:</strong> This action cannot be undone. All objects in the bucket will be permanently deleted.</div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteBucket()\"><i class=\"fas fa-trash me-1\"></i>Delete Bucket</button></div></div></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</small></div></div></div><!-- Create Bucket Modal --><div class=\"modal fade\" id=\"createBucketModal\" tabindex=\"-1\" aria-labelledby=\"createBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createBucketModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create New S3 Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createBucketForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label for=\"bucketName\" class=\"form-label\">Bucket Name</label> <input type=\"text\" class=\"form-control\" id=\"bucketName\" name=\"name\" placeholder=\"my-bucket-name\" required pattern=\"[a-z0-9.-]+\" title=\"Bucket name must contain only lowercase letters, numbers, dots, and hyphens\"><div class=\"form-text\">Bucket names must be between 3 and 63 characters, contain only lowercase letters, numbers, dots, and hyphens.</div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></form></div></div></div><!-- Delete Confirmation Modal --><div class=\"modal fade\" id=\"deleteBucketModal\" tabindex=\"-1\" aria-labelledby=\"deleteBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteBucketModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Delete Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the bucket <strong id=\"deleteBucketName\"></strong>?</p><div class=\"alert alert-warning\"><i class=\"fas fa-exclamation-triangle me-2\"></i> <strong>Warning:</strong> This action cannot be undone. All objects in the bucket will be permanently deleted.</div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteBucket()\"><i class=\"fas fa-trash me-1\"></i>Delete Bucket</button></div></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

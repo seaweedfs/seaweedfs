@@ -445,27 +445,25 @@ function exportBucketList() {
     const rows = Array.from(table.querySelectorAll('tbody tr'));
     const data = rows.map(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length < 6) return null; // Skip empty state row
+        if (cells.length < 5) return null; // Skip empty state row
         
         return {
             name: cells[0].textContent.trim(),
             created: cells[1].textContent.trim(),
             objects: cells[2].textContent.trim(),
             size: cells[3].textContent.trim(),
-            region: cells[4].textContent.trim(),
-            status: cells[5].textContent.trim()
+            status: cells[4].textContent.trim()
         };
     }).filter(item => item !== null);
 
     // Convert to CSV
     const csv = [
-        ['Name', 'Created', 'Objects', 'Size', 'Region', 'Status'].join(','),
+        ['Name', 'Created', 'Objects', 'Size', 'Status'].join(','),
         ...data.map(row => [
             row.name,
             row.created,
             row.objects,
             row.size,
-            row.region,
             row.status
         ].join(','))
     ].join('\n');
