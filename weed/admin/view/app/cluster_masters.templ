@@ -122,6 +122,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 								<tr>
 									<th>Address</th>
 									<th>Role</th>
+									<th>Suffrage</th>
 									<th>Status</th>
 									<th>Actions</th>
 								</tr>
@@ -144,6 +145,15 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 												<span class="badge bg-secondary">
 													<i class="fas fa-circle me-1"></i>Follower
 												</span>
+											}
+										</td>
+										<td>
+											if master.Suffrage != "" {
+												<span class="badge bg-info text-dark">
+													{ master.Suffrage }
+												</span>
+											} else {
+												<span class="text-muted">-</span>
 											}
 										</td>
 										<td>

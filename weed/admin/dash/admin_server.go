@@ -147,12 +147,10 @@ type ClusterCollectionsData struct {
 }
 
 type MasterInfo struct {
-	Address       string    `json:"address"`
-	IsLeader      bool      `json:"is_leader"`
-	Version       string    `json:"version"`
-	Uptime        string    `json:"uptime"`
-	LastHeartbeat time.Time `json:"last_heartbeat"`
-	Status        string    `json:"status"`
+	Address  string `json:"address"`
+	IsLeader bool   `json:"is_leader"`
+	Status   string `json:"status"`
+	Suffrage string `json:"suffrage"`
 }
 
 type ClusterMastersData struct {
@@ -164,14 +162,12 @@ type ClusterMastersData struct {
 }
 
 type FilerInfo struct {
-	Address       string    `json:"address"`
-	DataCenter    string    `json:"datacenter"`
-	Rack          string    `json:"rack"`
-	Version       string    `json:"version"`
-	Uptime        string    `json:"uptime"`
-	CreatedAt     time.Time `json:"created_at"`
-	LastHeartbeat time.Time `json:"last_heartbeat"`
-	Status        string    `json:"status"`
+	Address    string    `json:"address"`
+	DataCenter string    `json:"datacenter"`
+	Rack       string    `json:"rack"`
+	Version    string    `json:"version"`
+	CreatedAt  time.Time `json:"created_at"`
+	Status     string    `json:"status"`
 }
 
 type ClusterFilersData struct {
@@ -715,41 +711,88 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 
 // GetClusterMasters retrieves cluster masters data
 func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
+	var masters []MasterInfo
+	var leaderCount int
+
+	// First, get master information from topology
 	topology, err := s.GetClusterTopology()
 	if err != nil {
 		return nil, err
 	}
 
-	var masters []MasterInfo
-	var leaderCount int
+	// Create a map to merge topology and raft data
+	masterMap := make(map[string]*MasterInfo)
 
-	// Convert MasterNode to MasterInfo with additional details
+	// Add masters from topology
 	for _, master := range topology.Masters {
-		masterInfo := MasterInfo{
-			Address:       master.Address,
-			IsLeader:      master.IsLeader,
-			Version:       "2.0.0",                      // Default version, could be retrieved via API
-			Uptime:        "N/A",                        // Could be calculated from start time
-			LastHeartbeat: time.Now().Add(-time.Minute), // Mock data
-			Status:        master.Status,
+		masterInfo := &MasterInfo{
+			Address:  master.Address,
+			IsLeader: master.IsLeader,
+			Status:   master.Status,
+			Suffrage: "",
 		}
 
 		if master.IsLeader {
 			leaderCount++
 		}
 
-		masters = append(masters, masterInfo)
+		masterMap[master.Address] = masterInfo
 	}
 
-	// If no masters found from topology, add the configured master
+	// Then, get additional master information from Raft cluster
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.RaftListClusterServers(context.Background(), &master_pb.RaftListClusterServersRequest{})
+		if err != nil {
+			return err
+		}
+
+		// Process each raft server
+		for _, server := range resp.ClusterServers {
+			address := server.Address
+
+			// Update existing master info or create new one
+			if masterInfo, exists := masterMap[address]; exists {
+				// Update existing master with raft data
+				masterInfo.IsLeader = server.IsLeader
+				masterInfo.Suffrage = server.Suffrage
+				masterInfo.Status = "active" // If it's in raft cluster, it's active
+			} else {
+				// Create new master info from raft data
+				masterInfo := &MasterInfo{
+					Address:  address,
+					IsLeader: server.IsLeader,
+					Status:   "active",
+					Suffrage: server.Suffrage,
+				}
+				masterMap[address] = masterInfo
+			}
+
+			if server.IsLeader {
+				// Update leader count based on raft data
+				leaderCount = 1 // There should only be one leader
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		// If gRPC call fails, log the error but continue with topology data
+		glog.Errorf("Failed to get raft cluster servers from master %s: %v", s.masterAddress, err)
+	}
+
+	// Convert map to slice
+	for _, masterInfo := range masterMap {
+		masters = append(masters, *masterInfo)
+	}
+
+	// If no masters found at all, add the configured master as fallback
 	if len(masters) == 0 {
 		masters = append(masters, MasterInfo{
-			Address:       s.masterAddress,
-			IsLeader:      true,
-			Version:       "2.0.0",
-			Uptime:        "N/A",
-			LastHeartbeat: time.Now(),
-			Status:        "active",
+			Address:  s.masterAddress,
+			IsLeader: true,
+			Status:   "active",
+			Suffrage: "Voter",
 		})
 		leaderCount = 1
 	}
@@ -780,14 +823,12 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 			createdAt := time.Unix(0, node.CreatedAtNs)
 
 			filerInfo := FilerInfo{
-				Address:       node.Address,
-				DataCenter:    node.DataCenter,
-				Rack:          node.Rack,
-				Version:       node.Version,
-				Uptime:        "N/A", // Could calculate from CreatedAt
-				CreatedAt:     createdAt,
-				LastHeartbeat: time.Now(), // Assume active if in cluster list
-				Status:        "active",   // If it's in the cluster list, it's considered active
+				Address:    node.Address,
+				DataCenter: node.DataCenter,
+				Rack:       node.Rack,
+				Version:    node.Version,
+				CreatedAt:  createdAt,
+				Status:     "active", // If it's in the cluster list, it's considered active
 			}
 
 			filers = append(filers, filerInfo)

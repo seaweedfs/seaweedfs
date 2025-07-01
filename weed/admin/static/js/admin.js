@@ -290,7 +290,7 @@ window.Dashboard = {
     formatBytes,
     formatNumber,
     confirmAction
-};
+}; 
 
 // Initialize event handlers
 function initializeEventHandlers() {
@@ -642,18 +642,19 @@ function exportMasters() {
         return;
     }
 
-    const headers = ['Address', 'Role', 'Status'];
+    const headers = ['Address', 'Role', 'Suffrage', 'Status'];
     const rows = [];
 
     // Get table rows
     const tableRows = table.querySelectorAll('tbody tr');
     tableRows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 3) {
+        if (cells.length >= 4) {
             rows.push([
                 cells[0].textContent.trim(),
                 cells[1].textContent.trim(),
-                cells[2].textContent.trim()
+                cells[2].textContent.trim(),
+                cells[3].textContent.trim()
             ]);
         }
     });
