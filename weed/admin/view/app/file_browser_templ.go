@@ -195,7 +195,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		} else if data.CurrentPath == "/buckets" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "S3 Buckets Directory <a href=\"/object-store/buckets\" class=\"btn btn-sm btn-outline-primary ms-2\"><i class=\"fas fa-cube me-1\"></i>Manage Buckets</a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "Object Store Buckets Directory <a href=\"/object-store/buckets\" class=\"btn btn-sm btn-outline-primary ms-2\"><i class=\"fas fa-cube me-1\"></i>Manage Buckets</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

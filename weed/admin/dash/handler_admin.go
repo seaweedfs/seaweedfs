@@ -130,13 +130,13 @@ func (s *AdminServer) ShowOverview(c *gin.Context) {
 
 // S3 Bucket Management Handlers
 
-// ShowS3Buckets displays the S3 buckets management page
+// ShowS3Buckets displays the Object Store buckets management page
 func (s *AdminServer) ShowS3Buckets(c *gin.Context) {
 	username := c.GetString("username")
 
 	buckets, err := s.GetS3Buckets()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get S3 buckets: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Object Store buckets: " + err.Error()})
 		return
 	}
 

@@ -257,7 +257,7 @@ func (s *AdminServer) generateBreadcrumbs(path string) []BreadcrumbItem {
 		// Special handling for bucket paths
 		displayName := part
 		if len(breadcrumbs) == 1 && part == "buckets" {
-			displayName = "S3 Buckets"
+			displayName = "Object Store Buckets"
 		} else if len(breadcrumbs) == 2 && strings.HasPrefix(path, "/buckets/") {
 			displayName = "📦 " + part // Add bucket icon to bucket name
 		}

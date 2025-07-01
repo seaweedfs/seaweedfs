@@ -161,9 +161,9 @@ func (h *AdminHandlers) ShowDashboard(c *gin.Context) {
 	}
 }
 
-// ShowS3Buckets renders the S3 buckets management page
+// ShowS3Buckets renders the Object Store buckets management page
 func (h *AdminHandlers) ShowS3Buckets(c *gin.Context) {
-	// Get S3 buckets data from the server
+	// Get Object Store buckets data from the server
 	s3Data := h.getS3BucketsData(c)
 
 	// Render HTML template
@@ -204,14 +204,14 @@ func (h *AdminHandlers) ShowObjectStoreUsers(c *gin.Context) {
 	}
 }
 
-// getS3BucketsData retrieves S3 buckets data from the server
+// getS3BucketsData retrieves Object Store buckets data from the server
 func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 	username := c.GetString("username")
 	if username == "" {
 		username = "admin"
 	}
 
-	// Get S3 buckets
+	// Get Object Store buckets
 	buckets, err := h.adminServer.GetS3Buckets()
 	if err != nil {
 		// Return empty data on error

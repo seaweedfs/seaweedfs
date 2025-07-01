@@ -388,7 +388,7 @@ func (s *AdminServer) InvalidateCache() {
 	s.cachedFilers = nil
 }
 
-// GetS3Buckets retrieves all S3 buckets from the filer and collects size/object data from collections
+// GetS3Buckets retrieves all Object Store buckets from the filer and collects size/object data from collections
 func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	var buckets []S3Bucket
 
@@ -515,7 +515,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to list S3 buckets: %v", err)
+		return nil, fmt.Errorf("failed to list Object Store buckets: %v", err)
 	}
 
 	return buckets, nil

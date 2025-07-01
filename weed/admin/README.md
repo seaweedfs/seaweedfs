@@ -7,7 +7,7 @@ A modern web-based administration interface for SeaweedFS clusters built with Go
 - **Dashboard**: Real-time cluster status and metrics
 - **Master Management**: Monitor master nodes and leadership status
 - **Volume Server Management**: View volume servers, capacity, and health
-- **S3 Bucket Management**: Create, delete, and manage S3 buckets with web interface
+- **Object Store Bucket Management**: Create, delete, and manage Object Store buckets with web interface
 - **System Health**: Overall cluster health monitoring
 - **Responsive Design**: Bootstrap-based UI that works on all devices
 - **Authentication**: Optional user authentication with sessions
@@ -96,7 +96,7 @@ make fmt
 weed/admin/
 ├── Makefile              # Admin-specific build tasks
 ├── README.md             # This file
-├── S3_BUCKETS.md         # S3 bucket management documentation
+├── S3_BUCKETS.md         # Object Store bucket management documentation
 ├── admin.go              # Main application entry point
 ├── dash/                 # Server and handler logic
 │   ├── admin_server.go   # HTTP server setup
@@ -109,7 +109,7 @@ weed/admin/
 └── view/                 # Templates
     ├── app/              # Application templates
     │   ├── admin.templ   # Main dashboard template
-    │   ├── s3_buckets.templ # S3 bucket management template
+    │   ├── s3_buckets.templ # Object Store bucket management template
     │   └── *_templ.go    # Generated Go code
     └── layout/           # Layout templates
         ├── layout.templ  # Base layout template
@@ -118,9 +118,9 @@ weed/admin/
 
 ### S3 Bucket Management
 
-The admin interface includes comprehensive S3 bucket management capabilities. See [S3_BUCKETS.md](S3_BUCKETS.md) for detailed documentation on:
+The admin interface includes comprehensive Object Store bucket management capabilities. See [S3_BUCKETS.md](S3_BUCKETS.md) for detailed documentation on:
 
-- Creating and deleting S3 buckets
+- Creating and deleting Object Store buckets
 - Viewing bucket contents and metadata
 - Managing bucket permissions and settings
 - API endpoints for programmatic access
@@ -134,7 +134,7 @@ The admin interface includes comprehensive S3 bucket management capabilities. Se
 weed admin
 
 # Start with custom configuration
-weed admin -port=8080 -masters="master1:9333,master2:9333" -filer="filer:8888"
+weed admin -port=8080 -masters="master1:9333,master2:9333"
 
 # Start with authentication
 weed admin -adminUser=admin -adminPassword=secret123
