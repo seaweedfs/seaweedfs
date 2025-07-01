@@ -52,7 +52,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
 
 		// Cluster management routes
-		protected.GET("/cluster/hosts", h.clusterHandlers.ShowClusterHosts)
+		protected.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
 		protected.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
 		protected.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
 
@@ -83,7 +83,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		r.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
 
 		// Cluster management routes
-		r.GET("/cluster/hosts", h.clusterHandlers.ShowClusterHosts)
+		r.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
 		r.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
 		r.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
 

@@ -95,13 +95,13 @@ type BucketDetails struct {
 }
 
 // Cluster management data structures
-type ClusterHostsData struct {
-	Username      string         `json:"username"`
-	Hosts         []VolumeServer `json:"hosts"`
-	TotalHosts    int            `json:"total_hosts"`
-	TotalVolumes  int            `json:"total_volumes"`
-	TotalCapacity int64          `json:"total_capacity"`
-	LastUpdated   time.Time      `json:"last_updated"`
+type ClusterVolumeServersData struct {
+	Username           string         `json:"username"`
+	VolumeServers      []VolumeServer `json:"volume_servers"`
+	TotalVolumeServers int            `json:"total_volume_servers"`
+	TotalVolumes       int            `json:"total_volumes"`
+	TotalCapacity      int64          `json:"total_capacity"`
+	LastUpdated        time.Time      `json:"last_updated"`
 }
 
 type VolumeInfo struct {
@@ -109,6 +109,7 @@ type VolumeInfo struct {
 	Server      string `json:"server"`
 	DataCenter  string `json:"datacenter"`
 	Rack        string `json:"rack"`
+	Collection  string `json:"collection"`
 	Size        int64  `json:"size"`
 	FileCount   int64  `json:"file_count"`
 	Replication string `json:"replication"`
@@ -472,8 +473,8 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	})
 }
 
-// GetClusterHosts retrieves cluster hosts data
-func (s *AdminServer) GetClusterHosts() (*ClusterHostsData, error) {
+// GetClusterVolumeServers retrieves cluster volume servers data
+func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, error) {
 	topology, err := s.GetClusterTopology()
 	if err != nil {
 		return nil, err
@@ -486,12 +487,12 @@ func (s *AdminServer) GetClusterHosts() (*ClusterHostsData, error) {
 		totalVolumes += vs.Volumes
 	}
 
-	return &ClusterHostsData{
-		Hosts:         topology.VolumeServers,
-		TotalHosts:    len(topology.VolumeServers),
-		TotalVolumes:  totalVolumes,
-		TotalCapacity: totalCapacity,
-		LastUpdated:   time.Now(),
+	return &ClusterVolumeServersData{
+		VolumeServers:      topology.VolumeServers,
+		TotalVolumeServers: len(topology.VolumeServers),
+		TotalVolumes:       totalVolumes,
+		TotalCapacity:      totalCapacity,
+		LastUpdated:        time.Now(),
 	}, nil
 }
 
@@ -514,11 +515,18 @@ func (s *AdminServer) GetClusterVolumes() (*ClusterVolumesData, error) {
 					for _, node := range rack.DataNodeInfos {
 						for _, diskInfo := range node.DiskInfos {
 							for _, volInfo := range diskInfo.VolumeInfos {
+								// Extract collection name from volume info
+								collectionName := volInfo.Collection
+								if collectionName == "" {
+									collectionName = "default" // Default collection for volumes without explicit collection
+								}
+
 								volume := VolumeInfo{
 									ID:          volumeID,
 									Server:      node.Id,
 									DataCenter:  dc.Id,
 									Rack:        rack.Id,
+									Collection:  collectionName,
 									Size:        int64(volInfo.Size),
 									FileCount:   int64(volInfo.FileCount),
 									Replication: fmt.Sprintf("%03d", volInfo.ReplicaPlacement),

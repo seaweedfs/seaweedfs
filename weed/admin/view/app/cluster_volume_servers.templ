@@ -5,14 +5,14 @@ import (
     "github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
 
-templ ClusterHosts(data dash.ClusterHostsData) {
+templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <h1 class="h2">
-            <i class="fas fa-server me-2"></i>Cluster Hosts
+            <i class="fas fa-server me-2"></i>Volume Servers
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
-                <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportHosts()">
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportVolumeServers()">
                     <i class="fas fa-download me-1"></i>Export
                 </button>
             </div>
@@ -28,10 +28,10 @@ templ ClusterHosts(data dash.ClusterHostsData) {
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
-                                    Total Hosts
+                                    Total Volume Servers
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", data.TotalHosts)}
+                                    {fmt.Sprintf("%d", data.TotalVolumeServers)}
                                 </div>
                             </div>
                             <div class="col-auto">
@@ -48,10 +48,10 @@ templ ClusterHosts(data dash.ClusterHostsData) {
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                    Active Hosts
+                                    Active Volume Servers
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", countActiveHosts(data.Hosts))}
+                                    {fmt.Sprintf("%d", countActiveVolumeServers(data.VolumeServers))}
                                 </div>
                             </div>
                             <div class="col-auto">
@@ -111,12 +111,12 @@ templ ClusterHosts(data dash.ClusterHostsData) {
                 </h6>
             </div>
             <div class="card-body">
-                if len(data.Hosts) > 0 {
+                if len(data.VolumeServers) > 0 {
                     <div class="table-responsive">
                         <table class="table table-hover" id="hostsTable">
                             <thead>
                                 <tr>
-                                    <th>Host ID</th>
+                                    <th>Server ID</th>
                                     <th>Address</th>
                                     <th>Data Center</th>
                                     <th>Rack</th>
@@ -128,7 +128,7 @@ templ ClusterHosts(data dash.ClusterHostsData) {
                                 </tr>
                             </thead>
                             <tbody>
-                                for _, host := range data.Hosts {
+                                for _, host := range data.VolumeServers {
                                     <tr>
                                         <td>
                                             <code>{host.ID}</code>
@@ -191,7 +191,7 @@ templ ClusterHosts(data dash.ClusterHostsData) {
                 } else {
                     <div class="text-center py-5">
                         <i class="fas fa-server fa-3x text-muted mb-3"></i>
-                        <h5 class="text-muted">No Hosts Found</h5>
+                        <h5 class="text-muted">No Volume Servers Found</h5>
                         <p class="text-muted">No volume servers are currently available in the cluster.</p>
                     </div>
                 }
@@ -210,10 +210,10 @@ templ ClusterHosts(data dash.ClusterHostsData) {
     </div>
 }
 
-func countActiveHosts(hosts []dash.VolumeServer) int {
+func countActiveVolumeServers(volumeServers []dash.VolumeServer) int {
     count := 0
-    for _, host := range hosts {
-        if host.Status == "active" {
+    for _, server := range volumeServers {
+        if server.Status == "active" {
             count++
         }
     }

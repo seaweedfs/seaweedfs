@@ -120,6 +120,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                     <th>Server</th>
                                     <th>Data Center</th>
                                     <th>Rack</th>
+                                    <th>Collection</th>
                                     <th>Size</th>
                                     <th>File Count</th>
                                     <th>Replication</th>
@@ -144,6 +145,9 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                         </td>
                                         <td>
                                             <span class="badge bg-light text-dark">{volume.Rack}</span>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-secondary">{volume.Collection}</span>
                                         </td>
                                         <td>{formatBytes(volume.Size)}</td>
                                         <td>{fmt.Sprintf("%d", volume.FileCount)}</td>

@@ -21,12 +21,12 @@ func NewClusterHandlers(adminServer *dash.AdminServer) *ClusterHandlers {
 	}
 }
 
-// ShowClusterHosts renders the cluster hosts page
-func (h *ClusterHandlers) ShowClusterHosts(c *gin.Context) {
-	// Get cluster hosts data
-	hostsData, err := h.adminServer.GetClusterHosts()
+// ShowClusterVolumeServers renders the cluster volume servers page
+func (h *ClusterHandlers) ShowClusterVolumeServers(c *gin.Context) {
+	// Get cluster volume servers data
+	volumeServersData, err := h.adminServer.GetClusterVolumeServers()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster hosts: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster volume servers: " + err.Error()})
 		return
 	}
 
@@ -35,12 +35,12 @@ func (h *ClusterHandlers) ShowClusterHosts(c *gin.Context) {
 	if username == "" {
 		username = "admin"
 	}
-	hostsData.Username = username
+	volumeServersData.Username = username
 
 	// Render HTML template
 	c.Header("Content-Type", "text/html")
-	hostsComponent := app.ClusterHosts(*hostsData)
-	layoutComponent := layout.Layout(c, hostsComponent)
+	volumeServersComponent := app.ClusterVolumeServers(*volumeServersData)
+	layoutComponent := layout.Layout(c, volumeServersComponent)
 	err = layoutComponent.Render(c.Request.Context(), c.Writer)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})

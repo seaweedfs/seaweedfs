@@ -534,15 +534,15 @@ function refreshDashboard() {
 
 // Cluster management functions
 
-// Export hosts data as CSV
-function exportHosts() {
+// Export volume servers data as CSV
+function exportVolumeServers() {
     const table = document.getElementById('hostsTable');
     if (!table) {
-        showErrorMessage('No hosts data to export');
+        showErrorMessage('No volume servers data to export');
         return;
     }
     
-    let csv = 'Host ID,Address,Data Center,Rack,Volumes,Capacity,Usage,Status\n';
+    let csv = 'Server ID,Address,Data Center,Rack,Volumes,Capacity,Usage,Status\n';
     
     const rows = table.querySelectorAll('tbody tr');
     rows.forEach(row => {
@@ -562,7 +562,7 @@ function exportHosts() {
         }
     });
     
-    downloadCSV(csv, 'seaweedfs-hosts.csv');
+    downloadCSV(csv, 'seaweedfs-volume-servers.csv');
 }
 
 // Export volumes data as CSV
@@ -573,12 +573,12 @@ function exportVolumes() {
         return;
     }
     
-    let csv = 'Volume ID,Server,Data Center,Rack,Size,File Count,Replication,Status\n';
+    let csv = 'Volume ID,Server,Data Center,Rack,Collection,Size,File Count,Replication,Status\n';
     
     const rows = table.querySelectorAll('tbody tr');
     rows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 8) {
+        if (cells.length >= 9) {
             const rowData = [
                 cells[0].textContent.trim(),
                 cells[1].textContent.trim(),
@@ -587,7 +587,8 @@ function exportVolumes() {
                 cells[4].textContent.trim(),
                 cells[5].textContent.trim(),
                 cells[6].textContent.trim(),
-                cells[7].textContent.trim()
+                cells[7].textContent.trim(),
+                cells[8].textContent.trim()
             ];
             csv += rowData.join(',') + '\n';
         }
