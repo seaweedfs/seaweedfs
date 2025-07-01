@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -511,9 +512,12 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 				Name:        "buckets",
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
-					FileMode: 0755,
+					FileMode: uint32(0755 | os.ModeDir), // Directory mode
+					Uid:      uint32(1000),
+					Gid:      uint32(1000),
 					Crtime:   time.Now().Unix(),
 					Mtime:    time.Now().Unix(),
+					TtlSec:   0,
 				},
 			},
 		})
@@ -538,9 +542,12 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 				Name:        bucketName,
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
-					FileMode: 0755,
+					FileMode: uint32(0755 | os.ModeDir), // Directory mode
+					Uid:      uint32(1000),
+					Gid:      uint32(1000),
 					Crtime:   time.Now().Unix(),
 					Mtime:    time.Now().Unix(),
+					TtlSec:   0,
 				},
 			},
 		})
