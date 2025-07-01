@@ -9,6 +9,11 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeEventHandlers();
     setupFormValidation();
     setupFileManagerEventHandlers();
+    
+    // Initialize delete button visibility on file browser page
+    if (window.location.pathname === '/files') {
+        updateDeleteSelectedButton();
+    }
 });
 
 function initializeDashboard() {
@@ -823,6 +828,128 @@ function toggleSelectAll() {
     checkboxes.forEach(checkbox => {
         checkbox.checked = selectAll.checked;
     });
+    
+    updateDeleteSelectedButton();
+}
+
+// Update visibility of delete selected button based on selection
+function updateDeleteSelectedButton() {
+    const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+    const deleteBtn = document.getElementById('deleteSelectedBtn');
+    
+    if (deleteBtn) {
+        if (checkboxes.length > 0) {
+            deleteBtn.style.display = 'inline-block';
+            deleteBtn.innerHTML = `<i class="fas fa-trash me-1"></i>Delete Selected (${checkboxes.length})`;
+        } else {
+            deleteBtn.style.display = 'none';
+        }
+    }
+}
+
+// Update select all checkbox state based on individual selections
+function updateSelectAllCheckbox() {
+    const selectAll = document.getElementById('selectAll');
+    const allCheckboxes = document.querySelectorAll('.file-checkbox');
+    const checkedCheckboxes = document.querySelectorAll('.file-checkbox:checked');
+    
+    if (selectAll && allCheckboxes.length > 0) {
+        if (checkedCheckboxes.length === 0) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+        } else if (checkedCheckboxes.length === allCheckboxes.length) {
+            selectAll.checked = true;
+            selectAll.indeterminate = false;
+        } else {
+            selectAll.checked = false;
+            selectAll.indeterminate = true;
+        }
+    }
+}
+
+// Get selected file paths
+function getSelectedFilePaths() {
+    const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+    return Array.from(checkboxes).map(cb => cb.value);
+}
+
+// Confirm delete selected files
+function confirmDeleteSelected() {
+    const selectedPaths = getSelectedFilePaths();
+    
+    if (selectedPaths.length === 0) {
+        showAlert('warning', 'No files selected');
+        return;
+    }
+    
+    const fileNames = selectedPaths.map(path => path.split('/').pop()).join(', ');
+    const message = selectedPaths.length === 1 
+        ? `Are you sure you want to delete "${fileNames}"?`
+        : `Are you sure you want to delete ${selectedPaths.length} selected items?\n\n${fileNames.substring(0, 200)}${fileNames.length > 200 ? '...' : ''}`;
+    
+    if (confirm(message)) {
+        deleteSelectedFiles(selectedPaths);
+    }
+}
+
+// Delete multiple selected files
+async function deleteSelectedFiles(filePaths) {
+    if (!filePaths || filePaths.length === 0) {
+        showAlert('warning', 'No files selected');
+        return;
+    }
+    
+    // Disable the delete button during operation
+    const deleteBtn = document.getElementById('deleteSelectedBtn');
+    const originalText = deleteBtn.innerHTML;
+    deleteBtn.disabled = true;
+    deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Deleting...';
+    
+    try {
+        const response = await fetch('/api/files/delete-multiple', {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ paths: filePaths })
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            
+            if (result.deleted > 0) {
+                if (result.failed === 0) {
+                    showAlert('success', `Successfully deleted ${result.deleted} item(s)`);
+                } else {
+                    showAlert('warning', `Deleted ${result.deleted} item(s), failed to delete ${result.failed} item(s)`);
+                    if (result.errors && result.errors.length > 0) {
+                        console.warn('Deletion errors:', result.errors);
+                    }
+                }
+                
+                // Reload the page to update the file list
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            } else {
+                let errorMessage = result.message || 'Failed to delete all selected items';
+                if (result.errors && result.errors.length > 0) {
+                    errorMessage += ': ' + result.errors.join(', ');
+                }
+                showAlert('error', errorMessage);
+            }
+        } else {
+            const error = await response.json();
+            showAlert('error', `Failed to delete files: ${error.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Delete error:', error);
+        showAlert('error', 'Failed to delete files');
+    } finally {
+        // Re-enable the button
+        deleteBtn.disabled = false;
+        deleteBtn.innerHTML = originalText;
+    }
 }
 
 // Create new folder
@@ -1147,6 +1274,15 @@ function setupFileManagerEventHandlers() {
             updateFileListPreview();
         });
     }
+    
+    // Setup checkbox event listeners for file selection
+    const checkboxes = document.querySelectorAll('.file-checkbox');
+    checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            updateDeleteSelectedButton();
+            updateSelectAllCheckbox();
+        });
+    });
     
     // Setup drag and drop for file uploads
     setupDragAndDrop();

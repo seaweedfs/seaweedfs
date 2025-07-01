@@ -20,6 +20,9 @@ templ FileBrowser(data dash.FileBrowserData) {
 				<button type="button" class="btn btn-sm btn-outline-secondary" onclick="uploadFile()">
 					<i class="fas fa-upload me-1"></i>Upload
 				</button>
+				<button type="button" class="btn btn-sm btn-outline-danger" id="deleteSelectedBtn" onclick="confirmDeleteSelected()" style="display: none;">
+					<i class="fas fa-trash me-1"></i>Delete Selected
+				</button>
 				<button type="button" class="btn btn-sm btn-outline-info" onclick="exportFileList()">
 					<i class="fas fa-download me-1"></i>Export
 				</button>

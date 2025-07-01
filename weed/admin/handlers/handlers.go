@@ -85,6 +85,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 			filesApi := api.Group("/files")
 			{
 				filesApi.DELETE("/delete", h.fileBrowserHandlers.DeleteFile)
+				filesApi.DELETE("/delete-multiple", h.fileBrowserHandlers.DeleteMultipleFiles)
 				filesApi.POST("/create-folder", h.fileBrowserHandlers.CreateFolder)
 				filesApi.POST("/upload", h.fileBrowserHandlers.UploadFile)
 			}
@@ -129,6 +130,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 			filesApi := api.Group("/files")
 			{
 				filesApi.DELETE("/delete", h.fileBrowserHandlers.DeleteFile)
+				filesApi.DELETE("/delete-multiple", h.fileBrowserHandlers.DeleteMultipleFiles)
 				filesApi.POST("/create-folder", h.fileBrowserHandlers.CreateFolder)
 				filesApi.POST("/upload", h.fileBrowserHandlers.UploadFile)
 			}

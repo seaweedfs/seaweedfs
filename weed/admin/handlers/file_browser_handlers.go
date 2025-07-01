@@ -89,6 +89,71 @@ func (h *FileBrowserHandlers) DeleteFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "File deleted successfully"})
 }
 
+// DeleteMultipleFiles handles multiple file deletion API requests
+func (h *FileBrowserHandlers) DeleteMultipleFiles(c *gin.Context) {
+	var request struct {
+		Paths []string `json:"paths" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	if len(request.Paths) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No paths provided"})
+		return
+	}
+
+	var deletedCount int
+	var failedCount int
+	var errors []string
+
+	// Delete each file/folder
+	for _, path := range request.Paths {
+		err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+				Directory:            filepath.Dir(path),
+				Name:                 filepath.Base(path),
+				IsDeleteData:         true,
+				IsRecursive:          true,
+				IgnoreRecursiveError: false,
+			})
+			return err
+		})
+
+		if err != nil {
+			failedCount++
+			errors = append(errors, fmt.Sprintf("%s: %v", path, err))
+		} else {
+			deletedCount++
+		}
+	}
+
+	// Prepare response
+	response := map[string]interface{}{
+		"deleted": deletedCount,
+		"failed":  failedCount,
+		"total":   len(request.Paths),
+	}
+
+	if len(errors) > 0 {
+		response["errors"] = errors
+	}
+
+	if deletedCount > 0 {
+		if failedCount == 0 {
+			response["message"] = fmt.Sprintf("Successfully deleted %d item(s)", deletedCount)
+		} else {
+			response["message"] = fmt.Sprintf("Deleted %d item(s), failed to delete %d item(s)", deletedCount, failedCount)
+		}
+		c.JSON(http.StatusOK, response)
+	} else {
+		response["message"] = "Failed to delete all selected items"
+		c.JSON(http.StatusInternalServerError, response)
+	}
+}
+
 // CreateFolder handles folder creation requests
 func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
 	var request struct {
