@@ -23,12 +23,16 @@ import (
 
 type AdminServer struct {
 	masterAddress   string
-	filerAddress    string
 	templateFS      http.FileSystem
 	grpcDialOption  grpc.DialOption
 	cacheExpiration time.Duration
 	lastCacheUpdate time.Time
 	cachedTopology  *ClusterTopology
+
+	// Filer discovery and caching
+	cachedFilers         []string
+	lastFilerUpdate      time.Time
+	filerCacheExpiration time.Duration
 }
 
 type ClusterTopology struct {
@@ -189,19 +193,62 @@ type ClusterFilersData struct {
 	LastUpdated time.Time   `json:"last_updated"`
 }
 
-func NewAdminServer(masterAddress, filerAddress string, templateFS http.FileSystem) *AdminServer {
+func NewAdminServer(masterAddress string, templateFS http.FileSystem) *AdminServer {
 	return &AdminServer{
-		masterAddress:   masterAddress,
-		filerAddress:    filerAddress,
-		templateFS:      templateFS,
-		grpcDialOption:  security.LoadClientTLS(util.GetViper(), "grpc.client"),
-		cacheExpiration: 10 * time.Second,
+		masterAddress:        masterAddress,
+		templateFS:           templateFS,
+		grpcDialOption:       security.LoadClientTLS(util.GetViper(), "grpc.client"),
+		cacheExpiration:      10 * time.Second,
+		filerCacheExpiration: 30 * time.Second, // Cache filers for 30 seconds
 	}
 }
 
-// GetFilerAddress returns the filer address
+// GetFilerAddress returns a filer address, discovering from masters if needed
 func (s *AdminServer) GetFilerAddress() string {
-	return s.filerAddress
+	// Discover filers from masters
+	filers := s.getDiscoveredFilers()
+	if len(filers) > 0 {
+		return filers[0] // Return the first available filer
+	}
+
+	return ""
+}
+
+// getDiscoveredFilers returns cached filers or discovers them from masters
+func (s *AdminServer) getDiscoveredFilers() []string {
+	// Check if cache is still valid
+	if time.Since(s.lastFilerUpdate) < s.filerCacheExpiration && len(s.cachedFilers) > 0 {
+		return s.cachedFilers
+	}
+
+	// Discover filers from masters
+	var filers []string
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.FilerType,
+		})
+		if err != nil {
+			return err
+		}
+
+		for _, node := range resp.ClusterNodes {
+			filers = append(filers, node.Address)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		glog.Warningf("Failed to discover filers from master %s: %v", s.masterAddress, err)
+		// Return cached filers even if expired, better than nothing
+		return s.cachedFilers
+	}
+
+	// Update cache
+	s.cachedFilers = filers
+	s.lastFilerUpdate = time.Now()
+
+	return filers
 }
 
 // WithMasterClient executes a function with a master client connection
@@ -215,7 +262,12 @@ func (s *AdminServer) WithMasterClient(f func(client master_pb.SeaweedClient) er
 
 // WithFilerClient executes a function with a filer client connection
 func (s *AdminServer) WithFilerClient(f func(client filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(s.filerAddress), s.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	filerAddr := s.GetFilerAddress()
+	if filerAddr == "" {
+		return fmt.Errorf("no filer available")
+	}
+
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddr), s.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		return f(client)
 	})
 }
@@ -332,6 +384,8 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 func (s *AdminServer) InvalidateCache() {
 	s.lastCacheUpdate = time.Time{}
 	s.cachedTopology = nil
+	s.lastFilerUpdate = time.Time{}
+	s.cachedFilers = nil
 }
 
 // GetS3Buckets retrieves all S3 buckets from the filer and collects size/object data from collections
@@ -1084,4 +1138,9 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 		TotalFilers: len(filers),
 		LastUpdated: time.Now(),
 	}, nil
+}
+
+// GetAllFilers returns all discovered filers
+func (s *AdminServer) GetAllFilers() []string {
+	return s.getDiscoveredFilers()
 }

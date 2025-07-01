@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,7 +29,6 @@ var (
 type AdminOptions struct {
 	port          *int
 	masters       *string
-	filer         *string
 	tlsCertPath   *string
 	tlsKeyPath    *string
 	sessionSecret *string
@@ -41,7 +41,6 @@ func init() {
 	cmdAdmin.Run = runAdmin // break init cycle
 	a.port = cmdAdmin.Flag.Int("port", 23646, "admin server port")
 	a.masters = cmdAdmin.Flag.String("masters", "localhost:9333", "comma-separated master servers")
-	a.filer = cmdAdmin.Flag.String("filer", "localhost:8888", "filer server address")
 	a.tlsCertPath = cmdAdmin.Flag.String("tlsCert", "", "path to TLS certificate file")
 	a.tlsKeyPath = cmdAdmin.Flag.String("tlsKey", "", "path to TLS private key file")
 	a.sessionSecret = cmdAdmin.Flag.String("sessionSecret", "", "session encryption secret (auto-generated if empty)")
@@ -51,7 +50,7 @@ func init() {
 }
 
 var cmdAdmin = &Command{
-	UsageLine: "admin -port=23646 -masters=localhost:9333 -filer=localhost:8888",
+	UsageLine: "admin -port=23646 -masters=localhost:9333",
 	Short:     "start SeaweedFS web admin interface",
 	Long: `Start a web admin interface for SeaweedFS cluster management.
 
@@ -63,8 +62,10 @@ var cmdAdmin = &Command{
   - Configuration management
   - Maintenance operations
 
+  The admin interface automatically discovers filers from the master servers.
+
   Example Usage:
-    weed admin -port=23646 -masters="master1:9333,master2:9333" -filer="filer:8888"
+    weed admin -port=23646 -masters="master1:9333,master2:9333"
     weed admin -port=443 -tlsCert=/etc/ssl/admin.crt -tlsKey=/etc/ssl/admin.key
 
   Authentication:
@@ -88,12 +89,6 @@ func runAdmin(cmd *Command, args []string) bool {
 		return false
 	}
 
-	if *a.filer == "" {
-		fmt.Println("Error: filer parameter is required")
-		fmt.Println("Usage: weed admin -filer=filer:8888")
-		return false
-	}
-
 	// Validate TLS configuration
 	if (*a.tlsCertPath != "" && *a.tlsKeyPath == "") ||
 		(*a.tlsCertPath == "" && *a.tlsKeyPath != "") {
@@ -114,7 +109,7 @@ func runAdmin(cmd *Command, args []string) bool {
 
 	fmt.Printf("Starting SeaweedFS Admin Interface on port %d\n", *a.port)
 	fmt.Printf("Masters: %s\n", *a.masters)
-	fmt.Printf("Filer: %s\n", *a.filer)
+	fmt.Printf("Filers will be discovered automatically from masters\n")
 	if *a.adminPassword != "" {
 		fmt.Printf("Authentication: Enabled (user: %s)\n", *a.adminUser)
 	} else {
@@ -184,7 +179,15 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}
 
 	// Create admin server
-	adminServer := dash.NewAdminServer(*options.masters, *options.filer, nil)
+	adminServer := dash.NewAdminServer(*options.masters, nil)
+
+	// Show discovered filers
+	filers := adminServer.GetAllFilers()
+	if len(filers) > 0 {
+		fmt.Printf("Discovered filers: %s\n", strings.Join(filers, ", "))
+	} else {
+		fmt.Printf("No filers discovered from masters\n")
+	}
 
 	// Create handlers and setup routes
 	adminHandlers := handlers.NewAdminHandlers(adminServer)

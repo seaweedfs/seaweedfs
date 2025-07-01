@@ -83,7 +83,7 @@ func main() {
 	}
 
 	// Create admin server
-	adminServer := dash.NewAdminServer(*master, *filer, http.FS(viewFS))
+	adminServer := dash.NewAdminServer(*master, http.FS(viewFS))
 
 	// Setup routes
 	setupRoutes(r, adminServer, *authRequired, *username, *password)
