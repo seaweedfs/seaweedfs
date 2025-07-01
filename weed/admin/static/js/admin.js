@@ -530,8 +530,6 @@ function refreshDashboard() {
     location.reload();
 }
 
-
-
 // Cluster management functions
 
 // Export volume servers data as CSV
@@ -803,7 +801,7 @@ async function handleCreateCollection(event) {
     }
 }
 
-// Helper function to download CSV
+// Download CSV utility function
 function downloadCSV(csvContent, filename) {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -816,9 +814,120 @@ function downloadCSV(csvContent, filename) {
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-    } else {
-        // Fallback for browsers that don't support download attribute
-        window.open('data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent));
+    }
+}
+
+// File Browser Functions
+
+// Toggle select all checkboxes
+function toggleSelectAll() {
+    const selectAll = document.getElementById('selectAll');
+    const checkboxes = document.querySelectorAll('.file-checkbox');
+    
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = selectAll.checked;
+    });
+}
+
+// Create new folder
+function createFolder() {
+    const folderName = prompt('Enter folder name:');
+    if (folderName && folderName.trim()) {
+        // TODO: Implement folder creation API call
+        showAlert('info', 'Folder creation functionality will be implemented');
+    }
+}
+
+// Upload file
+function uploadFile() {
+    // TODO: Implement file upload functionality
+    showAlert('info', 'File upload functionality will be implemented');
+}
+
+// Export file list to CSV
+function exportFileList() {
+    const table = document.getElementById('fileTable');
+    if (!table) {
+        showAlert('error', 'File table not found');
+        return;
+    }
+
+    const headers = ['Name', 'Size', 'Type', 'Modified', 'Permissions'];
+    const rows = [];
+
+    // Get table rows
+    const tableRows = table.querySelectorAll('tbody tr');
+    tableRows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 6) {
+            rows.push([
+                cells[1].textContent.trim(), // Name
+                cells[2].textContent.trim(), // Size
+                cells[3].textContent.trim(), // Type
+                cells[4].textContent.trim(), // Modified
+                cells[5].textContent.trim()  // Permissions
+            ]);
+        }
+    });
+
+    // Generate CSV
+    const csvContent = [headers, ...rows]
+        .map(row => row.map(cell => `"${cell}"`).join(','))
+        .join('\n');
+
+    // Download
+    const filename = `seaweedfs-files-${new Date().toISOString().split('T')[0]}.csv`;
+    downloadCSV(csvContent, filename);
+}
+
+// Download file
+function downloadFile(filePath) {
+    // Create download link using filer direct access
+    const downloadUrl = `/files/download?path=${encodeURIComponent(filePath)}`;
+    window.open(downloadUrl, '_blank');
+}
+
+// View file
+function viewFile(filePath) {
+    // TODO: Implement file viewer functionality
+    showAlert('info', `File viewer for ${filePath} will be implemented`);
+}
+
+// Show file properties
+function showProperties(filePath) {
+    // TODO: Implement file properties modal
+    showAlert('info', `Properties for ${filePath} will be implemented`);
+}
+
+// Confirm delete file/folder
+function confirmDelete(filePath) {
+    if (confirm(`Are you sure you want to delete "${filePath}"?`)) {
+        deleteFile(filePath);
+    }
+}
+
+// Delete file/folder
+async function deleteFile(filePath) {
+    try {
+        const response = await fetch('/api/files/delete', {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ path: filePath })
+        });
+
+        if (response.ok) {
+            showAlert('success', `Successfully deleted "${filePath}"`);
+            // Reload the page to update the file list
+            window.location.reload();
+        } else {
+            const error = await response.json();
+            showAlert('error', `Failed to delete file: ${error.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Delete error:', error);
+        showAlert('error', 'Failed to delete file');
     }
 }
 

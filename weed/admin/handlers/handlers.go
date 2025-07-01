@@ -12,19 +12,22 @@ import (
 
 // AdminHandlers contains all the HTTP handlers for the admin interface
 type AdminHandlers struct {
-	adminServer     *dash.AdminServer
-	authHandlers    *AuthHandlers
-	clusterHandlers *ClusterHandlers
+	adminServer         *dash.AdminServer
+	authHandlers        *AuthHandlers
+	clusterHandlers     *ClusterHandlers
+	fileBrowserHandlers *FileBrowserHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
 func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	authHandlers := NewAuthHandlers(adminServer)
 	clusterHandlers := NewClusterHandlers(adminServer)
+	fileBrowserHandlers := NewFileBrowserHandlers(adminServer)
 	return &AdminHandlers{
-		adminServer:     adminServer,
-		authHandlers:    authHandlers,
-		clusterHandlers: clusterHandlers,
+		adminServer:         adminServer,
+		authHandlers:        authHandlers,
+		clusterHandlers:     clusterHandlers,
+		fileBrowserHandlers: fileBrowserHandlers,
 	}
 }
 
@@ -51,6 +54,9 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/s3/buckets", h.ShowS3Buckets)
 		protected.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
 
+		// File browser routes
+		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
+
 		// Cluster management routes
 		protected.GET("/cluster/masters", h.clusterHandlers.ShowClusterMasters)
 		protected.GET("/cluster/filers", h.clusterHandlers.ShowClusterFilers)
@@ -74,6 +80,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
 				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
 			}
+
+			// File management API routes
+			filesApi := api.Group("/files")
+			{
+				filesApi.DELETE("/delete", h.fileBrowserHandlers.DeleteFile)
+			}
 		}
 	} else {
 		// No authentication required - all routes are public
@@ -83,6 +95,9 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		// S3 Buckets management routes
 		r.GET("/s3/buckets", h.ShowS3Buckets)
 		r.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
+
+		// File browser routes
+		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
 
 		// Cluster management routes
 		r.GET("/cluster/masters", h.clusterHandlers.ShowClusterMasters)
@@ -106,6 +121,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				s3Api.POST("/buckets", h.adminServer.CreateBucket)
 				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
 				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
+			}
+
+			// File management API routes
+			filesApi := api.Group("/files")
+			{
+				filesApi.DELETE("/delete", h.fileBrowserHandlers.DeleteFile)
 			}
 		}
 	}
