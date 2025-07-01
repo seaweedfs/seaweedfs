@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
@@ -50,8 +51,26 @@ func (h *ClusterHandlers) ShowClusterVolumeServers(c *gin.Context) {
 
 // ShowClusterVolumes renders the cluster volumes page
 func (h *ClusterHandlers) ShowClusterVolumes(c *gin.Context) {
+	// Get pagination and sorting parameters from query string
+	page := 1
+	if p := c.Query("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	pageSize := 100
+	if ps := c.Query("pageSize"); ps != "" {
+		if parsed, err := strconv.Atoi(ps); err == nil && parsed > 0 && parsed <= 1000 {
+			pageSize = parsed
+		}
+	}
+
+	sortBy := c.DefaultQuery("sortBy", "id")
+	sortOrder := c.DefaultQuery("sortOrder", "asc")
+
 	// Get cluster volumes data
-	volumesData, err := h.adminServer.GetClusterVolumes()
+	volumesData, err := h.adminServer.GetClusterVolumes(page, pageSize, sortBy, sortOrder)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster volumes: " + err.Error()})
 		return

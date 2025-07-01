@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -124,6 +125,15 @@ type ClusterVolumesData struct {
 	TotalVolumes int          `json:"total_volumes"`
 	TotalSize    int64        `json:"total_size"`
 	LastUpdated  time.Time    `json:"last_updated"`
+
+	// Pagination
+	CurrentPage int `json:"current_page"`
+	TotalPages  int `json:"total_pages"`
+	PageSize    int `json:"page_size"`
+
+	// Sorting
+	SortBy    string `json:"sort_by"`
+	SortOrder string `json:"sort_order"`
 }
 
 type CollectionInfo struct {
@@ -693,8 +703,21 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 	}, nil
 }
 
-// GetClusterVolumes retrieves cluster volumes data
-func (s *AdminServer) GetClusterVolumes() (*ClusterVolumesData, error) {
+// GetClusterVolumes retrieves cluster volumes data with pagination and sorting
+func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, sortOrder string) (*ClusterVolumesData, error) {
+	// Set defaults
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 1000 {
+		pageSize = 100
+	}
+	if sortBy == "" {
+		sortBy = "id"
+	}
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
 	var volumes []VolumeInfo
 	var totalSize int64
 	volumeID := 1
@@ -746,12 +769,74 @@ func (s *AdminServer) GetClusterVolumes() (*ClusterVolumesData, error) {
 		return nil, err
 	}
 
+	// Sort volumes
+	s.sortVolumes(volumes, sortBy, sortOrder)
+
+	// Calculate pagination
+	totalVolumes := len(volumes)
+	totalPages := (totalVolumes + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+
+	// Apply pagination
+	startIndex := (page - 1) * pageSize
+	endIndex := startIndex + pageSize
+	if startIndex >= totalVolumes {
+		volumes = []VolumeInfo{}
+	} else {
+		if endIndex > totalVolumes {
+			endIndex = totalVolumes
+		}
+		volumes = volumes[startIndex:endIndex]
+	}
+
 	return &ClusterVolumesData{
 		Volumes:      volumes,
-		TotalVolumes: len(volumes),
+		TotalVolumes: totalVolumes,
 		TotalSize:    totalSize,
 		LastUpdated:  time.Now(),
+		CurrentPage:  page,
+		TotalPages:   totalPages,
+		PageSize:     pageSize,
+		SortBy:       sortBy,
+		SortOrder:    sortOrder,
 	}, nil
+}
+
+// sortVolumes sorts the volumes slice based on the specified field and order
+func (s *AdminServer) sortVolumes(volumes []VolumeInfo, sortBy string, sortOrder string) {
+	sort.Slice(volumes, func(i, j int) bool {
+		var less bool
+
+		switch sortBy {
+		case "id":
+			less = volumes[i].ID < volumes[j].ID
+		case "server":
+			less = volumes[i].Server < volumes[j].Server
+		case "datacenter":
+			less = volumes[i].DataCenter < volumes[j].DataCenter
+		case "rack":
+			less = volumes[i].Rack < volumes[j].Rack
+		case "collection":
+			less = volumes[i].Collection < volumes[j].Collection
+		case "size":
+			less = volumes[i].Size < volumes[j].Size
+		case "filecount":
+			less = volumes[i].FileCount < volumes[j].FileCount
+		case "replication":
+			less = volumes[i].Replication < volumes[j].Replication
+		case "status":
+			less = volumes[i].Status < volumes[j].Status
+		default:
+			less = volumes[i].ID < volumes[j].ID
+		}
+
+		if sortOrder == "desc" {
+			return !less
+		}
+		return less
+	})
 }
 
 // GetClusterCollections retrieves cluster collections data

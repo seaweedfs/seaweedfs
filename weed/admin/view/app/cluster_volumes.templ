@@ -12,6 +12,12 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
+                <select class="form-select form-select-sm me-2" id="pageSizeSelect" onchange="changePageSize()" style="width: auto;">
+                    <option value="50" if data.PageSize == 50 { selected="selected" }>50 per page</option>
+                    <option value="100" if data.PageSize == 100 { selected="selected" }>100 per page</option>
+                    <option value="200" if data.PageSize == 200 { selected="selected" }>200 per page</option>
+                    <option value="500" if data.PageSize == 500 { selected="selected" }>500 per page</option>
+                </select>
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportVolumes()">
                     <i class="fas fa-download me-1"></i>Export
                 </button>
@@ -116,15 +122,60 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                         <table class="table table-hover" id="volumesTable">
                             <thead>
                                 <tr>
-                                    <th>Volume ID</th>
-                                    <th>Server</th>
-                                    <th>Data Center</th>
-                                    <th>Rack</th>
-                                    <th>Collection</th>
-                                    <th>Size</th>
-                                    <th>File Count</th>
-                                    <th>Replication</th>
-                                    <th>Status</th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('id')" class="text-decoration-none text-dark">
+                                            Volume ID
+                                            @getSortIcon("id", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('server')" class="text-decoration-none text-dark">
+                                            Server
+                                            @getSortIcon("server", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('datacenter')" class="text-decoration-none text-dark">
+                                            Data Center
+                                            @getSortIcon("datacenter", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('rack')" class="text-decoration-none text-dark">
+                                            Rack
+                                            @getSortIcon("rack", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('collection')" class="text-decoration-none text-dark">
+                                            Collection
+                                            @getSortIcon("collection", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('size')" class="text-decoration-none text-dark">
+                                            Size
+                                            @getSortIcon("size", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('filecount')" class="text-decoration-none text-dark">
+                                            File Count
+                                            @getSortIcon("filecount", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('replication')" class="text-decoration-none text-dark">
+                                            Replication
+                                            @getSortIcon("replication", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('status')" class="text-decoration-none text-dark">
+                                            Status
+                                            @getSortIcon("status", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -180,6 +231,74 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                             </tbody>
                         </table>
                     </div>
+                    
+                    <!-- Volume Summary -->
+                    <div class="d-flex justify-content-between align-items-center mt-3">
+                        <div>
+                            <small class="text-muted">
+                                Showing {fmt.Sprintf("%d", (data.CurrentPage-1)*data.PageSize + 1)} to {fmt.Sprintf("%d", minInt(data.CurrentPage*data.PageSize, data.TotalVolumes))} of {fmt.Sprintf("%d", data.TotalVolumes)} volumes
+                            </small>
+                        </div>
+                        if data.TotalPages > 1 {
+                            <div>
+                                <small class="text-muted">
+                                    Page {fmt.Sprintf("%d", data.CurrentPage)} of {fmt.Sprintf("%d", data.TotalPages)}
+                                </small>
+                            </div>
+                        }
+                    </div>
+                    
+                    <!-- Pagination Controls -->
+                    if data.TotalPages > 1 {
+                        <div class="d-flex justify-content-center mt-3">
+                            <nav aria-label="Volumes pagination">
+                                <ul class="pagination pagination-sm mb-0">
+                                    <!-- Previous Button -->
+                                    if data.CurrentPage > 1 {
+                                        <li class="page-item">
+                                            <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", data.CurrentPage-1)}>
+                                                <i class="fas fa-chevron-left"></i>
+                                            </a>
+                                        </li>
+                                    } else {
+                                        <li class="page-item disabled">
+                                            <span class="page-link">
+                                                <i class="fas fa-chevron-left"></i>
+                                            </span>
+                                        </li>
+                                    }
+                                    
+                                    <!-- Page Numbers -->
+                                    for i := maxInt(1, data.CurrentPage-2); i <= minInt(data.TotalPages, data.CurrentPage+2); i++ {
+                                        if i == data.CurrentPage {
+                                            <li class="page-item active">
+                                                <span class="page-link">{fmt.Sprintf("%d", i)}</span>
+                                            </li>
+                                        } else {
+                                            <li class="page-item">
+                                                <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", i)}>{fmt.Sprintf("%d", i)}</a>
+                                            </li>
+                                        }
+                                    }
+                                    
+                                    <!-- Next Button -->
+                                    if data.CurrentPage < data.TotalPages {
+                                        <li class="page-item">
+                                            <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", data.CurrentPage+1)}>
+                                                <i class="fas fa-chevron-right"></i>
+                                            </a>
+                                        </li>
+                                    } else {
+                                        <li class="page-item disabled">
+                                            <span class="page-link">
+                                                <i class="fas fa-chevron-right"></i>
+                                            </span>
+                                        </li>
+                                    }
+                                </ul>
+                            </nav>
+                        </div>
+                    }
                 } else {
                     <div class="text-center py-5">
                         <i class="fas fa-database fa-3x text-muted mb-3"></i>
@@ -200,6 +319,56 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
             </div>
         </div>
     </div>
+    
+    <!-- JavaScript for pagination and sorting -->
+    <script>
+        // Initialize pagination links when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add click handlers to pagination links
+            document.querySelectorAll('.pagination-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const page = this.getAttribute('data-page');
+                    goToPage(page);
+                });
+            });
+        });
+        
+        function goToPage(page) {
+            const url = new URL(window.location);
+            url.searchParams.set('page', page);
+            window.location.href = url.toString();
+        }
+        
+        function changePageSize() {
+            const pageSize = document.getElementById('pageSizeSelect').value;
+            const url = new URL(window.location);
+            url.searchParams.set('pageSize', pageSize);
+            url.searchParams.set('page', '1'); // Reset to first page
+            window.location.href = url.toString();
+        }
+        
+        function sortTable(column) {
+            const url = new URL(window.location);
+            const currentSort = url.searchParams.get('sortBy');
+            const currentOrder = url.searchParams.get('sortOrder') || 'asc';
+            
+            let newOrder = 'asc';
+            if (currentSort === column && currentOrder === 'asc') {
+                newOrder = 'desc';
+            }
+            
+            url.searchParams.set('sortBy', column);
+            url.searchParams.set('sortOrder', newOrder);
+            url.searchParams.set('page', '1'); // Reset to first page
+            window.location.href = url.toString();
+        }
+        
+        function exportVolumes() {
+            // TODO: Implement volume export functionality
+            alert('Export functionality to be implemented');
+        }
+    </script>
 }
 
 func countActiveVolumes(volumes []dash.VolumeInfo) int {
@@ -218,4 +387,28 @@ func countUniqueDataCenters(volumes []dash.VolumeInfo) int {
         dcMap[volume.DataCenter] = true
     }
     return len(dcMap)
+}
+
+templ getSortIcon(column, currentSort, currentOrder string) {
+    if column != currentSort {
+        <i class="fas fa-sort text-muted ms-1"></i>
+    } else if currentOrder == "asc" {
+        <i class="fas fa-sort-up text-primary ms-1"></i>
+    } else {
+        <i class="fas fa-sort-down text-primary ms-1"></i>
+    }
+}
+
+func minInt(a, b int) int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+func maxInt(a, b int) int {
+    if a > b {
+        return a
+    }
+    return b
 } 
