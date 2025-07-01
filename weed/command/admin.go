@@ -44,7 +44,7 @@ func init() {
 	a.tlsCertPath = cmdAdmin.Flag.String("tlsCert", "", "path to TLS certificate file")
 	a.tlsKeyPath = cmdAdmin.Flag.String("tlsKey", "", "path to TLS private key file")
 	a.sessionSecret = cmdAdmin.Flag.String("sessionSecret", "", "session encryption secret (auto-generated if empty)")
-	a.metricsServer = cmdAdmin.Flag.String("metricsServer", "", "metrics server address for reporting")
+	// a.metricsServer = cmdAdmin.Flag.String("metricsServer", "", "metrics server address for reporting")
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
 }
