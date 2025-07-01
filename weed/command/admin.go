@@ -31,8 +31,6 @@ type AdminOptions struct {
 	masters       *string
 	tlsCertPath   *string
 	tlsKeyPath    *string
-	sessionSecret *string
-	metricsServer *string
 	adminUser     *string
 	adminPassword *string
 }
@@ -43,8 +41,7 @@ func init() {
 	a.masters = cmdAdmin.Flag.String("masters", "localhost:9333", "comma-separated master servers")
 	a.tlsCertPath = cmdAdmin.Flag.String("tlsCert", "", "path to TLS certificate file")
 	a.tlsKeyPath = cmdAdmin.Flag.String("tlsKey", "", "path to TLS private key file")
-	a.sessionSecret = cmdAdmin.Flag.String("sessionSecret", "", "session encryption secret (auto-generated if empty)")
-	// a.metricsServer = cmdAdmin.Flag.String("metricsServer", "", "metrics server address for reporting")
+
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
 }
@@ -71,7 +68,7 @@ var cmdAdmin = &Command{
   Authentication:
     - If adminPassword is not set, the admin interface runs without authentication
     - If adminPassword is set, users must login with adminUser/adminPassword
-    - Sessions are secured with sessionSecret (auto-generated if not provided)
+    - Sessions are secured with auto-generated session keys
 
   Security:
     - Use HTTPS in production by providing TLS certificates
@@ -155,17 +152,11 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
-	// Session store
-	var sessionKeyBytes []byte
-	if *options.sessionSecret != "" {
-		sessionKeyBytes = []byte(*options.sessionSecret)
-	} else {
-		// Generate a random session key
-		sessionKeyBytes = make([]byte, 32)
-		_, err := rand.Read(sessionKeyBytes)
-		if err != nil {
-			return fmt.Errorf("failed to generate session key: %v", err)
-		}
+	// Session store - always auto-generate session key
+	sessionKeyBytes := make([]byte, 32)
+	_, err := rand.Read(sessionKeyBytes)
+	if err != nil {
+		return fmt.Errorf("failed to generate session key: %v", err)
 	}
 	store := cookie.NewStore(sessionKeyBytes)
 	r.Use(sessions.Sessions("admin-session", store))

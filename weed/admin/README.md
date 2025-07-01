@@ -149,13 +149,10 @@ weed admin -port=443 -tlsCert=/path/to/cert.pem -tlsKey=/path/to/key.pem
 |--------|---------|-------------|
 | `-port` | 23646 | Admin server port |
 | `-masters` | localhost:9333 | Comma-separated master servers |
-| `-filer` | localhost:8888 | Filer server address |
 | `-adminUser` | admin | Admin username (if auth enabled) |
 | `-adminPassword` | "" | Admin password (empty = no auth) |
-| `-sessionSecret` | auto-generated | Session encryption secret |
 | `-tlsCert` | "" | Path to TLS certificate |
 | `-tlsKey` | "" | Path to TLS private key |
-| `-metricsServer` | "" | Metrics server for reporting |
 
 ### Docker Usage
 
@@ -220,7 +217,6 @@ make fmt
 1. **Authentication**: Always set `adminPassword` in production
 2. **HTTPS**: Use TLS certificates for encrypted connections
 3. **Firewall**: Restrict admin interface access to authorized networks
-4. **Session Security**: Use a strong `sessionSecret`
 
 ### Example Production Setup
 
@@ -229,10 +225,8 @@ make fmt
 weed admin \
   -port=443 \
   -masters="master1:9333,master2:9333,master3:9333" \
-  -filer="filer1:8888" \
   -adminUser=admin \
   -adminPassword=your-secure-password \
-  -sessionSecret=your-32-char-secret-key-here \
   -tlsCert=/etc/ssl/certs/admin.crt \
   -tlsKey=/etc/ssl/private/admin.key
 ```
