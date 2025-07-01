@@ -39,6 +39,25 @@ type CreateBucketRequest struct {
 	Region string `json:"region"`
 }
 
+// Object Store Users management structures
+type ObjectStoreUser struct {
+	Username    string    `json:"username"`
+	Email       string    `json:"email"`
+	AccessKey   string    `json:"access_key"`
+	SecretKey   string    `json:"secret_key"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	LastLogin   time.Time `json:"last_login"`
+	Permissions []string  `json:"permissions"`
+}
+
+type ObjectStoreUsersData struct {
+	Username    string            `json:"username"`
+	Users       []ObjectStoreUser `json:"users"`
+	TotalUsers  int               `json:"total_users"`
+	LastUpdated time.Time         `json:"last_updated"`
+}
+
 type FilerNode struct {
 	Address     string    `json:"address"`
 	DataCenter  string    `json:"datacenter"`

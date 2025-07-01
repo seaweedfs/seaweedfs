@@ -575,6 +575,46 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	})
 }
 
+// GetObjectStoreUsers retrieves object store users data
+func (s *AdminServer) GetObjectStoreUsers() ([]ObjectStoreUser, error) {
+	// For now, return mock data since SeaweedFS doesn't have built-in user management
+	// In a real implementation, this would query the IAM system or user database
+	users := []ObjectStoreUser{
+		{
+			Username:    "admin",
+			Email:       "admin@example.com",
+			AccessKey:   "AKIAIOSFODNN7EXAMPLE",
+			SecretKey:   "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+			Status:      "active",
+			CreatedAt:   time.Now().AddDate(0, -1, 0),
+			LastLogin:   time.Now().AddDate(0, 0, -1),
+			Permissions: []string{"s3:*", "iam:*"},
+		},
+		{
+			Username:    "readonly",
+			Email:       "readonly@example.com",
+			AccessKey:   "AKIAI44QH8DHBEXAMPLE",
+			SecretKey:   "je7MtGbClwBF/2Zp9Utk/h3yCo8nvbEXAMPLEKEY",
+			Status:      "active",
+			CreatedAt:   time.Now().AddDate(0, -2, 0),
+			LastLogin:   time.Now().AddDate(0, 0, -3),
+			Permissions: []string{"s3:GetObject", "s3:ListBucket"},
+		},
+		{
+			Username:    "backup",
+			Email:       "backup@example.com",
+			AccessKey:   "AKIAIGCEVSQ6C2EXAMPLE",
+			SecretKey:   "BnL1dIqRF/+WoWcouZ5e3qthJhEXAMPLEKEY",
+			Status:      "inactive",
+			CreatedAt:   time.Now().AddDate(0, -3, 0),
+			LastLogin:   time.Now().AddDate(0, -1, -15),
+			Permissions: []string{"s3:PutObject", "s3:GetObject"},
+		},
+	}
+
+	return users, nil
+}
+
 // GetClusterVolumeServers retrieves cluster volume servers data
 func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, error) {
 	topology, err := s.GetClusterTopology()

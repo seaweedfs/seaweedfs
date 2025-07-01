@@ -50,9 +50,10 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/", h.ShowDashboard)
 		protected.GET("/admin", h.ShowDashboard)
 
-		// S3 Buckets management routes
-		protected.GET("/s3/buckets", h.ShowS3Buckets)
-		protected.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
+		// Object Store management routes
+		protected.GET("/object-store/buckets", h.ShowS3Buckets)
+		protected.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
+		protected.GET("/object-store/users", h.ShowObjectStoreUsers)
 
 		// File browser routes
 		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -95,9 +96,10 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		r.GET("/", h.ShowDashboard)
 		r.GET("/admin", h.ShowDashboard)
 
-		// S3 Buckets management routes
-		r.GET("/s3/buckets", h.ShowS3Buckets)
-		r.GET("/s3/buckets/:bucket", h.ShowBucketDetails)
+		// Object Store management routes
+		r.GET("/object-store/buckets", h.ShowS3Buckets)
+		r.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
+		r.GET("/object-store/users", h.ShowObjectStoreUsers)
 
 		// File browser routes
 		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -186,6 +188,22 @@ func (h *AdminHandlers) ShowBucketDetails(c *gin.Context) {
 	c.JSON(http.StatusOK, details)
 }
 
+// ShowObjectStoreUsers renders the object store users management page
+func (h *AdminHandlers) ShowObjectStoreUsers(c *gin.Context) {
+	// Get object store users data from the server
+	usersData := h.getObjectStoreUsersData(c)
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	usersComponent := app.ObjectStoreUsers(usersData)
+	layoutComponent := layout.Layout(c, usersComponent)
+	err := layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
 // getS3BucketsData retrieves S3 buckets data from the server
 func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 	username := c.GetString("username")
@@ -218,6 +236,33 @@ func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 		TotalBuckets: len(buckets),
 		TotalSize:    totalSize,
 		LastUpdated:  time.Now(),
+	}
+}
+
+// getObjectStoreUsersData retrieves object store users data from the server
+func (h *AdminHandlers) getObjectStoreUsersData(c *gin.Context) dash.ObjectStoreUsersData {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+
+	// Get object store users
+	users, err := h.adminServer.GetObjectStoreUsers()
+	if err != nil {
+		// Return empty data on error
+		return dash.ObjectStoreUsersData{
+			Username:    username,
+			Users:       []dash.ObjectStoreUser{},
+			TotalUsers:  0,
+			LastUpdated: time.Now(),
+		}
+	}
+
+	return dash.ObjectStoreUsersData{
+		Username:    username,
+		Users:       users,
+		TotalUsers:  len(users),
+		LastUpdated: time.Now(),
 	}
 }
 
