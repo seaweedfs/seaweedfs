@@ -166,8 +166,9 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	} else {
 		// Generate a random session key
 		sessionKeyBytes = make([]byte, 32)
-		for i := range sessionKeyBytes {
-			sessionKeyBytes[i] = byte(time.Now().UnixNano() & 0xff)
+		_, err := rand.Read(sessionKeyBytes)
+		if err != nil {
+			return fmt.Errorf("failed to generate session key: %v", err)
 		}
 	}
 	store := cookie.NewStore(sessionKeyBytes)
