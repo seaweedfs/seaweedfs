@@ -116,6 +116,11 @@ templ Layout(c *gin.Context, content templ.Component) {
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
+                            <a class="nav-link" href="/files">
+                                <i class="fas fa-folder me-2"></i>File Browser
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#objectStoreSubmenu" aria-expanded="false" aria-controls="objectStoreSubmenu">
                                 <i class="fas fa-cloud me-2"></i>Object Store
                                 <i class="fas fa-chevron-down ms-auto"></i>
@@ -134,11 +139,6 @@ templ Layout(c *gin.Context, content templ.Component) {
                                     </li>
                                 </ul>
                             </div>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="/files">
-                                <i class="fas fa-folder me-2"></i>File Browser
-                            </a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href="/metrics">
