@@ -91,6 +91,49 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                    Total Files
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {fmt.Sprintf("%d", data.TotalFiles)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-file fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Second Row of Summary Cards -->
+        <div class="row mb-4">
+            <div class="col-xl-6 col-md-6 mb-4">
+                <div class="card border-left-secondary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-secondary text-uppercase mb-1">
+                                    Total Storage Size
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {formatBytes(data.TotalSize)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-6 col-md-6 mb-4">
+                <div class="card border-left-dark shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-dark text-uppercase mb-1">
                                     Data Centers
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
@@ -123,6 +166,8 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                     <th>Data Center</th>
                                     <th>Replication</th>
                                     <th>Volumes</th>
+                                    <th>Files</th>
+                                    <th>Size</th>
                                     <th>TTL</th>
                                     <th>Disk Type</th>
                                     <th>Status</th>
@@ -145,6 +190,18 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                             <div class="d-flex align-items-center">
                                                 <i class="fas fa-database me-2 text-muted"></i>
                                                 {fmt.Sprintf("%d", collection.VolumeCount)}
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                <i class="fas fa-file me-2 text-muted"></i>
+                                                {fmt.Sprintf("%d", collection.FileCount)}
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                <i class="fas fa-hdd me-2 text-muted"></i>
+                                                {formatBytes(collection.TotalSize)}
                                             </div>
                                         </td>
                                         <td>

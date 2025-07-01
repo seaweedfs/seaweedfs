@@ -131,6 +131,8 @@ type CollectionInfo struct {
 	DataCenter  string `json:"datacenter"`
 	Replication string `json:"replication"`
 	VolumeCount int    `json:"volume_count"`
+	FileCount   int64  `json:"file_count"`
+	TotalSize   int64  `json:"total_size"`
 	TTL         string `json:"ttl"`
 	DiskType    string `json:"disk_type"`
 	Status      string `json:"status"`
@@ -141,6 +143,8 @@ type ClusterCollectionsData struct {
 	Collections      []CollectionInfo `json:"collections"`
 	TotalCollections int              `json:"total_collections"`
 	TotalVolumes     int              `json:"total_volumes"`
+	TotalFiles       int64            `json:"total_files"`
+	TotalSize        int64            `json:"total_size"`
 	LastUpdated      time.Time        `json:"last_updated"`
 }
 
@@ -754,6 +758,8 @@ func (s *AdminServer) GetClusterVolumes() (*ClusterVolumesData, error) {
 func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 	var collections []CollectionInfo
 	var totalVolumes int
+	var totalFiles int64
+	var totalSize int64
 	collectionMap := make(map[string]*CollectionInfo)
 
 	// Get actual collection information from volume data
@@ -770,7 +776,6 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 						for _, diskInfo := range node.DiskInfos {
 							for _, volInfo := range diskInfo.VolumeInfos {
 								// Extract collection name from volume info
-								// Collection name is typically stored in volume metadata
 								collectionName := volInfo.Collection
 								if collectionName == "" {
 									collectionName = "default" // Default collection for volumes without explicit collection
@@ -779,19 +784,41 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 								// Get or create collection info
 								if collection, exists := collectionMap[collectionName]; exists {
 									collection.VolumeCount++
+									collection.FileCount += int64(volInfo.FileCount)
+									collection.TotalSize += int64(volInfo.Size)
+
+									// Update data center if this collection spans multiple DCs
+									if collection.DataCenter != dc.Id && collection.DataCenter != "multi" {
+										collection.DataCenter = "multi"
+									}
+
 									totalVolumes++
+									totalFiles += int64(volInfo.FileCount)
+									totalSize += int64(volInfo.Size)
 								} else {
+									// Format TTL properly
+									var ttlStr string
+									if volInfo.Ttl > 0 {
+										ttlStr = fmt.Sprintf("%ds", volInfo.Ttl)
+									} else {
+										ttlStr = ""
+									}
+
 									newCollection := CollectionInfo{
 										Name:        collectionName,
 										DataCenter:  dc.Id,
 										Replication: fmt.Sprintf("%03d", volInfo.ReplicaPlacement),
 										VolumeCount: 1,
-										TTL:         fmt.Sprintf("%d", volInfo.Ttl),
+										FileCount:   int64(volInfo.FileCount),
+										TotalSize:   int64(volInfo.Size),
+										TTL:         ttlStr,
 										DiskType:    "hdd", // Default disk type
 										Status:      "active",
 									}
 									collectionMap[collectionName] = &newCollection
 									totalVolumes++
+									totalFiles += int64(volInfo.FileCount)
+									totalSize += int64(volInfo.Size)
 								}
 							}
 						}
@@ -819,6 +846,8 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 			Collections:      []CollectionInfo{},
 			TotalCollections: 0,
 			TotalVolumes:     0,
+			TotalFiles:       0,
+			TotalSize:        0,
 			LastUpdated:      time.Now(),
 		}, nil
 	}
@@ -827,6 +856,8 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 		Collections:      collections,
 		TotalCollections: len(collections),
 		TotalVolumes:     totalVolumes,
+		TotalFiles:       totalFiles,
+		TotalSize:        totalSize,
 		LastUpdated:      time.Now(),
 	}, nil
 }
