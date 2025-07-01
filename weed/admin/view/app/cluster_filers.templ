@@ -117,12 +117,12 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 							<thead>
 								<tr>
 									<th>Address</th>
-									<th>Data Center</th>
 									<th>Version</th>
-									<th>Uptime</th>
+									<th>Data Center</th>
+									<th>Rack</th>
+									<th>Created At</th>
 									<th>Files</th>
 									<th>Directories</th>
-									<th>Last Heartbeat</th>
 									<th>Status</th>
 									<th>Actions</th>
 								</tr>
@@ -137,12 +137,21 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 											</a>
 										</td>
 										<td>
+											<span class="badge bg-light text-dark">{ filer.Version }</span>
+										</td>
+										<td>
 											<span class="badge bg-light text-dark">{ filer.DataCenter }</span>
 										</td>
 										<td>
-											<span class="badge bg-light text-dark">{ filer.Version }</span>
+											<span class="badge bg-light text-dark">{ filer.Rack }</span>
 										</td>
-										<td>{ filer.Uptime }</td>
+										<td>
+											if !filer.CreatedAt.IsZero() {
+												{ filer.CreatedAt.Format("2006-01-02 15:04:05") }
+											} else {
+												<span class="text-muted">N/A</span>
+											}
+										</td>
 										<td>
 											<span class="badge bg-info text-white">
 												{ formatNumber(filer.FileCount) }
@@ -152,13 +161,6 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 											<span class="badge bg-secondary text-white">
 												{ formatNumber(filer.DirectoryCount) }
 											</span>
-										</td>
-										<td>
-											if !filer.LastHeartbeat.IsZero() {
-												{ filer.LastHeartbeat.Format("2006-01-02 15:04:05") }
-											} else {
-												<span class="text-muted">N/A</span>
-											}
 										</td>
 										<td>
 											<span class={ fmt.Sprintf("badge bg-%s", getStatusColor(filer.Status)) }>

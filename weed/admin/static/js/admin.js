@@ -642,21 +642,18 @@ function exportMasters() {
         return;
     }
 
-    const headers = ['Address', 'Role', 'Version', 'Uptime', 'Last Heartbeat', 'Status'];
+    const headers = ['Address', 'Role', 'Status'];
     const rows = [];
 
     // Get table rows
     const tableRows = table.querySelectorAll('tbody tr');
     tableRows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 6) {
+        if (cells.length >= 3) {
             rows.push([
                 cells[0].textContent.trim(),
                 cells[1].textContent.trim(),
-                cells[2].textContent.trim(),
-                cells[3].textContent.trim(),
-                cells[4].textContent.trim(),
-                cells[5].textContent.trim()
+                cells[2].textContent.trim()
             ]);
         }
     });
@@ -679,7 +676,7 @@ function exportFilers() {
         return;
     }
 
-    const headers = ['Address', 'Data Center', 'Version', 'Uptime', 'Files', 'Directories', 'Last Heartbeat', 'Status'];
+    const headers = ['Address', 'Version', 'Data Center', 'Rack', 'Created At', 'Files', 'Directories', 'Status'];
     const rows = [];
 
     // Get table rows

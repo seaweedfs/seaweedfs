@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -165,10 +166,12 @@ type ClusterMastersData struct {
 type FilerInfo struct {
 	Address        string    `json:"address"`
 	DataCenter     string    `json:"datacenter"`
+	Rack           string    `json:"rack"`
 	Version        string    `json:"version"`
 	Uptime         string    `json:"uptime"`
 	DirectoryCount int64     `json:"directory_count"`
 	FileCount      int64     `json:"file_count"`
+	CreatedAt      time.Time `json:"created_at"`
 	LastHeartbeat  time.Time `json:"last_heartbeat"`
 	Status         string    `json:"status"`
 }
@@ -769,44 +772,47 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 	var totalFiles int64
 	var totalDirectories int64
 
-	// Get filer information - for now we'll use the configured filer
-	// In a real implementation, this would query multiple filers from the cluster
-	if s.filerAddress != "" {
-		// Try to get some basic stats from the filer
-		err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-			// Get basic filer stats (simplified)
+	// Get filer information from master using ListClusterNodes
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.FilerType,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Process each filer node
+		for _, node := range resp.ClusterNodes {
+			createdAt := time.Unix(0, node.CreatedAtNs)
+
+			// For now, use mock data for file/directory counts
+			// In a real implementation, this would query each filer for actual stats
+			fileCount := int64(1000) // Mock data
+			dirCount := int64(100)   // Mock data
+
 			filerInfo := FilerInfo{
-				Address:        s.filerAddress,
-				DataCenter:     "DefaultDataCenter",
-				Version:        "2.0.0",
-				Uptime:         "N/A",
-				DirectoryCount: 100,  // Mock data - would need actual implementation
-				FileCount:      1000, // Mock data - would need actual implementation
-				LastHeartbeat:  time.Now(),
-				Status:         "active",
+				Address:        node.Address,
+				DataCenter:     node.DataCenter,
+				Rack:           node.Rack,
+				Version:        node.Version,
+				Uptime:         "N/A", // Could calculate from CreatedAt
+				DirectoryCount: dirCount,
+				FileCount:      fileCount,
+				CreatedAt:      createdAt,
+				LastHeartbeat:  time.Now(), // Assume active if in cluster list
+				Status:         "active",   // If it's in the cluster list, it's considered active
 			}
 
 			filers = append(filers, filerInfo)
 			totalFiles += filerInfo.FileCount
 			totalDirectories += filerInfo.DirectoryCount
-
-			return nil
-		})
-
-		if err != nil {
-			// If we can't connect to filer, still show it as configured but offline
-			filerInfo := FilerInfo{
-				Address:        s.filerAddress,
-				DataCenter:     "DefaultDataCenter",
-				Version:        "Unknown",
-				Uptime:         "N/A",
-				DirectoryCount: 0,
-				FileCount:      0,
-				LastHeartbeat:  time.Time{},
-				Status:         "offline",
-			}
-			filers = append(filers, filerInfo)
 		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get filer nodes from master: %v", err)
 	}
 
 	return &ClusterFilersData{

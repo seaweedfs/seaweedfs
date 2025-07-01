@@ -122,9 +122,6 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 								<tr>
 									<th>Address</th>
 									<th>Role</th>
-									<th>Version</th>
-									<th>Uptime</th>
-									<th>Last Heartbeat</th>
 									<th>Status</th>
 									<th>Actions</th>
 								</tr>
@@ -147,17 +144,6 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 												<span class="badge bg-secondary">
 													<i class="fas fa-circle me-1"></i>Follower
 												</span>
-											}
-										</td>
-										<td>
-											<span class="badge bg-light text-dark">{ master.Version }</span>
-										</td>
-										<td>{ master.Uptime }</td>
-										<td>
-											if !master.LastHeartbeat.IsZero() {
-												{ master.LastHeartbeat.Format("2006-01-02 15:04:05") }
-											} else {
-												<span class="text-muted">N/A</span>
 											}
 										</td>
 										<td>
