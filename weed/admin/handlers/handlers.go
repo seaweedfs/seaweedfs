@@ -80,6 +80,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				s3Api.POST("/buckets", h.adminServer.CreateBucket)
 				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
 				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
+				s3Api.PUT("/buckets/:bucket/quota", h.adminServer.UpdateBucketQuota)
 			}
 
 			// File management API routes
@@ -126,6 +127,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				s3Api.POST("/buckets", h.adminServer.CreateBucket)
 				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
 				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
+				s3Api.PUT("/buckets/:bucket/quota", h.adminServer.UpdateBucketQuota)
 			}
 
 			// File management API routes

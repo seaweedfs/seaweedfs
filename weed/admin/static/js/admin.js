@@ -357,7 +357,48 @@ function initializeEventHandlers() {
             const bucketName = button.getAttribute('data-bucket-name');
             confirmDeleteBucket(bucketName);
         }
+        
+        // Quota management buttons
+        if (e.target.closest('.quota-btn')) {
+            const button = e.target.closest('.quota-btn');
+            const bucketName = button.getAttribute('data-bucket-name');
+            const currentQuota = parseInt(button.getAttribute('data-current-quota')) || 0;
+            const quotaEnabled = button.getAttribute('data-quota-enabled') === 'true';
+            showQuotaModal(bucketName, currentQuota, quotaEnabled);
+        }
     });
+
+    // Quota form submission
+    const quotaForm = document.getElementById('quotaForm');
+    if (quotaForm) {
+        quotaForm.addEventListener('submit', handleUpdateQuota);
+    }
+
+    // Enable quota checkbox for create bucket form
+    const enableQuotaCheckbox = document.getElementById('enableQuota');
+    if (enableQuotaCheckbox) {
+        enableQuotaCheckbox.addEventListener('change', function() {
+            const quotaSettings = document.getElementById('quotaSettings');
+            if (this.checked) {
+                quotaSettings.style.display = 'block';
+            } else {
+                quotaSettings.style.display = 'none';
+            }
+        });
+    }
+
+    // Enable quota checkbox for quota modal
+    const quotaEnabledCheckbox = document.getElementById('quotaEnabled');
+    if (quotaEnabledCheckbox) {
+        quotaEnabledCheckbox.addEventListener('change', function() {
+            const quotaSizeSettings = document.getElementById('quotaSizeSettings');
+            if (this.checked) {
+                quotaSizeSettings.style.display = 'block';
+            } else {
+                quotaSizeSettings.style.display = 'none';
+            }
+        });
+    }
 }
 
 // Setup form validation
@@ -379,7 +420,10 @@ async function handleCreateBucket(event) {
     const formData = new FormData(form);
     const bucketData = {
         name: formData.get('name'),
-        region: formData.get('region') || 'us-east-1'
+        region: formData.get('region') || 'us-east-1',
+        quota_enabled: formData.get('quota_enabled') === 'on',
+        quota_size: parseInt(formData.get('quota_size')) || 0,
+        quota_unit: formData.get('quota_unit') || 'MB'
     };
 
     try {
@@ -491,25 +535,27 @@ function exportBucketList() {
     const rows = Array.from(table.querySelectorAll('tbody tr'));
     const data = rows.map(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length < 5) return null; // Skip empty state row
+        if (cells.length < 6) return null; // Skip empty state row
         
         return {
             name: cells[0].textContent.trim(),
             created: cells[1].textContent.trim(),
             objects: cells[2].textContent.trim(),
             size: cells[3].textContent.trim(),
-            status: cells[4].textContent.trim()
+            quota: cells[4].textContent.trim(),
+            status: cells[5].textContent.trim()
         };
     }).filter(item => item !== null);
 
     // Convert to CSV
     const csv = [
-        ['Name', 'Created', 'Objects', 'Size', 'Status'].join(','),
+        ['Name', 'Created', 'Objects', 'Size', 'Quota', 'Status'].join(','),
         ...data.map(row => [
             row.name,
             row.created,
             row.objects,
             row.size,
+            row.quota,
             row.status
         ].join(','))
     ].join('\n');
@@ -1570,6 +1616,99 @@ function getFileIconByName(fileName) {
             return 'fa-file-code';
         default:
             return 'fa-file';
+    }
+}
+
+// Quota Management Functions
+
+// Show quota management modal
+function showQuotaModal(bucketName, currentQuotaMB, quotaEnabled) {
+    document.getElementById('quotaBucketName').value = bucketName;
+    document.getElementById('quotaEnabled').checked = quotaEnabled;
+    
+    // Convert quota to appropriate unit and set values
+    const quotaBytes = currentQuotaMB * 1024 * 1024; // Convert MB to bytes
+    const { size, unit } = convertBytesToBestUnit(quotaBytes);
+    
+    document.getElementById('quotaSizeMB').value = size;
+    document.getElementById('quotaUnitMB').value = unit;
+    
+    // Show/hide quota size settings based on enabled state
+    const quotaSizeSettings = document.getElementById('quotaSizeSettings');
+    if (quotaEnabled) {
+        quotaSizeSettings.style.display = 'block';
+    } else {
+        quotaSizeSettings.style.display = 'none';
+    }
+    
+    const modal = new bootstrap.Modal(document.getElementById('manageQuotaModal'));
+    modal.show();
+}
+
+// Convert bytes to the best unit (TB, GB, or MB)
+function convertBytesToBestUnit(bytes) {
+    if (bytes === 0) {
+        return { size: 0, unit: 'MB' };
+    }
+    
+    // Check if it's a clean TB value
+    if (bytes >= 1024 * 1024 * 1024 * 1024 && bytes % (1024 * 1024 * 1024 * 1024) === 0) {
+        return { size: bytes / (1024 * 1024 * 1024 * 1024), unit: 'TB' };
+    }
+    
+    // Check if it's a clean GB value
+    if (bytes >= 1024 * 1024 * 1024 && bytes % (1024 * 1024 * 1024) === 0) {
+        return { size: bytes / (1024 * 1024 * 1024), unit: 'GB' };
+    }
+    
+    // Default to MB
+    return { size: bytes / (1024 * 1024), unit: 'MB' };
+}
+
+// Handle quota update form submission
+async function handleUpdateQuota(event) {
+    event.preventDefault();
+    
+    const form = event.target;
+    const formData = new FormData(form);
+    const bucketName = document.getElementById('quotaBucketName').value;
+    
+    const quotaData = {
+        quota_enabled: formData.get('quota_enabled') === 'on',
+        quota_size: parseInt(formData.get('quota_size')) || 0,
+        quota_unit: formData.get('quota_unit') || 'MB'
+    };
+
+    try {
+        const response = await fetch(`/api/s3/buckets/${bucketName}/quota`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(quotaData)
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            // Success
+            showAlert('success', `Quota for bucket "${bucketName}" updated successfully!`);
+            
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('manageQuotaModal'));
+            modal.hide();
+            
+            // Refresh the page after a short delay
+            setTimeout(() => {
+                location.reload();
+            }, 1500);
+        } else {
+            // Error
+            showAlert('danger', result.error || 'Failed to update bucket quota');
+        }
+    } catch (error) {
+        console.error('Error updating bucket quota:', error);
+        showAlert('danger', 'Network error occurred while updating bucket quota');
     }
 }
 

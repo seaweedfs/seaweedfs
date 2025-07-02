@@ -25,20 +25,6 @@ type AdminData struct {
 	SystemHealth  string         `json:"system_health"`
 }
 
-// S3 Bucket management data structures for templates
-type S3BucketsData struct {
-	Username     string     `json:"username"`
-	Buckets      []S3Bucket `json:"buckets"`
-	TotalBuckets int        `json:"total_buckets"`
-	TotalSize    int64      `json:"total_size"`
-	LastUpdated  time.Time  `json:"last_updated"`
-}
-
-type CreateBucketRequest struct {
-	Name   string `json:"name" binding:"required"`
-	Region string `json:"region"`
-}
-
 // Object Store Users management structures
 type ObjectStoreUser struct {
 	Username    string    `json:"username"`
@@ -126,112 +112,6 @@ func (s *AdminServer) ShowOverview(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, topology)
-}
-
-// S3 Bucket Management Handlers
-
-// ShowS3Buckets displays the Object Store buckets management page
-func (s *AdminServer) ShowS3Buckets(c *gin.Context) {
-	username := c.GetString("username")
-
-	buckets, err := s.GetS3Buckets()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Object Store buckets: " + err.Error()})
-		return
-	}
-
-	// Calculate totals
-	var totalSize int64
-	for _, bucket := range buckets {
-		totalSize += bucket.Size
-	}
-
-	data := S3BucketsData{
-		Username:     username,
-		Buckets:      buckets,
-		TotalBuckets: len(buckets),
-		TotalSize:    totalSize,
-		LastUpdated:  time.Now(),
-	}
-
-	c.JSON(http.StatusOK, data)
-}
-
-// ShowBucketDetails displays detailed information about a specific bucket
-func (s *AdminServer) ShowBucketDetails(c *gin.Context) {
-	bucketName := c.Param("bucket")
-	if bucketName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Bucket name is required"})
-		return
-	}
-
-	details, err := s.GetBucketDetails(bucketName)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get bucket details: " + err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, details)
-}
-
-// CreateBucket creates a new S3 bucket
-func (s *AdminServer) CreateBucket(c *gin.Context) {
-	var req CreateBucketRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
-		return
-	}
-
-	// Validate bucket name (basic validation)
-	if len(req.Name) < 3 || len(req.Name) > 63 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Bucket name must be between 3 and 63 characters"})
-		return
-	}
-
-	err := s.CreateS3Bucket(req.Name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create bucket: " + err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "Bucket created successfully",
-		"bucket":  req.Name,
-	})
-}
-
-// DeleteBucket deletes an S3 bucket
-func (s *AdminServer) DeleteBucket(c *gin.Context) {
-	bucketName := c.Param("bucket")
-	if bucketName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Bucket name is required"})
-		return
-	}
-
-	err := s.DeleteS3Bucket(bucketName)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete bucket: " + err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Bucket deleted successfully",
-		"bucket":  bucketName,
-	})
-}
-
-// ListBucketsAPI returns buckets as JSON API
-func (s *AdminServer) ListBucketsAPI(c *gin.Context) {
-	buckets, err := s.GetS3Buckets()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"buckets": buckets,
-		"count":   len(buckets),
-	})
 }
 
 // getMasterNodesStatus checks status of all master nodes

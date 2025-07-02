@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -83,6 +81,8 @@ type S3Bucket struct {
 	ObjectCount  int64     `json:"object_count"`
 	LastModified time.Time `json:"last_modified"`
 	Status       string    `json:"status"`
+	Quota        int64     `json:"quota"`         // Quota in bytes, 0 means no quota
+	QuotaEnabled bool      `json:"quota_enabled"` // Whether quota is enabled
 }
 
 type S3Object struct {
@@ -499,6 +499,15 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					objectCount = collectionData.FileCount
 				}
 
+				// Get quota information from entry
+				quota := resp.Entry.Quota
+				quotaEnabled := quota > 0
+				if quota < 0 {
+					// Negative quota means disabled
+					quota = -quota
+					quotaEnabled = false
+				}
+
 				bucket := S3Bucket{
 					Name:         bucketName,
 					CreatedAt:    time.Unix(resp.Entry.Attributes.Crtime, 0),
@@ -506,6 +515,8 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					ObjectCount:  objectCount,
 					LastModified: time.Unix(resp.Entry.Attributes.Mtime, 0),
 					Status:       "active",
+					Quota:        quota,
+					QuotaEnabled: quotaEnabled,
 				}
 				buckets = append(buckets, bucket)
 			}
@@ -620,59 +631,7 @@ func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, dire
 
 // CreateS3Bucket creates a new S3 bucket
 func (s *AdminServer) CreateS3Bucket(bucketName string) error {
-	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// First ensure /buckets directory exists
-		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
-			Directory: "/",
-			Entry: &filer_pb.Entry{
-				Name:        "buckets",
-				IsDirectory: true,
-				Attributes: &filer_pb.FuseAttributes{
-					FileMode: uint32(0755 | os.ModeDir), // Directory mode
-					Uid:      uint32(1000),
-					Gid:      uint32(1000),
-					Crtime:   time.Now().Unix(),
-					Mtime:    time.Now().Unix(),
-					TtlSec:   0,
-				},
-			},
-		})
-		// Ignore error if directory already exists
-		if err != nil && !strings.Contains(err.Error(), "already exists") && !strings.Contains(err.Error(), "existing entry") {
-			return fmt.Errorf("failed to create /buckets directory: %v", err)
-		}
-
-		// Check if bucket already exists
-		_, err = client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/buckets",
-			Name:      bucketName,
-		})
-		if err == nil {
-			return fmt.Errorf("bucket %s already exists", bucketName)
-		}
-
-		// Create bucket directory under /buckets
-		_, err = client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
-			Directory: "/buckets",
-			Entry: &filer_pb.Entry{
-				Name:        bucketName,
-				IsDirectory: true,
-				Attributes: &filer_pb.FuseAttributes{
-					FileMode: uint32(0755 | os.ModeDir), // Directory mode
-					Uid:      uint32(1000),
-					Gid:      uint32(1000),
-					Crtime:   time.Now().Unix(),
-					Mtime:    time.Now().Unix(),
-					TtlSec:   0,
-				},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create bucket directory: %v", err)
-		}
-
-		return nil
-	})
+	return s.CreateS3BucketWithQuota(bucketName, 0, false)
 }
 
 // DeleteS3Bucket deletes an S3 bucket and all its contents
