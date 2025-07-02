@@ -698,23 +698,22 @@ function exportCollections() {
         return;
     }
 
-    const headers = ['Collection Name', 'Data Center', 'Replication', 'Volumes', 'Files', 'Size', 'Disk Types', 'Status'];
+    const headers = ['Collection Name', 'Data Center', 'Volumes', 'Files', 'Size', 'Disk Types', 'Status'];
     const rows = [];
 
     // Get table rows
     const tableRows = table.querySelectorAll('tbody tr');
     tableRows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 8) {
+        if (cells.length >= 7) {
             rows.push([
                 cells[0].textContent.trim(),
                 cells[1].textContent.trim(),
                 cells[2].textContent.trim(),
                 cells[3].textContent.trim(),
                 cells[4].textContent.trim(),
-                cells[5].textContent.trim(),
-                formatDiskTypes(cells[6].textContent.trim()),
-                cells[7].textContent.trim()
+                formatDiskTypes(cells[5].textContent.trim()),
+                cells[6].textContent.trim()
             ]);
         }
     });

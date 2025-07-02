@@ -143,7 +143,6 @@ type ClusterVolumesData struct {
 type CollectionInfo struct {
 	Name        string   `json:"name"`
 	DataCenter  string   `json:"datacenter"`
-	Replication string   `json:"replication"`
 	VolumeCount int      `json:"volume_count"`
 	FileCount   int64    `json:"file_count"`
 	TotalSize   int64    `json:"total_size"`
@@ -914,7 +913,6 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 									newCollection := CollectionInfo{
 										Name:        collectionName,
 										DataCenter:  dc.Id,
-										Replication: fmt.Sprintf("%03d", volInfo.ReplicaPlacement),
 										VolumeCount: 1,
 										FileCount:   int64(volInfo.FileCount),
 										TotalSize:   int64(volInfo.Size),
