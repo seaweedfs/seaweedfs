@@ -191,8 +191,8 @@ func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
 					FileMode: uint32(0755 | (1 << 31)), // Directory mode
-					Uid:      uint32(1000),
-					Gid:      uint32(1000),
+					Uid:      filer_pb.OS_UID,
+					Gid:      filer_pb.OS_GID,
 					Crtime:   time.Now().Unix(),
 					Mtime:    time.Now().Unix(),
 					TtlSec:   0,

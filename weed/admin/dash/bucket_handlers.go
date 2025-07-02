@@ -307,8 +307,8 @@ func (s *AdminServer) CreateS3BucketWithQuota(bucketName string, quotaBytes int6
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
 					FileMode: uint32(0755 | os.ModeDir), // Directory mode
-					Uid:      uint32(1000),
-					Gid:      uint32(1000),
+					Uid:      filer_pb.OS_UID,
+					Gid:      filer_pb.OS_GID,
 					Crtime:   time.Now().Unix(),
 					Mtime:    time.Now().Unix(),
 					TtlSec:   0,
