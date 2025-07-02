@@ -4,6 +4,7 @@ import (
     "fmt"
     "time"
     "github.com/gin-gonic/gin"
+    "github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 templ Layout(c *gin.Context, content templ.Component) {
@@ -38,6 +39,7 @@ templ Layout(c *gin.Context, content templ.Component) {
                 <a class="navbar-brand fw-bold" href="/admin">
                     <i class="fas fa-server me-2"></i>
                     SeaweedFS Admin
+                    <span class="badge bg-warning text-dark ms-2">ALPHA</span>
                 </a>
                 
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
@@ -183,7 +185,11 @@ templ Layout(c *gin.Context, content templ.Component) {
     <footer class="footer mt-auto py-3 bg-light">
         <div class="container-fluid text-center">
             <small class="text-muted">
-                &copy; {fmt.Sprintf("%d", time.Now().Year())} SeaweedFS Admin
+                &copy; {fmt.Sprintf("%d", time.Now().Year())} SeaweedFS Admin v{version.VERSION_NUMBER}
+                <span class="mx-2">•</span>
+                <a href="https://seaweedfs.com" target="_blank" class="text-decoration-none">
+                    <i class="fas fa-star me-1"></i>Enterprise Version Available
+                </a>
             </small>
         </div>
     </footer>
