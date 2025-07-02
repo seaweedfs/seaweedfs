@@ -147,7 +147,6 @@ type CollectionInfo struct {
 	VolumeCount int      `json:"volume_count"`
 	FileCount   int64    `json:"file_count"`
 	TotalSize   int64    `json:"total_size"`
-	TTL         string   `json:"ttl"`
 	DiskTypes   []string `json:"disk_types"`
 	Status      string   `json:"status"`
 }
@@ -912,14 +911,6 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 									totalFiles += int64(volInfo.FileCount)
 									totalSize += int64(volInfo.Size)
 								} else {
-									// Format TTL properly
-									var ttlStr string
-									if volInfo.Ttl > 0 {
-										ttlStr = fmt.Sprintf("%ds", volInfo.Ttl)
-									} else {
-										ttlStr = ""
-									}
-
 									newCollection := CollectionInfo{
 										Name:        collectionName,
 										DataCenter:  dc.Id,
@@ -927,7 +918,6 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 										VolumeCount: 1,
 										FileCount:   int64(volInfo.FileCount),
 										TotalSize:   int64(volInfo.Size),
-										TTL:         ttlStr,
 										DiskTypes:   []string{diskType},
 										Status:      "active",
 									}

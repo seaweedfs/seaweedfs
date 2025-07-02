@@ -698,14 +698,14 @@ function exportCollections() {
         return;
     }
 
-    const headers = ['Collection Name', 'Data Center', 'Replication', 'Volumes', 'Files', 'Size', 'TTL', 'Disk Types', 'Status'];
+    const headers = ['Collection Name', 'Data Center', 'Replication', 'Volumes', 'Files', 'Size', 'Disk Types', 'Status'];
     const rows = [];
 
     // Get table rows
     const tableRows = table.querySelectorAll('tbody tr');
     tableRows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 9) {
+        if (cells.length >= 8) {
             rows.push([
                 cells[0].textContent.trim(),
                 cells[1].textContent.trim(),
@@ -713,9 +713,8 @@ function exportCollections() {
                 cells[3].textContent.trim(),
                 cells[4].textContent.trim(),
                 cells[5].textContent.trim(),
-                cells[6].textContent.trim(),
-                cells[7].textContent.trim(),
-                cells[8].textContent.trim()
+                formatDiskTypes(cells[6].textContent.trim()),
+                cells[7].textContent.trim()
             ]);
         }
     });
@@ -897,7 +896,6 @@ async function handleCreateCollection(event) {
     const collectionData = {
         name: formData.get('name'),
         replication: formData.get('replication'),
-        ttl: formData.get('ttl'),
         diskType: formData.get('diskType')
     };
     

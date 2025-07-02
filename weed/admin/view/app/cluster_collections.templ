@@ -168,7 +168,6 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                     <th>Volumes</th>
                                     <th>Files</th>
                                     <th>Size</th>
-                                    <th>TTL</th>
                                     <th>Disk Types</th>
                                     <th>Status</th>
                                     <th>Actions</th>
@@ -203,13 +202,6 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                                 <i class="fas fa-hdd me-2 text-muted"></i>
                                                 {formatBytes(collection.TotalSize)}
                                             </div>
-                                        </td>
-                                        <td>
-                                            if collection.TTL != "" {
-                                                <span class="badge bg-warning text-dark">{collection.TTL}</span>
-                                            } else {
-                                                <span class="text-muted">None</span>
-                                            }
                                         </td>
                                         <td>
                                             for i, diskType := range collection.DiskTypes {
