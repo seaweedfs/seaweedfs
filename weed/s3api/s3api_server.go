@@ -66,7 +66,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 
 	v.SetDefault("cors.allowed_origins.values", "*")
 
-	if (option.AllowedOrigins == nil) || (len(option.AllowedOrigins) == 0) {
+	if len(option.AllowedOrigins) == 0 {
 		allowedOrigins := v.GetString("cors.allowed_origins.values")
 		domains := strings.Split(allowedOrigins, ",")
 		option.AllowedOrigins = domains
@@ -127,7 +127,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 			if origin != "" {
-				if s3a.option.AllowedOrigins == nil || len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
+				if len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
 					origin = "*"
 				} else {
 					originFound := false
