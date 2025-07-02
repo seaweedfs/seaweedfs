@@ -24,7 +24,7 @@ type FilerEtcStore struct {
 	grpcDialOption   grpc.DialOption
 }
 
-func (store *FilerEtcStore) GetName() string {
+func (store *FilerEtcStore) GetName() credential.CredentialStoreTypeName {
 	return credential.StoreTypeFilerEtc
 }
 

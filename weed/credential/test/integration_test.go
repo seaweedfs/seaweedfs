@@ -22,13 +22,13 @@ func TestStoreRegistration(t *testing.T) {
 		t.Fatal("No credential stores registered")
 	}
 
-	expectedStores := []string{credential.StoreTypeFilerEtc, credential.StoreTypeMemory, credential.StoreTypeSQLite, credential.StoreTypePostgres}
+	expectedStores := []string{string(credential.StoreTypeFilerEtc), string(credential.StoreTypeMemory), string(credential.StoreTypeSQLite), string(credential.StoreTypePostgres)}
 
 	// Verify all expected stores are present
 	for _, expected := range expectedStores {
 		found := false
 		for _, storeName := range storeNames {
-			if storeName == expected {
+			if string(storeName) == expected {
 				found = true
 				break
 			}

@@ -10,7 +10,7 @@ import (
 )
 
 // MigrateCredentials migrates credentials from one store to another
-func MigrateCredentials(fromStoreName, toStoreName string, configuration util.Configuration, fromPrefix, toPrefix string) error {
+func MigrateCredentials(fromStoreName, toStoreName CredentialStoreTypeName, configuration util.Configuration, fromPrefix, toPrefix string) error {
 	ctx := context.Background()
 
 	// Create source credential manager
@@ -81,7 +81,7 @@ func MigrateCredentials(fromStoreName, toStoreName string, configuration util.Co
 }
 
 // ExportCredentials exports credentials from a store to a configuration
-func ExportCredentials(storeName string, configuration util.Configuration, prefix string) (*iam_pb.S3ApiConfiguration, error) {
+func ExportCredentials(storeName CredentialStoreTypeName, configuration util.Configuration, prefix string) (*iam_pb.S3ApiConfiguration, error) {
 	ctx := context.Background()
 
 	// Create credential manager
@@ -101,7 +101,7 @@ func ExportCredentials(storeName string, configuration util.Configuration, prefi
 }
 
 // ImportCredentials imports credentials from a configuration to a store
-func ImportCredentials(storeName string, configuration util.Configuration, prefix string, config *iam_pb.S3ApiConfiguration) error {
+func ImportCredentials(storeName CredentialStoreTypeName, configuration util.Configuration, prefix string, config *iam_pb.S3ApiConfiguration) error {
 	ctx := context.Background()
 
 	// Create credential manager
@@ -151,7 +151,7 @@ func ImportCredentials(storeName string, configuration util.Configuration, prefi
 }
 
 // ValidateCredentials validates that all credentials in a store are accessible
-func ValidateCredentials(storeName string, configuration util.Configuration, prefix string) error {
+func ValidateCredentials(storeName CredentialStoreTypeName, configuration util.Configuration, prefix string) error {
 	ctx := context.Background()
 
 	// Create credential manager

@@ -15,18 +15,21 @@ var (
 	ErrAccessKeyNotFound = errors.New("access key not found")
 )
 
+// CredentialStoreTypeName represents the type name of a credential store
+type CredentialStoreTypeName string
+
 // Credential store name constants
 const (
-	StoreTypeMemory   = "memory"
-	StoreTypeFilerEtc = "filer_etc"
-	StoreTypePostgres = "postgres"
-	StoreTypeSQLite   = "sqlite"
+	StoreTypeMemory   CredentialStoreTypeName = "memory"
+	StoreTypeFilerEtc CredentialStoreTypeName = "filer_etc"
+	StoreTypePostgres CredentialStoreTypeName = "postgres"
+	StoreTypeSQLite   CredentialStoreTypeName = "sqlite"
 )
 
 // CredentialStore defines the interface for user credential storage and retrieval
 type CredentialStore interface {
 	// GetName returns the name of the credential store implementation
-	GetName() string
+	GetName() CredentialStoreTypeName
 
 	// Initialize initializes the credential store with configuration
 	Initialize(configuration util.Configuration, prefix string) error

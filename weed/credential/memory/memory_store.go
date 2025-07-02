@@ -24,7 +24,7 @@ type MemoryStore struct {
 	initialized bool
 }
 
-func (store *MemoryStore) GetName() string {
+func (store *MemoryStore) GetName() credential.CredentialStoreTypeName {
 	return credential.StoreTypeMemory
 }
 

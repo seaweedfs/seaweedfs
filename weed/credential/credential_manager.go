@@ -15,7 +15,7 @@ type CredentialManager struct {
 }
 
 // NewCredentialManager creates a new credential manager with the specified store
-func NewCredentialManager(storeName string, configuration util.Configuration, prefix string) (*CredentialManager, error) {
+func NewCredentialManager(storeName CredentialStoreTypeName, configuration util.Configuration, prefix string) (*CredentialManager, error) {
 	var store CredentialStore
 
 	// Find the requested store implementation
@@ -107,19 +107,19 @@ func (cm *CredentialManager) Shutdown() {
 func getAvailableStores() string {
 	var storeNames []string
 	for _, store := range Stores {
-		storeNames = append(storeNames, store.GetName())
+		storeNames = append(storeNames, string(store.GetName()))
 	}
 	return strings.Join(storeNames, ", ")
 }
 
 // GetAvailableStores returns a list of available credential store names
-func GetAvailableStores() []string {
-	var storeNames []string
+func GetAvailableStores() []CredentialStoreTypeName {
+	var storeNames []CredentialStoreTypeName
 	for _, store := range Stores {
 		storeNames = append(storeNames, store.GetName())
 	}
 	if storeNames == nil {
-		return []string{}
+		return []CredentialStoreTypeName{}
 	}
 	return storeNames
 }

@@ -25,7 +25,7 @@ type SqliteStore struct {
 	configured bool
 }
 
-func (store *SqliteStore) GetName() string {
+func (store *SqliteStore) GetName() credential.CredentialStoreTypeName {
 	return credential.StoreTypeSQLite
 }
 

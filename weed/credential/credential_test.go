@@ -17,13 +17,13 @@ func TestCredentialStoreInterface(t *testing.T) {
 
 	// Check that expected stores are available
 	storeNames := GetAvailableStores()
-	expectedStores := []string{StoreTypeFilerEtc, StoreTypeMemory}
+	expectedStores := []string{string(StoreTypeFilerEtc), string(StoreTypeMemory)}
 
 	// Add SQLite and PostgreSQL if they're available (build tags dependent)
 	for _, storeName := range storeNames {
 		found := false
-		for _, expected := range append(expectedStores, StoreTypeSQLite, StoreTypePostgres) {
-			if storeName == expected {
+		for _, expected := range append(expectedStores, string(StoreTypeSQLite), string(StoreTypePostgres)) {
+			if string(storeName) == expected {
 				found = true
 				break
 			}
@@ -37,10 +37,10 @@ func TestCredentialStoreInterface(t *testing.T) {
 	filerEtcStoreFound := false
 	memoryStoreFound := false
 	for _, storeName := range storeNames {
-		if storeName == StoreTypeFilerEtc {
+		if string(storeName) == string(StoreTypeFilerEtc) {
 			filerEtcStoreFound = true
 		}
-		if storeName == StoreTypeMemory {
+		if string(storeName) == string(StoreTypeMemory) {
 			memoryStoreFound = true
 		}
 	}
@@ -56,7 +56,7 @@ func TestCredentialManagerCreation(t *testing.T) {
 	config := util.GetViper()
 
 	// Test creating credential manager with invalid store
-	_, err := NewCredentialManager("nonexistent", config, "test.")
+	_, err := NewCredentialManager(CredentialStoreTypeName("nonexistent"), config, "test.")
 	if err == nil {
 		t.Error("Expected error for nonexistent store")
 	}
@@ -104,7 +104,7 @@ func TestCredentialInterface(t *testing.T) {
 	testCredentialInterfaceWithStore(t, availableStores[0])
 }
 
-func testCredentialInterfaceWithStore(t *testing.T, storeName string) {
+func testCredentialInterfaceWithStore(t *testing.T, storeName CredentialStoreTypeName) {
 	// Create a test identity
 	testIdentity := &iam_pb.Identity{
 		Name:    "testuser",
@@ -304,12 +304,50 @@ func TestErrorTypes(t *testing.T) {
 // TestGetAvailableStores tests the store discovery function
 func TestGetAvailableStores(t *testing.T) {
 	stores := GetAvailableStores()
-	// This should return an empty slice if no stores are registered
-	// or a slice of store names if stores are registered
-	if stores == nil {
-		t.Error("GetAvailableStores should not return nil")
+	if len(stores) == 0 {
+		t.Skip("No stores available for testing")
 	}
 
-	// It's fine if the slice is empty when no stores are registered
-	t.Logf("Available stores: %v (count: %d)", stores, len(stores))
+	// Convert to strings for comparison
+	storeNames := make([]string, len(stores))
+	for i, store := range stores {
+		storeNames[i] = string(store)
+	}
+
+	t.Logf("Available stores: %v (count: %d)", storeNames, len(storeNames))
+
+	// We expect at least memory and filer_etc stores to be available
+	expectedStores := []string{string(StoreTypeFilerEtc), string(StoreTypeMemory)}
+
+	// Add SQLite and PostgreSQL if they're available (build tags dependent)
+	for _, storeName := range storeNames {
+		found := false
+		for _, expected := range append(expectedStores, string(StoreTypeSQLite), string(StoreTypePostgres)) {
+			if storeName == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Unexpected store found: %s", storeName)
+		}
+	}
+
+	// Test that filer_etc store is always available
+	filerEtcStoreFound := false
+	memoryStoreFound := false
+	for _, storeName := range storeNames {
+		if storeName == string(StoreTypeFilerEtc) {
+			filerEtcStoreFound = true
+		}
+		if storeName == string(StoreTypeMemory) {
+			memoryStoreFound = true
+		}
+	}
+	if !filerEtcStoreFound {
+		t.Error("FilerEtc store should always be available")
+	}
+	if !memoryStoreFound {
+		t.Error("Memory store should always be available")
+	}
 }

@@ -215,7 +215,7 @@ func NewAdminServer(masterAddress string, templateFS http.FileSystem) *AdminServ
 }
 
 // InitializeCredentialManager initializes the credential manager with the specified store
-func (s *AdminServer) InitializeCredentialManager(storeName string, configuration util.Configuration, prefix string) error {
+func (s *AdminServer) InitializeCredentialManager(storeName credential.CredentialStoreTypeName, configuration util.Configuration, prefix string) error {
 	cm, err := credential.NewCredentialManager(storeName, configuration, prefix)
 	if err != nil {
 		return fmt.Errorf("failed to initialize credential manager: %v", err)

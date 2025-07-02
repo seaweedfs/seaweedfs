@@ -131,7 +131,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	}
 
 	// Always initialize credential manager with fallback to defaults
-	credentialManager, err := credential.NewCredentialManagerWithDefaults(explicitStore)
+	credentialManager, err := credential.NewCredentialManagerWithDefaults(credential.CredentialStoreTypeName(explicitStore))
 	if err != nil {
 		glog.Fatalf("failed to initialize credential manager: %v", err)
 	}

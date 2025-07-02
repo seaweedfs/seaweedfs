@@ -33,13 +33,13 @@ func LoadCredentialConfiguration() (*CredentialConfig, error) {
 	// Get available store types from registered stores
 	storeTypes := GetAvailableStores()
 	for _, storeType := range storeTypes {
-		key := fmt.Sprintf("credential.%s.enabled", storeType)
+		key := fmt.Sprintf("credential.%s.enabled", string(storeType))
 		if viper.GetBool(key) {
 			if enabledStore != "" {
-				return nil, fmt.Errorf("multiple credential stores enabled: %s and %s. Only one store can be enabled", enabledStore, storeType)
+				return nil, fmt.Errorf("multiple credential stores enabled: %s and %s. Only one store can be enabled", enabledStore, string(storeType))
 			}
-			enabledStore = storeType
-			storePrefix = fmt.Sprintf("credential.%s.", storeType)
+			enabledStore = string(storeType)
+			storePrefix = fmt.Sprintf("credential.%s.", string(storeType))
 		}
 	}
 
@@ -96,8 +96,8 @@ func MergeCredentialConfig(cmdLineStore string, cmdLineConfig util.Configuration
 // NewCredentialManagerWithDefaults creates a credential manager with fallback to defaults
 // If explicitStore is provided, it will be used regardless of credential.toml
 // If explicitStore is empty, it tries credential.toml first, then defaults to "filer_etc"
-func NewCredentialManagerWithDefaults(explicitStore string) (*CredentialManager, error) {
-	var storeName string
+func NewCredentialManagerWithDefaults(explicitStore CredentialStoreTypeName) (*CredentialManager, error) {
+	var storeName CredentialStoreTypeName
 	var config util.Configuration
 	var prefix string
 
@@ -110,7 +110,7 @@ func NewCredentialManagerWithDefaults(explicitStore string) (*CredentialManager,
 	} else {
 		// Try to load from credential.toml first
 		if credConfig, err := LoadCredentialConfiguration(); err == nil && credConfig != nil {
-			storeName = credConfig.Store
+			storeName = CredentialStoreTypeName(credConfig.Store)
 			config = credConfig.Config
 			prefix = credConfig.Prefix
 			glog.V(0).Infof("Loaded credential configuration from credential.toml: store=%s", storeName)

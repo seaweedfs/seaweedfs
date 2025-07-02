@@ -24,7 +24,7 @@ type PostgresStore struct {
 	configured bool
 }
 
-func (store *PostgresStore) GetName() string {
+func (store *PostgresStore) GetName() credential.CredentialStoreTypeName {
 	return credential.StoreTypePostgres
 }
 
