@@ -17,7 +17,7 @@ func TestCredentialStoreInterface(t *testing.T) {
 
 	// Check that expected stores are available
 	storeNames := GetAvailableStores()
-	expectedStores := []string{"file", "memory"}
+	expectedStores := []string{"filer_etc", "memory"}
 
 	// Add SQLite and PostgreSQL if they're available (build tags dependent)
 	for _, storeName := range storeNames {
@@ -33,11 +33,11 @@ func TestCredentialStoreInterface(t *testing.T) {
 		}
 	}
 
-	// Test that file store is always available
+	// Test that filer_etc store is always available
 	filerEtcStoreFound := false
 	memoryStoreFound := false
 	for _, storeName := range storeNames {
-		if storeName == "file" {
+		if storeName == "filer_etc" {
 			filerEtcStoreFound = true
 		}
 		if storeName == "memory" {

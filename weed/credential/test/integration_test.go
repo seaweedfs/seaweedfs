@@ -22,7 +22,7 @@ func TestStoreRegistration(t *testing.T) {
 		t.Fatal("No credential stores registered")
 	}
 
-	expectedStores := []string{"file", "memory", "sqlite", "postgres"}
+	expectedStores := []string{"filer_etc", "memory", "sqlite", "postgres"}
 
 	// Verify all expected stores are present
 	for _, expected := range expectedStores {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
@@ -41,13 +42,14 @@ type S3ApiServerOption struct {
 
 type S3ApiServer struct {
 	s3_pb.UnimplementedSeaweedS3Server
-	option         *S3ApiServerOption
-	iam            *IdentityAccessManagement
-	cb             *CircuitBreaker
-	randomClientId int32
-	filerGuard     *security.Guard
-	client         util_http_client.HTTPClientInterface
-	bucketRegistry *BucketRegistry
+	option            *S3ApiServerOption
+	iam               *IdentityAccessManagement
+	cb                *CircuitBreaker
+	randomClientId    int32
+	filerGuard        *security.Guard
+	client            util_http_client.HTTPClientInterface
+	bucketRegistry    *BucketRegistry
+	credentialManager *credential.CredentialManager
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -70,13 +72,19 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 		option.AllowedOrigins = domains
 	}
 
+	var iam *IdentityAccessManagement
+
+	iam = NewIdentityAccessManagement(option)
+
 	s3ApiServer = &S3ApiServer{
-		option:         option,
-		iam:            NewIdentityAccessManagement(option),
-		randomClientId: util.RandomInt32(),
-		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
-		cb:             NewCircuitBreaker(option),
+		option:            option,
+		iam:               iam,
+		randomClientId:    util.RandomInt32(),
+		filerGuard:        security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
+		cb:                NewCircuitBreaker(option),
+		credentialManager: iam.credentialManager,
 	}
+
 	if option.Config != "" {
 		grace.OnReload(func() {
 			if err := s3ApiServer.iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
