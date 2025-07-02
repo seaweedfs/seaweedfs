@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	filer_etc "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -20,6 +22,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+
+	// Import remaining credential store implementations to register them
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/postgres"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/sqlite"
 )
 
 type AdminServer struct {
@@ -34,6 +41,9 @@ type AdminServer struct {
 	cachedFilers         []string
 	lastFilerUpdate      time.Time
 	filerCacheExpiration time.Duration
+
+	// Credential management
+	credentialManager *credential.CredentialManager
 }
 
 type ClusterTopology struct {
@@ -202,6 +212,30 @@ func NewAdminServer(masterAddress string, templateFS http.FileSystem) *AdminServ
 		cacheExpiration:      10 * time.Second,
 		filerCacheExpiration: 30 * time.Second, // Cache filers for 30 seconds
 	}
+}
+
+// InitializeCredentialManager initializes the credential manager with the specified store
+func (s *AdminServer) InitializeCredentialManager(storeName string, configuration util.Configuration, prefix string) error {
+	cm, err := credential.NewCredentialManager(storeName, configuration, prefix)
+	if err != nil {
+		return fmt.Errorf("failed to initialize credential manager: %v", err)
+	}
+
+	// For file store, we need to set the filer client details
+	if filerEtcStore, ok := cm.GetStore().(*filer_etc.FilerEtcStore); ok {
+		filerAddr := s.GetFilerAddress()
+		if filerAddr != "" {
+			filerEtcStore.SetFilerClient(filerAddr, s.grpcDialOption)
+		}
+	}
+
+	s.credentialManager = cm
+	return nil
+}
+
+// GetCredentialManager returns the credential manager
+func (s *AdminServer) GetCredentialManager() *credential.CredentialManager {
+	return s.credentialManager
 }
 
 // GetFilerAddress returns a filer address, discovering from masters if needed

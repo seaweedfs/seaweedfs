@@ -2,11 +2,13 @@ package dash
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -14,6 +16,70 @@ import (
 
 // CreateObjectStoreUser creates a new user in identity.json
 func (s *AdminServer) CreateObjectStoreUser(req CreateUserRequest) (*ObjectStoreUser, error) {
+	// Use credential manager if available
+	if s.credentialManager != nil {
+		return s.createObjectStoreUserWithManager(req)
+	}
+
+	// Fall back to original file-based approach
+	return s.createObjectStoreUserLegacy(req)
+}
+
+// createObjectStoreUserWithManager creates a user using the credential manager
+func (s *AdminServer) createObjectStoreUserWithManager(req CreateUserRequest) (*ObjectStoreUser, error) {
+	ctx := context.Background()
+
+	// Create new identity
+	newIdentity := &iam_pb.Identity{
+		Name:    req.Username,
+		Actions: req.Actions,
+	}
+
+	// Add account if email is provided
+	if req.Email != "" {
+		newIdentity.Account = &iam_pb.Account{
+			Id:           generateAccountId(),
+			DisplayName:  req.Username,
+			EmailAddress: req.Email,
+		}
+	}
+
+	// Generate access key if requested
+	var accessKey, secretKey string
+	if req.GenerateKey {
+		accessKey = generateAccessKey()
+		secretKey = generateSecretKey()
+		newIdentity.Credentials = []*iam_pb.Credential{
+			{
+				AccessKey: accessKey,
+				SecretKey: secretKey,
+			},
+		}
+	}
+
+	// Create user using credential manager
+	err := s.credentialManager.CreateUser(ctx, newIdentity)
+	if err != nil {
+		if err == credential.ErrUserAlreadyExists {
+			return nil, fmt.Errorf("user %s already exists", req.Username)
+		}
+		return nil, fmt.Errorf("failed to create user: %v", err)
+	}
+
+	// Return created user
+	user := &ObjectStoreUser{
+		Username:    req.Username,
+		Email:       req.Email,
+		AccessKey:   accessKey,
+		SecretKey:   secretKey,
+		Permissions: req.Actions,
+	}
+
+	return user, nil
+}
+
+// createObjectStoreUserLegacy creates a user using the legacy file-based approach
+func (s *AdminServer) createObjectStoreUserLegacy(req CreateUserRequest) (*ObjectStoreUser, error) {
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 
 	// Load existing configuration
