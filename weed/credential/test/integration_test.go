@@ -22,7 +22,7 @@ func TestStoreRegistration(t *testing.T) {
 		t.Fatal("No credential stores registered")
 	}
 
-	expectedStores := []string{"filer_etc", "memory", "sqlite", "postgres"}
+	expectedStores := []string{credential.StoreTypeFilerEtc, credential.StoreTypeMemory, credential.StoreTypeSQLite, credential.StoreTypePostgres}
 
 	// Verify all expected stores are present
 	for _, expected := range expectedStores {
@@ -44,14 +44,14 @@ func TestStoreRegistration(t *testing.T) {
 func TestMemoryStoreIntegration(t *testing.T) {
 	// Test creating credential manager with memory store
 	config := util.GetViper()
-	cm, err := credential.NewCredentialManager("memory", config, "test.")
+	cm, err := credential.NewCredentialManager(credential.StoreTypeMemory, config, "test.")
 	if err != nil {
 		t.Fatalf("Failed to create memory credential manager: %v", err)
 	}
 	defer cm.Shutdown()
 
 	// Test that the store is of the correct type
-	if cm.GetStore().GetName() != "memory" {
+	if cm.GetStore().GetName() != credential.StoreTypeMemory {
 		t.Errorf("Expected memory store, got %s", cm.GetStore().GetName())
 	}
 

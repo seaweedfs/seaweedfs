@@ -120,34 +120,20 @@ func (action Action) getPermission() Permission {
 }
 
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
+	return NewIdentityAccessManagementWithStore(option, "")
+}
+
+func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitStore string) *IdentityAccessManagement {
 	iam := &IdentityAccessManagement{
 		domain:       option.DomainName,
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
 
-	// Always initialize credential manager, defaulting to filer_etc if no credential.toml is found
-	var credentialManager *credential.CredentialManager
-	var err error
-
-	// Try to load credential.toml configuration first
-	if credConfig, credErr := credential.LoadCredentialConfiguration(); credErr == nil && credConfig != nil {
-		credentialManager, err = credential.NewCredentialManager(
-			credConfig.Store,
-			credConfig.Config,
-			credConfig.Prefix,
-		)
-		if err != nil {
-			glog.Fatalf("failed to initialize credential manager from credential.toml: %v", err)
-		}
-		glog.V(0).Infof("Initialized credential manager with store: %s", credConfig.Store)
-	} else {
-		// Default to filer_etc store if no credential.toml found
-		credentialManager, err = credential.NewCredentialManager("filer_etc", nil, "")
-		if err != nil {
-			glog.Fatalf("failed to initialize default filer_etc credential manager: %v", err)
-		}
-		glog.V(1).Info("Initialized default filer_etc credential manager")
+	// Always initialize credential manager with fallback to defaults
+	credentialManager, err := credential.NewCredentialManagerWithDefaults(explicitStore)
+	if err != nil {
+		glog.Fatalf("failed to initialize credential manager: %v", err)
 	}
 
 	// For stores that need filer client details, set them

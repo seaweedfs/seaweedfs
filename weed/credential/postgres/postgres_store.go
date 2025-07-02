@@ -25,7 +25,7 @@ type PostgresStore struct {
 }
 
 func (store *PostgresStore) GetName() string {
-	return "postgres"
+	return credential.StoreTypePostgres
 }
 
 func (store *PostgresStore) Initialize(configuration util.Configuration, prefix string) error {

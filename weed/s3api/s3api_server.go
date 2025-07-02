@@ -53,6 +53,10 @@ type S3ApiServer struct {
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
+	return NewS3ApiServerWithStore(router, option, "")
+}
+
+func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, explicitStore string) (s3ApiServer *S3ApiServer, err error) {
 	startTsNs := time.Now().UnixNano()
 
 	v := util.GetViper()
@@ -74,7 +78,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 
 	var iam *IdentityAccessManagement
 
-	iam = NewIdentityAccessManagement(option)
+	iam = NewIdentityAccessManagementWithStore(option, explicitStore)
 
 	s3ApiServer = &S3ApiServer{
 		option:            option,

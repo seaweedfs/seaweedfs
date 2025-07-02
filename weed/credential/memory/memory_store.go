@@ -25,7 +25,7 @@ type MemoryStore struct {
 }
 
 func (store *MemoryStore) GetName() string {
-	return "memory"
+	return credential.StoreTypeMemory
 }
 
 func (store *MemoryStore) Initialize(configuration util.Configuration, prefix string) error {

@@ -26,7 +26,7 @@ type SqliteStore struct {
 }
 
 func (store *SqliteStore) GetName() string {
-	return "sqlite"
+	return credential.StoreTypeSQLite
 }
 
 func (store *SqliteStore) Initialize(configuration util.Configuration, prefix string) error {

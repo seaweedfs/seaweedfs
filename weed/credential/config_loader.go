@@ -92,3 +92,42 @@ func MergeCredentialConfig(cmdLineStore string, cmdLineConfig util.Configuration
 
 	return config, nil
 }
+
+// NewCredentialManagerWithDefaults creates a credential manager with fallback to defaults
+// If explicitStore is provided, it will be used regardless of credential.toml
+// If explicitStore is empty, it tries credential.toml first, then defaults to "filer_etc"
+func NewCredentialManagerWithDefaults(explicitStore string) (*CredentialManager, error) {
+	var storeName string
+	var config util.Configuration
+	var prefix string
+
+	// If explicit store is provided, use it
+	if explicitStore != "" {
+		storeName = explicitStore
+		config = nil
+		prefix = ""
+		glog.V(0).Infof("Using explicit credential store: %s", storeName)
+	} else {
+		// Try to load from credential.toml first
+		if credConfig, err := LoadCredentialConfiguration(); err == nil && credConfig != nil {
+			storeName = credConfig.Store
+			config = credConfig.Config
+			prefix = credConfig.Prefix
+			glog.V(0).Infof("Loaded credential configuration from credential.toml: store=%s", storeName)
+		} else {
+			// Default to filer_etc store
+			storeName = StoreTypeFilerEtc
+			config = nil
+			prefix = ""
+			glog.V(1).Info("No credential.toml found, defaulting to filer_etc store")
+		}
+	}
+
+	// Create the credential manager
+	credentialManager, err := NewCredentialManager(storeName, config, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize credential manager with store '%s': %v", storeName, err)
+	}
+
+	return credentialManager, nil
+}

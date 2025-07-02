@@ -25,7 +25,7 @@ type FilerEtcStore struct {
 }
 
 func (store *FilerEtcStore) GetName() string {
-	return "filer_etc"
+	return credential.StoreTypeFilerEtc
 }
 
 func (store *FilerEtcStore) Initialize(configuration util.Configuration, prefix string) error {

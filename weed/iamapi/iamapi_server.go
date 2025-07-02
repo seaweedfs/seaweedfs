@@ -51,6 +51,10 @@ type IamApiServer struct {
 var s3ApiConfigure IamS3ApiConfig
 
 func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer *IamApiServer, err error) {
+	return NewIamApiServerWithStore(router, option, "")
+}
+
+func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, explicitStore string) (iamApiServer *IamApiServer, err error) {
 	configure := &IamS3ApiConfigure{
 		option:       option,
 		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters)),
@@ -63,7 +67,7 @@ func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer 
 		GrpcDialOption: option.GrpcDialOption,
 	}
 
-	iam := s3api.NewIdentityAccessManagement(&s3Option)
+	iam := s3api.NewIdentityAccessManagementWithStore(&s3Option, explicitStore)
 	configure.credentialManager = iam.GetCredentialManager()
 
 	iamApiServer = &IamApiServer{
