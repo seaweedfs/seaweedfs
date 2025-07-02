@@ -117,7 +117,7 @@ func ClusterCollections(data dash.ClusterCollectionsData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if len(data.Collections) > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<div class=\"table-responsive\"><table class=\"table table-hover\" id=\"collectionsTable\"><thead><tr><th>Collection Name</th><th>Data Center</th><th>Replication</th><th>Volumes</th><th>Files</th><th>Size</th><th>TTL</th><th>Disk Type</th><th>Status</th><th>Actions</th></tr></thead> <tbody>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<div class=\"table-responsive\"><table class=\"table table-hover\" id=\"collectionsTable\"><thead><tr><th>Collection Name</th><th>Data Center</th><th>Replication</th><th>Volumes</th><th>Files</th><th>Size</th><th>TTL</th><th>Disk Types</th><th>Status</th><th>Actions</th></tr></thead> <tbody>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -228,96 +228,140 @@ func ClusterCollections(data dash.ClusterCollectionsData) templ.Component {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</td><td><span class=\"badge bg-secondary\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</td><td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var15 string
-				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(collection.DiskType)
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 215, Col: 97}
+				for i, diskType := range collection.DiskTypes {
+					if i > 0 {
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<span class=\"me-1\"></span>")
+						if templ_7745c5c3_Err != nil {
+							return templ_7745c5c3_Err
+						}
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, " ")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var15 = []any{fmt.Sprintf("badge bg-%s me-1", getDiskTypeColor(diskType))}
+					templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var15...)
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<span class=\"")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var16 string
+					templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var15).String())
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 1, Col: 0}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\">")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var17 string
+					templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(diskType)
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 219, Col: 131}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</span> ")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
+				if len(collection.DiskTypes) == 0 {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "<span class=\"text-muted\">Unknown</span>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</td><td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</span></td><td>")
+				var templ_7745c5c3_Var18 = []any{fmt.Sprintf("badge bg-%s", getStatusColor(collection.Status))}
+				templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var18...)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var16 = []any{fmt.Sprintf("badge bg-%s", getStatusColor(collection.Status))}
-				templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var16...)
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<span class=\"")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var17 string
-				templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var16).String())
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 1, Col: 0}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\">")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var18 string
-				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(collection.Status)
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 219, Col: 66}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</span></td><td><div class=\"btn-group btn-group-sm\"><button type=\"button\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\"><i class=\"fas fa-eye\"></i></button> <button type=\"button\" class=\"btn btn-outline-secondary btn-sm\" title=\"Edit\"><i class=\"fas fa-edit\"></i></button> <button type=\"button\" class=\"btn btn-outline-danger btn-sm\" title=\"Delete\" data-collection-name=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<span class=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var19 string
-				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(collection.Name)
+				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var18).String())
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 234, Col: 93}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 1, Col: 0}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "\" onclick=\"confirmDeleteCollection(this)\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var20 string
+				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(collection.Status)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 227, Col: 66}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "</span></td><td><div class=\"btn-group btn-group-sm\"><button type=\"button\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\"><i class=\"fas fa-eye\"></i></button> <button type=\"button\" class=\"btn btn-outline-secondary btn-sm\" title=\"Edit\"><i class=\"fas fa-edit\"></i></button> <button type=\"button\" class=\"btn btn-outline-danger btn-sm\" title=\"Delete\" data-collection-name=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var21 string
+				templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(collection.Name)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 242, Col: 93}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "\" onclick=\"confirmDeleteCollection(this)\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "</tbody></table></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "</tbody></table></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "<div class=\"text-center py-5\"><i class=\"fas fa-layer-group fa-3x text-muted mb-3\"></i><h5 class=\"text-muted\">No Collections Found</h5><p class=\"text-muted\">No collections are currently configured in the cluster.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createCollectionModal\"><i class=\"fas fa-plus me-2\"></i>Create First Collection</button></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "<div class=\"text-center py-5\"><i class=\"fas fa-layer-group fa-3x text-muted mb-3\"></i><h5 class=\"text-muted\">No Collections Found</h5><p class=\"text-muted\">No collections are currently configured in the cluster.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createCollectionModal\"><i class=\"fas fa-plus me-2\"></i>Create First Collection</button></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "</div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "</div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var20 string
-		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
+		var templ_7745c5c3_Var22 string
+		templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 263, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 271, Col: 81}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</small></div></div></div><!-- Create Collection Modal --><div class=\"modal fade\" id=\"createCollectionModal\" tabindex=\"-1\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\"><i class=\"fas fa-plus me-2\"></i>Create New Collection</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button></div><form id=\"createCollectionForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label for=\"collectionName\" class=\"form-label\">Collection Name</label> <input type=\"text\" class=\"form-control\" id=\"collectionName\" name=\"name\" required><div class=\"form-text\">Enter a unique name for the collection</div></div><div class=\"mb-3\"><label for=\"replication\" class=\"form-label\">Replication</label> <select class=\"form-select\" id=\"replication\" name=\"replication\" required><option value=\"000\">000 - No replication</option> <option value=\"001\" selected>001 - Replicate once on same rack</option> <option value=\"010\">010 - Replicate once on different rack</option> <option value=\"100\">100 - Replicate once on different data center</option> <option value=\"200\">200 - Replicate twice on different data centers</option></select></div><div class=\"mb-3\"><label for=\"ttl\" class=\"form-label\">TTL (Time To Live)</label> <input type=\"text\" class=\"form-control\" id=\"ttl\" name=\"ttl\" placeholder=\"e.g., 1d, 7d, 30d\"><div class=\"form-text\">Optional: Specify how long files should be kept</div></div><div class=\"mb-3\"><label for=\"diskType\" class=\"form-label\">Disk Type</label> <select class=\"form-select\" id=\"diskType\" name=\"diskType\"><option value=\"hdd\" selected>HDD</option> <option value=\"ssd\">SSD</option></select></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\">Create Collection</button></div></form></div></div></div><!-- Delete Confirmation Modal --><div class=\"modal fade\" id=\"deleteCollectionModal\" tabindex=\"-1\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title text-danger\"><i class=\"fas fa-exclamation-triangle me-2\"></i>Delete Collection</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the collection <strong id=\"deleteCollectionName\"></strong>?</p><div class=\"alert alert-warning\"><i class=\"fas fa-warning me-2\"></i> This action cannot be undone. All volumes in this collection will be affected.</div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" id=\"confirmDeleteCollection\">Delete Collection</button></div></div></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</small></div></div></div><!-- Create Collection Modal --><div class=\"modal fade\" id=\"createCollectionModal\" tabindex=\"-1\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\"><i class=\"fas fa-plus me-2\"></i>Create New Collection</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button></div><form id=\"createCollectionForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label for=\"collectionName\" class=\"form-label\">Collection Name</label> <input type=\"text\" class=\"form-control\" id=\"collectionName\" name=\"name\" required><div class=\"form-text\">Enter a unique name for the collection</div></div><div class=\"mb-3\"><label for=\"replication\" class=\"form-label\">Replication</label> <select class=\"form-select\" id=\"replication\" name=\"replication\" required><option value=\"000\">000 - No replication</option> <option value=\"001\" selected>001 - Replicate once on same rack</option> <option value=\"010\">010 - Replicate once on different rack</option> <option value=\"100\">100 - Replicate once on different data center</option> <option value=\"200\">200 - Replicate twice on different data centers</option></select></div><div class=\"mb-3\"><label for=\"ttl\" class=\"form-label\">TTL (Time To Live)</label> <input type=\"text\" class=\"form-control\" id=\"ttl\" name=\"ttl\" placeholder=\"e.g., 1d, 7d, 30d\"><div class=\"form-text\">Optional: Specify how long files should be kept</div></div><div class=\"mb-3\"><label for=\"diskType\" class=\"form-label\">Disk Type</label> <select class=\"form-select\" id=\"diskType\" name=\"diskType\"><option value=\"hdd\" selected>HDD</option> <option value=\"ssd\">SSD</option></select></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\">Create Collection</button></div></form></div></div></div><!-- Delete Confirmation Modal --><div class=\"modal fade\" id=\"deleteCollectionModal\" tabindex=\"-1\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title text-danger\"><i class=\"fas fa-exclamation-triangle me-2\"></i>Delete Collection</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the collection <strong id=\"deleteCollectionName\"></strong>?</p><div class=\"alert alert-warning\"><i class=\"fas fa-warning me-2\"></i> This action cannot be undone. All volumes in this collection will be affected.</div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" id=\"confirmDeleteCollection\">Delete Collection</button></div></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -341,6 +385,35 @@ func countUniqueCollectionDataCenters(collections []dash.CollectionInfo) int {
 		dcMap[collection.DataCenter] = true
 	}
 	return len(dcMap)
+}
+
+func getDiskTypeColor(diskType string) string {
+	switch diskType {
+	case "ssd":
+		return "primary"
+	case "hdd", "":
+		return "secondary"
+	default:
+		return "info"
+	}
+}
+
+func formatDiskTypes(diskTypes []string) string {
+	if len(diskTypes) == 0 {
+		return "Unknown"
+	}
+	if len(diskTypes) == 1 {
+		return diskTypes[0]
+	}
+	// For multiple disk types, join with comma
+	result := ""
+	for i, diskType := range diskTypes {
+		if i > 0 {
+			result += ", "
+		}
+		result += diskType
+	}
+	return result
 }
 
 var _ = templruntime.GeneratedTemplate

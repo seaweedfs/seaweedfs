@@ -169,7 +169,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                     <th>Files</th>
                                     <th>Size</th>
                                     <th>TTL</th>
-                                    <th>Disk Type</th>
+                                    <th>Disk Types</th>
                                     <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
@@ -212,7 +212,15 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                             }
                                         </td>
                                         <td>
-                                            <span class="badge bg-secondary">{collection.DiskType}</span>
+                                            for i, diskType := range collection.DiskTypes {
+                                                if i > 0 {
+                                                    <span class="me-1"></span>
+                                                }
+                                                <span class={fmt.Sprintf("badge bg-%s me-1", getDiskTypeColor(diskType))}>{diskType}</span>
+                                            }
+                                            if len(collection.DiskTypes) == 0 {
+                                                <span class="text-muted">Unknown</span>
+                                            }
                                         </td>
                                         <td>
                                             <span class={fmt.Sprintf("badge bg-%s", getStatusColor(collection.Status))}>
@@ -357,4 +365,33 @@ func countUniqueCollectionDataCenters(collections []dash.CollectionInfo) int {
         dcMap[collection.DataCenter] = true
     }
     return len(dcMap)
+}
+
+func getDiskTypeColor(diskType string) string {
+    switch diskType {
+    case "ssd":
+        return "primary"
+    case "hdd", "":
+        return "secondary"
+    default:
+        return "info"
+    }
+}
+
+func formatDiskTypes(diskTypes []string) string {
+    if len(diskTypes) == 0 {
+        return "Unknown"
+    }
+    if len(diskTypes) == 1 {
+        return diskTypes[0]
+    }
+    // For multiple disk types, join with comma
+    result := ""
+    for i, diskType := range diskTypes {
+        if i > 0 {
+            result += ", "
+        }
+        result += diskType
+    }
+    return result
 } 

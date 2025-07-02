@@ -141,15 +141,15 @@ type ClusterVolumesData struct {
 }
 
 type CollectionInfo struct {
-	Name        string `json:"name"`
-	DataCenter  string `json:"datacenter"`
-	Replication string `json:"replication"`
-	VolumeCount int    `json:"volume_count"`
-	FileCount   int64  `json:"file_count"`
-	TotalSize   int64  `json:"total_size"`
-	TTL         string `json:"ttl"`
-	DiskType    string `json:"disk_type"`
-	Status      string `json:"status"`
+	Name        string   `json:"name"`
+	DataCenter  string   `json:"datacenter"`
+	Replication string   `json:"replication"`
+	VolumeCount int      `json:"volume_count"`
+	FileCount   int64    `json:"file_count"`
+	TotalSize   int64    `json:"total_size"`
+	TTL         string   `json:"ttl"`
+	DiskTypes   []string `json:"disk_types"`
+	Status      string   `json:"status"`
 }
 
 type ClusterCollectionsData struct {
@@ -879,6 +879,12 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 									collectionName = "default" // Default collection for volumes without explicit collection
 								}
 
+								// Get disk type from volume info, default to hdd if empty
+								diskType := volInfo.DiskType
+								if diskType == "" {
+									diskType = "hdd"
+								}
+
 								// Get or create collection info
 								if collection, exists := collectionMap[collectionName]; exists {
 									collection.VolumeCount++
@@ -888,6 +894,18 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 									// Update data center if this collection spans multiple DCs
 									if collection.DataCenter != dc.Id && collection.DataCenter != "multi" {
 										collection.DataCenter = "multi"
+									}
+
+									// Add disk type if not already present
+									diskTypeExists := false
+									for _, existingDiskType := range collection.DiskTypes {
+										if existingDiskType == diskType {
+											diskTypeExists = true
+											break
+										}
+									}
+									if !diskTypeExists {
+										collection.DiskTypes = append(collection.DiskTypes, diskType)
 									}
 
 									totalVolumes++
@@ -910,7 +928,7 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 										FileCount:   int64(volInfo.FileCount),
 										TotalSize:   int64(volInfo.Size),
 										TTL:         ttlStr,
-										DiskType:    "hdd", // Default disk type
+										DiskTypes:   []string{diskType},
 										Status:      "active",
 									}
 									collectionMap[collectionName] = &newCollection
