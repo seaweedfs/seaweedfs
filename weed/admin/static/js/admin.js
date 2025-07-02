@@ -1331,21 +1331,49 @@ function exportFileList() {
 
 // Download file
 function downloadFile(filePath) {
-    // Create download link using filer direct access
-    const downloadUrl = `/files/download?path=${encodeURIComponent(filePath)}`;
+    // Create download link using admin API
+    const downloadUrl = `/api/files/download?path=${encodeURIComponent(filePath)}`;
     window.open(downloadUrl, '_blank');
 }
 
 // View file
-function viewFile(filePath) {
-    // TODO: Implement file viewer functionality
-    showAlert('info', `File viewer for ${filePath} will be implemented`);
+async function viewFile(filePath) {
+    try {
+        const response = await fetch(`/api/files/view?path=${encodeURIComponent(filePath)}`);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            showAlert('error', `Failed to view file: ${error.error || 'Unknown error'}`);
+            return;
+        }
+        
+        const data = await response.json();
+        showFileViewer(data);
+        
+    } catch (error) {
+        console.error('View file error:', error);
+        showAlert('error', 'Failed to view file');
+    }
 }
 
 // Show file properties
-function showProperties(filePath) {
-    // TODO: Implement file properties modal
-    showAlert('info', `Properties for ${filePath} will be implemented`);
+async function showProperties(filePath) {
+    try {
+        const response = await fetch(`/api/files/properties?path=${encodeURIComponent(filePath)}`);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            showAlert('error', `Failed to get file properties: ${error.error || 'Unknown error'}`);
+            return;
+        }
+        
+        const properties = await response.json();
+        showPropertiesModal(properties);
+        
+    } catch (error) {
+        console.error('Properties error:', error);
+        showAlert('error', 'Failed to get file properties');
+    }
 }
 
 // Confirm delete file/folder
@@ -1709,6 +1737,334 @@ async function handleUpdateQuota(event) {
         console.error('Error updating bucket quota:', error);
         showAlert('danger', 'Network error occurred while updating bucket quota');
     }
+}
+
+// Show file viewer modal
+function showFileViewer(data) {
+    const file = data.file;
+    const content = data.content || '';
+    const viewable = data.viewable !== false;
+    
+    // Create modal HTML
+    const modalHtml = `
+        <div class="modal fade" id="fileViewerModal" tabindex="-1" aria-labelledby="fileViewerModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="fileViewerModalLabel">
+                            <i class="fas fa-eye me-2"></i>File Viewer: ${file.name}
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        ${viewable ? createFileViewerContent(file, content) : createNonViewableContent(data.reason || 'File cannot be viewed')}
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-primary" onclick="downloadFile('${file.full_path}')">
+                            <i class="fas fa-download me-1"></i>Download
+                        </button>
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal if any
+    const existingModal = document.getElementById('fileViewerModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to DOM
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('fileViewerModal'));
+    modal.show();
+    
+    // Clean up when modal is hidden
+    document.getElementById('fileViewerModal').addEventListener('hidden.bs.modal', function () {
+        this.remove();
+    });
+}
+
+// Create file viewer content based on file type
+function createFileViewerContent(file, content) {
+    if (file.mime.startsWith('image/')) {
+        return `
+            <div class="text-center">
+                <img src="/api/files/download?path=${encodeURIComponent(file.full_path)}" 
+                     class="img-fluid" alt="${file.name}" style="max-height: 500px;">
+            </div>
+        `;
+    } else if (file.mime.startsWith('text/') || file.mime === 'application/json' || file.mime === 'application/javascript') {
+        const language = getLanguageFromMime(file.mime, file.name);
+        return `
+            <div class="mb-3">
+                <small class="text-muted">
+                    <i class="fas fa-info-circle me-1"></i>
+                    Size: ${formatBytes(file.size)} | Type: ${file.mime}
+                </small>
+            </div>
+            <pre><code class="language-${language}" style="max-height: 400px; overflow-y: auto;">${escapeHtml(content)}</code></pre>
+        `;
+    } else if (file.mime === 'application/pdf') {
+        return `
+            <div class="text-center">
+                <embed src="/api/files/download?path=${encodeURIComponent(file.full_path)}" 
+                       type="application/pdf" width="100%" height="500px">
+            </div>
+        `;
+    } else {
+        return createNonViewableContent('This file type cannot be previewed in the browser.');
+    }
+}
+
+// Create non-viewable content message
+function createNonViewableContent(reason) {
+    return `
+        <div class="text-center py-5">
+            <i class="fas fa-file fa-3x text-muted mb-3"></i>
+            <h5 class="text-muted">Cannot preview file</h5>
+            <p class="text-muted">${reason}</p>
+        </div>
+    `;
+}
+
+// Get language for syntax highlighting
+function getLanguageFromMime(mime, filename) {
+    // First check MIME type
+    switch (mime) {
+        case 'application/json': return 'json';
+        case 'application/javascript': return 'javascript';
+        case 'text/html': return 'html';
+        case 'text/css': return 'css';
+        case 'application/xml': return 'xml';
+        case 'text/typescript': return 'typescript';
+        case 'text/x-python': return 'python';
+        case 'text/x-go': return 'go';
+        case 'text/x-java': return 'java';
+        case 'text/x-c': return 'c';
+        case 'text/x-c++': return 'cpp';
+        case 'text/x-c-header': return 'c';
+        case 'text/x-shellscript': return 'bash';
+        case 'text/x-php': return 'php';
+        case 'text/x-ruby': return 'ruby';
+        case 'text/x-perl': return 'perl';
+        case 'text/x-rust': return 'rust';
+        case 'text/x-swift': return 'swift';
+        case 'text/x-kotlin': return 'kotlin';
+        case 'text/x-scala': return 'scala';
+        case 'text/x-dockerfile': return 'dockerfile';
+        case 'text/yaml': return 'yaml';
+        case 'text/csv': return 'csv';
+        case 'text/sql': return 'sql';
+        case 'text/markdown': return 'markdown';
+    }
+    
+    // Fallback to file extension
+    const ext = filename.split('.').pop().toLowerCase();
+    switch (ext) {
+        case 'js': case 'mjs': return 'javascript';
+        case 'ts': return 'typescript';
+        case 'py': return 'python';
+        case 'go': return 'go';
+        case 'java': return 'java';
+        case 'cpp': case 'cc': case 'cxx': case 'c++': return 'cpp';
+        case 'c': return 'c';
+        case 'h': case 'hpp': return 'c';
+        case 'sh': case 'bash': case 'zsh': case 'fish': return 'bash';
+        case 'php': return 'php';
+        case 'rb': return 'ruby';
+        case 'pl': return 'perl';
+        case 'rs': return 'rust';
+        case 'swift': return 'swift';
+        case 'kt': return 'kotlin';
+        case 'scala': return 'scala';
+        case 'yml': case 'yaml': return 'yaml';
+        case 'md': case 'markdown': return 'markdown';
+        case 'sql': return 'sql';
+        case 'csv': return 'csv';
+        case 'dockerfile': return 'dockerfile';
+        case 'gitignore': case 'gitattributes': return 'text';
+        case 'env': return 'bash';
+        case 'cfg': case 'conf': case 'ini': case 'properties': return 'ini';
+        default: return 'text';
+    }
+}
+
+// Show properties modal
+function showPropertiesModal(properties) {
+    // Create modal HTML
+    const modalHtml = `
+        <div class="modal fade" id="propertiesModal" tabindex="-1" aria-labelledby="propertiesModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="propertiesModalLabel">
+                            <i class="fas fa-info me-2"></i>Properties: ${properties.name}
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        ${createPropertiesContent(properties)}
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal if any
+    const existingModal = document.getElementById('propertiesModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to DOM
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('propertiesModal'));
+    modal.show();
+    
+    // Clean up when modal is hidden
+    document.getElementById('propertiesModal').addEventListener('hidden.bs.modal', function () {
+        this.remove();
+    });
+}
+
+// Create properties content
+function createPropertiesContent(properties) {
+    let html = `
+        <div class="row">
+            <div class="col-md-6">
+                <h6 class="text-primary"><i class="fas fa-file me-1"></i>Basic Information</h6>
+                <table class="table table-sm">
+                    <tr><td><strong>Name:</strong></td><td>${properties.name}</td></tr>
+                    <tr><td><strong>Full Path:</strong></td><td><code>${properties.full_path}</code></td></tr>
+                    <tr><td><strong>Type:</strong></td><td>${properties.is_directory ? 'Directory' : 'File'}</td></tr>
+    `;
+    
+    if (!properties.is_directory) {
+        html += `
+                    <tr><td><strong>Size:</strong></td><td>${properties.size_formatted || formatBytes(properties.size || 0)}</td></tr>
+                    <tr><td><strong>MIME Type:</strong></td><td>${properties.mime_type || 'Unknown'}</td></tr>
+        `;
+    }
+    
+    html += `
+                </table>
+            </div>
+            <div class="col-md-6">
+                <h6 class="text-primary"><i class="fas fa-clock me-1"></i>Timestamps</h6>
+                <table class="table table-sm">
+    `;
+    
+    if (properties.modified_time) {
+        html += `<tr><td><strong>Modified:</strong></td><td>${properties.modified_time}</td></tr>`;
+    }
+    if (properties.created_time) {
+        html += `<tr><td><strong>Created:</strong></td><td>${properties.created_time}</td></tr>`;
+    }
+    
+    html += `
+                </table>
+                
+                <h6 class="text-primary"><i class="fas fa-shield-alt me-1"></i>Permissions</h6>
+                <table class="table table-sm">
+                    <tr><td><strong>Mode:</strong></td><td><code>${properties.file_mode_formatted || properties.file_mode}</code></td></tr>
+                    <tr><td><strong>UID:</strong></td><td>${properties.uid || 'N/A'}</td></tr>
+                    <tr><td><strong>GID:</strong></td><td>${properties.gid || 'N/A'}</td></tr>
+                </table>
+            </div>
+        </div>
+    `;
+    
+    // Add TTL information if available
+    if (properties.ttl_seconds && properties.ttl_seconds > 0) {
+        html += `
+            <div class="row mt-3">
+                <div class="col-12">
+                    <h6 class="text-primary"><i class="fas fa-hourglass-half me-1"></i>TTL (Time To Live)</h6>
+                    <table class="table table-sm">
+                        <tr><td><strong>TTL:</strong></td><td>${properties.ttl_formatted || properties.ttl_seconds + ' seconds'}</td></tr>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Add chunk information if available
+    if (properties.chunks && properties.chunks.length > 0) {
+        html += `
+            <div class="row mt-3">
+                <div class="col-12">
+                    <h6 class="text-primary"><i class="fas fa-puzzle-piece me-1"></i>Chunks (${properties.chunk_count})</h6>
+                    <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>File ID</th>
+                                    <th>Offset</th>
+                                    <th>Size</th>
+                                    <th>ETag</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+        `;
+        
+        properties.chunks.forEach(chunk => {
+            html += `
+                                <tr>
+                                    <td><code class="small">${chunk.file_id}</code></td>
+                                    <td>${formatBytes(chunk.offset)}</td>
+                                    <td>${formatBytes(chunk.size)}</td>
+                                    <td><code class="small">${chunk.e_tag || 'N/A'}</code></td>
+                                </tr>
+            `;
+        });
+        
+        html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Add extended attributes if available
+    if (properties.extended && Object.keys(properties.extended).length > 0) {
+        html += `
+            <div class="row mt-3">
+                <div class="col-12">
+                    <h6 class="text-primary"><i class="fas fa-tags me-1"></i>Extended Attributes</h6>
+                    <table class="table table-sm">
+        `;
+        
+        Object.entries(properties.extended).forEach(([key, value]) => {
+            html += `<tr><td><strong>${key}:</strong></td><td>${value}</td></tr>`;
+        });
+        
+        html += `
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+    
+    return html;
+}
+
+// Utility function to escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
  

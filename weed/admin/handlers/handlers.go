@@ -90,6 +90,9 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				filesApi.DELETE("/delete-multiple", h.fileBrowserHandlers.DeleteMultipleFiles)
 				filesApi.POST("/create-folder", h.fileBrowserHandlers.CreateFolder)
 				filesApi.POST("/upload", h.fileBrowserHandlers.UploadFile)
+				filesApi.GET("/download", h.fileBrowserHandlers.DownloadFile)
+				filesApi.GET("/view", h.fileBrowserHandlers.ViewFile)
+				filesApi.GET("/properties", h.fileBrowserHandlers.GetFileProperties)
 			}
 		}
 	} else {
@@ -137,6 +140,9 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				filesApi.DELETE("/delete-multiple", h.fileBrowserHandlers.DeleteMultipleFiles)
 				filesApi.POST("/create-folder", h.fileBrowserHandlers.CreateFolder)
 				filesApi.POST("/upload", h.fileBrowserHandlers.UploadFile)
+				filesApi.GET("/download", h.fileBrowserHandlers.DownloadFile)
+				filesApi.GET("/view", h.fileBrowserHandlers.ViewFile)
+				filesApi.GET("/properties", h.fileBrowserHandlers.GetFileProperties)
 			}
 		}
 	}
