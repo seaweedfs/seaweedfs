@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -8,10 +9,12 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -651,41 +654,57 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	})
 }
 
-// GetObjectStoreUsers retrieves object store users data
+// GetObjectStoreUsers retrieves object store users from identity.json
 func (s *AdminServer) GetObjectStoreUsers() ([]ObjectStoreUser, error) {
-	// For now, return mock data since SeaweedFS doesn't have built-in user management
-	// In a real implementation, this would query the IAM system or user database
-	users := []ObjectStoreUser{
-		{
-			Username:    "admin",
-			Email:       "admin@example.com",
-			AccessKey:   "AKIAIOSFODNN7EXAMPLE",
-			SecretKey:   "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-			Status:      "active",
-			CreatedAt:   time.Now().AddDate(0, -1, 0),
-			LastLogin:   time.Now().AddDate(0, 0, -1),
-			Permissions: []string{"s3:*", "iam:*"},
-		},
-		{
-			Username:    "readonly",
-			Email:       "readonly@example.com",
-			AccessKey:   "AKIAI44QH8DHBEXAMPLE",
-			SecretKey:   "je7MtGbClwBF/2Zp9Utk/h3yCo8nvbEXAMPLEKEY",
-			Status:      "active",
-			CreatedAt:   time.Now().AddDate(0, -2, 0),
-			LastLogin:   time.Now().AddDate(0, 0, -3),
-			Permissions: []string{"s3:GetObject", "s3:ListBucket"},
-		},
-		{
-			Username:    "backup",
-			Email:       "backup@example.com",
-			AccessKey:   "AKIAIGCEVSQ6C2EXAMPLE",
-			SecretKey:   "BnL1dIqRF/+WoWcouZ5e3qthJhEXAMPLEKEY",
-			Status:      "inactive",
-			CreatedAt:   time.Now().AddDate(0, -3, 0),
-			LastLogin:   time.Now().AddDate(0, -1, -15),
-			Permissions: []string{"s3:PutObject", "s3:GetObject"},
-		},
+	s3cfg := &iam_pb.S3ApiConfiguration{}
+
+	// Load IAM configuration from filer
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		var buf bytes.Buffer
+		if err := filer.ReadEntry(nil, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf); err != nil {
+			if err == filer_pb.ErrNotFound {
+				// If file doesn't exist, return empty configuration
+				return nil
+			}
+			return err
+		}
+		if buf.Len() > 0 {
+			return filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg)
+		}
+		return nil
+	})
+
+	if err != nil {
+		glog.Errorf("Failed to load IAM configuration: %v", err)
+		return []ObjectStoreUser{}, nil // Return empty list instead of error for UI
+	}
+
+	var users []ObjectStoreUser
+
+	// Convert IAM identities to ObjectStoreUser format
+	for _, identity := range s3cfg.Identities {
+		// Skip anonymous identity
+		if identity.Name == "anonymous" {
+			continue
+		}
+
+		user := ObjectStoreUser{
+			Username:    identity.Name,
+			Permissions: identity.Actions,
+		}
+
+		// Set email from account if available
+		if identity.Account != nil {
+			user.Email = identity.Account.EmailAddress
+		}
+
+		// Get first access key for display
+		if len(identity.Credentials) > 0 {
+			user.AccessKey = identity.Credentials[0].AccessKey
+			user.SecretKey = identity.Credentials[0].SecretKey
+		}
+
+		users = append(users, user)
 	}
 
 	return users, nil

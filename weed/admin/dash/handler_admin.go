@@ -27,14 +27,11 @@ type AdminData struct {
 
 // Object Store Users management structures
 type ObjectStoreUser struct {
-	Username    string    `json:"username"`
-	Email       string    `json:"email"`
-	AccessKey   string    `json:"access_key"`
-	SecretKey   string    `json:"secret_key"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	LastLogin   time.Time `json:"last_login"`
-	Permissions []string  `json:"permissions"`
+	Username    string   `json:"username"`
+	Email       string   `json:"email"`
+	AccessKey   string   `json:"access_key"`
+	SecretKey   string   `json:"secret_key"`
+	Permissions []string `json:"permissions"`
 }
 
 type ObjectStoreUsersData struct {
@@ -42,6 +39,36 @@ type ObjectStoreUsersData struct {
 	Users       []ObjectStoreUser `json:"users"`
 	TotalUsers  int               `json:"total_users"`
 	LastUpdated time.Time         `json:"last_updated"`
+}
+
+// User management request structures
+type CreateUserRequest struct {
+	Username    string   `json:"username" binding:"required"`
+	Email       string   `json:"email"`
+	Actions     []string `json:"actions"`
+	GenerateKey bool     `json:"generate_key"`
+}
+
+type UpdateUserRequest struct {
+	Email   string   `json:"email"`
+	Actions []string `json:"actions"`
+}
+
+type UpdateUserPoliciesRequest struct {
+	Actions []string `json:"actions" binding:"required"`
+}
+
+type AccessKeyInfo struct {
+	AccessKey string    `json:"access_key"`
+	SecretKey string    `json:"secret_key"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type UserDetails struct {
+	Username   string          `json:"username"`
+	Email      string          `json:"email"`
+	Actions    []string        `json:"actions"`
+	AccessKeys []AccessKeyInfo `json:"access_keys"`
 }
 
 type FilerNode struct {

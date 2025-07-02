@@ -16,6 +16,7 @@ type AdminHandlers struct {
 	authHandlers        *AuthHandlers
 	clusterHandlers     *ClusterHandlers
 	fileBrowserHandlers *FileBrowserHandlers
+	userHandlers        *UserHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
@@ -23,11 +24,13 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	authHandlers := NewAuthHandlers(adminServer)
 	clusterHandlers := NewClusterHandlers(adminServer)
 	fileBrowserHandlers := NewFileBrowserHandlers(adminServer)
+	userHandlers := NewUserHandlers(adminServer)
 	return &AdminHandlers{
 		adminServer:         adminServer,
 		authHandlers:        authHandlers,
 		clusterHandlers:     clusterHandlers,
 		fileBrowserHandlers: fileBrowserHandlers,
+		userHandlers:        userHandlers,
 	}
 }
 
@@ -53,7 +56,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		// Object Store management routes
 		protected.GET("/object-store/buckets", h.ShowS3Buckets)
 		protected.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
-		protected.GET("/object-store/users", h.ShowObjectStoreUsers)
+		protected.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
 
 		// File browser routes
 		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -83,6 +86,20 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				s3Api.PUT("/buckets/:bucket/quota", h.adminServer.UpdateBucketQuota)
 			}
 
+			// User management API routes
+			usersApi := api.Group("/users")
+			{
+				usersApi.GET("", h.userHandlers.GetUsers)
+				usersApi.POST("", h.userHandlers.CreateUser)
+				usersApi.GET("/:username", h.userHandlers.GetUserDetails)
+				usersApi.PUT("/:username", h.userHandlers.UpdateUser)
+				usersApi.DELETE("/:username", h.userHandlers.DeleteUser)
+				usersApi.POST("/:username/access-keys", h.userHandlers.CreateAccessKey)
+				usersApi.DELETE("/:username/access-keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
+				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
+				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
+			}
+
 			// File management API routes
 			filesApi := api.Group("/files")
 			{
@@ -103,7 +120,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		// Object Store management routes
 		r.GET("/object-store/buckets", h.ShowS3Buckets)
 		r.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
-		r.GET("/object-store/users", h.ShowObjectStoreUsers)
+		r.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
 
 		// File browser routes
 		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -131,6 +148,20 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
 				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
 				s3Api.PUT("/buckets/:bucket/quota", h.adminServer.UpdateBucketQuota)
+			}
+
+			// User management API routes
+			usersApi := api.Group("/users")
+			{
+				usersApi.GET("", h.userHandlers.GetUsers)
+				usersApi.POST("", h.userHandlers.CreateUser)
+				usersApi.GET("/:username", h.userHandlers.GetUserDetails)
+				usersApi.PUT("/:username", h.userHandlers.UpdateUser)
+				usersApi.DELETE("/:username", h.userHandlers.DeleteUser)
+				usersApi.POST("/:username/access-keys", h.userHandlers.CreateAccessKey)
+				usersApi.DELETE("/:username/access-keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
+				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
+				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
 			}
 
 			// File management API routes
@@ -196,22 +227,6 @@ func (h *AdminHandlers) ShowBucketDetails(c *gin.Context) {
 	c.JSON(http.StatusOK, details)
 }
 
-// ShowObjectStoreUsers renders the object store users management page
-func (h *AdminHandlers) ShowObjectStoreUsers(c *gin.Context) {
-	// Get object store users data from the server
-	usersData := h.getObjectStoreUsersData(c)
-
-	// Render HTML template
-	c.Header("Content-Type", "text/html")
-	usersComponent := app.ObjectStoreUsers(usersData)
-	layoutComponent := layout.Layout(c, usersComponent)
-	err := layoutComponent.Render(c.Request.Context(), c.Writer)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
-		return
-	}
-}
-
 // getS3BucketsData retrieves Object Store buckets data from the server
 func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 	username := c.GetString("username")
@@ -244,33 +259,6 @@ func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 		TotalBuckets: len(buckets),
 		TotalSize:    totalSize,
 		LastUpdated:  time.Now(),
-	}
-}
-
-// getObjectStoreUsersData retrieves object store users data from the server
-func (h *AdminHandlers) getObjectStoreUsersData(c *gin.Context) dash.ObjectStoreUsersData {
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
-
-	// Get object store users
-	users, err := h.adminServer.GetObjectStoreUsers()
-	if err != nil {
-		// Return empty data on error
-		return dash.ObjectStoreUsersData{
-			Username:    username,
-			Users:       []dash.ObjectStoreUser{},
-			TotalUsers:  0,
-			LastUpdated: time.Now(),
-		}
-	}
-
-	return dash.ObjectStoreUsersData{
-		Username:    username,
-		Users:       users,
-		TotalUsers:  len(users),
-		LastUpdated: time.Now(),
 	}
 }
 

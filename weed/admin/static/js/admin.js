@@ -807,34 +807,30 @@ function exportUsers() {
         showAlert('error', 'Users table not found');
         return;
     }
-
-    const headers = ['Username', 'Email', 'Access Key', 'Status', 'Created', 'Last Login'];
-    const rows = [];
-
-    // Get table rows
-    const tableRows = table.querySelectorAll('tbody tr');
-    tableRows.forEach(row => {
+    
+    const rows = table.querySelectorAll('tbody tr');
+    if (rows.length === 0) {
+        showErrorMessage('No users to export');
+        return;
+    }
+    
+    let csvContent = 'Username,Email,Access Key,Status,Created,Last Login\n';
+    
+    rows.forEach(row => {
         const cells = row.querySelectorAll('td');
         if (cells.length >= 6) {
-            rows.push([
-                cells[0].textContent.trim(),
-                cells[1].textContent.trim(),
-                cells[2].textContent.trim(),
-                cells[3].textContent.trim(),
-                cells[4].textContent.trim(),
-                cells[5].textContent.trim()
-            ]);
+            const username = cells[0].textContent.trim();
+            const email = cells[1].textContent.trim();
+            const accessKey = cells[2].textContent.trim();
+            const status = cells[3].textContent.trim();
+            const created = cells[4].textContent.trim();
+            const lastLogin = cells[5].textContent.trim();
+            
+            csvContent += `"${username}","${email}","${accessKey}","${status}","${created}","${lastLogin}"\n`;
         }
     });
-
-    // Generate CSV
-    const csvContent = [headers, ...rows]
-        .map(row => row.map(cell => `"${cell}"`).join(','))
-        .join('\n');
-
-    // Download
-    const filename = `seaweedfs-users-${new Date().toISOString().split('T')[0]}.csv`;
-    downloadCSV(csvContent, filename);
+    
+    downloadCSV(csvContent, 'seaweedfs-users.csv');
 }
 
 // Confirm delete collection
@@ -2062,9 +2058,481 @@ function createPropertiesContent(properties) {
 
 // Utility function to escape HTML
 function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    var map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, function(m) { return map[m]; });
 }
+
+// ============================================================================
+// USER MANAGEMENT FUNCTIONS
+// ============================================================================
+
+// Global variables for user management
+let currentEditingUser = '';
+let currentAccessKeysUser = '';
+
+// User Management Functions
+
+async function handleCreateUser() {
+    const form = document.getElementById('createUserForm');
+    const formData = new FormData(form);
+    
+    // Get selected actions
+    const actionsSelect = document.getElementById('actions');
+    const selectedActions = Array.from(actionsSelect.selectedOptions).map(option => option.value);
+    
+    const userData = {
+        username: formData.get('username'),
+        email: formData.get('email'),
+        actions: selectedActions,
+        generate_key: formData.get('generateKey') === 'on'
+    };
+    
+    try {
+        const response = await fetch('/api/users', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(userData)
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            showSuccessMessage('User created successfully');
+            
+            // Show the created access key if generated
+            if (result.user && result.user.access_key) {
+                showNewAccessKeyModal(result.user);
+            }
+            
+            // Close modal and refresh page
+            const modal = bootstrap.Modal.getInstance(document.getElementById('createUserModal'));
+            modal.hide();
+            form.reset();
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            const error = await response.json();
+            showErrorMessage('Failed to create user: ' + (error.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error creating user:', error);
+        showErrorMessage('Failed to create user: ' + error.message);
+    }
+}
+
+async function editUser(username) {
+    currentEditingUser = username;
+    
+    try {
+        const response = await fetch(`/api/users/${username}`);
+        if (response.ok) {
+            const user = await response.json();
+            
+            // Populate edit form
+            document.getElementById('editUsername').value = username;
+                document.getElementById('editEmail').value = user.email || '';
+            
+            // Set selected actions
+            const actionsSelect = document.getElementById('editActions');
+            Array.from(actionsSelect.options).forEach(option => {
+                option.selected = user.actions && user.actions.includes(option.value);
+            });
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
+            modal.show();
+        } else {
+            showErrorMessage('Failed to load user details');
+        }
+    } catch (error) {
+        console.error('Error loading user:', error);
+        showErrorMessage('Failed to load user details');
+    }
+}
+
+async function handleUpdateUser() {
+    const form = document.getElementById('editUserForm');
+    const formData = new FormData(form);
+    
+    // Get selected actions
+    const actionsSelect = document.getElementById('editActions');
+    const selectedActions = Array.from(actionsSelect.selectedOptions).map(option => option.value);
+    
+    const userData = {
+        email: formData.get('email'),
+        actions: selectedActions
+    };
+    
+    try {
+        const response = await fetch(`/api/users/${currentEditingUser}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(userData)
+        });
+        
+        if (response.ok) {
+            showSuccessMessage('User updated successfully');
+            
+            // Close modal and refresh page
+            const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
+            modal.hide();
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            const error = await response.json();
+            showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error updating user:', error);
+        showErrorMessage('Failed to update user: ' + error.message);
+    }
+}
+
+function confirmDeleteUser(username) {
+    confirmAction(
+        `Are you sure you want to delete user "${username}"? This action cannot be undone.`,
+        () => deleteUserConfirmed(username)
+    );
+}
+
+function deleteUser(username) {
+    confirmDeleteUser(username);
+}
+
+async function deleteUserConfirmed(username) {
+    try {
+        const response = await fetch(`/api/users/${username}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            showSuccessMessage('User deleted successfully');
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            const error = await response.json();
+            showErrorMessage('Failed to delete user: ' + (error.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error deleting user:', error);
+        showErrorMessage('Failed to delete user: ' + error.message);
+    }
+}
+
+async function showUserDetails(username) {
+    try {
+        const response = await fetch(`/api/users/${username}`);
+        if (response.ok) {
+            const user = await response.json();
+            
+            const content = createUserDetailsContent(user);
+            document.getElementById('userDetailsContent').innerHTML = content;
+            
+            const modal = new bootstrap.Modal(document.getElementById('userDetailsModal'));
+            modal.show();
+        } else {
+            showErrorMessage('Failed to load user details');
+        }
+    } catch (error) {
+        console.error('Error loading user details:', error);
+        showErrorMessage('Failed to load user details');
+    }
+}
+
+function createUserDetailsContent(user) {
+    return `
+        <div class="row">
+            <div class="col-md-6">
+                <h6 class="text-muted">Basic Information</h6>
+                <table class="table table-sm">
+                    <tr>
+                        <td><strong>Username:</strong></td>
+                        <td>${escapeHtml(user.username)}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Email:</strong></td>
+                        <td>${escapeHtml(user.email || 'Not set')}</td>
+                    </tr>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <h6 class="text-muted">Permissions</h6>
+                <div class="mb-3">
+                    ${user.actions && user.actions.length > 0 ? 
+                        user.actions.map(action => `<span class="badge bg-info me-1">${action}</span>`).join('') :
+                        '<span class="text-muted">No permissions assigned</span>'
+                    }
+                </div>
+                
+                <h6 class="text-muted">Access Keys</h6>
+                ${user.access_keys && user.access_keys.length > 0 ? 
+                    createAccessKeysTable(user.access_keys) :
+                    '<p class="text-muted">No access keys</p>'
+                }
+            </div>
+        </div>
+    `;
+}
+
+function createAccessKeysTable(accessKeys) {
+    return `
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Access Key</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${accessKeys.map(key => `
+                        <tr>
+                            <td><code>${key.access_key}</code></td>
+                            <td>${new Date(key.created_at).toLocaleDateString()}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+async function manageAccessKeys(username) {
+    currentAccessKeysUser = username;
+    document.getElementById('accessKeysUsername').textContent = username;
+    
+    await loadAccessKeys(username);
+    
+    const modal = new bootstrap.Modal(document.getElementById('accessKeysModal'));
+    modal.show();
+}
+
+async function loadAccessKeys(username) {
+    try {
+        const response = await fetch(`/api/users/${username}`);
+        if (response.ok) {
+            const user = await response.json();
+            
+            const content = createAccessKeysManagementContent(user.access_keys || []);
+            document.getElementById('accessKeysContent').innerHTML = content;
+        } else {
+            document.getElementById('accessKeysContent').innerHTML = '<p class="text-muted">Failed to load access keys</p>';
+        }
+    } catch (error) {
+        console.error('Error loading access keys:', error);
+        document.getElementById('accessKeysContent').innerHTML = '<p class="text-muted">Error loading access keys</p>';
+    }
+}
+
+function createAccessKeysManagementContent(accessKeys) {
+    if (accessKeys.length === 0) {
+        return '<p class="text-muted">No access keys found. Create one to get started.</p>';
+    }
+    
+    return `
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Access Key</th>
+                        <th>Secret Key</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${accessKeys.map(key => `
+                        <tr>
+                            <td>
+                                <code>${key.access_key}</code>
+                                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyToClipboard('${key.access_key}')">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                            </td>
+                            <td>
+                                <code class="text-muted">••••••••••••••••</code>
+                                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="showSecretKey('${key.access_key}', '${key.secret_key}')">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </td>
+                            <td>${new Date(key.created_at).toLocaleDateString()}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteAccessKey('${key.access_key}')">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+async function createAccessKey() {
+    if (!currentAccessKeysUser) {
+        showErrorMessage('No user selected');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/users/${currentAccessKeysUser}/access-keys`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            showSuccessMessage('Access key created successfully');
+            
+            // Show the new access key
+            showNewAccessKeyModal(result.access_key);
+            
+            // Reload access keys
+            await loadAccessKeys(currentAccessKeysUser);
+        } else {
+            const error = await response.json();
+            showErrorMessage('Failed to create access key: ' + (error.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error creating access key:', error);
+        showErrorMessage('Failed to create access key: ' + error.message);
+    }
+}
+
+function confirmDeleteAccessKey(accessKeyId) {
+    confirmAction(
+        `Are you sure you want to delete access key "${accessKeyId}"? This action cannot be undone.`,
+        () => deleteAccessKeyConfirmed(accessKeyId)
+    );
+}
+
+async function deleteAccessKeyConfirmed(accessKeyId) {
+    try {
+        const response = await fetch(`/api/users/${currentAccessKeysUser}/access-keys/${accessKeyId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            showSuccessMessage('Access key deleted successfully');
+            
+            // Reload access keys
+            await loadAccessKeys(currentAccessKeysUser);
+        } else {
+            const error = await response.json();
+            showErrorMessage('Failed to delete access key: ' + (error.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error deleting access key:', error);
+        showErrorMessage('Failed to delete access key: ' + error.message);
+    }
+}
+
+function showSecretKey(accessKey, secretKey) {
+    const content = `
+        <div class="alert alert-info">
+            <i class="fas fa-info-circle me-2"></i>
+            <strong>Access Key Details:</strong> These credentials provide access to your object storage. Keep them secure and don't share them.
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Access Key:</strong></label>
+            <div class="input-group">
+                <input type="text" class="form-control" value="${accessKey}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${accessKey}')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Secret Key:</strong></label>
+            <div class="input-group">
+                <input type="text" class="form-control" value="${secretKey}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${secretKey}')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+    `;
+    
+    showModal('Access Key Details', content);
+}
+
+function showNewAccessKeyModal(accessKeyData) {
+    const content = `
+        <div class="alert alert-success">
+            <i class="fas fa-check-circle me-2"></i>
+            <strong>Success!</strong> Your new access key has been created.
+        </div>
+        <div class="alert alert-info">
+            <i class="fas fa-info-circle me-2"></i>
+            <strong>Important:</strong> These credentials provide access to your object storage. Keep them secure and don't share them. You can view them again through the user management interface if needed.
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Access Key:</strong></label>
+            <div class="input-group">
+                <input type="text" class="form-control" value="${accessKeyData.access_key}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${accessKeyData.access_key}')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Secret Key:</strong></label>
+            <div class="input-group">
+                <input type="text" class="form-control" value="${accessKeyData.secret_key}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${accessKeyData.secret_key}')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+    `;
+    
+    showModal('New Access Key Created', content);
+}
+
+function showModal(title, content) {
+    // Create a dynamic modal
+    const modalId = 'dynamicModal_' + Date.now();
+    const modalHtml = `
+        <div class="modal fade" id="${modalId}" tabindex="-1" role="dialog">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">${title}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        ${content}
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Add modal to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById(modalId));
+    modal.show();
+    
+    // Remove modal from DOM when hidden
+    document.getElementById(modalId).addEventListener('hidden.bs.modal', function() {
+        this.remove();
+    });
+}
+
+
 
  
