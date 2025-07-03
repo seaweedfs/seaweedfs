@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -53,7 +51,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		if err.Error() == "operation not permitted" {
 			writeJsonError(w, r, http.StatusForbidden, err)
 		} else if strings.HasPrefix(err.Error(), "read input:") || err.Error() == io.ErrUnexpectedEOF.Error() {
-			writeJsonError(w, r, version.HttpStatusCancelled, err)
+			writeJsonError(w, r, util.HttpStatusCancelled, err)
 		} else if strings.HasSuffix(err.Error(), "is a file") || strings.HasSuffix(err.Error(), "already exists") {
 			writeJsonError(w, r, http.StatusConflict, err)
 		} else {
