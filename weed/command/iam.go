@@ -3,8 +3,9 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"time"
 
@@ -15,6 +16,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+
+	// Import credential stores to register them
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/postgres"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/sqlite"
 )
 
 var (
