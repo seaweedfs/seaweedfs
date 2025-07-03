@@ -42,25 +42,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                 </div>
             </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
-                <div class="card border-left-success shadow h-100 py-2">
-                    <div class="card-body">
-                        <div class="row no-gutters align-items-center">
-                            <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                    Active Volume Servers
-                                </div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", countActiveVolumeServers(data.VolumeServers))}
-                                </div>
-                            </div>
-                            <div class="col-auto">
-                                <i class="fas fa-check-circle fa-2x text-gray-300"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+
 
             <div class="col-xl-3 col-md-6 mb-4">
                 <div class="card border-left-info shadow h-100 py-2">
@@ -123,7 +105,6 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                     <th>Volumes</th>
                                     <th>Capacity</th>
                                     <th>Usage</th>
-                                    <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -167,11 +148,6 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                             </div>
                                         </td>
                                         <td>
-                                            <span class={fmt.Sprintf("badge bg-%s", getStatusColor(host.Status))}>
-                                                {host.Status}
-                                            </span>
-                                        </td>
-                                        <td>
                                             <div class="btn-group btn-group-sm">
                                                 <button type="button" class="btn btn-outline-primary btn-sm" 
                                                         title="View Details">
@@ -210,12 +186,4 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
     </div>
 }
 
-func countActiveVolumeServers(volumeServers []dash.VolumeServer) int {
-    count := 0
-    for _, server := range volumeServers {
-        if server.Status == "active" {
-            count++
-        }
-    }
-    return count
-} 
+ 

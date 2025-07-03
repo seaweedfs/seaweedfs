@@ -22,7 +22,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 	<div id="masters-content">
 		<!-- Summary Cards -->
 		<div class="row mb-4">
-			<div class="col-xl-3 col-md-6 mb-4">
+			<div class="col-xl-4 col-md-6 mb-4">
 				<div class="card border-left-primary shadow h-100 py-2">
 					<div class="card-body">
 						<div class="row no-gutters align-items-center">
@@ -42,27 +42,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 				</div>
 			</div>
 
-			<div class="col-xl-3 col-md-6 mb-4">
-				<div class="card border-left-success shadow h-100 py-2">
-					<div class="card-body">
-						<div class="row no-gutters align-items-center">
-							<div class="col mr-2">
-								<div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-									Active Masters
-								</div>
-								<div class="h5 mb-0 font-weight-bold text-gray-800">
-									{ fmt.Sprintf("%d", countActiveMasters(data.Masters)) }
-								</div>
-							</div>
-							<div class="col-auto">
-								<i class="fas fa-check-circle fa-2x text-gray-300"></i>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<div class="col-xl-3 col-md-6 mb-4">
+			<div class="col-xl-4 col-md-6 mb-4">
 				<div class="card border-left-info shadow h-100 py-2">
 					<div class="card-body">
 						<div class="row no-gutters align-items-center">
@@ -82,7 +62,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 				</div>
 			</div>
 
-			<div class="col-xl-3 col-md-6 mb-4">
+			<div class="col-xl-4 col-md-6 mb-4">
 				<div class="card border-left-warning shadow h-100 py-2">
 					<div class="card-body">
 						<div class="row no-gutters align-items-center">
@@ -123,7 +103,6 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 									<th>Address</th>
 									<th>Role</th>
 									<th>Suffrage</th>
-									<th>Status</th>
 									<th>Actions</th>
 								</tr>
 							</thead>
@@ -155,11 +134,6 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 											} else {
 												<span class="text-muted">-</span>
 											}
-										</td>
-										<td>
-											<span class={ fmt.Sprintf("badge bg-%s", getStatusColor(master.Status)) }>
-												{ master.Status }
-											</span>
 										</td>
 										<td>
 											<div class="btn-group btn-group-sm">
@@ -198,12 +172,4 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 	</div>
 }
 
-func countActiveMasters(masters []dash.MasterInfo) int {
-	count := 0
-	for _, master := range masters {
-		if master.Status == "active" {
-			count++
-		}
-	}
-	return count
-} 
+ 

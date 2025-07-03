@@ -785,13 +785,8 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 }
 
 func countActiveVolumes(volumes []dash.VolumeInfo) int {
-	count := 0
-	for _, volume := range volumes {
-		if volume.Status == "active" {
-			count++
-		}
-	}
-	return count
+	// Since we removed status tracking, consider all volumes as active
+	return len(volumes)
 }
 
 func countUniqueDataCenters(volumes []dash.VolumeInfo) int {

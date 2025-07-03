@@ -22,7 +22,7 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 	<div id="filers-content">
 		<!-- Summary Cards -->
 		<div class="row mb-4">
-			<div class="col-xl-6 col-md-6 mb-4">
+			<div class="col-xl-12 col-md-12 mb-4">
 				<div class="card border-left-primary shadow h-100 py-2">
 					<div class="card-body">
 						<div class="row no-gutters align-items-center">
@@ -36,26 +36,6 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 							</div>
 							<div class="col-auto">
 								<i class="fas fa-folder-open fa-2x text-gray-300"></i>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<div class="col-xl-6 col-md-6 mb-4">
-				<div class="card border-left-success shadow h-100 py-2">
-					<div class="card-body">
-						<div class="row no-gutters align-items-center">
-							<div class="col mr-2">
-								<div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-									Active Filers
-								</div>
-								<div class="h5 mb-0 font-weight-bold text-gray-800">
-									{ fmt.Sprintf("%d", countActiveFilers(data.Filers)) }
-								</div>
-							</div>
-							<div class="col-auto">
-								<i class="fas fa-check-circle fa-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -81,7 +61,6 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 									<th>Data Center</th>
 									<th>Rack</th>
 									<th>Created At</th>
-									<th>Status</th>
 									<th>Actions</th>
 								</tr>
 							</thead>
@@ -109,11 +88,6 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 											} else {
 												<span class="text-muted">N/A</span>
 											}
-										</td>
-										<td>
-											<span class={ fmt.Sprintf("badge bg-%s", getStatusColor(filer.Status)) }>
-												{ filer.Status }
-											</span>
 										</td>
 										<td>
 											<div class="btn-group btn-group-sm">
@@ -152,12 +126,4 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 	</div>
 }
 
-func countActiveFilers(filers []dash.FilerInfo) int {
-	count := 0
-	for _, filer := range filers {
-		if filer.Status == "active" {
-			count++
-		}
-	}
-	return count
-} 
+ 

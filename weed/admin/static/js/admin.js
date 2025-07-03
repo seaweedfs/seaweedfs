@@ -541,28 +541,26 @@ function exportBucketList() {
     const rows = Array.from(table.querySelectorAll('tbody tr'));
     const data = rows.map(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length < 6) return null; // Skip empty state row
+        if (cells.length < 5) return null; // Skip empty state row
         
         return {
             name: cells[0].textContent.trim(),
             created: cells[1].textContent.trim(),
             objects: cells[2].textContent.trim(),
             size: cells[3].textContent.trim(),
-            quota: cells[4].textContent.trim(),
-            status: cells[5].textContent.trim()
+            quota: cells[4].textContent.trim()
         };
     }).filter(item => item !== null);
 
     // Convert to CSV
     const csv = [
-        ['Name', 'Created', 'Objects', 'Size', 'Quota', 'Status'].join(','),
+        ['Name', 'Created', 'Objects', 'Size', 'Quota'].join(','),
         ...data.map(row => [
             row.name,
             row.created,
             row.objects,
             row.size,
-            row.quota,
-            row.status
+            row.quota
         ].join(','))
     ].join('\n');
 
@@ -641,12 +639,12 @@ function exportVolumeServers() {
         return;
     }
     
-    let csv = 'Server ID,Address,Data Center,Rack,Volumes,Capacity,Usage,Status\n';
+    let csv = 'Server ID,Address,Data Center,Rack,Volumes,Capacity,Usage\n';
     
     const rows = table.querySelectorAll('tbody tr');
     rows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 8) {
+        if (cells.length >= 7) {
             const rowData = [
                 cells[0].textContent.trim(),
                 cells[1].textContent.trim(),
@@ -654,8 +652,7 @@ function exportVolumeServers() {
                 cells[3].textContent.trim(),
                 cells[4].textContent.trim(),
                 cells[5].textContent.trim(),
-                cells[6].textContent.trim(),
-                cells[7].textContent.trim()
+                cells[6].textContent.trim()
             ];
             csv += rowData.join(',') + '\n';
         }
@@ -742,19 +739,18 @@ function exportMasters() {
         return;
     }
 
-    const headers = ['Address', 'Role', 'Suffrage', 'Status'];
+    const headers = ['Address', 'Role', 'Suffrage'];
     const rows = [];
 
     // Get table rows
     const tableRows = table.querySelectorAll('tbody tr');
     tableRows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 4) {
+        if (cells.length >= 3) {
             rows.push([
                 cells[0].textContent.trim(),
                 cells[1].textContent.trim(),
-                cells[2].textContent.trim(),
-                cells[3].textContent.trim()
+                cells[2].textContent.trim()
             ]);
         }
     });
@@ -777,21 +773,20 @@ function exportFilers() {
         return;
     }
 
-    const headers = ['Address', 'Version', 'Data Center', 'Rack', 'Created At', 'Status'];
+    const headers = ['Address', 'Version', 'Data Center', 'Rack', 'Created At'];
     const rows = [];
 
     // Get table rows
     const tableRows = table.querySelectorAll('tbody tr');
     tableRows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 6) {
+        if (cells.length >= 5) {
             rows.push([
                 cells[0].textContent.trim(),
                 cells[1].textContent.trim(),
                 cells[2].textContent.trim(),
                 cells[3].textContent.trim(),
-                cells[4].textContent.trim(),
-                cells[5].textContent.trim()
+                cells[4].textContent.trim()
             ]);
         }
     });

@@ -13,7 +13,6 @@ import (
 
 type AdminData struct {
 	Username      string         `json:"username"`
-	ClusterStatus string         `json:"cluster_status"`
 	TotalVolumes  int            `json:"total_volumes"`
 	TotalFiles    int64          `json:"total_files"`
 	TotalSize     int64          `json:"total_size"`
@@ -75,7 +74,6 @@ type FilerNode struct {
 	Address     string    `json:"address"`
 	DataCenter  string    `json:"datacenter"`
 	Rack        string    `json:"rack"`
-	Status      string    `json:"status"`
 	LastUpdated time.Time `json:"last_updated"`
 }
 
@@ -101,7 +99,6 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	// Prepare admin data
 	adminData := AdminData{
 		Username:      username,
-		ClusterStatus: s.determineClusterStatus(topology, masterNodes),
 		TotalVolumes:  topology.TotalVolumes,
 		TotalFiles:    topology.TotalFiles,
 		TotalSize:     topology.TotalSize,
@@ -147,7 +144,6 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 
 	// Since we have a single master address, create one entry
 	var isLeader bool = true // Assume leader since it's the only master we know about
-	var status string
 
 	// Try to get leader info from this master
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
@@ -161,16 +157,12 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 	})
 
 	if err != nil {
-		status = "unreachable"
 		isLeader = false
-	} else {
-		status = "active"
 	}
 
 	masterNodes = append(masterNodes, MasterNode{
 		Address:  s.masterAddress,
 		IsLeader: isLeader,
-		Status:   status,
 	})
 
 	return masterNodes
@@ -195,7 +187,6 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 				Address:     node.Address,
 				DataCenter:  node.DataCenter,
 				Rack:        node.Rack,
-				Status:      "active", // If it's in the cluster list, it's considered active
 				LastUpdated: time.Now(),
 			})
 		}
@@ -212,69 +203,22 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 	return filerNodes
 }
 
-// determineClusterStatus analyzes cluster health
-func (s *AdminServer) determineClusterStatus(topology *ClusterTopology, masters []MasterNode) string {
-	// Check if we have an active leader
-	hasActiveLeader := false
-	for _, master := range masters {
-		if master.IsLeader && master.Status == "active" {
-			hasActiveLeader = true
-			break
-		}
-	}
-
-	if !hasActiveLeader {
-		return "critical"
-	}
-
-	// Check volume server health
-	activeServers := 0
-	for _, vs := range topology.VolumeServers {
-		if vs.Status == "active" {
-			activeServers++
-		}
-	}
-
-	if activeServers == 0 {
-		return "critical"
-	} else if activeServers < len(topology.VolumeServers) {
-		return "warning"
-	}
-
-	return "healthy"
-}
-
 // determineSystemHealth provides overall system health assessment
 func (s *AdminServer) determineSystemHealth(topology *ClusterTopology, masters []MasterNode) string {
-	// Simple health calculation based on active components
+	// Simple health calculation based on available components
 	totalComponents := len(masters) + len(topology.VolumeServers)
-	activeComponents := 0
-
-	for _, master := range masters {
-		if master.Status == "active" {
-			activeComponents++
-		}
-	}
-
-	for _, vs := range topology.VolumeServers {
-		if vs.Status == "active" {
-			activeComponents++
-		}
-	}
 
 	if totalComponents == 0 {
 		return "unknown"
 	}
 
-	healthPercent := float64(activeComponents) / float64(totalComponents) * 100
-
-	if healthPercent >= 95 {
+	// Consider all components as active since we're removing status tracking
+	// In the future, this could be enhanced with actual health checks
+	if totalComponents >= 3 {
 		return "excellent"
-	} else if healthPercent >= 80 {
+	} else if totalComponents >= 2 {
 		return "good"
-	} else if healthPercent >= 60 {
-		return "fair"
 	} else {
-		return "poor"
+		return "fair"
 	}
 }

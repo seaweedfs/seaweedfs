@@ -181,7 +181,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 
 // HealthCheck returns the health status of the admin interface
 func (h *AdminHandlers) HealthCheck(c *gin.Context) {
-	c.JSON(200, gin.H{"status": "ok"})
+	c.JSON(200, gin.H{"health": "ok"})
 }
 
 // ShowDashboard renders the main admin dashboard
@@ -278,13 +278,11 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 			{
 				Address:  "localhost:9333",
 				IsLeader: true,
-				Status:   "unreachable",
 			},
 		}
 
 		return dash.AdminData{
 			Username:      username,
-			ClusterStatus: "warning",
 			TotalVolumes:  0,
 			TotalFiles:    0,
 			TotalSize:     0,
@@ -301,12 +299,6 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 }
 
 // Helper functions
-func (h *AdminHandlers) determineClusterStatus(topology *dash.ClusterTopology, masters []dash.MasterNode) string {
-	if len(topology.VolumeServers) == 0 {
-		return "warning"
-	}
-	return "healthy"
-}
 
 func (h *AdminHandlers) determineSystemHealth(topology *dash.ClusterTopology, masters []dash.MasterNode) string {
 	if len(topology.VolumeServers) > 0 && len(masters) > 0 {

@@ -25,7 +25,7 @@ templ S3Buckets(data dash.S3BucketsData) {
     <div id="s3-buckets-content">
         <!-- Summary Cards -->
         <div class="row mb-4">
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-4 col-md-6 mb-4">
                 <div class="card border-left-primary shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -45,7 +45,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 </div>
             </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-4 col-md-6 mb-4">
                 <div class="card border-left-success shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -65,27 +65,8 @@ templ S3Buckets(data dash.S3BucketsData) {
                 </div>
             </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
-                <div class="card border-left-info shadow h-100 py-2">
-                    <div class="card-body">
-                        <div class="row no-gutters align-items-center">
-                            <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
-                                    Active Buckets
-                                </div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", countActiveBuckets(data.Buckets))}
-                                </div>
-                            </div>
-                            <div class="col-auto">
-                                <i class="fas fa-check-circle fa-2x text-gray-300"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-4 col-md-6 mb-4">
                 <div class="card border-left-warning shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -136,7 +117,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                                         <th>Objects</th>
                                         <th>Size</th>
                                         <th>Quota</th>
-                                        <th>Status</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
@@ -172,11 +152,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                 }
                                             </td>
                                             <td>
-                                                <span class={fmt.Sprintf("badge bg-%s", getBucketStatusColor(bucket.Status))}>
-                                                    {bucket.Status}
-                                                </span>
-                                            </td>
-                                            <td>
                                                 <div class="btn-group btn-group-sm" role="group">
                                                     <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))} 
                                                        class="btn btn-outline-success btn-sm"
@@ -208,7 +183,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     }
                                     if len(data.Buckets) == 0 {
                                         <tr>
-                                            <td colspan="7" class="text-center text-muted py-4">
+                                            <td colspan="6" class="text-center text-muted py-4">
                                                 <i class="fas fa-cube fa-3x mb-3 text-muted"></i>
                                                 <div>
                                                     					<h5>No Object Store buckets found</h5>
@@ -393,29 +368,6 @@ templ S3Buckets(data dash.S3BucketsData) {
 }
 
 // Helper functions for template
-func getBucketStatusColor(status string) string {
-    switch status {
-    case "active":
-        return "success"
-    case "error":
-        return "danger"
-    case "warning":
-        return "warning"
-    default:
-        return "secondary"
-    }
-}
-
-func countActiveBuckets(buckets []dash.S3Bucket) int {
-    count := 0
-    for _, bucket := range buckets {
-        if bucket.Status == "active" {
-            count++
-        }
-    }
-    return count
-}
-
 func getQuotaStatusColor(used, quota int64, enabled bool) string {
     if !enabled || quota <= 0 {
         return "secondary"

@@ -53,7 +53,6 @@ type ClusterTopology struct {
 type MasterNode struct {
 	Address  string `json:"address"`
 	IsLeader bool   `json:"is_leader"`
-	Status   string `json:"status"`
 }
 
 type DataCenter struct {
@@ -77,7 +76,6 @@ type VolumeServer struct {
 	DiskUsage     int64     `json:"disk_usage"`
 	DiskCapacity  int64     `json:"disk_capacity"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
-	Status        string    `json:"status"`
 }
 
 // S3 Bucket management structures
@@ -87,7 +85,6 @@ type S3Bucket struct {
 	Size         int64     `json:"size"`
 	ObjectCount  int64     `json:"object_count"`
 	LastModified time.Time `json:"last_modified"`
-	Status       string    `json:"status"`
 	Quota        int64     `json:"quota"`         // Quota in bytes, 0 means no quota
 	QuotaEnabled bool      `json:"quota_enabled"` // Whether quota is enabled
 }
@@ -127,7 +124,6 @@ type VolumeInfo struct {
 	Size        int64  `json:"size"`
 	FileCount   int64  `json:"file_count"`
 	Replication string `json:"replication"`
-	Status      string `json:"status"`
 	DiskType    string `json:"disk_type"`
 }
 
@@ -176,7 +172,6 @@ type CollectionInfo struct {
 	FileCount   int64    `json:"file_count"`
 	TotalSize   int64    `json:"total_size"`
 	DiskTypes   []string `json:"disk_types"`
-	Status      string   `json:"status"`
 }
 
 type ClusterCollectionsData struct {
@@ -192,7 +187,6 @@ type ClusterCollectionsData struct {
 type MasterInfo struct {
 	Address  string `json:"address"`
 	IsLeader bool   `json:"is_leader"`
-	Status   string `json:"status"`
 	Suffrage string `json:"suffrage"`
 }
 
@@ -210,7 +204,6 @@ type FilerInfo struct {
 	Rack       string    `json:"rack"`
 	Version    string    `json:"version"`
 	CreatedAt  time.Time `json:"created_at"`
-	Status     string    `json:"status"`
 }
 
 type ClusterFilersData struct {
@@ -426,7 +419,6 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							DiskUsage:     totalSize,
 							DiskCapacity:  totalMaxVolumes * int64(resp.VolumeSizeLimitMb) * 1024 * 1024,
 							LastHeartbeat: time.Now(),
-							Status:        "active",
 						}
 
 						rackObj.Nodes = append(rackObj.Nodes, vs)
@@ -583,7 +575,6 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					Size:         size,
 					ObjectCount:  objectCount,
 					LastModified: time.Unix(resp.Entry.Attributes.Mtime, 0),
-					Status:       "active",
 					Quota:        quota,
 					QuotaEnabled: quotaEnabled,
 				}
@@ -608,7 +599,6 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	details := &BucketDetails{
 		Bucket: S3Bucket{
 			Name:   bucketName,
-			Status: "active",
 		},
 		Objects:   []S3Object{},
 		UpdatedAt: time.Now(),
@@ -853,7 +843,6 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 									Size:        int64(volInfo.Size),
 									FileCount:   int64(volInfo.FileCount),
 									Replication: fmt.Sprintf("%03d", volInfo.ReplicaPlacement),
-									Status:      "active",
 									DiskType:    diskType,
 								}
 								volumes = append(volumes, volume)
@@ -1094,7 +1083,6 @@ func (s *AdminServer) GetClusterCollections() (*ClusterCollectionsData, error) {
 										FileCount:   int64(volInfo.FileCount),
 										TotalSize:   int64(volInfo.Size),
 										DiskTypes:   []string{diskType},
-										Status:      "active",
 									}
 									collectionMap[collectionName] = &newCollection
 									totalVolumes++
@@ -1162,7 +1150,6 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		masterInfo := &MasterInfo{
 			Address:  master.Address,
 			IsLeader: master.IsLeader,
-			Status:   master.Status,
 			Suffrage: "",
 		}
 
@@ -1189,13 +1176,11 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 				// Update existing master with raft data
 				masterInfo.IsLeader = server.IsLeader
 				masterInfo.Suffrage = server.Suffrage
-				masterInfo.Status = "active" // If it's in raft cluster, it's active
 			} else {
 				// Create new master info from raft data
 				masterInfo := &MasterInfo{
 					Address:  address,
 					IsLeader: server.IsLeader,
-					Status:   "active",
 					Suffrage: server.Suffrage,
 				}
 				masterMap[address] = masterInfo
@@ -1225,7 +1210,6 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		masters = append(masters, MasterInfo{
 			Address:  s.masterAddress,
 			IsLeader: true,
-			Status:   "active",
 			Suffrage: "Voter",
 		})
 		leaderCount = 1
@@ -1262,7 +1246,6 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 				Rack:       node.Rack,
 				Version:    node.Version,
 				CreatedAt:  createdAt,
-				Status:     "active", // If it's in the cluster list, it's considered active
 			}
 
 			filers = append(filers, filerInfo)

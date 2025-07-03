@@ -189,7 +189,7 @@ func (h *ClusterHandlers) GetClusterTopology(c *gin.Context) {
 // GetMasters returns master node information
 func (h *ClusterHandlers) GetMasters(c *gin.Context) {
 	// Simple master info
-	c.JSON(http.StatusOK, gin.H{"masters": []gin.H{{"address": "localhost:9333", "status": "active"}}})
+	c.JSON(http.StatusOK, gin.H{"masters": []gin.H{{"address": "localhost:9333"}}})
 }
 
 // GetVolumeServers returns volume server information

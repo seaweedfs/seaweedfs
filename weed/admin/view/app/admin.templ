@@ -21,31 +21,9 @@ templ Admin(data dash.AdminData) {
     </div>
 
     <div id="dashboard-content">
-        <!-- Status Cards -->
+        <!-- Summary Cards -->
         <div class="row mb-4">
-            <div class="col-xl-3 col-md-6 mb-4">
-                <div class="card border-left-primary shadow h-100 py-2">
-                    <div class="card-body">
-                        <div class="row no-gutters align-items-center">
-                            <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
-                                    Cluster Status
-                                </div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    <span class={fmt.Sprintf("badge bg-%s", getStatusColor(data.ClusterStatus))}>
-                                        {data.ClusterStatus}
-                                    </span>
-                                </div>
-                            </div>
-                            <div class="col-auto">
-                                <i class="fas fa-heartbeat fa-2x text-gray-300"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-4 col-md-6 mb-4">
                 <div class="card border-left-success shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -65,7 +43,7 @@ templ Admin(data dash.AdminData) {
                 </div>
             </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-4 col-md-6 mb-4">
                 <div class="card border-left-info shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -85,7 +63,7 @@ templ Admin(data dash.AdminData) {
                 </div>
             </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-4 col-md-6 mb-4">
                 <div class="card border-left-warning shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -122,7 +100,6 @@ templ Admin(data dash.AdminData) {
                                     <tr>
                                         <th>Address</th>
                                         <th>Role</th>
-                                        <th>Status</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -135,11 +112,6 @@ templ Admin(data dash.AdminData) {
                                                 } else {
                                                     <span class="badge bg-secondary">Follower</span>
                                                 }
-                                            </td>
-                                            <td>
-                                                <span class={fmt.Sprintf("badge bg-%s", getStatusColor(master.Status))}>
-                                                    {master.Status}
-                                                </span>
                                             </td>
                                         </tr>
                                     }
@@ -225,7 +197,6 @@ templ Admin(data dash.AdminData) {
                                         <th>Rack</th>
                                         <th>Volumes</th>
                                         <th>Capacity</th>
-                                        <th>Status</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -249,16 +220,11 @@ templ Admin(data dash.AdminData) {
                                                 </div>
                                             </td>
                                             <td>{formatBytes(vs.DiskUsage)} / {formatBytes(vs.DiskCapacity)}</td>
-                                            <td>
-                                                <span class={fmt.Sprintf("badge bg-%s", getStatusColor(vs.Status))}>
-                                                    {vs.Status}
-                                                </span>
-                                            </td>
                                         </tr>
                                     }
                                     if len(data.VolumeServers) == 0 {
                                         <tr>
-                                            <td colspan="7" class="text-center text-muted py-4">
+                                            <td colspan="6" class="text-center text-muted py-4">
                                                 <i class="fas fa-info-circle me-2"></i>
                                                 No volume servers found
                                             </td>
@@ -299,7 +265,6 @@ templ Admin(data dash.AdminData) {
                                         <th>Address</th>
                                         <th>Data Center</th>
                                         <th>Rack</th>
-                                        <th>Status</th>
                                         <th>Last Updated</th>
                                     </tr>
                                 </thead>
@@ -314,17 +279,12 @@ templ Admin(data dash.AdminData) {
                                             </td>
                                             <td>{filer.DataCenter}</td>
                                             <td>{filer.Rack}</td>
-                                            <td>
-                                                <span class={fmt.Sprintf("badge bg-%s", getStatusColor(filer.Status))}>
-                                                    {filer.Status}
-                                                </span>
-                                            </td>
                                             <td>{filer.LastUpdated.Format("2006-01-02 15:04:05")}</td>
                                         </tr>
                                     }
                                     if len(data.FilerNodes) == 0 {
                                         <tr>
-                                            <td colspan="5" class="text-center text-muted py-4">
+                                            <td colspan="4" class="text-center text-muted py-4">
                                                 <i class="fas fa-info-circle me-2"></i>
                                                 No filer nodes found
                                             </td>
