@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -13,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc/credentials/tls/certprovider"

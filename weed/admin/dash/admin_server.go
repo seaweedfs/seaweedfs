@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -34,6 +35,9 @@ type AdminServer struct {
 	cachedFilers         []string
 	lastFilerUpdate      time.Time
 	filerCacheExpiration time.Duration
+
+	// Credential management
+	credentialManager *credential.CredentialManager
 }
 
 type ClusterTopology struct {
@@ -195,13 +199,55 @@ type ClusterFilersData struct {
 }
 
 func NewAdminServer(masterAddress string, templateFS http.FileSystem) *AdminServer {
-	return &AdminServer{
+	server := &AdminServer{
 		masterAddress:        masterAddress,
 		templateFS:           templateFS,
 		grpcDialOption:       security.LoadClientTLS(util.GetViper(), "grpc.client"),
 		cacheExpiration:      10 * time.Second,
 		filerCacheExpiration: 30 * time.Second, // Cache filers for 30 seconds
 	}
+
+	// Initialize credential manager with defaults
+	credentialManager, err := credential.NewCredentialManagerWithDefaults("")
+	if err != nil {
+		glog.Warningf("Failed to initialize credential manager: %v", err)
+		// Continue without credential manager - will fall back to legacy approach
+	} else {
+		// For stores that need filer client details, set them
+		if store := credentialManager.GetStore(); store != nil {
+			if filerClientSetter, ok := store.(interface {
+				SetFilerClient(string, grpc.DialOption)
+			}); ok {
+				// We'll set the filer client later when we discover filers
+				// For now, just store the credential manager
+				server.credentialManager = credentialManager
+
+				// Set up a goroutine to set filer client once we discover filers
+				go func() {
+					for {
+						filerAddr := server.GetFilerAddress()
+						if filerAddr != "" {
+							filerClientSetter.SetFilerClient(filerAddr, server.grpcDialOption)
+							glog.V(1).Infof("Set filer client for credential manager: %s", filerAddr)
+							break
+						}
+						time.Sleep(5 * time.Second) // Retry every 5 seconds
+					}
+				}()
+			} else {
+				server.credentialManager = credentialManager
+			}
+		} else {
+			server.credentialManager = credentialManager
+		}
+	}
+
+	return server
+}
+
+// GetCredentialManager returns the credential manager
+func (s *AdminServer) GetCredentialManager() *credential.CredentialManager {
+	return s.credentialManager
 }
 
 // GetFilerAddress returns a filer address, discovering from masters if needed

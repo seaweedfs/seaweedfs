@@ -5,13 +5,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 func TestGetRequestDataReader_ChunkedEncodingWithoutIAM(t *testing.T) {
 	// Create an S3ApiServer with IAM disabled
 	s3a := &S3ApiServer{
-		iam: NewIdentityAccessManagement(&S3ApiServerOption{}),
+		iam: NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, string(credential.StoreTypeMemory)),
 	}
 	// Ensure IAM is disabled for this test
 	s3a.iam.isAuthEnabled = false
@@ -85,7 +87,7 @@ func TestGetRequestDataReader_ChunkedEncodingWithoutIAM(t *testing.T) {
 func TestGetRequestDataReader_AuthTypeDetection(t *testing.T) {
 	// Create an S3ApiServer with IAM disabled
 	s3a := &S3ApiServer{
-		iam: NewIdentityAccessManagement(&S3ApiServerOption{}),
+		iam: NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, string(credential.StoreTypeMemory)),
 	}
 	s3a.iam.isAuthEnabled = false
 
@@ -120,7 +122,7 @@ func TestGetRequestDataReader_AuthTypeDetection(t *testing.T) {
 func TestGetRequestDataReader_IAMEnabled(t *testing.T) {
 	// Create an S3ApiServer with IAM enabled
 	s3a := &S3ApiServer{
-		iam: NewIdentityAccessManagement(&S3ApiServerOption{}),
+		iam: NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, string(credential.StoreTypeMemory)),
 	}
 	s3a.iam.isAuthEnabled = true
 
