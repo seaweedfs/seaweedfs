@@ -161,7 +161,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                     if data.DiskTypeCount == 1 {
                                         {data.SingleDiskType}
                                     } else {
-                                        {fmt.Sprintf("%d", data.DiskTypeCount)}
+                                        {strings.Join(data.AllDiskTypes, ", ")}
                                     }
                                 </div>
                             </div>

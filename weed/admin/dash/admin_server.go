@@ -168,6 +168,9 @@ type ClusterVolumesData struct {
 	// All versions when multiple exist
 	AllVersions []string `json:"all_versions"`
 
+	// All disk types when multiple exist
+	AllDiskTypes []string `json:"all_disk_types"`
+
 	// Filtering
 	FilterCollection string `json:"filter_collection"`
 }
@@ -942,7 +945,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	showVersionColumn := versionCount > 1
 
 	var singleDataCenter, singleRack, singleDiskType, singleCollection, singleVersion string
-	var allVersions []string
+	var allVersions, allDiskTypes []string
 
 	if dataCenterCount == 1 {
 		for dc := range dataCenterMap {
@@ -961,6 +964,12 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 			singleDiskType = diskType
 			break
 		}
+	} else {
+		// Collect all disk types and sort them
+		for diskType := range diskTypeMap {
+			allDiskTypes = append(allDiskTypes, diskType)
+		}
+		sort.Strings(allDiskTypes)
 	}
 	if collectionCount == 1 {
 		for collection := range collectionMap {
@@ -1007,6 +1016,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 		SingleCollection:     singleCollection,
 		SingleVersion:        singleVersion,
 		AllVersions:          allVersions,
+		AllDiskTypes:         allDiskTypes,
 		FilterCollection:     collection,
 	}, nil
 }
