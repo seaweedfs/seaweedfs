@@ -11,7 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -552,23 +551,4 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 	}
 
 	return iam.loadS3ApiConfiguration(s3ApiConfiguration)
-}
-
-// SaveS3ApiConfigurationToCredentialManager saves configuration using the credential manager
-func (iam *IdentityAccessManagement) SaveS3ApiConfigurationToCredentialManager(s3cfg *iam_pb.S3ApiConfiguration) error {
-	return iam.credentialManager.SaveConfiguration(context.Background(), s3cfg)
-}
-
-func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFilerDirect(option *S3ApiServerOption) error {
-	var content []byte
-	var err error
-	err = pb.WithFilerClient(false, 0, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		glog.V(3).Infof("loading config %s from filer %s", filer.IamConfigDirectory+"/"+filer.IamIdentityFile, option.Filer)
-		content, err = filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile)
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("read S3 config: %v", err)
-	}
-	return iam.LoadS3ApiConfigurationFromBytes(content)
 }
