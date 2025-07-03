@@ -151,16 +151,22 @@ type ClusterVolumesData struct {
 	DataCenterCount int `json:"datacenter_count"`
 	RackCount       int `json:"rack_count"`
 	DiskTypeCount   int `json:"disk_type_count"`
+	CollectionCount int `json:"collection_count"`
 
 	// Conditional display flags
 	ShowDataCenterColumn bool `json:"show_datacenter_column"`
 	ShowRackColumn       bool `json:"show_rack_column"`
 	ShowDiskTypeColumn   bool `json:"show_disk_type_column"`
+	ShowCollectionColumn bool `json:"show_collection_column"`
 
 	// Single values when only one exists
 	SingleDataCenter string `json:"single_datacenter"`
 	SingleRack       string `json:"single_rack"`
 	SingleDiskType   string `json:"single_disk_type"`
+	SingleCollection string `json:"single_collection"`
+
+	// Filtering
+	FilterCollection string `json:"filter_collection"`
 }
 
 type CollectionInfo struct {
@@ -795,8 +801,8 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 	}, nil
 }
 
-// GetClusterVolumes retrieves cluster volumes data with pagination and sorting
-func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, sortOrder string) (*ClusterVolumesData, error) {
+// GetClusterVolumes retrieves cluster volumes data with pagination, sorting, and optional collection filtering
+func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, sortOrder string, collection string) (*ClusterVolumesData, error) {
 	// Set defaults
 	if page < 1 {
 		page = 1
@@ -812,7 +818,6 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	}
 	var volumes []VolumeInfo
 	var totalSize int64
-	volumeID := 1
 
 	// Get detailed volume information via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
@@ -840,7 +845,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 								}
 
 								volume := VolumeInfo{
-									ID:          volumeID,
+									ID:          int(volInfo.Id), // Use actual SeaweedFS volume ID
 									Server:      node.Id,
 									DataCenter:  dc.Id,
 									Rack:        rack.Id,
@@ -853,7 +858,6 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 								}
 								volumes = append(volumes, volume)
 								totalSize += volume.Size
-								volumeID++
 							}
 						}
 					}
@@ -868,10 +872,25 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 		return nil, err
 	}
 
-	// Calculate unique data center, rack, and disk type counts from all volumes
+	// Filter by collection if specified
+	if collection != "" {
+		var filteredVolumes []VolumeInfo
+		var filteredTotalSize int64
+		for _, volume := range volumes {
+			if volume.Collection == collection {
+				filteredVolumes = append(filteredVolumes, volume)
+				filteredTotalSize += volume.Size
+			}
+		}
+		volumes = filteredVolumes
+		totalSize = filteredTotalSize
+	}
+
+	// Calculate unique data center, rack, disk type, and collection counts from all volumes
 	dataCenterMap := make(map[string]bool)
 	rackMap := make(map[string]bool)
 	diskTypeMap := make(map[string]bool)
+	collectionMap := make(map[string]bool)
 	for _, volume := range volumes {
 		if volume.DataCenter != "" {
 			dataCenterMap[volume.DataCenter] = true
@@ -884,10 +903,14 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 			diskType = "hdd" // Default to hdd if not specified
 		}
 		diskTypeMap[diskType] = true
+		if volume.Collection != "" {
+			collectionMap[volume.Collection] = true
+		}
 	}
 	dataCenterCount := len(dataCenterMap)
 	rackCount := len(rackMap)
 	diskTypeCount := len(diskTypeMap)
+	collectionCount := len(collectionMap)
 
 	// Sort volumes
 	s.sortVolumes(volumes, sortBy, sortOrder)
@@ -915,8 +938,9 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	showDataCenterColumn := dataCenterCount > 1
 	showRackColumn := rackCount > 1
 	showDiskTypeColumn := diskTypeCount > 1
+	showCollectionColumn := collectionCount > 1 && collection == "" // Hide column when filtering by collection
 
-	var singleDataCenter, singleRack, singleDiskType string
+	var singleDataCenter, singleRack, singleDiskType, singleCollection string
 	if dataCenterCount == 1 {
 		for dc := range dataCenterMap {
 			singleDataCenter = dc
@@ -935,6 +959,12 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 			break
 		}
 	}
+	if collectionCount == 1 {
+		for collection := range collectionMap {
+			singleCollection = collection
+			break
+		}
+	}
 
 	return &ClusterVolumesData{
 		Volumes:              volumes,
@@ -949,12 +979,16 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 		DataCenterCount:      dataCenterCount,
 		RackCount:            rackCount,
 		DiskTypeCount:        diskTypeCount,
+		CollectionCount:      collectionCount,
 		ShowDataCenterColumn: showDataCenterColumn,
 		ShowRackColumn:       showRackColumn,
 		ShowDiskTypeColumn:   showDiskTypeColumn,
+		ShowCollectionColumn: showCollectionColumn,
 		SingleDataCenter:     singleDataCenter,
 		SingleRack:           singleRack,
 		SingleDiskType:       singleDiskType,
+		SingleCollection:     singleCollection,
+		FilterCollection:     collection,
 	}, nil
 }
 

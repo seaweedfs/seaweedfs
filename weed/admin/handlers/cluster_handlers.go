@@ -68,9 +68,10 @@ func (h *ClusterHandlers) ShowClusterVolumes(c *gin.Context) {
 
 	sortBy := c.DefaultQuery("sortBy", "id")
 	sortOrder := c.DefaultQuery("sortOrder", "asc")
+	collection := c.Query("collection") // Optional collection filter
 
 	// Get cluster volumes data
-	volumesData, err := h.adminServer.GetClusterVolumes(page, pageSize, sortBy, sortOrder)
+	volumesData, err := h.adminServer.GetClusterVolumes(page, pageSize, sortBy, sortOrder, collection)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster volumes: " + err.Error()})
 		return

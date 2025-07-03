@@ -7,9 +7,21 @@ import (
 
 templ ClusterVolumes(data dash.ClusterVolumesData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-        <h1 class="h2">
-            <i class="fas fa-database me-2"></i>Cluster Volumes
-        </h1>
+        <div>
+            <h1 class="h2">
+                <i class="fas fa-database me-2"></i>Cluster Volumes
+            </h1>
+            if data.FilterCollection != "" {
+                <div class="d-flex align-items-center mt-2">
+                    <span class="badge bg-info me-2">
+                        <i class="fas fa-filter me-1"></i>Collection: {data.FilterCollection}
+                    </span>
+                    <a href="/cluster/volumes" class="btn btn-sm btn-outline-secondary">
+                        <i class="fas fa-times me-1"></i>Clear Filter
+                    </a>
+                </div>
+            }
+        </div>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
                 <select class="form-select form-select-sm me-2" id="pageSizeSelect" onchange="changePageSize()" style="width: auto;">
@@ -54,10 +66,18 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                    Collections
+                                    if data.CollectionCount == 1 {
+                                        Collection
+                                    } else {
+                                        Collections
+                                    }
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", countUniqueCollections(data.Volumes))}
+                                    if data.CollectionCount == 1 {
+                                        {data.SingleCollection}
+                                    } else {
+                                        {fmt.Sprintf("%d", data.CollectionCount)}
+                                    }
                                 </div>
                             </div>
                             <div class="col-auto">
@@ -214,12 +234,14 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                             </a>
                                         </th>
                                     }
-                                    <th>
-                                        <a href="#" onclick="sortTable('collection')" class="text-decoration-none text-dark">
-                                            Collection
-                                            @getSortIcon("collection", data.SortBy, data.SortOrder)
-                                        </a>
-                                    </th>
+                                    if data.ShowCollectionColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('collection')" class="text-decoration-none text-dark">
+                                                Collection
+                                                @getSortIcon("collection", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
                                     <th>
                                         <a href="#" onclick="sortTable('size')" class="text-decoration-none text-dark">
                                             Size
@@ -271,9 +293,11 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                                 <span class="badge bg-light text-dark">{volume.Rack}</span>
                                             </td>
                                         }
-                                        <td>
-                                            <span class="badge bg-secondary">{volume.Collection}</span>
-                                        </td>
+                                        if data.ShowCollectionColumn {
+                                            <td>
+                                                <span class="badge bg-secondary">{volume.Collection}</span>
+                                            </td>
+                                        }
                                         <td>{formatBytes(volume.Size)}</td>
                                         <td>{fmt.Sprintf("%d", volume.FileCount)}</td>
                                         <td>
@@ -485,15 +509,7 @@ func countUniqueDiskTypes(volumes []dash.VolumeInfo) int {
     return len(diskTypeMap)
 }
 
-func countUniqueCollections(volumes []dash.VolumeInfo) int {
-    collectionMap := make(map[string]bool)
-    for _, volume := range volumes {
-        if volume.Collection != "" {
-            collectionMap[volume.Collection] = true
-        }
-    }
-    return len(collectionMap)
-}
+
 
 templ getSortIcon(column, currentSort, currentOrder string) {
     if column != currentSort {
