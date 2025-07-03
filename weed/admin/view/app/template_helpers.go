@@ -19,22 +19,6 @@ func getStatusColor(status string) string {
 	}
 }
 
-// getHealthColor returns Bootstrap color class for health status
-func getHealthColor(health string) string {
-	switch health {
-	case "excellent":
-		return "success"
-	case "good":
-		return "primary"
-	case "fair":
-		return "warning"
-	case "poor":
-		return "danger"
-	default:
-		return "secondary"
-	}
-}
-
 // formatBytes converts bytes to human readable format
 func formatBytes(bytes int64) string {
 	if bytes == 0 {

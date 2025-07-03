@@ -21,7 +21,6 @@ type AdminData struct {
 	FilerNodes    []FilerNode    `json:"filer_nodes"`
 	DataCenters   []DataCenter   `json:"datacenters"`
 	LastUpdated   time.Time      `json:"last_updated"`
-	SystemHealth  string         `json:"system_health"`
 }
 
 // Object Store Users management structures
@@ -107,7 +106,6 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		FilerNodes:    filerNodes,
 		DataCenters:   topology.DataCenters,
 		LastUpdated:   topology.UpdatedAt,
-		SystemHealth:  s.determineSystemHealth(topology, masterNodes),
 	}
 
 	return adminData, nil
@@ -201,24 +199,4 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 	}
 
 	return filerNodes
-}
-
-// determineSystemHealth provides overall system health assessment
-func (s *AdminServer) determineSystemHealth(topology *ClusterTopology, masters []MasterNode) string {
-	// Simple health calculation based on available components
-	totalComponents := len(masters) + len(topology.VolumeServers)
-
-	if totalComponents == 0 {
-		return "unknown"
-	}
-
-	// Consider all components as active since we're removing status tracking
-	// In the future, this could be enhanced with actual health checks
-	if totalComponents >= 3 {
-		return "excellent"
-	} else if totalComponents >= 2 {
-		return "good"
-	} else {
-		return "fair"
-	}
 }

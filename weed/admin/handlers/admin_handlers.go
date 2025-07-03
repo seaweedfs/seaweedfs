@@ -291,7 +291,6 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 			FilerNodes:    []dash.FilerNode{},
 			DataCenters:   []dash.DataCenter{},
 			LastUpdated:   time.Now(),
-			SystemHealth:  "poor",
 		}
 	}
 
@@ -299,10 +298,3 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 }
 
 // Helper functions
-
-func (h *AdminHandlers) determineSystemHealth(topology *dash.ClusterTopology, masters []dash.MasterNode) string {
-	if len(topology.VolumeServers) > 0 && len(masters) > 0 {
-		return "good"
-	}
-	return "fair"
-}
