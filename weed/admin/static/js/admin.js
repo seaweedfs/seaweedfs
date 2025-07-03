@@ -320,6 +320,12 @@ function formatNumber(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+// Helper function to format disk types for CSV export
+function formatDiskTypes(diskTypesText) {
+    // Remove any HTML tags and clean up the text
+    return diskTypesText.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+}
+
 // Confirm action dialogs
 function confirmAction(message, callback) {
     if (confirm(message)) {
@@ -666,25 +672,27 @@ function exportVolumes() {
         return;
     }
     
-    let csv = 'Volume ID,Server,Data Center,Rack,Collection,Size,File Count,Replication,Status\n';
+    // Get headers from the table (dynamically handles conditional columns)
+    const headerCells = table.querySelectorAll('thead th');
+    const headers = [];
+    headerCells.forEach((cell, index) => {
+        // Skip the Actions column (last column)
+        if (index < headerCells.length - 1) {
+            headers.push(cell.textContent.trim());
+        }
+    });
+    
+    let csv = headers.join(',') + '\n';
     
     const rows = table.querySelectorAll('tbody tr');
     rows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 9) {
-            const rowData = [
-                cells[0].textContent.trim(),
-                cells[1].textContent.trim(),
-                cells[2].textContent.trim(),
-                cells[3].textContent.trim(),
-                cells[4].textContent.trim(),
-                cells[5].textContent.trim(),
-                cells[6].textContent.trim(),
-                cells[7].textContent.trim(),
-                cells[8].textContent.trim()
-            ];
-            csv += rowData.join(',') + '\n';
+        const rowData = [];
+        // Export all cells except the Actions column (last column)
+        for (let i = 0; i < cells.length - 1; i++) {
+            rowData.push(`"${cells[i].textContent.trim().replace(/"/g, '""')}"`);
         }
+        csv += rowData.join(',') + '\n';
     });
     
     downloadCSV(csv, 'seaweedfs-volumes.csv');
