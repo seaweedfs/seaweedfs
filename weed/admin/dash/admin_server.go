@@ -128,6 +128,7 @@ type VolumeInfo struct {
 	FileCount   int64  `json:"file_count"`
 	Replication string `json:"replication"`
 	Status      string `json:"status"`
+	DiskType    string `json:"disk_type"`
 }
 
 type ClusterVolumesData struct {
@@ -145,6 +146,10 @@ type ClusterVolumesData struct {
 	// Sorting
 	SortBy    string `json:"sort_by"`
 	SortOrder string `json:"sort_order"`
+
+	// Statistics
+	RackCount     int `json:"rack_count"`
+	DiskTypeCount int `json:"disk_type_count"`
 }
 
 type CollectionInfo struct {
@@ -817,6 +822,12 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 									collectionName = "default" // Default collection for volumes without explicit collection
 								}
 
+								// Get disk type from volume info, default to hdd if empty
+								diskType := volInfo.DiskType
+								if diskType == "" {
+									diskType = "hdd"
+								}
+
 								volume := VolumeInfo{
 									ID:          volumeID,
 									Server:      node.Id,
@@ -827,6 +838,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 									FileCount:   int64(volInfo.FileCount),
 									Replication: fmt.Sprintf("%03d", volInfo.ReplicaPlacement),
 									Status:      "active",
+									DiskType:    diskType,
 								}
 								volumes = append(volumes, volume)
 								totalSize += volume.Size
@@ -844,6 +856,22 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	if err != nil {
 		return nil, err
 	}
+
+	// Calculate unique rack and disk type counts from all volumes
+	rackMap := make(map[string]bool)
+	diskTypeMap := make(map[string]bool)
+	for _, volume := range volumes {
+		if volume.Rack != "" {
+			rackMap[volume.Rack] = true
+		}
+		diskType := volume.DiskType
+		if diskType == "" {
+			diskType = "hdd" // Default to hdd if not specified
+		}
+		diskTypeMap[diskType] = true
+	}
+	rackCount := len(rackMap)
+	diskTypeCount := len(diskTypeMap)
 
 	// Sort volumes
 	s.sortVolumes(volumes, sortBy, sortOrder)
@@ -868,15 +896,17 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	}
 
 	return &ClusterVolumesData{
-		Volumes:      volumes,
-		TotalVolumes: totalVolumes,
-		TotalSize:    totalSize,
-		LastUpdated:  time.Now(),
-		CurrentPage:  page,
-		TotalPages:   totalPages,
-		PageSize:     pageSize,
-		SortBy:       sortBy,
-		SortOrder:    sortOrder,
+		Volumes:       volumes,
+		TotalVolumes:  totalVolumes,
+		TotalSize:     totalSize,
+		LastUpdated:   time.Now(),
+		CurrentPage:   page,
+		TotalPages:    totalPages,
+		PageSize:      pageSize,
+		SortBy:        sortBy,
+		SortOrder:     sortOrder,
+		RackCount:     rackCount,
+		DiskTypeCount: diskTypeCount,
 	}, nil
 }
 
@@ -902,8 +932,8 @@ func (s *AdminServer) sortVolumes(volumes []VolumeInfo, sortBy string, sortOrder
 			less = volumes[i].FileCount < volumes[j].FileCount
 		case "replication":
 			less = volumes[i].Replication < volumes[j].Replication
-		case "status":
-			less = volumes[i].Status < volumes[j].Status
+		case "disktype":
+			less = volumes[i].DiskType < volumes[j].DiskType
 		default:
 			less = volumes[i].ID < volumes[j].ID
 		}
