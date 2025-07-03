@@ -74,10 +74,18 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
-                                    Data Centers
+                                    if data.DataCenterCount == 1 {
+                                        Data Center
+                                    } else {
+                                        Data Centers
+                                    }
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", countUniqueDataCenters(data.Volumes))}
+                                    if data.DataCenterCount == 1 {
+                                        {data.SingleDataCenter}
+                                    } else {
+                                        {fmt.Sprintf("%d", data.DataCenterCount)}
+                                    }
                                 </div>
                             </div>
                             <div class="col-auto">
@@ -94,10 +102,18 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-secondary text-uppercase mb-1">
-                                    Racks
+                                    if data.RackCount == 1 {
+                                        Rack
+                                    } else {
+                                        Racks
+                                    }
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", data.RackCount)}
+                                    if data.RackCount == 1 {
+                                        {data.SingleRack}
+                                    } else {
+                                        {fmt.Sprintf("%d", data.RackCount)}
+                                    }
                                 </div>
                             </div>
                             <div class="col-auto">
@@ -114,10 +130,18 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-dark text-uppercase mb-1">
-                                    Disk Types
+                                    if data.DiskTypeCount == 1 {
+                                        Disk Type
+                                    } else {
+                                        Disk Types
+                                    }
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", data.DiskTypeCount)}
+                                    if data.DiskTypeCount == 1 {
+                                        {data.SingleDiskType}
+                                    } else {
+                                        {fmt.Sprintf("%d", data.DiskTypeCount)}
+                                    }
                                 </div>
                             </div>
                             <div class="col-auto">
@@ -174,18 +198,22 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                             @getSortIcon("server", data.SortBy, data.SortOrder)
                                         </a>
                                     </th>
-                                    <th>
-                                        <a href="#" onclick="sortTable('datacenter')" class="text-decoration-none text-dark">
-                                            Data Center
-                                            @getSortIcon("datacenter", data.SortBy, data.SortOrder)
-                                        </a>
-                                    </th>
-                                    <th>
-                                        <a href="#" onclick="sortTable('rack')" class="text-decoration-none text-dark">
-                                            Rack
-                                            @getSortIcon("rack", data.SortBy, data.SortOrder)
-                                        </a>
-                                    </th>
+                                    if data.ShowDataCenterColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('datacenter')" class="text-decoration-none text-dark">
+                                                Data Center
+                                                @getSortIcon("datacenter", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
+                                    if data.ShowRackColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('rack')" class="text-decoration-none text-dark">
+                                                Rack
+                                                @getSortIcon("rack", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
                                     <th>
                                         <a href="#" onclick="sortTable('collection')" class="text-decoration-none text-dark">
                                             Collection
@@ -210,12 +238,14 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                             @getSortIcon("replication", data.SortBy, data.SortOrder)
                                         </a>
                                     </th>
-                                    <th>
-                                        <a href="#" onclick="sortTable('disktype')" class="text-decoration-none text-dark">
-                                            Disk Type
-                                            @getSortIcon("disktype", data.SortBy, data.SortOrder)
-                                        </a>
-                                    </th>
+                                    if data.ShowDiskTypeColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('disktype')" class="text-decoration-none text-dark">
+                                                Disk Type
+                                                @getSortIcon("disktype", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -231,12 +261,16 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                                 <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                             </a>
                                         </td>
-                                        <td>
-                                            <span class="badge bg-light text-dark">{volume.DataCenter}</span>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-light text-dark">{volume.Rack}</span>
-                                        </td>
+                                        if data.ShowDataCenterColumn {
+                                            <td>
+                                                <span class="badge bg-light text-dark">{volume.DataCenter}</span>
+                                            </td>
+                                        }
+                                        if data.ShowRackColumn {
+                                            <td>
+                                                <span class="badge bg-light text-dark">{volume.Rack}</span>
+                                            </td>
+                                        }
                                         <td>
                                             <span class="badge bg-secondary">{volume.Collection}</span>
                                         </td>
@@ -245,9 +279,11 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                         <td>
                                             <span class="badge bg-info">{volume.Replication}</span>
                                         </td>
-                                        <td>
-                                            <span class="badge bg-primary">{volume.DiskType}</span>
-                                        </td>
+                                        if data.ShowDiskTypeColumn {
+                                            <td>
+                                                <span class="badge bg-primary">{volume.DiskType}</span>
+                                            </td>
+                                        }
                                         <td>
                                             <div class="btn-group btn-group-sm">
                                                 <button type="button" class="btn btn-outline-primary btn-sm" 
