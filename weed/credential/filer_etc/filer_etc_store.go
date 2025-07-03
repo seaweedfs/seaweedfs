@@ -29,8 +29,12 @@ func (store *FilerEtcStore) GetName() credential.CredentialStoreTypeName {
 }
 
 func (store *FilerEtcStore) Initialize(configuration util.Configuration, prefix string) error {
-	store.filerGrpcAddress = configuration.GetString(prefix + "filer")
-	// TODO: Initialize grpcDialOption based on configuration
+	// Handle nil configuration gracefully
+	if configuration != nil {
+		store.filerGrpcAddress = configuration.GetString(prefix + "filer")
+		// TODO: Initialize grpcDialOption based on configuration
+	}
+	// Note: filerGrpcAddress can be set later via SetFilerClient method
 	return nil
 }
 
