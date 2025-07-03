@@ -332,7 +332,15 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                         }
                                         if data.ShowCollectionColumn {
                                             <td>
-                                                <span class="badge bg-secondary">{volume.Collection}</span>
+                                                if volume.Collection == "" {
+                                                    <a href={templ.SafeURL("/cluster/volumes?collection=default")} class="text-decoration-none">
+                                                        <span class="badge bg-secondary">default</span>
+                                                    </a>
+                                                } else {
+                                                    <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", volume.Collection))} class="text-decoration-none">
+                                                        <span class="badge bg-secondary">{volume.Collection}</span>
+                                                    </a>
+                                                }
                                             </td>
                                         }
                                         <td>{formatBytes(volume.Size)}</td>

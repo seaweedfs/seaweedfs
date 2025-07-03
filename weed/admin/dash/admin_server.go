@@ -801,7 +801,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 	}, nil
 }
 
-// GetClusterVolumes retrieves cluster volumes data with pagination, sorting, and optional collection filtering
+// GetClusterVolumes retrieves cluster volumes data with pagination, sorting, and filtering
 func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, sortOrder string, collection string) (*ClusterVolumesData, error) {
 	// Set defaults
 	if page < 1 {
@@ -834,9 +834,8 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 							for _, volInfo := range diskInfo.VolumeInfos {
 								// Extract collection name from volume info
 								collectionName := volInfo.Collection
-								if collectionName == "" {
-									collectionName = "default" // Default collection for volumes without explicit collection
-								}
+								// Keep original collection name, don't default to "default"
+								// This way filtering works correctly
 
 								// Get disk type from volume info, default to hdd if empty
 								diskType := volInfo.DiskType
@@ -849,7 +848,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 									Server:      node.Id,
 									DataCenter:  dc.Id,
 									Rack:        rack.Id,
-									Collection:  collectionName,
+									Collection:  collectionName, // Keep original, even if empty
 									Size:        int64(volInfo.Size),
 									FileCount:   int64(volInfo.FileCount),
 									Replication: fmt.Sprintf("%03d", volInfo.ReplicaPlacement),
@@ -877,7 +876,13 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 		var filteredVolumes []VolumeInfo
 		var filteredTotalSize int64
 		for _, volume := range volumes {
-			if volume.Collection == collection {
+			// Handle "default" collection filtering for empty collections
+			volumeCollection := volume.Collection
+			if volumeCollection == "" {
+				volumeCollection = "default"
+			}
+
+			if volumeCollection == collection {
 				filteredVolumes = append(filteredVolumes, volume)
 				filteredTotalSize += volume.Size
 			}
@@ -886,7 +891,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 		totalSize = filteredTotalSize
 	}
 
-	// Calculate unique data center, rack, disk type, collection, and version counts from all volumes
+	// Calculate unique data center, rack, disk type, collection, and version counts from filtered volumes
 	dataCenterMap := make(map[string]bool)
 	rackMap := make(map[string]bool)
 	diskTypeMap := make(map[string]bool)
@@ -904,9 +909,14 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 			diskType = "hdd" // Default to hdd if not specified
 		}
 		diskTypeMap[diskType] = true
-		if volume.Collection != "" {
-			collectionMap[volume.Collection] = true
+
+		// Handle collection for display purposes
+		collectionName := volume.Collection
+		if collectionName == "" {
+			collectionName = "default"
 		}
+		collectionMap[collectionName] = true
+
 		versionMap[fmt.Sprintf("%d", volume.Version)] = true
 	}
 	dataCenterCount := len(dataCenterMap)
