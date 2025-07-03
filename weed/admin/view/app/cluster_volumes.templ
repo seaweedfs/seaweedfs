@@ -28,7 +28,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
     <div id="volumes-content">
         <!-- Summary Cards -->
         <div class="row mb-4">
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
                 <div class="card border-left-primary shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -48,36 +48,44 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                 </div>
             </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
                 <div class="card border-left-success shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                    Active Volumes
+                                    Collections
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", countActiveVolumes(data.Volumes))}
+                                    {fmt.Sprintf("%d", countUniqueCollections(data.Volumes))}
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-check-circle fa-2x text-gray-300"></i>
+                                <i class="fas fa-layer-group fa-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
                 <div class="card border-left-info shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
-                                    Data Centers
+                                    if data.DataCenterCount == 1 {
+                                        Data Center
+                                    } else {
+                                        Data Centers
+                                    }
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", countUniqueDataCenters(data.Volumes))}
+                                    if data.DataCenterCount == 1 {
+                                        {data.SingleDataCenter}
+                                    } else {
+                                        {fmt.Sprintf("%d", data.DataCenterCount)}
+                                    }
                                 </div>
                             </div>
                             <div class="col-auto">
@@ -88,7 +96,63 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                 </div>
             </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
+                <div class="card border-left-secondary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-secondary text-uppercase mb-1">
+                                    if data.RackCount == 1 {
+                                        Rack
+                                    } else {
+                                        Racks
+                                    }
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    if data.RackCount == 1 {
+                                        {data.SingleRack}
+                                    } else {
+                                        {fmt.Sprintf("%d", data.RackCount)}
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-server fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
+                <div class="card border-left-dark shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-dark text-uppercase mb-1">
+                                    if data.DiskTypeCount == 1 {
+                                        Disk Type
+                                    } else {
+                                        Disk Types
+                                    }
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    if data.DiskTypeCount == 1 {
+                                        {data.SingleDiskType}
+                                    } else {
+                                        {fmt.Sprintf("%d", data.DiskTypeCount)}
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
                 <div class="card border-left-warning shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -101,7 +165,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                                <i class="fas fa-chart-area fa-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -134,18 +198,22 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                             @getSortIcon("server", data.SortBy, data.SortOrder)
                                         </a>
                                     </th>
-                                    <th>
-                                        <a href="#" onclick="sortTable('datacenter')" class="text-decoration-none text-dark">
-                                            Data Center
-                                            @getSortIcon("datacenter", data.SortBy, data.SortOrder)
-                                        </a>
-                                    </th>
-                                    <th>
-                                        <a href="#" onclick="sortTable('rack')" class="text-decoration-none text-dark">
-                                            Rack
-                                            @getSortIcon("rack", data.SortBy, data.SortOrder)
-                                        </a>
-                                    </th>
+                                    if data.ShowDataCenterColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('datacenter')" class="text-decoration-none text-dark">
+                                                Data Center
+                                                @getSortIcon("datacenter", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
+                                    if data.ShowRackColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('rack')" class="text-decoration-none text-dark">
+                                                Rack
+                                                @getSortIcon("rack", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
                                     <th>
                                         <a href="#" onclick="sortTable('collection')" class="text-decoration-none text-dark">
                                             Collection
@@ -170,12 +238,14 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                             @getSortIcon("replication", data.SortBy, data.SortOrder)
                                         </a>
                                     </th>
-                                    <th>
-                                        <a href="#" onclick="sortTable('status')" class="text-decoration-none text-dark">
-                                            Status
-                                            @getSortIcon("status", data.SortBy, data.SortOrder)
-                                        </a>
-                                    </th>
+                                    if data.ShowDiskTypeColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('disktype')" class="text-decoration-none text-dark">
+                                                Disk Type
+                                                @getSortIcon("disktype", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -191,12 +261,16 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                                 <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                             </a>
                                         </td>
-                                        <td>
-                                            <span class="badge bg-light text-dark">{volume.DataCenter}</span>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-light text-dark">{volume.Rack}</span>
-                                        </td>
+                                        if data.ShowDataCenterColumn {
+                                            <td>
+                                                <span class="badge bg-light text-dark">{volume.DataCenter}</span>
+                                            </td>
+                                        }
+                                        if data.ShowRackColumn {
+                                            <td>
+                                                <span class="badge bg-light text-dark">{volume.Rack}</span>
+                                            </td>
+                                        }
                                         <td>
                                             <span class="badge bg-secondary">{volume.Collection}</span>
                                         </td>
@@ -205,11 +279,11 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                         <td>
                                             <span class="badge bg-info">{volume.Replication}</span>
                                         </td>
-                                        <td>
-                                            <span class={fmt.Sprintf("badge bg-%s", getStatusColor(volume.Status))}>
-                                                {volume.Status}
-                                            </span>
-                                        </td>
+                                        if data.ShowDiskTypeColumn {
+                                            <td>
+                                                <span class="badge bg-primary">{volume.DiskType}</span>
+                                            </td>
+                                        }
                                         <td>
                                             <div class="btn-group btn-group-sm">
                                                 <button type="button" class="btn btn-outline-primary btn-sm" 
@@ -387,6 +461,38 @@ func countUniqueDataCenters(volumes []dash.VolumeInfo) int {
         dcMap[volume.DataCenter] = true
     }
     return len(dcMap)
+}
+
+func countUniqueRacks(volumes []dash.VolumeInfo) int {
+    rackMap := make(map[string]bool)
+    for _, volume := range volumes {
+        if volume.Rack != "" {
+            rackMap[volume.Rack] = true
+        }
+    }
+    return len(rackMap)
+}
+
+func countUniqueDiskTypes(volumes []dash.VolumeInfo) int {
+    diskTypeMap := make(map[string]bool)
+    for _, volume := range volumes {
+        diskType := volume.DiskType
+        if diskType == "" {
+            diskType = "hdd"
+        }
+        diskTypeMap[diskType] = true
+    }
+    return len(diskTypeMap)
+}
+
+func countUniqueCollections(volumes []dash.VolumeInfo) int {
+    collectionMap := make(map[string]bool)
+    for _, volume := range volumes {
+        if volume.Collection != "" {
+            collectionMap[volume.Collection] = true
+        }
+    }
+    return len(collectionMap)
 }
 
 templ getSortIcon(column, currentSort, currentOrder string) {

@@ -128,6 +128,7 @@ type VolumeInfo struct {
 	FileCount   int64  `json:"file_count"`
 	Replication string `json:"replication"`
 	Status      string `json:"status"`
+	DiskType    string `json:"disk_type"`
 }
 
 type ClusterVolumesData struct {
@@ -145,6 +146,19 @@ type ClusterVolumesData struct {
 	// Sorting
 	SortBy    string `json:"sort_by"`
 	SortOrder string `json:"sort_order"`
+
+	// Statistics
+	DataCenterCount int `json:"datacenter_count"`
+	RackCount       int `json:"rack_count"`
+	DiskTypeCount   int `json:"disk_type_count"`
+
+	// Conditional display
+	ShowDataCenterColumn bool   `json:"show_datacenter_column"`
+	ShowRackColumn       bool   `json:"show_rack_column"`
+	ShowDiskTypeColumn   bool   `json:"show_disktype_column"`
+	SingleDataCenter     string `json:"single_datacenter"`
+	SingleRack           string `json:"single_rack"`
+	SingleDiskType       string `json:"single_disktype"`
 }
 
 type CollectionInfo struct {
@@ -817,6 +831,12 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 									collectionName = "default" // Default collection for volumes without explicit collection
 								}
 
+								// Get disk type from volume info, default to hdd if empty
+								diskType := volInfo.DiskType
+								if diskType == "" {
+									diskType = "hdd"
+								}
+
 								volume := VolumeInfo{
 									ID:          volumeID,
 									Server:      node.Id,
@@ -827,6 +847,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 									FileCount:   int64(volInfo.FileCount),
 									Replication: fmt.Sprintf("%03d", volInfo.ReplicaPlacement),
 									Status:      "active",
+									DiskType:    diskType,
 								}
 								volumes = append(volumes, volume)
 								totalSize += volume.Size
@@ -844,6 +865,27 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	if err != nil {
 		return nil, err
 	}
+
+	// Calculate unique data center, rack and disk type counts from all volumes
+	dataCenterMap := make(map[string]bool)
+	rackMap := make(map[string]bool)
+	diskTypeMap := make(map[string]bool)
+	for _, volume := range volumes {
+		if volume.DataCenter != "" {
+			dataCenterMap[volume.DataCenter] = true
+		}
+		if volume.Rack != "" {
+			rackMap[volume.Rack] = true
+		}
+		diskType := volume.DiskType
+		if diskType == "" {
+			diskType = "hdd" // Default to hdd if not specified
+		}
+		diskTypeMap[diskType] = true
+	}
+	dataCenterCount := len(dataCenterMap)
+	rackCount := len(rackMap)
+	diskTypeCount := len(diskTypeMap)
 
 	// Sort volumes
 	s.sortVolumes(volumes, sortBy, sortOrder)
@@ -867,16 +909,53 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 		volumes = volumes[startIndex:endIndex]
 	}
 
+	// Determine conditional display fields
+	showDataCenterColumn := dataCenterCount > 1
+	showRackColumn := rackCount > 1
+	showDiskTypeColumn := diskTypeCount > 1
+	singleDataCenter := ""
+	singleRack := ""
+	singleDiskType := ""
+
+	// Get single values when there's only one unique value
+	if dataCenterCount == 1 {
+		for dc := range dataCenterMap {
+			singleDataCenter = dc
+			break
+		}
+	}
+	if rackCount == 1 {
+		for rack := range rackMap {
+			singleRack = rack
+			break
+		}
+	}
+	if diskTypeCount == 1 {
+		for diskType := range diskTypeMap {
+			singleDiskType = diskType
+			break
+		}
+	}
+
 	return &ClusterVolumesData{
-		Volumes:      volumes,
-		TotalVolumes: totalVolumes,
-		TotalSize:    totalSize,
-		LastUpdated:  time.Now(),
-		CurrentPage:  page,
-		TotalPages:   totalPages,
-		PageSize:     pageSize,
-		SortBy:       sortBy,
-		SortOrder:    sortOrder,
+		Volumes:              volumes,
+		TotalVolumes:         totalVolumes,
+		TotalSize:            totalSize,
+		LastUpdated:          time.Now(),
+		CurrentPage:          page,
+		TotalPages:           totalPages,
+		PageSize:             pageSize,
+		SortBy:               sortBy,
+		SortOrder:            sortOrder,
+		DataCenterCount:      dataCenterCount,
+		RackCount:            rackCount,
+		DiskTypeCount:        diskTypeCount,
+		ShowDataCenterColumn: showDataCenterColumn,
+		ShowRackColumn:       showRackColumn,
+		ShowDiskTypeColumn:   showDiskTypeColumn,
+		SingleDataCenter:     singleDataCenter,
+		SingleRack:           singleRack,
+		SingleDiskType:       singleDiskType,
 	}, nil
 }
 
@@ -902,8 +981,8 @@ func (s *AdminServer) sortVolumes(volumes []VolumeInfo, sortBy string, sortOrder
 			less = volumes[i].FileCount < volumes[j].FileCount
 		case "replication":
 			less = volumes[i].Replication < volumes[j].Replication
-		case "status":
-			less = volumes[i].Status < volumes[j].Status
+		case "disktype":
+			less = volumes[i].DiskType < volumes[j].DiskType
 		default:
 			less = volumes[i].ID < volumes[j].ID
 		}

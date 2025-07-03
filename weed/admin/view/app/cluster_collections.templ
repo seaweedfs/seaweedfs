@@ -46,26 +46,6 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
             </div>
 
             <div class="col-xl-3 col-md-6 mb-4">
-                <div class="card border-left-success shadow h-100 py-2">
-                    <div class="card-body">
-                        <div class="row no-gutters align-items-center">
-                            <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                    Active Collections
-                                </div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", countActiveCollections(data.Collections))}
-                                </div>
-                            </div>
-                            <div class="col-auto">
-                                <i class="fas fa-check-circle fa-2x text-gray-300"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-xl-3 col-md-6 mb-4">
                 <div class="card border-left-info shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -104,11 +84,8 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Second Row of Summary Cards -->
-        <div class="row mb-4">
-            <div class="col-xl-6 col-md-6 mb-4">
+            <div class="col-xl-3 col-md-6 mb-4">
                 <div class="card border-left-secondary shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -122,26 +99,6 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                             </div>
                             <div class="col-auto">
                                 <i class="fas fa-hdd fa-2x text-gray-300"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-xl-6 col-md-6 mb-4">
-                <div class="card border-left-dark shadow h-100 py-2">
-                    <div class="card-body">
-                        <div class="row no-gutters align-items-center">
-                            <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-dark text-uppercase mb-1">
-                                    Data Centers
-                                </div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", countUniqueCollectionDataCenters(data.Collections))}
-                                </div>
-                            </div>
-                            <div class="col-auto">
-                                <i class="fas fa-building fa-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -163,12 +120,10 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                             <thead>
                                 <tr>
                                     <th>Collection Name</th>
-                                    <th>Data Center</th>
                                     <th>Volumes</th>
                                     <th>Files</th>
                                     <th>Size</th>
                                     <th>Disk Types</th>
-                                    <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -177,9 +132,6 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                     <tr>
                                         <td>
                                             <strong>{collection.Name}</strong>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-light text-dark">{collection.DataCenter}</span>
                                         </td>
                                         <td>
                                             <div class="d-flex align-items-center">
@@ -209,11 +161,6 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                             if len(collection.DiskTypes) == 0 {
                                                 <span class="text-muted">Unknown</span>
                                             }
-                                        </td>
-                                        <td>
-                                            <span class={fmt.Sprintf("badge bg-%s", getStatusColor(collection.Status))}>
-                                                {collection.Status}
-                                            </span>
                                         </td>
                                         <td>
                                             <div class="btn-group btn-group-sm">
@@ -335,24 +282,6 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
             </div>
         </div>
     </div>
-}
-
-func countActiveCollections(collections []dash.CollectionInfo) int {
-    count := 0
-    for _, collection := range collections {
-        if collection.Status == "active" {
-            count++
-        }
-    }
-    return count
-}
-
-func countUniqueCollectionDataCenters(collections []dash.CollectionInfo) int {
-    dcMap := make(map[string]bool)
-    for _, collection := range collections {
-        dcMap[collection.DataCenter] = true
-    }
-    return len(dcMap)
 }
 
 func getDiskTypeColor(diskType string) string {
