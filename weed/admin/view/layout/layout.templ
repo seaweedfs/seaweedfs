@@ -2,6 +2,7 @@ package layout
 
 import (
     "fmt"
+    "strings"
     "time"
     "github.com/gin-gonic/gin"
     "github.com/seaweedfs/seaweedfs/weed/util/version"
@@ -186,10 +187,12 @@ templ Layout(c *gin.Context, content templ.Component) {
         <div class="container-fluid text-center">
             <small class="text-muted">
                 &copy; {fmt.Sprintf("%d", time.Now().Year())} SeaweedFS Admin v{version.VERSION_NUMBER}
-                <span class="mx-2">•</span>
-                <a href="https://seaweedfs.com" target="_blank" class="text-decoration-none">
-                    <i class="fas fa-star me-1"></i>Enterprise Version Available
-                </a>
+                if !strings.Contains(version.VERSION, "enterprise") {
+                    <span class="mx-2">•</span>
+                    <a href="https://seaweedfs.com" target="_blank" class="text-decoration-none">
+                        <i class="fas fa-star me-1"></i>Enterprise Version Available
+                    </a>
+                }
             </small>
         </div>
     </footer>
