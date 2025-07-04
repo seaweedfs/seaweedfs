@@ -115,25 +115,19 @@ type ClusterVolumeServersData struct {
 	LastUpdated        time.Time      `json:"last_updated"`
 }
 
-type VolumeInfo struct {
-	ID          int    `json:"id"`
-	Server      string `json:"server"`
-	DataCenter  string `json:"datacenter"`
-	Rack        string `json:"rack"`
-	Collection  string `json:"collection"`
-	Size        int64  `json:"size"`
-	FileCount   int64  `json:"file_count"`
-	Replication string `json:"replication"`
-	DiskType    string `json:"disk_type"`
-	Version     uint32 `json:"version"`
+type VolumeWithTopology struct {
+	*master_pb.VolumeInformationMessage
+	Server     string `json:"server"`
+	DataCenter string `json:"datacenter"`
+	Rack       string `json:"rack"`
 }
 
 type ClusterVolumesData struct {
-	Username     string       `json:"username"`
-	Volumes      []VolumeInfo `json:"volumes"`
-	TotalVolumes int          `json:"total_volumes"`
-	TotalSize    int64        `json:"total_size"`
-	LastUpdated  time.Time    `json:"last_updated"`
+	Username     string               `json:"username"`
+	Volumes      []VolumeWithTopology `json:"volumes"`
+	TotalVolumes int                  `json:"total_volumes"`
+	TotalSize    int64                `json:"total_size"`
+	LastUpdated  time.Time            `json:"last_updated"`
 
 	// Pagination
 	CurrentPage int `json:"current_page"`
@@ -173,6 +167,14 @@ type ClusterVolumesData struct {
 
 	// Filtering
 	FilterCollection string `json:"filter_collection"`
+}
+
+type VolumeDetailsData struct {
+	Volume           VolumeWithTopology   `json:"volume"`
+	Replicas         []VolumeWithTopology `json:"replicas"`
+	VolumeSizeLimit  uint64               `json:"volume_size_limit"`
+	ReplicationCount int                  `json:"replication_count"`
+	LastUpdated      time.Time            `json:"last_updated"`
 }
 
 type CollectionInfo struct {
@@ -816,7 +818,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	if sortOrder == "" {
 		sortOrder = "asc"
 	}
-	var volumes []VolumeInfo
+	var volumes []VolumeWithTopology
 	var totalSize int64
 
 	// Get detailed volume information via gRPC
@@ -832,31 +834,14 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 					for _, node := range rack.DataNodeInfos {
 						for _, diskInfo := range node.DiskInfos {
 							for _, volInfo := range diskInfo.VolumeInfos {
-								// Extract collection name from volume info
-								collectionName := volInfo.Collection
-								// Keep original collection name, don't default to "default"
-								// This way filtering works correctly
-
-								// Get disk type from volume info, default to hdd if empty
-								diskType := volInfo.DiskType
-								if diskType == "" {
-									diskType = "hdd"
-								}
-
-								volume := VolumeInfo{
-									ID:          int(volInfo.Id), // Use actual SeaweedFS volume ID
-									Server:      node.Id,
-									DataCenter:  dc.Id,
-									Rack:        rack.Id,
-									Collection:  collectionName, // Keep original, even if empty
-									Size:        int64(volInfo.Size),
-									FileCount:   int64(volInfo.FileCount),
-									Replication: fmt.Sprintf("%03d", volInfo.ReplicaPlacement),
-									DiskType:    diskType,
-									Version:     volInfo.Version,
+								volume := VolumeWithTopology{
+									VolumeInformationMessage: volInfo,
+									Server:                   node.Id,
+									DataCenter:               dc.Id,
+									Rack:                     rack.Id,
 								}
 								volumes = append(volumes, volume)
-								totalSize += volume.Size
+								totalSize += int64(volInfo.Size)
 							}
 						}
 					}
@@ -873,7 +858,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 
 	// Filter by collection if specified
 	if collection != "" {
-		var filteredVolumes []VolumeInfo
+		var filteredVolumes []VolumeWithTopology
 		var filteredTotalSize int64
 		for _, volume := range volumes {
 			// Handle "default" collection filtering for empty collections
@@ -884,7 +869,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 
 			if volumeCollection == collection {
 				filteredVolumes = append(filteredVolumes, volume)
-				filteredTotalSize += volume.Size
+				filteredTotalSize += int64(volume.Size)
 			}
 		}
 		volumes = filteredVolumes
@@ -939,7 +924,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	startIndex := (page - 1) * pageSize
 	endIndex := startIndex + pageSize
 	if startIndex >= totalVolumes {
-		volumes = []VolumeInfo{}
+		volumes = []VolumeWithTopology{}
 	} else {
 		if endIndex > totalVolumes {
 			endIndex = totalVolumes
@@ -1032,13 +1017,13 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 }
 
 // sortVolumes sorts the volumes slice based on the specified field and order
-func (s *AdminServer) sortVolumes(volumes []VolumeInfo, sortBy string, sortOrder string) {
+func (s *AdminServer) sortVolumes(volumes []VolumeWithTopology, sortBy string, sortOrder string) {
 	sort.Slice(volumes, func(i, j int) bool {
 		var less bool
 
 		switch sortBy {
 		case "id":
-			less = volumes[i].ID < volumes[j].ID
+			less = volumes[i].Id < volumes[j].Id
 		case "server":
 			less = volumes[i].Server < volumes[j].Server
 		case "datacenter":
@@ -1052,13 +1037,13 @@ func (s *AdminServer) sortVolumes(volumes []VolumeInfo, sortBy string, sortOrder
 		case "filecount":
 			less = volumes[i].FileCount < volumes[j].FileCount
 		case "replication":
-			less = volumes[i].Replication < volumes[j].Replication
+			less = volumes[i].ReplicaPlacement < volumes[j].ReplicaPlacement
 		case "disktype":
 			less = volumes[i].DiskType < volumes[j].DiskType
 		case "version":
 			less = volumes[i].Version < volumes[j].Version
 		default:
-			less = volumes[i].ID < volumes[j].ID
+			less = volumes[i].Id < volumes[j].Id
 		}
 
 		if sortOrder == "desc" {
@@ -1320,4 +1305,87 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 // GetAllFilers returns all discovered filers
 func (s *AdminServer) GetAllFilers() []string {
 	return s.getDiscoveredFilers()
+}
+
+// GetVolumeDetails retrieves detailed information about a specific volume
+func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDetailsData, error) {
+	var primaryVolume VolumeWithTopology
+	var replicas []VolumeWithTopology
+	var volumeSizeLimit uint64
+	var found bool
+
+	// Find the volume and all its replicas in the cluster
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							for _, volInfo := range diskInfo.VolumeInfos {
+								if int(volInfo.Id) == volumeID {
+									diskType := volInfo.DiskType
+									if diskType == "" {
+										diskType = "hdd"
+									}
+
+									volume := VolumeWithTopology{
+										VolumeInformationMessage: volInfo,
+										Server:                   node.Id,
+										DataCenter:               dc.Id,
+										Rack:                     rack.Id,
+									}
+
+									// If this is the requested server, it's the primary volume
+									if node.Id == server {
+										primaryVolume = volume
+										found = true
+									} else {
+										// This is a replica on another server
+										replicas = append(replicas, volume)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if !found {
+		return nil, fmt.Errorf("volume %d not found on server %s", volumeID, server)
+	}
+
+	// Get volume size limit from master
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		volumeSizeLimit = uint64(resp.VolumeSizeLimitMB) * 1024 * 1024 // Convert MB to bytes
+		return nil
+	})
+
+	if err != nil {
+		// If we can't get the limit, set a default
+		volumeSizeLimit = 30 * 1024 * 1024 * 1024 // 30GB default
+	}
+
+	return &VolumeDetailsData{
+		Volume:           primaryVolume,
+		Replicas:         replicas,
+		VolumeSizeLimit:  volumeSizeLimit,
+		ReplicationCount: len(replicas) + 1, // Include the primary volume
+		LastUpdated:      time.Now(),
+	}, nil
 }

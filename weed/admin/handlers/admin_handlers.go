@@ -66,6 +66,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/cluster/filers", h.clusterHandlers.ShowClusterFilers)
 		protected.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
 		protected.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
+		protected.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
 		protected.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
 
 		// API routes for AJAX calls
@@ -130,6 +131,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		r.GET("/cluster/filers", h.clusterHandlers.ShowClusterFilers)
 		r.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
 		r.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
+		r.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
 		r.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
 
 		// API routes for AJAX calls

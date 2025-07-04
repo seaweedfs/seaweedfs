@@ -95,6 +95,45 @@ func (h *ClusterHandlers) ShowClusterVolumes(c *gin.Context) {
 	}
 }
 
+// ShowVolumeDetails renders the volume details page
+func (h *ClusterHandlers) ShowVolumeDetails(c *gin.Context) {
+	volumeIDStr := c.Param("id")
+	server := c.Param("server")
+
+	if volumeIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Volume ID is required"})
+		return
+	}
+
+	if server == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Server is required"})
+		return
+	}
+
+	volumeID, err := strconv.Atoi(volumeIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid volume ID"})
+		return
+	}
+
+	// Get volume details
+	volumeDetails, err := h.adminServer.GetVolumeDetails(volumeID, server)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get volume details: " + err.Error()})
+		return
+	}
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	volumeDetailsComponent := app.VolumeDetails(*volumeDetails)
+	layoutComponent := layout.Layout(c, volumeDetailsComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
 // ShowClusterCollections renders the cluster collections page
 func (h *ClusterHandlers) ShowClusterCollections(c *gin.Context) {
 	// Get cluster collections data

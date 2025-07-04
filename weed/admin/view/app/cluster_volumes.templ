@@ -312,7 +312,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 for _, volume := range data.Volumes {
                                     <tr>
                                         <td>
-                                            <code>{fmt.Sprintf("%d", volume.ID)}</code>
+                                            <code>{fmt.Sprintf("%d", volume.Id)}</code>
                                         </td>
                                         <td>
                                             <a href={templ.SafeURL(fmt.Sprintf("http://%s", volume.Server))} target="_blank" class="text-decoration-none">
@@ -343,11 +343,11 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                                 }
                                             </td>
                                         }
-                                        <td>{formatBytes(volume.Size)}</td>
-                                        <td>{fmt.Sprintf("%d", volume.FileCount)}</td>
-                                        <td>
-                                            <span class="badge bg-info">{volume.Replication}</span>
-                                        </td>
+                                                                <td>{formatBytes(int64(volume.Size))}</td>
+                        <td>{fmt.Sprintf("%d", volume.FileCount)}</td>
+                        <td>
+                            <span class="badge bg-info">{fmt.Sprintf("%03d", volume.ReplicaPlacement)}</span>
+                        </td>
                                         if data.ShowDiskTypeColumn {
                                             <td>
                                                 <span class="badge bg-primary">{volume.DiskType}</span>
@@ -360,8 +360,8 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                         }
                                         <td>
                                             <div class="btn-group btn-group-sm">
-                                                <button type="button" class="btn btn-outline-primary btn-sm" 
-                                                        title="View Details">
+                                                <button type="button" class="btn btn-outline-primary btn-sm view-details-btn" 
+                                                        title="View Details" data-volume-id={fmt.Sprintf("%d", volume.Id)}>
                                                     <i class="fas fa-eye"></i>
                                                 </button>
                                                 <button type="button" class="btn btn-outline-secondary btn-sm" 
@@ -480,6 +480,15 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                     goToPage(page);
                 });
             });
+            
+            // Add click handlers to view details buttons
+            document.querySelectorAll('.view-details-btn').forEach(button => {
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const volumeId = this.getAttribute('data-volume-id');
+                    viewVolumeDetails(volumeId);
+                });
+            });
         });
         
         function goToPage(page) {
@@ -516,15 +525,25 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
             // TODO: Implement volume export functionality
             alert('Export functionality to be implemented');
         }
+        
+        function viewVolumeDetails(volumeId) {
+            // Get the server from the current row
+            const button = event.target.closest('button');
+            const row = button.closest('tr');
+            const serverCell = row.querySelector('td:nth-child(2) a');
+            const server = serverCell ? serverCell.textContent.trim() : 'unknown';
+            
+            window.location.href = `/cluster/volumes/${volumeId}/${encodeURIComponent(server)}`;
+        }
     </script>
 }
 
-func countActiveVolumes(volumes []dash.VolumeInfo) int {
+func countActiveVolumes(volumes []dash.VolumeWithTopology) int {
 	// Since we removed status tracking, consider all volumes as active
 	return len(volumes)
 }
 
-func countUniqueDataCenters(volumes []dash.VolumeInfo) int {
+func countUniqueDataCenters(volumes []dash.VolumeWithTopology) int {
     dcMap := make(map[string]bool)
     for _, volume := range volumes {
         dcMap[volume.DataCenter] = true
@@ -532,7 +551,7 @@ func countUniqueDataCenters(volumes []dash.VolumeInfo) int {
     return len(dcMap)
 }
 
-func countUniqueRacks(volumes []dash.VolumeInfo) int {
+func countUniqueRacks(volumes []dash.VolumeWithTopology) int {
     rackMap := make(map[string]bool)
     for _, volume := range volumes {
         if volume.Rack != "" {
@@ -542,7 +561,7 @@ func countUniqueRacks(volumes []dash.VolumeInfo) int {
     return len(rackMap)
 }
 
-func countUniqueDiskTypes(volumes []dash.VolumeInfo) int {
+func countUniqueDiskTypes(volumes []dash.VolumeWithTopology) int {
     diskTypeMap := make(map[string]bool)
     for _, volume := range volumes {
         diskType := volume.DiskType
