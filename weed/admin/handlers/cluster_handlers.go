@@ -240,3 +240,35 @@ func (h *ClusterHandlers) GetVolumeServers(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"volume_servers": topology.VolumeServers})
 }
+
+// VacuumVolume handles volume vacuum requests via API
+func (h *ClusterHandlers) VacuumVolume(c *gin.Context) {
+	volumeIDStr := c.Param("id")
+	server := c.Param("server")
+
+	if volumeIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Volume ID is required"})
+		return
+	}
+
+	volumeID, err := strconv.Atoi(volumeIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid volume ID"})
+		return
+	}
+
+	// Perform vacuum operation
+	err = h.adminServer.VacuumVolume(volumeID, server)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to vacuum volume: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Volume vacuum started successfully",
+		"volume_id": volumeID,
+		"server":    server,
+	})
+}

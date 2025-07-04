@@ -355,7 +355,10 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
                 </div>
                 <div class="card-body">
                     <div class="btn-group" role="group">
-                        <button type="button" class="btn btn-outline-danger" title="Vacuum Volume">
+                        <button type="button" class="btn btn-outline-danger vacuum-btn" 
+                                title="Vacuum Volume" 
+                                data-volume-id={fmt.Sprintf("%d", data.Volume.Id)} 
+                                data-server={data.Volume.Server}>
                             <i class="fas fa-compress-alt me-1"></i>Vacuum
                         </button>
                     </div>
@@ -379,6 +382,81 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
             </small>
         </div>
     </div>
+
+    <!-- JavaScript for volume actions -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add click handler for vacuum button
+            const vacuumBtn = document.querySelector('.vacuum-btn');
+            if (vacuumBtn) {
+                vacuumBtn.addEventListener('click', function() {
+                    const volumeId = this.getAttribute('data-volume-id');
+                    const server = this.getAttribute('data-server');
+                    performVacuum(volumeId, server, this);
+                });
+            }
+        });
+
+        function performVacuum(volumeId, server, button) {
+            // Disable button and show loading state
+            const originalText = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Vacuuming...';
+
+            // Send vacuum request
+            fetch(`/api/volumes/${volumeId}/${encodeURIComponent(server)}/vacuum`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showMessage(data.error, 'error');
+                } else {
+                    showMessage(data.message || 'Volume vacuum started successfully', 'success');
+                    // Optionally refresh the page after a delay
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showMessage('Failed to start vacuum operation', 'error');
+            })
+            .finally(() => {
+                // Re-enable button
+                button.disabled = false;
+                button.innerHTML = originalText;
+            });
+        }
+
+        function showMessage(message, type) {
+            // Create toast notification
+            const toast = document.createElement('div');
+            toast.className = `alert alert-${type === 'error' ? 'danger' : 'success'} alert-dismissible fade show position-fixed`;
+            toast.style.top = '20px';
+            toast.style.right = '20px';
+            toast.style.zIndex = '9999';
+            toast.style.minWidth = '300px';
+            
+            toast.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            document.body.appendChild(toast);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 5000);
+        }
+    </script>
 }
 
 func formatTimestamp(unixTimestamp int64) string {

@@ -1389,3 +1389,15 @@ func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDeta
 		LastUpdated:      time.Now(),
 	}, nil
 }
+
+// VacuumVolume performs a vacuum operation on a specific volume
+func (s *AdminServer) VacuumVolume(volumeID int, server string) error {
+	return s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		_, err := client.VacuumVolume(context.Background(), &master_pb.VacuumVolumeRequest{
+			VolumeId:         uint32(volumeID),
+			GarbageThreshold: 0.0001, // A very low threshold to ensure all garbage is collected
+			Collection:       "",     // Empty for all collections
+		})
+		return err
+	})
+}

@@ -112,6 +112,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				filesApi.GET("/view", h.fileBrowserHandlers.ViewFile)
 				filesApi.GET("/properties", h.fileBrowserHandlers.GetFileProperties)
 			}
+
+			// Volume management API routes
+			volumeApi := api.Group("/volumes")
+			{
+				volumeApi.POST("/:id/:server/vacuum", h.clusterHandlers.VacuumVolume)
+			}
 		}
 	} else {
 		// No authentication required - all routes are public
@@ -176,6 +182,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				filesApi.GET("/download", h.fileBrowserHandlers.DownloadFile)
 				filesApi.GET("/view", h.fileBrowserHandlers.ViewFile)
 				filesApi.GET("/properties", h.fileBrowserHandlers.GetFileProperties)
+			}
+
+			// Volume management API routes
+			volumeApi := api.Group("/volumes")
+			{
+				volumeApi.POST("/:id/:server/vacuum", h.clusterHandlers.VacuumVolume)
 			}
 		}
 	}
