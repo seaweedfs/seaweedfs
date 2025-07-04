@@ -199,7 +199,7 @@ templ Admin(data dash.AdminData) {
                                         <tr>
                                             <td>{vs.ID}</td>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s", vs.PublicURL))} target="_blank">
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", vs.PublicURL))} target="_blank">
                                                     {vs.Address}
                                                     <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                                 </a>

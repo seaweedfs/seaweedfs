@@ -65,7 +65,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var4 templ.SafeURL = templ.SafeURL(fmt.Sprintf("http://%s", data.Volume.Server))
+		var templ_7745c5c3_Var4 templ.SafeURL = templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", data.Volume.Server))
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var4)))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
@@ -461,7 +461,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var28 templ.SafeURL = templ.SafeURL(fmt.Sprintf("http://%s", data.Volume.Server))
+			var templ_7745c5c3_Var28 templ.SafeURL = templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", data.Volume.Server))
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var28)))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
@@ -540,7 +540,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var34 templ.SafeURL = templ.SafeURL(fmt.Sprintf("http://%s", replica.Server))
+				var templ_7745c5c3_Var34 templ.SafeURL = templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", replica.Server))
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var34)))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err

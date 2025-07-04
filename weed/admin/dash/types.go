@@ -83,11 +83,12 @@ type VolumeWithTopology struct {
 }
 
 type ClusterVolumesData struct {
-	Username     string               `json:"username"`
-	Volumes      []VolumeWithTopology `json:"volumes"`
-	TotalVolumes int                  `json:"total_volumes"`
-	TotalSize    int64                `json:"total_size"`
-	LastUpdated  time.Time            `json:"last_updated"`
+	Username        string               `json:"username"`
+	Volumes         []VolumeWithTopology `json:"volumes"`
+	TotalVolumes    int                  `json:"total_volumes"`
+	TotalSize       int64                `json:"total_size"`
+	VolumeSizeLimit uint64               `json:"volume_size_limit"`
+	LastUpdated     time.Time            `json:"last_updated"`
 
 	// Pagination
 	CurrentPage int `json:"current_page"`

@@ -115,7 +115,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                             <code>{host.ID}</code>
                                         </td>
                                         <td>
-                                            <a href={templ.SafeURL(fmt.Sprintf("http://%s", host.PublicURL))} target="_blank" class="text-decoration-none">
+                                            <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", host.PublicURL))} target="_blank" class="text-decoration-none">
                                                 {host.Address}
                                                 <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                             </a>

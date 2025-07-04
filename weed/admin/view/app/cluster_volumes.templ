@@ -277,6 +277,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                             @getSortIcon("size", data.SortBy, data.SortOrder)
                                         </a>
                                     </th>
+                                    <th>Storage Usage</th>
                                     <th>
                                         <a href="#" onclick="sortTable('filecount')" class="text-decoration-none text-dark">
                                             File Count
@@ -315,7 +316,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                             <code>{fmt.Sprintf("%d", volume.Id)}</code>
                                         </td>
                                         <td>
-                                            <a href={templ.SafeURL(fmt.Sprintf("http://%s", volume.Server))} target="_blank" class="text-decoration-none">
+                                            <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", volume.Server))} target="_blank" class="text-decoration-none">
                                                 {volume.Server}
                                                 <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                             </a>
@@ -344,6 +345,50 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                             </td>
                                         }
                                                                 <td>{formatBytes(int64(volume.Size))}</td>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div class="progress me-2" style="width: 80px; height: 16px; background-color: #e9ecef;">
+                                    <!-- Active data (green) -->
+                                    <div class="progress-bar bg-success" role="progressbar" 
+                                         style={fmt.Sprintf("width: %.1f%%", 
+                                             func() float64 {
+                                                 if volume.Size > 0 {
+                                                     activePct := float64(volume.Size - volume.DeletedByteCount) / float64(volume.Size) * 100
+                                                     if data.VolumeSizeLimit > 0 {
+                                                         return activePct * float64(volume.Size) / float64(data.VolumeSizeLimit) * 100
+                                                     }
+                                                     return activePct
+                                                 }
+                                                 return 0
+                                             }())}
+                                         title={fmt.Sprintf("Active: %s", formatBytes(int64(volume.Size - volume.DeletedByteCount)))}>
+                                    </div>
+                                    <!-- Garbage data (red) -->
+                                    <div class="progress-bar bg-danger" role="progressbar" 
+                                         style={fmt.Sprintf("width: %.1f%%", 
+                                             func() float64 {
+                                                 if volume.Size > 0 && volume.DeletedByteCount > 0 {
+                                                     garbagePct := float64(volume.DeletedByteCount) / float64(volume.Size) * 100
+                                                     if data.VolumeSizeLimit > 0 {
+                                                         return garbagePct * float64(volume.Size) / float64(data.VolumeSizeLimit) * 100
+                                                     }
+                                                     return garbagePct
+                                                 }
+                                                 return 0
+                                             }())}
+                                         title={fmt.Sprintf("Garbage: %s", formatBytes(int64(volume.DeletedByteCount)))}>
+                                    </div>
+                                </div>
+                                <small class="text-muted">
+                                    {func() string {
+                                        if data.VolumeSizeLimit > 0 {
+                                            return fmt.Sprintf("%.0f%%", float64(volume.Size)/float64(data.VolumeSizeLimit)*100)
+                                        }
+                                        return "N/A"
+                                    }()}
+                                </small>
+                            </div>
+                        </td>
                         <td>{fmt.Sprintf("%d", volume.FileCount)}</td>
                         <td>
                             <span class="badge bg-info">{fmt.Sprintf("%03d", volume.ReplicaPlacement)}</span>

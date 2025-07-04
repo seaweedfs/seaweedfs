@@ -119,6 +119,21 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	// Sort volumes
 	s.sortVolumes(volumes, sortBy, sortOrder)
 
+	// Get volume size limit from master
+	var volumeSizeLimit uint64
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		volumeSizeLimit = uint64(resp.VolumeSizeLimitMB) * 1024 * 1024 // Convert MB to bytes
+		return nil
+	})
+	if err != nil {
+		// If we can't get the limit, set a default
+		volumeSizeLimit = 30 * 1024 * 1024 * 1024 // 30GB default
+	}
+
 	// Calculate pagination
 	totalVolumes := len(volumes)
 	totalPages := (totalVolumes + pageSize - 1) / pageSize
@@ -195,6 +210,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 		Volumes:              volumes,
 		TotalVolumes:         totalVolumes,
 		TotalSize:            totalSize,
+		VolumeSizeLimit:      volumeSizeLimit,
 		LastUpdated:          time.Now(),
 		CurrentPage:          page,
 		TotalPages:           totalPages,

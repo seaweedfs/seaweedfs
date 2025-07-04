@@ -51,7 +51,7 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
                             <div class="mb-3">
                                 <label class="form-label"><strong>Server:</strong></label>
                                 <div>
-                                    <a href={templ.SafeURL(fmt.Sprintf("http://%s", data.Volume.Server))} target="_blank" class="text-decoration-none">
+                                    <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", data.Volume.Server))} target="_blank" class="text-decoration-none">
                                         {data.Volume.Server}
                                         <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                     </a>
@@ -298,7 +298,7 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
                                     <tr class="table-primary">
                                         <td>
                                             <strong>
-                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s", data.Volume.Server))} target="_blank" class="text-decoration-none">
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", data.Volume.Server))} target="_blank" class="text-decoration-none">
                                                     {data.Volume.Server}
                                                     <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                                 </a>
@@ -318,7 +318,7 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
                                     for _, replica := range data.Replicas {
                                         <tr>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s", replica.Server))} target="_blank" class="text-decoration-none">
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", replica.Server))} target="_blank" class="text-decoration-none">
                                                     {replica.Server}
                                                     <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                                 </a>
