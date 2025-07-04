@@ -197,3 +197,12 @@ type ClusterVolumeServersData struct {
 	TotalCapacity      int64          `json:"total_capacity"`
 	LastUpdated        time.Time      `json:"last_updated"`
 }
+
+// MaintenanceWorkersData represents the data for the maintenance workers page
+type MaintenanceWorkersData struct {
+	Workers       []*WorkerDetailsData `json:"workers"`
+	ActiveWorkers int                  `json:"active_workers"`
+	BusyWorkers   int                  `json:"busy_workers"`
+	TotalLoad     int                  `json:"total_load"`
+	LastUpdated   time.Time            `json:"last_updated"`
+}

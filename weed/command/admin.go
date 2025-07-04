@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -67,6 +68,7 @@ var cmdAdmin = &Command{
     weed admin -port=23646 -masters="master1:9333,master2:9333"
     weed admin -port=443 -tlsCert=/etc/ssl/admin.crt -tlsKey=/etc/ssl/admin.key
     weed admin -port=23646 -masters="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
+    weed admin -port=23646 -masters="localhost:9333" -dataDir="~/seaweedfs-admin"
 
   Data Directory:
     - If dataDir is specified, admin configuration and maintenance data is persisted
@@ -186,7 +188,18 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	// Create data directory if specified
 	var dataDir string
 	if *options.dataDir != "" {
-		dataDir = *options.dataDir
+		// Expand tilde (~) to home directory
+		expandedDir, err := expandHomeDir(*options.dataDir)
+		if err != nil {
+			return fmt.Errorf("failed to expand dataDir path %s: %v", *options.dataDir, err)
+		}
+		dataDir = expandedDir
+
+		// Show path expansion if it occurred
+		if dataDir != *options.dataDir {
+			fmt.Printf("Expanded dataDir: %s -> %s\n", *options.dataDir, dataDir)
+		}
+
 		if err := os.MkdirAll(dataDir, 0755); err != nil {
 			return fmt.Errorf("failed to create data directory %s: %v", dataDir, err)
 		}
@@ -257,4 +270,48 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 // GetAdminOptions returns the admin command options for testing
 func GetAdminOptions() *AdminOptions {
 	return &AdminOptions{}
+}
+
+// expandHomeDir expands the tilde (~) in a path to the user's home directory
+func expandHomeDir(path string) (string, error) {
+	if path == "" {
+		return path, nil
+	}
+
+	if !strings.HasPrefix(path, "~") {
+		return path, nil
+	}
+
+	// Get current user
+	currentUser, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current user: %v", err)
+	}
+
+	// Handle different tilde patterns
+	if path == "~" {
+		return currentUser.HomeDir, nil
+	}
+
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(currentUser.HomeDir, path[2:]), nil
+	}
+
+	// Handle ~username/ patterns
+	if strings.HasPrefix(path, "~") {
+		parts := strings.SplitN(path[1:], "/", 2)
+		username := parts[0]
+
+		targetUser, err := user.Lookup(username)
+		if err != nil {
+			return "", fmt.Errorf("user %s not found: %v", username, err)
+		}
+
+		if len(parts) == 1 {
+			return targetUser.HomeDir, nil
+		}
+		return filepath.Join(targetUser.HomeDir, parts[1]), nil
+	}
+
+	return path, nil
 }

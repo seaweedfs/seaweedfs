@@ -43,40 +43,21 @@ func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
 
 // ShowMaintenanceWorkers displays the maintenance workers page
 func (h *MaintenanceHandlers) ShowMaintenanceWorkers(c *gin.Context) {
-	workers, err := h.getMaintenanceWorkers()
+	workersData, err := h.adminServer.GetMaintenanceWorkersData()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Create worker details data
-	workersData := make([]*dash.WorkerDetailsData, 0, len(workers))
-	for _, worker := range workers {
-		details, err := h.getMaintenanceWorkerDetails(worker.ID)
-		if err != nil {
-			// Create basic worker details if we can't get full details
-			details = &dash.WorkerDetailsData{
-				Worker:       worker,
-				CurrentTasks: []*dash.MaintenanceTask{},
-				RecentTasks:  []*dash.MaintenanceTask{},
-				Performance: &dash.WorkerPerformance{
-					TasksCompleted:  0,
-					TasksFailed:     0,
-					AverageTaskTime: 0,
-					Uptime:          0,
-					SuccessRate:     0,
-				},
-				LastUpdated: time.Now(),
-			}
-		}
-		workersData = append(workersData, details)
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	workersComponent := app.MaintenanceWorkers(workersData)
+	layoutComponent := layout.Layout(c, workersComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
 	}
-
-	// For now, return JSON until we create a workers template
-	c.JSON(http.StatusOK, gin.H{
-		"workers": workersData,
-		"title":   "Maintenance Workers",
-	})
 }
 
 // ShowMaintenanceConfig displays the maintenance configuration page
@@ -192,32 +173,11 @@ func (h *MaintenanceHandlers) getMaintenanceWorkerDetails(workerID string) (*das
 }
 
 func (h *MaintenanceHandlers) getMaintenanceConfig() (*dash.MaintenanceConfigData, error) {
-	// This would integrate with the maintenance system to get real config
-	// For now, return mock data
-	config := dash.DefaultMaintenanceConfig()
-	systemStats := &dash.MaintenanceStats{
-		TotalTasks:      23,
-		TasksByStatus:   make(map[dash.MaintenanceTaskStatus]int),
-		TasksByType:     make(map[dash.MaintenanceTaskType]int),
-		ActiveWorkers:   2,
-		CompletedToday:  15,
-		FailedToday:     1,
-		AverageTaskTime: 25 * time.Minute,
-		LastScanTime:    time.Now().Add(-30 * time.Minute),
-		NextScanTime:    time.Now().Add(30 * time.Minute),
-	}
-
-	return &dash.MaintenanceConfigData{
-		Config:       config,
-		IsEnabled:    true,
-		LastScanTime: time.Now().Add(-30 * time.Minute),
-		NextScanTime: time.Now().Add(30 * time.Minute),
-		SystemStats:  systemStats,
-	}, nil
+	// Delegate to AdminServer's real persistence method
+	return h.adminServer.GetMaintenanceConfigData()
 }
 
 func (h *MaintenanceHandlers) updateMaintenanceConfig(config *dash.MaintenanceConfig) error {
-	// This would integrate with the maintenance system to update real config
-	// For now, simulate update
-	return nil
+	// Delegate to AdminServer's real persistence method
+	return h.adminServer.UpdateMaintenanceConfigData(config)
 }

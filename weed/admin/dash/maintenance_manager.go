@@ -42,6 +42,11 @@ func (mm *MaintenanceManager) Start() error {
 		return nil
 	}
 
+	// Validate configuration durations to prevent ticker panics
+	if err := mm.validateConfig(); err != nil {
+		return fmt.Errorf("invalid maintenance configuration: %v", err)
+	}
+
 	mm.running = true
 
 	// Start background processes
@@ -50,6 +55,46 @@ func (mm *MaintenanceManager) Start() error {
 
 	glog.Infof("Maintenance manager started with scan interval %v", mm.config.ScanInterval)
 	return nil
+}
+
+// validateConfig validates the maintenance configuration durations
+func (mm *MaintenanceManager) validateConfig() error {
+	if mm.config.ScanInterval <= 0 {
+		glog.Warningf("Invalid scan interval %v, using default 30m", mm.config.ScanInterval)
+		mm.config.ScanInterval = 30 * time.Minute
+	}
+
+	if mm.config.CleanupInterval <= 0 {
+		glog.Warningf("Invalid cleanup interval %v, using default 24h", mm.config.CleanupInterval)
+		mm.config.CleanupInterval = 24 * time.Hour
+	}
+
+	if mm.config.WorkerTimeout <= 0 {
+		glog.Warningf("Invalid worker timeout %v, using default 5m", mm.config.WorkerTimeout)
+		mm.config.WorkerTimeout = 5 * time.Minute
+	}
+
+	if mm.config.TaskTimeout <= 0 {
+		glog.Warningf("Invalid task timeout %v, using default 2h", mm.config.TaskTimeout)
+		mm.config.TaskTimeout = 2 * time.Hour
+	}
+
+	if mm.config.RetryDelay <= 0 {
+		glog.Warningf("Invalid retry delay %v, using default 15m", mm.config.RetryDelay)
+		mm.config.RetryDelay = 15 * time.Minute
+	}
+
+	if mm.config.TaskRetention <= 0 {
+		glog.Warningf("Invalid task retention %v, using default 168h", mm.config.TaskRetention)
+		mm.config.TaskRetention = 7 * 24 * time.Hour
+	}
+
+	return nil
+}
+
+// IsRunning returns whether the maintenance manager is currently running
+func (mm *MaintenanceManager) IsRunning() bool {
+	return mm.running
 }
 
 // Stop terminates the maintenance manager

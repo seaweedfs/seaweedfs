@@ -786,6 +786,16 @@ func (as *AdminServer) UpdateMaintenanceConfigAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Configuration updated"})
 }
 
+// GetMaintenanceConfigData returns maintenance configuration data (public wrapper)
+func (as *AdminServer) GetMaintenanceConfigData() (*MaintenanceConfigData, error) {
+	return as.getMaintenanceConfig()
+}
+
+// UpdateMaintenanceConfigData updates maintenance configuration (public wrapper)
+func (as *AdminServer) UpdateMaintenanceConfigData(config *MaintenanceConfig) error {
+	return as.updateMaintenanceConfig(config)
+}
+
 // Helper methods for maintenance operations
 
 // getMaintenanceQueueData returns data for the maintenance queue UI
@@ -828,9 +838,10 @@ func (as *AdminServer) getMaintenanceQueueStats() (*QueueStats, error) {
 
 // getMaintenanceTasks returns all maintenance tasks
 func (as *AdminServer) getMaintenanceTasks() ([]*MaintenanceTask, error) {
-	// This would integrate with the maintenance queue to get real tasks
-	// For now, return mock data
-	return []*MaintenanceTask{}, nil
+	if as.maintenanceManager == nil {
+		return []*MaintenanceTask{}, nil
+	}
+	return as.maintenanceManager.GetTasks("", "", 0), nil
 }
 
 // getMaintenanceTask returns a specific maintenance task
@@ -859,33 +870,82 @@ func (as *AdminServer) cancelMaintenanceTask(taskID string) error {
 
 // getMaintenanceWorkers returns all maintenance workers
 func (as *AdminServer) getMaintenanceWorkers() ([]*MaintenanceWorker, error) {
-	// This would integrate with the maintenance system to get real workers
-	// For now, return mock data
-	return []*MaintenanceWorker{}, nil
+	if as.maintenanceManager == nil {
+		return []*MaintenanceWorker{}, nil
+	}
+	return as.maintenanceManager.GetWorkers(), nil
 }
 
 // getMaintenanceWorkerDetails returns detailed information about a worker
 func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDetailsData, error) {
-	// This would integrate with the maintenance system to get real worker details
-	// For now, return mock data
+	if as.maintenanceManager == nil {
+		return nil, fmt.Errorf("maintenance manager not initialized")
+	}
+
+	workers := as.maintenanceManager.GetWorkers()
+	var targetWorker *MaintenanceWorker
+	for _, worker := range workers {
+		if worker.ID == workerID {
+			targetWorker = worker
+			break
+		}
+	}
+
+	if targetWorker == nil {
+		return nil, fmt.Errorf("worker %s not found", workerID)
+	}
+
+	// Get current tasks for this worker
+	currentTasks := as.maintenanceManager.GetTasks(TaskStatusInProgress, "", 0)
+	var workerCurrentTasks []*MaintenanceTask
+	for _, task := range currentTasks {
+		if task.WorkerID == workerID {
+			workerCurrentTasks = append(workerCurrentTasks, task)
+		}
+	}
+
+	// Get recent tasks for this worker
+	recentTasks := as.maintenanceManager.GetTasks(TaskStatusCompleted, "", 10)
+	var workerRecentTasks []*MaintenanceTask
+	for _, task := range recentTasks {
+		if task.WorkerID == workerID {
+			workerRecentTasks = append(workerRecentTasks, task)
+		}
+	}
+
+	// Calculate performance metrics
+	var totalDuration time.Duration
+	var completedTasks, failedTasks int
+	for _, task := range workerRecentTasks {
+		if task.Status == TaskStatusCompleted {
+			completedTasks++
+			if task.StartedAt != nil && task.CompletedAt != nil {
+				totalDuration += task.CompletedAt.Sub(*task.StartedAt)
+			}
+		} else if task.Status == TaskStatusFailed {
+			failedTasks++
+		}
+	}
+
+	var averageTaskTime time.Duration
+	var successRate float64
+	if completedTasks+failedTasks > 0 {
+		if completedTasks > 0 {
+			averageTaskTime = totalDuration / time.Duration(completedTasks)
+		}
+		successRate = float64(completedTasks) / float64(completedTasks+failedTasks) * 100
+	}
+
 	return &WorkerDetailsData{
-		Worker: &MaintenanceWorker{
-			ID:            workerID,
-			Address:       "localhost:8082",
-			Status:        "active",
-			LastHeartbeat: time.Now(),
-			Capabilities:  []MaintenanceTaskType{TaskTypeVacuum, TaskTypeErasureCoding},
-			MaxConcurrent: 2,
-			CurrentLoad:   1,
-		},
-		CurrentTasks: []*MaintenanceTask{},
-		RecentTasks:  []*MaintenanceTask{},
+		Worker:       targetWorker,
+		CurrentTasks: workerCurrentTasks,
+		RecentTasks:  workerRecentTasks,
 		Performance: &WorkerPerformance{
-			TasksCompleted:  10,
-			TasksFailed:     1,
-			AverageTaskTime: 30 * time.Minute,
-			Uptime:          12 * time.Hour,
-			SuccessRate:     90.9,
+			TasksCompleted:  completedTasks,
+			TasksFailed:     failedTasks,
+			AverageTaskTime: averageTaskTime,
+			Uptime:          time.Since(targetWorker.LastHeartbeat), // This should be tracked properly
+			SuccessRate:     successRate,
 		},
 		LastUpdated: time.Now(),
 	}, nil
@@ -893,29 +953,15 @@ func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDeta
 
 // getMaintenanceStats returns maintenance statistics
 func (as *AdminServer) getMaintenanceStats() (*MaintenanceStats, error) {
-	// This would integrate with the maintenance system to get real stats
-	// For now, return mock data
-	return &MaintenanceStats{
-		TotalTasks: 23,
-		TasksByStatus: map[MaintenanceTaskStatus]int{
-			TaskStatusPending:    5,
-			TaskStatusInProgress: 2,
-			TaskStatusCompleted:  15,
-			TaskStatusFailed:     1,
-		},
-		TasksByType: map[MaintenanceTaskType]int{
-			TaskTypeVacuum:         12,
-			TaskTypeErasureCoding:  5,
-			TaskTypeFixReplication: 4,
-			TaskTypeRemoteUpload:   2,
-		},
-		ActiveWorkers:   2,
-		CompletedToday:  15,
-		FailedToday:     1,
-		AverageTaskTime: 25 * time.Minute,
-		LastScanTime:    time.Now().Add(-30 * time.Minute),
-		NextScanTime:    time.Now().Add(30 * time.Minute),
-	}, nil
+	if as.maintenanceManager == nil {
+		return &MaintenanceStats{
+			TotalTasks:    0,
+			TasksByStatus: make(map[MaintenanceTaskStatus]int),
+			TasksByType:   make(map[MaintenanceTaskType]int),
+			ActiveWorkers: 0,
+		}, nil
+	}
+	return as.maintenanceManager.GetStats(), nil
 }
 
 // getMaintenanceConfig returns maintenance configuration
@@ -1010,4 +1056,54 @@ func (as *AdminServer) GetConfigInfo(c *gin.Context) {
 		"config_info": configInfo,
 		"title":       "Configuration Information",
 	})
+}
+
+// GetMaintenanceWorkersData returns workers data for the maintenance workers page
+func (as *AdminServer) GetMaintenanceWorkersData() (*MaintenanceWorkersData, error) {
+	workers, err := as.getMaintenanceWorkers()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create worker details data
+	workersData := make([]*WorkerDetailsData, 0, len(workers))
+	activeWorkers := 0
+	busyWorkers := 0
+	totalLoad := 0
+
+	for _, worker := range workers {
+		details, err := as.getMaintenanceWorkerDetails(worker.ID)
+		if err != nil {
+			// Create basic worker details if we can't get full details
+			details = &WorkerDetailsData{
+				Worker:       worker,
+				CurrentTasks: []*MaintenanceTask{},
+				RecentTasks:  []*MaintenanceTask{},
+				Performance: &WorkerPerformance{
+					TasksCompleted:  0,
+					TasksFailed:     0,
+					AverageTaskTime: 0,
+					Uptime:          0,
+					SuccessRate:     0,
+				},
+				LastUpdated: time.Now(),
+			}
+		}
+		workersData = append(workersData, details)
+
+		if worker.Status == "active" {
+			activeWorkers++
+		} else if worker.Status == "busy" {
+			busyWorkers++
+		}
+		totalLoad += worker.CurrentLoad
+	}
+
+	return &MaintenanceWorkersData{
+		Workers:       workersData,
+		ActiveWorkers: activeWorkers,
+		BusyWorkers:   busyWorkers,
+		TotalLoad:     totalLoad,
+		LastUpdated:   time.Now(),
+	}, nil
 }
