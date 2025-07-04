@@ -33,6 +33,7 @@ type AdminOptions struct {
 	tlsKeyPath    *string
 	adminUser     *string
 	adminPassword *string
+	dataDir       *string
 }
 
 func init() {
@@ -41,13 +42,14 @@ func init() {
 	a.masters = cmdAdmin.Flag.String("masters", "localhost:9333", "comma-separated master servers")
 	a.tlsCertPath = cmdAdmin.Flag.String("tlsCert", "", "path to TLS certificate file")
 	a.tlsKeyPath = cmdAdmin.Flag.String("tlsKey", "", "path to TLS private key file")
+	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
 }
 
 var cmdAdmin = &Command{
-	UsageLine: "admin -port=23646 -masters=localhost:9333",
+	UsageLine: "admin -port=23646 -masters=localhost:9333 [-dataDir=/path/to/data]",
 	Short:     "start SeaweedFS web admin interface",
 	Long: `Start a web admin interface for SeaweedFS cluster management.
 
@@ -64,6 +66,13 @@ var cmdAdmin = &Command{
   Example Usage:
     weed admin -port=23646 -masters="master1:9333,master2:9333"
     weed admin -port=443 -tlsCert=/etc/ssl/admin.crt -tlsKey=/etc/ssl/admin.key
+    weed admin -port=23646 -masters="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
+
+  Data Directory:
+    - If dataDir is specified, admin configuration and maintenance data is persisted
+    - The directory will be created if it doesn't exist
+    - Configuration files are stored in JSON format for easy editing
+    - Without dataDir, all configuration is kept in memory only
 
   Authentication:
     - If adminPassword is not set, the admin interface runs without authentication
@@ -107,6 +116,11 @@ func runAdmin(cmd *Command, args []string) bool {
 	fmt.Printf("Starting SeaweedFS Admin Interface on port %d\n", *a.port)
 	fmt.Printf("Masters: %s\n", *a.masters)
 	fmt.Printf("Filers will be discovered automatically from masters\n")
+	if *a.dataDir != "" {
+		fmt.Printf("Data Directory: %s\n", *a.dataDir)
+	} else {
+		fmt.Printf("Data Directory: Not specified (configuration will be in-memory only)\n")
+	}
 	if *a.adminPassword != "" {
 		fmt.Printf("Authentication: Enabled (user: %s)\n", *a.adminUser)
 	} else {
@@ -169,8 +183,18 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 		log.Printf("Warning: Static files not found at %s", staticPath)
 	}
 
+	// Create data directory if specified
+	var dataDir string
+	if *options.dataDir != "" {
+		dataDir = *options.dataDir
+		if err := os.MkdirAll(dataDir, 0755); err != nil {
+			return fmt.Errorf("failed to create data directory %s: %v", dataDir, err)
+		}
+		fmt.Printf("Data directory created/verified: %s\n", dataDir)
+	}
+
 	// Create admin server
-	adminServer := dash.NewAdminServer(*options.masters, nil)
+	adminServer := dash.NewAdminServer(*options.masters, nil, dataDir)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()

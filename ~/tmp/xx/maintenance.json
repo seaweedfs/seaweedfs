@@ -1,0 +1,31 @@
+{
+  "enabled": true,
+  "scan_interval": 1800,
+  "worker_timeout": 0,
+  "task_timeout": 0,
+  "retry_delay": 0,
+  "max_retries": 0,
+  "cleanup_interval": 0,
+  "task_retention": 0,
+  "policy": {
+    "vacuum_enabled": false,
+    "vacuum_garbage_ratio": 0.15,
+    "vacuum_min_interval": 0,
+    "vacuum_max_concurrent": 0,
+    "ec_enabled": false,
+    "ec_volume_age_hours": 0,
+    "ec_fullness_ratio": 0,
+    "ec_max_concurrent": 0,
+    "remote_upload_enabled": false,
+    "remote_upload_age_hours": 0,
+    "remote_upload_pattern": "",
+    "remote_upload_max_concurrent": 0,
+    "replication_fix_enabled": true,
+    "replication_check_interval": 0,
+    "replication_max_concurrent": 0,
+    "balance_enabled": false,
+    "balance_check_interval": 0,
+    "balance_threshold": 0,
+    "balance_max_concurrent": 0
+  }
+}

@@ -55,7 +55,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</a><ul class=\"dropdown-menu\"><li><a class=\"dropdown-item\" href=\"/logout\"><i class=\"fas fa-sign-out-alt me-2\"></i>Logout</a></li></ul></li></ul></div></div></header><div class=\"row g-0\"><!-- Sidebar --><div class=\"col-md-3 col-lg-2 d-md-block bg-light sidebar collapse\"><div class=\"position-sticky pt-3\"><h6 class=\"sidebar-heading px-3 mt-4 mb-1 text-muted\"><span>MAIN</span></h6><ul class=\"nav flex-column\"><li class=\"nav-item\"><a class=\"nav-link\" href=\"/admin\"><i class=\"fas fa-tachometer-alt me-2\"></i>Dashboard</a></li><li class=\"nav-item\"><a class=\"nav-link collapsed\" href=\"#\" data-bs-toggle=\"collapse\" data-bs-target=\"#clusterSubmenu\" aria-expanded=\"false\" aria-controls=\"clusterSubmenu\"><i class=\"fas fa-sitemap me-2\"></i>Cluster <i class=\"fas fa-chevron-down ms-auto\"></i></a><div class=\"collapse\" id=\"clusterSubmenu\"><ul class=\"nav flex-column ms-3\"><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/cluster/masters\"><i class=\"fas fa-crown me-2\"></i>Masters</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/cluster/volume-servers\"><i class=\"fas fa-server me-2\"></i>Volume Servers</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/cluster/filers\"><i class=\"fas fa-folder-open me-2\"></i>Filers</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/cluster/volumes\"><i class=\"fas fa-database me-2\"></i>Volumes</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/cluster/collections\"><i class=\"fas fa-layer-group me-2\"></i>Collections</a></li></ul></div></li></ul><h6 class=\"sidebar-heading px-3 mt-4 mb-1 text-muted\"><span>MANAGEMENT</span></h6><ul class=\"nav flex-column\"><li class=\"nav-item\"><a class=\"nav-link\" href=\"/files\"><i class=\"fas fa-folder me-2\"></i>File Browser</a></li><li class=\"nav-item\"><a class=\"nav-link collapsed\" href=\"#\" data-bs-toggle=\"collapse\" data-bs-target=\"#objectStoreSubmenu\" aria-expanded=\"false\" aria-controls=\"objectStoreSubmenu\"><i class=\"fas fa-cloud me-2\"></i>Object Store <i class=\"fas fa-chevron-down ms-auto\"></i></a><div class=\"collapse\" id=\"objectStoreSubmenu\"><ul class=\"nav flex-column ms-3\"><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/object-store/buckets\"><i class=\"fas fa-cube me-2\"></i>Buckets</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/object-store/users\"><i class=\"fas fa-users me-2\"></i>Users</a></li></ul></div></li><li class=\"nav-item\"><a class=\"nav-link\" href=\"/metrics\"><i class=\"fas fa-chart-line me-2\"></i>Metrics</a></li><li class=\"nav-item\"><a class=\"nav-link\" href=\"/logs\"><i class=\"fas fa-file-alt me-2\"></i>Logs</a></li></ul><h6 class=\"sidebar-heading px-3 mt-4 mb-1 text-muted\"><span>SYSTEM</span></h6><ul class=\"nav flex-column\"><li class=\"nav-item\"><a class=\"nav-link\" href=\"/config\"><i class=\"fas fa-cog me-2\"></i>Configuration</a></li><li class=\"nav-item\"><a class=\"nav-link\" href=\"/maintenance\"><i class=\"fas fa-tools me-2\"></i>Maintenance</a></li></ul></div></div><!-- Main content --><main class=\"col-md-9 ms-sm-auto col-lg-10 px-md-4\"><div class=\"pt-3\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</a><ul class=\"dropdown-menu\"><li><a class=\"dropdown-item\" href=\"/logout\"><i class=\"fas fa-sign-out-alt me-2\"></i>Logout</a></li></ul></li></ul></div></div></header><div class=\"row g-0\"><!-- Sidebar --><div class=\"col-md-3 col-lg-2 d-md-block bg-light sidebar collapse\"><div class=\"position-sticky pt-3\"><h6 class=\"sidebar-heading px-3 mt-4 mb-1 text-muted\"><span>MAIN</span></h6><ul class=\"nav flex-column\"><li class=\"nav-item\"><a class=\"nav-link\" href=\"/admin\"><i class=\"fas fa-tachometer-alt me-2\"></i>Dashboard</a></li><li class=\"nav-item\"><a class=\"nav-link collapsed\" href=\"#\" data-bs-toggle=\"collapse\" data-bs-target=\"#clusterSubmenu\" aria-expanded=\"false\" aria-controls=\"clusterSubmenu\"><i class=\"fas fa-sitemap me-2\"></i>Cluster <i class=\"fas fa-chevron-down ms-auto\"></i></a><div class=\"collapse\" id=\"clusterSubmenu\"><ul class=\"nav flex-column ms-3\"><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/cluster/masters\"><i class=\"fas fa-crown me-2\"></i>Masters</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/cluster/volume-servers\"><i class=\"fas fa-server me-2\"></i>Volume Servers</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/cluster/filers\"><i class=\"fas fa-folder-open me-2\"></i>Filers</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/cluster/volumes\"><i class=\"fas fa-database me-2\"></i>Volumes</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/cluster/collections\"><i class=\"fas fa-layer-group me-2\"></i>Collections</a></li></ul></div></li></ul><h6 class=\"sidebar-heading px-3 mt-4 mb-1 text-muted\"><span>MANAGEMENT</span></h6><ul class=\"nav flex-column\"><li class=\"nav-item\"><a class=\"nav-link\" href=\"/files\"><i class=\"fas fa-folder me-2\"></i>File Browser</a></li><li class=\"nav-item\"><a class=\"nav-link collapsed\" href=\"#\" data-bs-toggle=\"collapse\" data-bs-target=\"#objectStoreSubmenu\" aria-expanded=\"false\" aria-controls=\"objectStoreSubmenu\"><i class=\"fas fa-cloud me-2\"></i>Object Store <i class=\"fas fa-chevron-down ms-auto\"></i></a><div class=\"collapse\" id=\"objectStoreSubmenu\"><ul class=\"nav flex-column ms-3\"><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/object-store/buckets\"><i class=\"fas fa-cube me-2\"></i>Buckets</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/object-store/users\"><i class=\"fas fa-users me-2\"></i>Users</a></li></ul></div></li><li class=\"nav-item\"><a class=\"nav-link\" href=\"/metrics\"><i class=\"fas fa-chart-line me-2\"></i>Metrics</a></li><li class=\"nav-item\"><a class=\"nav-link\" href=\"/logs\"><i class=\"fas fa-file-alt me-2\"></i>Logs</a></li></ul><h6 class=\"sidebar-heading px-3 mt-4 mb-1 text-muted\"><span>SYSTEM</span></h6><ul class=\"nav flex-column\"><li class=\"nav-item\"><a class=\"nav-link\" href=\"/config\"><i class=\"fas fa-cog me-2\"></i>Configuration</a></li><li class=\"nav-item\"><a class=\"nav-link collapsed\" href=\"#\" data-bs-toggle=\"collapse\" data-bs-target=\"#maintenanceSubmenu\" aria-expanded=\"false\" aria-controls=\"maintenanceSubmenu\"><i class=\"fas fa-tools me-2\"></i>Maintenance <i class=\"fas fa-chevron-down ms-auto\"></i></a><div class=\"collapse\" id=\"maintenanceSubmenu\"><ul class=\"nav flex-column ms-3\"><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/maintenance\"><i class=\"fas fa-list me-2\"></i>Queue</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/maintenance/workers\"><i class=\"fas fa-user-cog me-2\"></i>Workers</a></li><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/maintenance/config\"><i class=\"fas fa-sliders-h me-2\"></i>Configuration</a></li></ul></div></li></ul></div></div><!-- Main content --><main class=\"col-md-9 ms-sm-auto col-lg-10 px-md-4\"><div class=\"pt-3\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -70,7 +70,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", time.Now().Year()))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 189, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 209, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -83,7 +83,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(version.VERSION_NUMBER)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 189, Col: 102}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 209, Col: 102}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -135,7 +135,7 @@ func LoginForm(c *gin.Context, title string, errorMessage string) templ.Componen
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 213, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 233, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -148,7 +148,7 @@ func LoginForm(c *gin.Context, title string, errorMessage string) templ.Componen
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 227, Col: 57}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 247, Col: 57}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -166,7 +166,7 @@ func LoginForm(c *gin.Context, title string, errorMessage string) templ.Componen
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(errorMessage)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 234, Col: 45}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 254, Col: 45}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {

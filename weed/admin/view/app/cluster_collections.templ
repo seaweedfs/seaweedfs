@@ -79,11 +79,11 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                             </div>
                             <div class="col-auto">
                                 <i class="fas fa-file fa-2x text-gray-300"></i>
-                            </div>
                         </div>
                     </div>
                 </div>
             </div>
+        </div>
 
             <div class="col-xl-3 col-md-6 mb-4">
                 <div class="card border-left-secondary shadow h-100 py-2">
@@ -132,15 +132,15 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                     <tr>
                                         <td>
                                             <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", collection.Name))} class="text-decoration-none">
-                                                <strong>{collection.Name}</strong>
+                                            <strong>{collection.Name}</strong>
                                             </a>
                                         </td>
                                         <td>
                                             <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", collection.Name))} class="text-decoration-none">
-                                                <div class="d-flex align-items-center">
-                                                    <i class="fas fa-database me-2 text-muted"></i>
-                                                    {fmt.Sprintf("%d", collection.VolumeCount)}
-                                                </div>
+                                            <div class="d-flex align-items-center">
+                                                <i class="fas fa-database me-2 text-muted"></i>
+                                                {fmt.Sprintf("%d", collection.VolumeCount)}
+                                            </div>
                                             </a>
                                         </td>
                                         <td>

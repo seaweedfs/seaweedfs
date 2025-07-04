@@ -1,0 +1,219 @@
+package app
+
+import (
+    "fmt"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ MaintenanceConfig(data *dash.MaintenanceConfigData) {
+    <div class="container-fluid">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2 class="mb-0">
+                        <i class="fas fa-cog me-2"></i>
+                        Maintenance Configuration
+                    </h2>
+                    <div class="btn-group">
+                        <a href="/maintenance" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left me-1"></i>
+                            Back to Queue
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">System Settings</h5>
+                    </div>
+                    <div class="card-body">
+                        <form>
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="enabled" checked?={data.IsEnabled}>
+                                    <label class="form-check-label" for="enabled">
+                                        <strong>Enable Maintenance System</strong>
+                                    </label>
+                                </div>
+                                <small class="form-text text-muted">
+                                    When enabled, the system will automatically scan for and execute maintenance tasks.
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="scanInterval" class="form-label">Scan Interval (minutes)</label>
+                                <input type="number" class="form-control" id="scanInterval" 
+                                       value={fmt.Sprintf("%.0f", data.Config.ScanInterval.Minutes())} min="1" max="1440">
+                                <small class="form-text text-muted">
+                                    How often to scan for maintenance tasks (1-1440 minutes).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="vacuumEnabled" 
+                                           checked?={data.Config.Policy.VacuumEnabled}>
+                                    <label class="form-check-label" for="vacuumEnabled">
+                                        <strong>Enable Vacuum</strong>
+                                    </label>
+                                </div>
+                                <small class="form-text text-muted">
+                                    Automatically vacuum volumes with high garbage ratio.
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="vacuumGarbageRatio" class="form-label">Vacuum Garbage Ratio Threshold (%)</label>
+                                <input type="number" class="form-control" id="vacuumGarbageRatio" 
+                                       value={fmt.Sprintf("%.1f", data.Config.Policy.VacuumGarbageRatio*100)} 
+                                       min="5" max="90" step="0.1">
+                                <small class="form-text text-muted">
+                                    Trigger vacuum when deleted bytes exceed this percentage (5-90%).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="replicationFixEnabled" 
+                                           checked?={data.Config.Policy.ReplicationFixEnabled}>
+                                    <label class="form-check-label" for="replicationFixEnabled">
+                                        <strong>Enable Replication Fix</strong>
+                                    </label>
+                                </div>
+                                <small class="form-text text-muted">
+                                    Automatically fix under-replicated or over-replicated volumes.
+                                </small>
+                            </div>
+
+                            <div class="mt-4">
+                                <button type="button" class="btn btn-primary" onclick="saveConfiguration()">
+                                    <i class="fas fa-save me-1"></i>
+                                    Save Configuration
+                                </button>
+                                <button type="button" class="btn btn-outline-info ms-2" onclick="testConfiguration()">
+                                    <i class="fas fa-play me-1"></i>
+                                    Test Configuration
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Status Information</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h4 mb-0">
+                                        if data.IsEnabled {
+                                            <span class="text-success">
+                                                <i class="fas fa-check-circle"></i>
+                                                Enabled
+                                            </span>
+                                        } else {
+                                            <span class="text-danger">
+                                                <i class="fas fa-times-circle"></i>
+                                                Disabled
+                                            </span>
+                                        }
+                                    </div>
+                                    <small class="text-muted">System Status</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h4 mb-0 text-info">
+                                        {fmt.Sprintf("%d", data.SystemStats.ActiveWorkers)}
+                                    </div>
+                                    <small class="text-muted">Active Workers</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h4 mb-0 text-warning">
+                                        {fmt.Sprintf("%d", data.SystemStats.TotalTasks)}
+                                    </div>
+                                    <small class="text-muted">Total Tasks</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h4 mb-0 text-success">
+                                        {fmt.Sprintf("%d", data.SystemStats.CompletedToday)}
+                                    </div>
+                                    <small class="text-muted">Completed Today</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function saveConfiguration() {
+            const config = {
+                enabled: document.getElementById('enabled').checked,
+                scan_interval: parseInt(document.getElementById('scanInterval').value) * 60, // Convert to seconds
+                policy: {
+                    vacuum_enabled: document.getElementById('vacuumEnabled').checked,
+                    vacuum_garbage_ratio: parseFloat(document.getElementById('vacuumGarbageRatio').value) / 100,
+                    replication_fix_enabled: document.getElementById('replicationFixEnabled').checked,
+                }
+            };
+
+            fetch('/api/maintenance/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(config)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Configuration saved successfully');
+                } else {
+                    alert('Failed to save configuration: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                alert('Error: ' + error.message);
+            });
+        }
+
+        function testConfiguration() {
+            alert('Testing configuration...');
+            
+            fetch('/api/maintenance/scan', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Test scan completed successfully');
+                } else {
+                    alert('Test failed: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                alert('Test error: ' + error.message);
+            });
+        }
+    </script>
+} 

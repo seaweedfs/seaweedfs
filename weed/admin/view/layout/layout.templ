@@ -165,9 +165,29 @@ templ Layout(c *gin.Context, content templ.Component) {
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="/maintenance">
+                            <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#maintenanceSubmenu" aria-expanded="false" aria-controls="maintenanceSubmenu">
                                 <i class="fas fa-tools me-2"></i>Maintenance
+                                <i class="fas fa-chevron-down ms-auto"></i>
                             </a>
+                            <div class="collapse" id="maintenanceSubmenu">
+                                <ul class="nav flex-column ms-3">
+                                    <li class="nav-item">
+                                        <a class="nav-link py-2" href="/maintenance">
+                                            <i class="fas fa-list me-2"></i>Queue
+                                        </a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a class="nav-link py-2" href="/maintenance/workers">
+                                            <i class="fas fa-user-cog me-2"></i>Workers
+                                        </a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a class="nav-link py-2" href="/maintenance/config">
+                                            <i class="fas fa-sliders-h me-2"></i>Configuration
+                                        </a>
+                                    </li>
+                                </ul>
+                            </div>
                         </li>
                     </ul>
                 </div>
