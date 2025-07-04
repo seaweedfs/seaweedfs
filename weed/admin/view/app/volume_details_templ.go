@@ -341,7 +341,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "</div><small class=\"text-muted\">Compact Revision</small></div></div><div class=\"col-6\"><div class=\"text-center\"><div class=\"h6 mb-0 font-weight-bold text-secondary\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "</div><small class=\"text-muted\">Vacuum Revision</small></div></div><div class=\"col-6\"><div class=\"text-center\"><div class=\"h6 mb-0 font-weight-bold text-secondary\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -629,14 +629,14 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<!-- Actions Card --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-tools me-2\"></i>Actions</h6></div><div class=\"card-body\"><div class=\"btn-group\" role=\"group\"><button type=\"button\" class=\"btn btn-outline-secondary\" title=\"Compact Volume\"><i class=\"fas fa-compress-alt me-1\"></i>Compact</button> <button type=\"button\" class=\"btn btn-outline-warning\" title=\"Fix Volume\"><i class=\"fas fa-wrench me-1\"></i>Fix</button> <button type=\"button\" class=\"btn btn-outline-danger\" title=\"Vacuum Volume\"><i class=\"fas fa-trash me-1\"></i>Vacuum</button></div><div class=\"mt-3\"><small class=\"text-muted\"><i class=\"fas fa-info-circle me-1\"></i> Use these actions to perform maintenance operations on the volume.</small></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<!-- Actions Card --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-tools me-2\"></i>Actions</h6></div><div class=\"card-body\"><div class=\"btn-group\" role=\"group\"><button type=\"button\" class=\"btn btn-outline-danger\" title=\"Vacuum Volume\"><i class=\"fas fa-compress-alt me-1\"></i>Vacuum</button></div><div class=\"mt-3\"><small class=\"text-muted\"><i class=\"fas fa-info-circle me-1\"></i> Use these actions to perform maintenance operations on the volume.</small></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var41 string
 		templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/volume_details.templ`, Line: 384, Col: 77}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/volume_details.templ`, Line: 378, Col: 77}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 		if templ_7745c5c3_Err != nil {

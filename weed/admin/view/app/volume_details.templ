@@ -215,7 +215,7 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
                                 <div class="h6 mb-0 font-weight-bold text-info">
                                     #{fmt.Sprintf("%d", data.Volume.CompactRevision)}
                                 </div>
-                                <small class="text-muted">Compact Revision</small>
+                                <small class="text-muted">Vacuum Revision</small>
                             </div>
                         </div>
                         <div class="col-6">
@@ -355,14 +355,8 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
                 </div>
                 <div class="card-body">
                     <div class="btn-group" role="group">
-                        <button type="button" class="btn btn-outline-secondary" title="Compact Volume">
-                            <i class="fas fa-compress-alt me-1"></i>Compact
-                        </button>
-                        <button type="button" class="btn btn-outline-warning" title="Fix Volume">
-                            <i class="fas fa-wrench me-1"></i>Fix
-                        </button>
                         <button type="button" class="btn btn-outline-danger" title="Vacuum Volume">
-                            <i class="fas fa-trash me-1"></i>Vacuum
+                            <i class="fas fa-compress-alt me-1"></i>Vacuum
                         </button>
                     </div>
                     <div class="mt-3">
