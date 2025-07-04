@@ -313,7 +313,11 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 for _, volume := range data.Volumes {
                                     <tr>
                                         <td>
-                                            <code>{fmt.Sprintf("%d", volume.Id)}</code>
+                                            <code class="volume-id-link" style="cursor: pointer; text-decoration: underline; color: #0d6efd;" 
+                                                  data-volume-id={fmt.Sprintf("%d", volume.Id)}
+                                                  title="Click to view volume details">
+                                                {fmt.Sprintf("%d", volume.Id)}
+                                            </code>
                                         </td>
                                         <td>
                                             <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", volume.Server))} target="_blank" class="text-decoration-none">
@@ -527,6 +531,15 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
             // Add click handlers to view details buttons
             document.querySelectorAll('.view-details-btn').forEach(button => {
                 button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const volumeId = this.getAttribute('data-volume-id');
+                    viewVolumeDetails(volumeId);
+                });
+            });
+
+            // Add click handlers to volume ID links
+            document.querySelectorAll('.volume-id-link').forEach(link => {
+                link.addEventListener('click', function(e) {
                     e.preventDefault();
                     const volumeId = this.getAttribute('data-volume-id');
                     viewVolumeDetails(volumeId);
