@@ -5,16 +5,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // NewMaintenanceScanner creates a new maintenance scanner
-func NewMaintenanceScanner(adminServer *dash.AdminServer, policy *MaintenancePolicy, queue *MaintenanceQueue) *MaintenanceScanner {
+func NewMaintenanceScanner(adminClient AdminClient, policy *MaintenancePolicy, queue *MaintenanceQueue) *MaintenanceScanner {
 	scanner := &MaintenanceScanner{
-		adminServer: adminServer,
+		adminClient: adminClient,
 		policy:      policy,
 		queue:       queue,
 		lastScan:    make(map[MaintenanceTaskType]time.Time),
@@ -64,7 +63,7 @@ func (ms *MaintenanceScanner) ScanForMaintenanceTasks() ([]*TaskDetectionResult,
 func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, error) {
 	var metrics []*VolumeHealthMetrics
 
-	err := ms.adminServer.WithMasterClient(func(client master_pb.SeaweedClient) error {
+	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err

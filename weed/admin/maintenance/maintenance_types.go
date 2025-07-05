@@ -4,8 +4,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
+
+// AdminClient interface defines what the maintenance system needs from the admin server
+type AdminClient interface {
+	WithMasterClient(fn func(client master_pb.SeaweedClient) error) error
+}
 
 // MaintenanceTaskType represents different types of maintenance operations
 type MaintenanceTaskType string
@@ -171,7 +176,7 @@ type MaintenanceQueue struct {
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks
 type MaintenanceScanner struct {
-	adminServer *dash.AdminServer
+	adminClient AdminClient
 	policy      *MaintenancePolicy
 	queue       *MaintenanceQueue
 	lastScan    map[MaintenanceTaskType]time.Time

@@ -3,6 +3,7 @@ package dash
 import (
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
@@ -198,6 +199,45 @@ type ClusterVolumeServersData struct {
 	LastUpdated        time.Time      `json:"last_updated"`
 }
 
+// Type aliases for maintenance package types to support existing code
+type MaintenanceTask = maintenance.MaintenanceTask
+type MaintenanceTaskType = maintenance.MaintenanceTaskType
+type MaintenanceTaskStatus = maintenance.MaintenanceTaskStatus
+type MaintenanceTaskPriority = maintenance.MaintenanceTaskPriority
+type MaintenanceWorker = maintenance.MaintenanceWorker
+type MaintenanceConfig = maintenance.MaintenanceConfig
+type MaintenanceStats = maintenance.MaintenanceStats
+type MaintenanceConfigData = maintenance.MaintenanceConfigData
+type MaintenanceQueueData = maintenance.MaintenanceQueueData
+type QueueStats = maintenance.QueueStats
+type WorkerDetailsData = maintenance.WorkerDetailsData
+type WorkerPerformance = maintenance.WorkerPerformance
+
+// Constants from maintenance package
+const (
+	TaskTypeVacuum             = maintenance.TaskTypeVacuum
+	TaskTypeErasureCoding      = maintenance.TaskTypeErasureCoding
+	TaskTypeRemoteUpload       = maintenance.TaskTypeRemoteUpload
+	TaskTypeFixReplication     = maintenance.TaskTypeFixReplication
+	TaskTypeBalance            = maintenance.TaskTypeBalance
+	TaskTypeClusterReplication = maintenance.TaskTypeClusterReplication
+
+	TaskStatusPending    = maintenance.TaskStatusPending
+	TaskStatusAssigned   = maintenance.TaskStatusAssigned
+	TaskStatusInProgress = maintenance.TaskStatusInProgress
+	TaskStatusCompleted  = maintenance.TaskStatusCompleted
+	TaskStatusFailed     = maintenance.TaskStatusFailed
+	TaskStatusCancelled  = maintenance.TaskStatusCancelled
+
+	PriorityLow      = maintenance.PriorityLow
+	PriorityNormal   = maintenance.PriorityNormal
+	PriorityHigh     = maintenance.PriorityHigh
+	PriorityCritical = maintenance.PriorityCritical
+)
+
+// Helper functions from maintenance package
+var DefaultMaintenanceConfig = maintenance.DefaultMaintenanceConfig
+
 // MaintenanceWorkersData represents the data for the maintenance workers page
 type MaintenanceWorkersData struct {
 	Workers       []*WorkerDetailsData `json:"workers"`
@@ -206,3 +246,5 @@ type MaintenanceWorkersData struct {
 	TotalLoad     int                  `json:"total_load"`
 	LastUpdated   time.Time            `json:"last_updated"`
 }
+
+// Maintenance system types are now in weed/admin/maintenance package

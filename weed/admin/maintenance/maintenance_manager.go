@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
@@ -15,7 +14,7 @@ type MaintenanceManager struct {
 	config      *MaintenanceConfig
 	scanner     *MaintenanceScanner
 	queue       *MaintenanceQueue
-	adminServer *dash.AdminServer
+	adminClient AdminClient
 	running     bool
 	stopChan    chan struct{}
 	// Error handling and backoff
@@ -27,19 +26,19 @@ type MaintenanceManager struct {
 }
 
 // NewMaintenanceManager creates a new maintenance manager
-func NewMaintenanceManager(adminServer *dash.AdminServer, config *MaintenanceConfig) *MaintenanceManager {
+func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig) *MaintenanceManager {
 	if config == nil {
 		config = DefaultMaintenanceConfig()
 	}
 
 	queue := NewMaintenanceQueue(config.Policy)
-	scanner := NewMaintenanceScanner(adminServer, config.Policy, queue)
+	scanner := NewMaintenanceScanner(adminClient, config.Policy, queue)
 
 	return &MaintenanceManager{
 		config:       config,
 		scanner:      scanner,
 		queue:        queue,
-		adminServer:  adminServer,
+		adminClient:  adminClient,
 		stopChan:     make(chan struct{}),
 		backoffDelay: time.Second, // Start with 1 second backoff
 	}
