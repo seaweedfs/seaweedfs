@@ -119,5 +119,6 @@ func Register(registry *tasks.TaskRegistry) {
 
 // Auto-register this task when the package is imported
 func init() {
-	tasks.AutoRegister(Register)
+	factory := NewFactory()
+	tasks.AutoRegister(types.TaskTypeVacuum, factory)
 }

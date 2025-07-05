@@ -4,33 +4,26 @@ import (
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
-
-// RegisterFunc is a function that registers a task with a given registry
-type RegisterFunc func(registry *TaskRegistry)
 
 var (
-	globalRegistrations []RegisterFunc
-	registrationMutex   sync.Mutex
+	globalRegistry *TaskRegistry
+	registryOnce   sync.Once
 )
 
-// AutoRegister adds a task registration function to be called later
-func AutoRegister(registerFunc RegisterFunc) {
-	registrationMutex.Lock()
-	defer registrationMutex.Unlock()
-	globalRegistrations = append(globalRegistrations, registerFunc)
+// GetGlobalRegistry returns the global task registry (singleton)
+func GetGlobalRegistry() *TaskRegistry {
+	registryOnce.Do(func() {
+		globalRegistry = NewTaskRegistry()
+		glog.V(1).Infof("Created global task registry")
+	})
+	return globalRegistry
 }
 
-// RegisterAll calls all registered task registration functions
-func RegisterAll(registry *TaskRegistry) {
-	registrationMutex.Lock()
-	defer registrationMutex.Unlock()
-
-	glog.V(1).Infof("Auto-registering %d task types", len(globalRegistrations))
-
-	for _, registerFunc := range globalRegistrations {
-		registerFunc(registry)
-	}
-
-	glog.V(1).Infof("Successfully registered %d task types", len(globalRegistrations))
+// AutoRegister registers a task directly with the global registry
+func AutoRegister(taskType types.TaskType, factory types.TaskFactory) {
+	registry := GetGlobalRegistry()
+	registry.Register(taskType, factory)
+	glog.V(1).Infof("Auto-registered task type: %s", taskType)
 }

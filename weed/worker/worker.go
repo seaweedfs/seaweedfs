@@ -17,13 +17,6 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
-// RegisterAllTasks registers all built-in task types with the given registry
-// Tasks register themselves automatically when their packages are imported
-func RegisterAllTasks(registry *tasks.TaskRegistry) {
-	// Tasks register themselves via init() functions when imported
-	tasks.RegisterAll(registry)
-}
-
 // Worker represents a maintenance worker instance
 type Worker struct {
 	id              string
@@ -67,7 +60,8 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 	// Auto-generate address
 	address := ":8082"
 
-	registry := tasks.NewTaskRegistry()
+	// Use the global registry that already has all tasks registered
+	registry := tasks.GetGlobalRegistry()
 
 	worker := &Worker{
 		id:           workerID,
@@ -79,8 +73,7 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 		startTime:    time.Now(),
 	}
 
-	// Register default tasks
-	worker.registerDefaultTasks()
+	glog.V(1).Infof("Worker created with %d registered task types", len(registry.GetSupportedTypes()))
 
 	return worker, nil
 }
@@ -385,12 +378,6 @@ func (w *Worker) requestTasks() {
 			}
 		}
 	}
-}
-
-// registerDefaultTasks registers the default task implementations
-func (w *Worker) registerDefaultTasks() {
-	// Register all built-in task types
-	RegisterAllTasks(w.registry)
 }
 
 // GetTaskRegistry returns the task registry
