@@ -19,6 +19,12 @@ type MaintenanceIntegration struct {
 	// Bridge to existing system
 	maintenanceQueue  *MaintenanceQueue
 	maintenancePolicy *MaintenancePolicy
+
+	// Type conversion maps
+	taskTypeMap    map[types.TaskType]MaintenanceTaskType
+	revTaskTypeMap map[MaintenanceTaskType]types.TaskType
+	priorityMap    map[types.TaskPriority]MaintenanceTaskPriority
+	revPriorityMap map[MaintenanceTaskPriority]types.TaskPriority
 }
 
 // NewMaintenanceIntegration creates the integration bridge
@@ -30,10 +36,51 @@ func NewMaintenanceIntegration(queue *MaintenanceQueue, policy *MaintenancePolic
 		maintenancePolicy: policy,
 	}
 
+	// Initialize type conversion maps
+	integration.initializeTypeMaps()
+
 	// Register all tasks
 	integration.registerAllTasks()
 
 	return integration
+}
+
+// initializeTypeMaps creates the type conversion maps for dynamic conversion
+func (s *MaintenanceIntegration) initializeTypeMaps() {
+	// Task type mappings
+	s.taskTypeMap = map[types.TaskType]MaintenanceTaskType{
+		types.TaskTypeVacuum:             TaskTypeVacuum,
+		types.TaskTypeErasureCoding:      TaskTypeErasureCoding,
+		types.TaskTypeRemoteUpload:       TaskTypeRemoteUpload,
+		types.TaskTypeFixReplication:     TaskTypeFixReplication,
+		types.TaskTypeBalance:            TaskTypeBalance,
+		types.TaskTypeClusterReplication: TaskTypeClusterReplication,
+	}
+
+	// Reverse task type mappings
+	s.revTaskTypeMap = map[MaintenanceTaskType]types.TaskType{
+		TaskTypeVacuum:             types.TaskTypeVacuum,
+		TaskTypeErasureCoding:      types.TaskTypeErasureCoding,
+		TaskTypeRemoteUpload:       types.TaskTypeRemoteUpload,
+		TaskTypeFixReplication:     types.TaskTypeFixReplication,
+		TaskTypeBalance:            types.TaskTypeBalance,
+		TaskTypeClusterReplication: types.TaskTypeClusterReplication,
+	}
+
+	// Priority mappings
+	s.priorityMap = map[types.TaskPriority]MaintenanceTaskPriority{
+		types.TaskPriorityLow:    PriorityLow,
+		types.TaskPriorityNormal: PriorityNormal,
+		types.TaskPriorityHigh:   PriorityHigh,
+	}
+
+	// Reverse priority mappings
+	s.revPriorityMap = map[MaintenanceTaskPriority]types.TaskPriority{
+		PriorityLow:      types.TaskPriorityLow,
+		PriorityNormal:   types.TaskPriorityNormal,
+		PriorityHigh:     types.TaskPriorityHigh,
+		PriorityCritical: types.TaskPriorityHigh, // Map critical to high
+	}
 }
 
 // registerAllTasks registers all available tasks
@@ -62,26 +109,34 @@ func (s *MaintenanceIntegration) configureTasksFromPolicy() {
 		return
 	}
 
-	// Configure all registered detectors and schedulers dynamically
+	// Configure all registered detectors and schedulers dynamically using policy configuration
 	configuredCount := 0
 
 	// Get all registered task types from the registry
 	for taskType, detector := range s.taskRegistry.GetAllDetectors() {
-		// Configure detector based on task type
-		s.configureDetectorForTaskType(taskType, detector)
+		// Configure detector using policy-based configuration
+		s.configureDetectorFromPolicy(taskType, detector)
 		configuredCount++
 	}
 
 	for taskType, scheduler := range s.taskRegistry.GetAllSchedulers() {
-		// Configure scheduler based on task type
-		s.configureSchedulerForTaskType(taskType, scheduler)
+		// Configure scheduler using policy-based configuration
+		s.configureSchedulerFromPolicy(taskType, scheduler)
 	}
 
 	glog.V(1).Infof("Dynamically configured %d task types from maintenance policy", configuredCount)
 }
 
-// configureDetectorForTaskType configures a detector based on its task type and the maintenance policy
-func (s *MaintenanceIntegration) configureDetectorForTaskType(taskType types.TaskType, detector types.TaskDetector) {
+// configureDetectorFromPolicy configures a detector using policy-based configuration
+func (s *MaintenanceIntegration) configureDetectorFromPolicy(taskType types.TaskType, detector types.TaskDetector) {
+	// Try to configure using PolicyConfigurableDetector interface if supported
+	if configurableDetector, ok := detector.(types.PolicyConfigurableDetector); ok {
+		configurableDetector.ConfigureFromPolicy(s.maintenancePolicy)
+		glog.V(2).Infof("Configured detector %s using policy interface", taskType)
+		return
+	}
+
+	// Fallback to specific configurations for existing detectors
 	switch taskType {
 	case types.TaskTypeVacuum:
 		if vacuumDetector := vacuum.GetDetector(s.taskRegistry); vacuumDetector != nil {
@@ -111,8 +166,16 @@ func (s *MaintenanceIntegration) configureDetectorForTaskType(taskType types.Tas
 	}
 }
 
-// configureSchedulerForTaskType configures a scheduler based on its task type and the maintenance policy
-func (s *MaintenanceIntegration) configureSchedulerForTaskType(taskType types.TaskType, scheduler types.TaskScheduler) {
+// configureSchedulerFromPolicy configures a scheduler using policy-based configuration
+func (s *MaintenanceIntegration) configureSchedulerFromPolicy(taskType types.TaskType, scheduler types.TaskScheduler) {
+	// Try to configure using PolicyConfigurableScheduler interface if supported
+	if configurableScheduler, ok := scheduler.(types.PolicyConfigurableScheduler); ok {
+		configurableScheduler.ConfigureFromPolicy(s.maintenancePolicy)
+		glog.V(2).Infof("Configured scheduler %s using policy interface", taskType)
+		return
+	}
+
+	// Fallback to specific configurations for existing schedulers
 	switch taskType {
 	case types.TaskTypeVacuum:
 		if vacuumScheduler := vacuum.GetScheduler(s.taskRegistry); vacuumScheduler != nil {
@@ -175,36 +238,19 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 	return allResults, nil
 }
 
-// convertToExistingFormat converts task results to existing system format
+// convertToExistingFormat converts task results to existing system format using dynamic mapping
 func (s *MaintenanceIntegration) convertToExistingFormat(result *types.TaskDetectionResult) *TaskDetectionResult {
-	// Convert types between task system and existing system
-	var existingType MaintenanceTaskType
-	var existingPriority MaintenanceTaskPriority
-
-	switch result.TaskType {
-	case types.TaskTypeVacuum:
-		existingType = TaskTypeVacuum
-	case types.TaskTypeErasureCoding:
-		existingType = TaskTypeErasureCoding
-	case types.TaskTypeRemoteUpload:
-		existingType = TaskTypeRemoteUpload
-	case types.TaskTypeFixReplication:
-		existingType = TaskTypeFixReplication
-	case types.TaskTypeBalance:
-		existingType = TaskTypeBalance
-	case types.TaskTypeClusterReplication:
-		existingType = TaskTypeClusterReplication
-	default:
+	// Convert types using mapping tables
+	existingType, exists := s.taskTypeMap[result.TaskType]
+	if !exists {
+		glog.Warningf("Unknown task type %s, defaulting to vacuum", result.TaskType)
 		existingType = TaskTypeVacuum
 	}
 
-	switch result.Priority {
-	case types.TaskPriorityLow:
-		existingPriority = PriorityLow
-	case types.TaskPriorityNormal:
+	existingPriority, exists := s.priorityMap[result.Priority]
+	if !exists {
+		glog.Warningf("Unknown priority %d, defaulting to normal", result.Priority)
 		existingPriority = PriorityNormal
-	case types.TaskPriorityHigh:
-		existingPriority = PriorityHigh
 	}
 
 	return &TaskDetectionResult{
@@ -219,67 +265,44 @@ func (s *MaintenanceIntegration) convertToExistingFormat(result *types.TaskDetec
 	}
 }
 
-// CanScheduleWithTaskSchedulers determines if a task can be scheduled using task schedulers
+// CanScheduleWithTaskSchedulers determines if a task can be scheduled using task schedulers with dynamic type conversion
 func (s *MaintenanceIntegration) CanScheduleWithTaskSchedulers(task *MaintenanceTask, runningTasks []*MaintenanceTask, availableWorkers []*MaintenanceWorker) bool {
-	// Convert existing types to task types
+	// Convert existing types to task types using mapping
+	taskType, exists := s.revTaskTypeMap[task.Type]
+	if !exists {
+		glog.V(2).Infof("Unknown task type %s for scheduling, falling back to existing logic", task.Type)
+		return false // Fallback to existing logic for unknown types
+	}
+
+	// Convert task objects
 	taskObject := s.convertTaskToTaskSystem(task)
 	runningTaskObjects := s.convertTasksToTaskSystem(runningTasks)
 	workerObjects := s.convertWorkersToTaskSystem(availableWorkers)
 
-	// Get the appropriate scheduler for all task types
-	var taskType types.TaskType
-	switch task.Type {
-	case TaskTypeVacuum:
-		taskType = types.TaskTypeVacuum
-	case TaskTypeErasureCoding:
-		taskType = types.TaskTypeErasureCoding
-	case TaskTypeRemoteUpload:
-		taskType = types.TaskTypeRemoteUpload
-	case TaskTypeFixReplication:
-		taskType = types.TaskTypeFixReplication
-	case TaskTypeBalance:
-		taskType = types.TaskTypeBalance
-	case TaskTypeClusterReplication:
-		taskType = types.TaskTypeClusterReplication
-	default:
-		return false // Fallback to existing logic for unknown types
-	}
-
+	// Get the appropriate scheduler
 	scheduler := s.taskRegistry.GetScheduler(taskType)
 	if scheduler == nil {
+		glog.V(2).Infof("No scheduler found for task type %s", taskType)
 		return false
 	}
 
 	return scheduler.CanScheduleNow(taskObject, runningTaskObjects, workerObjects)
 }
 
-// convertTaskToTaskSystem converts existing task to task system format
+// convertTaskToTaskSystem converts existing task to task system format using dynamic mapping
 func (s *MaintenanceIntegration) convertTaskToTaskSystem(task *MaintenanceTask) *types.Task {
-	var taskType types.TaskType
-	var priority types.TaskPriority
-
-	switch task.Type {
-	case TaskTypeVacuum:
+	// Convert task type using mapping
+	taskType, exists := s.revTaskTypeMap[task.Type]
+	if !exists {
+		glog.Warningf("Unknown task type %s in conversion, defaulting to vacuum", task.Type)
 		taskType = types.TaskTypeVacuum
-	case TaskTypeErasureCoding:
-		taskType = types.TaskTypeErasureCoding
-	case TaskTypeRemoteUpload:
-		taskType = types.TaskTypeRemoteUpload
-	case TaskTypeFixReplication:
-		taskType = types.TaskTypeFixReplication
-	case TaskTypeBalance:
-		taskType = types.TaskTypeBalance
-	case TaskTypeClusterReplication:
-		taskType = types.TaskTypeClusterReplication
 	}
 
-	switch task.Priority {
-	case PriorityLow:
-		priority = types.TaskPriorityLow
-	case PriorityNormal:
+	// Convert priority using mapping
+	priority, exists := s.revPriorityMap[task.Priority]
+	if !exists {
+		glog.Warningf("Unknown priority %d in conversion, defaulting to normal", task.Priority)
 		priority = types.TaskPriorityNormal
-	case PriorityHigh:
-		priority = types.TaskPriorityHigh
 	}
 
 	return &types.Task{
@@ -303,25 +326,18 @@ func (s *MaintenanceIntegration) convertTasksToTaskSystem(tasks []*MaintenanceTa
 	return result
 }
 
-// convertWorkersToTaskSystem converts workers to task system format
+// convertWorkersToTaskSystem converts workers to task system format using dynamic mapping
 func (s *MaintenanceIntegration) convertWorkersToTaskSystem(workers []*MaintenanceWorker) []*types.Worker {
 	var result []*types.Worker
 	for _, worker := range workers {
 		capabilities := make([]types.TaskType, 0, len(worker.Capabilities))
 		for _, cap := range worker.Capabilities {
-			switch cap {
-			case TaskTypeVacuum:
-				capabilities = append(capabilities, types.TaskTypeVacuum)
-			case TaskTypeErasureCoding:
-				capabilities = append(capabilities, types.TaskTypeErasureCoding)
-			case TaskTypeRemoteUpload:
-				capabilities = append(capabilities, types.TaskTypeRemoteUpload)
-			case TaskTypeFixReplication:
-				capabilities = append(capabilities, types.TaskTypeFixReplication)
-			case TaskTypeBalance:
-				capabilities = append(capabilities, types.TaskTypeBalance)
-			case TaskTypeClusterReplication:
-				capabilities = append(capabilities, types.TaskTypeClusterReplication)
+			// Convert capability using mapping
+			taskType, exists := s.revTaskTypeMap[cap]
+			if exists {
+				capabilities = append(capabilities, taskType)
+			} else {
+				glog.V(3).Infof("Unknown capability %s for worker %s, skipping", cap, worker.ID)
 			}
 		}
 
@@ -336,15 +352,12 @@ func (s *MaintenanceIntegration) convertWorkersToTaskSystem(workers []*Maintenan
 	return result
 }
 
-// GetUIProvider returns the UI provider for a task type
+// GetUIProvider returns the UI provider for a task type using dynamic mapping
 func (s *MaintenanceIntegration) GetUIProvider(taskType MaintenanceTaskType) types.TaskUIProvider {
-	var taskSystemType types.TaskType
-	switch taskType {
-	case TaskTypeVacuum:
-		taskSystemType = types.TaskTypeVacuum
-	case TaskTypeErasureCoding:
-		taskSystemType = types.TaskTypeErasureCoding
-	default:
+	// Convert task type using mapping
+	taskSystemType, exists := s.revTaskTypeMap[taskType]
+	if !exists {
+		glog.V(3).Infof("Unknown task type %s for UI provider", taskType)
 		return nil
 	}
 
