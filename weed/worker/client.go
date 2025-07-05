@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -50,19 +52,19 @@ func NewGrpcAdminClient(adminAddress string, workerID string) *GrpcAdminClient {
 	}
 }
 
-// Connect establishes the gRPC connection and bidirectional stream
+// Connect establishes gRPC connection to admin server with TLS detection
 func (c *GrpcAdminClient) Connect() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	if c.connected {
-		return nil
+		return fmt.Errorf("already connected")
 	}
 
-	// Create gRPC connection with insecure credentials
-	conn, err := pb.GrpcDial(context.Background(), c.adminAddress, false, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Detect TLS support and create appropriate connection
+	conn, err := c.createConnection()
 	if err != nil {
-		return fmt.Errorf("failed to connect to admin server at %s: %v", c.adminAddress, err)
+		return fmt.Errorf("failed to connect to admin server: %v", err)
 	}
 
 	c.conn = conn
@@ -85,6 +87,50 @@ func (c *GrpcAdminClient) Connect() error {
 
 	glog.Infof("Connected to admin server at %s", c.adminAddress)
 	return nil
+}
+
+// createConnection attempts to connect with TLS first, falls back to insecure
+func (c *GrpcAdminClient) createConnection() (*grpc.ClientConn, error) {
+	// First try TLS connection
+	conn, err := c.tryTLSConnection()
+	if err == nil {
+		glog.Infof("Connected to admin server using TLS")
+		return conn, nil
+	}
+
+	glog.V(2).Infof("TLS connection failed: %v, attempting insecure connection", err)
+
+	// Fall back to insecure connection
+	conn, err = c.tryInsecureConnection()
+	if err == nil {
+		glog.Infof("Connected to admin server using insecure connection")
+		return conn, nil
+	}
+
+	return nil, fmt.Errorf("both TLS and insecure connections failed: %v", err)
+}
+
+// tryTLSConnection attempts to connect using TLS
+func (c *GrpcAdminClient) tryTLSConnection() (*grpc.ClientConn, error) {
+	// Create TLS config that skips verification for self-signed certs
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: true, // For development/self-signed certs
+		MinVersion:         tls.VersionTLS12,
+	}
+	creds := credentials.NewTLS(tlsConfig)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	return pb.GrpcDial(ctx, c.adminAddress, false, grpc.WithTransportCredentials(creds))
+}
+
+// tryInsecureConnection attempts to connect without TLS
+func (c *GrpcAdminClient) tryInsecureConnection() (*grpc.ClientConn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	return pb.GrpcDial(ctx, c.adminAddress, false, grpc.WithTransportCredentials(insecure.NewCredentials()))
 }
 
 // Disconnect closes the gRPC connection

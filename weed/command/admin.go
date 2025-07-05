@@ -63,6 +63,7 @@ var cmdAdmin = &Command{
   - Maintenance operations
 
   The admin interface automatically discovers filers from the master servers.
+  A gRPC server for worker connections runs on HTTP port + 10000.
 
   Example Usage:
     weed admin -port=23646 -masters="master1:9333,master2:9333"
@@ -83,8 +84,15 @@ var cmdAdmin = &Command{
 
   Security:
     - Use HTTPS in production by providing TLS certificates
+    - TLS certificates also secure the worker gRPC communication
     - Set strong adminPassword for production deployments
     - Configure firewall rules to restrict admin interface access
+    - Workers automatically detect and use TLS when available
+
+  Worker Communication:
+    - Workers connect via gRPC on HTTP port + 10000
+    - TLS is automatically used if certificates are provided
+    - Workers fall back to insecure connections if TLS is unavailable
 
 `,
 }
@@ -218,11 +226,16 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}
 
 	// Start worker gRPC server for worker connections
-	err = adminServer.StartWorkerGrpcServer(*options.port)
+	err = adminServer.StartWorkerGrpcServer(*options.port, *options.tlsCertPath, *options.tlsKeyPath)
 	if err != nil {
 		return fmt.Errorf("failed to start worker gRPC server: %v", err)
 	}
-	fmt.Printf("Worker gRPC server started on port %d\n", *options.port+10000)
+
+	if *options.tlsCertPath != "" && *options.tlsKeyPath != "" {
+		fmt.Printf("Worker gRPC server (TLS) started on port %d\n", *options.port+10000)
+	} else {
+		fmt.Printf("Worker gRPC server started on port %d\n", *options.port+10000)
+	}
 
 	// Set up cleanup for gRPC server
 	defer func() {

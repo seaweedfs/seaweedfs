@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 // WorkerGrpcServer implements the WorkerService gRPC interface
@@ -52,8 +54,13 @@ func NewWorkerGrpcServer(adminServer *AdminServer) *WorkerGrpcServer {
 	}
 }
 
-// Start starts the gRPC server on the specified port
+// Start starts the gRPC server on the specified port without TLS
 func (s *WorkerGrpcServer) Start(port int) error {
+	return s.StartWithTLS(port, "", "")
+}
+
+// StartWithTLS starts the gRPC server on the specified port with optional TLS
+func (s *WorkerGrpcServer) StartWithTLS(port int, tlsCertPath, tlsKeyPath string) error {
 	if s.running {
 		return fmt.Errorf("worker gRPC server is already running")
 	}
@@ -64,10 +71,33 @@ func (s *WorkerGrpcServer) Start(port int) error {
 		return fmt.Errorf("failed to listen on port %d: %v", port, err)
 	}
 
-	// Create gRPC server
-	s.grpcServer = pb.NewGrpcServer()
-	worker_pb.RegisterWorkerServiceServer(s.grpcServer, s)
+	// Create gRPC server with optional TLS
+	var grpcServer *grpc.Server
 
+	if tlsCertPath != "" && tlsKeyPath != "" {
+		// Load TLS certificate
+		cert, err := tls.LoadX509KeyPair(tlsCertPath, tlsKeyPath)
+		if err != nil {
+			return fmt.Errorf("failed to load TLS certificate: %v", err)
+		}
+
+		// Create TLS credentials
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}
+		creds := credentials.NewTLS(tlsConfig)
+
+		grpcServer = pb.NewGrpcServer(grpc.Creds(creds))
+		glog.Infof("Worker gRPC server configured with TLS")
+	} else {
+		grpcServer = pb.NewGrpcServer()
+		glog.Infof("Worker gRPC server configured without TLS")
+	}
+
+	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
+
+	s.grpcServer = grpcServer
 	s.listener = listener
 	s.running = true
 
@@ -76,7 +106,12 @@ func (s *WorkerGrpcServer) Start(port int) error {
 
 	// Start serving in a goroutine
 	go func() {
-		glog.Infof("Worker gRPC server listening on port %d", port)
+		if tlsCertPath != "" && tlsKeyPath != "" {
+			glog.Infof("Worker gRPC server (TLS) listening on port %d", port)
+		} else {
+			glog.Infof("Worker gRPC server listening on port %d", port)
+		}
+
 		if err := s.grpcServer.Serve(listener); err != nil {
 			if s.running {
 				glog.Errorf("Worker gRPC server error: %v", err)
