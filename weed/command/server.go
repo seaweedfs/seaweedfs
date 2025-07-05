@@ -1,16 +1,16 @@
 package command
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
@@ -357,4 +357,14 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	select {}
+}
+
+func newHttpServer(h http.Handler, tlsConfig *tls.Config) *http.Server {
+	s := &http.Server{
+		Handler: h,
+	}
+	if tlsConfig != nil {
+		s.TLSConfig = tlsConfig.Clone()
+	}
+	return s
 }

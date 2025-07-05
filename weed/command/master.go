@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -264,19 +265,20 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		clientCertFile = viper.GetString("https.master.ca")
 	}
 
-	httpS := &http.Server{Handler: r}
 	if masterLocalListener != nil {
-		go httpS.Serve(masterLocalListener)
+		go newHttpServer(r, nil).Serve(masterLocalListener)
 	}
 
+	var tlsConfig *tls.Config
 	if useMTLS {
-		httpS.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
+		tlsConfig = security.LoadClientTLSHTTP(clientCertFile)
+		security.FixTlsConfig(util.GetViper(), tlsConfig)
 	}
 
 	if useTLS {
-		go httpS.ServeTLS(masterListener, certFile, keyFile)
+		go newHttpServer(r, tlsConfig).ServeTLS(masterListener, certFile, keyFile)
 	} else {
-		go httpS.Serve(masterListener)
+		go newHttpServer(r, nil).Serve(masterListener)
 	}
 
 	grace.OnInterrupt(ms.Shutdown)

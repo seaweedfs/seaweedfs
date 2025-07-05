@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +12,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/spf13/viper"
+	"google.golang.org/grpc/credentials/tls/certprovider"
+	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
+	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -22,10 +26,7 @@ import (
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc/credentials/tls/certprovider"
-	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
-	"google.golang.org/grpc/reflection"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 var (
@@ -372,7 +373,6 @@ func (fo *FilerOptions) startFiler() {
 	}
 	go grpcS.Serve(grpcL)
 
-	httpS := &http.Server{Handler: defaultMux}
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
 		if localSocket == "" {
@@ -387,7 +387,7 @@ func (fo *FilerOptions) startFiler() {
 			if err != nil {
 				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
 			}
-			httpS.Serve(filerSocketListener)
+			newHttpServer(defaultMux, nil).Serve(filerSocketListener)
 		}()
 	}
 
@@ -420,31 +420,33 @@ func (fo *FilerOptions) startFiler() {
 			clientAuth = tls.RequireAndVerifyClientCert
 		}
 
-		httpS.TLSConfig = &tls.Config{
+		tlsConfig := &tls.Config{
 			GetCertificate: fo.GetCertificateWithUpdate,
 			ClientAuth:     clientAuth,
 			ClientCAs:      caCertPool,
 		}
 
+		security.FixTlsConfig(util.GetViper(), tlsConfig)
+
 		if filerLocalListener != nil {
 			go func() {
-				if err := httpS.ServeTLS(filerLocalListener, "", ""); err != nil {
+				if err := newHttpServer(defaultMux, tlsConfig).ServeTLS(filerLocalListener, "", ""); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", e)
 				}
 			}()
 		}
-		if err := httpS.ServeTLS(filerListener, "", ""); err != nil {
+		if err := newHttpServer(defaultMux, tlsConfig).ServeTLS(filerListener, "", ""); err != nil {
 			glog.Fatalf("Filer Fail to serve: %v", e)
 		}
 	} else {
 		if filerLocalListener != nil {
 			go func() {
-				if err := httpS.Serve(filerLocalListener); err != nil {
+				if err := newHttpServer(defaultMux, nil).Serve(filerLocalListener); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", e)
 				}
 			}()
 		}
-		if err := httpS.Serve(filerListener); err != nil {
+		if err := newHttpServer(defaultMux, nil).Serve(filerListener); err != nil {
 			glog.Fatalf("Filer Fail to serve: %v", e)
 		}
 	}

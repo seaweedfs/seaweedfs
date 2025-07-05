@@ -3,19 +3,19 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
-	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/gorilla/mux"
+	"google.golang.org/grpc/reflection"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"google.golang.org/grpc/reflection"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 var (
@@ -144,11 +144,10 @@ func startMasterFollower(masterOptions MasterOptions) {
 	go ms.MasterClient.KeepConnectedToMaster(context.Background())
 
 	// start http server
-	httpS := &http.Server{Handler: r}
 	if masterLocalListener != nil {
-		go httpS.Serve(masterLocalListener)
+		go newHttpServer(r, nil).Serve(masterLocalListener)
 	}
-	go httpS.Serve(masterListener)
+	go newHttpServer(r, nil).Serve(masterListener)
 
 	select {}
 }
