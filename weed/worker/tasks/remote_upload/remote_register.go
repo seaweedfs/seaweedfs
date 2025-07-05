@@ -14,25 +14,3 @@ func RegisterSimple(registry *types.TaskRegistry) {
 
 	glog.V(1).Infof("Registered simplified remote upload task")
 }
-
-// GetSimpleDetector returns the simple detector for configuration
-func GetSimpleDetector(registry *types.TaskRegistry) *SimpleDetector {
-	detector := registry.GetDetector(types.TaskTypeRemoteUpload)
-	if detector != nil {
-		if remoteDetector, ok := detector.(*SimpleDetector); ok {
-			return remoteDetector
-		}
-	}
-	return nil
-}
-
-// GetSimpleScheduler returns the simple scheduler for configuration
-func GetSimpleScheduler(registry *types.TaskRegistry) *SimpleScheduler {
-	scheduler := registry.GetScheduler(types.TaskTypeRemoteUpload)
-	if scheduler != nil {
-		if remoteScheduler, ok := scheduler.(*SimpleScheduler); ok {
-			return remoteScheduler
-		}
-	}
-	return nil
-}

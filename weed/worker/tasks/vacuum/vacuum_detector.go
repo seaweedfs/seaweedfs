@@ -7,45 +7,49 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// SimpleDetector implements vacuum task detection using code instead of schemas
-type SimpleDetector struct {
+// VacuumDetector implements vacuum task detection using code instead of schemas
+type VacuumDetector struct {
 	enabled          bool
 	garbageThreshold float64
-	scanInterval     time.Duration
 	minVolumeAge     time.Duration
+	scanInterval     time.Duration
 }
 
-// NewSimpleDetector creates a new simple vacuum detector
-func NewSimpleDetector() *SimpleDetector {
-	return &SimpleDetector{
+// Compile-time interface assertions
+var (
+	_ types.TaskDetector               = (*VacuumDetector)(nil)
+	_ types.PolicyConfigurableDetector = (*VacuumDetector)(nil)
+)
+
+// NewVacuumDetector creates a new simple vacuum detector
+func NewVacuumDetector() *VacuumDetector {
+	return &VacuumDetector{
 		enabled:          true,
-		garbageThreshold: 0.3, // 30% garbage ratio
+		garbageThreshold: 0.3,
+		minVolumeAge:     24 * time.Hour,
 		scanInterval:     30 * time.Minute,
-		minVolumeAge:     1 * time.Hour,
 	}
 }
 
 // GetTaskType returns the task type
-func (d *SimpleDetector) GetTaskType() types.TaskType {
+func (d *VacuumDetector) GetTaskType() types.TaskType {
 	return types.TaskTypeVacuum
 }
 
 // ScanForTasks scans for volumes that need vacuum operations
-func (d *SimpleDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo) ([]*types.TaskDetectionResult, error) {
+func (d *VacuumDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo) ([]*types.TaskDetectionResult, error) {
 	if !d.enabled {
 		return nil, nil
 	}
 
 	var results []*types.TaskDetectionResult
-	now := time.Now()
 
 	for _, metric := range volumeMetrics {
 		// Check if volume needs vacuum
 		if metric.GarbageRatio >= d.garbageThreshold && metric.Age >= d.minVolumeAge {
-
-			// Determine priority based on garbage ratio
+			// Higher priority for volumes with more garbage
 			priority := types.TaskPriorityNormal
-			if metric.GarbageRatio > 0.7 {
+			if metric.GarbageRatio > 0.6 {
 				priority = types.TaskPriorityHigh
 			}
 
@@ -55,66 +59,66 @@ func (d *SimpleDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics
 				Server:     metric.Server,
 				Collection: metric.Collection,
 				Priority:   priority,
-				Reason:     "Garbage ratio exceeds threshold",
+				Reason:     "Volume has excessive garbage requiring vacuum",
 				Parameters: map[string]interface{}{
 					"garbage_ratio": metric.GarbageRatio,
-					"threshold":     d.garbageThreshold,
+					"volume_age":    metric.Age.String(),
 				},
-				ScheduleAt: now,
+				ScheduleAt: time.Now(),
 			}
 			results = append(results, result)
 		}
 	}
 
-	glog.V(2).Infof("Vacuum detector found %d tasks to schedule", len(results))
+	glog.V(2).Infof("Vacuum detector found %d volumes needing vacuum", len(results))
 	return results, nil
 }
 
-// ScanInterval returns how often this task type should be scanned
-func (d *SimpleDetector) ScanInterval() time.Duration {
+// ScanInterval returns how often this detector should scan
+func (d *VacuumDetector) ScanInterval() time.Duration {
 	return d.scanInterval
 }
 
-// IsEnabled returns whether this task type is enabled
-func (d *SimpleDetector) IsEnabled() bool {
+// IsEnabled returns whether this detector is enabled
+func (d *VacuumDetector) IsEnabled() bool {
 	return d.enabled
 }
 
 // Configuration setters
 
-// SetEnabled sets whether the detector is enabled
-func (d *SimpleDetector) SetEnabled(enabled bool) {
+func (d *VacuumDetector) SetEnabled(enabled bool) {
 	d.enabled = enabled
 }
 
-// SetGarbageThreshold sets the garbage ratio threshold for triggering vacuum
-func (d *SimpleDetector) SetGarbageThreshold(threshold float64) {
+func (d *VacuumDetector) SetGarbageThreshold(threshold float64) {
 	d.garbageThreshold = threshold
 }
 
-// SetScanInterval sets how often to scan for vacuum tasks
-func (d *SimpleDetector) SetScanInterval(interval time.Duration) {
+func (d *VacuumDetector) SetScanInterval(interval time.Duration) {
 	d.scanInterval = interval
 }
 
-// SetMinVolumeAge sets the minimum age a volume must have before being vacuum eligible
-func (d *SimpleDetector) SetMinVolumeAge(age time.Duration) {
+func (d *VacuumDetector) SetMinVolumeAge(age time.Duration) {
 	d.minVolumeAge = age
 }
 
 // ConfigureFromPolicy configures the detector based on the maintenance policy
-func (d *SimpleDetector) ConfigureFromPolicy(policy interface{}) {
+func (d *VacuumDetector) ConfigureFromPolicy(policy interface{}) {
 	// Type assert to the maintenance policy type we expect
-	// This allows flexibility while keeping type safety
 	if maintenancePolicy, ok := policy.(interface {
 		GetVacuumEnabled() bool
 		GetVacuumGarbageRatio() float64
-		GetVacuumMinInterval() int
 	}); ok {
 		d.SetEnabled(maintenancePolicy.GetVacuumEnabled())
 		d.SetGarbageThreshold(maintenancePolicy.GetVacuumGarbageRatio())
-		d.SetMinVolumeAge(time.Duration(maintenancePolicy.GetVacuumMinInterval()) * time.Hour)
 	} else {
-		glog.V(1).Infof("🧹 Could not configure vacuum detector from policy: unsupported policy type")
+		glog.V(1).Infof("Could not configure vacuum detector from policy: unsupported policy type")
 	}
+}
+
+// Backward compatibility aliases
+type SimpleDetector = VacuumDetector
+
+func NewSimpleDetector() *VacuumDetector {
+	return NewVacuumDetector()
 }

@@ -17,6 +17,11 @@ type Task struct {
 	collection string
 }
 
+// Compile-time interface assertions
+var (
+	_ types.TaskInterface = (*Task)(nil)
+)
+
 // NewTask creates a new remote upload task instance
 func NewTask(server string, volumeID uint32, collection string) *Task {
 	task := &Task{

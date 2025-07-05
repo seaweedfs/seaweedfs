@@ -7,17 +7,22 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// Detector implements erasure coding task detection
-type Detector struct {
+// EcDetector implements erasure coding task detection
+type EcDetector struct {
 	enabled        bool
 	volumeAgeHours int
 	fullnessRatio  float64
 	scanInterval   time.Duration
 }
 
-// NewDetector creates a new erasure coding detector
-func NewDetector() *Detector {
-	return &Detector{
+// Compile-time interface assertions
+var (
+	_ types.TaskDetector = (*EcDetector)(nil)
+)
+
+// NewEcDetector creates a new erasure coding detector
+func NewEcDetector() *EcDetector {
+	return &EcDetector{
 		enabled:        false,  // Conservative default
 		volumeAgeHours: 24 * 7, // 1 week
 		fullnessRatio:  0.9,    // 90% full
@@ -26,12 +31,12 @@ func NewDetector() *Detector {
 }
 
 // GetTaskType returns the task type
-func (d *Detector) GetTaskType() types.TaskType {
+func (d *EcDetector) GetTaskType() types.TaskType {
 	return types.TaskTypeErasureCoding
 }
 
 // ScanForTasks scans for volumes that should be converted to erasure coding
-func (d *Detector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo) ([]*types.TaskDetectionResult, error) {
+func (d *EcDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo) ([]*types.TaskDetectionResult, error) {
 	if !d.enabled {
 		return nil, nil
 	}
@@ -75,35 +80,35 @@ func (d *Detector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, clus
 }
 
 // ScanInterval returns how often this task type should be scanned
-func (d *Detector) ScanInterval() time.Duration {
+func (d *EcDetector) ScanInterval() time.Duration {
 	return d.scanInterval
 }
 
 // IsEnabled returns whether this task type is enabled
-func (d *Detector) IsEnabled() bool {
+func (d *EcDetector) IsEnabled() bool {
 	return d.enabled
 }
 
 // Configuration setters
 
-func (d *Detector) SetEnabled(enabled bool) {
+func (d *EcDetector) SetEnabled(enabled bool) {
 	d.enabled = enabled
 }
 
-func (d *Detector) SetVolumeAgeHours(hours int) {
+func (d *EcDetector) SetVolumeAgeHours(hours int) {
 	d.volumeAgeHours = hours
 }
 
-func (d *Detector) SetFullnessRatio(ratio float64) {
+func (d *EcDetector) SetFullnessRatio(ratio float64) {
 	d.fullnessRatio = ratio
 }
 
-func (d *Detector) SetScanInterval(interval time.Duration) {
+func (d *EcDetector) SetScanInterval(interval time.Duration) {
 	d.scanInterval = interval
 }
 
 // ConfigureFromPolicy configures the detector based on the maintenance policy
-func (d *Detector) ConfigureFromPolicy(policy interface{}) {
+func (d *EcDetector) ConfigureFromPolicy(policy interface{}) {
 	// Type assert to the maintenance policy type we expect
 	if maintenancePolicy, ok := policy.(interface {
 		GetECEnabled() bool

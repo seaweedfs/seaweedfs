@@ -6,16 +6,21 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// SimpleScheduler implements vacuum task scheduling using code instead of schemas
-type SimpleScheduler struct {
+// VacuumScheduler implements vacuum task scheduling using code instead of schemas
+type VacuumScheduler struct {
 	enabled       bool
 	maxConcurrent int
 	minInterval   time.Duration
 }
 
-// NewSimpleScheduler creates a new simple vacuum scheduler
-func NewSimpleScheduler() *SimpleScheduler {
-	return &SimpleScheduler{
+// Compile-time interface assertions
+var (
+	_ types.TaskScheduler = (*VacuumScheduler)(nil)
+)
+
+// NewVacuumScheduler creates a new simple vacuum scheduler
+func NewVacuumScheduler() *VacuumScheduler {
+	return &VacuumScheduler{
 		enabled:       true,
 		maxConcurrent: 2,
 		minInterval:   6 * time.Hour,
@@ -23,12 +28,12 @@ func NewSimpleScheduler() *SimpleScheduler {
 }
 
 // GetTaskType returns the task type
-func (s *SimpleScheduler) GetTaskType() types.TaskType {
+func (s *VacuumScheduler) GetTaskType() types.TaskType {
 	return types.TaskTypeVacuum
 }
 
 // CanScheduleNow determines if a vacuum task can be scheduled right now
-func (s *SimpleScheduler) CanScheduleNow(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker) bool {
+func (s *VacuumScheduler) CanScheduleNow(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker) bool {
 	// Check if scheduler is enabled
 	if !s.enabled {
 		return false
@@ -61,7 +66,7 @@ func (s *SimpleScheduler) CanScheduleNow(task *types.Task, runningTasks []*types
 }
 
 // GetPriority returns the priority for this task
-func (s *SimpleScheduler) GetPriority(task *types.Task) types.TaskPriority {
+func (s *VacuumScheduler) GetPriority(task *types.Task) types.TaskPriority {
 	// Could adjust priority based on task parameters
 	if params, ok := task.Parameters["garbage_ratio"].(float64); ok {
 		if params > 0.8 {
@@ -72,33 +77,37 @@ func (s *SimpleScheduler) GetPriority(task *types.Task) types.TaskPriority {
 }
 
 // GetMaxConcurrent returns max concurrent tasks of this type
-func (s *SimpleScheduler) GetMaxConcurrent() int {
+func (s *VacuumScheduler) GetMaxConcurrent() int {
 	return s.maxConcurrent
 }
 
 // GetDefaultRepeatInterval returns the default interval to wait before repeating vacuum tasks
-func (s *SimpleScheduler) GetDefaultRepeatInterval() time.Duration {
+func (s *VacuumScheduler) GetDefaultRepeatInterval() time.Duration {
 	return s.minInterval
 }
 
 // IsEnabled returns whether this scheduler is enabled
-func (s *SimpleScheduler) IsEnabled() bool {
+func (s *VacuumScheduler) IsEnabled() bool {
 	return s.enabled
 }
 
 // Configuration setters
 
-// SetEnabled sets whether the scheduler is enabled
-func (s *SimpleScheduler) SetEnabled(enabled bool) {
+func (s *VacuumScheduler) SetEnabled(enabled bool) {
 	s.enabled = enabled
 }
 
-// SetMaxConcurrent sets the maximum number of concurrent vacuum tasks
-func (s *SimpleScheduler) SetMaxConcurrent(max int) {
+func (s *VacuumScheduler) SetMaxConcurrent(max int) {
 	s.maxConcurrent = max
 }
 
-// SetMinInterval sets the minimum interval between vacuum operations on the same volume
-func (s *SimpleScheduler) SetMinInterval(interval time.Duration) {
+func (s *VacuumScheduler) SetMinInterval(interval time.Duration) {
 	s.minInterval = interval
+}
+
+// Backward compatibility aliases
+type SimpleScheduler = VacuumScheduler
+
+func NewSimpleScheduler() *VacuumScheduler {
+	return NewVacuumScheduler()
 }

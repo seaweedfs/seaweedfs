@@ -14,31 +14,3 @@ func RegisterSimple(registry *types.TaskRegistry) {
 
 	glog.V(1).Infof("✅ Registered simplified vacuum task (detector + scheduler)")
 }
-
-// GetDetector returns the vacuum detector for configuration
-func GetDetector(registry *types.TaskRegistry) *SimpleDetector {
-	detector := registry.GetDetector(types.TaskTypeVacuum)
-	if detector == nil {
-		return nil
-	}
-
-	if vacuumDetector, ok := detector.(*SimpleDetector); ok {
-		return vacuumDetector
-	}
-
-	return nil
-}
-
-// GetScheduler returns the vacuum scheduler for configuration
-func GetScheduler(registry *types.TaskRegistry) *SimpleScheduler {
-	scheduler := registry.GetScheduler(types.TaskTypeVacuum)
-	if scheduler == nil {
-		return nil
-	}
-
-	if vacuumScheduler, ok := scheduler.(*SimpleScheduler); ok {
-		return vacuumScheduler
-	}
-
-	return nil
-}

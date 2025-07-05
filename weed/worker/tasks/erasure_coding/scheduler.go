@@ -7,27 +7,32 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// SimpleScheduler implements erasure coding task scheduling
-type SimpleScheduler struct {
+// ECScheduler implements erasure coding task scheduling
+type ECScheduler struct {
 	maxConcurrent int
 	enabled       bool
 }
 
-// NewSimpleScheduler creates a new erasure coding scheduler
-func NewSimpleScheduler() *SimpleScheduler {
-	return &SimpleScheduler{
+// Compile-time interface assertions
+var (
+	_ types.TaskScheduler = (*ECScheduler)(nil)
+)
+
+// NewECScheduler creates a new erasure coding scheduler
+func NewECScheduler() *ECScheduler {
+	return &ECScheduler{
 		maxConcurrent: 1,     // Conservative default
 		enabled:       false, // Conservative default
 	}
 }
 
 // GetTaskType returns the task type
-func (s *SimpleScheduler) GetTaskType() types.TaskType {
+func (s *ECScheduler) GetTaskType() types.TaskType {
 	return types.TaskTypeErasureCoding
 }
 
 // CanScheduleNow determines if an erasure coding task can be scheduled now
-func (s *SimpleScheduler) CanScheduleNow(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker) bool {
+func (s *ECScheduler) CanScheduleNow(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker) bool {
 	if !s.enabled {
 		return false
 	}
@@ -65,22 +70,22 @@ func (s *SimpleScheduler) CanScheduleNow(task *types.Task, runningTasks []*types
 }
 
 // GetMaxConcurrent returns the maximum number of concurrent tasks
-func (s *SimpleScheduler) GetMaxConcurrent() int {
+func (s *ECScheduler) GetMaxConcurrent() int {
 	return s.maxConcurrent
 }
 
 // GetDefaultRepeatInterval returns the default interval to wait before repeating EC tasks
-func (s *SimpleScheduler) GetDefaultRepeatInterval() time.Duration {
+func (s *ECScheduler) GetDefaultRepeatInterval() time.Duration {
 	return 24 * time.Hour // Don't repeat EC for 24 hours
 }
 
 // GetPriority returns the priority for this task
-func (s *SimpleScheduler) GetPriority(task *types.Task) types.TaskPriority {
+func (s *ECScheduler) GetPriority(task *types.Task) types.TaskPriority {
 	return types.TaskPriorityLow // EC is not urgent
 }
 
 // WasTaskRecentlyCompleted checks if a similar task was recently completed
-func (s *SimpleScheduler) WasTaskRecentlyCompleted(task *types.Task, completedTasks []*types.Task, now time.Time) bool {
+func (s *ECScheduler) WasTaskRecentlyCompleted(task *types.Task, completedTasks []*types.Task, now time.Time) bool {
 	// Don't repeat EC for 24 hours
 	interval := 24 * time.Hour
 	cutoff := now.Add(-interval)
@@ -99,16 +104,23 @@ func (s *SimpleScheduler) WasTaskRecentlyCompleted(task *types.Task, completedTa
 }
 
 // IsEnabled returns whether this task type is enabled
-func (s *SimpleScheduler) IsEnabled() bool {
+func (s *ECScheduler) IsEnabled() bool {
 	return s.enabled
 }
 
 // Configuration setters
 
-func (s *SimpleScheduler) SetEnabled(enabled bool) {
+func (s *ECScheduler) SetEnabled(enabled bool) {
 	s.enabled = enabled
 }
 
-func (s *SimpleScheduler) SetMaxConcurrent(max int) {
+func (s *ECScheduler) SetMaxConcurrent(max int) {
 	s.maxConcurrent = max
+}
+
+// Backward compatibility aliases
+type SimpleScheduler = ECScheduler
+
+func NewSimpleScheduler() *ECScheduler {
+	return NewECScheduler()
 }

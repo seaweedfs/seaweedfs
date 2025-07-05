@@ -12,12 +12,12 @@ import (
 
 // UIProvider provides the UI for vacuum task configuration
 type UIProvider struct {
-	detector  *SimpleDetector
-	scheduler *SimpleScheduler
+	detector  *VacuumDetector
+	scheduler *VacuumScheduler
 }
 
 // NewUIProvider creates a new vacuum UI provider
-func NewUIProvider(detector *SimpleDetector, scheduler *SimpleScheduler) *UIProvider {
+func NewUIProvider(detector *VacuumDetector, scheduler *VacuumScheduler) *UIProvider {
 	return &UIProvider{
 		detector:  detector,
 		scheduler: scheduler,
@@ -348,7 +348,7 @@ func (ui *UIProvider) getCurrentVacuumConfig() *VacuumConfig {
 }
 
 // RegisterUI registers the vacuum UI provider with the UI registry
-func RegisterUI(uiRegistry *types.UIRegistry, detector *SimpleDetector, scheduler *SimpleScheduler) {
+func RegisterUI(uiRegistry *types.UIRegistry, detector *VacuumDetector, scheduler *VacuumScheduler) {
 	uiProvider := NewUIProvider(detector, scheduler)
 	uiRegistry.RegisterUI(uiProvider)
 

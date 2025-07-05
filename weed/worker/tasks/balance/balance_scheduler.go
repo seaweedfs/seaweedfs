@@ -7,17 +7,22 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// SimpleScheduler implements TaskScheduler for balance tasks
-type SimpleScheduler struct {
+// BalanceScheduler implements TaskScheduler for balance tasks
+type BalanceScheduler struct {
 	enabled       bool
 	maxConcurrent int
 	minInterval   time.Duration
 	lastScheduled map[string]time.Time // track when we last scheduled a balance for each task type
 }
 
-// NewSimpleScheduler creates a new balance scheduler
-func NewSimpleScheduler() *SimpleScheduler {
-	return &SimpleScheduler{
+// Compile-time interface assertions
+var (
+	_ types.TaskScheduler = (*BalanceScheduler)(nil)
+)
+
+// NewBalanceScheduler creates a new balance scheduler
+func NewBalanceScheduler() *BalanceScheduler {
+	return &BalanceScheduler{
 		enabled:       true,
 		maxConcurrent: 1, // Only run one balance at a time
 		minInterval:   6 * time.Hour,
@@ -26,12 +31,12 @@ func NewSimpleScheduler() *SimpleScheduler {
 }
 
 // GetTaskType returns the task type
-func (s *SimpleScheduler) GetTaskType() types.TaskType {
+func (s *BalanceScheduler) GetTaskType() types.TaskType {
 	return types.TaskTypeBalance
 }
 
 // CanScheduleNow determines if a balance task can be scheduled
-func (s *SimpleScheduler) CanScheduleNow(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker) bool {
+func (s *BalanceScheduler) CanScheduleNow(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker) bool {
 	if !s.enabled {
 		return false
 	}
@@ -83,46 +88,46 @@ func (s *SimpleScheduler) CanScheduleNow(task *types.Task, runningTasks []*types
 }
 
 // GetPriority returns the priority for balance tasks
-func (s *SimpleScheduler) GetPriority(task *types.Task) types.TaskPriority {
+func (s *BalanceScheduler) GetPriority(task *types.Task) types.TaskPriority {
 	// Balance is typically normal priority - not urgent but important for optimization
 	return types.TaskPriorityNormal
 }
 
 // GetMaxConcurrent returns the maximum concurrent balance tasks
-func (s *SimpleScheduler) GetMaxConcurrent() int {
+func (s *BalanceScheduler) GetMaxConcurrent() int {
 	return s.maxConcurrent
 }
 
 // GetDefaultRepeatInterval returns the default interval to wait before repeating balance tasks
-func (s *SimpleScheduler) GetDefaultRepeatInterval() time.Duration {
+func (s *BalanceScheduler) GetDefaultRepeatInterval() time.Duration {
 	return s.minInterval
 }
 
 // IsEnabled returns whether the scheduler is enabled
-func (s *SimpleScheduler) IsEnabled() bool {
+func (s *BalanceScheduler) IsEnabled() bool {
 	return s.enabled
 }
 
 // SetEnabled sets whether the scheduler is enabled
-func (s *SimpleScheduler) SetEnabled(enabled bool) {
+func (s *BalanceScheduler) SetEnabled(enabled bool) {
 	s.enabled = enabled
 	glog.V(1).Infof("🔄 Balance scheduler enabled: %v", enabled)
 }
 
 // SetMaxConcurrent sets the maximum concurrent balance tasks
-func (s *SimpleScheduler) SetMaxConcurrent(max int) {
+func (s *BalanceScheduler) SetMaxConcurrent(max int) {
 	s.maxConcurrent = max
 	glog.V(1).Infof("🔄 Balance max concurrent set to: %d", max)
 }
 
 // SetMinInterval sets the minimum interval between balance operations
-func (s *SimpleScheduler) SetMinInterval(interval time.Duration) {
+func (s *BalanceScheduler) SetMinInterval(interval time.Duration) {
 	s.minInterval = interval
 	glog.V(1).Infof("🔄 Balance minimum interval set to: %v", interval)
 }
 
 // GetLastScheduled returns when we last scheduled this task type
-func (s *SimpleScheduler) GetLastScheduled(taskKey string) time.Time {
+func (s *BalanceScheduler) GetLastScheduled(taskKey string) time.Time {
 	if lastTime, exists := s.lastScheduled[taskKey]; exists {
 		return lastTime
 	}
@@ -130,6 +135,6 @@ func (s *SimpleScheduler) GetLastScheduled(taskKey string) time.Time {
 }
 
 // SetLastScheduled updates when we last scheduled this task type
-func (s *SimpleScheduler) SetLastScheduled(taskKey string, when time.Time) {
+func (s *BalanceScheduler) SetLastScheduled(taskKey string, when time.Time) {
 	s.lastScheduled[taskKey] = when
 }

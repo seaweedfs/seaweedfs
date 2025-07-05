@@ -7,17 +7,22 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// SimpleDetector implements erasure coding task detection
-type SimpleDetector struct {
+// ECDetector implements erasure coding task detection
+type ECDetector struct {
 	enabled        bool
 	volumeAgeHours int
 	fullnessRatio  float64
 	scanInterval   time.Duration
 }
 
-// NewSimpleDetector creates a new erasure coding detector
-func NewSimpleDetector() *SimpleDetector {
-	return &SimpleDetector{
+// Compile-time interface assertions
+var (
+	_ types.TaskDetector = (*ECDetector)(nil)
+)
+
+// NewECDetector creates a new erasure coding detector
+func NewECDetector() *ECDetector {
+	return &ECDetector{
 		enabled:        false,  // Conservative default
 		volumeAgeHours: 24 * 7, // 1 week
 		fullnessRatio:  0.9,    // 90% full
@@ -26,12 +31,12 @@ func NewSimpleDetector() *SimpleDetector {
 }
 
 // GetTaskType returns the task type
-func (d *SimpleDetector) GetTaskType() types.TaskType {
+func (d *ECDetector) GetTaskType() types.TaskType {
 	return types.TaskTypeErasureCoding
 }
 
 // ScanForTasks scans for volumes that should be converted to erasure coding
-func (d *SimpleDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo) ([]*types.TaskDetectionResult, error) {
+func (d *ECDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo) ([]*types.TaskDetectionResult, error) {
 	if !d.enabled {
 		return nil, nil
 	}
@@ -75,29 +80,36 @@ func (d *SimpleDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics
 }
 
 // ScanInterval returns how often this task type should be scanned
-func (d *SimpleDetector) ScanInterval() time.Duration {
+func (d *ECDetector) ScanInterval() time.Duration {
 	return d.scanInterval
 }
 
 // IsEnabled returns whether this task type is enabled
-func (d *SimpleDetector) IsEnabled() bool {
+func (d *ECDetector) IsEnabled() bool {
 	return d.enabled
 }
 
 // Configuration setters
 
-func (d *SimpleDetector) SetEnabled(enabled bool) {
+func (d *ECDetector) SetEnabled(enabled bool) {
 	d.enabled = enabled
 }
 
-func (d *SimpleDetector) SetVolumeAgeHours(hours int) {
+func (d *ECDetector) SetVolumeAgeHours(hours int) {
 	d.volumeAgeHours = hours
 }
 
-func (d *SimpleDetector) SetFullnessRatio(ratio float64) {
+func (d *ECDetector) SetFullnessRatio(ratio float64) {
 	d.fullnessRatio = ratio
 }
 
-func (d *SimpleDetector) SetScanInterval(interval time.Duration) {
+func (d *ECDetector) SetScanInterval(interval time.Duration) {
 	d.scanInterval = interval
+}
+
+// Backward compatibility aliases
+type SimpleDetector = ECDetector
+
+func NewSimpleDetector() *ECDetector {
+	return NewECDetector()
 }

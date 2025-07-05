@@ -8,8 +8,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// SimpleDetector implements TaskDetector for balance tasks
-type SimpleDetector struct {
+// BalanceDetector implements TaskDetector for balance tasks
+type BalanceDetector struct {
 	enabled          bool
 	threshold        float64 // Imbalance threshold (0.1 = 10%)
 	minCheckInterval time.Duration
@@ -17,9 +17,14 @@ type SimpleDetector struct {
 	lastCheck        time.Time
 }
 
-// NewSimpleDetector creates a new balance detector
-func NewSimpleDetector() *SimpleDetector {
-	return &SimpleDetector{
+// Compile-time interface assertions
+var (
+	_ types.TaskDetector = (*BalanceDetector)(nil)
+)
+
+// NewBalanceDetector creates a new balance detector
+func NewBalanceDetector() *BalanceDetector {
+	return &BalanceDetector{
 		enabled:          true,
 		threshold:        0.1, // 10% imbalance threshold
 		minCheckInterval: 1 * time.Hour,
@@ -29,12 +34,12 @@ func NewSimpleDetector() *SimpleDetector {
 }
 
 // GetTaskType returns the task type
-func (d *SimpleDetector) GetTaskType() types.TaskType {
+func (d *BalanceDetector) GetTaskType() types.TaskType {
 	return types.TaskTypeBalance
 }
 
 // ScanForTasks checks if cluster balance is needed
-func (d *SimpleDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo) ([]*types.TaskDetectionResult, error) {
+func (d *BalanceDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo) ([]*types.TaskDetectionResult, error) {
 	if !d.enabled {
 		return nil, nil
 	}
@@ -117,35 +122,35 @@ func (d *SimpleDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics
 }
 
 // ScanInterval returns how often to scan
-func (d *SimpleDetector) ScanInterval() time.Duration {
+func (d *BalanceDetector) ScanInterval() time.Duration {
 	return d.minCheckInterval
 }
 
 // IsEnabled returns whether the detector is enabled
-func (d *SimpleDetector) IsEnabled() bool {
+func (d *BalanceDetector) IsEnabled() bool {
 	return d.enabled
 }
 
 // SetEnabled sets whether the detector is enabled
-func (d *SimpleDetector) SetEnabled(enabled bool) {
+func (d *BalanceDetector) SetEnabled(enabled bool) {
 	d.enabled = enabled
 	glog.V(1).Infof("🔄 Balance detector enabled: %v", enabled)
 }
 
 // SetThreshold sets the imbalance threshold
-func (d *SimpleDetector) SetThreshold(threshold float64) {
+func (d *BalanceDetector) SetThreshold(threshold float64) {
 	d.threshold = threshold
 	glog.V(1).Infof("🔄 Balance threshold set to: %.1f%%", threshold*100)
 }
 
 // SetMinCheckInterval sets the minimum time between balance checks
-func (d *SimpleDetector) SetMinCheckInterval(interval time.Duration) {
+func (d *BalanceDetector) SetMinCheckInterval(interval time.Duration) {
 	d.minCheckInterval = interval
 	glog.V(1).Infof("🔄 Balance check interval set to: %v", interval)
 }
 
 // SetMinVolumeCount sets the minimum volume count for balance operations
-func (d *SimpleDetector) SetMinVolumeCount(count int) {
+func (d *BalanceDetector) SetMinVolumeCount(count int) {
 	d.minVolumeCount = count
 	glog.V(1).Infof("🔄 Balance minimum volume count set to: %d", count)
 }
