@@ -567,24 +567,6 @@ func WorkerStatusBadge(status string) templ.Component {
 }
 
 // Helper functions (would be defined in Go)
-func getTaskTypeName(taskType dash.MaintenanceTaskType) string {
-	switch taskType {
-	case dash.TaskTypeVacuum:
-		return "Vacuum"
-	case dash.TaskTypeErasureCoding:
-		return "Erasure Coding"
-	case dash.TaskTypeRemoteUpload:
-		return "Remote Upload"
-	case dash.TaskTypeFixReplication:
-		return "Fix Replication"
-	case dash.TaskTypeBalance:
-		return "Balance"
-	case dash.TaskTypeClusterReplication:
-		return "Cluster Replication"
-	default:
-		return string(taskType)
-	}
-}
 
 func getWorkerStatusColor(status string) string {
 	switch status {
