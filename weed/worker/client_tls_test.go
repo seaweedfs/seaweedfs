@@ -118,3 +118,25 @@ func TestTLSConnectionWithRealAddress(t *testing.T) {
 		t.Logf("Connection failed: %v", err)
 	}
 }
+
+func TestTLSDetectionWithConnectionTest(t *testing.T) {
+	// Test the new TLS detection logic that actually tests the connection
+	client := NewGrpcAdminClient("localhost:1", "test-worker") // Port 1 won't support gRPC at all
+
+	// This should fail when trying to test the TLS connection
+	conn, err := client.tryTLSConnection()
+	if conn != nil {
+		// If we got a connection, test it
+		works := client.testConnection(conn)
+		conn.Close()
+		if works {
+			t.Error("Connection test should fail for non-gRPC port")
+		} else {
+			t.Log("Connection test correctly detected that the connection doesn't work")
+		}
+	}
+
+	if err != nil {
+		t.Logf("TLS connection creation failed as expected: %v", err)
+	}
+}

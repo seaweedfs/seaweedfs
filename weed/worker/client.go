@@ -91,14 +91,20 @@ func (c *GrpcAdminClient) Connect() error {
 
 // createConnection attempts to connect with TLS first, falls back to insecure
 func (c *GrpcAdminClient) createConnection() (*grpc.ClientConn, error) {
-	// First try TLS connection
+	// First try TLS connection and test it
 	conn, err := c.tryTLSConnection()
 	if err == nil {
-		glog.Infof("Connected to admin server using TLS")
-		return conn, nil
+		// Test the TLS connection by trying to create a client and ping
+		if c.testConnection(conn) {
+			glog.Infof("Connected to admin server using TLS")
+			return conn, nil
+		}
+		// TLS connection created but doesn't work, close it
+		conn.Close()
+		glog.V(2).Infof("TLS connection test failed, attempting insecure connection")
+	} else {
+		glog.V(2).Infof("TLS connection failed: %v, attempting insecure connection", err)
 	}
-
-	glog.V(2).Infof("TLS connection failed: %v, attempting insecure connection", err)
 
 	// Fall back to insecure connection
 	conn, err = c.tryInsecureConnection()
@@ -108,6 +114,27 @@ func (c *GrpcAdminClient) createConnection() (*grpc.ClientConn, error) {
 	}
 
 	return nil, fmt.Errorf("both TLS and insecure connections failed: %v", err)
+}
+
+// testConnection verifies that a gRPC connection actually works
+func (c *GrpcAdminClient) testConnection(conn *grpc.ClientConn) bool {
+	// Create a test client and try a simple operation
+	client := worker_pb.NewWorkerServiceClient(conn)
+
+	// Try to create a stream with a short timeout to test the connection
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	stream, err := client.WorkerStream(ctx)
+	if err != nil {
+		glog.V(3).Infof("Connection test failed: %v", err)
+		return false
+	}
+
+	// Close the test stream immediately
+	stream.CloseSend()
+
+	return true
 }
 
 // tryTLSConnection attempts to connect using TLS
