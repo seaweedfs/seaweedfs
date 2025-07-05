@@ -116,3 +116,8 @@ func Register(registry *tasks.TaskRegistry) {
 	registry.Register(types.TaskTypeErasureCoding, factory)
 	glog.V(1).Infof("Registered erasure coding task type")
 }
+
+// Auto-register this task when the package is imported
+func init() {
+	tasks.AutoRegister(Register)
+}

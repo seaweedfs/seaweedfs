@@ -9,12 +9,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// Task implements remote upload operation to upload volumes to remote storage
+// Task implements remote upload operation to copy volumes to remote storage
 type Task struct {
 	*tasks.BaseTask
 	server     string
 	volumeID   uint32
-	collection string
+	remotePath string
 }
 
 // Compile-time interface assertions
@@ -23,19 +23,19 @@ var (
 )
 
 // NewTask creates a new remote upload task instance
-func NewTask(server string, volumeID uint32, collection string) *Task {
+func NewTask(server string, volumeID uint32, remotePath string) *Task {
 	task := &Task{
 		BaseTask:   tasks.NewBaseTask(types.TaskTypeRemoteUpload),
 		server:     server,
 		volumeID:   volumeID,
-		collection: collection,
+		remotePath: remotePath,
 	}
 	return task
 }
 
 // Execute executes the remote upload task
 func (t *Task) Execute(params types.TaskParams) error {
-	glog.Infof("Starting remote upload task for volume %d on server %s (collection: %s)", t.volumeID, t.server, t.collection)
+	glog.Infof("Starting remote upload task for volume %d on server %s to %s", t.volumeID, t.server, t.remotePath)
 
 	// Simulate remote upload operation with progress updates
 	steps := []struct {
@@ -43,10 +43,10 @@ func (t *Task) Execute(params types.TaskParams) error {
 		duration time.Duration
 		progress float64
 	}{
-		{"Preparing volume for upload", 1 * time.Second, 10},
-		{"Uploading to remote storage", 10 * time.Second, 70},
+		{"Preparing upload", 1 * time.Second, 10},
+		{"Uploading volume data", 8 * time.Second, 70},
 		{"Verifying upload", 2 * time.Second, 90},
-		{"Updating metadata", 1 * time.Second, 100},
+		{"Finalizing remote copy", 1 * time.Second, 100},
 	}
 
 	for _, step := range steps {
@@ -81,7 +81,7 @@ func (t *Task) EstimateTime(params types.TaskParams) time.Duration {
 	// Base time for remote upload operation
 	baseTime := 45 * time.Second
 
-	// Could adjust based on volume size or network conditions
+	// Could adjust based on volume size or network speed
 	return baseTime
 }
 
@@ -111,7 +111,15 @@ func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
 		return nil, fmt.Errorf("server is required")
 	}
 
-	task := NewTask(params.Server, params.VolumeID, params.Collection)
+	// Get remote path from parameters
+	remotePath := "/remote/backup" // Default path
+	if params.Parameters != nil {
+		if path, ok := params.Parameters["remote_path"].(string); ok {
+			remotePath = path
+		}
+	}
+
+	task := NewTask(params.Server, params.VolumeID, remotePath)
 	task.SetEstimatedDuration(task.EstimateTime(params))
 
 	return task, nil
@@ -122,4 +130,9 @@ func Register(registry *tasks.TaskRegistry) {
 	factory := NewFactory()
 	registry.Register(types.TaskTypeRemoteUpload, factory)
 	glog.V(1).Infof("Registered remote upload task type")
+}
+
+// Auto-register this task when the package is imported
+func init() {
+	tasks.AutoRegister(Register)
 }

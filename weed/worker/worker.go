@@ -8,24 +8,20 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+
+	// Import task packages to trigger their auto-registration
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 // RegisterAllTasks registers all built-in task types with the given registry
+// Tasks register themselves automatically when their packages are imported
 func RegisterAllTasks(registry *tasks.TaskRegistry) {
-	glog.V(1).Infof("Registering all built-in task types")
-
-	// Register all built-in task types
-	vacuum.Register(registry)
-	erasure_coding.Register(registry)
-	remote_upload.Register(registry)
-	balance.Register(registry)
-
-	glog.V(1).Infof("Registered %d built-in task types", len(registry.GetSupportedTypes()))
+	// Tasks register themselves via init() functions when imported
+	tasks.RegisterAll(registry)
 }
 
 // Worker represents a maintenance worker instance

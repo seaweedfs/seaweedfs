@@ -9,7 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// Task implements balance operation to balance data across volume servers
+// Task implements balance operation to redistribute volumes across volume servers
 type Task struct {
 	*tasks.BaseTask
 	server     string
@@ -38,9 +38,10 @@ func (t *Task) Execute(params types.TaskParams) error {
 		duration time.Duration
 		progress float64
 	}{
-		{"Analyzing cluster balance", 2 * time.Second, 15},
-		{"Identifying move candidates", 1 * time.Second, 30},
-		{"Moving volumes", 6 * time.Second, 85},
+		{"Analyzing cluster state", 2 * time.Second, 15},
+		{"Identifying optimal placement", 3 * time.Second, 35},
+		{"Moving volume data", 6 * time.Second, 75},
+		{"Updating cluster metadata", 2 * time.Second, 95},
 		{"Verifying balance", 1 * time.Second, 100},
 	}
 
@@ -117,4 +118,9 @@ func Register(registry *tasks.TaskRegistry) {
 	factory := NewFactory()
 	registry.Register(types.TaskTypeBalance, factory)
 	glog.V(1).Infof("Registered balance task type")
+}
+
+// Auto-register this task when the package is imported
+func init() {
+	tasks.AutoRegister(Register)
 }

@@ -36,10 +36,10 @@ func (t *Task) Execute(params types.TaskParams) error {
 		duration time.Duration
 		progress float64
 	}{
-		{"Scanning volume", 2 * time.Second, 20},
-		{"Identifying deleted files", 1 * time.Second, 40},
+		{"Scanning volume", 1 * time.Second, 20},
+		{"Identifying deleted files", 2 * time.Second, 50},
 		{"Compacting data", 3 * time.Second, 80},
-		{"Updating metadata", 1 * time.Second, 100},
+		{"Finalizing vacuum", 1 * time.Second, 100},
 	}
 
 	for _, step := range steps {
@@ -72,10 +72,9 @@ func (t *Task) Validate(params types.TaskParams) error {
 // EstimateTime estimates the time needed for the task
 func (t *Task) EstimateTime(params types.TaskParams) time.Duration {
 	// Base time for vacuum operation
-	baseTime := 15 * time.Second
+	baseTime := 25 * time.Second
 
-	// Could adjust based on volume size or other factors
-	// For now, return base time
+	// Could adjust based on volume size or usage patterns
 	return baseTime
 }
 
@@ -116,4 +115,9 @@ func Register(registry *tasks.TaskRegistry) {
 	factory := NewFactory()
 	registry.Register(types.TaskTypeVacuum, factory)
 	glog.V(1).Infof("Registered vacuum task type")
+}
+
+// Auto-register this task when the package is imported
+func init() {
+	tasks.AutoRegister(Register)
 }
