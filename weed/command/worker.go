@@ -20,6 +20,7 @@ var cmdWorker = &Command{
 maintenance tasks like vacuum, erasure coding, remote upload, and replication fixes.
 
 The worker ID and address are automatically generated.
+The worker connects to the admin server via gRPC (admin HTTP port + 10000).
 
 Examples:
   weed worker -admin=localhost:9333
@@ -35,7 +36,6 @@ var (
 	workerMaxConcurrent       = cmdWorker.Flag.Int("maxConcurrent", 2, "maximum number of concurrent tasks")
 	workerHeartbeatInterval   = cmdWorker.Flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	workerTaskRequestInterval = cmdWorker.Flag.Duration("taskInterval", 5*time.Second, "task request interval")
-	workerClientType          = cmdWorker.Flag.String("clientType", "http", "admin client type (http, mock)")
 )
 
 func init() {
@@ -73,7 +73,7 @@ func runWorker(cmd *Command, args []string) bool {
 	}
 
 	// Create admin client
-	adminClient, err := worker.CreateAdminClient(*workerAdminServer, workerInstance.ID(), *workerClientType)
+	adminClient, err := worker.CreateAdminClient(*workerAdminServer, workerInstance.ID(), "grpc")
 	if err != nil {
 		glog.Fatalf("Failed to create admin client: %v", err)
 		return false

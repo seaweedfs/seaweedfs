@@ -31,11 +31,14 @@ type Worker struct {
 
 // AdminClient defines the interface for communicating with the admin server
 type AdminClient interface {
+	Connect() error
+	Disconnect() error
 	RegisterWorker(worker *types.Worker) error
+	SendHeartbeat(workerID string, status *types.WorkerStatus) error
 	RequestTask(workerID string, capabilities []types.TaskType) (*types.Task, error)
-	CompleteTask(taskID string, error string) error
+	CompleteTask(taskID string, success bool, errorMsg string) error
 	UpdateTaskProgress(taskID string, progress float64) error
-	SendHeartbeat(workerID string) error
+	IsConnected() bool
 }
 
 // NewWorker creates a new worker instance
@@ -92,6 +95,11 @@ func (w *Worker) Start() error {
 		return fmt.Errorf("admin client is not set")
 	}
 
+	// Connect to admin server
+	if err := w.adminClient.Connect(); err != nil {
+		return fmt.Errorf("failed to connect to admin server: %v", err)
+	}
+
 	w.running = true
 	w.startTime = time.Now()
 
@@ -108,6 +116,7 @@ func (w *Worker) Start() error {
 
 	if err := w.adminClient.RegisterWorker(workerInfo); err != nil {
 		w.running = false
+		w.adminClient.Disconnect()
 		return fmt.Errorf("failed to register worker: %v", err)
 	}
 
@@ -147,9 +156,16 @@ func (w *Worker) Stop() error {
 		select {
 		case <-timeout.C:
 			glog.Warningf("Worker %s stopping with %d tasks still running", w.id, len(w.currentTasks))
-			return nil
+			break
 		case <-time.After(time.Second):
 			// Check again
+		}
+	}
+
+	// Disconnect from admin server
+	if w.adminClient != nil {
+		if err := w.adminClient.Disconnect(); err != nil {
+			glog.Errorf("Error disconnecting from admin server: %v", err)
 		}
 	}
 
@@ -258,7 +274,7 @@ func (w *Worker) executeTask(task *types.Task) {
 
 	taskInstance, err := w.registry.CreateTask(task.Type, taskParams)
 	if err != nil {
-		w.completeTask(task.ID, fmt.Sprintf("failed to create task: %v", err))
+		w.completeTask(task.ID, false, fmt.Sprintf("failed to create task: %v", err))
 		return
 	}
 
@@ -267,20 +283,20 @@ func (w *Worker) executeTask(task *types.Task) {
 
 	// Report completion
 	if err != nil {
-		w.completeTask(task.ID, err.Error())
+		w.completeTask(task.ID, false, err.Error())
 		w.tasksFailed++
 		glog.Errorf("Worker %s failed to execute task %s: %v", w.id, task.ID, err)
 	} else {
-		w.completeTask(task.ID, "")
+		w.completeTask(task.ID, true, "")
 		w.tasksCompleted++
 		glog.Infof("Worker %s completed task %s successfully", w.id, task.ID)
 	}
 }
 
 // completeTask reports task completion to admin server
-func (w *Worker) completeTask(taskID string, errorMsg string) {
+func (w *Worker) completeTask(taskID string, success bool, errorMsg string) {
 	if w.adminClient != nil {
-		if err := w.adminClient.CompleteTask(taskID, errorMsg); err != nil {
+		if err := w.adminClient.CompleteTask(taskID, success, errorMsg); err != nil {
 			glog.Errorf("Failed to report task completion: %v", err)
 		}
 	}
@@ -319,7 +335,15 @@ func (w *Worker) taskRequestLoop() {
 // sendHeartbeat sends heartbeat to admin server
 func (w *Worker) sendHeartbeat() {
 	if w.adminClient != nil {
-		if err := w.adminClient.SendHeartbeat(w.id); err != nil {
+		if err := w.adminClient.SendHeartbeat(w.id, &types.WorkerStatus{
+			WorkerID:      w.id,
+			Address:       w.address,
+			Status:        "active",
+			Capabilities:  w.config.Capabilities,
+			MaxConcurrent: w.config.MaxConcurrent,
+			CurrentLoad:   len(w.currentTasks),
+			LastHeartbeat: time.Now(),
+		}); err != nil {
 			glog.Warningf("Failed to send heartbeat: %v", err)
 		}
 	}

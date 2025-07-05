@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+package worker_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/worker_pb";
+
+// WorkerService provides bidirectional communication between admin and worker
+service WorkerService {
+  // WorkerStream maintains a bidirectional stream for worker communication
+  rpc WorkerStream(stream WorkerMessage) returns (stream AdminMessage);
+}
+
+// WorkerMessage represents messages from worker to admin
+message WorkerMessage {
+  string worker_id = 1;
+  int64 timestamp = 2;
+  
+  oneof message {
+    WorkerRegistration registration = 3;
+    WorkerHeartbeat heartbeat = 4;
+    TaskRequest task_request = 5;
+    TaskUpdate task_update = 6;
+    TaskComplete task_complete = 7;
+    WorkerShutdown shutdown = 8;
+  }
+}
+
+// AdminMessage represents messages from admin to worker
+message AdminMessage {
+  string admin_id = 1;
+  int64 timestamp = 2;
+  
+  oneof message {
+    RegistrationResponse registration_response = 3;
+    HeartbeatResponse heartbeat_response = 4;
+    TaskAssignment task_assignment = 5;
+    TaskCancellation task_cancellation = 6;
+    AdminShutdown admin_shutdown = 7;
+  }
+}
+
+// WorkerRegistration message when worker connects
+message WorkerRegistration {
+  string worker_id = 1;
+  string address = 2;
+  repeated string capabilities = 3;
+  int32 max_concurrent = 4;
+  map<string, string> metadata = 5;
+}
+
+// RegistrationResponse confirms worker registration
+message RegistrationResponse {
+  bool success = 1;
+  string message = 2;
+  string assigned_worker_id = 3;
+}
+
+// WorkerHeartbeat sent periodically by worker
+message WorkerHeartbeat {
+  string worker_id = 1;
+  string status = 2;
+  int32 current_load = 3;
+  int32 max_concurrent = 4;
+  repeated string current_task_ids = 5;
+  int32 tasks_completed = 6;
+  int32 tasks_failed = 7;
+  int64 uptime_seconds = 8;
+}
+
+// HeartbeatResponse acknowledges heartbeat
+message HeartbeatResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// TaskRequest from worker asking for new tasks
+message TaskRequest {
+  string worker_id = 1;
+  repeated string capabilities = 2;
+  int32 available_slots = 3;
+}
+
+// TaskAssignment from admin to worker
+message TaskAssignment {
+  string task_id = 1;
+  string task_type = 2;
+  TaskParams params = 3;
+  int32 priority = 4;
+  int64 created_time = 5;
+  map<string, string> metadata = 6;
+}
+
+// TaskParams contains task-specific parameters
+message TaskParams {
+  uint32 volume_id = 1;
+  string server = 2;
+  string collection = 3;
+  string data_center = 4;
+  string rack = 5;
+  repeated string replicas = 6;
+  map<string, string> parameters = 7;
+}
+
+// TaskUpdate reports task progress
+message TaskUpdate {
+  string task_id = 1;
+  string worker_id = 2;
+  string status = 3;
+  float progress = 4;
+  string message = 5;
+  map<string, string> metadata = 6;
+}
+
+// TaskComplete reports task completion
+message TaskComplete {
+  string task_id = 1;
+  string worker_id = 2;
+  bool success = 3;
+  string error_message = 4;
+  int64 completion_time = 5;
+  map<string, string> result_metadata = 6;
+}
+
+// TaskCancellation from admin to cancel a task
+message TaskCancellation {
+  string task_id = 1;
+  string reason = 2;
+  bool force = 3;
+}
+
+// WorkerShutdown notifies admin that worker is shutting down
+message WorkerShutdown {
+  string worker_id = 1;
+  string reason = 2;
+  repeated string pending_task_ids = 3;
+}
+
+// AdminShutdown notifies worker that admin is shutting down
+message AdminShutdown {
+  string reason = 1;
+  int32 graceful_shutdown_seconds = 2;
+} 

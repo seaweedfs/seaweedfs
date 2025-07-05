@@ -5,6 +5,8 @@ This package provides a comprehensive worker system for SeaweedFS maintenance ta
 ## Features
 
 - **Automatic Configuration**: Worker ID and address are automatically generated
+- **gRPC Communication**: Long-running bidirectional gRPC streams for efficient communication
+- **Real-time Heartbeats**: Continuous connection with admin server via gRPC
 - **Task Plugin System**: Easy registration of custom task types
 - **Concurrent Processing**: Configurable concurrent task execution
 - **Admin Integration**: Seamless integration with SeaweedFS admin server
@@ -12,12 +14,24 @@ This package provides a comprehensive worker system for SeaweedFS maintenance ta
 - **Type Safety**: Strong typing throughout the system
 - **Comprehensive Logging**: Detailed logging for monitoring and debugging
 
+## Communication Architecture
+
+The worker system uses **bidirectional gRPC streaming** for all communication with the admin server:
+
+- **Connection**: Workers establish a persistent gRPC connection to admin server (HTTP port + 10000)
+- **Heartbeats**: Sent over the gRPC stream with full worker status information
+- **Task Assignment**: Admin server pushes tasks to workers via the stream
+- **Progress Updates**: Workers send real-time progress updates via the stream
+- **Task Completion**: Completion status and results sent via the stream
+
+This approach eliminates HTTP polling overhead and provides real-time communication.
+
 ## Quick Start
 
 ### Basic Usage
 
 ```bash
-# Start a worker with default configuration
+# Start a worker with default configuration (connects to admin gRPC port)
 weed worker -admin=localhost:9333
 
 # Start a worker with specific capabilities
@@ -27,13 +41,19 @@ weed worker -admin=localhost:9333 -capabilities=vacuum,ec
 weed worker -admin=localhost:9333 -maxConcurrent=4
 ```
 
+### gRPC Connection
+
+Workers automatically connect to the admin server's gRPC port:
+- **Admin HTTP**: `localhost:9333`
+- **Admin gRPC**: `localhost:19333` (HTTP port + 10000)
+
 ### Configuration
 
 The worker configuration has been simplified to focus on essential parameters:
 
 ```go
 config := &types.WorkerConfig{
-    AdminServer:         "localhost:9333",
+    AdminServer:         "localhost:9333",  // HTTP address, gRPC calculated automatically
     Capabilities:        []types.TaskType{types.TaskTypeVacuum, types.TaskTypeErasureCoding},
     MaxConcurrent:       2,
     HeartbeatInterval:   30 * time.Second,
@@ -43,7 +63,7 @@ config := &types.WorkerConfig{
 
 Worker ID and address are automatically generated:
 - **ID**: `worker-{hostname}-{timestamp}`
-- **Address**: `:8082` (default)
+- **Address**: `:8082` (no longer used for HTTP server)
 
 ## Architecture
 
@@ -53,7 +73,7 @@ Worker ID and address are automatically generated:
 weed/worker/
 ├── worker.go              # Main worker implementation
 ├── registry.go            # Worker registry and statistics
-├── client.go              # Admin server client
+├── client.go              # gRPC admin client with bidirectional streaming
 ├── types/                 # Type definitions
 │   ├── task_types.go      # Task types and structures
 │   ├── worker_types.go    # Worker types and interfaces
@@ -64,6 +84,14 @@ weed/worker/
 └── examples/              # Usage examples
     └── custom_worker_example.go
 ```
+
+### gRPC Protocol
+
+The worker system uses `weed/pb/worker.proto` for communication:
+
+- **WorkerMessage**: Messages from worker to admin (registration, heartbeat, task requests, completion)
+- **AdminMessage**: Messages from admin to worker (task assignments, cancellations)
+- **Bidirectional Stream**: Single persistent connection for all communication
 
 ### Task Types
 
@@ -161,7 +189,7 @@ import (
 
 func main() {
     config := &types.WorkerConfig{
-        AdminServer:  "localhost:9333",
+        AdminServer:  "localhost:9333",  // gRPC will use port 19333
         MaxConcurrent: 2,
         Capabilities: []types.TaskType{
             types.TaskTypeVacuum,
@@ -178,20 +206,20 @@ func main() {
     fmt.Printf("Worker ID: %s\n", worker.ID())
     fmt.Printf("Worker Address: %s\n", worker.Address())
 
-    // Set up admin client
-    adminClient, err := worker.CreateAdminClient(config.AdminServer, worker.ID(), "http")
+    // Set up gRPC admin client
+    adminClient, err := worker.CreateAdminClient(config.AdminServer, worker.ID(), "grpc")
     if err != nil {
         log.Fatalf("Failed to create admin client: %v", err)
     }
 
     worker.SetAdminClient(adminClient)
 
-    // Start worker
+    // Start worker (automatically connects via gRPC)
     if err := worker.Start(); err != nil {
         log.Fatalf("Failed to start worker: %v", err)
     }
 
-    // Worker is now running
+    // Worker is now running with persistent gRPC connection
     select {} // Keep running
 }
 ```
@@ -235,7 +263,7 @@ func main() {
         log.Fatalf("Failed to start worker: %v", err)
     }
 
-    fmt.Printf("Custom worker %s started\n", worker.ID())
+    fmt.Printf("Custom worker %s started with gRPC connection\n", worker.ID())
     select {} // Keep running
 }
 ```
@@ -246,7 +274,7 @@ func main() {
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| AdminServer | string | Admin server address | "localhost:9333" |
+| AdminServer | string | Admin server HTTP address (gRPC = HTTP+10000) | "localhost:9333" |
 | Capabilities | []TaskType | Supported task types | All built-in types |
 | MaxConcurrent | int | Maximum concurrent tasks | 2 |
 | HeartbeatInterval | time.Duration | Heartbeat interval | 30s |
@@ -257,21 +285,32 @@ func main() {
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| -admin | Admin server address | "localhost:9333" |
+| -admin | Admin server HTTP address | "localhost:9333" |
 | -capabilities | Comma-separated task types | "vacuum,ec,remote,replication,balance" |
 | -maxConcurrent | Maximum concurrent tasks | 2 |
 | -heartbeat | Heartbeat interval | 30s |
 | -taskInterval | Task request interval | 5s |
-| -clientType | Admin client type | "http" |
 
 ## Integration with Admin Server
 
-The worker system integrates seamlessly with the SeaweedFS admin server:
+The worker system integrates seamlessly with the SeaweedFS admin server via gRPC:
 
-1. **Worker Registration**: Workers automatically register with the admin server
-2. **Task Assignment**: Admin server assigns tasks based on worker capabilities
-3. **Progress Reporting**: Workers report task progress and completion
-4. **Health Monitoring**: Regular heartbeats ensure worker health
+1. **Worker Connection**: Workers establish persistent gRPC connections (admin HTTP port + 10000)
+2. **Worker Registration**: Workers register via the gRPC stream
+3. **Real-time Heartbeats**: Status updates sent continuously via the stream
+4. **Task Assignment**: Admin server pushes tasks to workers via the stream
+5. **Progress Reporting**: Workers send real-time progress updates
+6. **Health Monitoring**: Connection health monitored via stream status
+
+## gRPC Benefits
+
+The gRPC implementation provides several advantages over HTTP polling:
+
+- **Real-time Communication**: Instant task assignment and progress updates
+- **Reduced Overhead**: Single persistent connection vs. multiple HTTP requests
+- **Better Error Handling**: Connection state awareness and automatic retry
+- **Bidirectional Streams**: Both sides can send messages at any time
+- **Built-in Heartbeats**: gRPC keepalive handles connection monitoring
 
 ## Monitoring and Metrics
 
@@ -283,6 +322,7 @@ fmt.Printf("Worker %s: %s\n", status.WorkerID, status.Status)
 fmt.Printf("Current Load: %d/%d\n", status.CurrentLoad, status.MaxConcurrent)
 fmt.Printf("Tasks Completed: %d\n", status.TasksCompleted)
 fmt.Printf("Tasks Failed: %d\n", status.TasksFailed)
+fmt.Printf("gRPC Connected: %v\n", worker.GetAdminClient().IsConnected())
 ```
 
 ### Performance Metrics
@@ -300,6 +340,7 @@ fmt.Printf("Uptime: %v\n", metrics.Uptime)
 - **Keep it simple**: Use default values unless you have specific requirements
 - **Match capabilities**: Only enable capabilities your infrastructure supports
 - **Reasonable concurrency**: Don't overload your system with too many concurrent tasks
+- **Network considerations**: Ensure gRPC port (HTTP + 10000) is accessible
 
 ### 2. Custom Tasks
 
@@ -310,34 +351,35 @@ fmt.Printf("Uptime: %v\n", metrics.Uptime)
 
 ### 3. Error Handling
 
-- **Graceful degradation**: Handle errors gracefully
+- **Connection monitoring**: Check gRPC connection status
+- **Graceful degradation**: Handle connection failures gracefully
 - **Proper logging**: Use structured logging for debugging
-- **Retry logic**: Implement retry logic for transient failures
+- **Retry logic**: gRPC client handles automatic reconnection
 
 ### 4. Resource Management
 
 - **Memory usage**: Monitor memory usage for large tasks
 - **Disk space**: Ensure sufficient disk space for operations
-- **Network bandwidth**: Consider network impact of operations
+- **Network bandwidth**: gRPC streams are more efficient than HTTP polling
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **Worker won't start**
-   - Check admin server connectivity
-   - Verify worker configuration
-   - Review logs for errors
+   - Check admin server gRPC port (HTTP + 10000) connectivity
+   - Verify firewall allows gRPC port access
+   - Review gRPC connection logs
 
 2. **Tasks not executing**
-   - Check worker capabilities
-   - Verify task parameters
+   - Check gRPC stream status
+   - Verify worker capabilities
    - Review admin server logs
 
-3. **Performance issues**
-   - Monitor resource usage
-   - Adjust concurrency settings
-   - Check network connectivity
+3. **Connection issues**
+   - Monitor gRPC connection status with `IsConnected()`
+   - Check network connectivity to gRPC port
+   - Review gRPC keepalive settings
 
 ### Debug Mode
 
@@ -347,23 +389,41 @@ Enable debug logging for more detailed information:
 weed worker -admin=localhost:9333 -v=2
 ```
 
+### gRPC Connection Testing
+
+Test gRPC connectivity manually:
+
+```bash
+# Check if gRPC port is accessible
+telnet localhost 19333
+
+# Use grpcurl to test gRPC service (if available)
+grpcurl -plaintext localhost:19333 list
+```
+
 ## Migration Guide
 
 If you're upgrading from an older version:
 
-### Before (Old Configuration)
+### Before (HTTP Polling)
 
 ```bash
-weed worker -admin=localhost:9333 -id=worker-1 -addr=:8082 -type=maintenance
+weed worker -admin=localhost:9333 -id=worker-1 -addr=:8082
 ```
 
-### After (New Simplified Configuration)
+### After (gRPC Streaming)
 
 ```bash
 weed worker -admin=localhost:9333
 ```
 
-The worker ID and address are now automatically generated, making configuration much simpler while maintaining all the functionality.
+### Key Changes
+
+- **No HTTP server**: Workers no longer run HTTP servers
+- **gRPC only**: All communication via bidirectional gRPC streams
+- **Auto-configuration**: Worker ID and address automatically generated
+- **Real-time**: Instant communication vs. polling intervals
+- **Port calculation**: gRPC port = HTTP port + 10000
 
 ## Contributing
 
@@ -374,6 +434,7 @@ When adding new features to the worker system:
 3. Update documentation
 4. Provide usage examples
 5. Consider backward compatibility
+6. Test gRPC communication thoroughly
 
 ## License
 

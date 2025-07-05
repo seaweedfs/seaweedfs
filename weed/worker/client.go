@@ -1,217 +1,494 @@
 package worker
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+	"google.golang.org/grpc"
 )
 
-// HTTPAdminClient implements AdminClient interface using HTTP
-type HTTPAdminClient struct {
+// GrpcAdminClient implements AdminClient using gRPC bidirectional streaming
+type GrpcAdminClient struct {
 	adminAddress string
 	workerID     string
-	timeout      time.Duration
+
+	conn         *grpc.ClientConn
+	client       worker_pb.WorkerServiceClient
+	stream       worker_pb.WorkerService_WorkerStreamClient
+	streamCtx    context.Context
+	streamCancel context.CancelFunc
+
+	connected bool
+	mutex     sync.RWMutex
+
+	// Channels for communication
+	outgoing       chan *worker_pb.WorkerMessage
+	incoming       chan *worker_pb.AdminMessage
+	responseChans  map[string]chan *worker_pb.AdminMessage
+	responsesMutex sync.RWMutex
 }
 
-// NewHTTPAdminClient creates a new HTTP admin client
-func NewHTTPAdminClient(adminAddress string, workerID string) *HTTPAdminClient {
-	return &HTTPAdminClient{
-		adminAddress: adminAddress,
-		workerID:     workerID,
-		timeout:      30 * time.Second,
+// NewGrpcAdminClient creates a new gRPC admin client
+func NewGrpcAdminClient(adminAddress string, workerID string) *GrpcAdminClient {
+	// Admin uses HTTP port + 10000 as gRPC port
+	grpcAddress := pb.ServerToGrpcAddress(adminAddress)
+
+	return &GrpcAdminClient{
+		adminAddress:  grpcAddress,
+		workerID:      workerID,
+		outgoing:      make(chan *worker_pb.WorkerMessage, 100),
+		incoming:      make(chan *worker_pb.AdminMessage, 100),
+		responseChans: make(map[string]chan *worker_pb.AdminMessage),
 	}
 }
 
-// RegisterWorker registers a worker with the admin server
-func (c *HTTPAdminClient) RegisterWorker(worker *types.Worker) error {
-	glog.V(2).Infof("Registering worker %s with admin server at %s", worker.ID, c.adminAddress)
+// Connect establishes the gRPC connection and bidirectional stream
+func (c *GrpcAdminClient) Connect() error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
-	// TODO: Implement HTTP request to register worker
-	// For now, we'll simulate successful registration
-	glog.V(2).Infof("Worker %s registered successfully", worker.ID)
-
-	return nil
-}
-
-// RequestTask requests a new task from the admin server
-func (c *HTTPAdminClient) RequestTask(workerID string, capabilities []types.TaskType) (*types.Task, error) {
-	glog.V(3).Infof("Requesting task for worker %s with capabilities %v", workerID, capabilities)
-
-	// TODO: Implement HTTP request to get next task
-	// For now, we'll return nil (no task available)
-
-	return nil, nil
-}
-
-// CompleteTask reports task completion to the admin server
-func (c *HTTPAdminClient) CompleteTask(taskID string, errorMsg string) error {
-	if errorMsg != "" {
-		glog.V(2).Infof("Reporting task %s completion with error: %s", taskID, errorMsg)
-	} else {
-		glog.V(2).Infof("Reporting task %s completion successfully", taskID)
+	if c.connected {
+		return nil
 	}
 
-	// TODO: Implement HTTP request to report task completion
-	// For now, we'll simulate successful reporting
+	// Create gRPC connection
+	conn, err := pb.GrpcDial(context.Background(), c.adminAddress, false)
+	if err != nil {
+		return fmt.Errorf("failed to connect to admin server at %s: %v", c.adminAddress, err)
+	}
 
+	c.conn = conn
+	c.client = worker_pb.NewWorkerServiceClient(conn)
+
+	// Create bidirectional stream
+	c.streamCtx, c.streamCancel = context.WithCancel(context.Background())
+	stream, err := c.client.WorkerStream(c.streamCtx)
+	if err != nil {
+		c.conn.Close()
+		return fmt.Errorf("failed to create worker stream: %v", err)
+	}
+
+	c.stream = stream
+	c.connected = true
+
+	// Start stream handlers
+	go c.handleOutgoing()
+	go c.handleIncoming()
+
+	glog.Infof("Connected to admin server at %s", c.adminAddress)
 	return nil
 }
 
-// UpdateTaskProgress updates task progress on the admin server
-func (c *HTTPAdminClient) UpdateTaskProgress(taskID string, progress float64) error {
-	glog.V(3).Infof("Updating task %s progress to %.2f%%", taskID, progress)
+// Disconnect closes the gRPC connection
+func (c *GrpcAdminClient) Disconnect() error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
-	// TODO: Implement HTTP request to update task progress
-	// For now, we'll simulate successful update
+	if !c.connected {
+		return nil
+	}
 
+	c.connected = false
+
+	// Send shutdown message
+	shutdownMsg := &worker_pb.WorkerMessage{
+		WorkerId:  c.workerID,
+		Timestamp: time.Now().Unix(),
+		Message: &worker_pb.WorkerMessage_Shutdown{
+			Shutdown: &worker_pb.WorkerShutdown{
+				WorkerId: c.workerID,
+				Reason:   "normal shutdown",
+			},
+		},
+	}
+
+	select {
+	case c.outgoing <- shutdownMsg:
+	case <-time.After(time.Second):
+		glog.Warningf("Failed to send shutdown message")
+	}
+
+	// Cancel stream context
+	if c.streamCancel != nil {
+		c.streamCancel()
+	}
+
+	// Close stream
+	if c.stream != nil {
+		c.stream.CloseSend()
+	}
+
+	// Close connection
+	if c.conn != nil {
+		c.conn.Close()
+	}
+
+	// Close channels
+	close(c.outgoing)
+	close(c.incoming)
+
+	glog.Infof("Disconnected from admin server")
 	return nil
 }
 
-// SendHeartbeat sends a heartbeat to the admin server
-func (c *HTTPAdminClient) SendHeartbeat(workerID string) error {
-	glog.V(3).Infof("Sending heartbeat for worker %s", workerID)
+// handleOutgoing processes outgoing messages to admin
+func (c *GrpcAdminClient) handleOutgoing() {
+	for msg := range c.outgoing {
+		if !c.connected {
+			break
+		}
 
-	// TODO: Implement HTTP request to send heartbeat
-	// For now, we'll simulate successful heartbeat
-
-	return nil
+		if err := c.stream.Send(msg); err != nil {
+			glog.Errorf("Failed to send message to admin: %v", err)
+			break
+		}
+	}
 }
 
-// SetTimeout sets the client timeout
-func (c *HTTPAdminClient) SetTimeout(timeout time.Duration) {
-	c.timeout = timeout
+// handleIncoming processes incoming messages from admin
+func (c *GrpcAdminClient) handleIncoming() {
+	for {
+		if !c.connected {
+			break
+		}
+
+		msg, err := c.stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				glog.Infof("Admin server closed the stream")
+			} else {
+				glog.Errorf("Failed to receive message from admin: %v", err)
+			}
+			break
+		}
+
+		// Route message to waiting goroutines or general handler
+		select {
+		case c.incoming <- msg:
+		case <-time.After(time.Second):
+			glog.Warningf("Incoming message buffer full, dropping message")
+		}
+	}
 }
 
-// MockAdminClient is a mock implementation for testing
+// RegisterWorker registers the worker with the admin server
+func (c *GrpcAdminClient) RegisterWorker(worker *types.Worker) error {
+	if !c.connected {
+		return fmt.Errorf("not connected to admin server")
+	}
+
+	capabilities := make([]string, len(worker.Capabilities))
+	for i, cap := range worker.Capabilities {
+		capabilities[i] = string(cap)
+	}
+
+	msg := &worker_pb.WorkerMessage{
+		WorkerId:  c.workerID,
+		Timestamp: time.Now().Unix(),
+		Message: &worker_pb.WorkerMessage_Registration{
+			Registration: &worker_pb.WorkerRegistration{
+				WorkerId:      c.workerID,
+				Address:       worker.Address,
+				Capabilities:  capabilities,
+				MaxConcurrent: int32(worker.MaxConcurrent),
+				Metadata:      make(map[string]string),
+			},
+		},
+	}
+
+	select {
+	case c.outgoing <- msg:
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("failed to send registration message: timeout")
+	}
+
+	// Wait for registration response
+	timeout := time.NewTimer(10 * time.Second)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case response := <-c.incoming:
+			if regResp := response.GetRegistrationResponse(); regResp != nil {
+				if regResp.Success {
+					glog.Infof("Worker registered successfully: %s", regResp.Message)
+					return nil
+				}
+				return fmt.Errorf("registration failed: %s", regResp.Message)
+			}
+		case <-timeout.C:
+			return fmt.Errorf("registration timeout")
+		}
+	}
+}
+
+// SendHeartbeat sends heartbeat to admin server
+func (c *GrpcAdminClient) SendHeartbeat(workerID string, status *types.WorkerStatus) error {
+	if !c.connected {
+		return fmt.Errorf("not connected to admin server")
+	}
+
+	taskIds := make([]string, len(status.CurrentTasks))
+	for i, task := range status.CurrentTasks {
+		taskIds[i] = task.ID
+	}
+
+	msg := &worker_pb.WorkerMessage{
+		WorkerId:  c.workerID,
+		Timestamp: time.Now().Unix(),
+		Message: &worker_pb.WorkerMessage_Heartbeat{
+			Heartbeat: &worker_pb.WorkerHeartbeat{
+				WorkerId:       c.workerID,
+				Status:         status.Status,
+				CurrentLoad:    int32(status.CurrentLoad),
+				MaxConcurrent:  int32(status.MaxConcurrent),
+				CurrentTaskIds: taskIds,
+				TasksCompleted: int32(status.TasksCompleted),
+				TasksFailed:    int32(status.TasksFailed),
+				UptimeSeconds:  int64(status.Uptime.Seconds()),
+			},
+		},
+	}
+
+	select {
+	case c.outgoing <- msg:
+		return nil
+	case <-time.After(time.Second):
+		return fmt.Errorf("failed to send heartbeat: timeout")
+	}
+}
+
+// RequestTask requests a new task from admin server
+func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.TaskType) (*types.Task, error) {
+	if !c.connected {
+		return nil, fmt.Errorf("not connected to admin server")
+	}
+
+	caps := make([]string, len(capabilities))
+	for i, cap := range capabilities {
+		caps[i] = string(cap)
+	}
+
+	msg := &worker_pb.WorkerMessage{
+		WorkerId:  c.workerID,
+		Timestamp: time.Now().Unix(),
+		Message: &worker_pb.WorkerMessage_TaskRequest{
+			TaskRequest: &worker_pb.TaskRequest{
+				WorkerId:       c.workerID,
+				Capabilities:   caps,
+				AvailableSlots: 1, // Request one task
+			},
+		},
+	}
+
+	select {
+	case c.outgoing <- msg:
+	case <-time.After(time.Second):
+		return nil, fmt.Errorf("failed to send task request: timeout")
+	}
+
+	// Wait for task assignment
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case response := <-c.incoming:
+			if taskAssign := response.GetTaskAssignment(); taskAssign != nil {
+				// Convert parameters map[string]string to map[string]interface{}
+				parameters := make(map[string]interface{})
+				for k, v := range taskAssign.Params.Parameters {
+					parameters[k] = v
+				}
+
+				// Convert to our task type
+				task := &types.Task{
+					ID:         taskAssign.TaskId,
+					Type:       types.TaskType(taskAssign.TaskType),
+					Status:     types.TaskStatusAssigned,
+					VolumeID:   taskAssign.Params.VolumeId,
+					Server:     taskAssign.Params.Server,
+					Collection: taskAssign.Params.Collection,
+					Priority:   types.TaskPriority(taskAssign.Priority),
+					CreatedAt:  time.Unix(taskAssign.CreatedTime, 0),
+					Parameters: parameters,
+				}
+				return task, nil
+			}
+		case <-timeout.C:
+			return nil, nil // No task available
+		}
+	}
+}
+
+// CompleteTask reports task completion to admin server
+func (c *GrpcAdminClient) CompleteTask(taskID string, success bool, errorMsg string) error {
+	if !c.connected {
+		return fmt.Errorf("not connected to admin server")
+	}
+
+	msg := &worker_pb.WorkerMessage{
+		WorkerId:  c.workerID,
+		Timestamp: time.Now().Unix(),
+		Message: &worker_pb.WorkerMessage_TaskComplete{
+			TaskComplete: &worker_pb.TaskComplete{
+				TaskId:         taskID,
+				WorkerId:       c.workerID,
+				Success:        success,
+				ErrorMessage:   errorMsg,
+				CompletionTime: time.Now().Unix(),
+			},
+		},
+	}
+
+	select {
+	case c.outgoing <- msg:
+		return nil
+	case <-time.After(time.Second):
+		return fmt.Errorf("failed to send task completion: timeout")
+	}
+}
+
+// UpdateTaskProgress updates task progress to admin server
+func (c *GrpcAdminClient) UpdateTaskProgress(taskID string, progress float64) error {
+	if !c.connected {
+		return fmt.Errorf("not connected to admin server")
+	}
+
+	msg := &worker_pb.WorkerMessage{
+		WorkerId:  c.workerID,
+		Timestamp: time.Now().Unix(),
+		Message: &worker_pb.WorkerMessage_TaskUpdate{
+			TaskUpdate: &worker_pb.TaskUpdate{
+				TaskId:   taskID,
+				WorkerId: c.workerID,
+				Status:   "in_progress",
+				Progress: float32(progress),
+			},
+		},
+	}
+
+	select {
+	case c.outgoing <- msg:
+		return nil
+	case <-time.After(time.Second):
+		return fmt.Errorf("failed to send task progress: timeout")
+	}
+}
+
+// IsConnected returns whether the client is connected
+func (c *GrpcAdminClient) IsConnected() bool {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.connected
+}
+
+// MockAdminClient provides a mock implementation for testing
 type MockAdminClient struct {
-	registeredWorkers map[string]*types.Worker
-	tasks             []*types.Task
-	completedTasks    map[string]string
-	heartbeats        map[string]time.Time
-	taskProgress      map[string]float64
+	workerID  string
+	connected bool
+	tasks     []*types.Task
+	mutex     sync.RWMutex
 }
 
 // NewMockAdminClient creates a new mock admin client
 func NewMockAdminClient() *MockAdminClient {
 	return &MockAdminClient{
-		registeredWorkers: make(map[string]*types.Worker),
-		tasks:             make([]*types.Task, 0),
-		completedTasks:    make(map[string]string),
-		heartbeats:        make(map[string]time.Time),
-		taskProgress:      make(map[string]float64),
+		connected: true,
+		tasks:     make([]*types.Task, 0),
 	}
 }
 
-// RegisterWorker registers a worker (mock implementation)
-func (m *MockAdminClient) RegisterWorker(worker *types.Worker) error {
-	m.registeredWorkers[worker.ID] = worker
-	glog.V(2).Infof("Mock: Registered worker %s", worker.ID)
+// Connect mock implementation
+func (m *MockAdminClient) Connect() error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.connected = true
 	return nil
 }
 
-// RequestTask requests a new task (mock implementation)
+// Disconnect mock implementation
+func (m *MockAdminClient) Disconnect() error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.connected = false
+	return nil
+}
+
+// RegisterWorker mock implementation
+func (m *MockAdminClient) RegisterWorker(worker *types.Worker) error {
+	m.workerID = worker.ID
+	glog.Infof("Mock: Worker %s registered with capabilities: %v", worker.ID, worker.Capabilities)
+	return nil
+}
+
+// SendHeartbeat mock implementation
+func (m *MockAdminClient) SendHeartbeat(workerID string, status *types.WorkerStatus) error {
+	glog.V(2).Infof("Mock: Heartbeat from worker %s, status: %s, load: %d/%d",
+		workerID, status.Status, status.CurrentLoad, status.MaxConcurrent)
+	return nil
+}
+
+// RequestTask mock implementation
 func (m *MockAdminClient) RequestTask(workerID string, capabilities []types.TaskType) (*types.Task, error) {
-	// Return a mock task for testing
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
 	if len(m.tasks) > 0 {
 		task := m.tasks[0]
 		m.tasks = m.tasks[1:]
-
-		// Check if worker can handle this task
-		canHandle := false
-		for _, capability := range capabilities {
-			if capability == task.Type {
-				canHandle = true
-				break
-			}
-		}
-
-		if canHandle {
-			task.WorkerID = workerID
-			task.Status = types.TaskStatusAssigned
-			now := time.Now()
-			task.StartedAt = &now
-
-			glog.V(2).Infof("Mock: Assigned task %s to worker %s", task.ID, workerID)
-			return task, nil
-		}
+		glog.Infof("Mock: Assigned task %s to worker %s", task.ID, workerID)
+		return task, nil
 	}
 
+	// No tasks available
 	return nil, nil
 }
 
-// CompleteTask reports task completion (mock implementation)
-func (m *MockAdminClient) CompleteTask(taskID string, errorMsg string) error {
-	m.completedTasks[taskID] = errorMsg
-	glog.V(2).Infof("Mock: Task %s completed with error: %s", taskID, errorMsg)
+// CompleteTask mock implementation
+func (m *MockAdminClient) CompleteTask(taskID string, success bool, errorMsg string) error {
+	if success {
+		glog.Infof("Mock: Task %s completed successfully", taskID)
+	} else {
+		glog.Infof("Mock: Task %s failed: %s", taskID, errorMsg)
+	}
 	return nil
 }
 
-// UpdateTaskProgress updates task progress (mock implementation)
+// UpdateTaskProgress mock implementation
 func (m *MockAdminClient) UpdateTaskProgress(taskID string, progress float64) error {
-	m.taskProgress[taskID] = progress
-	glog.V(3).Infof("Mock: Task %s progress updated to %.2f%%", taskID, progress)
+	glog.V(2).Infof("Mock: Task %s progress: %.1f%%", taskID, progress)
 	return nil
 }
 
-// SendHeartbeat sends a heartbeat (mock implementation)
-func (m *MockAdminClient) SendHeartbeat(workerID string) error {
-	m.heartbeats[workerID] = time.Now()
-	glog.V(3).Infof("Mock: Heartbeat received from worker %s", workerID)
-	return nil
+// IsConnected mock implementation
+func (m *MockAdminClient) IsConnected() bool {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.connected
 }
 
-// AddTask adds a task to the mock queue
-func (m *MockAdminClient) AddTask(task *types.Task) {
+// AddMockTask adds a mock task for testing
+func (m *MockAdminClient) AddMockTask(task *types.Task) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 	m.tasks = append(m.tasks, task)
 }
 
-// GetRegisteredWorkers returns all registered workers
-func (m *MockAdminClient) GetRegisteredWorkers() map[string]*types.Worker {
-	return m.registeredWorkers
-}
-
-// GetCompletedTasks returns all completed tasks
-func (m *MockAdminClient) GetCompletedTasks() map[string]string {
-	return m.completedTasks
-}
-
-// GetTaskProgress returns task progress information
-func (m *MockAdminClient) GetTaskProgress() map[string]float64 {
-	return m.taskProgress
-}
-
-// GetHeartbeats returns heartbeat information
-func (m *MockAdminClient) GetHeartbeats() map[string]time.Time {
-	return m.heartbeats
-}
-
-// CreateAdminClient creates an admin client based on the configuration
-func CreateAdminClient(adminAddress string, workerID string, clientType string) (AdminClient, error) {
+// CreateAdminClient creates an admin client, defaulting to gRPC
+func CreateAdminClient(adminServer string, workerID string, clientType string) (AdminClient, error) {
 	switch clientType {
-	case "http", "":
-		return NewHTTPAdminClient(adminAddress, workerID), nil
 	case "mock":
 		return NewMockAdminClient(), nil
 	default:
-		return nil, fmt.Errorf("unsupported client type: %s", clientType)
-	}
-}
-
-// AdminClientConfig contains configuration for admin client
-type AdminClientConfig struct {
-	AdminAddress string        `json:"admin_address"`
-	WorkerID     string        `json:"worker_id"`
-	ClientType   string        `json:"client_type"`
-	Timeout      time.Duration `json:"timeout"`
-}
-
-// DefaultAdminClientConfig returns default admin client configuration
-func DefaultAdminClientConfig() *AdminClientConfig {
-	return &AdminClientConfig{
-		AdminAddress: "localhost:9333",
-		ClientType:   "http",
-		Timeout:      30 * time.Second,
+		// Default to gRPC for all cases (including "grpc" and unknown types)
+		return NewGrpcAdminClient(adminServer, workerID), nil
 	}
 }
