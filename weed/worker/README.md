@@ -1,49 +1,31 @@
-# SeaweedFS Worker Package
+# SeaweedFS Worker System
 
-This package provides a comprehensive worker system for SeaweedFS maintenance tasks such as vacuum, erasure coding, remote upload, and replication fixes.
+A comprehensive worker system for SeaweedFS maintenance tasks with gRPC communication, automatic configuration, and modular task architecture.
 
 ## Features
 
-- **Automatic Configuration**: Worker ID and address are automatically generated
-- **gRPC Communication**: Long-running bidirectional gRPC streams for efficient communication
-- **Real-time Heartbeats**: Continuous connection with admin server via gRPC
-- **Task Plugin System**: Easy registration of custom task types
-- **Concurrent Processing**: Configurable concurrent task execution
-- **Admin Integration**: Seamless integration with SeaweedFS admin server
-- **Extensible Architecture**: Simple interfaces for custom workers and tasks
-- **Type Safety**: Strong typing throughout the system
-- **Comprehensive Logging**: Detailed logging for monitoring and debugging
-
-## Communication Architecture
-
-The worker system uses **bidirectional gRPC streaming** for all communication with the admin server:
-
-- **Connection**: Workers establish a persistent gRPC connection to admin server (HTTP port + 10000)
-- **Heartbeats**: Sent over the gRPC stream with full worker status information
-- **Task Assignment**: Admin server pushes tasks to workers via the stream
-- **Progress Updates**: Workers send real-time progress updates via the stream
-- **Task Completion**: Completion status and results sent via the stream
-
-This approach eliminates HTTP polling overhead and provides real-time communication.
+- **Automatic Configuration**: Worker ID and address are auto-generated
+- **gRPC Communication**: Persistent bidirectional streams for real-time communication
+- **Modular Task System**: Each task type in its own self-contained package
+- **Easy Task Addition**: Simple 3-step process to add new task types
+- **Production Ready**: Comprehensive error handling, logging, and monitoring
 
 ## Quick Start
 
 ### Basic Usage
 
 ```bash
-# Start a worker with default configuration (connects to admin gRPC port)
+# Start a worker (connects to admin server via gRPC)
 weed worker -admin=localhost:9333
 
-# Start a worker with specific capabilities
-weed worker -admin=localhost:9333 -capabilities=vacuum,ec
-
-# Start a worker with custom concurrency
-weed worker -admin=localhost:9333 -maxConcurrent=4
+# Worker will auto-generate:
+# - ID: worker-{hostname}-{timestamp}
+# - Address: :8082 (not used for HTTP, just identification)
+# - gRPC connection to admin server (HTTP port + 10000)
 ```
 
-### gRPC Connection
+### Default Ports
 
-Workers automatically connect to the admin server's gRPC port:
 - **Admin HTTP**: `localhost:9333`
 - **Admin gRPC**: `localhost:19333` (HTTP port + 10000)
 
@@ -80,9 +62,46 @@ weed/worker/
 │   └── config_types.go    # Configuration types
 ├── tasks/                 # Task implementations
 │   ├── task.go            # Base task interface and registry
-│   └── vacuum.go          # Vacuum task implementation
+│   ├── vacuum/            # Vacuum task package
+│   │   └── vacuum.go      # All vacuum-related code
+│   ├── erasure_coding/    # Erasure coding task package
+│   │   └── ec.go          # All EC-related code
+│   ├── remote_upload/     # Remote upload task package
+│   │   └── remote.go      # All remote upload code
+│   ├── replication/       # Replication task package
+│   │   └── replication.go # All replication code
+│   ├── balance/           # Balance task package
+│   │   └── balance.go     # All balance code
+│   └── cluster_replication/ # Cluster replication task package
+│       └── cluster_replication.go # All cluster replication code
 └── examples/              # Usage examples
     └── custom_worker_example.go
+```
+
+### Task Package Structure
+
+Each task is now completely self-contained in its own package:
+
+```go
+// weed/worker/tasks/my_task/my_task.go
+package my_task
+
+// Task implements the actual task logic
+type Task struct {
+    *tasks.BaseTask
+    // task-specific fields
+}
+
+// Factory creates task instances
+type Factory struct {
+    *tasks.BaseTaskFactory
+}
+
+// Register registers this task type (single function call)
+func Register(registry *tasks.TaskRegistry) {
+    factory := NewFactory()
+    registry.Register(types.TaskTypeMyTask, factory)
+}
 ```
 
 ### gRPC Protocol
@@ -98,82 +117,150 @@ The worker system uses `weed/pb/worker.proto` for communication:
 The system supports the following built-in task types:
 
 - **vacuum**: Reclaim disk space by removing deleted files
-- **ec** (erasure_coding): Convert volumes to erasure coded format
-- **remote**: Upload volumes to remote storage
-- **replication**: Fix replication issues
+- **erasure_coding**: Convert volumes to erasure coded format
+- **remote_upload**: Upload volumes to remote storage
+- **fix_replication**: Fix replication issues
 - **balance**: Balance data across volume servers
 - **cluster_replication**: Replicate data between clusters
 
-## Creating Custom Tasks
+## Adding New Tasks (Easy 3-Step Process)
 
-### Step 1: Define Task Type
+### Step 1: Create Task Package
 
-```go
-const CustomTaskType types.TaskType = "custom_task"
+Create a new directory under `weed/worker/tasks/`:
+
+```bash
+mkdir weed/worker/tasks/my_task
 ```
 
-### Step 2: Implement Task Interface
+### Step 2: Implement Task
+
+Create `weed/worker/tasks/my_task/my_task.go`:
 
 ```go
-type CustomTask struct {
-    params   types.TaskParams
-    progress float64
+package my_task
+
+import (
+    "fmt"
+    "time"
+    "github.com/seaweedfs/seaweedfs/weed/glog"
+    "github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+    "github.com/seaweedfs/seaweedfs/weed/worker/types"
+)
+
+// Task implements your custom task logic
+type Task struct {
+    *tasks.BaseTask
+    server   string
+    volumeID uint32
 }
 
-func (t *CustomTask) Type() types.TaskType {
-    return CustomTaskType
+// NewTask creates a new task instance
+func NewTask(server string, volumeID uint32) *Task {
+    return &Task{
+        BaseTask: tasks.NewBaseTask(types.TaskTypeMyTask),
+        server:   server,
+        volumeID: volumeID,
+    }
 }
 
-func (t *CustomTask) Execute(params types.TaskParams) error {
+// Execute executes the task
+func (t *Task) Execute(params types.TaskParams) error {
+    glog.Infof("Starting my_task for volume %d on server %s", t.volumeID, t.server)
+    
     // Your task implementation here
+    t.SetProgress(50)
+    time.Sleep(2 * time.Second)
+    t.SetProgress(100)
+    
+    glog.Infof("Completed my_task for volume %d", t.volumeID)
     return nil
 }
 
-func (t *CustomTask) Validate(params types.TaskParams) error {
-    // Validate parameters
+// Validate validates the task parameters
+func (t *Task) Validate(params types.TaskParams) error {
+    if params.VolumeID == 0 {
+        return fmt.Errorf("volume_id is required")
+    }
+    if params.Server == "" {
+        return fmt.Errorf("server is required")
+    }
     return nil
 }
 
-func (t *CustomTask) EstimateTime(params types.TaskParams) time.Duration {
+// EstimateTime estimates the time needed for the task
+func (t *Task) EstimateTime(params types.TaskParams) time.Duration {
     return 5 * time.Second
 }
 
-func (t *CustomTask) GetProgress() float64 {
-    return t.progress
+// Factory creates task instances
+type Factory struct {
+    *tasks.BaseTaskFactory
 }
 
-func (t *CustomTask) Cancel() error {
-    // Handle cancellation
-    return nil
+// NewFactory creates a new task factory
+func NewFactory() *Factory {
+    return &Factory{
+        BaseTaskFactory: tasks.NewBaseTaskFactory(
+            types.TaskTypeMyTask,
+            []string{"my_task", "custom"},
+            "My custom task description",
+        ),
+    }
+}
+
+// Create creates a new task instance
+func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
+    if params.VolumeID == 0 {
+        return nil, fmt.Errorf("volume_id is required")
+    }
+    if params.Server == "" {
+        return nil, fmt.Errorf("server is required")
+    }
+
+    task := NewTask(params.Server, params.VolumeID)
+    task.SetEstimatedDuration(task.EstimateTime(params))
+    return task, nil
+}
+
+// Register registers the task with the given registry
+func Register(registry *tasks.TaskRegistry) {
+    factory := NewFactory()
+    registry.Register(types.TaskTypeMyTask, factory)
+    glog.V(1).Infof("Registered my_task type")
 }
 ```
 
-### Step 3: Create Task Factory
+### Step 3: Register Task
+
+Add your task to `weed/worker/worker.go`:
 
 ```go
-type CustomTaskFactory struct{}
+// Add import
+import (
+    // ... existing imports ...
+    "github.com/seaweedfs/seaweedfs/weed/worker/tasks/my_task"
+)
 
-func (f *CustomTaskFactory) Create(params types.TaskParams) (types.TaskInterface, error) {
-    return &CustomTask{params: params}, nil
-}
-
-func (f *CustomTaskFactory) Capabilities() []string {
-    return []string{"custom", "processing"}
-}
-
-func (f *CustomTaskFactory) Description() string {
-    return "Custom task implementation"
+// Add registration call in RegisterAllTasks function
+func RegisterAllTasks(registry *tasks.TaskRegistry) {
+    // ... existing registrations ...
+    my_task.Register(registry)
 }
 ```
 
-### Step 4: Register Task
+### Step 4: Add Task Type (Optional)
+
+If you want to use a new task type enum, add it to `weed/worker/types/task_types.go`:
 
 ```go
-func RegisterCustomTask(registry *tasks.TaskRegistry) {
-    factory := &CustomTaskFactory{}
-    registry.Register(CustomTaskType, factory)
-}
+const (
+    // ... existing types ...
+    TaskTypeMyTask TaskType = "my_task"
+)
 ```
+
+That's it! Your task is now available to all workers.
 
 ## Usage Examples
 
@@ -189,8 +276,8 @@ import (
 
 func main() {
     config := &types.WorkerConfig{
-        AdminServer:  "localhost:9333",  // gRPC will use port 19333
-        MaxConcurrent: 2,
+        AdminServer:  "localhost:9333",
+        MaxConcurrent: 3,
         Capabilities: []types.TaskType{
             types.TaskTypeVacuum,
             types.TaskTypeErasureCoding,
@@ -202,29 +289,24 @@ func main() {
         log.Fatalf("Failed to create worker: %v", err)
     }
 
-    // Worker ID and address are automatically generated
-    fmt.Printf("Worker ID: %s\n", worker.ID())
-    fmt.Printf("Worker Address: %s\n", worker.Address())
+    // Built-in tasks are automatically registered
+    // Custom tasks can be registered here:
+    // registry := worker.GetTaskRegistry()
+    // my_task.Register(registry)
 
-    // Set up gRPC admin client
-    adminClient, err := worker.CreateAdminClient(config.AdminServer, worker.ID(), "grpc")
-    if err != nil {
-        log.Fatalf("Failed to create admin client: %v", err)
-    }
-
+    adminClient := worker.CreateAdminClient("grpc", config.AdminServer)
     worker.SetAdminClient(adminClient)
 
-    // Start worker (automatically connects via gRPC)
     if err := worker.Start(); err != nil {
         log.Fatalf("Failed to start worker: %v", err)
     }
 
-    // Worker is now running with persistent gRPC connection
+    fmt.Printf("Worker %s started with gRPC connection\n", worker.ID())
     select {} // Keep running
 }
 ```
 
-### Custom Worker with Custom Tasks
+### Worker with Custom Task
 
 ```go
 package main
@@ -232,17 +314,16 @@ package main
 import (
     "github.com/seaweedfs/seaweedfs/weed/worker"
     "github.com/seaweedfs/seaweedfs/weed/worker/types"
+    "github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 )
-
-const CustomTaskType types.TaskType = "custom_task"
 
 func main() {
     config := &types.WorkerConfig{
         AdminServer:  "localhost:9333",
-        MaxConcurrent: 3,
+        MaxConcurrent: 2,
         Capabilities: []types.TaskType{
             types.TaskTypeVacuum,
-            CustomTaskType,
+            "custom_task", // Custom task type
         },
     }
 
@@ -255,16 +336,22 @@ func main() {
     registry := worker.GetTaskRegistry()
     RegisterCustomTask(registry)
 
-    // Set up and start worker
-    adminClient := worker.NewMockAdminClient()
+    // Start worker
+    adminClient := worker.CreateAdminClient("grpc", config.AdminServer)
     worker.SetAdminClient(adminClient)
 
     if err := worker.Start(); err != nil {
         log.Fatalf("Failed to start worker: %v", err)
     }
 
-    fmt.Printf("Custom worker %s started with gRPC connection\n", worker.ID())
+    fmt.Printf("Worker %s started with custom task\n", worker.ID())
     select {} // Keep running
+}
+
+// Custom task registration
+func RegisterCustomTask(registry *tasks.TaskRegistry) {
+    factory := &CustomTaskFactory{}
+    registry.Register("custom_task", factory)
 }
 ```
 
@@ -286,7 +373,7 @@ func main() {
 | Flag | Description | Default |
 |------|-------------|---------|
 | -admin | Admin server HTTP address | "localhost:9333" |
-| -capabilities | Comma-separated task types | "vacuum,ec,remote,replication,balance" |
+| -capabilities | Comma-separated task types | "vacuum,erasure_coding,remote_upload,fix_replication,balance,cluster_replication" |
 | -maxConcurrent | Maximum concurrent tasks | 2 |
 | -heartbeat | Heartbeat interval | 30s |
 | -taskInterval | Task request interval | 5s |
@@ -296,146 +383,136 @@ func main() {
 The worker system integrates seamlessly with the SeaweedFS admin server via gRPC:
 
 1. **Worker Connection**: Workers establish persistent gRPC connections (admin HTTP port + 10000)
-2. **Worker Registration**: Workers register via the gRPC stream
-3. **Real-time Heartbeats**: Status updates sent continuously via the stream
-4. **Task Assignment**: Admin server pushes tasks to workers via the stream
-5. **Progress Reporting**: Workers send real-time progress updates
-6. **Health Monitoring**: Connection health monitored via stream status
+2. **Task Assignment**: Admin server assigns tasks based on worker capabilities and load
+3. **Real-time Updates**: Bidirectional streaming for heartbeats, task updates, and completion
+4. **Load Balancing**: Automatic load balancing across available workers
 
-## gRPC Benefits
+## Benefits of New Task Structure
 
-The gRPC implementation provides several advantages over HTTP polling:
+### Before (scattered code):
+- Task logic spread across multiple files
+- Difficult to find all related code
+- Hard to add new tasks
+- Tight coupling between components
 
-- **Real-time Communication**: Instant task assignment and progress updates
-- **Reduced Overhead**: Single persistent connection vs. multiple HTTP requests
-- **Better Error Handling**: Connection state awareness and automatic retry
-- **Bidirectional Streams**: Both sides can send messages at any time
-- **Built-in Heartbeats**: gRPC keepalive handles connection monitoring
+### After (self-contained packages):
+- ✅ Each task in its own package
+- ✅ All related code in one place
+- ✅ Easy 3-step process to add new tasks
+- ✅ Loose coupling, high cohesion
+- ✅ Clear separation of concerns
+- ✅ Simple testing and maintenance
 
-## Monitoring and Metrics
+## Testing
 
-### Worker Status
-
-```go
-status := worker.GetStatus()
-fmt.Printf("Worker %s: %s\n", status.WorkerID, status.Status)
-fmt.Printf("Current Load: %d/%d\n", status.CurrentLoad, status.MaxConcurrent)
-fmt.Printf("Tasks Completed: %d\n", status.TasksCompleted)
-fmt.Printf("Tasks Failed: %d\n", status.TasksFailed)
-fmt.Printf("gRPC Connected: %v\n", worker.GetAdminClient().IsConnected())
-```
-
-### Performance Metrics
+### Testing gRPC Connection
 
 ```go
-metrics := worker.GetPerformanceMetrics()
-fmt.Printf("Success Rate: %.2f%%\n", metrics.SuccessRate)
-fmt.Printf("Uptime: %v\n", metrics.Uptime)
+func TestWorkerConnection() {
+    worker, err := worker.NewWorker(config)
+    if err != nil {
+        t.Fatalf("Failed to create worker: %v", err)
+    }
+
+    adminClient := worker.CreateAdminClient("grpc", "localhost:9333")
+    worker.SetAdminClient(adminClient)
+
+    if err := worker.Start(); err != nil {
+        t.Fatalf("Failed to start worker: %v", err)
+    }
+
+    // Test connection
+    if !adminClient.IsConnected() {
+        t.Error("Worker should be connected to admin server")
+    }
+
+    worker.Stop()
+}
 ```
 
-## Best Practices
+### Testing Custom Tasks
 
-### 1. Configuration
+```go
+func TestCustomTask() {
+    registry := tasks.NewTaskRegistry()
+    my_task.Register(registry)
 
-- **Keep it simple**: Use default values unless you have specific requirements
-- **Match capabilities**: Only enable capabilities your infrastructure supports
-- **Reasonable concurrency**: Don't overload your system with too many concurrent tasks
-- **Network considerations**: Ensure gRPC port (HTTP + 10000) is accessible
+    taskParams := types.TaskParams{
+        VolumeID: 123,
+        Server:   "localhost:8080",
+    }
 
-### 2. Custom Tasks
+    task, err := registry.CreateTask("my_task", taskParams)
+    if err != nil {
+        t.Fatalf("Failed to create task: %v", err)
+    }
 
-- **Validate parameters**: Always validate input parameters
-- **Handle cancellation**: Implement proper cancellation logic
-- **Report progress**: Update progress for long-running tasks
-- **Use appropriate timeouts**: Set realistic time estimates
+    if err := task.Execute(taskParams); err != nil {
+        t.Fatalf("Failed to execute task: %v", err)
+    }
+}
+```
 
-### 3. Error Handling
+## Migration from Old Structure
 
-- **Connection monitoring**: Check gRPC connection status
-- **Graceful degradation**: Handle connection failures gracefully
-- **Proper logging**: Use structured logging for debugging
-- **Retry logic**: gRPC client handles automatic reconnection
+### Before
+```
+weed/worker/
+├── worker.go          # Mixed worker + task logic
+├── tasks/
+│   ├── task.go        # Base + vacuum implementation
+│   └── vacuum.go      # Duplicate vacuum code
+```
 
-### 4. Resource Management
+### After
+```
+weed/worker/
+├── worker.go          # Pure worker logic
+├── tasks/
+│   ├── task.go        # Base interfaces only
+│   ├── vacuum/        # Self-contained vacuum package
+│   ├── erasure_coding/ # Self-contained EC package
+│   └── ...            # Each task in its own package
+```
 
-- **Memory usage**: Monitor memory usage for large tasks
-- **Disk space**: Ensure sufficient disk space for operations
-- **Network bandwidth**: gRPC streams are more efficient than HTTP polling
+### Migration Benefits
+- **Cleaner Architecture**: Clear separation of concerns
+- **Easier Maintenance**: Each task is self-contained
+- **Simple Testing**: Test each task in isolation
+- **Better Documentation**: Each task package is self-documenting
+- **Rapid Development**: Add new tasks in minutes, not hours
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Worker won't start**
-   - Check admin server gRPC port (HTTP + 10000) connectivity
-   - Verify firewall allows gRPC port access
-   - Review gRPC connection logs
+1. **gRPC Connection Failed**
+   - Check admin server is running
+   - Verify gRPC port (HTTP port + 10000)
+   - Check firewall settings
 
-2. **Tasks not executing**
-   - Check gRPC stream status
-   - Verify worker capabilities
-   - Review admin server logs
+2. **Task Not Found**
+   - Verify task is registered in `RegisterAllTasks()`
+   - Check task type enum is defined
+   - Ensure package imports are correct
 
-3. **Connection issues**
-   - Monitor gRPC connection status with `IsConnected()`
-   - Check network connectivity to gRPC port
-   - Review gRPC keepalive settings
+3. **Worker Not Receiving Tasks**
+   - Check worker capabilities match task requirements
+   - Verify admin server has pending tasks
+   - Check worker load is below MaxConcurrent
 
 ### Debug Mode
 
-Enable debug logging for more detailed information:
-
 ```bash
+# Enable debug logging
 weed worker -admin=localhost:9333 -v=2
 ```
 
-### gRPC Connection Testing
+## Performance
 
-Test gRPC connectivity manually:
+- **Real-time Communication**: gRPC streaming vs HTTP polling
+- **Reduced Overhead**: Single persistent connection
+- **Better Resource Usage**: Automatic load balancing
+- **Faster Task Assignment**: Sub-second task distribution
 
-```bash
-# Check if gRPC port is accessible
-telnet localhost 19333
-
-# Use grpcurl to test gRPC service (if available)
-grpcurl -plaintext localhost:19333 list
-```
-
-## Migration Guide
-
-If you're upgrading from an older version:
-
-### Before (HTTP Polling)
-
-```bash
-weed worker -admin=localhost:9333 -id=worker-1 -addr=:8082
-```
-
-### After (gRPC Streaming)
-
-```bash
-weed worker -admin=localhost:9333
-```
-
-### Key Changes
-
-- **No HTTP server**: Workers no longer run HTTP servers
-- **gRPC only**: All communication via bidirectional gRPC streams
-- **Auto-configuration**: Worker ID and address automatically generated
-- **Real-time**: Instant communication vs. polling intervals
-- **Port calculation**: gRPC port = HTTP port + 10000
-
-## Contributing
-
-When adding new features to the worker system:
-
-1. Follow the existing interface patterns
-2. Add comprehensive tests
-3. Update documentation
-4. Provide usage examples
-5. Consider backward compatibility
-6. Test gRPC communication thoroughly
-
-## License
-
-This package is part of SeaweedFS and follows the same licensing terms. 
+The new architecture provides significant performance improvements while maintaining full backward compatibility. 

@@ -8,8 +8,29 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/cluster_replication"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/replication"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
+
+// RegisterAllTasks registers all built-in task types with the given registry
+func RegisterAllTasks(registry *tasks.TaskRegistry) {
+	glog.V(1).Infof("Registering all built-in task types")
+
+	// Register all built-in task types
+	vacuum.Register(registry)
+	erasure_coding.Register(registry)
+	remote_upload.Register(registry)
+	replication.Register(registry)
+	balance.Register(registry)
+	cluster_replication.Register(registry)
+
+	glog.V(1).Infof("Registered %d built-in task types", len(registry.GetSupportedTypes()))
+}
 
 // Worker represents a maintenance worker instance
 type Worker struct {
@@ -376,162 +397,8 @@ func (w *Worker) requestTasks() {
 
 // registerDefaultTasks registers the default task implementations
 func (w *Worker) registerDefaultTasks() {
-	// Register vacuum task
-	RegisterVacuumTask(w.registry)
-
-	// Additional task registrations can be added here
-	// RegisterErasureCodingTask(w.registry)
-	// RegisterRemoteUploadTask(w.registry)
-	// RegisterReplicationTask(w.registry)
-	// RegisterBalanceTask(w.registry)
-}
-
-// RegisterVacuumTask registers the vacuum task with a registry
-func RegisterVacuumTask(registry *tasks.TaskRegistry) {
-	factory := NewVacuumTaskFactory()
-	registry.Register(types.TaskTypeVacuum, factory)
-}
-
-// NewVacuumTaskFactory creates a new vacuum task factory
-func NewVacuumTaskFactory() types.TaskFactory {
-	return &VacuumTaskFactory{
-		capabilities: []string{"vacuum", "storage"},
-		description:  "Vacuum operation to reclaim disk space by removing deleted files",
-	}
-}
-
-// VacuumTaskFactory creates vacuum task instances
-type VacuumTaskFactory struct {
-	capabilities []string
-	description  string
-}
-
-// Create creates a new vacuum task instance
-func (f *VacuumTaskFactory) Create(params types.TaskParams) (types.TaskInterface, error) {
-	// Validate parameters
-	if params.VolumeID == 0 {
-		return nil, fmt.Errorf("volume_id is required")
-	}
-	if params.Server == "" {
-		return nil, fmt.Errorf("server is required")
-	}
-
-	task := &VacuumTaskImpl{
-		taskType:  types.TaskTypeVacuum,
-		server:    params.Server,
-		volumeID:  params.VolumeID,
-		progress:  0.0,
-		cancelled: false,
-	}
-
-	return task, nil
-}
-
-// Capabilities returns the capabilities required for this task type
-func (f *VacuumTaskFactory) Capabilities() []string {
-	return f.capabilities
-}
-
-// Description returns the description of this task type
-func (f *VacuumTaskFactory) Description() string {
-	return f.description
-}
-
-// VacuumTaskImpl implements vacuum operation task
-type VacuumTaskImpl struct {
-	taskType  types.TaskType
-	server    string
-	volumeID  uint32
-	progress  float64
-	cancelled bool
-	mutex     sync.RWMutex
-}
-
-// Type returns the task type
-func (t *VacuumTaskImpl) Type() types.TaskType {
-	return t.taskType
-}
-
-// Execute executes the vacuum task
-func (t *VacuumTaskImpl) Execute(params types.TaskParams) error {
-	glog.Infof("Starting vacuum task for volume %d on server %s", t.volumeID, t.server)
-
-	// Simulate vacuum operation with progress updates
-	steps := []struct {
-		name     string
-		duration time.Duration
-		progress float64
-	}{
-		{"Analyzing volume", 2 * time.Second, 10},
-		{"Identifying garbage", 3 * time.Second, 30},
-		{"Compacting data", 8 * time.Second, 70},
-		{"Updating metadata", 2 * time.Second, 90},
-		{"Finalizing", 1 * time.Second, 100},
-	}
-
-	for _, step := range steps {
-		if t.IsCancelled() {
-			return fmt.Errorf("task cancelled during %s", step.name)
-		}
-
-		glog.V(2).Infof("Vacuum task %s: %s", t.Type(), step.name)
-		time.Sleep(step.duration)
-		t.SetProgress(step.progress)
-	}
-
-	glog.Infof("Vacuum task completed for volume %d on server %s", t.volumeID, t.server)
-	return nil
-}
-
-// Validate validates the task parameters
-func (t *VacuumTaskImpl) Validate(params types.TaskParams) error {
-	if params.VolumeID == 0 {
-		return fmt.Errorf("volume_id is required")
-	}
-	if params.Server == "" {
-		return fmt.Errorf("server is required")
-	}
-	return nil
-}
-
-// EstimateTime estimates the time needed for the task
-func (t *VacuumTaskImpl) EstimateTime(params types.TaskParams) time.Duration {
-	return 15 * time.Second
-}
-
-// GetProgress returns the current progress (0.0 to 100.0)
-func (t *VacuumTaskImpl) GetProgress() float64 {
-	t.mutex.RLock()
-	defer t.mutex.RUnlock()
-	return t.progress
-}
-
-// SetProgress sets the current progress
-func (t *VacuumTaskImpl) SetProgress(progress float64) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	if progress < 0 {
-		progress = 0
-	}
-	if progress > 100 {
-		progress = 100
-	}
-	t.progress = progress
-}
-
-// Cancel cancels the task
-func (t *VacuumTaskImpl) Cancel() error {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	t.cancelled = true
-	return nil
-}
-
-// IsCancelled returns whether the task is cancelled
-func (t *VacuumTaskImpl) IsCancelled() bool {
-	t.mutex.RLock()
-	defer t.mutex.RUnlock()
-	return t.cancelled
+	// Register all built-in task types
+	RegisterAllTasks(w.registry)
 }
 
 // GetTaskRegistry returns the task registry
