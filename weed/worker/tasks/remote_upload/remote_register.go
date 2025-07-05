@@ -7,8 +7,8 @@ import (
 
 // RegisterSimple registers the remote upload detector and scheduler with simplified system
 func RegisterSimple(registry *types.TaskRegistry) {
-	detector := NewSimpleDetector()
-	scheduler := NewSimpleScheduler()
+	detector := NewRemoteUploadDetector()
+	scheduler := NewRemoteUploadScheduler()
 
 	registry.RegisterTask(detector, scheduler)
 

@@ -117,10 +117,3 @@ func (s *ECScheduler) SetEnabled(enabled bool) {
 func (s *ECScheduler) SetMaxConcurrent(max int) {
 	s.maxConcurrent = max
 }
-
-// Backward compatibility aliases
-type SimpleScheduler = ECScheduler
-
-func NewSimpleScheduler() *ECScheduler {
-	return NewECScheduler()
-}

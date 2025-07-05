@@ -137,10 +137,3 @@ func (d *RemoteUploadDetector) SetPattern(pattern string) {
 func (d *RemoteUploadDetector) SetScanInterval(interval time.Duration) {
 	d.scanInterval = interval
 }
-
-// Backward compatibility aliases
-type SimpleDetector = RemoteUploadDetector
-
-func NewSimpleDetector() *RemoteUploadDetector {
-	return NewRemoteUploadDetector()
-}

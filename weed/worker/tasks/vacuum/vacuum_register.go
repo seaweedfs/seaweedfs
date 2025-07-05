@@ -7,8 +7,8 @@ import (
 
 // RegisterSimple registers the vacuum task components with the simplified registry
 func RegisterSimple(registry *types.TaskRegistry) {
-	detector := NewSimpleDetector()
-	scheduler := NewSimpleScheduler()
+	detector := NewVacuumDetector()
+	scheduler := NewVacuumScheduler()
 
 	registry.RegisterTask(detector, scheduler)
 

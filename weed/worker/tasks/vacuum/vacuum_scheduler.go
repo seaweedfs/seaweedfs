@@ -104,10 +104,3 @@ func (s *VacuumScheduler) SetMaxConcurrent(max int) {
 func (s *VacuumScheduler) SetMinInterval(interval time.Duration) {
 	s.minInterval = interval
 }
-
-// Backward compatibility aliases
-type SimpleScheduler = VacuumScheduler
-
-func NewSimpleScheduler() *VacuumScheduler {
-	return NewVacuumScheduler()
-}

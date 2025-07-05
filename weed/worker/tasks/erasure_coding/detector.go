@@ -106,10 +106,3 @@ func (d *ECDetector) SetFullnessRatio(ratio float64) {
 func (d *ECDetector) SetScanInterval(interval time.Duration) {
 	d.scanInterval = interval
 }
-
-// Backward compatibility aliases
-type SimpleDetector = ECDetector
-
-func NewSimpleDetector() *ECDetector {
-	return NewECDetector()
-}

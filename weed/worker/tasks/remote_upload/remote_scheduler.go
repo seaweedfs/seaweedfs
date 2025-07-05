@@ -123,10 +123,3 @@ func (s *RemoteUploadScheduler) SetEnabled(enabled bool) {
 func (s *RemoteUploadScheduler) SetMaxConcurrent(max int) {
 	s.maxConcurrent = max
 }
-
-// Backward compatibility aliases
-type SimpleScheduler = RemoteUploadScheduler
-
-func NewSimpleScheduler() *RemoteUploadScheduler {
-	return NewRemoteUploadScheduler()
-}

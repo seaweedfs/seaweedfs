@@ -115,10 +115,3 @@ func (d *VacuumDetector) ConfigureFromPolicy(policy interface{}) {
 		glog.V(1).Infof("Could not configure vacuum detector from policy: unsupported policy type")
 	}
 }
-
-// Backward compatibility aliases
-type SimpleDetector = VacuumDetector
-
-func NewSimpleDetector() *VacuumDetector {
-	return NewVacuumDetector()
-}
