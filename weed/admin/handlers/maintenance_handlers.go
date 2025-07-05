@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 )
@@ -81,7 +82,7 @@ func (h *MaintenanceHandlers) ShowMaintenanceConfig(c *gin.Context) {
 
 // UpdateMaintenanceConfig updates maintenance configuration from form
 func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
-	var config dash.MaintenanceConfig
+	var config maintenance.MaintenanceConfig
 	if err := c.ShouldBind(&config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -98,7 +99,7 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 
 // Helper methods that delegate to AdminServer
 
-func (h *MaintenanceHandlers) getMaintenanceQueueData() (*dash.MaintenanceQueueData, error) {
+func (h *MaintenanceHandlers) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
 	tasks, err := h.getMaintenanceTasks()
 	if err != nil {
 		return nil, err
@@ -114,7 +115,7 @@ func (h *MaintenanceHandlers) getMaintenanceQueueData() (*dash.MaintenanceQueueD
 		return nil, err
 	}
 
-	return &dash.MaintenanceQueueData{
+	return &maintenance.MaintenanceQueueData{
 		Tasks:       tasks,
 		Workers:     workers,
 		Stats:       stats,
@@ -122,10 +123,10 @@ func (h *MaintenanceHandlers) getMaintenanceQueueData() (*dash.MaintenanceQueueD
 	}, nil
 }
 
-func (h *MaintenanceHandlers) getMaintenanceQueueStats() (*dash.QueueStats, error) {
+func (h *MaintenanceHandlers) getMaintenanceQueueStats() (*maintenance.QueueStats, error) {
 	// This would integrate with the maintenance queue to get real statistics
 	// For now, return mock data
-	return &dash.QueueStats{
+	return &maintenance.QueueStats{
 		PendingTasks:   5,
 		RunningTasks:   2,
 		CompletedToday: 15,
@@ -134,24 +135,24 @@ func (h *MaintenanceHandlers) getMaintenanceQueueStats() (*dash.QueueStats, erro
 	}, nil
 }
 
-func (h *MaintenanceHandlers) getMaintenanceTasks() ([]*dash.MaintenanceTask, error) {
+func (h *MaintenanceHandlers) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
 	// This would integrate with the maintenance queue to get real tasks
 	// For now, return mock data
-	return []*dash.MaintenanceTask{}, nil
+	return []*maintenance.MaintenanceTask{}, nil
 }
 
-func (h *MaintenanceHandlers) getMaintenanceWorkers() ([]*dash.MaintenanceWorker, error) {
+func (h *MaintenanceHandlers) getMaintenanceWorkers() ([]*maintenance.MaintenanceWorker, error) {
 	// This would integrate with the maintenance system to get real workers
 	// For now, return mock data
-	return []*dash.MaintenanceWorker{}, nil
+	return []*maintenance.MaintenanceWorker{}, nil
 }
 
-func (h *MaintenanceHandlers) getMaintenanceConfig() (*dash.MaintenanceConfigData, error) {
+func (h *MaintenanceHandlers) getMaintenanceConfig() (*maintenance.MaintenanceConfigData, error) {
 	// Delegate to AdminServer's real persistence method
 	return h.adminServer.GetMaintenanceConfigData()
 }
 
-func (h *MaintenanceHandlers) updateMaintenanceConfig(config *dash.MaintenanceConfig) error {
+func (h *MaintenanceHandlers) updateMaintenanceConfig(config *maintenance.MaintenanceConfig) error {
 	// Delegate to AdminServer's real persistence method
 	return h.adminServer.UpdateMaintenanceConfigData(config)
 }

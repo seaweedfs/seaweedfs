@@ -1,4 +1,4 @@
-package dash
+package maintenance
 
 import (
 	"fmt"
@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
@@ -88,7 +89,7 @@ type MaintenanceWorkerService struct {
 	maxConcurrent int
 	currentTasks  map[string]*MaintenanceTask
 	queue         *MaintenanceQueue
-	adminClient   *AdminServer
+	adminClient   *dash.AdminServer
 	running       bool
 	stopChan      chan struct{}
 
@@ -350,7 +351,7 @@ func (mws *MaintenanceWorkerService) SetQueue(queue *MaintenanceQueue) {
 }
 
 // SetAdminClient sets the admin client for the worker
-func (mws *MaintenanceWorkerService) SetAdminClient(client *AdminServer) {
+func (mws *MaintenanceWorkerService) SetAdminClient(client *dash.AdminServer) {
 	mws.adminClient = client
 }
 

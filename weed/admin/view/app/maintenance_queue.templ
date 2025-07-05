@@ -3,10 +3,10 @@ package app
 import (
     "fmt"
     "time"
-    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+    "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 )
 
-templ MaintenanceQueue(data *dash.MaintenanceQueueData) {
+templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
     <div class="container-fluid">
         <!-- Header -->
         <div class="row mb-4">
@@ -187,67 +187,67 @@ templ MaintenanceQueue(data *dash.MaintenanceQueueData) {
 }
 
 // Helper components
-templ TaskTypeIcon(taskType dash.MaintenanceTaskType) {
+templ TaskTypeIcon(taskType maintenance.MaintenanceTaskType) {
     switch taskType {
-    case dash.TaskTypeVacuum:
+    case maintenance.TaskTypeVacuum:
         <i class="fas fa-broom text-primary me-1"></i>
-    case dash.TaskTypeErasureCoding:
+    case maintenance.TaskTypeErasureCoding:
         <i class="fas fa-shield-alt text-info me-1"></i>
-    case dash.TaskTypeRemoteUpload:
+    case maintenance.TaskTypeRemoteUpload:
         <i class="fas fa-cloud-upload-alt text-warning me-1"></i>
-    case dash.TaskTypeFixReplication:
+    case maintenance.TaskTypeFixReplication:
         <i class="fas fa-copy text-success me-1"></i>
-    case dash.TaskTypeBalance:
+    case maintenance.TaskTypeBalance:
         <i class="fas fa-balance-scale text-secondary me-1"></i>
-    case dash.TaskTypeClusterReplication:
+    case maintenance.TaskTypeClusterReplication:
         <i class="fas fa-network-wired text-info me-1"></i>
     default:
         <i class="fas fa-cog text-muted me-1"></i>
     }
 }
 
-templ PriorityBadge(priority dash.MaintenanceTaskPriority) {
+templ PriorityBadge(priority maintenance.MaintenanceTaskPriority) {
     switch priority {
-    case dash.PriorityCritical:
+    case maintenance.PriorityCritical:
         <span class="badge bg-danger">Critical</span>
-    case dash.PriorityHigh:
+    case maintenance.PriorityHigh:
         <span class="badge bg-warning">High</span>
-    case dash.PriorityNormal:
+    case maintenance.PriorityNormal:
         <span class="badge bg-primary">Normal</span>
-    case dash.PriorityLow:
+    case maintenance.PriorityLow:
         <span class="badge bg-secondary">Low</span>
     default:
         <span class="badge bg-light text-dark">Unknown</span>
     }
 }
 
-templ StatusBadge(status dash.MaintenanceTaskStatus) {
+templ StatusBadge(status maintenance.MaintenanceTaskStatus) {
     switch status {
-    case dash.TaskStatusPending:
+    case maintenance.TaskStatusPending:
         <span class="badge bg-secondary">Pending</span>
-    case dash.TaskStatusAssigned:
+    case maintenance.TaskStatusAssigned:
         <span class="badge bg-info">Assigned</span>
-    case dash.TaskStatusInProgress:
+    case maintenance.TaskStatusInProgress:
         <span class="badge bg-warning">Running</span>
-    case dash.TaskStatusCompleted:
+    case maintenance.TaskStatusCompleted:
         <span class="badge bg-success">Completed</span>
-    case dash.TaskStatusFailed:
+    case maintenance.TaskStatusFailed:
         <span class="badge bg-danger">Failed</span>
-    case dash.TaskStatusCancelled:
+    case maintenance.TaskStatusCancelled:
         <span class="badge bg-light text-dark">Cancelled</span>
     default:
         <span class="badge bg-light text-dark">Unknown</span>
     }
 }
 
-templ ProgressBar(progress float64, status dash.MaintenanceTaskStatus) {
-    if status == dash.TaskStatusInProgress || status == dash.TaskStatusAssigned {
+templ ProgressBar(progress float64, status maintenance.MaintenanceTaskStatus) {
+    if status == maintenance.TaskStatusInProgress || status == maintenance.TaskStatusAssigned {
         <div class="progress" style="height: 8px; min-width: 100px;">
             <div class="progress-bar" role="progressbar" style={fmt.Sprintf("width: %.1f%%", progress)}>
             </div>
         </div>
         <small class="text-muted">{fmt.Sprintf("%.1f%%", progress)}</small>
-    } else if status == dash.TaskStatusCompleted {
+    } else if status == maintenance.TaskStatusCompleted {
         <div class="progress" style="height: 8px; min-width: 100px;">
             <div class="progress-bar bg-success" role="progressbar" style="width: 100%">
             </div>

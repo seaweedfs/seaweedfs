@@ -1,17 +1,18 @@
-package dash
+package maintenance
 
 import (
 	"context"
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // NewMaintenanceScanner creates a new maintenance scanner
-func NewMaintenanceScanner(adminServer *AdminServer, policy *MaintenancePolicy, queue *MaintenanceQueue) *MaintenanceScanner {
+func NewMaintenanceScanner(adminServer *dash.AdminServer, policy *MaintenancePolicy, queue *MaintenanceQueue) *MaintenanceScanner {
 	scanner := &MaintenanceScanner{
 		adminServer: adminServer,
 		policy:      policy,

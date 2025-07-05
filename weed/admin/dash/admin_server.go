@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -41,7 +42,7 @@ type AdminServer struct {
 	configPersistence *ConfigPersistence
 
 	// Maintenance system
-	maintenanceManager *MaintenanceManager
+	maintenanceManager *maintenance.MaintenanceManager
 
 	// Worker gRPC server
 	workerGrpcServer *WorkerGrpcServer

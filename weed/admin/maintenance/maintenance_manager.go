@@ -1,4 +1,4 @@
-package dash
+package maintenance
 
 import (
 	"fmt"
@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
@@ -14,7 +15,7 @@ type MaintenanceManager struct {
 	config      *MaintenanceConfig
 	scanner     *MaintenanceScanner
 	queue       *MaintenanceQueue
-	adminServer *AdminServer
+	adminServer *dash.AdminServer
 	running     bool
 	stopChan    chan struct{}
 	// Error handling and backoff
@@ -26,7 +27,7 @@ type MaintenanceManager struct {
 }
 
 // NewMaintenanceManager creates a new maintenance manager
-func NewMaintenanceManager(adminServer *AdminServer, config *MaintenanceConfig) *MaintenanceManager {
+func NewMaintenanceManager(adminServer *dash.AdminServer, config *MaintenanceConfig) *MaintenanceManager {
 	if config == nil {
 		config = DefaultMaintenanceConfig()
 	}
@@ -404,29 +405,4 @@ func (mm *MaintenanceManager) UpdateTaskProgress(taskID string, progress float64
 // UpdateWorkerHeartbeat updates worker heartbeat
 func (mm *MaintenanceManager) UpdateWorkerHeartbeat(workerID string) {
 	mm.queue.UpdateWorkerHeartbeat(workerID)
-}
-
-// Add maintenance manager to AdminServer
-func (s *AdminServer) InitMaintenanceManager(config *MaintenanceConfig) {
-	s.maintenanceManager = NewMaintenanceManager(s, config)
-}
-
-// GetMaintenanceManager returns the maintenance manager
-func (s *AdminServer) GetMaintenanceManager() *MaintenanceManager {
-	return s.maintenanceManager
-}
-
-// StartMaintenanceManager starts the maintenance manager
-func (s *AdminServer) StartMaintenanceManager() error {
-	if s.maintenanceManager == nil {
-		s.InitMaintenanceManager(nil)
-	}
-	return s.maintenanceManager.Start()
-}
-
-// StopMaintenanceManager stops the maintenance manager
-func (s *AdminServer) StopMaintenanceManager() {
-	if s.maintenanceManager != nil {
-		s.maintenanceManager.Stop()
-	}
 }

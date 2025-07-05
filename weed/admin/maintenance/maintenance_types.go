@@ -1,8 +1,10 @@
-package dash
+package maintenance
 
 import (
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
 
 // MaintenanceTaskType represents different types of maintenance operations
@@ -169,7 +171,7 @@ type MaintenanceQueue struct {
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks
 type MaintenanceScanner struct {
-	adminServer *AdminServer
+	adminServer *dash.AdminServer
 	policy      *MaintenancePolicy
 	queue       *MaintenanceQueue
 	lastScan    map[MaintenanceTaskType]time.Time

@@ -1,4 +1,4 @@
-package dash
+package maintenance
 
 import (
 	"errors"
