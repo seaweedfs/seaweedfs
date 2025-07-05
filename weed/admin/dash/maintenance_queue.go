@@ -246,37 +246,26 @@ func (mq *MaintenanceQueue) getRepeatPreventionInterval(taskType MaintenanceTask
 	if mq.integration != nil {
 		if scheduler := mq.integration.GetTaskScheduler(taskType); scheduler != nil {
 			defaultInterval := scheduler.GetDefaultRepeatInterval()
-			glog.V(3).Infof("Using task scheduler default repeat interval for %s: %v", taskType, defaultInterval)
-			return defaultInterval
+			if defaultInterval > 0 {
+				glog.V(3).Infof("Using task scheduler default repeat interval for %s: %v", taskType, defaultInterval)
+				return defaultInterval
+			}
 		}
 	}
 
-	// Fallback to policy configuration if no scheduler available
+	// Fallback to policy configuration if no scheduler available or scheduler doesn't provide default
 	if mq.policy != nil {
-		// Create a mapping table for repeat prevention intervals using configurable values
-		intervalMap := map[MaintenanceTaskType]time.Duration{
-			TaskTypeVacuum:             time.Duration(mq.policy.VacuumRepeatInterval) * time.Hour,
-			TaskTypeErasureCoding:      time.Duration(mq.policy.ECRepeatInterval) * time.Hour,
-			TaskTypeRemoteUpload:       time.Duration(mq.policy.RemoteUploadRepeatInterval) * time.Hour,
-			TaskTypeFixReplication:     time.Duration(mq.policy.ReplicationRepeatInterval) * time.Hour,
-			TaskTypeBalance:            time.Duration(mq.policy.BalanceRepeatInterval) * time.Hour,
-			TaskTypeClusterReplication: time.Duration(mq.policy.ClusterReplicationRepeatInterval) * time.Hour,
-		}
-
-		if interval, exists := intervalMap[taskType]; exists {
-			// Ensure minimum interval is at least 1 hour
-			if interval < time.Hour {
-				glog.V(2).Infof("Task type %s repeat interval too short (%v), using minimum: 1h", taskType, interval)
-				return time.Hour
-			}
+		repeatIntervalHours := mq.policy.GetRepeatInterval(taskType)
+		if repeatIntervalHours > 0 {
+			interval := time.Duration(repeatIntervalHours) * time.Hour
 			glog.V(3).Infof("Using policy configuration repeat interval for %s: %v", taskType, interval)
 			return interval
 		}
 	}
 
-	// Default interval when no policy is configured or task type is unknown
-	glog.V(2).Infof("No scheduler or policy configuration found for task type %s, using default: 6h", taskType)
-	return 6 * time.Hour
+	// Ultimate fallback - but avoid hardcoded values where possible
+	glog.V(2).Infof("No scheduler or policy configuration found for task type %s, using minimal default: 1h", taskType)
+	return time.Hour // Minimal safe default
 }
 
 // GetTasks returns tasks with optional filtering
@@ -467,32 +456,25 @@ func (mq *MaintenanceQueue) getMaxConcurrentForTaskType(taskType MaintenanceTask
 	if mq.integration != nil {
 		if scheduler := mq.integration.GetTaskScheduler(taskType); scheduler != nil {
 			maxConcurrent := scheduler.GetMaxConcurrent()
-			glog.V(3).Infof("Using task scheduler max concurrent for %s: %d", taskType, maxConcurrent)
-			return maxConcurrent
+			if maxConcurrent > 0 {
+				glog.V(3).Infof("Using task scheduler max concurrent for %s: %d", taskType, maxConcurrent)
+				return maxConcurrent
+			}
 		}
 	}
 
-	// Fallback to policy configuration if no scheduler available
+	// Fallback to policy configuration if no scheduler available or scheduler doesn't provide default
 	if mq.policy != nil {
-		// Create a mapping table for max concurrent limits
-		maxConcurrentMap := map[MaintenanceTaskType]int{
-			TaskTypeVacuum:             mq.policy.VacuumMaxConcurrent,
-			TaskTypeErasureCoding:      mq.policy.ECMaxConcurrent,
-			TaskTypeRemoteUpload:       mq.policy.RemoteUploadMaxConcurrent,
-			TaskTypeFixReplication:     mq.policy.ReplicationMaxConcurrent,
-			TaskTypeBalance:            mq.policy.BalanceMaxConcurrent,
-			TaskTypeClusterReplication: 3, // Default for cluster replication
-		}
-
-		if maxConcurrent, exists := maxConcurrentMap[taskType]; exists {
+		maxConcurrent := mq.policy.GetMaxConcurrent(taskType)
+		if maxConcurrent > 0 {
 			glog.V(3).Infof("Using policy configuration max concurrent for %s: %d", taskType, maxConcurrent)
 			return maxConcurrent
 		}
 	}
 
-	// Default limit when no scheduler or policy is available
-	glog.V(2).Infof("No scheduler or policy configuration found for task type %s, using default: 2", taskType)
-	return 2
+	// Ultimate fallback - minimal safe default
+	glog.V(2).Infof("No scheduler or policy configuration found for task type %s, using minimal default: 1", taskType)
+	return 1
 }
 
 // getRunningTasks returns all currently running tasks

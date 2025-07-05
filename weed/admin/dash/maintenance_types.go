@@ -61,44 +61,88 @@ type MaintenanceTask struct {
 	MaxRetries  int                     `json:"max_retries"`
 }
 
-// MaintenancePolicy defines when and how maintenance tasks should be created
+// TaskPolicy represents configuration for a specific task type
+type TaskPolicy struct {
+	Enabled        bool                   `json:"enabled"`
+	MaxConcurrent  int                    `json:"max_concurrent"`
+	RepeatInterval int                    `json:"repeat_interval"` // Hours to wait before repeating
+	CheckInterval  int                    `json:"check_interval"`  // Hours between checks
+	Configuration  map[string]interface{} `json:"configuration"`   // Task-specific config
+}
+
+// MaintenancePolicy defines policies for maintenance operations using a dynamic structure
 type MaintenancePolicy struct {
-	// Vacuum policies
-	VacuumEnabled       bool    `json:"vacuum_enabled"`
-	VacuumGarbageRatio  float64 `json:"vacuum_garbage_ratio"`  // Trigger vacuum when garbage > this ratio
-	VacuumMinInterval   int     `json:"vacuum_min_interval"`   // Minimum hours between vacuum operations (legacy - use VacuumRepeatInterval)
-	VacuumMaxConcurrent int     `json:"vacuum_max_concurrent"` // Max concurrent vacuum operations
+	// Task-specific policies mapped by task type
+	TaskPolicies map[MaintenanceTaskType]*TaskPolicy `json:"task_policies"`
 
-	// Erasure Coding policies
-	ECEnabled        bool    `json:"ec_enabled"`
-	ECVolumeAgeHours int     `json:"ec_volume_age_hours"` // Convert volumes older than this to EC
-	ECFullnessRatio  float64 `json:"ec_fullness_ratio"`   // Convert volumes when fuller than this ratio
-	ECMaxConcurrent  int     `json:"ec_max_concurrent"`   // Max concurrent EC operations
+	// Global policy settings
+	GlobalMaxConcurrent   int `json:"global_max_concurrent"`   // Overall limit across all task types
+	DefaultRepeatInterval int `json:"default_repeat_interval"` // Default hours if task doesn't specify
+	DefaultCheckInterval  int `json:"default_check_interval"`  // Default hours for periodic checks
+}
 
-	// Remote Upload policies
-	RemoteUploadEnabled       bool   `json:"remote_upload_enabled"`
-	RemoteUploadAgeHours      int    `json:"remote_upload_age_hours"` // Upload volumes older than this
-	RemoteUploadPattern       string `json:"remote_upload_pattern"`   // Collection pattern for remote upload
-	RemoteUploadMaxConcurrent int    `json:"remote_upload_max_concurrent"`
+// GetTaskPolicy returns the policy for a specific task type, creating generic defaults if needed
+func (mp *MaintenancePolicy) GetTaskPolicy(taskType MaintenanceTaskType) *TaskPolicy {
+	if mp.TaskPolicies == nil {
+		mp.TaskPolicies = make(map[MaintenanceTaskType]*TaskPolicy)
+	}
 
-	// Replication Fix policies
-	ReplicationFixEnabled    bool `json:"replication_fix_enabled"`
-	ReplicationCheckInterval int  `json:"replication_check_interval"` // Hours between replication checks
-	ReplicationMaxConcurrent int  `json:"replication_max_concurrent"`
+	policy, exists := mp.TaskPolicies[taskType]
+	if !exists {
+		// Create generic default policy using global settings - no hardcoded fallbacks
+		policy = &TaskPolicy{
+			Enabled:        false,                    // Conservative default - require explicit enabling
+			MaxConcurrent:  1,                        // Conservative default concurrency
+			RepeatInterval: mp.DefaultRepeatInterval, // Use configured default, 0 if not set
+			CheckInterval:  mp.DefaultCheckInterval,  // Use configured default, 0 if not set
+			Configuration:  make(map[string]interface{}),
+		}
+		mp.TaskPolicies[taskType] = policy
+	}
 
-	// Balance policies
-	BalanceEnabled       bool    `json:"balance_enabled"`
-	BalanceCheckInterval int     `json:"balance_check_interval"` // Hours between balance checks
-	BalanceThreshold     float64 `json:"balance_threshold"`      // Trigger balance when imbalance > this ratio
-	BalanceMaxConcurrent int     `json:"balance_max_concurrent"`
+	return policy
+}
 
-	// Repeat prevention intervals (in hours)
-	VacuumRepeatInterval             int `json:"vacuum_repeat_interval"`              // Hours to wait before repeating vacuum
-	ECRepeatInterval                 int `json:"ec_repeat_interval"`                  // Hours to wait before repeating EC
-	RemoteUploadRepeatInterval       int `json:"remote_upload_repeat_interval"`       // Hours to wait before repeating remote upload
-	ReplicationRepeatInterval        int `json:"replication_repeat_interval"`         // Hours to wait before repeating replication fix
-	BalanceRepeatInterval            int `json:"balance_repeat_interval"`             // Hours to wait before repeating balance
-	ClusterReplicationRepeatInterval int `json:"cluster_replication_repeat_interval"` // Hours to wait before repeating cluster replication
+// SetTaskPolicy sets the policy for a specific task type
+func (mp *MaintenancePolicy) SetTaskPolicy(taskType MaintenanceTaskType, policy *TaskPolicy) {
+	if mp.TaskPolicies == nil {
+		mp.TaskPolicies = make(map[MaintenanceTaskType]*TaskPolicy)
+	}
+	mp.TaskPolicies[taskType] = policy
+}
+
+// IsTaskEnabled returns whether a task type is enabled
+func (mp *MaintenancePolicy) IsTaskEnabled(taskType MaintenanceTaskType) bool {
+	policy := mp.GetTaskPolicy(taskType)
+	return policy.Enabled
+}
+
+// GetMaxConcurrent returns the max concurrent limit for a task type
+func (mp *MaintenancePolicy) GetMaxConcurrent(taskType MaintenanceTaskType) int {
+	policy := mp.GetTaskPolicy(taskType)
+	return policy.MaxConcurrent
+}
+
+// GetRepeatInterval returns the repeat interval for a task type
+func (mp *MaintenancePolicy) GetRepeatInterval(taskType MaintenanceTaskType) int {
+	policy := mp.GetTaskPolicy(taskType)
+	return policy.RepeatInterval
+}
+
+// GetTaskConfig returns a configuration value for a task type
+func (mp *MaintenancePolicy) GetTaskConfig(taskType MaintenanceTaskType, key string) (interface{}, bool) {
+	policy := mp.GetTaskPolicy(taskType)
+	value, exists := policy.Configuration[key]
+	return value, exists
+}
+
+// SetTaskConfig sets a configuration value for a task type
+func (mp *MaintenancePolicy) SetTaskConfig(taskType MaintenanceTaskType, key string, value interface{}) {
+	policy := mp.GetTaskPolicy(taskType)
+	if policy.Configuration == nil {
+		policy.Configuration = make(map[string]interface{})
+	}
+	policy.Configuration[key] = value
 }
 
 // MaintenanceWorker represents a worker instance
@@ -200,32 +244,9 @@ func DefaultMaintenanceConfig() *MaintenanceConfig {
 		CleanupIntervalSeconds: 24 * 60 * 60,     // 24 hours
 		TaskRetentionSeconds:   7 * 24 * 60 * 60, // 7 days
 		Policy: &MaintenancePolicy{
-			VacuumEnabled:             true,
-			VacuumGarbageRatio:        0.3, // 30% garbage
-			VacuumMinInterval:         6,   // 6 hours
-			VacuumMaxConcurrent:       2,
-			ECEnabled:                 false,  // Conservative default
-			ECVolumeAgeHours:          24 * 7, // 1 week
-			ECFullnessRatio:           0.9,    // 90% full
-			ECMaxConcurrent:           1,
-			RemoteUploadEnabled:       false,
-			RemoteUploadAgeHours:      24 * 30, // 1 month
-			RemoteUploadMaxConcurrent: 1,
-			ReplicationFixEnabled:     true,
-			ReplicationCheckInterval:  4, // 4 hours
-			ReplicationMaxConcurrent:  2,
-			BalanceEnabled:            false,
-			BalanceCheckInterval:      12,  // 12 hours
-			BalanceThreshold:          0.2, // 20% imbalance
-			BalanceMaxConcurrent:      1,
-
-			// Repeat prevention intervals (in hours)
-			VacuumRepeatInterval:             6,  // 6 hours
-			ECRepeatInterval:                 24, // 24 hours
-			RemoteUploadRepeatInterval:       48, // 48 hours
-			ReplicationRepeatInterval:        2,  // 2 hours
-			BalanceRepeatInterval:            12, // 12 hours
-			ClusterReplicationRepeatInterval: 6,  // 6 hours
+			GlobalMaxConcurrent:   4,
+			DefaultRepeatInterval: 6,
+			DefaultCheckInterval:  12,
 		},
 	}
 }

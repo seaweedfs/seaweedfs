@@ -150,34 +150,20 @@ func (s *MaintenanceIntegration) configureDetectorFromPolicy(taskType types.Task
 		return
 	}
 
-	// Fallback to specific configurations for existing detectors
-	switch taskType {
-	case types.TaskTypeVacuum:
-		if vacuumDetector := vacuum.GetDetector(s.taskRegistry); vacuumDetector != nil {
-			vacuumDetector.SetEnabled(s.maintenancePolicy.VacuumEnabled)
-			vacuumDetector.SetGarbageThreshold(s.maintenancePolicy.VacuumGarbageRatio)
-			vacuumDetector.SetMinVolumeAge(time.Duration(s.maintenancePolicy.VacuumMinInterval) * time.Hour)
+	// Apply basic configuration that all detectors should support
+	if basicDetector, ok := detector.(interface{ SetEnabled(bool) }); ok {
+		// Convert task system type to maintenance task type for policy lookup
+		maintenanceTaskType, exists := s.taskTypeMap[taskType]
+		if exists {
+			enabled := s.maintenancePolicy.IsTaskEnabled(maintenanceTaskType)
+			basicDetector.SetEnabled(enabled)
+			glog.V(3).Infof("Set enabled=%v for detector %s", enabled, taskType)
 		}
-	case types.TaskTypeErasureCoding:
-		if ecDetector := erasure_coding.GetSimpleDetector(s.taskRegistry); ecDetector != nil {
-			ecDetector.SetEnabled(s.maintenancePolicy.ECEnabled)
-			ecDetector.SetVolumeAgeHours(s.maintenancePolicy.ECVolumeAgeHours)
-			ecDetector.SetFullnessRatio(s.maintenancePolicy.ECFullnessRatio)
-		}
-	case types.TaskTypeRemoteUpload:
-		if remoteDetector := remote_upload.GetSimpleDetector(s.taskRegistry); remoteDetector != nil {
-			remoteDetector.SetEnabled(s.maintenancePolicy.RemoteUploadEnabled)
-			remoteDetector.SetAgeHours(s.maintenancePolicy.RemoteUploadAgeHours)
-			remoteDetector.SetPattern(s.maintenancePolicy.RemoteUploadPattern)
-		}
-	case types.TaskTypeBalance:
-		if balanceDetector := balance.GetSimpleDetector(s.taskRegistry); balanceDetector != nil {
-			balanceDetector.SetEnabled(s.maintenancePolicy.BalanceEnabled)
-			balanceDetector.SetThreshold(s.maintenancePolicy.BalanceThreshold)
-		}
-	default:
-		glog.V(2).Infof("No specific configuration for detector task type: %s", taskType)
 	}
+
+	// For detectors that don't implement PolicyConfigurableDetector interface,
+	// they should be updated to implement it for full policy-based configuration
+	glog.V(2).Infof("Detector %s should implement PolicyConfigurableDetector interface for full policy support", taskType)
 }
 
 // configureSchedulerFromPolicy configures a scheduler using policy-based configuration
@@ -189,31 +175,32 @@ func (s *MaintenanceIntegration) configureSchedulerFromPolicy(taskType types.Tas
 		return
 	}
 
-	// Fallback to specific configurations for existing schedulers
-	switch taskType {
-	case types.TaskTypeVacuum:
-		if vacuumScheduler := vacuum.GetScheduler(s.taskRegistry); vacuumScheduler != nil {
-			vacuumScheduler.SetMaxConcurrent(s.maintenancePolicy.VacuumMaxConcurrent)
-			vacuumScheduler.SetMinInterval(time.Duration(s.maintenancePolicy.VacuumMinInterval) * time.Hour)
-		}
-	case types.TaskTypeErasureCoding:
-		if ecScheduler := erasure_coding.GetSimpleScheduler(s.taskRegistry); ecScheduler != nil {
-			ecScheduler.SetEnabled(s.maintenancePolicy.ECEnabled)
-			ecScheduler.SetMaxConcurrent(s.maintenancePolicy.ECMaxConcurrent)
-		}
-	case types.TaskTypeRemoteUpload:
-		if remoteScheduler := remote_upload.GetSimpleScheduler(s.taskRegistry); remoteScheduler != nil {
-			remoteScheduler.SetEnabled(s.maintenancePolicy.RemoteUploadEnabled)
-			remoteScheduler.SetMaxConcurrent(s.maintenancePolicy.RemoteUploadMaxConcurrent)
-		}
-	case types.TaskTypeBalance:
-		if balanceScheduler := balance.GetSimpleScheduler(s.taskRegistry); balanceScheduler != nil {
-			balanceScheduler.SetEnabled(s.maintenancePolicy.BalanceEnabled)
-			balanceScheduler.SetMaxConcurrent(s.maintenancePolicy.BalanceMaxConcurrent)
-		}
-	default:
-		glog.V(2).Infof("No specific configuration for scheduler task type: %s", taskType)
+	// Apply basic configuration that all schedulers should support
+	maintenanceTaskType, exists := s.taskTypeMap[taskType]
+	if !exists {
+		glog.V(3).Infof("No maintenance task type mapping for %s, skipping configuration", taskType)
+		return
 	}
+
+	// Set enabled status if scheduler supports it
+	if enableableScheduler, ok := scheduler.(interface{ SetEnabled(bool) }); ok {
+		enabled := s.maintenancePolicy.IsTaskEnabled(maintenanceTaskType)
+		enableableScheduler.SetEnabled(enabled)
+		glog.V(3).Infof("Set enabled=%v for scheduler %s", enabled, taskType)
+	}
+
+	// Set max concurrent if scheduler supports it
+	if concurrentScheduler, ok := scheduler.(interface{ SetMaxConcurrent(int) }); ok {
+		maxConcurrent := s.maintenancePolicy.GetMaxConcurrent(maintenanceTaskType)
+		if maxConcurrent > 0 {
+			concurrentScheduler.SetMaxConcurrent(maxConcurrent)
+			glog.V(3).Infof("Set max concurrent=%d for scheduler %s", maxConcurrent, taskType)
+		}
+	}
+
+	// For schedulers that don't implement PolicyConfigurableScheduler interface,
+	// they should be updated to implement it for full policy-based configuration
+	glog.V(2).Infof("Scheduler %s should implement PolicyConfigurableScheduler interface for full policy support", taskType)
 }
 
 // ScanWithTaskDetectors performs a scan using the task system
@@ -243,7 +230,9 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 		// Convert results to existing system format
 		for _, result := range results {
 			existingResult := s.convertToExistingFormat(result)
-			allResults = append(allResults, existingResult)
+			if existingResult != nil {
+				allResults = append(allResults, existingResult)
+			}
 		}
 
 		glog.V(2).Infof("Found %d %s tasks", len(results), taskType)
@@ -257,8 +246,9 @@ func (s *MaintenanceIntegration) convertToExistingFormat(result *types.TaskDetec
 	// Convert types using mapping tables
 	existingType, exists := s.taskTypeMap[result.TaskType]
 	if !exists {
-		glog.Warningf("Unknown task type %s, defaulting to vacuum", result.TaskType)
-		existingType = TaskTypeVacuum
+		glog.Warningf("Unknown task type %s, skipping conversion", result.TaskType)
+		// Return nil to indicate conversion failed - caller should handle this
+		return nil
 	}
 
 	existingPriority, exists := s.priorityMap[result.Priority]
@@ -290,6 +280,11 @@ func (s *MaintenanceIntegration) CanScheduleWithTaskSchedulers(task *Maintenance
 
 	// Convert task objects
 	taskObject := s.convertTaskToTaskSystem(task)
+	if taskObject == nil {
+		glog.V(2).Infof("Failed to convert task %s for scheduling", task.ID)
+		return false
+	}
+
 	runningTaskObjects := s.convertTasksToTaskSystem(runningTasks)
 	workerObjects := s.convertWorkersToTaskSystem(availableWorkers)
 
@@ -308,8 +303,9 @@ func (s *MaintenanceIntegration) convertTaskToTaskSystem(task *MaintenanceTask) 
 	// Convert task type using mapping
 	taskType, exists := s.revTaskTypeMap[task.Type]
 	if !exists {
-		glog.Warningf("Unknown task type %s in conversion, defaulting to vacuum", task.Type)
-		taskType = types.TaskTypeVacuum
+		glog.Errorf("Unknown task type %s in conversion, cannot convert task", task.Type)
+		// Return nil to indicate conversion failed
+		return nil
 	}
 
 	// Convert priority using mapping
@@ -335,7 +331,10 @@ func (s *MaintenanceIntegration) convertTaskToTaskSystem(task *MaintenanceTask) 
 func (s *MaintenanceIntegration) convertTasksToTaskSystem(tasks []*MaintenanceTask) []*types.Task {
 	var result []*types.Task
 	for _, task := range tasks {
-		result = append(result, s.convertTaskToTaskSystem(task))
+		converted := s.convertTaskToTaskSystem(task)
+		if converted != nil {
+			result = append(result, converted)
+		}
 	}
 	return result
 }
