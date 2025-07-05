@@ -62,40 +62,40 @@ func (mm *MaintenanceManager) Start() error {
 	go mm.scanLoop()
 	go mm.cleanupLoop()
 
-	glog.Infof("Maintenance manager started with scan interval %v", mm.config.ScanInterval)
+	glog.Infof("Maintenance manager started with scan interval %ds", mm.config.ScanIntervalSeconds)
 	return nil
 }
 
 // validateConfig validates the maintenance configuration durations
 func (mm *MaintenanceManager) validateConfig() error {
-	if mm.config.ScanInterval <= 0 {
-		glog.Warningf("Invalid scan interval %v, using default 30m", mm.config.ScanInterval)
-		mm.config.ScanInterval = 30 * time.Minute
+	if mm.config.ScanIntervalSeconds <= 0 {
+		glog.Warningf("Invalid scan interval %ds, using default 30m", mm.config.ScanIntervalSeconds)
+		mm.config.ScanIntervalSeconds = 30 * 60 // 30 minutes in seconds
 	}
 
-	if mm.config.CleanupInterval <= 0 {
-		glog.Warningf("Invalid cleanup interval %v, using default 24h", mm.config.CleanupInterval)
-		mm.config.CleanupInterval = 24 * time.Hour
+	if mm.config.CleanupIntervalSeconds <= 0 {
+		glog.Warningf("Invalid cleanup interval %ds, using default 24h", mm.config.CleanupIntervalSeconds)
+		mm.config.CleanupIntervalSeconds = 24 * 60 * 60 // 24 hours in seconds
 	}
 
-	if mm.config.WorkerTimeout <= 0 {
-		glog.Warningf("Invalid worker timeout %v, using default 5m", mm.config.WorkerTimeout)
-		mm.config.WorkerTimeout = 5 * time.Minute
+	if mm.config.WorkerTimeoutSeconds <= 0 {
+		glog.Warningf("Invalid worker timeout %ds, using default 5m", mm.config.WorkerTimeoutSeconds)
+		mm.config.WorkerTimeoutSeconds = 5 * 60 // 5 minutes in seconds
 	}
 
-	if mm.config.TaskTimeout <= 0 {
-		glog.Warningf("Invalid task timeout %v, using default 2h", mm.config.TaskTimeout)
-		mm.config.TaskTimeout = 2 * time.Hour
+	if mm.config.TaskTimeoutSeconds <= 0 {
+		glog.Warningf("Invalid task timeout %ds, using default 2h", mm.config.TaskTimeoutSeconds)
+		mm.config.TaskTimeoutSeconds = 2 * 60 * 60 // 2 hours in seconds
 	}
 
-	if mm.config.RetryDelay <= 0 {
-		glog.Warningf("Invalid retry delay %v, using default 15m", mm.config.RetryDelay)
-		mm.config.RetryDelay = 15 * time.Minute
+	if mm.config.RetryDelaySeconds <= 0 {
+		glog.Warningf("Invalid retry delay %ds, using default 15m", mm.config.RetryDelaySeconds)
+		mm.config.RetryDelaySeconds = 15 * 60 // 15 minutes in seconds
 	}
 
-	if mm.config.TaskRetention <= 0 {
-		glog.Warningf("Invalid task retention %v, using default 168h", mm.config.TaskRetention)
-		mm.config.TaskRetention = 7 * 24 * time.Hour
+	if mm.config.TaskRetentionSeconds <= 0 {
+		glog.Warningf("Invalid task retention %ds, using default 168h", mm.config.TaskRetentionSeconds)
+		mm.config.TaskRetentionSeconds = 7 * 24 * 60 * 60 // 7 days in seconds
 	}
 
 	return nil
@@ -115,7 +115,8 @@ func (mm *MaintenanceManager) Stop() {
 
 // scanLoop periodically scans for maintenance tasks with adaptive timing
 func (mm *MaintenanceManager) scanLoop() {
-	ticker := time.NewTicker(mm.config.ScanInterval)
+	scanInterval := time.Duration(mm.config.ScanIntervalSeconds) * time.Second
+	ticker := time.NewTicker(scanInterval)
 	defer ticker.Stop()
 
 	for mm.running {
@@ -123,17 +124,18 @@ func (mm *MaintenanceManager) scanLoop() {
 		case <-mm.stopChan:
 			return
 		case <-ticker.C:
+			glog.V(1).Infof("Performing maintenance scan every %v", scanInterval)
 			mm.performScan()
 
 			// Adjust ticker interval based on error state
 			mm.mutex.RLock()
-			currentInterval := mm.config.ScanInterval
+			currentInterval := scanInterval
 			if mm.errorCount > 0 {
 				// Use backoff delay when there are errors
 				currentInterval = mm.backoffDelay
-				if currentInterval > mm.config.ScanInterval {
+				if currentInterval > scanInterval {
 					// Don't make it longer than the configured interval * 10
-					maxInterval := mm.config.ScanInterval * 10
+					maxInterval := scanInterval * 10
 					if currentInterval > maxInterval {
 						currentInterval = maxInterval
 					}
@@ -142,7 +144,7 @@ func (mm *MaintenanceManager) scanLoop() {
 			mm.mutex.RUnlock()
 
 			// Reset ticker with new interval if needed
-			if currentInterval != mm.config.ScanInterval {
+			if currentInterval != scanInterval {
 				ticker.Stop()
 				ticker = time.NewTicker(currentInterval)
 			}
@@ -152,7 +154,8 @@ func (mm *MaintenanceManager) scanLoop() {
 
 // cleanupLoop periodically cleans up old tasks and stale workers
 func (mm *MaintenanceManager) cleanupLoop() {
-	ticker := time.NewTicker(mm.config.CleanupInterval)
+	cleanupInterval := time.Duration(mm.config.CleanupIntervalSeconds) * time.Second
+	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
 	for mm.running {
@@ -263,8 +266,11 @@ func isConnectionError(err error) bool {
 func (mm *MaintenanceManager) performCleanup() {
 	glog.V(2).Infof("Starting maintenance cleanup")
 
-	removedTasks := mm.queue.CleanupOldTasks(mm.config.TaskRetention)
-	removedWorkers := mm.queue.RemoveStaleWorkers(mm.config.WorkerTimeout)
+	taskRetention := time.Duration(mm.config.TaskRetentionSeconds) * time.Second
+	workerTimeout := time.Duration(mm.config.WorkerTimeoutSeconds) * time.Second
+
+	removedTasks := mm.queue.CleanupOldTasks(taskRetention)
+	removedWorkers := mm.queue.RemoveStaleWorkers(workerTimeout)
 
 	if removedTasks > 0 || removedWorkers > 0 {
 		glog.V(1).Infof("Cleanup completed: removed %d old tasks and %d stale workers", removedTasks, removedWorkers)
@@ -291,10 +297,11 @@ func (mm *MaintenanceManager) GetStats() *MaintenanceStats {
 	stats.LastScanTime = time.Now() // Would need to track this properly
 
 	// Calculate next scan time based on current error state
-	nextScanInterval := mm.config.ScanInterval
+	scanInterval := time.Duration(mm.config.ScanIntervalSeconds) * time.Second
+	nextScanInterval := scanInterval
 	if mm.errorCount > 0 {
 		nextScanInterval = mm.backoffDelay
-		maxInterval := mm.config.ScanInterval * 10
+		maxInterval := scanInterval * 10
 		if nextScanInterval > maxInterval {
 			nextScanInterval = maxInterval
 		}

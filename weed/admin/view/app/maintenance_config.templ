@@ -47,7 +47,7 @@ templ MaintenanceConfig(data *dash.MaintenanceConfigData) {
                             <div class="mb-3">
                                 <label for="scanInterval" class="form-label">Scan Interval (minutes)</label>
                                 <input type="number" class="form-control" id="scanInterval" 
-                                       value={fmt.Sprintf("%.0f", data.Config.ScanInterval.Minutes())} min="1" max="1440">
+                                       value={fmt.Sprintf("%.0f", float64(data.Config.ScanIntervalSeconds)/60)} min="1" max="1440">
                                 <small class="form-text text-muted">
                                     How often to scan for maintenance tasks (1-1440 minutes).
                                 </small>
@@ -166,7 +166,7 @@ templ MaintenanceConfig(data *dash.MaintenanceConfigData) {
         function saveConfiguration() {
             const config = {
                 enabled: document.getElementById('enabled').checked,
-                scan_interval: parseInt(document.getElementById('scanInterval').value) * 60, // Convert to seconds
+                scan_interval_seconds: parseInt(document.getElementById('scanInterval').value) * 60, // Convert to seconds
                 policy: {
                     vacuum_enabled: document.getElementById('vacuumEnabled').checked,
                     vacuum_garbage_ratio: parseFloat(document.getElementById('vacuumGarbageRatio').value) / 100,

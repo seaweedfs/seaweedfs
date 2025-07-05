@@ -167,28 +167,28 @@ type MaintenanceStats struct {
 
 // MaintenanceConfig holds configuration for the maintenance system
 type MaintenanceConfig struct {
-	Enabled         bool               `json:"enabled"`
-	ScanInterval    time.Duration      `json:"scan_interval"`    // How often to scan for maintenance needs
-	WorkerTimeout   time.Duration      `json:"worker_timeout"`   // Worker heartbeat timeout
-	TaskTimeout     time.Duration      `json:"task_timeout"`     // Individual task timeout
-	RetryDelay      time.Duration      `json:"retry_delay"`      // Delay between retries
-	MaxRetries      int                `json:"max_retries"`      // Default max retries for tasks
-	CleanupInterval time.Duration      `json:"cleanup_interval"` // How often to clean up old tasks
-	TaskRetention   time.Duration      `json:"task_retention"`   // How long to keep completed/failed tasks
-	Policy          *MaintenancePolicy `json:"policy"`
+	Enabled                bool               `json:"enabled"`
+	ScanIntervalSeconds    int                `json:"scan_interval_seconds"`    // How often to scan for maintenance needs (in seconds)
+	WorkerTimeoutSeconds   int                `json:"worker_timeout_seconds"`   // Worker heartbeat timeout (in seconds)
+	TaskTimeoutSeconds     int                `json:"task_timeout_seconds"`     // Individual task timeout (in seconds)
+	RetryDelaySeconds      int                `json:"retry_delay_seconds"`      // Delay between retries (in seconds)
+	MaxRetries             int                `json:"max_retries"`              // Default max retries for tasks
+	CleanupIntervalSeconds int                `json:"cleanup_interval_seconds"` // How often to clean up old tasks (in seconds)
+	TaskRetentionSeconds   int                `json:"task_retention_seconds"`   // How long to keep completed/failed tasks (in seconds)
+	Policy                 *MaintenancePolicy `json:"policy"`
 }
 
 // Default configuration values
 func DefaultMaintenanceConfig() *MaintenanceConfig {
 	return &MaintenanceConfig{
-		Enabled:         false, // Disabled by default for safety
-		ScanInterval:    30 * time.Minute,
-		WorkerTimeout:   5 * time.Minute,
-		TaskTimeout:     2 * time.Hour,
-		RetryDelay:      15 * time.Minute,
-		MaxRetries:      3,
-		CleanupInterval: 24 * time.Hour,
-		TaskRetention:   7 * 24 * time.Hour, // 7 days
+		Enabled:                false,       // Disabled by default for safety
+		ScanIntervalSeconds:    30 * 60,     // 30 minutes
+		WorkerTimeoutSeconds:   5 * 60,      // 5 minutes
+		TaskTimeoutSeconds:     2 * 60 * 60, // 2 hours
+		RetryDelaySeconds:      15 * 60,     // 15 minutes
+		MaxRetries:             3,
+		CleanupIntervalSeconds: 24 * 60 * 60,     // 24 hours
+		TaskRetentionSeconds:   7 * 24 * 60 * 60, // 7 days
 		Policy: &MaintenancePolicy{
 			VacuumEnabled:             true,
 			VacuumGarbageRatio:        0.3, // 30% garbage

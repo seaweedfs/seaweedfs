@@ -997,7 +997,7 @@ func (as *AdminServer) getMaintenanceConfig() (*MaintenanceConfigData, error) {
 			FailedToday:     0,
 			AverageTaskTime: 0,
 			LastScanTime:    time.Now().Add(-time.Hour),
-			NextScanTime:    time.Now().Add(config.ScanInterval),
+			NextScanTime:    time.Now().Add(time.Duration(config.ScanIntervalSeconds) * time.Second),
 		}
 	}
 
@@ -1025,8 +1025,8 @@ func (as *AdminServer) updateMaintenanceConfig(config *MaintenanceConfig) error 
 		}
 	}
 
-	glog.V(1).Infof("Updated maintenance configuration (enabled: %v, scan interval: %v)",
-		config.Enabled, config.ScanInterval)
+	glog.V(1).Infof("Updated maintenance configuration (enabled: %v, scan interval: %ds)",
+		config.Enabled, config.ScanIntervalSeconds)
 	return nil
 }
 

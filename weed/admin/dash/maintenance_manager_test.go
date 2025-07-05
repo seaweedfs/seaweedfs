@@ -8,7 +8,7 @@ import (
 
 func TestMaintenanceManager_ErrorHandling(t *testing.T) {
 	config := DefaultMaintenanceConfig()
-	config.ScanInterval = 100 * time.Millisecond // Short interval for testing
+	config.ScanIntervalSeconds = 1 // Short interval for testing (1 second)
 
 	manager := NewMaintenanceManager(nil, config)
 
