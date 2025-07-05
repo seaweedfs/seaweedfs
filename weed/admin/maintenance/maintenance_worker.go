@@ -8,11 +8,13 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+
+	// Import task packages to trigger their auto-registration
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 // MaintenanceWorkerService manages maintenance task execution
@@ -110,27 +112,15 @@ func NewMaintenanceWorkerService(workerID, address, adminServer string) *Mainten
 		currentTasks:  make(map[string]*MaintenanceTask),
 		stopChan:      make(chan struct{}),
 		taskExecutors: make(map[MaintenanceTaskType]TaskExecutor),
-		taskRegistry:  tasks.NewTaskRegistry(), // Initialize task registry
+		taskRegistry:  tasks.GetGlobalRegistry(), // Use global registry with auto-registered tasks
 	}
 
 	// Initialize task executor registry
 	worker.initializeTaskExecutors()
 
-	// Register task types with the registry
-	worker.registerTaskTypes()
+	glog.V(1).Infof("Created maintenance worker with %d registered task types", len(worker.taskRegistry.GetSupportedTypes()))
 
 	return worker
-}
-
-// registerTaskTypes registers all supported task types with the task registry
-func (mws *MaintenanceWorkerService) registerTaskTypes() {
-	// Register all the task types
-	vacuum.Register(mws.taskRegistry)
-	erasure_coding.Register(mws.taskRegistry)
-	remote_upload.Register(mws.taskRegistry)
-	balance.Register(mws.taskRegistry)
-
-	glog.V(2).Infof("Registered task types with worker task registry")
 }
 
 // executeGenericTask executes a task using the task registry instead of hardcoded methods
