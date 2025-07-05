@@ -9,12 +9,19 @@ import (
 
 // NewMaintenanceQueue creates a new maintenance queue
 func NewMaintenanceQueue(policy *MaintenancePolicy) *MaintenanceQueue {
-	return &MaintenanceQueue{
+	queue := &MaintenanceQueue{
 		tasks:        make(map[string]*MaintenanceTask),
 		workers:      make(map[string]*MaintenanceWorker),
 		pendingTasks: make([]*MaintenanceTask, 0),
 		policy:       policy,
 	}
+	return queue
+}
+
+// SetSimplifiedIntegration sets the simplified integration reference
+func (mq *MaintenanceQueue) SetSimplifiedIntegration(integration *SimplifiedMaintenanceIntegration) {
+	mq.simplifiedIntegration = integration
+	glog.V(1).Infof("Maintenance queue configured with simplified integration")
 }
 
 // AddTask adds a new maintenance task to the queue
@@ -87,8 +94,8 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 			continue
 		}
 
-		// Check concurrency limits for this task type
-		if !mq.canExecuteTaskType(task.Type) {
+		// Check scheduling logic - use simplified system if available, otherwise fallback
+		if !mq.canScheduleTaskNow(task) {
 			continue
 		}
 
@@ -395,7 +402,24 @@ func (mq *MaintenanceQueue) workerCanHandle(taskType MaintenanceTaskType, capabi
 	return false
 }
 
-// canExecuteTaskType checks if we can execute more tasks of this type (concurrency limits)
+// canScheduleTaskNow determines if a task can be scheduled using simplified or fallback logic
+func (mq *MaintenanceQueue) canScheduleTaskNow(task *MaintenanceTask) bool {
+	// Try simplified scheduling logic first
+	if mq.simplifiedIntegration != nil {
+		// Get all running tasks and available workers
+		runningTasks := mq.getRunningTasks()
+		availableWorkers := mq.getAvailableWorkers()
+
+		canSchedule := mq.simplifiedIntegration.CanScheduleWithSimplifiedLogic(task, runningTasks, availableWorkers)
+		glog.V(3).Infof("Simplified scheduler decision for task %s (%s): %v", task.ID, task.Type, canSchedule)
+		return canSchedule
+	}
+
+	// Fallback to hardcoded logic
+	return mq.canExecuteTaskType(task.Type)
+}
+
+// canExecuteTaskType checks if we can execute more tasks of this type (concurrency limits) - fallback logic
 func (mq *MaintenanceQueue) canExecuteTaskType(taskType MaintenanceTaskType) bool {
 	runningCount := mq.GetRunningTaskCount(taskType)
 
@@ -413,4 +437,26 @@ func (mq *MaintenanceQueue) canExecuteTaskType(taskType MaintenanceTaskType) boo
 	default:
 		return runningCount < 2 // Default limit
 	}
+}
+
+// getRunningTasks returns all currently running tasks
+func (mq *MaintenanceQueue) getRunningTasks() []*MaintenanceTask {
+	var runningTasks []*MaintenanceTask
+	for _, task := range mq.tasks {
+		if task.Status == TaskStatusAssigned || task.Status == TaskStatusInProgress {
+			runningTasks = append(runningTasks, task)
+		}
+	}
+	return runningTasks
+}
+
+// getAvailableWorkers returns all workers that can take more work
+func (mq *MaintenanceQueue) getAvailableWorkers() []*MaintenanceWorker {
+	var availableWorkers []*MaintenanceWorker
+	for _, worker := range mq.workers {
+		if worker.Status == "active" && worker.CurrentLoad < worker.MaxConcurrent {
+			availableWorkers = append(availableWorkers, worker)
+		}
+	}
+	return availableWorkers
 }

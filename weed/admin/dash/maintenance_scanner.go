@@ -10,21 +10,31 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // NewMaintenanceScanner creates a new maintenance scanner
 func NewMaintenanceScanner(adminServer *AdminServer, policy *MaintenancePolicy, queue *MaintenanceQueue) *MaintenanceScanner {
-	return &MaintenanceScanner{
+	scanner := &MaintenanceScanner{
 		adminServer: adminServer,
 		policy:      policy,
 		queue:       queue,
 		lastScan:    make(map[MaintenanceTaskType]time.Time),
 	}
+
+	// Initialize simplified integration
+	scanner.simplifiedIntegration = NewSimplifiedMaintenanceIntegration(queue, policy)
+
+	// Set up bidirectional relationship
+	queue.SetSimplifiedIntegration(scanner.simplifiedIntegration)
+
+	glog.V(1).Infof("Initialized maintenance scanner with simplified task system")
+
+	return scanner
 }
 
 // ScanForMaintenanceTasks analyzes the cluster and generates maintenance tasks
 func (ms *MaintenanceScanner) ScanForMaintenanceTasks() ([]*TaskDetectionResult, error) {
-	var results []*TaskDetectionResult
 	now := time.Now()
 
 	// Get volume health metrics
@@ -33,7 +43,25 @@ func (ms *MaintenanceScanner) ScanForMaintenanceTasks() ([]*TaskDetectionResult,
 		return nil, fmt.Errorf("failed to get volume health metrics: %v", err)
 	}
 
-	// Check each maintenance type
+	// Use simplified system for registered task types
+	if ms.simplifiedIntegration != nil {
+		// Convert metrics to simplified format
+		simplifiedMetrics := ms.convertToSimplifiedMetrics(volumeMetrics)
+
+		// Use simplified detection system
+		simplifiedResults, err := ms.simplifiedIntegration.ScanWithSimplifiedTasks(simplifiedMetrics)
+		if err != nil {
+			glog.Errorf("Simplified task scanning failed, falling back to hardcoded: %v", err)
+		} else {
+			glog.V(1).Infof("Simplified maintenance scan completed: found %d tasks", len(simplifiedResults))
+			return simplifiedResults, nil
+		}
+	}
+
+	// Fallback to hardcoded logic for non-simplified tasks or if simplified system fails
+	var results []*TaskDetectionResult
+
+	// Check each maintenance type (fallback logic)
 	if ms.policy.VacuumEnabled && ms.shouldScan(TaskTypeVacuum, now) {
 		vacuumTasks := ms.scanForVacuumTasks(volumeMetrics, now)
 		results = append(results, vacuumTasks...)
@@ -178,6 +206,32 @@ func (ms *MaintenanceScanner) enrichVolumeMetrics(metrics []*VolumeHealthMetrics
 			metric.ReplicaCount = actualReplicas
 		}
 	}
+}
+
+// convertToSimplifiedMetrics converts existing volume metrics to simplified format
+func (ms *MaintenanceScanner) convertToSimplifiedMetrics(metrics []*VolumeHealthMetrics) []*types.VolumeHealthMetrics {
+	var simplified []*types.VolumeHealthMetrics
+
+	for _, metric := range metrics {
+		simplified = append(simplified, &types.VolumeHealthMetrics{
+			VolumeID:         metric.VolumeID,
+			Server:           metric.Server,
+			Collection:       metric.Collection,
+			Size:             metric.Size,
+			DeletedBytes:     metric.DeletedBytes,
+			GarbageRatio:     metric.GarbageRatio,
+			LastModified:     metric.LastModified,
+			Age:              metric.Age,
+			ReplicaCount:     metric.ReplicaCount,
+			ExpectedReplicas: metric.ExpectedReplicas,
+			IsReadOnly:       metric.IsReadOnly,
+			HasRemoteCopy:    metric.HasRemoteCopy,
+			IsECVolume:       metric.IsECVolume,
+			FullnessRatio:    metric.FullnessRatio,
+		})
+	}
+
+	return simplified
 }
 
 // scanForVacuumTasks identifies volumes that need vacuum operations
