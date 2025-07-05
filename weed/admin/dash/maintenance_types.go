@@ -66,7 +66,7 @@ type MaintenancePolicy struct {
 	// Vacuum policies
 	VacuumEnabled       bool    `json:"vacuum_enabled"`
 	VacuumGarbageRatio  float64 `json:"vacuum_garbage_ratio"`  // Trigger vacuum when garbage > this ratio
-	VacuumMinInterval   int     `json:"vacuum_min_interval"`   // Minimum hours between vacuum operations
+	VacuumMinInterval   int     `json:"vacuum_min_interval"`   // Minimum hours between vacuum operations (legacy - use VacuumRepeatInterval)
 	VacuumMaxConcurrent int     `json:"vacuum_max_concurrent"` // Max concurrent vacuum operations
 
 	// Erasure Coding policies
@@ -91,6 +91,14 @@ type MaintenancePolicy struct {
 	BalanceCheckInterval int     `json:"balance_check_interval"` // Hours between balance checks
 	BalanceThreshold     float64 `json:"balance_threshold"`      // Trigger balance when imbalance > this ratio
 	BalanceMaxConcurrent int     `json:"balance_max_concurrent"`
+
+	// Repeat prevention intervals (in hours)
+	VacuumRepeatInterval             int `json:"vacuum_repeat_interval"`              // Hours to wait before repeating vacuum
+	ECRepeatInterval                 int `json:"ec_repeat_interval"`                  // Hours to wait before repeating EC
+	RemoteUploadRepeatInterval       int `json:"remote_upload_repeat_interval"`       // Hours to wait before repeating remote upload
+	ReplicationRepeatInterval        int `json:"replication_repeat_interval"`         // Hours to wait before repeating replication fix
+	BalanceRepeatInterval            int `json:"balance_repeat_interval"`             // Hours to wait before repeating balance
+	ClusterReplicationRepeatInterval int `json:"cluster_replication_repeat_interval"` // Hours to wait before repeating cluster replication
 }
 
 // MaintenanceWorker represents a worker instance
@@ -210,6 +218,14 @@ func DefaultMaintenanceConfig() *MaintenanceConfig {
 			BalanceCheckInterval:      12,  // 12 hours
 			BalanceThreshold:          0.2, // 20% imbalance
 			BalanceMaxConcurrent:      1,
+
+			// Repeat prevention intervals (in hours)
+			VacuumRepeatInterval:             6,  // 6 hours
+			ECRepeatInterval:                 24, // 24 hours
+			RemoteUploadRepeatInterval:       48, // 48 hours
+			ReplicationRepeatInterval:        2,  // 2 hours
+			BalanceRepeatInterval:            12, // 12 hours
+			ClusterReplicationRepeatInterval: 6,  // 6 hours
 		},
 	}
 }

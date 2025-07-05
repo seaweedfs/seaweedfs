@@ -69,6 +69,11 @@ func (s *SimpleScheduler) GetMaxConcurrent() int {
 	return s.maxConcurrent
 }
 
+// GetDefaultRepeatInterval returns the default interval to wait before repeating remote upload tasks
+func (s *SimpleScheduler) GetDefaultRepeatInterval() time.Duration {
+	return 48 * time.Hour // Don't repeat remote upload for 48 hours
+}
+
 // GetPriority returns the priority for this task
 func (s *SimpleScheduler) GetPriority(task *types.Task) types.TaskPriority {
 	// Check if volume is read-only (higher priority)

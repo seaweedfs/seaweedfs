@@ -3,12 +3,83 @@ package dash
 import (
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // MaintenanceWorkerService manages maintenance task execution
+// TaskExecutor defines the function signature for task execution
+type TaskExecutor func(*MaintenanceWorkerService, *MaintenanceTask) error
+
+// TaskExecutorFactory creates a task executor for a given worker service
+type TaskExecutorFactory func() TaskExecutor
+
+// Global registry for task executor factories
+var taskExecutorFactories = make(map[MaintenanceTaskType]TaskExecutorFactory)
+var executorRegistryMutex sync.RWMutex
+
+// RegisterTaskExecutorFactory registers a factory function for creating task executors
+func RegisterTaskExecutorFactory(taskType MaintenanceTaskType, factory TaskExecutorFactory) {
+	executorRegistryMutex.Lock()
+	defer executorRegistryMutex.Unlock()
+	taskExecutorFactories[taskType] = factory
+	glog.V(2).Infof("Registered executor factory for task type: %s", taskType)
+}
+
+// GetTaskExecutorFactory returns the factory for a task type
+func GetTaskExecutorFactory(taskType MaintenanceTaskType) (TaskExecutorFactory, bool) {
+	executorRegistryMutex.RLock()
+	defer executorRegistryMutex.RUnlock()
+	factory, exists := taskExecutorFactories[taskType]
+	return factory, exists
+}
+
+// GetSupportedExecutorTaskTypes returns all task types with registered executor factories
+func GetSupportedExecutorTaskTypes() []MaintenanceTaskType {
+	executorRegistryMutex.RLock()
+	defer executorRegistryMutex.RUnlock()
+
+	taskTypes := make([]MaintenanceTaskType, 0, len(taskExecutorFactories))
+	for taskType := range taskExecutorFactories {
+		taskTypes = append(taskTypes, taskType)
+	}
+	return taskTypes
+}
+
+// createGenericTaskExecutor creates a generic task executor that uses the task registry
+func createGenericTaskExecutor() TaskExecutor {
+	return func(mws *MaintenanceWorkerService, task *MaintenanceTask) error {
+		return mws.executeGenericTask(task)
+	}
+}
+
+// init registers the generic executor factory for all task types
+func init() {
+	// Register generic executor for all task types
+	taskTypes := []MaintenanceTaskType{
+		TaskTypeVacuum,
+		TaskTypeErasureCoding,
+		TaskTypeRemoteUpload,
+		TaskTypeFixReplication,
+		TaskTypeBalance,
+		TaskTypeClusterReplication,
+	}
+
+	for _, taskType := range taskTypes {
+		RegisterTaskExecutorFactory(taskType, createGenericTaskExecutor)
+	}
+
+	glog.V(1).Infof("Registered generic task executor for %d task types", len(taskTypes))
+}
+
 type MaintenanceWorkerService struct {
 	workerID      string
 	address       string
@@ -20,11 +91,17 @@ type MaintenanceWorkerService struct {
 	adminClient   *AdminServer
 	running       bool
 	stopChan      chan struct{}
+
+	// Task execution registry
+	taskExecutors map[MaintenanceTaskType]TaskExecutor
+
+	// Task registry for creating task instances
+	taskRegistry *tasks.TaskRegistry
 }
 
 // NewMaintenanceWorkerService creates a new maintenance worker service
 func NewMaintenanceWorkerService(workerID, address, adminServer string) *MaintenanceWorkerService {
-	return &MaintenanceWorkerService{
+	worker := &MaintenanceWorkerService{
 		workerID:      workerID,
 		address:       address,
 		adminServer:   adminServer,
@@ -32,7 +109,96 @@ func NewMaintenanceWorkerService(workerID, address, adminServer string) *Mainten
 		maxConcurrent: 2, // Default concurrent task limit
 		currentTasks:  make(map[string]*MaintenanceTask),
 		stopChan:      make(chan struct{}),
+		taskExecutors: make(map[MaintenanceTaskType]TaskExecutor),
+		taskRegistry:  tasks.NewTaskRegistry(), // Initialize task registry
 	}
+
+	// Initialize task executor registry
+	worker.initializeTaskExecutors()
+
+	// Register task types with the registry
+	worker.registerTaskTypes()
+
+	return worker
+}
+
+// registerTaskTypes registers all supported task types with the task registry
+func (mws *MaintenanceWorkerService) registerTaskTypes() {
+	// Register all the task types
+	vacuum.Register(mws.taskRegistry)
+	erasure_coding.Register(mws.taskRegistry)
+	remote_upload.Register(mws.taskRegistry)
+	balance.Register(mws.taskRegistry)
+
+	glog.V(2).Infof("Registered task types with worker task registry")
+}
+
+// executeGenericTask executes a task using the task registry instead of hardcoded methods
+func (mws *MaintenanceWorkerService) executeGenericTask(task *MaintenanceTask) error {
+	glog.V(2).Infof("Executing generic task %s: %s for volume %d", task.ID, task.Type, task.VolumeID)
+
+	// Convert MaintenanceTask to types.TaskType
+	taskType := types.TaskType(string(task.Type))
+
+	// Create task parameters
+	taskParams := types.TaskParams{
+		VolumeID:   task.VolumeID,
+		Server:     task.Server,
+		Collection: task.Collection,
+		Parameters: task.Parameters,
+	}
+
+	// Create task instance using the registry
+	taskInstance, err := mws.taskRegistry.CreateTask(taskType, taskParams)
+	if err != nil {
+		return fmt.Errorf("failed to create task instance: %v", err)
+	}
+
+	// Update progress to show task has started
+	mws.updateTaskProgress(task.ID, 5)
+
+	// Execute the task
+	err = taskInstance.Execute(taskParams)
+	if err != nil {
+		return fmt.Errorf("task execution failed: %v", err)
+	}
+
+	// Update progress to show completion
+	mws.updateTaskProgress(task.ID, 100)
+
+	glog.V(2).Infof("Generic task %s completed successfully", task.ID)
+	return nil
+}
+
+// initializeTaskExecutors sets up the task execution registry dynamically
+func (mws *MaintenanceWorkerService) initializeTaskExecutors() {
+	mws.taskExecutors = make(map[MaintenanceTaskType]TaskExecutor)
+
+	// Get all registered executor factories and create executors
+	executorRegistryMutex.RLock()
+	defer executorRegistryMutex.RUnlock()
+
+	for taskType, factory := range taskExecutorFactories {
+		executor := factory()
+		mws.taskExecutors[taskType] = executor
+		glog.V(3).Infof("Initialized executor for task type: %s", taskType)
+	}
+
+	glog.V(2).Infof("Initialized %d task executors", len(mws.taskExecutors))
+}
+
+// RegisterTaskExecutor allows dynamic registration of new task executors
+func (mws *MaintenanceWorkerService) RegisterTaskExecutor(taskType MaintenanceTaskType, executor TaskExecutor) {
+	if mws.taskExecutors == nil {
+		mws.taskExecutors = make(map[MaintenanceTaskType]TaskExecutor)
+	}
+	mws.taskExecutors[taskType] = executor
+	glog.V(1).Infof("Registered executor for task type: %s", taskType)
+}
+
+// GetSupportedTaskTypes returns all task types that this worker can execute
+func (mws *MaintenanceWorkerService) GetSupportedTaskTypes() []MaintenanceTaskType {
+	return GetSupportedExecutorTaskTypes()
 }
 
 // Start begins the worker service
@@ -132,22 +298,13 @@ func (mws *MaintenanceWorkerService) executeTask(task *MaintenanceTask) {
 
 		glog.Infof("Worker %s executing task %s: %s", mws.workerID, task.ID, task.Type)
 
+		// Execute task using dynamic executor registry
 		var err error
-		switch task.Type {
-		case TaskTypeVacuum:
-			err = mws.executeVacuumTask(task)
-		case TaskTypeErasureCoding:
-			err = mws.executeECTask(task)
-		case TaskTypeRemoteUpload:
-			err = mws.executeRemoteUploadTask(task)
-		case TaskTypeFixReplication:
-			err = mws.executeReplicationTask(task)
-		case TaskTypeBalance:
-			err = mws.executeBalanceTask(task)
-		case TaskTypeClusterReplication:
-			err = mws.executeClusterReplicationTask(task)
-		default:
+		if executor, exists := mws.taskExecutors[task.Type]; exists {
+			err = executor(mws, task)
+		} else {
 			err = fmt.Errorf("unsupported task type: %s", task.Type)
+			glog.Errorf("No executor registered for task type: %s", task.Type)
 		}
 
 		// Report task completion
@@ -165,235 +322,6 @@ func (mws *MaintenanceWorkerService) executeTask(task *MaintenanceTask) {
 			glog.Infof("Worker %s completed task %s successfully", mws.workerID, task.ID)
 		}
 	}()
-}
-
-// executeVacuumTask executes a vacuum operation
-func (mws *MaintenanceWorkerService) executeVacuumTask(task *MaintenanceTask) error {
-	mws.updateTaskProgress(task.ID, 10)
-
-	// Use the admin client to perform vacuum operation
-	if mws.adminClient != nil {
-		mws.updateTaskProgress(task.ID, 30)
-
-		err := mws.adminClient.VacuumVolume(int(task.VolumeID), task.Server)
-		if err != nil {
-			return fmt.Errorf("vacuum operation failed: %v", err)
-		}
-
-		mws.updateTaskProgress(task.ID, 90)
-		glog.V(2).Infof("Vacuum task %s completed successfully", task.ID)
-	} else {
-		return fmt.Errorf("admin client not available")
-	}
-
-	mws.updateTaskProgress(task.ID, 100)
-	return nil
-}
-
-// executeECTask executes an erasure coding conversion
-func (mws *MaintenanceWorkerService) executeECTask(task *MaintenanceTask) error {
-	mws.updateTaskProgress(task.ID, 10)
-
-	// This would integrate with SeaweedFS EC operations
-	// For now, simulate the operation
-	glog.V(2).Infof("Executing EC conversion for volume %d on server %s", task.VolumeID, task.Server)
-
-	// Simulate EC conversion process
-	for progress := 20; progress < 100; progress += 20 {
-		mws.updateTaskProgress(task.ID, float64(progress))
-		time.Sleep(5 * time.Second) // Simulate work
-	}
-
-	mws.updateTaskProgress(task.ID, 100)
-	return nil
-}
-
-// executeRemoteUploadTask executes a remote storage upload
-func (mws *MaintenanceWorkerService) executeRemoteUploadTask(task *MaintenanceTask) error {
-	mws.updateTaskProgress(task.ID, 10)
-
-	// This would integrate with SeaweedFS remote storage operations
-	glog.V(2).Infof("Executing remote upload for volume %d on server %s", task.VolumeID, task.Server)
-
-	// Simulate remote upload process
-	for progress := 20; progress < 100; progress += 15 {
-		mws.updateTaskProgress(task.ID, float64(progress))
-		time.Sleep(3 * time.Second) // Simulate upload
-	}
-
-	mws.updateTaskProgress(task.ID, 100)
-	return nil
-}
-
-// executeReplicationTask executes a replication fix operation
-func (mws *MaintenanceWorkerService) executeReplicationTask(task *MaintenanceTask) error {
-	mws.updateTaskProgress(task.ID, 10)
-
-	// This would integrate with SeaweedFS replication operations
-	glog.V(2).Infof("Executing replication fix for volume %d on server %s", task.VolumeID, task.Server)
-
-	// Get expected and actual replica counts from task parameters
-	expectedReplicas, _ := task.Parameters["expected_replicas"].(int)
-	actualReplicas, _ := task.Parameters["actual_replicas"].(int)
-
-	mws.updateTaskProgress(task.ID, 30)
-
-	if actualReplicas < expectedReplicas {
-		// Need to add replicas
-		glog.V(2).Infof("Adding %d replicas for volume %d", expectedReplicas-actualReplicas, task.VolumeID)
-		// Simulate replica addition
-		time.Sleep(10 * time.Second)
-	} else if actualReplicas > expectedReplicas {
-		// Need to remove replicas
-		glog.V(2).Infof("Removing %d replicas for volume %d", actualReplicas-expectedReplicas, task.VolumeID)
-		// Simulate replica removal
-		time.Sleep(5 * time.Second)
-	}
-
-	mws.updateTaskProgress(task.ID, 100)
-	return nil
-}
-
-// executeBalanceTask executes a cluster balance operation
-func (mws *MaintenanceWorkerService) executeBalanceTask(task *MaintenanceTask) error {
-	mws.updateTaskProgress(task.ID, 10)
-
-	// This would integrate with SeaweedFS balance operations
-	glog.V(2).Infof("Executing cluster balance operation")
-
-	// Simulate balance operation
-	for progress := 20; progress < 100; progress += 20 {
-		mws.updateTaskProgress(task.ID, float64(progress))
-		time.Sleep(8 * time.Second) // Balance operations take longer
-	}
-
-	mws.updateTaskProgress(task.ID, 100)
-	return nil
-}
-
-// executeClusterReplicationTask executes a cluster-to-cluster replication operation
-func (mws *MaintenanceWorkerService) executeClusterReplicationTask(task *MaintenanceTask) error {
-	mws.updateTaskProgress(task.ID, 10)
-
-	// Extract parameters
-	sourcePath, _ := task.Parameters["source_path"].(string)
-	targetCluster, _ := task.Parameters["target_cluster"].(string)
-	targetPath, _ := task.Parameters["target_path"].(string)
-	replicationMode, _ := task.Parameters["replication_mode"].(string)
-	fileSize, _ := task.Parameters["file_size"].(int64)
-	checksum, _ := task.Parameters["checksum"].(string)
-
-	glog.V(2).Infof("Executing cluster replication: %s -> %s:%s (mode: %s)",
-		sourcePath, targetCluster, targetPath, replicationMode)
-
-	mws.updateTaskProgress(task.ID, 20)
-
-	// Step 1: Verify source file exists and get metadata
-	err := mws.verifySourceFile(sourcePath, checksum)
-	if err != nil {
-		return fmt.Errorf("source file verification failed: %v", err)
-	}
-
-	mws.updateTaskProgress(task.ID, 40)
-
-	// Step 2: Establish connection to target cluster
-	err = mws.connectToTargetCluster(targetCluster)
-	if err != nil {
-		return fmt.Errorf("failed to connect to target cluster %s: %v", targetCluster, err)
-	}
-
-	mws.updateTaskProgress(task.ID, 60)
-
-	// Step 3: Transfer file data
-	err = mws.transferFile(sourcePath, targetCluster, targetPath, fileSize, replicationMode)
-	if err != nil {
-		return fmt.Errorf("file transfer failed: %v", err)
-	}
-
-	mws.updateTaskProgress(task.ID, 90)
-
-	// Step 4: Verify transfer success
-	err = mws.verifyTransfer(targetCluster, targetPath, checksum)
-	if err != nil {
-		return fmt.Errorf("transfer verification failed: %v", err)
-	}
-
-	mws.updateTaskProgress(task.ID, 100)
-	glog.V(2).Infof("Cluster replication task %s completed successfully", task.ID)
-	return nil
-}
-
-// verifySourceFile checks if source file exists and matches expected checksum
-func (mws *MaintenanceWorkerService) verifySourceFile(sourcePath, expectedChecksum string) error {
-	// This would integrate with SeaweedFS filer to verify file existence and checksum
-	// For now, simulate the verification
-	glog.V(3).Infof("Verifying source file: %s", sourcePath)
-
-	// In real implementation:
-	// 1. Call filer to check file existence
-	// 2. Calculate or retrieve file checksum
-	// 3. Compare with expected checksum
-
-	time.Sleep(2 * time.Second) // Simulate verification time
-	return nil
-}
-
-// connectToTargetCluster establishes connection to the target cluster
-func (mws *MaintenanceWorkerService) connectToTargetCluster(targetCluster string) error {
-	glog.V(3).Infof("Connecting to target cluster: %s", targetCluster)
-
-	// In real implementation:
-	// 1. Parse target cluster connection details
-	// 2. Establish gRPC connection to target filer
-	// 3. Authenticate if required
-	// 4. Test connection
-
-	time.Sleep(1 * time.Second) // Simulate connection time
-	return nil
-}
-
-// transferFile performs the actual file transfer between clusters
-func (mws *MaintenanceWorkerService) transferFile(sourcePath, targetCluster, targetPath string, fileSize int64, mode string) error {
-	glog.V(3).Infof("Transferring file %s to %s:%s (size: %d bytes, mode: %s)",
-		sourcePath, targetCluster, targetPath, fileSize, mode)
-
-	// In real implementation, this would:
-	// 1. Open source file stream from local filer
-	// 2. Create target file in remote cluster
-	// 3. Stream data with progress updates
-	// 4. Handle different replication modes (sync/async/backup)
-
-	// Simulate transfer with progress updates
-	transferDuration := 10 * time.Second
-	if mode == "sync" {
-		transferDuration = 5 * time.Second // Faster for sync mode
-	} else if mode == "backup" {
-		transferDuration = 15 * time.Second // Slower for backup mode
-	}
-
-	steps := 10
-	stepDuration := transferDuration / time.Duration(steps)
-
-	for i := 0; i < steps; i++ {
-		time.Sleep(stepDuration)
-		// Progress updates are handled by the main task execution
-	}
-
-	return nil
-}
-
-// verifyTransfer verifies the transferred file in the target cluster
-func (mws *MaintenanceWorkerService) verifyTransfer(targetCluster, targetPath, expectedChecksum string) error {
-	glog.V(3).Infof("Verifying transferred file: %s:%s", targetCluster, targetPath)
-
-	// In real implementation:
-	// 1. Connect to target cluster filer
-	// 2. Check file existence at target path
-	// 3. Verify file size and checksum
-	// 4. Optionally test file accessibility
-
-	time.Sleep(1 * time.Second) // Simulate verification time
-	return nil
 }
 
 // updateTaskProgress updates the progress of a task

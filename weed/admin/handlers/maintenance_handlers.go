@@ -146,32 +146,6 @@ func (h *MaintenanceHandlers) getMaintenanceWorkers() ([]*dash.MaintenanceWorker
 	return []*dash.MaintenanceWorker{}, nil
 }
 
-func (h *MaintenanceHandlers) getMaintenanceWorkerDetails(workerID string) (*dash.WorkerDetailsData, error) {
-	// This would integrate with the maintenance system to get real worker details
-	// For now, return mock data
-	return &dash.WorkerDetailsData{
-		Worker: &dash.MaintenanceWorker{
-			ID:            workerID,
-			Address:       "localhost:8082",
-			Status:        "active",
-			LastHeartbeat: time.Now(),
-			Capabilities:  []dash.MaintenanceTaskType{dash.TaskTypeVacuum, dash.TaskTypeErasureCoding},
-			MaxConcurrent: 2,
-			CurrentLoad:   1,
-		},
-		CurrentTasks: []*dash.MaintenanceTask{},
-		RecentTasks:  []*dash.MaintenanceTask{},
-		Performance: &dash.WorkerPerformance{
-			TasksCompleted:  10,
-			TasksFailed:     1,
-			AverageTaskTime: 30 * time.Minute,
-			Uptime:          12 * time.Hour,
-			SuccessRate:     90.9,
-		},
-		LastUpdated: time.Now(),
-	}, nil
-}
-
 func (h *MaintenanceHandlers) getMaintenanceConfig() (*dash.MaintenanceConfigData, error) {
 	// Delegate to AdminServer's real persistence method
 	return h.adminServer.GetMaintenanceConfigData()

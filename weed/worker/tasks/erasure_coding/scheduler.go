@@ -69,6 +69,11 @@ func (s *SimpleScheduler) GetMaxConcurrent() int {
 	return s.maxConcurrent
 }
 
+// GetDefaultRepeatInterval returns the default interval to wait before repeating EC tasks
+func (s *SimpleScheduler) GetDefaultRepeatInterval() time.Duration {
+	return 24 * time.Hour // Don't repeat EC for 24 hours
+}
+
 // GetPriority returns the priority for this task
 func (s *SimpleScheduler) GetPriority(task *types.Task) types.TaskPriority {
 	return types.TaskPriorityLow // EC is not urgent

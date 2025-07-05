@@ -223,23 +223,8 @@ func (mq *MaintenanceQueue) WasTaskRecentlyCompleted(taskType MaintenanceTaskTyp
 	mq.mutex.RLock()
 	defer mq.mutex.RUnlock()
 
-	// Check for completed tasks in the last interval
-	var interval time.Duration
-	switch taskType {
-	case TaskTypeVacuum:
-		interval = time.Duration(mq.policy.VacuumMinInterval) * time.Hour
-	case TaskTypeErasureCoding:
-		interval = 24 * time.Hour // Don't repeat EC for 24 hours
-	case TaskTypeRemoteUpload:
-		interval = 48 * time.Hour // Don't repeat remote upload for 48 hours
-	case TaskTypeFixReplication:
-		interval = 2 * time.Hour // Allow replication fix retry sooner
-	case TaskTypeBalance:
-		interval = 12 * time.Hour // Don't repeat balance for 12 hours
-	default:
-		interval = 6 * time.Hour
-	}
-
+	// Get the repeat prevention interval for this task type
+	interval := mq.getRepeatPreventionInterval(taskType)
 	cutoff := now.Add(-interval)
 
 	for _, task := range mq.tasks {
@@ -253,6 +238,45 @@ func (mq *MaintenanceQueue) WasTaskRecentlyCompleted(taskType MaintenanceTaskTyp
 		}
 	}
 	return false
+}
+
+// getRepeatPreventionInterval returns the interval for preventing task repetition
+func (mq *MaintenanceQueue) getRepeatPreventionInterval(taskType MaintenanceTaskType) time.Duration {
+	// First try to get default from task scheduler
+	if mq.integration != nil {
+		if scheduler := mq.integration.GetTaskScheduler(taskType); scheduler != nil {
+			defaultInterval := scheduler.GetDefaultRepeatInterval()
+			glog.V(3).Infof("Using task scheduler default repeat interval for %s: %v", taskType, defaultInterval)
+			return defaultInterval
+		}
+	}
+
+	// Fallback to policy configuration if no scheduler available
+	if mq.policy != nil {
+		// Create a mapping table for repeat prevention intervals using configurable values
+		intervalMap := map[MaintenanceTaskType]time.Duration{
+			TaskTypeVacuum:             time.Duration(mq.policy.VacuumRepeatInterval) * time.Hour,
+			TaskTypeErasureCoding:      time.Duration(mq.policy.ECRepeatInterval) * time.Hour,
+			TaskTypeRemoteUpload:       time.Duration(mq.policy.RemoteUploadRepeatInterval) * time.Hour,
+			TaskTypeFixReplication:     time.Duration(mq.policy.ReplicationRepeatInterval) * time.Hour,
+			TaskTypeBalance:            time.Duration(mq.policy.BalanceRepeatInterval) * time.Hour,
+			TaskTypeClusterReplication: time.Duration(mq.policy.ClusterReplicationRepeatInterval) * time.Hour,
+		}
+
+		if interval, exists := intervalMap[taskType]; exists {
+			// Ensure minimum interval is at least 1 hour
+			if interval < time.Hour {
+				glog.V(2).Infof("Task type %s repeat interval too short (%v), using minimum: 1h", taskType, interval)
+				return time.Hour
+			}
+			glog.V(3).Infof("Using policy configuration repeat interval for %s: %v", taskType, interval)
+			return interval
+		}
+	}
+
+	// Default interval when no policy is configured or task type is unknown
+	glog.V(2).Infof("No scheduler or policy configuration found for task type %s, using default: 6h", taskType)
+	return 6 * time.Hour
 }
 
 // GetTasks returns tasks with optional filtering
@@ -432,21 +456,43 @@ func (mq *MaintenanceQueue) canScheduleTaskNow(task *MaintenanceTask) bool {
 // canExecuteTaskType checks if we can execute more tasks of this type (concurrency limits) - fallback logic
 func (mq *MaintenanceQueue) canExecuteTaskType(taskType MaintenanceTaskType) bool {
 	runningCount := mq.GetRunningTaskCount(taskType)
+	maxConcurrent := mq.getMaxConcurrentForTaskType(taskType)
 
-	switch taskType {
-	case TaskTypeVacuum:
-		return runningCount < mq.policy.VacuumMaxConcurrent
-	case TaskTypeErasureCoding:
-		return runningCount < mq.policy.ECMaxConcurrent
-	case TaskTypeRemoteUpload:
-		return runningCount < mq.policy.RemoteUploadMaxConcurrent
-	case TaskTypeFixReplication:
-		return runningCount < mq.policy.ReplicationMaxConcurrent
-	case TaskTypeBalance:
-		return runningCount < mq.policy.BalanceMaxConcurrent
-	default:
-		return runningCount < 2 // Default limit
+	return runningCount < maxConcurrent
+}
+
+// getMaxConcurrentForTaskType returns the maximum concurrent tasks allowed for a task type
+func (mq *MaintenanceQueue) getMaxConcurrentForTaskType(taskType MaintenanceTaskType) int {
+	// First try to get default from task scheduler
+	if mq.integration != nil {
+		if scheduler := mq.integration.GetTaskScheduler(taskType); scheduler != nil {
+			maxConcurrent := scheduler.GetMaxConcurrent()
+			glog.V(3).Infof("Using task scheduler max concurrent for %s: %d", taskType, maxConcurrent)
+			return maxConcurrent
+		}
 	}
+
+	// Fallback to policy configuration if no scheduler available
+	if mq.policy != nil {
+		// Create a mapping table for max concurrent limits
+		maxConcurrentMap := map[MaintenanceTaskType]int{
+			TaskTypeVacuum:             mq.policy.VacuumMaxConcurrent,
+			TaskTypeErasureCoding:      mq.policy.ECMaxConcurrent,
+			TaskTypeRemoteUpload:       mq.policy.RemoteUploadMaxConcurrent,
+			TaskTypeFixReplication:     mq.policy.ReplicationMaxConcurrent,
+			TaskTypeBalance:            mq.policy.BalanceMaxConcurrent,
+			TaskTypeClusterReplication: 3, // Default for cluster replication
+		}
+
+		if maxConcurrent, exists := maxConcurrentMap[taskType]; exists {
+			glog.V(3).Infof("Using policy configuration max concurrent for %s: %d", taskType, maxConcurrent)
+			return maxConcurrent
+		}
+	}
+
+	// Default limit when no scheduler or policy is available
+	glog.V(2).Infof("No scheduler or policy configuration found for task type %s, using default: 2", taskType)
+	return 2
 }
 
 // getRunningTasks returns all currently running tasks

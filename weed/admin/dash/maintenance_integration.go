@@ -47,27 +47,14 @@ func NewMaintenanceIntegration(queue *MaintenanceQueue, policy *MaintenancePolic
 
 // initializeTypeMaps creates the type conversion maps for dynamic conversion
 func (s *MaintenanceIntegration) initializeTypeMaps() {
-	// Task type mappings
-	s.taskTypeMap = map[types.TaskType]MaintenanceTaskType{
-		types.TaskTypeVacuum:             TaskTypeVacuum,
-		types.TaskTypeErasureCoding:      TaskTypeErasureCoding,
-		types.TaskTypeRemoteUpload:       TaskTypeRemoteUpload,
-		types.TaskTypeFixReplication:     TaskTypeFixReplication,
-		types.TaskTypeBalance:            TaskTypeBalance,
-		types.TaskTypeClusterReplication: TaskTypeClusterReplication,
-	}
+	// Initialize empty maps
+	s.taskTypeMap = make(map[types.TaskType]MaintenanceTaskType)
+	s.revTaskTypeMap = make(map[MaintenanceTaskType]types.TaskType)
 
-	// Reverse task type mappings
-	s.revTaskTypeMap = map[MaintenanceTaskType]types.TaskType{
-		TaskTypeVacuum:             types.TaskTypeVacuum,
-		TaskTypeErasureCoding:      types.TaskTypeErasureCoding,
-		TaskTypeRemoteUpload:       types.TaskTypeRemoteUpload,
-		TaskTypeFixReplication:     types.TaskTypeFixReplication,
-		TaskTypeBalance:            types.TaskTypeBalance,
-		TaskTypeClusterReplication: types.TaskTypeClusterReplication,
-	}
+	// Build task type mappings dynamically from registered tasks after registration
+	// This will be called from registerAllTasks() after all tasks are registered
 
-	// Priority mappings
+	// Priority mappings (these are static and don't depend on registered tasks)
 	s.priorityMap = map[types.TaskPriority]MaintenanceTaskPriority{
 		types.TaskPriorityLow:    PriorityLow,
 		types.TaskPriorityNormal: PriorityNormal,
@@ -81,6 +68,26 @@ func (s *MaintenanceIntegration) initializeTypeMaps() {
 		PriorityHigh:     types.TaskPriorityHigh,
 		PriorityCritical: types.TaskPriorityHigh, // Map critical to high
 	}
+}
+
+// buildTaskTypeMappings dynamically builds task type mappings from registered tasks
+func (s *MaintenanceIntegration) buildTaskTypeMappings() {
+	// Clear existing mappings
+	s.taskTypeMap = make(map[types.TaskType]MaintenanceTaskType)
+	s.revTaskTypeMap = make(map[MaintenanceTaskType]types.TaskType)
+
+	// Build mappings from registered detectors
+	for workerTaskType := range s.taskRegistry.GetAllDetectors() {
+		// Convert types.TaskType to MaintenanceTaskType by string conversion
+		maintenanceTaskType := MaintenanceTaskType(string(workerTaskType))
+
+		s.taskTypeMap[workerTaskType] = maintenanceTaskType
+		s.revTaskTypeMap[maintenanceTaskType] = workerTaskType
+
+		glog.V(3).Infof("Dynamically mapped task type: %s <-> %s", workerTaskType, maintenanceTaskType)
+	}
+
+	glog.V(2).Infof("Built %d dynamic task type mappings", len(s.taskTypeMap))
 }
 
 // registerAllTasks registers all available tasks
@@ -97,10 +104,17 @@ func (s *MaintenanceIntegration) registerAllTasks() {
 	// Register balance task
 	balance.RegisterSimple(s.taskRegistry)
 
+	// Build dynamic type mappings from registered tasks
+	s.buildTaskTypeMappings()
+
 	// Configure tasks from policy
 	s.configureTasksFromPolicy()
 
-	glog.V(1).Infof("Registered tasks: vacuum, erasure_coding, remote_upload, replication, balance, cluster_replication")
+	registeredTaskTypes := make([]string, 0, len(s.taskTypeMap))
+	for _, maintenanceTaskType := range s.taskTypeMap {
+		registeredTaskTypes = append(registeredTaskTypes, string(maintenanceTaskType))
+	}
+	glog.V(1).Infof("Registered tasks: %v", registeredTaskTypes)
 }
 
 // configureTasksFromPolicy dynamically configures all registered tasks based on the maintenance policy
@@ -350,6 +364,18 @@ func (s *MaintenanceIntegration) convertWorkersToTaskSystem(workers []*Maintenan
 		})
 	}
 	return result
+}
+
+// GetTaskScheduler returns the scheduler for a task type using dynamic mapping
+func (s *MaintenanceIntegration) GetTaskScheduler(taskType MaintenanceTaskType) types.TaskScheduler {
+	// Convert task type using mapping
+	taskSystemType, exists := s.revTaskTypeMap[taskType]
+	if !exists {
+		glog.V(3).Infof("Unknown task type %s for scheduler", taskType)
+		return nil
+	}
+
+	return s.taskRegistry.GetScheduler(taskSystemType)
 }
 
 // GetUIProvider returns the UI provider for a task type using dynamic mapping

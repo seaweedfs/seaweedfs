@@ -76,6 +76,11 @@ func (s *SimpleScheduler) GetMaxConcurrent() int {
 	return s.maxConcurrent
 }
 
+// GetDefaultRepeatInterval returns the default interval to wait before repeating vacuum tasks
+func (s *SimpleScheduler) GetDefaultRepeatInterval() time.Duration {
+	return s.minInterval
+}
+
 // IsEnabled returns whether this scheduler is enabled
 func (s *SimpleScheduler) IsEnabled() bool {
 	return s.enabled

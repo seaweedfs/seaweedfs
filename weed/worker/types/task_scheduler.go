@@ -1,5 +1,7 @@
 package types
 
+import "time"
+
 // TaskScheduler defines the interface for task scheduling
 type TaskScheduler interface {
 	// GetTaskType returns the task type this scheduler handles
@@ -13,6 +15,9 @@ type TaskScheduler interface {
 
 	// GetMaxConcurrent returns the maximum concurrent tasks of this type
 	GetMaxConcurrent() int
+
+	// GetDefaultRepeatInterval returns the default interval to wait before repeating tasks of this type
+	GetDefaultRepeatInterval() time.Duration
 
 	// IsEnabled returns whether this scheduler is enabled
 	IsEnabled() bool
