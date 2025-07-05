@@ -101,3 +101,20 @@ func (d *SimpleDetector) SetScanInterval(interval time.Duration) {
 func (d *SimpleDetector) SetMinVolumeAge(age time.Duration) {
 	d.minVolumeAge = age
 }
+
+// ConfigureFromPolicy configures the detector based on the maintenance policy
+func (d *SimpleDetector) ConfigureFromPolicy(policy interface{}) {
+	// Type assert to the maintenance policy type we expect
+	// This allows flexibility while keeping type safety
+	if maintenancePolicy, ok := policy.(interface {
+		GetVacuumEnabled() bool
+		GetVacuumGarbageRatio() float64
+		GetVacuumMinInterval() int
+	}); ok {
+		d.SetEnabled(maintenancePolicy.GetVacuumEnabled())
+		d.SetGarbageThreshold(maintenancePolicy.GetVacuumGarbageRatio())
+		d.SetMinVolumeAge(time.Duration(maintenancePolicy.GetVacuumMinInterval()) * time.Hour)
+	} else {
+		glog.V(1).Infof("🧹 Could not configure vacuum detector from policy: unsupported policy type")
+	}
+}

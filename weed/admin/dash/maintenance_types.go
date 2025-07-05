@@ -107,21 +107,21 @@ type MaintenanceWorker struct {
 
 // MaintenanceQueue manages the task queue and worker coordination
 type MaintenanceQueue struct {
-	tasks                 map[string]*MaintenanceTask
-	workers               map[string]*MaintenanceWorker
-	pendingTasks          []*MaintenanceTask
-	mutex                 sync.RWMutex
-	policy                *MaintenancePolicy
-	simplifiedIntegration *SimplifiedMaintenanceIntegration
+	tasks        map[string]*MaintenanceTask
+	workers      map[string]*MaintenanceWorker
+	pendingTasks []*MaintenanceTask
+	mutex        sync.RWMutex
+	policy       *MaintenancePolicy
+	integration  *MaintenanceIntegration
 }
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks
 type MaintenanceScanner struct {
-	adminServer           *AdminServer
-	policy                *MaintenancePolicy
-	queue                 *MaintenanceQueue
-	lastScan              map[MaintenanceTaskType]time.Time
-	simplifiedIntegration *SimplifiedMaintenanceIntegration
+	adminServer *AdminServer
+	policy      *MaintenancePolicy
+	queue       *MaintenanceQueue
+	lastScan    map[MaintenanceTaskType]time.Time
+	integration *MaintenanceIntegration
 }
 
 // TaskDetectionResult represents the result of scanning for maintenance needs

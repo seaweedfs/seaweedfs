@@ -6,7 +6,7 @@ import (
 )
 
 // RegisterSimple registers the vacuum task components with the simplified registry
-func RegisterSimple(registry *types.SimpleTaskRegistry) {
+func RegisterSimple(registry *types.TaskRegistry) {
 	detector := NewSimpleDetector()
 	scheduler := NewSimpleScheduler()
 
@@ -16,7 +16,7 @@ func RegisterSimple(registry *types.SimpleTaskRegistry) {
 }
 
 // GetDetector returns the vacuum detector for configuration
-func GetDetector(registry *types.SimpleTaskRegistry) *SimpleDetector {
+func GetDetector(registry *types.TaskRegistry) *SimpleDetector {
 	detector := registry.GetDetector(types.TaskTypeVacuum)
 	if detector == nil {
 		return nil
@@ -30,7 +30,7 @@ func GetDetector(registry *types.SimpleTaskRegistry) *SimpleDetector {
 }
 
 // GetScheduler returns the vacuum scheduler for configuration
-func GetScheduler(registry *types.SimpleTaskRegistry) *SimpleScheduler {
+func GetScheduler(registry *types.TaskRegistry) *SimpleScheduler {
 	scheduler := registry.GetScheduler(types.TaskTypeVacuum)
 	if scheduler == nil {
 		return nil

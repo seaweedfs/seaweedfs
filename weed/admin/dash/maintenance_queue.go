@@ -18,10 +18,10 @@ func NewMaintenanceQueue(policy *MaintenancePolicy) *MaintenanceQueue {
 	return queue
 }
 
-// SetSimplifiedIntegration sets the simplified integration reference
-func (mq *MaintenanceQueue) SetSimplifiedIntegration(integration *SimplifiedMaintenanceIntegration) {
-	mq.simplifiedIntegration = integration
-	glog.V(1).Infof("Maintenance queue configured with simplified integration")
+// SetIntegration sets the integration reference
+func (mq *MaintenanceQueue) SetIntegration(integration *MaintenanceIntegration) {
+	mq.integration = integration
+	glog.V(1).Infof("Maintenance queue configured with integration")
 }
 
 // AddTask adds a new maintenance task to the queue
@@ -294,6 +294,16 @@ func (mq *MaintenanceQueue) GetWorkers() []*MaintenanceWorker {
 	return workers
 }
 
+// generateTaskID generates a unique ID for tasks
+func generateTaskID() string {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 8)
+	for i := range b {
+		b[i] = charset[i%len(charset)]
+	}
+	return string(b)
+}
+
 // CleanupOldTasks removes old completed and failed tasks
 func (mq *MaintenanceQueue) CleanupOldTasks(retention time.Duration) int {
 	mq.mutex.Lock()
@@ -402,16 +412,16 @@ func (mq *MaintenanceQueue) workerCanHandle(taskType MaintenanceTaskType, capabi
 	return false
 }
 
-// canScheduleTaskNow determines if a task can be scheduled using simplified or fallback logic
+// canScheduleTaskNow determines if a task can be scheduled using task schedulers or fallback logic
 func (mq *MaintenanceQueue) canScheduleTaskNow(task *MaintenanceTask) bool {
-	// Try simplified scheduling logic first
-	if mq.simplifiedIntegration != nil {
+	// Try task scheduling logic first
+	if mq.integration != nil {
 		// Get all running tasks and available workers
 		runningTasks := mq.getRunningTasks()
 		availableWorkers := mq.getAvailableWorkers()
 
-		canSchedule := mq.simplifiedIntegration.CanScheduleWithSimplifiedLogic(task, runningTasks, availableWorkers)
-		glog.V(3).Infof("Simplified scheduler decision for task %s (%s): %v", task.ID, task.Type, canSchedule)
+		canSchedule := mq.integration.CanScheduleWithTaskSchedulers(task, runningTasks, availableWorkers)
+		glog.V(3).Infof("Task scheduler decision for task %s (%s): %v", task.ID, task.Type, canSchedule)
 		return canSchedule
 	}
 

@@ -8,6 +8,7 @@ import (
 
 // SimpleScheduler implements vacuum task scheduling using code instead of schemas
 type SimpleScheduler struct {
+	enabled       bool
 	maxConcurrent int
 	minInterval   time.Duration
 }
@@ -15,6 +16,7 @@ type SimpleScheduler struct {
 // NewSimpleScheduler creates a new simple vacuum scheduler
 func NewSimpleScheduler() *SimpleScheduler {
 	return &SimpleScheduler{
+		enabled:       true,
 		maxConcurrent: 2,
 		minInterval:   6 * time.Hour,
 	}
@@ -27,6 +29,11 @@ func (s *SimpleScheduler) GetTaskType() types.TaskType {
 
 // CanScheduleNow determines if a vacuum task can be scheduled right now
 func (s *SimpleScheduler) CanScheduleNow(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker) bool {
+	// Check if scheduler is enabled
+	if !s.enabled {
+		return false
+	}
+
 	// Check concurrent limit
 	runningVacuumCount := 0
 	for _, runningTask := range runningTasks {
@@ -69,7 +76,17 @@ func (s *SimpleScheduler) GetMaxConcurrent() int {
 	return s.maxConcurrent
 }
 
+// IsEnabled returns whether this scheduler is enabled
+func (s *SimpleScheduler) IsEnabled() bool {
+	return s.enabled
+}
+
 // Configuration setters
+
+// SetEnabled sets whether the scheduler is enabled
+func (s *SimpleScheduler) SetEnabled(enabled bool) {
+	s.enabled = enabled
+}
 
 // SetMaxConcurrent sets the maximum number of concurrent vacuum tasks
 func (s *SimpleScheduler) SetMaxConcurrent(max int) {
