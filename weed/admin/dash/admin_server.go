@@ -42,6 +42,9 @@ type AdminServer struct {
 
 	// Maintenance system
 	maintenanceManager *MaintenanceManager
+
+	// Worker gRPC server
+	workerGrpcServer *WorkerGrpcServer
 }
 
 // Type definitions moved to types.go
@@ -1106,4 +1109,32 @@ func (as *AdminServer) GetMaintenanceWorkersData() (*MaintenanceWorkersData, err
 		TotalLoad:     totalLoad,
 		LastUpdated:   time.Now(),
 	}, nil
+}
+
+// StartWorkerGrpcServer starts the worker gRPC server
+func (s *AdminServer) StartWorkerGrpcServer(httpPort int) error {
+	if s.workerGrpcServer != nil {
+		return fmt.Errorf("worker gRPC server is already running")
+	}
+
+	// Calculate gRPC port (HTTP port + 10000)
+	grpcPort := httpPort + 10000
+
+	s.workerGrpcServer = NewWorkerGrpcServer(s)
+	return s.workerGrpcServer.Start(grpcPort)
+}
+
+// StopWorkerGrpcServer stops the worker gRPC server
+func (s *AdminServer) StopWorkerGrpcServer() error {
+	if s.workerGrpcServer != nil {
+		err := s.workerGrpcServer.Stop()
+		s.workerGrpcServer = nil
+		return err
+	}
+	return nil
+}
+
+// GetWorkerGrpcServer returns the worker gRPC server
+func (s *AdminServer) GetWorkerGrpcServer() *WorkerGrpcServer {
+	return s.workerGrpcServer
 }

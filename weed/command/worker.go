@@ -23,15 +23,15 @@ The worker ID and address are automatically generated.
 The worker connects to the admin server via gRPC (admin HTTP port + 10000).
 
 Examples:
-  weed worker -admin=localhost:9333
-  weed worker -admin=admin.example.com:9333
-  weed worker -admin=localhost:9333 -capabilities=vacuum,replication
-  weed worker -admin=localhost:9333 -maxConcurrent=4
+  weed worker -admin=localhost:23646
+  weed worker -admin=admin.example.com:23646
+  weed worker -admin=localhost:23646 -capabilities=vacuum,replication
+  weed worker -admin=localhost:23646 -maxConcurrent=4
 `,
 }
 
 var (
-	workerAdminServer         = cmdWorker.Flag.String("admin", "localhost:9333", "admin server address")
+	workerAdminServer         = cmdWorker.Flag.String("admin", "localhost:23646", "admin server address")
 	workerCapabilities        = cmdWorker.Flag.String("capabilities", "vacuum,ec,remote,replication,balance", "comma-separated list of task types this worker can handle")
 	workerMaxConcurrent       = cmdWorker.Flag.Int("maxConcurrent", 2, "maximum number of concurrent tasks")
 	workerHeartbeatInterval   = cmdWorker.Flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")

@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // GrpcAdminClient implements AdminClient using gRPC bidirectional streaming
@@ -58,8 +59,8 @@ func (c *GrpcAdminClient) Connect() error {
 		return nil
 	}
 
-	// Create gRPC connection
-	conn, err := pb.GrpcDial(context.Background(), c.adminAddress, false)
+	// Create gRPC connection with insecure credentials
+	conn, err := pb.GrpcDial(context.Background(), c.adminAddress, false, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return fmt.Errorf("failed to connect to admin server at %s: %v", c.adminAddress, err)
 	}

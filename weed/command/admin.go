@@ -217,6 +217,20 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 		fmt.Printf("No filers discovered from masters\n")
 	}
 
+	// Start worker gRPC server for worker connections
+	err = adminServer.StartWorkerGrpcServer(*options.port)
+	if err != nil {
+		return fmt.Errorf("failed to start worker gRPC server: %v", err)
+	}
+	fmt.Printf("Worker gRPC server started on port %d\n", *options.port+10000)
+
+	// Set up cleanup for gRPC server
+	defer func() {
+		if stopErr := adminServer.StopWorkerGrpcServer(); stopErr != nil {
+			log.Printf("Error stopping worker gRPC server: %v", stopErr)
+		}
+	}()
+
 	// Create handlers and setup routes
 	adminHandlers := handlers.NewAdminHandlers(adminServer)
 	adminHandlers.SetupRoutes(r, *options.adminPassword != "", *options.adminUser, *options.adminPassword)
