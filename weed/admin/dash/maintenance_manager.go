@@ -2,6 +2,8 @@ package dash
 
 import (
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -15,6 +17,12 @@ type MaintenanceManager struct {
 	adminServer *AdminServer
 	running     bool
 	stopChan    chan struct{}
+	// Error handling and backoff
+	errorCount    int
+	lastError     error
+	lastErrorTime time.Time
+	backoffDelay  time.Duration
+	mutex         sync.RWMutex
 }
 
 // NewMaintenanceManager creates a new maintenance manager
@@ -27,11 +35,12 @@ func NewMaintenanceManager(adminServer *AdminServer, config *MaintenanceConfig) 
 	scanner := NewMaintenanceScanner(adminServer, config.Policy, queue)
 
 	return &MaintenanceManager{
-		config:      config,
-		scanner:     scanner,
-		queue:       queue,
-		adminServer: adminServer,
-		stopChan:    make(chan struct{}),
+		config:       config,
+		scanner:      scanner,
+		queue:        queue,
+		adminServer:  adminServer,
+		stopChan:     make(chan struct{}),
+		backoffDelay: time.Second, // Start with 1 second backoff
 	}
 }
 
@@ -104,7 +113,7 @@ func (mm *MaintenanceManager) Stop() {
 	glog.Infof("Maintenance manager stopped")
 }
 
-// scanLoop periodically scans for maintenance tasks
+// scanLoop periodically scans for maintenance tasks with adaptive timing
 func (mm *MaintenanceManager) scanLoop() {
 	ticker := time.NewTicker(mm.config.ScanInterval)
 	defer ticker.Stop()
@@ -115,6 +124,28 @@ func (mm *MaintenanceManager) scanLoop() {
 			return
 		case <-ticker.C:
 			mm.performScan()
+
+			// Adjust ticker interval based on error state
+			mm.mutex.RLock()
+			currentInterval := mm.config.ScanInterval
+			if mm.errorCount > 0 {
+				// Use backoff delay when there are errors
+				currentInterval = mm.backoffDelay
+				if currentInterval > mm.config.ScanInterval {
+					// Don't make it longer than the configured interval * 10
+					maxInterval := mm.config.ScanInterval * 10
+					if currentInterval > maxInterval {
+						currentInterval = maxInterval
+					}
+				}
+			}
+			mm.mutex.RUnlock()
+
+			// Reset ticker with new interval if needed
+			if currentInterval != mm.config.ScanInterval {
+				ticker.Stop()
+				ticker = time.NewTicker(currentInterval)
+			}
 		}
 	}
 }
@@ -134,15 +165,21 @@ func (mm *MaintenanceManager) cleanupLoop() {
 	}
 }
 
-// performScan executes a maintenance scan
+// performScan executes a maintenance scan with error handling and backoff
 func (mm *MaintenanceManager) performScan() {
+	mm.mutex.Lock()
+	defer mm.mutex.Unlock()
+
 	glog.V(2).Infof("Starting maintenance scan")
 
 	results, err := mm.scanner.ScanForMaintenanceTasks()
 	if err != nil {
-		glog.Errorf("Maintenance scan failed: %v", err)
+		mm.handleScanError(err)
 		return
 	}
+
+	// Scan succeeded, reset error tracking
+	mm.resetErrorTracking()
 
 	if len(results) > 0 {
 		mm.queue.AddTasksFromResults(results)
@@ -150,6 +187,76 @@ func (mm *MaintenanceManager) performScan() {
 	} else {
 		glog.V(2).Infof("Maintenance scan completed: no tasks needed")
 	}
+}
+
+// handleScanError handles scan errors with exponential backoff and reduced logging
+func (mm *MaintenanceManager) handleScanError(err error) {
+	now := time.Now()
+	mm.errorCount++
+	mm.lastError = err
+	mm.lastErrorTime = now
+
+	// Use exponential backoff with jitter
+	if mm.errorCount > 1 {
+		mm.backoffDelay = mm.backoffDelay * 2
+		if mm.backoffDelay > 5*time.Minute {
+			mm.backoffDelay = 5 * time.Minute // Cap at 5 minutes
+		}
+	}
+
+	// Reduce log frequency based on error count and time
+	shouldLog := false
+	if mm.errorCount <= 3 {
+		// Log first 3 errors immediately
+		shouldLog = true
+	} else if mm.errorCount <= 10 && mm.errorCount%3 == 0 {
+		// Log every 3rd error for errors 4-10
+		shouldLog = true
+	} else if mm.errorCount%10 == 0 {
+		// Log every 10th error after that
+		shouldLog = true
+	}
+
+	if shouldLog {
+		// Check if it's a connection error to provide better messaging
+		if isConnectionError(err) {
+			if mm.errorCount == 1 {
+				glog.Errorf("Maintenance scan failed: %v (will retry with backoff)", err)
+			} else {
+				glog.Errorf("Maintenance scan still failing after %d attempts: %v (backoff: %v)",
+					mm.errorCount, err, mm.backoffDelay)
+			}
+		} else {
+			glog.Errorf("Maintenance scan failed: %v", err)
+		}
+	} else {
+		// Use debug level for suppressed errors
+		glog.V(3).Infof("Maintenance scan failed (error #%d, suppressed): %v", mm.errorCount, err)
+	}
+}
+
+// resetErrorTracking resets error tracking when scan succeeds
+func (mm *MaintenanceManager) resetErrorTracking() {
+	if mm.errorCount > 0 {
+		glog.V(1).Infof("Maintenance scan recovered after %d failed attempts", mm.errorCount)
+		mm.errorCount = 0
+		mm.lastError = nil
+		mm.backoffDelay = time.Second // Reset to initial delay
+	}
+}
+
+// isConnectionError checks if the error is a connection-related error
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection error") ||
+		strings.Contains(errStr, "dial tcp") ||
+		strings.Contains(errStr, "connection timeout") ||
+		strings.Contains(errStr, "no route to host") ||
+		strings.Contains(errStr, "network unreachable")
 }
 
 // performCleanup cleans up old tasks and stale workers
@@ -177,9 +284,31 @@ func (mm *MaintenanceManager) GetConfig() *MaintenanceConfig {
 // GetStats returns maintenance statistics
 func (mm *MaintenanceManager) GetStats() *MaintenanceStats {
 	stats := mm.queue.GetStats()
+
+	mm.mutex.RLock()
+	defer mm.mutex.RUnlock()
+
 	stats.LastScanTime = time.Now() // Would need to track this properly
-	stats.NextScanTime = time.Now().Add(mm.config.ScanInterval)
+
+	// Calculate next scan time based on current error state
+	nextScanInterval := mm.config.ScanInterval
+	if mm.errorCount > 0 {
+		nextScanInterval = mm.backoffDelay
+		maxInterval := mm.config.ScanInterval * 10
+		if nextScanInterval > maxInterval {
+			nextScanInterval = maxInterval
+		}
+	}
+	stats.NextScanTime = time.Now().Add(nextScanInterval)
+
 	return stats
+}
+
+// GetErrorState returns the current error state for monitoring
+func (mm *MaintenanceManager) GetErrorState() (errorCount int, lastError error, backoffDelay time.Duration) {
+	mm.mutex.RLock()
+	defer mm.mutex.RUnlock()
+	return mm.errorCount, mm.lastError, mm.backoffDelay
 }
 
 // GetTasks returns tasks with filtering
