@@ -5,10 +5,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/cluster_replication"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/replication"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -49,14 +47,8 @@ func (s *MaintenanceIntegration) registerAllTasks() {
 	// Register remote upload task
 	remote_upload.RegisterSimple(s.taskRegistry)
 
-	// Register replication task
-	replication.RegisterSimple(s.taskRegistry)
-
 	// Register balance task
 	balance.RegisterSimple(s.taskRegistry)
-
-	// Register cluster replication task
-	cluster_replication.RegisterSimple(s.taskRegistry)
 
 	// Configure tasks from policy
 	s.configureTasksFromPolicy()
@@ -109,18 +101,10 @@ func (s *MaintenanceIntegration) configureDetectorForTaskType(taskType types.Tas
 			remoteDetector.SetAgeHours(s.maintenancePolicy.RemoteUploadAgeHours)
 			remoteDetector.SetPattern(s.maintenancePolicy.RemoteUploadPattern)
 		}
-	case types.TaskTypeFixReplication:
-		if replDetector := replication.GetSimpleDetector(s.taskRegistry); replDetector != nil {
-			replDetector.SetEnabled(s.maintenancePolicy.ReplicationFixEnabled)
-		}
 	case types.TaskTypeBalance:
 		if balanceDetector := balance.GetSimpleDetector(s.taskRegistry); balanceDetector != nil {
 			balanceDetector.SetEnabled(s.maintenancePolicy.BalanceEnabled)
 			balanceDetector.SetThreshold(s.maintenancePolicy.BalanceThreshold)
-		}
-	case types.TaskTypeClusterReplication:
-		if clusterDetector := cluster_replication.GetSimpleDetector(s.taskRegistry); clusterDetector != nil {
-			clusterDetector.SetEnabled(false) // Disabled by default as it needs MQ setup
 		}
 	default:
 		glog.V(2).Infof("No specific configuration for detector task type: %s", taskType)
@@ -145,20 +129,10 @@ func (s *MaintenanceIntegration) configureSchedulerForTaskType(taskType types.Ta
 			remoteScheduler.SetEnabled(s.maintenancePolicy.RemoteUploadEnabled)
 			remoteScheduler.SetMaxConcurrent(s.maintenancePolicy.RemoteUploadMaxConcurrent)
 		}
-	case types.TaskTypeFixReplication:
-		if replScheduler := replication.GetSimpleScheduler(s.taskRegistry); replScheduler != nil {
-			replScheduler.SetEnabled(s.maintenancePolicy.ReplicationFixEnabled)
-			replScheduler.SetMaxConcurrent(s.maintenancePolicy.ReplicationMaxConcurrent)
-		}
 	case types.TaskTypeBalance:
 		if balanceScheduler := balance.GetSimpleScheduler(s.taskRegistry); balanceScheduler != nil {
 			balanceScheduler.SetEnabled(s.maintenancePolicy.BalanceEnabled)
 			balanceScheduler.SetMaxConcurrent(s.maintenancePolicy.BalanceMaxConcurrent)
-		}
-	case types.TaskTypeClusterReplication:
-		if clusterScheduler := cluster_replication.GetSimpleScheduler(s.taskRegistry); clusterScheduler != nil {
-			clusterScheduler.SetEnabled(false) // Disabled by default as it needs MQ setup
-			clusterScheduler.SetMaxConcurrent(3)
 		}
 	default:
 		glog.V(2).Infof("No specific configuration for scheduler task type: %s", taskType)

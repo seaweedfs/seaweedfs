@@ -9,10 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/cluster_replication"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/replication"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -25,9 +23,7 @@ func RegisterAllTasks(registry *tasks.TaskRegistry) {
 	vacuum.Register(registry)
 	erasure_coding.Register(registry)
 	remote_upload.Register(registry)
-	replication.Register(registry)
 	balance.Register(registry)
-	cluster_replication.Register(registry)
 
 	glog.V(1).Infof("Registered %d built-in task types", len(registry.GetSupportedTypes()))
 }
