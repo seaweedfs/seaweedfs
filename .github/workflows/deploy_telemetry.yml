@@ -1,0 +1,171 @@
+# This workflow will build and deploy the SeaweedFS telemetry server
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Deploy Telemetry Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      setup:
+        description: 'Run first-time server setup'
+        required: true
+        type: boolean
+        default: false
+      deploy:
+        description: 'Deploy telemetry server to remote server'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build Telemetry Server
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy
+        run: |
+          go mod tidy
+          echo "Building telemetry server..."
+          GOOS=linux GOARCH=amd64 go build -o telemetry-server ./telemetry/server/main.go
+          ls -la telemetry-server
+          echo "Build completed successfully"
+
+      - name: First-time Server Setup
+        if: github.event_name == 'workflow_dispatch' && inputs.setup
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.TELEMETRY_SSH_PRIVATE_KEY }}
+          REMOTE_HOST: ${{ secrets.TELEMETRY_HOST }}
+          REMOTE_USER: ${{ secrets.TELEMETRY_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "Host *" > ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+
+          # Create all required directories with proper permissions
+          ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "
+            mkdir -p ~/seaweedfs-telemetry/bin ~/seaweedfs-telemetry/logs ~/seaweedfs-telemetry/data ~/seaweedfs-telemetry/tmp && \
+            chmod 755 ~/seaweedfs-telemetry/logs && \
+            chmod 755 ~/seaweedfs-telemetry/data && \
+            touch ~/seaweedfs-telemetry/logs/telemetry.log ~/seaweedfs-telemetry/logs/telemetry.error.log && \
+            chmod 644 ~/seaweedfs-telemetry/logs/*.log"
+
+          # Create systemd service file
+          echo "
+          [Unit]
+          Description=SeaweedFS Telemetry Server
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=$REMOTE_USER
+          WorkingDirectory=/home/$REMOTE_USER/seaweedfs-telemetry
+          ExecStart=/home/$REMOTE_USER/seaweedfs-telemetry/bin/telemetry-server -port=8353
+          Restart=always
+          RestartSec=5
+          StandardOutput=append:/home/$REMOTE_USER/seaweedfs-telemetry/logs/telemetry.log
+          StandardError=append:/home/$REMOTE_USER/seaweedfs-telemetry/logs/telemetry.error.log
+
+          [Install]
+          WantedBy=multi-user.target" > telemetry.service
+
+          # Setup logrotate configuration
+          echo "# SeaweedFS Telemetry service log rotation
+          /home/$REMOTE_USER/seaweedfs-telemetry/logs/*.log {
+              daily
+              rotate 30
+              compress
+              delaycompress
+              missingok
+              notifempty
+              create 644 $REMOTE_USER $REMOTE_USER
+              postrotate
+                  systemctl restart telemetry.service
+              endscript
+          }" > telemetry_logrotate
+
+          # Copy configuration files
+          scp -i ~/.ssh/deploy_key telemetry/grafana-dashboard.json $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
+          scp -i ~/.ssh/deploy_key telemetry/prometheus.yml $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
+
+          # Copy and install service and logrotate files
+          scp -i ~/.ssh/deploy_key telemetry.service telemetry_logrotate $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
+          ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "
+            sudo mv ~/seaweedfs-telemetry/telemetry.service /etc/systemd/system/ && \
+            sudo mv ~/seaweedfs-telemetry/telemetry_logrotate /etc/logrotate.d/seaweedfs-telemetry && \
+            sudo systemctl daemon-reload && \
+            sudo systemctl enable telemetry.service"
+
+          echo "✅ First-time setup completed successfully!"
+          echo "📋 Next step: Run the deployment to install the telemetry server binary"
+          echo "   1. Go to GitHub Actions → Deploy Telemetry Server"
+          echo "   2. Click 'Run workflow'"
+          echo "   3. Check 'Deploy telemetry server to remote server'"
+          echo "   4. Click 'Run workflow'"
+
+          rm -f ~/.ssh/deploy_key
+
+      - name: Deploy Telemetry Server to Remote Server
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.TELEMETRY_SSH_PRIVATE_KEY }}
+          REMOTE_HOST: ${{ secrets.TELEMETRY_HOST }}
+          REMOTE_USER: ${{ secrets.TELEMETRY_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "Host *" > ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+
+          # Create temp directory and copy binary
+          ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "mkdir -p ~/seaweedfs-telemetry/tmp"
+          scp -i ~/.ssh/deploy_key telemetry-server $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/tmp/
+
+          # Copy updated configuration files
+          scp -i ~/.ssh/deploy_key telemetry/grafana-dashboard.json $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
+          scp -i ~/.ssh/deploy_key telemetry/prometheus.yml $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
+
+          # Check if service exists and deploy accordingly
+          ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "
+            if systemctl list-unit-files telemetry.service >/dev/null 2>&1; then
+              echo 'Service exists, performing update...'
+              sudo systemctl stop telemetry.service
+              mkdir -p ~/seaweedfs-telemetry/bin
+              mv ~/seaweedfs-telemetry/tmp/telemetry-server ~/seaweedfs-telemetry/bin/
+              chmod +x ~/seaweedfs-telemetry/bin/telemetry-server
+              sudo systemctl start telemetry.service
+              sudo systemctl status telemetry.service
+            else
+              echo 'ERROR: telemetry.service not found!'
+              echo 'Please run the first-time setup before deploying.'
+              echo 'Go to GitHub Actions → Deploy Telemetry Server → Run workflow → Check \"Run first-time server setup\"'
+              exit 1
+            fi"
+
+          # Verify deployment
+          ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "
+            echo 'Waiting for service to start...'
+            sleep 5
+            curl -f http://localhost:8353/health || echo 'Health check failed'"
+
+          rm -f ~/.ssh/deploy_key
+
+      - name: Notify Deployment Status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Telemetry server deployment successful"
+            echo "Dashboard: http://${{ secrets.TELEMETRY_HOST }}:8353"
+            echo "Metrics: http://${{ secrets.TELEMETRY_HOST }}:8353/metrics"
+          else
+            echo "❌ Telemetry server deployment failed"
+          fi 

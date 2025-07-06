@@ -9,6 +9,7 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: volume
 {{- if .Values.volume.annotations }}
   annotations:
     {{- toYaml .Values.volume.annotations | nindent 4 }}
@@ -47,9 +48,8 @@ spec:
       affinity:
         {{ tpl .Values.volume.affinity . | nindent 8 | trim }}
       {{- end }}
-      {{- with .Values.volume.topologySpreadConstraints }}
-      topologySpreadConstraints:
-        {{- toYaml . | nindent 8 }}
+      {{- if .Values.volume.topologySpreadConstraints }}
+      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "volume") | nindent 6 }}
       {{- end }}
       restartPolicy: {{ default .Values.global.restartPolicy .Values.volume.restartPolicy }}
       {{- if .Values.volume.tolerations }}
@@ -150,6 +150,9 @@ spec:
                 {{- if .Values.volume.metricsPort }}
                 -metricsPort={{ .Values.volume.metricsPort }} \
                 {{- end }}
+                {{- if .Values.volume.metricsIp }}
+                -metricsIp={{ .Values.volume.metricsIp }} \
+                {{- end }}
                 -dir {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}/{{$dir.name}}{{end}} \
                 {{- if .Values.volume.idx }}
                 -dir.idx=/idx \
@@ -183,7 +186,10 @@ spec:
                 -minFreeSpacePercent={{ .Values.volume.minFreeSpacePercent }} \
                 -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-volume.{{ .Release.Namespace }} \
                 -compactionMBps={{ .Values.volume.compactionMBps }} \
-                -mserver={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
+                -mserver={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }} \
+                {{- range .Values.volume.extraArgs }}
+                {{ . }} \
+                {{- end }}
           volumeMounts:
             {{- range $dir := .Values.volume.dataDirs }}
             {{- if not ( eq $dir.type "custom" ) }}
@@ -351,7 +357,9 @@ spec:
   volumeClaimTemplates:
     {{- range $dir := .Values.volume.dataDirs }}
     {{- if eq $dir.type "persistentVolumeClaim" }}
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: {{ $dir.name }}
         {{- with $dir.annotations }}
         annotations:
@@ -367,7 +375,9 @@ spec:
     {{- end }}
 
     {{- if and .Values.volume.idx (eq .Values.volume.idx.type "persistentVolumeClaim") }}
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: idx
         {{- with .Values.volume.idx.annotations }}
         annotations:
@@ -381,7 +391,9 @@ spec:
             storage: {{ .Values.volume.idx.size }}
     {{- end }}
     {{- if and .Values.volume.logs (eq .Values.volume.logs.type "persistentVolumeClaim") }}
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: logs
         {{- with .Values.volume.logs.annotations }}
         annotations:

@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"hash"
 	"hash/crc32"
-	"hash/crc64"
 	"io"
 	"net/http"
 	"time"
@@ -39,6 +38,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
 	"github.com/dustin/go-humanize"
+	"github.com/minio/crc64nvme"
 )
 
 // calculateSeedSignature - Calculate seed signature in accordance with
@@ -378,17 +378,16 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 
 			if extractedCheckSumAlgorithm.String() != cr.checkSumAlgorithm {
 				errorMessage := fmt.Sprintf("checksum algorithm in trailer '%s' does not match the one advertised in the header '%s'", extractedCheckSumAlgorithm.String(), cr.checkSumAlgorithm)
-				glog.V(3).Infof(errorMessage)
-				cr.err = errors.New(errorMessage)
+				glog.V(3).Info(errorMessage)
+				cr.err = errors.New(s3err.ErrMsgChecksumAlgorithmMismatch)
 				return 0, cr.err
 			}
 
 			computedChecksum := cr.checkSumWriter.Sum(nil)
 			base64Checksum := base64.StdEncoding.EncodeToString(computedChecksum)
 			if string(extractedChecksum) != base64Checksum {
-				// TODO: Return BadDigest
 				glog.V(3).Infof("payload checksum '%s' does not match provided checksum '%s'", base64Checksum, string(extractedChecksum))
-				cr.err = errors.New("payload checksum does not match")
+				cr.err = errors.New(s3err.ErrMsgPayloadChecksumMismatch)
 				return 0, cr.err
 			}
 
@@ -449,7 +448,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			newSignature := cr.getChunkSignature(hashedChunk)
 			if !compareSignatureV4(cr.chunkSignature, newSignature) {
 				// Chunk signature doesn't match we return signature does not match.
-				cr.err = errors.New("chunk signature does not match")
+				cr.err = errors.New(s3err.ErrMsgChunkSignatureMismatch)
 				return 0, cr.err
 			}
 			// Newly calculated signature becomes the seed for the next chunk
@@ -674,7 +673,7 @@ func getCheckSumWriter(checksumAlgorithm ChecksumAlgorithm) hash.Hash {
 	case ChecksumAlgorithmCRC32C:
 		return crc32.New(crc32.MakeTable(crc32.Castagnoli))
 	case ChecksumAlgorithmCRC64NVMe:
-		return crc64.New(crc64.MakeTable(crc64.ISO))
+		return crc64nvme.New()
 	case ChecksumAlgorithmSHA1:
 		return sha1.New()
 	case ChecksumAlgorithmSHA256:

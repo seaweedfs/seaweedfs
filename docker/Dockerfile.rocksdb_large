@@ -1,9 +1,9 @@
-FROM golang:1.23 as builder
+FROM golang:1.24 as builder
 
 RUN apt-get update
 RUN apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev
 
-ENV ROCKSDB_VERSION v9.10.0
+ENV ROCKSDB_VERSION v10.2.1
 
 # build RocksDB
 RUN cd /tmp && \
@@ -21,7 +21,7 @@ RUN git clone https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedf
 ARG BRANCH=${BRANCH:-master}
 RUN cd /go/src/github.com/seaweedfs/seaweedfs && git checkout $BRANCH
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
-  && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(git rev-parse --short HEAD)" \
+  && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && go install -tags "5BytesOffset rocksdb" -ldflags "-extldflags -static ${LDFLAGS}"
 
 

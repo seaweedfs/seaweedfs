@@ -2,9 +2,10 @@ package storage
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -225,7 +226,7 @@ func ScanVolumeFile(dirname string, collection string, id needle.VolumeId,
 	needleMapKind NeedleMapKind,
 	volumeFileScanner VolumeFileScanner) (err error) {
 	var v *Volume
-	if v, err = loadVolumeWithoutIndex(dirname, collection, id, needleMapKind); err != nil {
+	if v, err = loadVolumeWithoutIndex(dirname, collection, id, needleMapKind, needle.GetCurrentVersion()); err != nil {
 		return fmt.Errorf("failed to load volume %d: %v", id, err)
 	}
 	if err = volumeFileScanner.VisitSuperBlock(v.SuperBlock); err != nil {

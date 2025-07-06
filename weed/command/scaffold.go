@@ -2,8 +2,9 @@ package command
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"path/filepath"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/command/scaffold"
 )
@@ -13,9 +14,9 @@ func init() {
 }
 
 var cmdScaffold = &Command{
-	UsageLine: "scaffold -config=[filer|notification|replication|security|master]",
+	UsageLine: "scaffold -config=[filer|notification|replication|security|master|shell|credential]",
 	Short:     "generate basic configuration files",
-	Long: `Generate filer.toml with all possible configurations for you to customize.
+	Long: `Generate configuration files with all possible configurations for you to customize.
 
 	The options can also be overwritten by environment variables.
 	For example, the filer.toml mysql password can be overwritten by environment variable
@@ -30,7 +31,7 @@ var cmdScaffold = &Command{
 
 var (
 	outputPath = cmdScaffold.Flag.String("output", "", "if not empty, save the configuration file to this directory")
-	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication|security|master] the configuration file to generate")
+	config     = cmdScaffold.Flag.String("config", "filer", "[filer|notification|replication|security|master|shell|credential] the configuration file to generate")
 )
 
 func runScaffold(cmd *Command, args []string) bool {
@@ -49,6 +50,8 @@ func runScaffold(cmd *Command, args []string) bool {
 		content = scaffold.Master
 	case "shell":
 		content = scaffold.Shell
+	case "credential":
+		content = scaffold.Credential
 	}
 	if content == "" {
 		println("need a valid -config option")

@@ -141,7 +141,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 
 func (c *commandRemoteConfigure) listExistingRemoteStorages(commandEnv *CommandEnv, writer io.Writer) error {
 
-	return filer_pb.ReadDirAllEntries(commandEnv, util.FullPath(filer.DirectoryEtcRemote), "", func(entry *filer_pb.Entry, isLast bool) error {
+	return filer_pb.ReadDirAllEntries(context.Background(), commandEnv, util.FullPath(filer.DirectoryEtcRemote), "", func(entry *filer_pb.Entry, isLast bool) error {
 		if len(entry.Content) == 0 {
 			fmt.Fprintf(writer, "skipping %s\n", entry.Name)
 			return nil

@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -10,11 +11,10 @@ import (
 	ui "github.com/seaweedfs/seaweedfs/weed/server/volume_server_ui"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS Volume "+version.VERSION)
 	infos := make(map[string]interface{})
 	infos["Up Time"] = time.Now().Sub(startTime).String()
 	var ds []*volume_server_pb.DiskStatus
@@ -44,7 +44,7 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Stats         interface{}
 		Counters      *stats.ServerStats
 	}{
-		util.Version(),
+		version.Version(),
 		vs.SeedMasterNodes,
 		normalVolumeInfos,
 		vs.store.EcVolumes(),

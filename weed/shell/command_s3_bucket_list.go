@@ -57,7 +57,7 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 		return fmt.Errorf("read buckets: %v", err)
 	}
 
-	err = filer_pb.List(commandEnv, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.List(context.Background(), commandEnv, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
 		if !entry.IsDirectory {
 			return nil
 		}

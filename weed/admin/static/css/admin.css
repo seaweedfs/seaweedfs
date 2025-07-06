@@ -1,0 +1,217 @@
+/* SeaweedFS Dashboard Custom Styles */
+
+/* Sidebar Styles */
+.sidebar {
+    position: fixed;
+    top: 56px;
+    bottom: 0;
+    left: 0;
+    z-index: 100;
+    padding: 48px 0 0;
+    box-shadow: inset -1px 0 0 rgba(0, 0, 0, .1);
+}
+
+.sidebar-heading {
+    font-size: .75rem;
+    text-transform: uppercase;
+}
+
+.sidebar .nav-link {
+    font-weight: 500;
+    color: #333;
+}
+
+.sidebar .nav-link:hover {
+    color: #007bff;
+}
+
+.sidebar .nav-link.active {
+    color: #007bff;
+}
+
+.sidebar .nav-link:hover .feather,
+.sidebar .nav-link.active .feather {
+    color: inherit;
+}
+
+/* Main content area */
+main {
+    margin-left: 240px;
+}
+
+@media (max-width: 767.98px) {
+    .sidebar {
+        top: 5rem;
+    }
+    main {
+        margin-left: 0;
+    }
+}
+
+/* Custom card styles */
+.border-left-primary {
+    border-left: 0.25rem solid #4e73df !important;
+}
+
+.border-left-success {
+    border-left: 0.25rem solid #1cc88a !important;
+}
+
+.border-left-info {
+    border-left: 0.25rem solid #36b9cc !important;
+}
+
+.border-left-warning {
+    border-left: 0.25rem solid #f6c23e !important;
+}
+
+.border-left-danger {
+    border-left: 0.25rem solid #e74a3b !important;
+}
+
+/* Status badges */
+.badge {
+    font-size: 0.875em;
+}
+
+/* Progress bars */
+.progress {
+    background-color: #f8f9fc;
+    border: 1px solid #e3e6f0;
+}
+
+.progress-bar {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+}
+
+/* Tables */
+.table {
+    color: #5a5c69;
+}
+
+.table thead th {
+    vertical-align: bottom;
+    border-bottom: 1px solid #e3e6f0;
+    font-weight: 700;
+    color: #5a5c69;
+    background-color: #f8f9fc;
+}
+
+.table-bordered {
+    border: 1px solid #e3e6f0;
+}
+
+.table-bordered th,
+.table-bordered td {
+    border: 1px solid #e3e6f0;
+}
+
+/* Cards */
+.card {
+    box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15) !important;
+    border: 1px solid #e3e6f0;
+}
+
+.card-header {
+    background-color: #f8f9fc;
+    border-bottom: 1px solid #e3e6f0;
+}
+
+/* Buttons */
+.btn-primary {
+    background-color: #4e73df;
+    border-color: #4e73df;
+}
+
+.btn-primary:hover {
+    background-color: #2e59d9;
+    border-color: #2653d4;
+}
+
+/* Text utilities */
+.text-gray-800 {
+    color: #5a5c69 !important;
+}
+
+.text-gray-300 {
+    color: #dddfeb !important;
+}
+
+/* Animation for HTMX updates */
+.htmx-indicator {
+    opacity: 0;
+    transition: opacity 500ms ease-in;
+}
+
+.htmx-request .htmx-indicator {
+    opacity: 1;
+}
+
+.htmx-request.htmx-indicator {
+    opacity: 1;
+}
+
+/* Loading spinner */
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+}
+
+/* Custom utilities */
+.bg-gradient-primary {
+    background: linear-gradient(180deg, #4e73df 10%, #224abe 100%);
+}
+
+.shadow {
+    box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15) !important;
+}
+
+/* Collapsible menu styles */
+.nav-link[data-bs-toggle="collapse"] {
+    position: relative;
+}
+
+.nav-link[data-bs-toggle="collapse"] .fa-chevron-down {
+    transition: transform 0.2s ease;
+}
+
+.nav-link[data-bs-toggle="collapse"][aria-expanded="true"] .fa-chevron-down {
+    transform: rotate(180deg);
+}
+
+.nav-link[data-bs-toggle="collapse"]:not(.collapsed) {
+    color: #007bff;
+}
+
+.nav-link[data-bs-toggle="collapse"]:not(.collapsed) .fa-chevron-down {
+    color: #007bff;
+}
+
+/* Submenu styles */
+.nav .nav {
+    border-left: 1px solid #e3e6f0;
+    margin-left: 0.5rem;
+}
+
+.nav .nav .nav-link {
+    font-size: 0.875rem;
+    padding-left: 1rem;
+}
+
+.nav .nav .nav-link:hover {
+    background-color: #f8f9fc;
+}
+
+/* Responsive adjustments */
+@media (max-width: 576px) {
+    .card-body {
+        padding: 1rem;
+    }
+    
+    .h5 {
+        font-size: 1rem;
+    }
+} 

@@ -46,6 +46,7 @@ Your support will be really appreciated by me and other supporters!
 - [SeaweedFS Mailing List](https://groups.google.com/d/forum/seaweedfs)
 - [Wiki Documentation](https://github.com/seaweedfs/seaweedfs/wiki)
 - [SeaweedFS White Paper](https://github.com/seaweedfs/seaweedfs/wiki/SeaweedFS_Architecture.pdf)
+- [SeaweedFS Introduction Slides 2025.5](https://docs.google.com/presentation/d/1tdkp45J01oRV68dIm4yoTXKJDof-EhainlA0LMXexQE/edit?usp=sharing)
 - [SeaweedFS Introduction Slides 2021.5](https://docs.google.com/presentation/d/1DcxKWlINc-HNCjhYeERkpGXXm6nTCES8mi2W5G0Z4Ts/edit?usp=sharing)
 - [SeaweedFS Introduction Slides 2019.3](https://www.slideshare.net/chrislusf/seaweedfs-introduction)
 
@@ -72,6 +73,7 @@ Table of Contents
 * [Installation Guide](#installation-guide)
 * [Disk Related Topics](#disk-related-topics)
 * [Benchmark](#benchmark)
+* [Enterprise](#enterprise)
 * [License](#license)
 
 # Quick Start #
@@ -647,6 +649,13 @@ Requests considered: 5587:
 Cluster Total: 369.64 MiB/s, 61.77 obj/s, 0 errors over 5m0s.
 Total Errors:0.
 ```
+
+[Back to TOC](#table-of-contents)
+
+## Enterprise ##
+
+For enterprise users, please visit [seaweedfs.com](https://seaweedfs.com) for the SeaweedFS Enterprise Edition, 
+which has a self-healing storage format with better data protection.
 
 [Back to TOC](#table-of-contents)
 

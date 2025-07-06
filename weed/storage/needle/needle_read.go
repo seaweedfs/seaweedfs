@@ -3,12 +3,13 @@ package needle
 import (
 	"errors"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"io"
 )
 
 const (
@@ -52,7 +53,6 @@ func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size Size, versi
 func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Version) (err error) {
 	n.ParseNeedleHeader(bytes)
 	if n.Size != size {
-		// cookie is not always passed in for this API. Use size to do preliminary checking.
 		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorSizeMismatchOffsetSize).Inc()
 			glog.Errorf("entry not found1: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
@@ -61,30 +61,17 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorSizeMismatch).Inc()
 		return fmt.Errorf("entry not found: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 	}
-	switch version {
-	case Version1:
+	if version == Version1 {
 		n.Data = bytes[NeedleHeaderSize : NeedleHeaderSize+size]
-	case Version2, Version3:
-		err = n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(n.Size)])
-	}
-	if err != nil && err != io.EOF {
-		return err
-	}
-	if size > 0 {
-		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
-		newChecksum := NewCRC(n.Data)
-		if checksum != newChecksum.Value() && checksum != uint32(newChecksum) {
-			// the crc.Value() function is to be deprecated. this double checking is for backward compatibility
-			// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
-			// and switch appeared in version 3.09.
-			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
-			return errors.New("CRC error! Data On Disk Corrupted")
+	} else {
+		err := n.readNeedleDataVersion2(bytes[NeedleHeaderSize : NeedleHeaderSize+int(size)])
+		if err != nil && err != io.EOF {
+			return err
 		}
-		n.Checksum = newChecksum
 	}
-	if version == Version3 {
-		tsOffset := NeedleHeaderSize + size + NeedleChecksumSize
-		n.AppendAtNs = util.BytesToUint64(bytes[tsOffset : tsOffset+TimestampSize])
+	err = n.readNeedleTail(bytes[NeedleHeaderSize+size:], version)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -95,7 +82,6 @@ func (n *Needle) ReadData(r backend.BackendStorageFile, offset int64, size Size,
 	if err != nil {
 		return err
 	}
-
 	err = n.ReadBytes(bytes, offset, size, version)
 	if err == ErrorSizeMismatch && OffsetSize == 4 {
 		offset = offset + int64(MaxPossibleVolumeSize)
@@ -191,38 +177,22 @@ func (n *Needle) readNeedleDataVersion2NonData(bytes []byte) (index int, err err
 
 func ReadNeedleHeader(r backend.BackendStorageFile, version Version, offset int64) (n *Needle, bytes []byte, bodyLength int64, err error) {
 	n = new(Needle)
-	if version == Version1 || version == Version2 || version == Version3 {
-		bytes = make([]byte, NeedleHeaderSize)
 
-		var count int
-		count, err = r.ReadAt(bytes, offset)
-		if err == io.EOF && count == NeedleHeaderSize {
-			err = nil
-		}
-		if count <= 0 || err != nil {
-			return nil, bytes, 0, err
-		}
+	bytes = make([]byte, NeedleHeaderSize)
 
-		n.ParseNeedleHeader(bytes)
-		bodyLength = NeedleBodyLength(n.Size, version)
+	var count int
+	count, err = r.ReadAt(bytes, offset)
+	if err == io.EOF && count == NeedleHeaderSize {
+		err = nil
 	}
+	if count <= 0 || err != nil {
+		return nil, bytes, 0, err
+	}
+
+	n.ParseNeedleHeader(bytes)
+	bodyLength = NeedleBodyLength(n.Size, version)
 
 	return
-}
-
-func PaddingLength(needleSize Size, version Version) Size {
-	if version == Version3 {
-		// this is same value as version2, but just listed here for clarity
-		return NeedlePaddingSize - ((NeedleHeaderSize + needleSize + NeedleChecksumSize + TimestampSize) % NeedlePaddingSize)
-	}
-	return NeedlePaddingSize - ((NeedleHeaderSize + needleSize + NeedleChecksumSize) % NeedlePaddingSize)
-}
-
-func NeedleBodyLength(needleSize Size, version Version) int64 {
-	if version == Version3 {
-		return int64(needleSize) + NeedleChecksumSize + TimestampSize + int64(PaddingLength(needleSize, version))
-	}
-	return int64(needleSize) + NeedleChecksumSize + int64(PaddingLength(needleSize, version))
 }
 
 // n should be a needle already read the header
@@ -255,14 +225,11 @@ func (n *Needle) ReadNeedleBodyBytes(needleBody []byte, version Version) (err er
 	switch version {
 	case Version1:
 		n.Data = needleBody[:n.Size]
-		n.Checksum = NewCRC(n.Data)
+		err = n.readNeedleTail(needleBody[n.Size:], version)
 	case Version2, Version3:
 		err = n.readNeedleDataVersion2(needleBody[0:n.Size])
-		n.Checksum = NewCRC(n.Data)
-
-		if version == Version3 {
-			tsOffset := n.Size + NeedleChecksumSize
-			n.AppendAtNs = util.BytesToUint64(needleBody[tsOffset : tsOffset+TimestampSize])
+		if err == nil {
+			err = n.readNeedleTail(needleBody[n.Size:], version)
 		}
 	default:
 		err = fmt.Errorf("unsupported version %d!", version)

@@ -13,6 +13,7 @@ gen:
 	protoc mq_broker.proto --go_out=./mq_pb --go-grpc_out=./mq_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc mq_schema.proto --go_out=./schema_pb --go-grpc_out=./schema_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc mq_agent.proto --go_out=./mq_agent_pb --go-grpc_out=./mq_agent_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
+	protoc worker.proto --go_out=./worker_pb --go-grpc_out=./worker_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	# protoc filer.proto --java_out=../../other/java/client/src/main/java
 	cp filer.proto ../../other/java/client/src/main/proto
 

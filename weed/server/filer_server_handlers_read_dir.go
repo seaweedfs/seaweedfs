@@ -1,8 +1,8 @@
 package weed_server
 
 import (
-	"context"
 	"errors"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,7 +18,7 @@ import (
 // sub directories are listed on the first page, when "lastFileName"
 // is empty.
 func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
-
+	ctx := r.Context()
 	if fs.option.ExposeDirectoryData == false {
 		writeJsonError(w, r, http.StatusForbidden, errors.New("ui is disabled"))
 		return
@@ -40,10 +40,10 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	namePattern := r.FormValue("namePattern")
 	namePatternExclude := r.FormValue("namePatternExclude")
 
-	entries, shouldDisplayLoadMore, err := fs.filer.ListDirectoryEntries(context.Background(), util.FullPath(path), lastFileName, false, int64(limit), "", namePattern, namePatternExclude)
+	entries, shouldDisplayLoadMore, err := fs.filer.ListDirectoryEntries(ctx, util.FullPath(path), lastFileName, false, int64(limit), "", namePattern, namePatternExclude)
 
 	if err != nil {
-		glog.V(0).Infof("listDirectory %s %s %d: %s", path, lastFileName, limit, err)
+		glog.V(0).InfofCtx(ctx, "listDirectory %s %s %d: %s", path, lastFileName, limit, err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -58,7 +58,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		emptyFolder = false
 	}
 
-	glog.V(4).Infof("listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
+	glog.V(4).InfofCtx(ctx, "listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
 
 	if r.Header.Get("Accept") == "application/json" {
 		writeJsonQuiet(w, r, http.StatusOK, struct {
@@ -70,7 +70,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 			ShouldDisplayLoadMore bool
 			EmptyFolder           bool
 		}{
-			util.Version(),
+			version.Version(),
 			path,
 			entries,
 			limit,
@@ -92,7 +92,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		EmptyFolder           bool
 		ShowDirectoryDelete   bool
 	}{
-		util.Version(),
+		version.Version(),
 		path,
 		ui.ToBreadcrumb(path),
 		entries,
@@ -103,7 +103,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		fs.option.ShowUIDirectoryDelete,
 	})
 	if err != nil {
-		glog.V(0).Infof("Template Execute Error: %v", err)
+		glog.V(0).InfofCtx(ctx, "Template Execute Error: %v", err)
 	}
 
 }

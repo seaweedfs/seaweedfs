@@ -1,0 +1,438 @@
+package app
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ FileBrowser(data dash.FileBrowserData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			if data.IsBucketPath && data.BucketName != "" {
+				<i class="fas fa-cube me-2"></i>S3 Bucket: {data.BucketName}
+			} else {
+				<i class="fas fa-folder-open me-2"></i>File Browser
+			}
+		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				if data.IsBucketPath && data.BucketName != "" {
+					<a href="/object-store/buckets" class="btn btn-sm btn-outline-secondary">
+						<i class="fas fa-arrow-left me-1"></i>Back to Buckets
+					</a>
+				}
+				<button type="button" class="btn btn-sm btn-outline-primary" onclick="createFolder()">
+					<i class="fas fa-folder-plus me-1"></i>New Folder
+				</button>
+				<button type="button" class="btn btn-sm btn-outline-secondary" onclick="uploadFile()">
+					<i class="fas fa-upload me-1"></i>Upload
+				</button>
+				<button type="button" class="btn btn-sm btn-outline-danger" id="deleteSelectedBtn" onclick="confirmDeleteSelected()" style="display: none;">
+					<i class="fas fa-trash me-1"></i>Delete Selected
+				</button>
+				<button type="button" class="btn btn-sm btn-outline-info" onclick="exportFileList()">
+					<i class="fas fa-download me-1"></i>Export
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Breadcrumb Navigation -->
+	<nav aria-label="breadcrumb" class="mb-3">
+		<ol class="breadcrumb">
+			for i, crumb := range data.Breadcrumbs {
+				if i == len(data.Breadcrumbs)-1 {
+					<li class="breadcrumb-item active" aria-current="page">
+						<i class="fas fa-folder me-1"></i>{ crumb.Name }
+					</li>
+				} else {
+					<li class="breadcrumb-item">
+						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
+							if crumb.Name == "Root" {
+								<i class="fas fa-home me-1"></i>
+							} else {
+								<i class="fas fa-folder me-1"></i>
+							}
+							{ crumb.Name }
+						</a>
+					</li>
+				}
+			}
+		</ol>
+	</nav>
+
+	<!-- Summary Cards -->
+	<div class="row mb-4">
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-primary shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+								Total Entries
+							</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">
+								{ fmt.Sprintf("%d", data.TotalEntries) }
+							</div>
+						</div>
+						<div class="col-auto">
+							<i class="fas fa-list fa-2x text-gray-300"></i>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-success shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+								Directories
+							</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">
+								{ fmt.Sprintf("%d", countDirectories(data.Entries)) }
+							</div>
+						</div>
+						<div class="col-auto">
+							<i class="fas fa-folder fa-2x text-gray-300"></i>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-info shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+								Files
+							</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">
+								{ fmt.Sprintf("%d", countFiles(data.Entries)) }
+							</div>
+						</div>
+						<div class="col-auto">
+							<i class="fas fa-file fa-2x text-gray-300"></i>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-warning shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+								Total Size
+							</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">
+								{ formatBytes(data.TotalSize) }
+							</div>
+						</div>
+						<div class="col-auto">
+							<i class="fas fa-hdd fa-2x text-gray-300"></i>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- File Listing -->
+	<div class="card shadow mb-4">
+		<div class="card-header py-3 d-flex justify-content-between align-items-center">
+			<h6 class="m-0 font-weight-bold text-primary">
+				<i class="fas fa-folder-open me-2"></i>
+							if data.CurrentPath == "/" {
+				Root Directory
+			} else if data.CurrentPath == "/buckets" {
+										Object Store Buckets Directory
+				<a href="/object-store/buckets" class="btn btn-sm btn-outline-primary ms-2">
+					<i class="fas fa-cube me-1"></i>Manage Buckets
+				</a>
+			} else {
+				{ filepath.Base(data.CurrentPath) }
+			}
+			</h6>
+			if data.ParentPath != data.CurrentPath {
+				<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", data.ParentPath)) } class="btn btn-sm btn-outline-secondary">
+					<i class="fas fa-arrow-up me-1"></i>Up
+				</a>
+			}
+		</div>
+		<div class="card-body">
+			if len(data.Entries) > 0 {
+				<div class="table-responsive">
+					<table class="table table-hover" id="fileTable">
+						<thead>
+							<tr>
+								<th width="40px">
+									<input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+								</th>
+								<th>Name</th>
+								<th>Size</th>
+								<th>Type</th>
+								<th>Modified</th>
+								<th>Permissions</th>
+								<th>Actions</th>
+							</tr>
+						</thead>
+						<tbody>
+							for _, entry := range data.Entries {
+								<tr>
+									<td>
+										<input type="checkbox" class="file-checkbox" value={ entry.FullPath }>
+									</td>
+									<td>
+										<div class="d-flex align-items-center">
+											if entry.IsDirectory {
+												<i class="fas fa-folder text-warning me-2"></i>
+												<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", entry.FullPath)) } class="text-decoration-none">
+													{ entry.Name }
+												</a>
+											} else {
+												<i class={ fmt.Sprintf("fas %s text-muted me-2", getFileIcon(entry.Mime)) }></i>
+												<span>{ entry.Name }</span>
+											}
+										</div>
+									</td>
+									<td>
+										if entry.IsDirectory {
+											<span class="text-muted">—</span>
+										} else {
+											{ formatBytes(entry.Size) }
+										}
+									</td>
+									<td>
+										<span class="badge bg-light text-dark">
+											if entry.IsDirectory {
+												Directory
+											} else {
+												{ getMimeDisplayName(entry.Mime) }
+											}
+										</span>
+									</td>
+									<td>
+										if !entry.ModTime.IsZero() {
+											{ entry.ModTime.Format("2006-01-02 15:04") }
+										} else {
+											<span class="text-muted">—</span>
+										}
+									</td>
+									<td>
+										<code class="small">{ entry.Mode }</code>
+									</td>
+									<td>
+										<div class="btn-group btn-group-sm">
+											if !entry.IsDirectory {
+												<button type="button" class="btn btn-outline-primary btn-sm" title="Download" onclick={ templ.ComponentScript{Call: fmt.Sprintf("downloadFile('%s')", entry.FullPath)} }>
+													<i class="fas fa-download"></i>
+												</button>
+												<button type="button" class="btn btn-outline-info btn-sm" title="View" onclick={ templ.ComponentScript{Call: fmt.Sprintf("viewFile('%s')", entry.FullPath)} }>
+													<i class="fas fa-eye"></i>
+												</button>
+											}
+											<button type="button" class="btn btn-outline-secondary btn-sm" title="Properties" onclick={ templ.ComponentScript{Call: fmt.Sprintf("showProperties('%s')", entry.FullPath)} }>
+												<i class="fas fa-info"></i>
+											</button>
+											<button type="button" class="btn btn-outline-danger btn-sm" title="Delete" onclick={ templ.ComponentScript{Call: fmt.Sprintf("confirmDelete('%s')", entry.FullPath)} }>
+												<i class="fas fa-trash"></i>
+											</button>
+										</div>
+									</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			} else {
+				<div class="text-center py-5">
+					<i class="fas fa-folder-open fa-3x text-muted mb-3"></i>
+					<h5 class="text-muted">Empty Directory</h5>
+					<p class="text-muted">This directory contains no files or subdirectories.</p>
+				</div>
+			}
+		</div>
+	</div>
+
+	<!-- Last Updated -->
+	<div class="row">
+		<div class="col-12">
+			<small class="text-muted">
+				<i class="fas fa-clock me-1"></i>
+				Last updated: { data.LastUpdated.Format("2006-01-02 15:04:05") }
+			</small>
+		</div>
+	</div>
+
+	<!-- Create Folder Modal -->
+	<div class="modal fade" id="createFolderModal" tabindex="-1" aria-labelledby="createFolderModalLabel" aria-hidden="true">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="createFolderModalLabel">
+						<i class="fas fa-folder-plus me-2"></i>Create New Folder
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<form id="createFolderForm">
+						<div class="mb-3">
+							<label for="folderName" class="form-label">Folder Name</label>
+							<input type="text" class="form-control" id="folderName" name="folderName" required 
+								   placeholder="Enter folder name" maxlength="255">
+							<div class="form-text">
+								Folder names cannot contain / or \ characters.
+							</div>
+						</div>
+						<input type="hidden" id="currentPath" name="currentPath" value={ data.CurrentPath }>
+					</form>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+					<button type="button" class="btn btn-primary" onclick="submitCreateFolder()">
+						<i class="fas fa-folder-plus me-1"></i>Create Folder
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Upload File Modal -->
+	<div class="modal fade" id="uploadFileModal" tabindex="-1" aria-labelledby="uploadFileModalLabel" aria-hidden="true">
+		<div class="modal-dialog modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="uploadFileModalLabel">
+						<i class="fas fa-upload me-2"></i>Upload Files
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<form id="uploadFileForm" enctype="multipart/form-data">
+						<div class="mb-3">
+							<label for="fileInput" class="form-label">Select Files</label>
+							<input type="file" class="form-control" id="fileInput" name="files" multiple required>
+							<div class="form-text">
+								Choose one or more files to upload to the current directory. You can select multiple files by holding Ctrl (Cmd on Mac) while clicking.
+							</div>
+						</div>
+						<input type="hidden" id="uploadPath" name="path" value={ data.CurrentPath }>
+						
+						<!-- File List Preview -->
+						<div id="fileListPreview" class="mb-3" style="display: none;">
+							<label class="form-label">Selected Files:</label>
+							<div id="selectedFilesList" class="border rounded p-2 bg-light">
+								<!-- Files will be listed here -->
+							</div>
+						</div>
+						
+						<!-- Upload Progress -->
+						<div class="mb-3" id="uploadProgress" style="display: none;">
+							<label class="form-label">Upload Progress:</label>
+							<div class="progress mb-2">
+								<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+							</div>
+							<div id="uploadStatus" class="small text-muted">
+								Preparing upload...
+							</div>
+						</div>
+					</form>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+					<button type="button" class="btn btn-primary" onclick="submitUploadFile()">
+						<i class="fas fa-upload me-1"></i>Upload Files
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+func countDirectories(entries []dash.FileEntry) int {
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDirectory {
+			count++
+		}
+	}
+	return count
+}
+
+func countFiles(entries []dash.FileEntry) int {
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDirectory {
+			count++
+		}
+	}
+	return count
+}
+
+func getFileIcon(mime string) string {
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return "fa-image"
+	case strings.HasPrefix(mime, "video/"):
+		return "fa-video"
+	case strings.HasPrefix(mime, "audio/"):
+		return "fa-music"
+	case strings.HasPrefix(mime, "text/"):
+		return "fa-file-text"
+	case mime == "application/pdf":
+		return "fa-file-pdf"
+	case mime == "application/zip" || strings.Contains(mime, "archive"):
+		return "fa-file-archive"
+	case mime == "application/json":
+		return "fa-file-code"
+	case strings.Contains(mime, "script") || strings.Contains(mime, "javascript"):
+		return "fa-file-code"
+	default:
+		return "fa-file"
+	}
+}
+
+func getMimeDisplayName(mime string) string {
+	switch mime {
+	case "text/plain":
+		return "Text"
+	case "text/html":
+		return "HTML"
+	case "application/json":
+		return "JSON"
+	case "application/pdf":
+		return "PDF"
+	case "image/jpeg":
+		return "JPEG"
+	case "image/png":
+		return "PNG"
+	case "image/gif":
+		return "GIF"
+	case "video/mp4":
+		return "MP4"
+	case "audio/mpeg":
+		return "MP3"
+	case "application/zip":
+		return "ZIP"
+	default:
+		if strings.HasPrefix(mime, "image/") {
+			return "Image"
+		} else if strings.HasPrefix(mime, "video/") {
+			return "Video"
+		} else if strings.HasPrefix(mime, "audio/") {
+			return "Audio"
+		} else if strings.HasPrefix(mime, "text/") {
+			return "Text"
+		}
+		return "File"
+	}
+} 

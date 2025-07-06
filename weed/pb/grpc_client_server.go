@@ -3,13 +3,16 @@ package pb
 import (
 	"context"
 	"fmt"
-	"google.golang.org/grpc/metadata"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -21,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
 const (
@@ -58,6 +62,7 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 		}),
 		grpc.MaxRecvMsgSize(Max_Message_Size),
 		grpc.MaxSendMsgSize(Max_Message_Size),
+		grpc.UnaryInterceptor(requestIDUnaryInterceptor()),
 	)
 	for _, opt := range opts {
 		if opt != nil {
@@ -116,6 +121,36 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 	grpcClients[address] = vgc
 
 	return vgc, nil
+}
+
+func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req interface{},
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (interface{}, error) {
+		incomingMd, _ := metadata.FromIncomingContext(ctx)
+		idList := incomingMd.Get(request_id.AmzRequestIDHeader)
+		var reqID string
+		if len(idList) > 0 {
+			reqID = idList[0]
+		}
+		if reqID == "" {
+			reqID = uuid.New().String()
+		}
+
+		ctx = metadata.NewOutgoingContext(ctx,
+			metadata.New(map[string]string{
+				request_id.AmzRequestIDHeader: reqID,
+			}))
+
+		ctx = request_id.Set(ctx, reqID)
+
+		grpc.SetTrailer(ctx, metadata.Pairs(request_id.AmzRequestIDHeader, reqID))
+
+		return handler(ctx, req)
+	}
 }
 
 // WithGrpcClient In streamingMode, always use a fresh connection. Otherwise, try to reuse an existing connection.
@@ -277,4 +312,11 @@ func WithOneOfGrpcFilerClients(streamingMode bool, filerAddresses []ServerAddres
 	}
 
 	return err
+}
+
+func WithWorkerClient(streamingMode bool, workerAddress string, grpcDialOption grpc.DialOption, fn func(client worker_pb.WorkerServiceClient) error) error {
+	return WithGrpcClient(streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
+		client := worker_pb.NewWorkerServiceClient(grpcConnection)
+		return fn(client)
+	}, workerAddress, false, grpcDialOption)
 }

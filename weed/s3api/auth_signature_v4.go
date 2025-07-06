@@ -719,9 +719,11 @@ func extractHostHeader(r *http.Request) string {
 
 	forwardedHost := r.Header.Get("X-Forwarded-Host")
 	forwardedPort := r.Header.Get("X-Forwarded-Port")
+	forwardedProto := r.Header.Get("X-Forwarded-Proto")
 
 	// If X-Forwarded-Host is set, use that as the host.
 	// If X-Forwarded-Port is set, use that too to form the host.
+	// If X-Forwarded-Proto is set, check if is it default to omit the port.
 	if forwardedHost != "" {
 		extractedHost := forwardedHost
 		host, port, err := net.SplitHostPort(extractedHost)
@@ -731,8 +733,12 @@ func extractHostHeader(r *http.Request) string {
 				forwardedPort = port
 			}
 		}
-		if !isDefaultPort(r.URL.Scheme, forwardedPort) {
-			extractedHost = net.JoinHostPort(forwardedHost, forwardedPort)
+		scheme := r.URL.Scheme
+		if forwardedProto != "" {
+			scheme = forwardedProto
+		}
+		if !isDefaultPort(scheme, forwardedPort) {
+			extractedHost = net.JoinHostPort(extractedHost, forwardedPort)
 		}
 		return extractedHost
 	} else {
@@ -743,12 +749,12 @@ func extractHostHeader(r *http.Request) string {
 		}
 		h, port, err := net.SplitHostPort(host)
 		if err != nil {
-			return r.Host
+			return host
 		}
 		if isDefaultPort(r.URL.Scheme, port) {
 			return h
 		}
-		return r.Host
+		return host
 	}
 }
 

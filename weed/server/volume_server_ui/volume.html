@@ -114,6 +114,7 @@
                 <th>Trash</th>
                 <th>TTL</th>
                 <th>ReadOnly</th>
+                <th>Version</th>
             </tr>
             </thead>
             <tbody>
@@ -127,6 +128,7 @@
                 <td>{{ .DeleteCount }} / {{bytesToHumanReadable .DeletedByteCount}}</td>
                 <td>{{ .Ttl }}</td>
                 <td>{{ .ReadOnly }}</td>
+                <td>{{ .Version }}</td>
             </tr>
             {{ end }}
             </tbody>

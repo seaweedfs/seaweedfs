@@ -1,8 +1,10 @@
 package needle
 
 import (
+	"bytes"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -57,8 +59,102 @@ func TestAppend(t *testing.T) {
 	datBackend := backend.NewDiskFile(tempFile)
 	defer datBackend.Close()
 
-	offset, _, _, _ := n.Append(datBackend, CurrentVersion)
+	offset, _, _, _ := n.Append(datBackend, GetCurrentVersion())
 	if offset != uint64(fileSize) {
 		t.Errorf("Fail to Append Needle.")
 	}
+}
+
+func versionString(v Version) string {
+	switch v {
+	case Version1:
+		return "Version1"
+	case Version2:
+		return "Version2"
+	case Version3:
+		return "Version3"
+	default:
+		return "UnknownVersion"
+	}
+}
+
+func TestWriteNeedle_CompatibilityWithLegacy(t *testing.T) {
+	versions := []Version{Version1, Version2, Version3}
+	for _, version := range versions {
+		t.Run(versionString(version), func(t *testing.T) {
+			n := &Needle{
+				Cookie:       0x12345678,
+				Id:           0x1122334455667788,
+				Data:         []byte("hello world"),
+				Flags:        0xFF,
+				Name:         []byte("filename.txt"),
+				Mime:         []byte("text/plain"),
+				LastModified: 0x1234567890,
+				Ttl:          nil, // Add TTL if needed
+				Pairs:        []byte("key=value"),
+				PairsSize:    9,
+				Checksum:     0xCAFEBABE,
+				AppendAtNs:   0xDEADBEEF,
+			}
+
+			// Legacy
+			legacyBuf := &bytes.Buffer{}
+			_, _, err := n.LegacyPrepareWriteBuffer(version, legacyBuf)
+			if err != nil {
+				t.Fatalf("LegacyPrepareWriteBuffer failed: %v", err)
+			}
+
+			// New
+			newBuf := &bytes.Buffer{}
+			offset := uint64(0)
+			switch version {
+			case Version1:
+				_, _, err = writeNeedleV1(n, offset, newBuf)
+			case Version2:
+				_, _, err = writeNeedleV2(n, offset, newBuf)
+			case Version3:
+				_, _, err = writeNeedleV3(n, offset, newBuf)
+			}
+			if err != nil {
+				t.Fatalf("writeNeedleV%d failed: %v", version, err)
+			}
+
+			if !bytes.Equal(legacyBuf.Bytes(), newBuf.Bytes()) {
+				t.Errorf("Data layout mismatch for version %d\nLegacy: %x\nNew:    %x", version, legacyBuf.Bytes(), newBuf.Bytes())
+			}
+		})
+	}
+}
+
+type mockBackendWriter struct {
+	buf *bytes.Buffer
+}
+
+func (m *mockBackendWriter) WriteAt(p []byte, off int64) (n int, err error) {
+	return m.buf.Write(p)
+}
+
+func (m *mockBackendWriter) GetStat() (int64, time.Time, error) {
+	return 0, time.Time{}, nil
+}
+
+func (m *mockBackendWriter) Truncate(size int64) error {
+	return nil
+}
+
+func (m *mockBackendWriter) Name() string {
+	return "mock"
+}
+
+func (m *mockBackendWriter) Close() error {
+	return nil
+}
+
+func (m *mockBackendWriter) Sync() error {
+	return nil
+}
+
+func (m *mockBackendWriter) ReadAt(p []byte, off int64) (n int, err error) {
+	// Not used in this test
+	return 0, nil
 }

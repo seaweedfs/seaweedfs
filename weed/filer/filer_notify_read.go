@@ -323,7 +323,7 @@ type LogFileIterator struct {
 
 func newLogFileIterator(masterClient *wdclient.MasterClient, fileEntry *Entry, startTsNs, stopTsNs int64) *LogFileIterator {
 	return &LogFileIterator{
-		r:         NewChunkStreamReaderFromFiler(masterClient, fileEntry.Chunks),
+		r:         NewChunkStreamReaderFromFiler(context.Background(), masterClient, fileEntry.Chunks),
 		sizeBuf:   make([]byte, 4),
 		startTsNs: startTsNs,
 		stopTsNs:  stopTsNs,

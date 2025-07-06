@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -54,7 +55,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	var buckets []string
-	err = filer_pb.List(commandEnv, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.List(context.Background(), commandEnv, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
 		buckets = append(buckets, entry.Name)
 		return nil
 	}, "", false, math.MaxUint32)
@@ -64,7 +65,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 
 	for _, bucket := range buckets {
 		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo, signingKey); err != nil {
-			fmt.Fprintf(writer, fmt.Sprintf("failed cleanup uploads for bucket %s: %v", bucket, err))
+			fmt.Fprintf(writer, "failed cleanup uploads for bucket %s: %v", bucket, err)
 		}
 	}
 
@@ -75,7 +76,7 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 	uploadsDir := filerBucketsPath + "/" + bucket + "/" + s3_constants.MultipartUploadsFolder
 	var staleUploads []string
 	now := time.Now()
-	err := filer_pb.List(commandEnv, uploadsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+	err := filer_pb.List(context.Background(), commandEnv, uploadsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 		ctime := time.Unix(entry.Attributes.Crtime, 0)
 		if ctime.Add(timeAgo).Before(now) {
 			staleUploads = append(staleUploads, entry.Name)

@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"time"
 
@@ -119,7 +120,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, option, masters)
 	listeningAddress := util.JoinHostPort(*masterOptions.ipBind, *masterOptions.port)
-	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
+	glog.V(0).Infof("Start Seaweed Master %s at %s", version.Version(), listeningAddress)
 	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOptions.ipBind, *masterOptions.port, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
@@ -134,7 +135,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	reflection.Register(grpcS)
-	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOptions.ip, grpcPort)
+	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", version.Version(), *masterOptions.ip, grpcPort)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)
 	}

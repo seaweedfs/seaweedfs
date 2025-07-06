@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
+
 	hashicorpRaft "github.com/hashicorp/raft"
 
 	"slices"
@@ -59,6 +61,8 @@ type MasterOptions struct {
 	electionTimeout    *time.Duration
 	raftHashicorp      *bool
 	raftBootstrap      *bool
+	telemetryUrl       *string
+	telemetryEnabled   *bool
 }
 
 func init() {
@@ -86,6 +90,8 @@ func init() {
 	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
 	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", false, "use hashicorp raft")
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
+	m.telemetryUrl = cmdMaster.Flag.String("telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
+	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", false, "enable telemetry reporting")
 }
 
 var cmdMaster = &Command{
@@ -109,6 +115,11 @@ func runMaster(cmd *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
+
+	// bind viper configuration to command line flags
+	if v := util.GetViper().GetString("master.mdir"); v != "" {
+		*m.metaFolder = v
+	}
 
 	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
@@ -160,7 +171,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), masterPeers)
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
-	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
+	glog.V(0).Infof("Start Seaweed Master %s at %s", version.Version(), listeningAddress)
 	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
@@ -211,7 +222,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		protobuf.RegisterRaftServer(grpcS, raftServer)
 	}
 	reflection.Register(grpcS)
-	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
+	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", version.Version(), *masterOption.ipBind, grpcPort)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)
 	}
@@ -325,5 +336,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		DisableHttp:             *m.disableHttp,
 		MetricsAddress:          *m.metricsAddress,
 		MetricsIntervalSec:      *m.metricsIntervalSec,
+		TelemetryUrl:            *m.telemetryUrl,
+		TelemetryEnabled:        *m.telemetryEnabled,
 	}
 }

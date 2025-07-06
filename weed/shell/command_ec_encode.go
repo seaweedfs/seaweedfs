@@ -4,11 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"google.golang.org/grpc"
 
@@ -65,7 +67,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	collection := encodeCommand.String("collection", "", "the collection name")
 	fullPercentage := encodeCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
-	maxParallelization := encodeCommand.Int("maxParallelization", 10, "run up to X tasks in parallel, whenever possible")
+	maxParallelization := encodeCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
 	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	applyBalancing := encodeCommand.Bool("rebalance", false, "re-balance EC shards after creation")
@@ -98,76 +100,83 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		}
 	}
 
-	var collections []string
 	var volumeIds []needle.VolumeId
+	var balanceCollections []string
 	if vid := needle.VolumeId(*volumeId); vid != 0 {
 		// volumeId is provided
 		volumeIds = append(volumeIds, vid)
-		collections = collectCollectionsForVolumeIds(topologyInfo, volumeIds)
+		balanceCollections = collectCollectionsForVolumeIds(topologyInfo, volumeIds)
 	} else {
 		// apply to all volumes for the given collection
-		volumeIds, err = collectVolumeIdsForEcEncode(commandEnv, *collection, *fullPercentage, *quietPeriod)
+		volumeIds, err = collectVolumeIdsForEcEncode(commandEnv, *collection, nil, *fullPercentage, *quietPeriod)
 		if err != nil {
 			return err
 		}
-		collections = append(collections, *collection)
+		balanceCollections = []string{*collection}
 	}
 
 	// encode all requested volumes...
-	for _, vid := range volumeIds {
-		if err = doEcEncode(commandEnv, *collection, vid, *maxParallelization); err != nil {
-			return fmt.Errorf("ec encode for volume %d: %v", vid, err)
-		}
+	if err = doEcEncode(commandEnv, *collection, volumeIds, *maxParallelization); err != nil {
+		return fmt.Errorf("ec encode for volumes %v: %v", volumeIds, err)
 	}
-	// ...then re-balance ec shards.
-	if err := EcBalance(commandEnv, collections, "", rp, *maxParallelization, *applyBalancing); err != nil {
-		return fmt.Errorf("re-balance ec shards for collection(s) %v: %v", collections, err)
+	// ...re-balance ec shards...
+	if err := EcBalance(commandEnv, balanceCollections, "", rp, *maxParallelization, *applyBalancing); err != nil {
+		return fmt.Errorf("re-balance ec shards for collection(s) %v: %v", balanceCollections, err)
+	}
+	// ...then delete original volumes.
+	if err := doDeleteVolumes(commandEnv, volumeIds, *maxParallelization); err != nil {
+		return fmt.Errorf("re-balance ec shards for collection(s) %v: %v", balanceCollections, err)
 	}
 
 	return nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, maxParallelization int) error {
-	var ewg *ErrorWaitGroup
+func volumeLocations(commandEnv *CommandEnv, volumeIds []needle.VolumeId) (map[needle.VolumeId][]wdclient.Location, error) {
+	res := map[needle.VolumeId][]wdclient.Location{}
+	for _, vid := range volumeIds {
+		ls, ok := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
+		if !ok {
+			return nil, fmt.Errorf("volume %d not found", vid)
+		}
+		res[vid] = ls
+	}
 
+	return res, nil
+}
+
+func doEcEncode(commandEnv *CommandEnv, collection string, volumeIds []needle.VolumeId, maxParallelization int) error {
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
-
-	// find volume location
-	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
-	if !found {
-		return fmt.Errorf("volume %d not found", vid)
+	locations, err := volumeLocations(commandEnv, volumeIds)
+	if err != nil {
+		return nil
 	}
-	target := locations[0]
 
-	// mark the volume as readonly
-	ewg = NewErrorWaitGroup(maxParallelization)
-	for _, location := range locations {
-		ewg.Add(func() error {
-			if err := markVolumeReplicaWritable(commandEnv.option.GrpcDialOption, vid, location, false, false); err != nil {
-				return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, location.Url, err)
-			}
-			return nil
-		})
+	// mark volumes as readonly
+	ewg := NewErrorWaitGroup(maxParallelization)
+	for _, vid := range volumeIds {
+		for _, l := range locations[vid] {
+			ewg.Add(func() error {
+				if err := markVolumeReplicaWritable(commandEnv.option.GrpcDialOption, vid, l, false, false); err != nil {
+					return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, l.Url, err)
+				}
+				return nil
+			})
+		}
 	}
 	if err := ewg.Wait(); err != nil {
 		return err
 	}
 
 	// generate ec shards
-	if err := generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, target.ServerAddress()); err != nil {
-		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, target.Url, err)
-	}
-
-	// ask the source volume server to delete the original volume
-	ewg = NewErrorWaitGroup(maxParallelization)
-	for _, location := range locations {
+	ewg.Reset()
+	for i, vid := range volumeIds {
+		target := locations[vid][i%len(locations[vid])]
 		ewg.Add(func() error {
-			if err := deleteVolume(commandEnv.option.GrpcDialOption, vid, location.ServerAddress(), false); err != nil {
-				return fmt.Errorf("deleteVolume %s volume %d: %v", location.Url, vid, err)
+			if err := generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, target.ServerAddress()); err != nil {
+				return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, target.Url, err)
 			}
-			fmt.Printf("deleted volume %d from %s\n", vid, location.Url)
 			return nil
 		})
 	}
@@ -180,8 +189,47 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	for i := range shardIds {
 		shardIds[i] = uint32(i)
 	}
-	if err := mountEcShards(commandEnv.option.GrpcDialOption, collection, vid, target.ServerAddress(), shardIds); err != nil {
-		return fmt.Errorf("mount ec shards for volume %d on %s: %v", vid, target.Url, err)
+
+	ewg.Reset()
+	for _, vid := range volumeIds {
+		target := locations[vid][0]
+		ewg.Add(func() error {
+			if err := mountEcShards(commandEnv.option.GrpcDialOption, collection, vid, target.ServerAddress(), shardIds); err != nil {
+				return fmt.Errorf("mount ec shards for volume %d on %s: %v", vid, target.Url, err)
+			}
+			return nil
+		})
+	}
+	if err := ewg.Wait(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func doDeleteVolumes(commandEnv *CommandEnv, volumeIds []needle.VolumeId, maxParallelization int) error {
+	if !commandEnv.isLocked() {
+		return fmt.Errorf("lock is lost")
+	}
+	locations, err := volumeLocations(commandEnv, volumeIds)
+	if err != nil {
+		return nil
+	}
+
+	ewg := NewErrorWaitGroup(maxParallelization)
+	for _, vid := range volumeIds {
+		for _, l := range locations[vid] {
+			ewg.Add(func() error {
+				if err := deleteVolume(commandEnv.option.GrpcDialOption, vid, l.ServerAddress(), false); err != nil {
+					return fmt.Errorf("deleteVolume %s volume %d: %v", l.Url, vid, err)
+				}
+				fmt.Printf("deleted volume %d from %s\n", vid, l.Url)
+				return nil
+			})
+		}
+	}
+	if err := ewg.Wait(); err != nil {
+		return err
 	}
 
 	return nil
@@ -189,7 +237,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 
 func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {
 
-	fmt.Printf("generateEcShards %s %d on %s ...\n", collection, volumeId, sourceVolumeServer)
+	fmt.Printf("generateEcShards %d (collection %q) on %s ...\n", volumeId, collection, sourceVolumeServer)
 
 	err := operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, genErr := volumeServerClient.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
@@ -203,7 +251,7 @@ func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, 
 
 }
 
-func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
+func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, sourceDiskType *types.DiskType, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 	// collect topology information
 	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
@@ -223,7 +271,8 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 				if v.RemoteStorageName != "" && v.RemoteStorageKey != "" {
 					continue
 				}
-				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
+				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds &&
+					(sourceDiskType == nil || types.ToDiskType(v.DiskType) == *sourceDiskType) {
 					if float64(v.Size) > fullPercentage/100*float64(volumeSizeLimitMb)*1024*1024 {
 						if good, found := vidMap[v.Id]; found {
 							if good {

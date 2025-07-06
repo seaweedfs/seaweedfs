@@ -1,0 +1,289 @@
+package app
+
+import (
+    "fmt"
+    "time"
+    "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+)
+
+templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
+    <div class="container-fluid">
+        <!-- Header -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2 class="mb-0">
+                        <i class="fas fa-tasks me-2"></i>
+                        Maintenance Queue
+                    </h2>
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-primary" onclick="triggerScan()">
+                            <i class="fas fa-search me-1"></i>
+                            Trigger Scan
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="refreshPage()">
+                            <i class="fas fa-sync-alt me-1"></i>
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistics Cards -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card border-primary">
+                    <div class="card-body text-center">
+                        <i class="fas fa-clock fa-2x text-primary mb-2"></i>
+                        <h4 class="mb-1">{fmt.Sprintf("%d", data.Stats.PendingTasks)}</h4>
+                        <p class="text-muted mb-0">Pending Tasks</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-warning">
+                    <div class="card-body text-center">
+                        <i class="fas fa-running fa-2x text-warning mb-2"></i>
+                        <h4 class="mb-1">{fmt.Sprintf("%d", data.Stats.RunningTasks)}</h4>
+                        <p class="text-muted mb-0">Running Tasks</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-success">
+                    <div class="card-body text-center">
+                        <i class="fas fa-check-circle fa-2x text-success mb-2"></i>
+                        <h4 class="mb-1">{fmt.Sprintf("%d", data.Stats.CompletedToday)}</h4>
+                        <p class="text-muted mb-0">Completed Today</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-danger">
+                    <div class="card-body text-center">
+                        <i class="fas fa-exclamation-triangle fa-2x text-danger mb-2"></i>
+                        <h4 class="mb-1">{fmt.Sprintf("%d", data.Stats.FailedToday)}</h4>
+                        <p class="text-muted mb-0">Failed Today</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Simple task queue display -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Task Queue</h5>
+                    </div>
+                    <div class="card-body">
+                        if len(data.Tasks) == 0 {
+                            <div class="text-center text-muted py-4">
+                                <i class="fas fa-clipboard-list fa-3x mb-3"></i>
+                                <p>No maintenance tasks in queue</p>
+                                <small>Tasks will appear here when the system detects maintenance needs</small>
+                            </div>
+                        } else {
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Type</th>
+                                            <th>Status</th>
+                                            <th>Volume</th>
+                                            <th>Server</th>
+                                            <th>Created</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, task := range data.Tasks {
+                                            <tr>
+                                                <td><code>{task.ID[:8]}...</code></td>
+                                                <td>{string(task.Type)}</td>
+                                                <td>{string(task.Status)}</td>
+                                                <td>{fmt.Sprintf("%d", task.VolumeID)}</td>
+                                                <td>{task.Server}</td>
+                                                <td>{task.CreatedAt.Format("2006-01-02 15:04")}</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Workers Summary -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Active Workers</h5>
+                    </div>
+                    <div class="card-body">
+                        if len(data.Workers) == 0 {
+                            <div class="text-center text-muted py-4">
+                                <i class="fas fa-robot fa-3x mb-3"></i>
+                                <p>No workers are currently active</p>
+                                <small>Start workers using: <code>weed worker -admin=localhost:9333</code></small>
+                            </div>
+                        } else {
+                            <div class="row">
+                                for _, worker := range data.Workers {
+                                    <div class="col-md-4 mb-3">
+                                        <div class="card">
+                                            <div class="card-body">
+                                                <h6 class="card-title">{worker.ID}</h6>
+                                                <p class="card-text">
+                                                    <small class="text-muted">{worker.Address}</small><br/>
+                                                    Status: {worker.Status}<br/>
+                                                    Load: {fmt.Sprintf("%d/%d", worker.CurrentLoad, worker.MaxConcurrent)}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Auto-refresh every 10 seconds
+        setInterval(function() {
+            if (!document.hidden) {
+                window.location.reload();
+            }
+        }, 10000);
+
+        function triggerScan() {
+            fetch('/api/maintenance/scan', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Maintenance scan triggered successfully');
+                    setTimeout(() => window.location.reload(), 2000);
+                } else {
+                    alert('Failed to trigger scan: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                alert('Error: ' + error.message);
+            });
+        }
+    </script>
+}
+
+// Helper components
+templ TaskTypeIcon(taskType maintenance.MaintenanceTaskType) {
+    <i class={maintenance.GetTaskIcon(taskType) + " me-1"}></i>
+}
+
+templ PriorityBadge(priority maintenance.MaintenanceTaskPriority) {
+    switch priority {
+    case maintenance.PriorityCritical:
+        <span class="badge bg-danger">Critical</span>
+    case maintenance.PriorityHigh:
+        <span class="badge bg-warning">High</span>
+    case maintenance.PriorityNormal:
+        <span class="badge bg-primary">Normal</span>
+    case maintenance.PriorityLow:
+        <span class="badge bg-secondary">Low</span>
+    default:
+        <span class="badge bg-light text-dark">Unknown</span>
+    }
+}
+
+templ StatusBadge(status maintenance.MaintenanceTaskStatus) {
+    switch status {
+    case maintenance.TaskStatusPending:
+        <span class="badge bg-secondary">Pending</span>
+    case maintenance.TaskStatusAssigned:
+        <span class="badge bg-info">Assigned</span>
+    case maintenance.TaskStatusInProgress:
+        <span class="badge bg-warning">Running</span>
+    case maintenance.TaskStatusCompleted:
+        <span class="badge bg-success">Completed</span>
+    case maintenance.TaskStatusFailed:
+        <span class="badge bg-danger">Failed</span>
+    case maintenance.TaskStatusCancelled:
+        <span class="badge bg-light text-dark">Cancelled</span>
+    default:
+        <span class="badge bg-light text-dark">Unknown</span>
+    }
+}
+
+templ ProgressBar(progress float64, status maintenance.MaintenanceTaskStatus) {
+    if status == maintenance.TaskStatusInProgress || status == maintenance.TaskStatusAssigned {
+        <div class="progress" style="height: 8px; min-width: 100px;">
+            <div class="progress-bar" role="progressbar" style={fmt.Sprintf("width: %.1f%%", progress)}>
+            </div>
+        </div>
+        <small class="text-muted">{fmt.Sprintf("%.1f%%", progress)}</small>
+    } else if status == maintenance.TaskStatusCompleted {
+        <div class="progress" style="height: 8px; min-width: 100px;">
+            <div class="progress-bar bg-success" role="progressbar" style="width: 100%">
+            </div>
+        </div>
+        <small class="text-success">100%</small>
+    } else {
+        <span class="text-muted">-</span>
+    }
+}
+
+templ WorkerStatusBadge(status string) {
+    switch status {
+    case "active":
+        <span class="badge bg-success">Active</span>
+    case "busy":
+        <span class="badge bg-warning">Busy</span>
+    case "inactive":
+        <span class="badge bg-secondary">Inactive</span>
+    default:
+        <span class="badge bg-light text-dark">Unknown</span>
+    }
+}
+
+// Helper functions (would be defined in Go)
+
+
+func getWorkerStatusColor(status string) string {
+    switch status {
+    case "active":
+        return "success"
+    case "busy":
+        return "warning"
+    case "inactive":
+        return "secondary"
+    default:
+        return "light"
+    }
+}
+
+func formatTimeAgo(t time.Time) string {
+    duration := time.Since(t)
+    if duration < time.Minute {
+        return "just now"
+    } else if duration < time.Hour {
+        minutes := int(duration.Minutes())
+        return fmt.Sprintf("%dm ago", minutes)
+    } else if duration < 24*time.Hour {
+        hours := int(duration.Hours())
+        return fmt.Sprintf("%dh ago", hours)
+    } else {
+        days := int(duration.Hours() / 24)
+        return fmt.Sprintf("%dd ago", days)
+    }
+} 

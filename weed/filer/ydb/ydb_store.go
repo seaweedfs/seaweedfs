@@ -6,6 +6,15 @@ package ydb
 import (
 	"context"
 	"fmt"
+	"os"
+	"path"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/ydb-platform/ydb-go-sdk/v3/query"
+	"github.com/ydb-platform/ydb-go-sdk/v3/table/options"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -13,37 +22,38 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	environ "github.com/ydb-platform/ydb-go-sdk-auth-environ"
 	"github.com/ydb-platform/ydb-go-sdk/v3"
-	"github.com/ydb-platform/ydb-go-sdk/v3/sugar"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table"
-	"github.com/ydb-platform/ydb-go-sdk/v3/table/result"
-	"github.com/ydb-platform/ydb-go-sdk/v3/table/result/named"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table/types"
-	"os"
-	"path"
-	"strings"
-	"sync"
-	"time"
 )
 
 const (
-	defaultDialTimeOut = 10
+	defaultDialTimeOut            = 10
+	defaultPartitionBySizeEnabled = true
+	defaultPartitionSizeMb        = 200
+	defaultPartitionByLoadEnabled = true
+	defaultMinPartitionsCount     = 5
+	defaultMaxPartitionsCount     = 1000
+	defaultMaxListChunk           = 2000
 )
 
 var (
-	roTX = table.TxControl(
-		table.BeginTx(table.WithOnlineReadOnly()),
-		table.CommitTx(),
-	)
-	rwTX = table.DefaultTxControl()
+	roQC = query.WithTxControl(query.OnlineReadOnlyTxControl())
+	rwQC = query.WithTxControl(query.DefaultTxControl())
 )
 
 type YdbStore struct {
-	DB                 ydb.Connection
-	dirBuckets         string
-	tablePathPrefix    string
-	SupportBucketTable bool
-	dbs                map[string]bool
-	dbsLock            sync.Mutex
+	DB                     *ydb.Driver
+	dirBuckets             string
+	tablePathPrefix        string
+	SupportBucketTable     bool
+	partitionBySizeEnabled options.FeatureFlag
+	partitionSizeMb        uint64
+	partitionByLoadEnabled options.FeatureFlag
+	minPartitionsCount     uint64
+	maxPartitionsCount     uint64
+	maxListChunk           int
+	dbs                    map[string]bool
+	dbsLock                sync.Mutex
 }
 
 func init() {
@@ -55,6 +65,12 @@ func (store *YdbStore) GetName() string {
 }
 
 func (store *YdbStore) Initialize(configuration util.Configuration, prefix string) (err error) {
+	configuration.SetDefault(prefix+"partitionBySizeEnabled", defaultPartitionBySizeEnabled)
+	configuration.SetDefault(prefix+"partitionSizeMb", defaultPartitionSizeMb)
+	configuration.SetDefault(prefix+"partitionByLoadEnabled", defaultPartitionByLoadEnabled)
+	configuration.SetDefault(prefix+"minPartitionsCount", defaultMinPartitionsCount)
+	configuration.SetDefault(prefix+"maxPartitionsCount", defaultMaxPartitionsCount)
+	configuration.SetDefault(prefix+"maxListChunk", defaultMaxListChunk)
 	return store.initialize(
 		configuration.GetString("filer.options.buckets_folder"),
 		configuration.GetString(prefix+"dsn"),
@@ -62,18 +78,37 @@ func (store *YdbStore) Initialize(configuration util.Configuration, prefix strin
 		configuration.GetBool(prefix+"useBucketPrefix"),
 		configuration.GetInt(prefix+"dialTimeOut"),
 		configuration.GetInt(prefix+"poolSizeLimit"),
+		configuration.GetBool(prefix+"partitionBySizeEnabled"),
+		uint64(configuration.GetInt(prefix+"partitionSizeMb")),
+		configuration.GetBool(prefix+"partitionByLoadEnabled"),
+		uint64(configuration.GetInt(prefix+"minPartitionsCount")),
+		uint64(configuration.GetInt(prefix+"maxPartitionsCount")),
+		configuration.GetInt(prefix+"maxListChunk"),
 	)
 }
 
-func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix string, useBucketPrefix bool, dialTimeOut int, poolSizeLimit int) (err error) {
+func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix string, useBucketPrefix bool, dialTimeOut int, poolSizeLimit int, partitionBySizeEnabled bool, partitionSizeMb uint64, partitionByLoadEnabled bool, minPartitionsCount uint64, maxPartitionsCount uint64, maxListChunk int) (err error) {
 	store.dirBuckets = dirBuckets
 	store.SupportBucketTable = useBucketPrefix
+	if partitionBySizeEnabled {
+		store.partitionBySizeEnabled = options.FeatureEnabled
+	} else {
+		store.partitionBySizeEnabled = options.FeatureDisabled
+	}
+	if partitionByLoadEnabled {
+		store.partitionByLoadEnabled = options.FeatureEnabled
+	} else {
+		store.partitionByLoadEnabled = options.FeatureDisabled
+	}
+	store.partitionSizeMb = partitionSizeMb
+	store.minPartitionsCount = minPartitionsCount
+	store.maxPartitionsCount = maxPartitionsCount
+	store.maxListChunk = maxListChunk
 	if store.SupportBucketTable {
 		glog.V(0).Infof("enabled BucketPrefix")
 	}
 	store.dbs = make(map[string]bool)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := context.Background()
 	if dialTimeOut == 0 {
 		dialTimeOut = defaultDialTimeOut
 	}
@@ -89,45 +124,38 @@ func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix
 	}
 	store.DB, err = ydb.Open(ctx, dsn, opts...)
 	if err != nil {
-		if store.DB != nil {
-			_ = store.DB.Close(ctx)
-			store.DB = nil
-		}
-		return fmt.Errorf("can not connect to %s error: %v", dsn, err)
+		return fmt.Errorf("can not connect to %s: %w", dsn, err)
 	}
 
 	store.tablePathPrefix = path.Join(store.DB.Name(), tablePathPrefix)
-	if err = sugar.MakeRecursive(ctx, store.DB, store.tablePathPrefix); err != nil {
-		return fmt.Errorf("MakeRecursive %s : %v", store.tablePathPrefix, err)
-	}
 
-	if err = store.createTable(ctx, store.tablePathPrefix); err != nil {
-		glog.Errorf("createTable %s: %v", store.tablePathPrefix, err)
+	if err := store.ensureTables(ctx); err != nil {
+		return err
 	}
 	return err
 }
 
-func (store *YdbStore) doTxOrDB(ctx context.Context, query *string, params *table.QueryParameters, tc *table.TransactionControl, processResultFunc func(res result.Result) error) (err error) {
-	var res result.Result
-	if tx, ok := ctx.Value("tx").(table.Transaction); ok {
-		res, err = tx.Execute(ctx, *query, params)
+func (store *YdbStore) doTxOrDB(ctx context.Context, q *string, params *table.QueryParameters, ts query.ExecuteOption, processResultFunc func(res query.Result) error) (err error) {
+	var res query.Result
+	if tx, ok := ctx.Value("tx").(query.Transaction); ok {
+		res, err = tx.Query(ctx, *q, query.WithParameters(params))
 		if err != nil {
 			return fmt.Errorf("execute transaction: %v", err)
 		}
 	} else {
-		err = store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
-			_, res, err = s.Execute(ctx, tc, *query, params)
+		err = store.DB.Query().Do(ctx, func(ctx context.Context, s query.Session) (err error) {
+			res, err = s.Query(ctx, *q, query.WithParameters(params), ts)
 			if err != nil {
 				return fmt.Errorf("execute statement: %v", err)
 			}
 			return nil
-		})
+		}, query.WithIdempotent())
 	}
 	if err != nil {
 		return err
 	}
 	if res != nil {
-		defer func() { _ = res.Close() }()
+		defer func() { _ = res.Close(ctx) }()
 		if processResultFunc != nil {
 			if err = processResultFunc(res); err != nil {
 				return fmt.Errorf("process result: %v", err)
@@ -149,7 +177,7 @@ func (store *YdbStore) insertOrUpdateEntry(ctx context.Context, entry *filer.Ent
 	}
 	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
 	fileMeta := FileMeta{util.HashStringToLong(dir), name, *shortDir, meta}
-	return store.doTxOrDB(ctx, withPragma(tablePathPrefix, upsertQuery), fileMeta.queryParameters(entry.TtlSec), rwTX, nil)
+	return store.doTxOrDB(ctx, withPragma(tablePathPrefix, upsertQuery), fileMeta.queryParameters(entry.TtlSec), rwQC, nil)
 }
 
 func (store *YdbStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
@@ -165,23 +193,29 @@ func (store *YdbStore) FindEntry(ctx context.Context, fullpath util.FullPath) (e
 	var data []byte
 	entryFound := false
 	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
-	query := withPragma(tablePathPrefix, findQuery)
+	q := withPragma(tablePathPrefix, findQuery)
 	queryParams := table.NewQueryParameters(
 		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
+		table.ValueParam("$directory", types.UTF8Value(*shortDir)),
 		table.ValueParam("$name", types.UTF8Value(name)))
 
-	err = store.doTxOrDB(ctx, query, queryParams, roTX, func(res result.Result) error {
-		if !res.NextResultSet(ctx) || !res.HasNextRow() {
-			return nil
-		}
-		for res.NextRow() {
-			if err = res.ScanNamed(named.OptionalWithDefault("meta", &data)); err != nil {
-				return fmt.Errorf("scanNamed %s : %v", fullpath, err)
+	err = store.doTxOrDB(ctx, q, queryParams, roQC, func(res query.Result) error {
+		for rs, err := range res.ResultSets(ctx) {
+			if err != nil {
+				return err
 			}
-			entryFound = true
-			return nil
+			for row, err := range rs.Rows(ctx) {
+				if err != nil {
+					return err
+				}
+				if scanErr := row.Scan(&data); scanErr != nil {
+					return fmt.Errorf("scan %s: %v", fullpath, scanErr)
+				}
+				entryFound = true
+				return nil
+			}
 		}
-		return res.Err()
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -190,36 +224,35 @@ func (store *YdbStore) FindEntry(ctx context.Context, fullpath util.FullPath) (e
 		return nil, filer_pb.ErrNotFound
 	}
 
-	entry = &filer.Entry{
-		FullPath: fullpath,
+	entry = &filer.Entry{FullPath: fullpath}
+	if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); decodeErr != nil {
+		return nil, fmt.Errorf("decode %s: %v", fullpath, decodeErr)
 	}
-	if err := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
-		return nil, fmt.Errorf("decode %s : %v", fullpath, err)
-	}
-
 	return entry, nil
 }
 
 func (store *YdbStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 	dir, name := fullpath.DirAndName()
 	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
-	query := withPragma(tablePathPrefix, deleteQuery)
+	q := withPragma(tablePathPrefix, deleteQuery)
+	glog.V(4).InfofCtx(ctx, "DeleteEntry %s, tablePathPrefix %s, shortDir %s", fullpath, *tablePathPrefix, *shortDir)
 	queryParams := table.NewQueryParameters(
 		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
+		table.ValueParam("$directory", types.UTF8Value(*shortDir)),
 		table.ValueParam("$name", types.UTF8Value(name)))
 
-	return store.doTxOrDB(ctx, query, queryParams, rwTX, nil)
+	return store.doTxOrDB(ctx, q, queryParams, rwQC, nil)
 }
 
 func (store *YdbStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
-	dir, _ := fullpath.DirAndName()
+	dir := string(fullpath)
 	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
-	query := withPragma(tablePathPrefix, deleteFolderChildrenQuery)
+	q := withPragma(tablePathPrefix, deleteFolderChildrenQuery)
 	queryParams := table.NewQueryParameters(
 		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
 		table.ValueParam("$directory", types.UTF8Value(*shortDir)))
 
-	return store.doTxOrDB(ctx, query, queryParams, rwTX, nil)
+	return store.doTxOrDB(ctx, q, queryParams, rwQC, nil)
 }
 
 func (store *YdbStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
@@ -229,62 +262,79 @@ func (store *YdbStore) ListDirectoryEntries(ctx context.Context, dirPath util.Fu
 func (store *YdbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	dir := string(dirPath)
 	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
-	var query *string
-	if includeStartFile {
-		query = withPragma(tablePathPrefix, listInclusiveDirectoryQuery)
-	} else {
-		query = withPragma(tablePathPrefix, listDirectoryQuery)
-	}
-	truncated := true
-	eachEntryFuncIsNotBreake := true
-	entryCount := int64(0)
-	for truncated && eachEntryFuncIsNotBreake {
-		if lastFileName != "" {
-			startFileName = lastFileName
-			if includeStartFile {
-				query = withPragma(tablePathPrefix, listDirectoryQuery)
-			}
+	baseInclusive := withPragma(tablePathPrefix, listInclusiveDirectoryQuery)
+	baseExclusive := withPragma(tablePathPrefix, listDirectoryQuery)
+	var entryCount int64
+	var prevFetchedLessThanChunk bool
+	for entryCount < limit {
+		if prevFetchedLessThanChunk {
+			break
 		}
-		restLimit := limit - entryCount
-		queryParams := table.NewQueryParameters(
+		var q *string
+		if entryCount == 0 && includeStartFile {
+			q = baseInclusive
+		} else {
+			q = baseExclusive
+		}
+		rest := limit - entryCount
+		chunkLimit := rest
+		if chunkLimit > int64(store.maxListChunk) {
+			chunkLimit = int64(store.maxListChunk)
+		}
+		var rowCount int64
+
+		params := table.NewQueryParameters(
 			table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
 			table.ValueParam("$directory", types.UTF8Value(*shortDir)),
 			table.ValueParam("$start_name", types.UTF8Value(startFileName)),
 			table.ValueParam("$prefix", types.UTF8Value(prefix+"%")),
-			table.ValueParam("$limit", types.Uint64Value(uint64(restLimit))),
+			table.ValueParam("$limit", types.Uint64Value(uint64(chunkLimit))),
 		)
-		err = store.doTxOrDB(ctx, query, queryParams, roTX, func(res result.Result) error {
-			var name string
-			var data []byte
-			if !res.NextResultSet(ctx) || !res.HasNextRow() {
-				truncated = false
-				return nil
+
+		err := store.doTxOrDB(ctx, q, params, roQC, func(res query.Result) error {
+			for rs, err := range res.ResultSets(ctx) {
+				if err != nil {
+					return err
+				}
+				for row, err := range rs.Rows(ctx) {
+					if err != nil {
+						return err
+					}
+
+					var name string
+					var data []byte
+					if scanErr := row.Scan(&name, &data); scanErr != nil {
+						return fmt.Errorf("scan %s: %w", dir, scanErr)
+					}
+
+					lastFileName = name
+					entry := &filer.Entry{FullPath: util.NewFullPath(dir, name)}
+					if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); decodeErr != nil {
+						return fmt.Errorf("decode entry %s: %w", entry.FullPath, decodeErr)
+					}
+
+					if !eachEntryFunc(entry) {
+						return nil
+					}
+
+					rowCount++
+					entryCount++
+					startFileName = lastFileName
+
+					if entryCount >= limit {
+						return nil
+					}
+				}
 			}
-			truncated = res.CurrentResultSet().Truncated()
-			for res.NextRow() {
-				if err := res.ScanNamed(
-					named.OptionalWithDefault("name", &name),
-					named.OptionalWithDefault("meta", &data)); err != nil {
-					return fmt.Errorf("list scanNamed %s : %v", dir, err)
-				}
-				lastFileName = name
-				entry := &filer.Entry{
-					FullPath: util.NewFullPath(dir, name),
-				}
-				if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
-					return fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
-				}
-				if !eachEntryFunc(entry) {
-					eachEntryFuncIsNotBreake = false
-					break
-				}
-				entryCount += 1
-			}
-			return res.Err()
+			return nil
 		})
-	}
-	if err != nil {
-		return lastFileName, err
+		if err != nil {
+			return lastFileName, err
+		}
+
+		if rowCount < chunkLimit {
+			prevFetchedLessThanChunk = true
+		}
 	}
 	return lastFileName, nil
 }
@@ -327,12 +377,16 @@ func (store *YdbStore) CanDropWholeBucket() bool {
 }
 
 func (store *YdbStore) OnBucketCreation(bucket string) {
+	if !store.SupportBucketTable {
+		return
+	}
+	prefix := path.Join(store.tablePathPrefix, bucket)
+
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
-	if err := store.createTable(context.Background(),
-		path.Join(store.tablePathPrefix, bucket)); err != nil {
-		glog.Errorf("createTable %s: %v", bucket, err)
+	if err := store.createTable(context.Background(), prefix); err != nil {
+		glog.Errorf("createTable %s: %v", prefix, err)
 	}
 
 	if store.dbs == nil {
@@ -342,12 +396,21 @@ func (store *YdbStore) OnBucketCreation(bucket string) {
 }
 
 func (store *YdbStore) OnBucketDeletion(bucket string) {
+	if !store.SupportBucketTable {
+		return
+	}
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
-	if err := store.deleteTable(context.Background(),
-		path.Join(store.tablePathPrefix, bucket)); err != nil {
-		glog.Errorf("deleteTable %s: %v", bucket, err)
+	prefix := path.Join(store.tablePathPrefix, bucket)
+	glog.V(4).Infof("deleting table %s", prefix)
+
+	if err := store.deleteTable(context.Background(), prefix); err != nil {
+		glog.Errorf("deleteTable %s: %v", prefix, err)
+	}
+
+	if err := store.DB.Scheme().RemoveDirectory(context.Background(), prefix); err != nil {
+		glog.Errorf("remove directory %s: %v", prefix, err)
 	}
 
 	if store.dbs == nil {
@@ -358,7 +421,7 @@ func (store *YdbStore) OnBucketDeletion(bucket string) {
 
 func (store *YdbStore) createTable(ctx context.Context, prefix string) error {
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
-		return s.CreateTable(ctx, path.Join(prefix, abstract_sql.DEFAULT_TABLE), createTableOptions()...)
+		return s.CreateTable(ctx, path.Join(prefix, abstract_sql.DEFAULT_TABLE), store.createTableOptions()...)
 	})
 }
 
@@ -371,7 +434,7 @@ func (store *YdbStore) deleteTable(ctx context.Context, prefix string) error {
 	}); err != nil {
 		return err
 	}
-	glog.V(4).Infof("deleted table %s", prefix)
+	glog.V(4).InfofCtx(ctx, "deleted table %s", prefix)
 
 	return nil
 }
@@ -384,9 +447,11 @@ func (store *YdbStore) getPrefix(ctx context.Context, dir *string) (tablePathPre
 	}
 
 	prefixBuckets := store.dirBuckets + "/"
+	glog.V(4).InfofCtx(ctx, "dir: %s, prefixBuckets: %s", *dir, prefixBuckets)
 	if strings.HasPrefix(*dir, prefixBuckets) {
 		// detect bucket
 		bucketAndDir := (*dir)[len(prefixBuckets):]
+		glog.V(4).InfofCtx(ctx, "bucketAndDir: %s", bucketAndDir)
 		var bucket string
 		if t := strings.Index(bucketAndDir, "/"); t > 0 {
 			bucket = bucketAndDir[:t]
@@ -400,16 +465,50 @@ func (store *YdbStore) getPrefix(ctx context.Context, dir *string) (tablePathPre
 		store.dbsLock.Lock()
 		defer store.dbsLock.Unlock()
 
-		tablePathPrefixWithBucket := path.Join(store.tablePathPrefix, bucket)
 		if _, found := store.dbs[bucket]; !found {
-			if err := store.createTable(ctx, tablePathPrefixWithBucket); err == nil {
-				store.dbs[bucket] = true
-				glog.V(4).Infof("created table %s", tablePathPrefixWithBucket)
-			} else {
-				glog.Errorf("createTable %s: %v", tablePathPrefixWithBucket, err)
+			glog.V(4).InfofCtx(ctx, "bucket %q not in cache, verifying existence via DescribeTable", bucket)
+			tablePath := path.Join(store.tablePathPrefix, bucket, abstract_sql.DEFAULT_TABLE)
+			err2 := store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
+				_, err3 := s.DescribeTable(ctx, tablePath)
+				return err3
+			})
+			if err2 != nil {
+				glog.V(4).InfofCtx(ctx, "bucket %q not found (DescribeTable %s failed)", bucket, tablePath)
+				return
 			}
+			glog.V(4).InfofCtx(ctx, "bucket %q exists, adding to cache", bucket)
+			store.dbs[bucket] = true
 		}
-		tablePathPrefix = &tablePathPrefixWithBucket
+		bucketPrefix := path.Join(store.tablePathPrefix, bucket)
+		tablePathPrefix = &bucketPrefix
 	}
 	return
+}
+
+func (store *YdbStore) ensureTables(ctx context.Context) error {
+	prefixFull := store.tablePathPrefix
+
+	glog.V(4).InfofCtx(ctx, "creating base table %s", prefixFull)
+	baseTable := path.Join(prefixFull, abstract_sql.DEFAULT_TABLE)
+	if err := store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
+		return s.CreateTable(ctx, baseTable, store.createTableOptions()...)
+	}); err != nil {
+		return fmt.Errorf("failed to create base table %s: %v", baseTable, err)
+	}
+
+	glog.V(4).InfofCtx(ctx, "creating bucket tables")
+	if store.SupportBucketTable {
+		store.dbsLock.Lock()
+		defer store.dbsLock.Unlock()
+		for bucket := range store.dbs {
+			glog.V(4).InfofCtx(ctx, "creating bucket table %s", bucket)
+			bucketTable := path.Join(prefixFull, bucket, abstract_sql.DEFAULT_TABLE)
+			if err := store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
+				return s.CreateTable(ctx, bucketTable, store.createTableOptions()...)
+			}); err != nil {
+				glog.ErrorfCtx(ctx, "failed to create bucket table %s: %v", bucketTable, err)
+			}
+		}
+	}
+	return nil
 }

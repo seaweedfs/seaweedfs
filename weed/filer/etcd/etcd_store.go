@@ -4,9 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"go.etcd.io/etcd/client/pkg/v3/transport"
 	"strings"
 	"time"
+
+	"go.etcd.io/etcd/client/pkg/v3/transport"
 
 	"go.etcd.io/etcd/client/v3"
 
@@ -95,7 +96,7 @@ func (store *EtcdStore) initialize(servers, username, password string, timeout t
 		return fmt.Errorf("error checking etcd connection: %s", err)
 	}
 
-	glog.V(0).Infof("сonnection to etcd has been successfully verified. etcd version: %s", resp.Version)
+	glog.V(0).InfofCtx(ctx, "сonnection to etcd has been successfully verified. etcd version: %s", resp.Version)
 	store.client = client
 
 	return nil
@@ -208,7 +209,7 @@ func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(kv.Value)); decodeErr != nil {
 			err = decodeErr
-			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+			glog.V(0).InfofCtx(ctx, "list %s : %v", entry.FullPath, err)
 			break
 		}
 		if !eachEntryFunc(entry) {

@@ -28,6 +28,7 @@ var (
 	masterOptions   MasterOptions
 	filerOptions    FilerOptions
 	s3Options       S3Options
+	sftpOptions     SftpOptions
 	iamOptions      IamOptions
 	webdavOptions   WebDavOption
 	mqBrokerOptions MessageQueueBrokerOptions
@@ -73,6 +74,7 @@ var (
 	isStartingVolumeServer = cmdServer.Flag.Bool("volume", true, "whether to start volume server")
 	isStartingFiler        = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 	isStartingS3           = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
+	isStartingSftp         = cmdServer.Flag.Bool("sftp", false, "whether to start Sftp server")
 	isStartingIam          = cmdServer.Flag.Bool("iam", false, "whether to start IAM service")
 	isStartingWebDav       = cmdServer.Flag.Bool("webdav", false, "whether to start WebDAV gateway")
 	isStartingMqBroker     = cmdServer.Flag.Bool("mq.broker", false, "whether to start message queue broker")
@@ -102,6 +104,8 @@ func init() {
 	masterOptions.raftBootstrap = cmdServer.Flag.Bool("master.raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	masterOptions.heartbeatInterval = cmdServer.Flag.Duration("master.heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	masterOptions.electionTimeout = cmdServer.Flag.Duration("master.electionTimeout", 10*time.Second, "election timeout of master servers")
+	masterOptions.telemetryUrl = cmdServer.Flag.String("master.telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
+	masterOptions.telemetryEnabled = cmdServer.Flag.Bool("master.telemetry", false, "enable telemetry reporting")
 
 	filerOptions.filerGroup = cmdServer.Flag.String("filer.filerGroup", "", "share metadata with other filers in the same filerGroup")
 	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
@@ -139,6 +143,8 @@ func init() {
 	serverOptions.v.pprof = cmdServer.Flag.Bool("volume.pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	serverOptions.v.idxFolder = cmdServer.Flag.String("volume.dir.idx", "", "directory to store .idx files")
 	serverOptions.v.inflightUploadDataTimeout = cmdServer.Flag.Duration("volume.inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
+	serverOptions.v.inflightDownloadDataTimeout = cmdServer.Flag.Duration("volume.inflightDownloadDataTimeout", 60*time.Second, "inflight download data wait timeout of volume servers")
+
 	serverOptions.v.hasSlowRead = cmdServer.Flag.Bool("volume.hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
 	serverOptions.v.readBufferSizeMB = cmdServer.Flag.Int("volume.readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally")
 
@@ -156,7 +162,20 @@ func init() {
 	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 	s3Options.allowDeleteBucketNotEmpty = cmdServer.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	s3Options.localSocket = cmdServer.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
+	s3Options.bindIp = cmdServer.Flag.String("s3.ip.bind", "", "ip address to bind to. If empty, default to same as -ip.bind option.")
+	s3Options.idleTimeout = cmdServer.Flag.Int("s3.idleTimeout", 10, "connection idle seconds")
 
+	sftpOptions.port = cmdServer.Flag.Int("sftp.port", 2022, "SFTP server listen port")
+	sftpOptions.sshPrivateKey = cmdServer.Flag.String("sftp.sshPrivateKey", "", "path to the SSH private key file for host authentication")
+	sftpOptions.hostKeysFolder = cmdServer.Flag.String("sftp.hostKeysFolder", "", "path to folder containing SSH private key files for host authentication")
+	sftpOptions.authMethods = cmdServer.Flag.String("sftp.authMethods", "password,publickey", "comma-separated list of allowed auth methods: password, publickey, keyboard-interactive")
+	sftpOptions.maxAuthTries = cmdServer.Flag.Int("sftp.maxAuthTries", 6, "maximum number of authentication attempts per connection")
+	sftpOptions.bannerMessage = cmdServer.Flag.String("sftp.bannerMessage", "SeaweedFS SFTP Server - Unauthorized access is prohibited", "message displayed before authentication")
+	sftpOptions.loginGraceTime = cmdServer.Flag.Duration("sftp.loginGraceTime", 2*time.Minute, "timeout for authentication")
+	sftpOptions.clientAliveInterval = cmdServer.Flag.Duration("sftp.clientAliveInterval", 5*time.Second, "interval for sending keep-alive messages")
+	sftpOptions.clientAliveCountMax = cmdServer.Flag.Int("sftp.clientAliveCountMax", 3, "maximum number of missed keep-alive messages before disconnecting")
+	sftpOptions.userStoreFile = cmdServer.Flag.String("sftp.userStoreFile", "", "path to JSON file containing user credentials and permissions")
+	sftpOptions.localSocket = cmdServer.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
 	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
 
 	webdavOptions.port = cmdServer.Flag.Int("webdav.port", 7333, "webdav server http listen port")
@@ -186,6 +205,9 @@ func runServer(cmd *Command, args []string) bool {
 	grace.SetupProfiling(*serverOptions.cpuprofile, *serverOptions.memprofile)
 
 	if *isStartingS3 {
+		*isStartingFiler = true
+	}
+	if *isStartingSftp {
 		*isStartingFiler = true
 	}
 	if *isStartingIam {
@@ -218,7 +240,12 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.masters = pb.ServerAddresses(*masterOptions.peers).ToServiceDiscovery()
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
-	s3Options.bindIp = serverBindIp
+	if *s3Options.bindIp == "" {
+		s3Options.bindIp = serverBindIp
+	}
+	if sftpOptions.bindIp == nil || *sftpOptions.bindIp == "" {
+		sftpOptions.bindIp = serverBindIp
+	}
 	iamOptions.ip = serverBindIp
 	iamOptions.masters = masterOptions.peers
 	webdavOptions.ipBind = serverBindIp
@@ -242,11 +269,13 @@ func runServer(cmd *Command, args []string) bool {
 	mqBrokerOptions.dataCenter = serverDataCenter
 	mqBrokerOptions.rack = serverRack
 	s3Options.dataCenter = serverDataCenter
+	sftpOptions.dataCenter = serverDataCenter
 	filerOptions.disableHttp = serverDisableHttp
 	masterOptions.disableHttp = serverDisableHttp
 
 	filerAddress := string(pb.NewServerAddress(*serverIp, *filerOptions.port, *filerOptions.portGrpc))
 	s3Options.filer = &filerAddress
+	sftpOptions.filer = &filerAddress
 	iamOptions.filer = &filerAddress
 	webdavOptions.filer = &filerAddress
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
@@ -284,6 +313,14 @@ func runServer(cmd *Command, args []string) bool {
 			time.Sleep(2 * time.Second)
 			s3Options.localFilerSocket = filerOptions.localSocket
 			s3Options.startS3Server()
+		}()
+	}
+
+	if *isStartingSftp {
+		go func() {
+			time.Sleep(2 * time.Second)
+			sftpOptions.localSocket = filerOptions.localSocket
+			sftpOptions.startSftpServer()
 		}()
 	}
 

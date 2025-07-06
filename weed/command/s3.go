@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc/credentials/tls/certprovider"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
@@ -57,6 +59,7 @@ type S3Options struct {
 	dataCenter                *string
 	localSocket               *string
 	certProvider              certprovider.Provider
+	idleTimeout               *int
 }
 
 func init() {
@@ -81,6 +84,7 @@ func init() {
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
 	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
+	s3StandaloneOptions.idleTimeout = cmdS3.Flag.Int("idleTimeout", 10, "connection idle seconds")
 }
 
 var cmdS3 = &Command{
@@ -275,7 +279,8 @@ func (s3opt *S3Options) startS3Server() bool {
 	}
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.port)
-	s3ApiListener, s3ApiLocalListener, err := util.NewIpAndLocalListeners(*s3opt.bindIp, *s3opt.port, time.Duration(10)*time.Second)
+	s3ApiListener, s3ApiLocalListener, err := util.NewIpAndLocalListeners(
+		*s3opt.bindIp, *s3opt.port, time.Duration(*s3opt.idleTimeout)*time.Second)
 	if err != nil {
 		glog.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
 	}
@@ -336,7 +341,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			glog.Fatalf("error with tls config: %v", err)
 		}
 		if *s3opt.portHttps == 0 {
-			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
+			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", version.Version(), *s3opt.port)
 			if s3ApiLocalListener != nil {
 				go func() {
 					if err = httpS.ServeTLS(s3ApiLocalListener, "", ""); err != nil {
@@ -348,9 +353,9 @@ func (s3opt *S3Options) startS3Server() bool {
 				glog.Fatalf("S3 API Server Fail to serve: %v", err)
 			}
 		} else {
-			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.portHttps)
+			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", version.Version(), *s3opt.portHttps)
 			s3ApiListenerHttps, s3ApiLocalListenerHttps, _ := util.NewIpAndLocalListeners(
-				*s3opt.bindIp, *s3opt.portHttps, time.Duration(10)*time.Second)
+				*s3opt.bindIp, *s3opt.portHttps, time.Duration(*s3opt.idleTimeout)*time.Second)
 			if s3ApiLocalListenerHttps != nil {
 				go func() {
 					if err = httpS.ServeTLS(s3ApiLocalListenerHttps, "", ""); err != nil {
@@ -366,7 +371,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 	}
 	if *s3opt.tlsPrivateKey == "" || *s3opt.portHttps > 0 {
-		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.Version(), *s3opt.port)
+		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", version.Version(), *s3opt.port)
 		if s3ApiLocalListener != nil {
 			go func() {
 				if err = httpS.Serve(s3ApiLocalListener); err != nil {

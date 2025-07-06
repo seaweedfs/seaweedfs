@@ -3,10 +3,11 @@ package storage
 import (
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -16,7 +17,7 @@ import (
 func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -78,7 +79,7 @@ func assertFileExist(t *testing.T, expected bool, path string) {
 func TestDestroyEmptyVolumeWithOnlyEmpty(t *testing.T) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestDestroyEmptyVolumeWithOnlyEmpty(t *testing.T) {
 func TestDestroyEmptyVolumeWithoutOnlyEmpty(t *testing.T) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -114,7 +115,7 @@ func TestDestroyEmptyVolumeWithoutOnlyEmpty(t *testing.T) {
 func TestDestroyNonemptyVolumeWithOnlyEmpty(t *testing.T) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -144,7 +145,7 @@ func TestDestroyNonemptyVolumeWithOnlyEmpty(t *testing.T) {
 func TestDestroyNonemptyVolumeWithoutOnlyEmpty(t *testing.T) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}

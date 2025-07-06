@@ -47,27 +47,10 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	dataReader := r.Body
-	rAuthType := getRequestAuthType(r)
-	if s3a.iam.isEnabled() {
-		var s3ErrCode s3err.ErrorCode
-		switch rAuthType {
-		case authTypeStreamingSigned, authTypeStreamingUnsigned:
-			dataReader, s3ErrCode = s3a.iam.newChunkedReader(r)
-		case authTypeSignedV2, authTypePresignedV2:
-			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
-		case authTypePresigned, authTypeSigned:
-			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
-		}
-		if s3ErrCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, s3ErrCode)
-			return
-		}
-	} else {
-		if authTypeStreamingSigned == rAuthType {
-			s3err.WriteErrorResponse(w, r, s3err.ErrAuthNotSetup)
-			return
-		}
+	dataReader, s3ErrCode := getRequestDataReader(s3a, r)
+	if s3ErrCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, s3ErrCode)
+		return
 	}
 	defer dataReader.Close()
 
@@ -143,6 +126,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
+		if strings.Contains(postErr.Error(), s3err.ErrMsgPayloadChecksumMismatch) {
+			return "", s3err.ErrInvalidDigest
+		}
 		return "", s3err.ErrInternalError
 	}
 	defer resp.Body.Close()

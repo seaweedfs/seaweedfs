@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package telemetry;
+
+option go_package = "github.com/seaweedfs/seaweedfs/telemetry/proto";
+
+// TelemetryData represents cluster-level telemetry information
+message TelemetryData {
+  // Unique cluster identifier (generated in-memory)
+  string cluster_id = 1;
+  
+  // SeaweedFS version
+  string version = 2;
+  
+  // Operating system (e.g., "linux/amd64")
+  string os = 3;
+  
+  // Field 4 reserved (was features)
+  reserved 4;
+  
+  // Field 5 reserved (was deployment)
+  reserved 5;
+  
+  // Number of volume servers in the cluster
+  int32 volume_server_count = 6;
+  
+  // Total disk usage across all volume servers (in bytes)
+  uint64 total_disk_bytes = 7;
+  
+  // Total number of volumes in the cluster
+  int32 total_volume_count = 8;
+  
+  // Number of filer servers in the cluster
+  int32 filer_count = 9;
+  
+  // Number of broker servers in the cluster
+  int32 broker_count = 10;
+  
+  // Unix timestamp when the data was collected
+  int64 timestamp = 11;
+}
+
+// TelemetryRequest is sent from SeaweedFS clusters to the telemetry server
+message TelemetryRequest {
+  TelemetryData data = 1;
+}
+
+// TelemetryResponse is returned by the telemetry server
+message TelemetryResponse {
+  bool success = 1;
+  string message = 2;
+} 

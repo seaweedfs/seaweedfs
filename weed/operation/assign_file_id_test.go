@@ -60,7 +60,7 @@ func BenchmarkStreamAssign(b *testing.B) {
 
 func BenchmarkUnaryAssign(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		Assign(func(_ context.Context) pb.ServerAddress {
+		Assign(context.Background(), func(_ context.Context) pb.ServerAddress {
 			return pb.ServerAddress("localhost:9333")
 		}, grpc.WithInsecure(), &VolumeAssignRequest{
 			Count: 1,

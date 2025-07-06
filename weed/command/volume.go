@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	httppprof "net/http/pprof"
 	"os"
@@ -67,10 +68,11 @@ type VolumeServerOptions struct {
 	metricsHttpPort           *int
 	metricsHttpIp             *string
 	// pulseSeconds          *int
-	inflightUploadDataTimeout *time.Duration
-	hasSlowRead               *bool
-	readBufferSizeMB          *int
-	ldbTimeout                *int64
+	inflightUploadDataTimeout   *time.Duration
+	inflightDownloadDataTimeout *time.Duration
+	hasSlowRead                 *bool
+	readBufferSizeMB            *int
+	ldbTimeout                  *int64
 }
 
 func init() {
@@ -103,6 +105,7 @@ func init() {
 	v.metricsHttpIp = cmdVolume.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
 	v.inflightUploadDataTimeout = cmdVolume.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
+	v.inflightDownloadDataTimeout = cmdVolume.Flag.Duration("inflightDownloadDataTimeout", 60*time.Second, "inflight download data wait timeout of volume servers")
 	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
 	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
 }
@@ -260,6 +263,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		int64(*v.concurrentUploadLimitMB)*1024*1024,
 		int64(*v.concurrentDownloadLimitMB)*1024*1024,
 		*v.inflightUploadDataTimeout,
+		*v.inflightDownloadDataTimeout,
 		*v.hasSlowRead,
 		*v.readBufferSizeMB,
 		*v.ldbTimeout,
@@ -351,7 +355,7 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 
 func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdown.Server {
 	publicListeningAddress := util.JoinHostPort(*v.bindIp, *v.publicPort)
-	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "public at", publicListeningAddress)
+	glog.V(0).Infoln("Start Seaweed volume server", version.Version(), "public at", publicListeningAddress)
 	publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)
@@ -378,7 +382,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	}
 
 	listeningAddress := util.JoinHostPort(*v.bindIp, *v.port)
-	glog.V(0).Infof("Start Seaweed volume server %s at %s", util.Version(), listeningAddress)
+	glog.V(0).Infof("Start Seaweed volume server %s at %s", version.Version(), listeningAddress)
 	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
 		glog.Fatalf("Volume server listener error:%v", e)

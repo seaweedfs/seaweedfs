@@ -1,0 +1,32 @@
+{{- if .Values.sftp.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "seaweedfs.name" . }}-sftp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/component: sftp
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- if .Values.sftp.annotations }}
+  annotations:
+    {{- toYaml .Values.sftp.annotations | nindent 4 }}
+{{- end }}
+spec:
+  internalTrafficPolicy: {{ .Values.sftp.internalTrafficPolicy | default "Cluster" }}
+  ports:
+  - name: "swfs-sftp"
+    port: {{ .Values.sftp.port }}
+    targetPort: {{ .Values.sftp.port }}
+    protocol: TCP
+{{- if .Values.sftp.metricsPort }}
+  - name: "metrics"
+    port: {{ .Values.sftp.metricsPort }}
+    targetPort: {{ .Values.sftp.metricsPort }}
+    protocol: TCP
+{{- end }}
+  selector:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/component: sftp
+{{- end }}

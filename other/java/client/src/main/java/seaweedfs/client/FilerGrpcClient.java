@@ -8,7 +8,6 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.SslContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.SSLException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
@@ -17,14 +16,12 @@ import java.util.concurrent.TimeUnit;
 public class FilerGrpcClient {
 
     private static final Logger logger = LoggerFactory.getLogger(FilerGrpcClient.class);
-    static SslContext sslContext;
+    private static final SslContext sslContext;
+    private static final String protocol;
 
     static {
-        try {
-            sslContext = FilerSslContext.loadSslContext();
-        } catch (SSLException e) {
-            logger.warn("failed to load ssl context", e);
-        }
+        sslContext = FilerSecurityContext.getGrpcSslContext();
+        protocol = FilerSecurityContext.isHttpSecurityEnabled() ? "https" : "http";
     }
 
     public final int VOLUME_SERVER_ACCESS_DIRECT = 0;
@@ -42,19 +39,27 @@ public class FilerGrpcClient {
     private int volumeServerAccess = VOLUME_SERVER_ACCESS_DIRECT;
     private String filerAddress;
 
-    public FilerGrpcClient(String host, int port, int grpcPort) {
-        this(host, port, grpcPort, sslContext);
+    public FilerGrpcClient(String host, int port, int grpcPort, String cn) {
+        this(host, port, grpcPort, cn, sslContext);
     }
 
-    public FilerGrpcClient(String host, int port, int grpcPort, SslContext sslContext) {
+    public FilerGrpcClient(String host, int port, int grpcPort, String cn, SslContext sslContext) {
 
         this(sslContext == null ?
-                ManagedChannelBuilder.forAddress(host, grpcPort).usePlaintext()
+                ManagedChannelBuilder.forAddress(host, grpcPort)
+                        .usePlaintext()
                         .maxInboundMessageSize(1024 * 1024 * 1024) :
-                NettyChannelBuilder.forAddress(host, grpcPort)
-                        .maxInboundMessageSize(1024 * 1024 * 1024)
-                        .negotiationType(NegotiationType.TLS)
-                        .sslContext(sslContext));
+                cn.isEmpty() ?
+                    NettyChannelBuilder.forAddress(host, grpcPort)
+                            .maxInboundMessageSize(1024 * 1024 * 1024)
+                            .negotiationType(NegotiationType.TLS)
+                            .sslContext(sslContext) :
+                    NettyChannelBuilder.forAddress(host, grpcPort)
+                            .maxInboundMessageSize(1024 * 1024 * 1024)
+                            .negotiationType(NegotiationType.TLS)
+                            .overrideAuthority(cn) //will not check hostname of the filer server
+                            .sslContext(sslContext)
+                );
 
         filerAddress = SeaweedUtil.joinHostPort(host, port);
 
@@ -130,12 +135,11 @@ public class FilerGrpcClient {
     public String getChunkUrl(String chunkId, String url, String publicUrl) {
         switch (this.volumeServerAccess) {
             case VOLUME_SERVER_ACCESS_PUBLIC_URL:
-                return String.format("http://%s/%s", publicUrl, chunkId);
+                return String.format("%s://%s/%s", protocol, publicUrl, chunkId);
             case VOLUME_SERVER_ACCESS_FILER_PROXY:
-                return String.format("http://%s/?proxyChunkId=%s", this.filerAddress, chunkId);
+                return String.format("%s://%s/?proxyChunkId=%s", protocol, this.filerAddress, chunkId);
             default:
-                return String.format("http://%s/%s", url, chunkId);
+                return String.format("%s://%s/%s", protocol, url, chunkId);
         }
     }
-
 }

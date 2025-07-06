@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -58,7 +59,7 @@ func (c *commandFsDu) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 
 func duTraverseDirectory(writer io.Writer, filerClient filer_pb.FilerClient, dir, name string) (blockCount, byteCount uint64, err error) {
 
-	err = filer_pb.ReadDirAllEntries(filerClient, util.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.ReadDirAllEntries(context.Background(), filerClient, util.FullPath(dir), name, func(entry *filer_pb.Entry, isLast bool) error {
 
 		var fileBlockCount, fileByteCount uint64
 

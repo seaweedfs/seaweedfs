@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"log"
 	"math/rand"
 	"time"
-	"context"
 
 	"google.golang.org/grpc"
 
@@ -56,7 +56,7 @@ func main() {
 }
 
 func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, string) {
-	assignResult, err := operation.Assign(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*master) }, grpcDialOption, &operation.VolumeAssignRequest{
+	assignResult, err := operation.Assign(context.Background(), func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*master) }, grpcDialOption, &operation.VolumeAssignRequest{
 		Count:       1,
 		Replication: *replication,
 	})
@@ -84,7 +84,7 @@ func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, st
 		log.Fatalf("upload: %v", err)
 	}
 
-	_, err = uploader.UploadData(data, uploadOption)
+	_, err = uploader.UploadData(context.Background(), data, uploadOption)
 	if err != nil {
 		log.Fatalf("upload: %v", err)
 	}

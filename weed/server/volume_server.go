@@ -28,6 +28,7 @@ type VolumeServer struct {
 	inFlightUploadDataLimitCond   *sync.Cond
 	inFlightDownloadDataLimitCond *sync.Cond
 	inflightUploadDataTimeout     time.Duration
+	inflightDownloadDataTimeout   time.Duration
 	hasSlowRead                   bool
 	readBufferSizeMB              int
 
@@ -68,6 +69,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
 	inflightUploadDataTimeout time.Duration,
+	inflightDownloadDataTimeout time.Duration,
 	hasSlowRead bool,
 	readBufferSizeMB int,
 	ldbTimeout int64,
@@ -115,23 +117,26 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)
-	adminMux.HandleFunc("/status", vs.statusHandler)
-	adminMux.HandleFunc("/healthz", vs.healthzHandler)
+	adminMux.HandleFunc("/status", requestIDMiddleware(vs.statusHandler))
+	adminMux.HandleFunc("/healthz", requestIDMiddleware(vs.healthzHandler))
 	if signingKey == "" || enableUiAccess {
 		// only expose the volume server details for safe environments
-		adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)
+		adminMux.HandleFunc("/ui/index.html", requestIDMiddleware(vs.uiStatusHandler))
 		/*
 			adminMux.HandleFunc("/stats/counter", vs.guard.WhiteList(statsCounterHandler))
 			adminMux.HandleFunc("/stats/memory", vs.guard.WhiteList(statsMemoryHandler))
 			adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
 		*/
 	}
-	adminMux.HandleFunc("/", vs.privateStoreHandler)
+	adminMux.HandleFunc("/", requestIDMiddleware(vs.privateStoreHandler))
 	if publicMux != adminMux {
 		// separated admin and public port
 		handleStaticResources(publicMux)
-		publicMux.HandleFunc("/", vs.publicReadOnlyHandler)
+		publicMux.HandleFunc("/", requestIDMiddleware(vs.publicReadOnlyHandler))
 	}
+
+	stats.VolumeServerConcurrentDownloadLimit.Set(float64(vs.concurrentDownloadLimit))
+	stats.VolumeServerConcurrentUploadLimit.Set(float64(vs.concurrentUploadLimit))
 
 	go vs.heartbeat()
 	go stats.LoopPushingMetric("volumeServer", util.JoinHostPort(ip, port), vs.metricsAddress, vs.metricsIntervalSec)

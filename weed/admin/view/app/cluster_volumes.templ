@@ -1,0 +1,726 @@
+package app
+
+import (
+    "fmt"
+    "strings"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ ClusterVolumes(data dash.ClusterVolumesData) {
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <div>
+            <h1 class="h2">
+                <i class="fas fa-database me-2"></i>Cluster Volumes
+            </h1>
+            if data.FilterCollection != "" {
+                <div class="d-flex align-items-center mt-2">
+                    <span class="badge bg-info me-2">
+                        <i class="fas fa-filter me-1"></i>Collection: {data.FilterCollection}
+                    </span>
+                    <a href="/cluster/volumes" class="btn btn-sm btn-outline-secondary">
+                        <i class="fas fa-times me-1"></i>Clear Filter
+                    </a>
+                </div>
+            }
+        </div>
+        <div class="btn-toolbar mb-2 mb-md-0">
+            <div class="btn-group me-2">
+                <select class="form-select form-select-sm me-2" id="pageSizeSelect" onchange="changePageSize()" style="width: auto;">
+                    <option value="50" if data.PageSize == 50 { selected="selected" }>50 per page</option>
+                    <option value="100" if data.PageSize == 100 { selected="selected" }>100 per page</option>
+                    <option value="200" if data.PageSize == 200 { selected="selected" }>200 per page</option>
+                    <option value="500" if data.PageSize == 500 { selected="selected" }>500 per page</option>
+                </select>
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportVolumes()">
+                    <i class="fas fa-download me-1"></i>Export
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="volumes-content">
+        <!-- Summary Cards -->
+        <div class="row mb-4">
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
+                <div class="card border-left-primary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                    Total Volumes
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {fmt.Sprintf("%d", data.TotalVolumes)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-database fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
+                <div class="card border-left-success shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                    if data.CollectionCount == 1 {
+                                        Collection
+                                    } else {
+                                        Collections
+                                    }
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    if data.CollectionCount == 1 {
+                                        {data.SingleCollection}
+                                    } else {
+                                        {fmt.Sprintf("%d", data.CollectionCount)}
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-layer-group fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
+                <div class="card border-left-info shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                    if data.DataCenterCount == 1 {
+                                        Data Center
+                                    } else {
+                                        Data Centers
+                                    }
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    if data.DataCenterCount == 1 {
+                                        {data.SingleDataCenter}
+                                    } else {
+                                        {fmt.Sprintf("%d", data.DataCenterCount)}
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-building fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
+                <div class="card border-left-secondary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-secondary text-uppercase mb-1">
+                                    if data.RackCount == 1 {
+                                        Rack
+                                    } else {
+                                        Racks
+                                    }
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    if data.RackCount == 1 {
+                                        {data.SingleRack}
+                                    } else {
+                                        {fmt.Sprintf("%d", data.RackCount)}
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-server fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
+                <div class="card border-left-dark shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-dark text-uppercase mb-1">
+                                    if data.DiskTypeCount == 1 {
+                                        Disk Type
+                                    } else {
+                                        Disk Types
+                                    }
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    if data.DiskTypeCount == 1 {
+                                        {data.SingleDiskType}
+                                    } else {
+                                        {strings.Join(data.AllDiskTypes, ", ")}
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
+                <div class="card border-left-purple shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-purple text-uppercase mb-1">
+                                    if data.VersionCount == 1 {
+                                        Version
+                                    } else {
+                                        Versions
+                                    }
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    if data.VersionCount == 1 {
+                                        {data.SingleVersion}
+                                    } else {
+                                        {strings.Join(data.AllVersions, ", ")}
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-code-branch fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-2 col-md-4 col-sm-6 mb-4">
+                <div class="card border-left-warning shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                    Total Size
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {formatBytes(data.TotalSize)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-chart-area fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Volumes Table -->
+        <div class="card shadow mb-4">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="fas fa-database me-2"></i>Volume Details
+                </h6>
+            </div>
+            <div class="card-body">
+                if len(data.Volumes) > 0 {
+                    <div class="table-responsive">
+                        <table class="table table-hover" id="volumesTable">
+                            <thead>
+                                <tr>
+                                    <th>
+                                        <a href="#" onclick="sortTable('id')" class="text-decoration-none text-dark">
+                                            Volume ID
+                                            @getSortIcon("id", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('server')" class="text-decoration-none text-dark">
+                                            Server
+                                            @getSortIcon("server", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    if data.ShowDataCenterColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('datacenter')" class="text-decoration-none text-dark">
+                                                Data Center
+                                                @getSortIcon("datacenter", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
+                                    if data.ShowRackColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('rack')" class="text-decoration-none text-dark">
+                                                Rack
+                                                @getSortIcon("rack", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
+                                    if data.ShowCollectionColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('collection')" class="text-decoration-none text-dark">
+                                                Collection
+                                                @getSortIcon("collection", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
+                                    <th>
+                                        <a href="#" onclick="sortTable('size')" class="text-decoration-none text-dark">
+                                            Size
+                                            @getSortIcon("size", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>Storage Usage</th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('filecount')" class="text-decoration-none text-dark">
+                                            File Count
+                                            @getSortIcon("filecount", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    <th>
+                                        <a href="#" onclick="sortTable('replication')" class="text-decoration-none text-dark">
+                                            Replication
+                                            @getSortIcon("replication", data.SortBy, data.SortOrder)
+                                        </a>
+                                    </th>
+                                    if data.ShowDiskTypeColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('disktype')" class="text-decoration-none text-dark">
+                                                Disk Type
+                                                @getSortIcon("disktype", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
+                                    if data.ShowVersionColumn {
+                                        <th>
+                                            <a href="#" onclick="sortTable('version')" class="text-decoration-none text-dark">
+                                                Version
+                                                @getSortIcon("version", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                    }
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                for _, volume := range data.Volumes {
+                                    <tr>
+                                        <td>
+                                            <code class="volume-id-link" style="cursor: pointer; text-decoration: underline; color: #0d6efd;" 
+                                                  data-volume-id={fmt.Sprintf("%d", volume.Id)}
+                                                  title="Click to view volume details">
+                                                {fmt.Sprintf("%d", volume.Id)}
+                                            </code>
+                                        </td>
+                                        <td>
+                                            <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", volume.Server))} target="_blank" class="text-decoration-none">
+                                                {volume.Server}
+                                                <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                            </a>
+                                        </td>
+                                        if data.ShowDataCenterColumn {
+                                            <td>
+                                                <span class="badge bg-light text-dark">{volume.DataCenter}</span>
+                                            </td>
+                                        }
+                                        if data.ShowRackColumn {
+                                            <td>
+                                                <span class="badge bg-light text-dark">{volume.Rack}</span>
+                                            </td>
+                                        }
+                                        if data.ShowCollectionColumn {
+                                            <td>
+                                                if volume.Collection == "" {
+                                                    <a href={templ.SafeURL("/cluster/volumes?collection=default")} class="text-decoration-none">
+                                                        <span class="badge bg-secondary">default</span>
+                                                    </a>
+                                                } else {
+                                                    <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", volume.Collection))} class="text-decoration-none">
+                                                        <span class="badge bg-secondary">{volume.Collection}</span>
+                                                    </a>
+                                                }
+                                            </td>
+                                        }
+                                                                <td>{formatBytes(int64(volume.Size))}</td>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div class="progress me-2" style="width: 80px; height: 16px; background-color: #e9ecef;">
+                                    <!-- Active data (green) -->
+                                    <div class="progress-bar bg-success" role="progressbar" 
+                                         style={fmt.Sprintf("width: %.1f%%", 
+                                             func() float64 {
+                                                 if volume.Size > 0 {
+                                                     activePct := float64(volume.Size - volume.DeletedByteCount) / float64(volume.Size) * 100
+                                                     if data.VolumeSizeLimit > 0 {
+                                                         return activePct * float64(volume.Size) / float64(data.VolumeSizeLimit) * 100
+                                                     }
+                                                     return activePct
+                                                 }
+                                                 return 0
+                                             }())}
+                                         title={fmt.Sprintf("Active: %s", formatBytes(int64(volume.Size - volume.DeletedByteCount)))}>
+                                    </div>
+                                    <!-- Garbage data (red) -->
+                                    <div class="progress-bar bg-danger" role="progressbar" 
+                                         style={fmt.Sprintf("width: %.1f%%", 
+                                             func() float64 {
+                                                 if volume.Size > 0 && volume.DeletedByteCount > 0 {
+                                                     garbagePct := float64(volume.DeletedByteCount) / float64(volume.Size) * 100
+                                                     if data.VolumeSizeLimit > 0 {
+                                                         return garbagePct * float64(volume.Size) / float64(data.VolumeSizeLimit) * 100
+                                                     }
+                                                     return garbagePct
+                                                 }
+                                                 return 0
+                                             }())}
+                                         title={fmt.Sprintf("Garbage: %s", formatBytes(int64(volume.DeletedByteCount)))}>
+                                    </div>
+                                </div>
+                                <small class="text-muted">
+                                    {func() string {
+                                        if data.VolumeSizeLimit > 0 {
+                                            return fmt.Sprintf("%.0f%%", float64(volume.Size)/float64(data.VolumeSizeLimit)*100)
+                                        }
+                                        return "N/A"
+                                    }()}
+                                </small>
+                            </div>
+                        </td>
+                        <td>{fmt.Sprintf("%d", volume.FileCount)}</td>
+                        <td>
+                            <span class="badge bg-info">{fmt.Sprintf("%03d", volume.ReplicaPlacement)}</span>
+                        </td>
+                                        if data.ShowDiskTypeColumn {
+                                            <td>
+                                                <span class="badge bg-primary">{volume.DiskType}</span>
+                                            </td>
+                                        }
+                                        if data.ShowVersionColumn {
+                                            <td>
+                                                <span class="badge bg-dark">{fmt.Sprintf("v%d", volume.Version)}</span>
+                                            </td>
+                                        }
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <button type="button" class="btn btn-outline-primary btn-sm view-details-btn" 
+                                                        title="View Details" data-volume-id={fmt.Sprintf("%d", volume.Id)}>
+                                                    <i class="fas fa-eye"></i>
+                                                </button>
+                                                <button type="button" class="btn btn-outline-secondary btn-sm vacuum-btn" 
+                                                        title="Vacuum"
+                                                        data-volume-id={fmt.Sprintf("%d", volume.Id)}
+                                                        data-server={volume.Server}>
+                                                    <i class="fas fa-compress-alt"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Volume Summary -->
+                    <div class="d-flex justify-content-between align-items-center mt-3">
+                        <div>
+                            <small class="text-muted">
+                                Showing {fmt.Sprintf("%d", (data.CurrentPage-1)*data.PageSize + 1)} to {fmt.Sprintf("%d", minInt(data.CurrentPage*data.PageSize, data.TotalVolumes))} of {fmt.Sprintf("%d", data.TotalVolumes)} volumes
+                            </small>
+                        </div>
+                        if data.TotalPages > 1 {
+                            <div>
+                                <small class="text-muted">
+                                    Page {fmt.Sprintf("%d", data.CurrentPage)} of {fmt.Sprintf("%d", data.TotalPages)}
+                                </small>
+                            </div>
+                        }
+                    </div>
+                    
+                    <!-- Pagination Controls -->
+                    if data.TotalPages > 1 {
+                        <div class="d-flex justify-content-center mt-3">
+                            <nav aria-label="Volumes pagination">
+                                <ul class="pagination pagination-sm mb-0">
+                                    <!-- Previous Button -->
+                                    if data.CurrentPage > 1 {
+                                        <li class="page-item">
+                                            <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", data.CurrentPage-1)}>
+                                                <i class="fas fa-chevron-left"></i>
+                                            </a>
+                                        </li>
+                                    } else {
+                                        <li class="page-item disabled">
+                                            <span class="page-link">
+                                                <i class="fas fa-chevron-left"></i>
+                                            </span>
+                                        </li>
+                                    }
+                                    
+                                    <!-- Page Numbers -->
+                                    for i := maxInt(1, data.CurrentPage-2); i <= minInt(data.TotalPages, data.CurrentPage+2); i++ {
+                                        if i == data.CurrentPage {
+                                            <li class="page-item active">
+                                                <span class="page-link">{fmt.Sprintf("%d", i)}</span>
+                                            </li>
+                                        } else {
+                                            <li class="page-item">
+                                                <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", i)}>{fmt.Sprintf("%d", i)}</a>
+                                            </li>
+                                        }
+                                    }
+                                    
+                                    <!-- Next Button -->
+                                    if data.CurrentPage < data.TotalPages {
+                                        <li class="page-item">
+                                            <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", data.CurrentPage+1)}>
+                                                <i class="fas fa-chevron-right"></i>
+                                            </a>
+                                        </li>
+                                    } else {
+                                        <li class="page-item disabled">
+                                            <span class="page-link">
+                                                <i class="fas fa-chevron-right"></i>
+                                            </span>
+                                        </li>
+                                    }
+                                </ul>
+                            </nav>
+                        </div>
+                    }
+                } else {
+                    <div class="text-center py-5">
+                        <i class="fas fa-database fa-3x text-muted mb-3"></i>
+                        <h5 class="text-muted">No Volumes Found</h5>
+                        <p class="text-muted">No volumes are currently available in the cluster.</p>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Last Updated -->
+        <div class="row">
+            <div class="col-12">
+                <small class="text-muted">
+                    <i class="fas fa-clock me-1"></i>
+                    Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
+                </small>
+            </div>
+        </div>
+    </div>
+    
+    <!-- JavaScript for pagination and sorting -->
+    <script>
+        // Initialize pagination links when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add click handlers to pagination links
+            document.querySelectorAll('.pagination-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const page = this.getAttribute('data-page');
+                    goToPage(page);
+                });
+            });
+            
+            // Add click handlers to view details buttons
+            document.querySelectorAll('.view-details-btn').forEach(button => {
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const volumeId = this.getAttribute('data-volume-id');
+                    viewVolumeDetails(volumeId);
+                });
+            });
+
+            // Add click handlers to volume ID links
+            document.querySelectorAll('.volume-id-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const volumeId = this.getAttribute('data-volume-id');
+                    viewVolumeDetails(volumeId);
+                });
+            });
+
+            // Add click handlers to vacuum buttons
+            document.querySelectorAll('.vacuum-btn').forEach(button => {
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const volumeId = this.getAttribute('data-volume-id');
+                    const server = this.getAttribute('data-server');
+                    performVacuum(volumeId, server, this);
+                });
+            });
+        });
+        
+        function goToPage(page) {
+            const url = new URL(window.location);
+            url.searchParams.set('page', page);
+            window.location.href = url.toString();
+        }
+        
+        function changePageSize() {
+            const pageSize = document.getElementById('pageSizeSelect').value;
+            const url = new URL(window.location);
+            url.searchParams.set('pageSize', pageSize);
+            url.searchParams.set('page', '1'); // Reset to first page
+            window.location.href = url.toString();
+        }
+        
+        function sortTable(column) {
+            const url = new URL(window.location);
+            const currentSort = url.searchParams.get('sortBy');
+            const currentOrder = url.searchParams.get('sortOrder') || 'asc';
+            
+            let newOrder = 'asc';
+            if (currentSort === column && currentOrder === 'asc') {
+                newOrder = 'desc';
+            }
+            
+            url.searchParams.set('sortBy', column);
+            url.searchParams.set('sortOrder', newOrder);
+            url.searchParams.set('page', '1'); // Reset to first page
+            window.location.href = url.toString();
+        }
+        
+        function exportVolumes() {
+            // TODO: Implement volume export functionality
+            alert('Export functionality to be implemented');
+        }
+        
+        function viewVolumeDetails(volumeId) {
+            // Get the server from the current row - works for both buttons and volume ID links
+            const clickedElement = event.target;
+            const row = clickedElement.closest('tr');
+            const serverCell = row.querySelector('td:nth-child(2) a');
+            const server = serverCell ? serverCell.textContent.trim() : 'unknown';
+            
+            window.location.href = `/cluster/volumes/${volumeId}/${encodeURIComponent(server)}`;
+        }
+
+        function performVacuum(volumeId, server, button) {
+            // Disable button and show loading state
+            const originalHTML = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+            // Send vacuum request
+            fetch(`/api/volumes/${volumeId}/${encodeURIComponent(server)}/vacuum`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showMessage(data.error, 'error');
+                } else {
+                    showMessage(data.message || 'Volume vacuum started successfully', 'success');
+                    // Optionally refresh the page after a delay to show updated vacuum status
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showMessage('Failed to start vacuum operation', 'error');
+            })
+            .finally(() => {
+                // Re-enable button
+                button.disabled = false;
+                button.innerHTML = originalHTML;
+            });
+        }
+
+        function showMessage(message, type) {
+            // Create toast notification
+            const toast = document.createElement('div');
+            toast.className = `alert alert-${type === 'error' ? 'danger' : 'success'} alert-dismissible fade show position-fixed`;
+            toast.style.top = '20px';
+            toast.style.right = '20px';
+            toast.style.zIndex = '9999';
+            toast.style.minWidth = '300px';
+            
+            toast.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            document.body.appendChild(toast);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 5000);
+        }
+    </script>
+}
+
+func countActiveVolumes(volumes []dash.VolumeWithTopology) int {
+	// Since we removed status tracking, consider all volumes as active
+	return len(volumes)
+}
+
+func countUniqueDataCenters(volumes []dash.VolumeWithTopology) int {
+    dcMap := make(map[string]bool)
+    for _, volume := range volumes {
+        dcMap[volume.DataCenter] = true
+    }
+    return len(dcMap)
+}
+
+func countUniqueRacks(volumes []dash.VolumeWithTopology) int {
+    rackMap := make(map[string]bool)
+    for _, volume := range volumes {
+        if volume.Rack != "" {
+            rackMap[volume.Rack] = true
+        }
+    }
+    return len(rackMap)
+}
+
+func countUniqueDiskTypes(volumes []dash.VolumeWithTopology) int {
+    diskTypeMap := make(map[string]bool)
+    for _, volume := range volumes {
+        diskType := volume.DiskType
+        if diskType == "" {
+            diskType = "hdd"
+        }
+        diskTypeMap[diskType] = true
+    }
+    return len(diskTypeMap)
+}
+
+
+
+templ getSortIcon(column, currentSort, currentOrder string) {
+    if column != currentSort {
+        <i class="fas fa-sort text-muted ms-1"></i>
+    } else if currentOrder == "asc" {
+        <i class="fas fa-sort-up text-primary ms-1"></i>
+    } else {
+        <i class="fas fa-sort-down text-primary ms-1"></i>
+    }
+}
+
+func minInt(a, b int) int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+func maxInt(a, b int) int {
+    if a > b {
+        return a
+    }
+    return b
+} 

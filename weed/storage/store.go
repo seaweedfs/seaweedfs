@@ -107,7 +107,7 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 
 	return
 }
-func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement string, ttlString string, preallocate int64, MemoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
+func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement string, ttlString string, preallocate int64, ver needle.Version, MemoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
 	rt, e := super_block.NewReplicaPlacementFromString(replicaPlacement)
 	if e != nil {
 		return e
@@ -116,7 +116,7 @@ func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMap
 	if e != nil {
 		return e
 	}
-	e = s.addVolume(volumeId, collection, needleMapKind, rt, ttl, preallocate, MemoryMapMaxSizeMb, diskType, ldbTimeout)
+	e = s.addVolume(volumeId, collection, needleMapKind, rt, ttl, preallocate, ver, MemoryMapMaxSizeMb, diskType, ldbTimeout)
 	return e
 }
 func (s *Store) DeleteCollection(collection string) (e error) {
@@ -159,7 +159,7 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (re
 	}
 	return ret
 }
-func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
+func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
@@ -168,7 +168,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	}); location != nil {
 		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
-		if volume, err := NewVolume(location.Directory, location.IdxDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb, ldbTimeout); err == nil {
+		if volume, err := NewVolume(location.Directory, location.IdxDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, ver, memoryMapMaxSizeMb, ldbTimeout); err == nil {
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d", vid)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
@@ -269,19 +269,23 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				maxFileKey = curMaxFileKey
 			}
 			shouldDeleteVolume := false
-			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
-				volumeMessages = append(volumeMessages, volumeMessage)
+
+			if v.lastIoError != nil {
+				deleteVids = append(deleteVids, v.Id)
+				shouldDeleteVolume = true
+				glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
 			} else {
-				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
-					deleteVids = append(deleteVids, v.Id)
-					shouldDeleteVolume = true
+				if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
+					volumeMessages = append(volumeMessages, volumeMessage)
 				} else {
-					glog.V(0).Infof("volume %d is expired", v.Id)
-				}
-				if v.lastIoError != nil {
-					deleteVids = append(deleteVids, v.Id)
-					shouldDeleteVolume = true
-					glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
+					if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
+						if !shouldDeleteVolume {
+							deleteVids = append(deleteVids, v.Id)
+							shouldDeleteVolume = true
+						}
+					} else {
+						glog.V(0).Infof("volume %d is expired", v.Id)
+					}
 				}
 			}
 
@@ -437,7 +441,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCook
 			err = fmt.Errorf("volume %d is read only", i)
 			return
 		}
-		_, _, isUnchanged, err = v.writeNeedle2(n, checkCookie, fsync && s.isStopping)
+		_, _, isUnchanged, err = v.writeNeedle2(n, checkCookie, fsync && !s.isStopping)
 		return
 	}
 	glog.V(0).Infoln("volume", i, "not found!")

@@ -35,6 +35,16 @@ func TestTTLReadWrite(t *testing.T) {
 		t.Errorf("50d ttl:%v", ttl)
 	}
 
+	ttl, _ = ReadTTL("365d")
+	if ttl.Minutes() != 365*24*60 {
+		t.Errorf("365d ttl:%v", ttl)
+	}
+
+	ttl, _ = ReadTTL("730d")
+	if ttl.Minutes() != 730*24*60 {
+		t.Errorf("730d ttl:%v", ttl)
+	}
+
 	ttl, _ = ReadTTL("5w")
 	if ttl.Minutes() != 5*7*24*60 {
 		t.Errorf("5w ttl:%v", ttl)

@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"errors"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"os"
 	"strconv"
@@ -14,8 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/util"
-
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
@@ -80,7 +79,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Server", "SeaweedFS "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS "+version.VERSION)
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
@@ -168,7 +167,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	w.Header().Set("Server", "SeaweedFS "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS "+version.VERSION)
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
@@ -229,7 +228,7 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 }
 
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Server", "SeaweedFS "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS "+version.VERSION)
 	if _, err := fs.filer.Store.FindEntry(context.Background(), filer.TopicsDir); err != nil && err != filer_pb.ErrNotFound {
 		glog.Warningf("filerHealthzHandler FindEntry: %+v", err)
 		w.WriteHeader(http.StatusServiceUnavailable)

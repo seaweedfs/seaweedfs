@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
+
 	"time"
 
 	"github.com/gorilla/mux"
@@ -14,6 +16,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+
+	// Import credential stores to register them
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/postgres"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/sqlite"
 )
 
 var (
@@ -89,7 +97,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 		glog.Fatalf("IAM API Server listener on %s error: %v", listenAddress, err)
 	}
 
-	glog.V(0).Infof("Start Seaweed IAM API Server %s at http port %d", util.Version(), *iamopt.port)
+	glog.V(0).Infof("Start Seaweed IAM API Server %s at http port %d", version.Version(), *iamopt.port)
 	if iamApiLocalListener != nil {
 		go func() {
 			if err = httpS.Serve(iamApiLocalListener); err != nil {

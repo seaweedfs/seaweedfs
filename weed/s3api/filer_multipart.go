@@ -5,8 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math"
 	"path/filepath"
 	"slices"
@@ -14,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -84,16 +85,20 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	}
 	completedPartNumbers := []int{}
 	completedPartMap := make(map[int][]string)
+
+	maxPartNo := 1
+
 	for _, part := range parts.Parts {
 		if _, ok := completedPartMap[part.PartNumber]; !ok {
 			completedPartNumbers = append(completedPartNumbers, part.PartNumber)
 		}
 		completedPartMap[part.PartNumber] = append(completedPartMap[part.PartNumber], part.ETag)
+		maxPartNo = max(maxPartNo, part.PartNumber)
 	}
 	sort.Ints(completedPartNumbers)
 
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
-	entries, _, err := s3a.list(uploadDirectory, "", "", false, maxPartsList)
+	entries, _, err := s3a.list(uploadDirectory, "", "", false, 0)
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s %s error: %v, entries:%d", *input.Bucket, *input.UploadId, err, len(entries))
 		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
@@ -156,7 +161,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 				glog.Warningf("invalid complete etag %s, partEtag %s", partETag, entryETag)
 				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagInvalid).Inc()
 			}
-			if len(entry.Chunks) == 0 {
+			if len(entry.Chunks) == 0 && partNumber != maxPartNo {
 				glog.Warningf("completeMultipartUpload %s empty chunks", entry.Name)
 				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartEmpty).Inc()
 				continue

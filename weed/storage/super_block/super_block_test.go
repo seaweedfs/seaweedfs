@@ -10,7 +10,7 @@ func TestSuperBlockReadWrite(t *testing.T) {
 	rp, _ := NewReplicaPlacementFromByte(byte(001))
 	ttl, _ := needle.ReadTTL("15d")
 	s := &SuperBlock{
-		Version:          needle.CurrentVersion,
+		Version:          needle.GetCurrentVersion(),
 		ReplicaPlacement: rp,
 		Ttl:              ttl,
 	}

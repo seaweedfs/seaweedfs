@@ -2,16 +2,16 @@ package weed_server
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"path/filepath"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (vs *VolumeServer) healthzHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS Volume "+version.VERSION)
 	volumeInfos := vs.store.VolumeInfos()
 	for _, vinfo := range volumeInfos {
 		if len(vinfo.Collection) == 0 {
@@ -29,9 +29,9 @@ func (vs *VolumeServer) healthzHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS Volume "+version.VERSION)
 	m := make(map[string]interface{})
-	m["Version"] = util.Version()
+	m["Version"] = version.Version()
 	var ds []*volume_server_pb.DiskStatus
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {
@@ -46,9 +46,9 @@ func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	w.Header().Set("Server", "SeaweedFS Volume "+version.VERSION)
 	m := make(map[string]interface{})
-	m["Version"] = util.Version()
+	m["Version"] = version.Version()
 	var ds []*volume_server_pb.DiskStatus
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {

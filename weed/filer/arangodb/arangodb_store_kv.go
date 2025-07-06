@@ -38,7 +38,7 @@ func (store *ArangodbStore) KvGet(ctx context.Context, key []byte) (value []byte
 		return nil, filer.ErrKvNotFound
 	}
 	if err != nil {
-		glog.Errorf("kv get: %s %v", string(key), err)
+		glog.ErrorfCtx(ctx, "kv get: %s %v", string(key), err)
 		return nil, filer.ErrKvNotFound
 	}
 	return arrayToBytes(model.Meta), nil
@@ -47,7 +47,7 @@ func (store *ArangodbStore) KvGet(ctx context.Context, key []byte) (value []byte
 func (store *ArangodbStore) KvDelete(ctx context.Context, key []byte) (err error) {
 	_, err = store.kvCollection.RemoveDocument(ctx, hashString(".kvstore."+string(key)))
 	if err != nil {
-		glog.Errorf("kv del: %v", err)
+		glog.ErrorfCtx(ctx, "kv del: %v", err)
 		return filer.ErrKvNotFound
 	}
 	return nil

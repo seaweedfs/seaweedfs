@@ -3,6 +3,7 @@ package wdclient
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"math/rand"
 	"sync"
 	"time"
@@ -56,13 +57,14 @@ func (mc *MasterClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 	return mc.LookupFileIdWithFallback
 }
 
-func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []string, err error) {
-	fullUrls, err = mc.vidMap.LookupFileId(fileId)
+func (mc *MasterClient) LookupFileIdWithFallback(ctx context.Context, fileId string) (fullUrls []string, err error) {
+	fullUrls, err = mc.vidMap.LookupFileId(ctx, fileId)
 	if err == nil && len(fullUrls) > 0 {
 		return
 	}
-	err = pb.WithMasterClient(false, mc.GetMaster(context.Background()), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{
+
+	err = pb.WithMasterClient(false, mc.GetMaster(ctx), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.LookupVolume(ctx, &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: []string{fileId},
 		})
 		if err != nil {
@@ -207,7 +209,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			Rack:          mc.rack,
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
-			Version:       util.Version(),
+			Version:       version.Version(),
 		}); err != nil {
 			glog.V(0).Infof("%s.%s masterClient failed to send to %s: %v", mc.FilerGroup, mc.clientType, master, err)
 			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToSend).Inc()

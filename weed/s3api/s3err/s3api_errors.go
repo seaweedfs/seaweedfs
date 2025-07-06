@@ -112,6 +112,13 @@ const (
 	ErrNoSuchTagSet
 )
 
+// Error message constants for checksum validation
+const (
+	ErrMsgPayloadChecksumMismatch   = "payload checksum does not match"
+	ErrMsgChunkSignatureMismatch    = "chunk signature does not match"
+	ErrMsgChecksumAlgorithmMismatch = "checksum algorithm mismatch"
+)
+
 // error code to APIError structure, these fields carry respective
 // descriptions for all the error responses.
 var errorCodeResponse = map[ErrorCode]APIError{

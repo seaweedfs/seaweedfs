@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/arangodb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra2"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/elastic/v7"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/etcd"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/hbase"
@@ -40,6 +41,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis2"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis3"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/sqlite"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/tarantool"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/ydb"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/notification"
@@ -144,8 +146,23 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	if len(option.Masters.GetInstances()) == 0 {
 		glog.Fatal("master list is required!")
 	}
+
+	if !util.LoadConfiguration("filer", false) {
+		v.SetDefault("leveldb2.enabled", true)
+		v.SetDefault("leveldb2.dir", option.DefaultLevelDbDir)
+		_, err := os.Stat(option.DefaultLevelDbDir)
+		if os.IsNotExist(err) {
+			os.MkdirAll(option.DefaultLevelDbDir, 0755)
+		}
+		glog.V(0).Infof("default to create filer store dir in %s", option.DefaultLevelDbDir)
+	} else {
+		glog.Warningf("skipping default store dir in %s", option.DefaultLevelDbDir)
+	}
+	util.LoadConfiguration("notification", false)
+
 	v.SetDefault("filer.options.max_file_name_length", 255)
 	maxFilenameLength := v.GetUint32("filer.options.max_file_name_length")
+	glog.V(0).Infof("max_file_name_length %d", maxFilenameLength)
 	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, func() {
 		if atomic.LoadInt64(&fs.listenersWaits) > 0 {
 			fs.listenersCond.Broadcast()
@@ -161,19 +178,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
 	go fs.filer.KeepMasterClientConnected(context.Background())
 
-	if !util.LoadConfiguration("filer", false) {
-		v.SetDefault("leveldb2.enabled", true)
-		v.SetDefault("leveldb2.dir", option.DefaultLevelDbDir)
-		_, err := os.Stat(option.DefaultLevelDbDir)
-		if os.IsNotExist(err) {
-			os.MkdirAll(option.DefaultLevelDbDir, 0755)
-		}
-		glog.V(0).Infof("default to create filer store dir in %s", option.DefaultLevelDbDir)
-	} else {
-		glog.Warningf("skipping default store dir in %s", option.DefaultLevelDbDir)
-	}
-	util.LoadConfiguration("notification", false)
-
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")
 	fs.filer.DirBucketsPath = v.GetString("filer.options.buckets_folder")
@@ -186,13 +190,13 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
-		defaultMux.HandleFunc("/healthz", fs.filerHealthzHandler)
-		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(fs.filerHandler))
+		defaultMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.filerHandler)))
 	}
 	if defaultMux != readonlyMux {
 		handleStaticResources(readonlyMux)
-		readonlyMux.HandleFunc("/healthz", fs.filerHealthzHandler)
-		readonlyMux.HandleFunc("/", fs.filerGuard.WhiteList(fs.readonlyFilerHandler))
+		readonlyMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		readonlyMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.readonlyFilerHandler)))
 	}
 
 	existingNodes := fs.filer.ListExistingPeerUpdates(context.Background())

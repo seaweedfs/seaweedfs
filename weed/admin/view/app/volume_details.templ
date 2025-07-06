@@ -1,0 +1,497 @@
+package app
+
+import (
+    "fmt"
+    "time"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ VolumeDetails(data dash.VolumeDetailsData) {
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <div>
+            <h1 class="h2">
+                <i class="fas fa-database me-2"></i>Volume Details
+            </h1>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="/admin" class="text-decoration-none">Dashboard</a></li>
+                    <li class="breadcrumb-item"><a href="/cluster/volumes" class="text-decoration-none">Volumes</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">Volume {fmt.Sprintf("%d", data.Volume.Id)}</li>
+                </ol>
+            </nav>
+        </div>
+        <div class="btn-toolbar mb-2 mb-md-0">
+            <div class="btn-group me-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="history.back()">
+                    <i class="fas fa-arrow-left me-1"></i>Back
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="window.location.reload()">
+                    <i class="fas fa-refresh me-1"></i>Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Volume Information Card -->
+        <div class="col-lg-8">
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">
+                        <i class="fas fa-info-circle me-2"></i>Volume Information
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Volume ID:</strong></label>
+                                <div><code class="fs-5">{fmt.Sprintf("%d", data.Volume.Id)}</code></div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Server:</strong></label>
+                                <div>
+                                    <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", data.Volume.Server))} target="_blank" class="text-decoration-none">
+                                        {data.Volume.Server}
+                                        <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                    </a>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Data Center:</strong></label>
+                                <div><span class="badge bg-light text-dark">{data.Volume.DataCenter}</span></div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Rack:</strong></label>
+                                <div><span class="badge bg-light text-dark">{data.Volume.Rack}</span></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Collection:</strong></label>
+                                <div>
+                                    if data.Volume.Collection == "" {
+                                        <a href={templ.SafeURL("/cluster/volumes?collection=default")} class="text-decoration-none">
+                                            <span class="badge bg-secondary">default</span>
+                                        </a>
+                                    } else {
+                                        <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", data.Volume.Collection))} class="text-decoration-none">
+                                            <span class="badge bg-secondary">{data.Volume.Collection}</span>
+                                        </a>
+                                    }
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Replication:</strong></label>
+                                <div><span class="badge bg-info">{fmt.Sprintf("%03d", data.Volume.ReplicaPlacement)}</span></div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Disk Type:</strong></label>
+                                <div>
+                                    <span class="badge bg-primary">
+                                        if data.Volume.DiskType == "" {
+                                            hdd
+                                        } else {
+                                            {data.Volume.DiskType}
+                                        }
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label"><strong>Version:</strong></label>
+                                <div><span class="badge bg-dark">{fmt.Sprintf("v%d", data.Volume.Version)}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistics Card -->
+        <div class="col-lg-4">
+            <!-- Volume Statistics & Health Card -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">
+                        <i class="fas fa-chart-pie me-2"></i>Volume Statistics & Health
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <!-- Storage Metrics -->
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <div class="text-center">
+                                <div class="h4 mb-0 font-weight-bold text-success">
+                                    {formatBytes(int64(data.Volume.Size - data.Volume.DeletedByteCount))}
+                                </div>
+                                <small class="text-muted">Active Bytes</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center">
+                                <div class="h4 mb-0 font-weight-bold text-danger">
+                                    {formatBytes(int64(data.Volume.DeletedByteCount))}
+                                </div>
+                                <small class="text-muted">Deleted Bytes</small>
+                            </div>
+                        </div>
+                    </div>
+
+
+
+                    <!-- File Metrics -->
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <div class="text-center">
+                                <div class="h4 mb-0 font-weight-bold text-success">
+                                    {fmt.Sprintf("%d", data.Volume.FileCount)}
+                                </div>
+                                <small class="text-muted">Active Files</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center">
+                                <div class="h4 mb-0 font-weight-bold text-danger">
+                                    {fmt.Sprintf("%d", data.Volume.DeleteCount)}
+                                </div>
+                                <small class="text-muted">Deleted Files</small>
+                            </div>
+                        </div>
+                    </div>
+
+
+
+                    <!-- Storage Efficiency -->
+                    if data.Volume.FileCount > 0 && data.Volume.Size > 0 {
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <small class="text-muted">Storage Efficiency</small>
+                                <small class="text-muted">
+                                    {fmt.Sprintf("%.1f%%", float64(data.Volume.Size-data.Volume.DeletedByteCount)/float64(data.Volume.Size)*100)}
+                                </small>
+                            </div>
+                            <div class="progress" style="height: 8px;">
+                                <div class="progress-bar bg-info" role="progressbar" 
+                                     style={fmt.Sprintf("width: %.1f%%", float64(data.Volume.Size-data.Volume.DeletedByteCount)/float64(data.Volume.Size)*100)}
+                                     aria-valuenow={fmt.Sprintf("%.1f", float64(data.Volume.Size-data.Volume.DeletedByteCount)/float64(data.Volume.Size)*100)}
+                                     aria-valuemin="0" aria-valuemax="100">
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    <hr class="my-3">
+
+                    <!-- Status & Configuration -->
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <div class="text-center mb-2">
+                                if data.Volume.ReadOnly {
+                                    <span class="badge bg-warning fs-6 px-3 py-2">
+                                        <i class="fas fa-lock me-1"></i>Read Only
+                                    </span>
+                                    if data.Volume.Size >= data.VolumeSizeLimit {
+                                        <div class="mt-1">
+                                            <small class="text-muted">Size limit exceeded</small>
+                                        </div>
+                                    }
+                                } else if data.VolumeSizeLimit > data.Volume.Size {
+                                    <span class="badge bg-success fs-6 px-3 py-2">
+                                        <i class="fas fa-edit me-1"></i>Read/Write
+                                    </span>
+                                } else {
+                                    <span class="badge bg-warning fs-6 px-3 py-2">
+                                        <i class="fas fa-exclamation-triangle me-1"></i>Size Limit Reached
+                                    </span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Maintenance Info -->
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <div class="text-center">
+                                <div class="h6 mb-0 font-weight-bold text-info">
+                                    #{fmt.Sprintf("%d", data.Volume.CompactRevision)}
+                                </div>
+                                <small class="text-muted">Vacuum Revision</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center">
+                                <div class="h6 mb-0 font-weight-bold text-secondary">
+                                    if data.Volume.ModifiedAtSecond > 0 {
+                                        {formatTimestamp(data.Volume.ModifiedAtSecond)}
+                                    } else {
+                                        <span class="text-muted">Never modified</span>
+                                    }
+                                </div>
+                                <small class="text-muted">Last Modified</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TTL Configuration -->
+                    if data.Volume.Ttl > 0 {
+                        <div class="mb-3 text-center">
+                            <span class="badge bg-info fs-6 px-3 py-2">
+                                <i class="fas fa-clock me-1"></i>{formatTTL(data.Volume.Ttl)}
+                            </span>
+                            <div class="mt-1">
+                                <small class="text-muted">Time To Live</small>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Remote Storage Configuration -->
+                    if data.Volume.RemoteStorageName != "" {
+                        <hr class="my-3">
+                        <div class="mb-2">
+                            <div class="text-center">
+                                <div class="h6 mb-1 font-weight-bold text-info">
+                                    <i class="fas fa-cloud me-1"></i>{data.Volume.RemoteStorageName}
+                                </div>
+                                <small class="text-muted">Remote Storage</small>
+                            </div>
+                        </div>
+                        if data.Volume.RemoteStorageKey != "" {
+                            <div class="text-center">
+                                <div class="text-xs font-monospace bg-light p-2 rounded text-truncate" title={data.Volume.RemoteStorageKey}>
+                                    {data.Volume.RemoteStorageKey}
+                                </div>
+                                <small class="text-muted">Storage Key</small>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Replicas Card -->
+    if len(data.Replicas) > 0 {
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-copy me-2"></i>Replicas ({fmt.Sprintf("%d", data.ReplicationCount)})
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Server</th>
+                                        <th>Data Center</th>
+                                        <th>Rack</th>
+                                        <th>Size</th>
+                                        <th>File Count</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Primary Volume (current one) -->
+                                    <tr class="table-primary">
+                                        <td>
+                                            <strong>
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", data.Volume.Server))} target="_blank" class="text-decoration-none">
+                                                    {data.Volume.Server}
+                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                </a>
+                                            </strong>
+                                            <span class="badge bg-success ms-2">Primary</span>
+                                        </td>
+                                        <td><span class="badge bg-light text-dark">{data.Volume.DataCenter}</span></td>
+                                        <td><span class="badge bg-light text-dark">{data.Volume.Rack}</span></td>
+                                        <td>{formatBytes(int64(data.Volume.Size))}</td>
+                                        <td>{fmt.Sprintf("%d", data.Volume.FileCount)}</td>
+                                        <td><span class="badge bg-success">Active</span></td>
+                                        <td>
+                                            <span class="text-muted">Current Volume</span>
+                                        </td>
+                                    </tr>
+                                    <!-- Replica Volumes -->
+                                    for _, replica := range data.Replicas {
+                                        <tr>
+                                            <td>
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", replica.Server))} target="_blank" class="text-decoration-none">
+                                                    {replica.Server}
+                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                </a>
+                                            </td>
+                                            <td><span class="badge bg-light text-dark">{replica.DataCenter}</span></td>
+                                            <td><span class="badge bg-light text-dark">{replica.Rack}</span></td>
+                                            <td>{formatBytes(int64(replica.Size))}</td>
+                                            <td>{fmt.Sprintf("%d", replica.FileCount)}</td>
+                                            <td><span class="badge bg-info">Replica</span></td>
+                                            <td>
+                                                <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes/%d/%s", replica.Id, replica.Server))} class="btn btn-sm btn-outline-primary">
+                                                    <i class="fas fa-eye me-1"></i>View
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Actions Card -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">
+                        <i class="fas fa-tools me-2"></i>Actions
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div class="btn-group" role="group">
+                        <button type="button" class="btn btn-outline-danger vacuum-btn" 
+                                title="Vacuum Volume" 
+                                data-volume-id={fmt.Sprintf("%d", data.Volume.Id)} 
+                                data-server={data.Volume.Server}>
+                            <i class="fas fa-compress-alt me-1"></i>Vacuum
+                        </button>
+                    </div>
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Use these actions to perform maintenance operations on the volume.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Last Updated -->
+    <div class="row">
+        <div class="col-12">
+            <small class="text-muted">
+                <i class="fas fa-clock me-1"></i>
+                Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
+            </small>
+        </div>
+    </div>
+
+    <!-- JavaScript for volume actions -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add click handler for vacuum button
+            const vacuumBtn = document.querySelector('.vacuum-btn');
+            if (vacuumBtn) {
+                vacuumBtn.addEventListener('click', function() {
+                    const volumeId = this.getAttribute('data-volume-id');
+                    const server = this.getAttribute('data-server');
+                    performVacuum(volumeId, server, this);
+                });
+            }
+        });
+
+        function performVacuum(volumeId, server, button) {
+            // Disable button and show loading state
+            const originalText = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Vacuuming...';
+
+            // Send vacuum request
+            fetch(`/api/volumes/${volumeId}/${encodeURIComponent(server)}/vacuum`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showMessage(data.error, 'error');
+                } else {
+                    showMessage(data.message || 'Volume vacuum started successfully', 'success');
+                    // Optionally refresh the page after a delay
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showMessage('Failed to start vacuum operation', 'error');
+            })
+            .finally(() => {
+                // Re-enable button
+                button.disabled = false;
+                button.innerHTML = originalText;
+            });
+        }
+
+        function showMessage(message, type) {
+            // Create toast notification
+            const toast = document.createElement('div');
+            toast.className = `alert alert-${type === 'error' ? 'danger' : 'success'} alert-dismissible fade show position-fixed`;
+            toast.style.top = '20px';
+            toast.style.right = '20px';
+            toast.style.zIndex = '9999';
+            toast.style.minWidth = '300px';
+            
+            toast.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            document.body.appendChild(toast);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 5000);
+        }
+    </script>
+}
+
+func formatTimestamp(unixTimestamp int64) string {
+    if unixTimestamp <= 0 {
+        return "Never"
+    }
+    t := time.Unix(unixTimestamp, 0)
+    return t.Format("2006-01-02 15:04:05")
+}
+
+func formatTTL(ttlSeconds uint32) string {
+    if ttlSeconds == 0 {
+        return "No TTL"
+    }
+    
+    duration := time.Duration(ttlSeconds) * time.Second
+    
+    // Convert to human readable format
+    days := int(duration.Hours()) / 24
+    hours := int(duration.Hours()) % 24
+    minutes := int(duration.Minutes()) % 60
+    
+    if days > 0 {
+        if hours > 0 {
+            return fmt.Sprintf("%dd %dh", days, hours)
+        }
+        return fmt.Sprintf("%d days", days)
+    } else if hours > 0 {
+        if minutes > 0 {
+            return fmt.Sprintf("%dh %dm", hours, minutes)
+        }
+        return fmt.Sprintf("%d hours", hours)
+    } else if minutes > 0 {
+        return fmt.Sprintf("%d minutes", minutes)
+    } else {
+        return fmt.Sprintf("%d seconds", int(duration.Seconds()))
+    }
+} 

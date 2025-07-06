@@ -1,0 +1,30 @@
+version: '3.9'
+
+services:
+  tarantool:
+    image: chrislusf/tarantool_dev_env
+    entrypoint: "tt start app -i"
+    environment:
+      APP_USER_PASSWORD: "app"
+      CLIENT_USER_PASSWORD: "client"
+      REPLICATOR_USER_PASSWORD: "replicator"
+      STORAGE_USER_PASSWORD: "storage"
+    network_mode: "host"
+    ports:
+      - "3303:3303"
+
+  s3:
+    image: chrislusf/seaweedfs:local
+    command: "server -ip=127.0.0.1 -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8000 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false"
+    volumes:
+      - ./s3.json:/etc/seaweedfs/s3.json
+    environment:
+      WEED_LEVELDB2_ENABLED: "false"
+      WEED_TARANTOOL_ENABLED: "true"
+      WEED_TARANTOOL_ADDRESS: "127.0.0.1:3303"
+      WEED_TARANTOOL_USER: "client"
+      WEED_TARANTOOL_PASSWORD: "client"
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+    network_mode: "host"
+    depends_on:
+      - tarantool

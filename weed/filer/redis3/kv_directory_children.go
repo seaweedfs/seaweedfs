@@ -3,6 +3,7 @@ package redis3
 import (
 	"context"
 	"fmt"
+
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -31,7 +32,7 @@ func insertChild(ctx context.Context, redisStore *UniversalRedis3Store, key stri
 	nameList := LoadItemList([]byte(data), key, client, store, maxNameBatchSizeLimit)
 
 	if err := nameList.WriteName(name); err != nil {
-		glog.Errorf("add %s %s: %v", key, name, err)
+		glog.ErrorfCtx(ctx, "add %s %s: %v", key, name, err)
 		return err
 	}
 
@@ -100,7 +101,7 @@ func removeChildren(ctx context.Context, redisStore *UniversalRedis3Store, key s
 
 	if err = nameList.ListNames("", func(name string) bool {
 		if err := onDeleteFn(name); err != nil {
-			glog.Errorf("delete %s child %s: %v", key, name, err)
+			glog.ErrorfCtx(ctx, "delete %s child %s: %v", key, name, err)
 			return false
 		}
 		return true

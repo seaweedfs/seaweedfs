@@ -29,6 +29,7 @@ public class SeaweedFileSystem extends FileSystem {
     public static final String FS_SEAWEED_REPLICATION = "fs.seaweed.replication";
     public static final String FS_SEAWEED_VOLUME_SERVER_ACCESS = "fs.seaweed.volume.server.access";
     public static final int FS_SEAWEED_DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
+    public static final String FS_SEAWEED_FILER_CN = "fs.seaweed.filer.cn";
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystem.class);
 
@@ -63,8 +64,9 @@ public class SeaweedFileSystem extends FileSystem {
         setConf(conf);
         this.uri = uri;
 
-        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port, grpcPort, conf);
+        String cn = conf.get(FS_SEAWEED_FILER_CN, "");
 
+        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port, grpcPort, cn, conf);
     }
 
     @Override

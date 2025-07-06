@@ -1,19 +1,21 @@
 package s3api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc"
 )
 
 type Action string
@@ -35,6 +37,9 @@ type IdentityAccessManagement struct {
 	hashMu            sync.RWMutex
 	domain            string
 	isAuthEnabled     bool
+	credentialManager *credential.CredentialManager
+	filerClient       filer_pb.SeaweedFilerClient
+	grpcDialOption    grpc.DialOption
 }
 
 type Identity struct {
@@ -114,11 +119,32 @@ func (action Action) getPermission() Permission {
 }
 
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
+	return NewIdentityAccessManagementWithStore(option, "")
+}
+
+func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitStore string) *IdentityAccessManagement {
 	iam := &IdentityAccessManagement{
 		domain:       option.DomainName,
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
+
+	// Always initialize credential manager with fallback to defaults
+	credentialManager, err := credential.NewCredentialManagerWithDefaults(credential.CredentialStoreTypeName(explicitStore))
+	if err != nil {
+		glog.Fatalf("failed to initialize credential manager: %v", err)
+	}
+
+	// For stores that need filer client details, set them
+	if store := credentialManager.GetStore(); store != nil {
+		if filerClientSetter, ok := store.(interface {
+			SetFilerClient(string, grpc.DialOption)
+		}); ok {
+			filerClientSetter.SetFilerClient(string(option.Filer), option.GrpcDialOption)
+		}
+	}
+
+	iam.credentialManager = credentialManager
 
 	if option.Config != "" {
 		glog.V(3).Infof("loading static config file %s", option.Config)
@@ -126,7 +152,7 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
 	} else {
-		glog.V(3).Infof("no static config file specified... loading config from filer %s", option.Filer)
+		glog.V(3).Infof("no static config file specified... loading config from credential manager")
 		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
 			glog.Warningf("fail to load config: %v", err)
 		}
@@ -134,17 +160,8 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 	return iam
 }
 
-func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) (err error) {
-	var content []byte
-	err = pb.WithFilerClient(false, 0, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		glog.V(3).Infof("loading config %s from filer %s", filer.IamConfigDirectory+"/"+filer.IamIdentityFile, option.Filer)
-		content, err = filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile)
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("read S3 config: %v", err)
-	}
-	return iam.LoadS3ApiConfigurationFromBytes(content)
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) error {
+	return iam.LoadS3ApiConfigurationFromCredentialManager()
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
@@ -515,4 +532,23 @@ func (identity *Identity) isAdmin() bool {
 		}
 	}
 	return false
+}
+
+// GetCredentialManager returns the credential manager instance
+func (iam *IdentityAccessManagement) GetCredentialManager() *credential.CredentialManager {
+	return iam.credentialManager
+}
+
+// LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
+func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
+	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to load configuration from credential manager: %v", err)
+	}
+
+	if len(s3ApiConfiguration.Identities) == 0 {
+		return fmt.Errorf("no identities found")
+	}
+
+	return iam.loadS3ApiConfiguration(s3ApiConfiguration)
 }

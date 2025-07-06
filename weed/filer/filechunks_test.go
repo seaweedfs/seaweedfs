@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math"
@@ -21,7 +22,7 @@ func TestCompactFileChunks(t *testing.T) {
 		{Offset: 110, Size: 200, FileId: "jkl", ModifiedTsNs: 300},
 	}
 
-	compacted, garbage := CompactFileChunks(nil, chunks)
+	compacted, garbage := CompactFileChunks(context.Background(), nil, chunks)
 
 	if len(compacted) != 3 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
@@ -54,7 +55,7 @@ func TestCompactFileChunks2(t *testing.T) {
 		})
 	}
 
-	compacted, garbage := CompactFileChunks(nil, chunks)
+	compacted, garbage := CompactFileChunks(context.Background(), nil, chunks)
 
 	if len(compacted) != 4 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
@@ -90,7 +91,7 @@ func TestRandomFileChunksCompact(t *testing.T) {
 		}
 	}
 
-	visibles, _ := NonOverlappingVisibleIntervals(nil, chunks, 0, math.MaxInt64)
+	visibles, _ := NonOverlappingVisibleIntervals(context.Background(), nil, chunks, 0, math.MaxInt64)
 
 	for visible := visibles.Front(); visible != nil; visible = visible.Next {
 		v := visible.Value
@@ -228,7 +229,7 @@ func TestIntervalMerging(t *testing.T) {
 
 	for i, testcase := range testcases {
 		log.Printf("++++++++++ merged test case %d ++++++++++++++++++++", i)
-		intervals, _ := NonOverlappingVisibleIntervals(nil, testcase.Chunks, 0, math.MaxInt64)
+		intervals, _ := NonOverlappingVisibleIntervals(context.Background(), nil, testcase.Chunks, 0, math.MaxInt64)
 		x := -1
 		for visible := intervals.Front(); visible != nil; visible = visible.Next {
 			x++
@@ -426,7 +427,7 @@ func TestChunksReading(t *testing.T) {
 			// continue
 		}
 		log.Printf("++++++++++ read test case %d ++++++++++++++++++++", i)
-		chunks := ViewFromChunks(nil, testcase.Chunks, testcase.Offset, testcase.Size)
+		chunks := ViewFromChunks(context.Background(), nil, testcase.Chunks, testcase.Offset, testcase.Size)
 		x := -1
 		for c := chunks.Front(); c != nil; c = c.Next {
 			x++
@@ -473,7 +474,7 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 	}
 
 	for n := 0; n < b.N; n++ {
-		CompactFileChunks(nil, chunks)
+		CompactFileChunks(context.Background(), nil, chunks)
 	}
 }
 
@@ -562,7 +563,7 @@ func TestCompactFileChunks3(t *testing.T) {
 		{Offset: 300, Size: 100, FileId: "def", ModifiedTsNs: 200},
 	}
 
-	compacted, _ := CompactFileChunks(nil, chunks)
+	compacted, _ := CompactFileChunks(context.Background(), nil, chunks)
 
 	if len(compacted) != 4 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))

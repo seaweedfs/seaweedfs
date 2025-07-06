@@ -64,7 +64,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	}
 
 	// detect storage option
-	so, err := fs.detectStorageOption(req.Directory, "", "", 0, "", "", "", "")
+	so, err := fs.detectStorageOption(ctx, req.Directory, "", "", 0, "", "", "", "")
 	if err != nil {
 		return resp, err
 	}
@@ -97,7 +97,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 			}
 
 			// assign one volume server
-			assignResult, err := operation.Assign(fs.filer.GetMaster, fs.grpcDialOption, assignRequest, altRequest)
+			assignResult, err := operation.Assign(ctx, fs.filer.GetMaster, fs.grpcDialOption, assignRequest, altRequest)
 			if err != nil {
 				fetchAndWriteErr = err
 				return
@@ -184,10 +184,10 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	// this skips meta data log events
 
 	if err := fs.filer.Store.UpdateEntry(context.Background(), newEntry); err != nil {
-		fs.filer.DeleteUncommittedChunks(chunks)
+		fs.filer.DeleteUncommittedChunks(ctx, chunks)
 		return nil, err
 	}
-	fs.filer.DeleteChunks(entry.FullPath, garbage)
+	fs.filer.DeleteChunks(ctx, entry.FullPath, garbage)
 
 	fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, false, nil)
 

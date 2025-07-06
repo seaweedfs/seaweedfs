@@ -1,0 +1,306 @@
+package components
+
+import "fmt"
+
+// FormFieldData represents common form field data
+type FormFieldData struct {
+    Name        string
+    Label       string
+    Description string
+    Required    bool
+}
+
+// TextFieldData represents text input field data
+type TextFieldData struct {
+    FormFieldData
+    Value       string
+    Placeholder string
+}
+
+// NumberFieldData represents number input field data
+type NumberFieldData struct {
+    FormFieldData
+    Value float64
+    Step  string
+    Min   *float64
+    Max   *float64
+}
+
+// CheckboxFieldData represents checkbox field data
+type CheckboxFieldData struct {
+    FormFieldData
+    Checked bool
+}
+
+// SelectFieldData represents select field data
+type SelectFieldData struct {
+    FormFieldData
+    Value   string
+    Options []SelectOption
+}
+
+type SelectOption struct {
+    Value string
+    Label string
+}
+
+// DurationFieldData represents duration input field data
+type DurationFieldData struct {
+    FormFieldData
+    Value       string
+    Placeholder string
+}
+
+// DurationInputFieldData represents duration input with number + unit dropdown
+type DurationInputFieldData struct {
+    FormFieldData
+    Seconds int // The duration value in seconds
+}
+
+// TextField renders a Bootstrap text input field
+templ TextField(data TextFieldData) {
+    <div class="mb-3">
+        <label for={ data.Name } class="form-label">
+            { data.Label }
+            if data.Required {
+                <span class="text-danger">*</span>
+            }
+        </label>
+        <input 
+            type="text" 
+            class="form-control" 
+            id={ data.Name } 
+            name={ data.Name } 
+            value={ data.Value }
+            if data.Placeholder != "" {
+                placeholder={ data.Placeholder }
+            }
+            if data.Required {
+                required
+            }
+        />
+        if data.Description != "" {
+            <div class="form-text text-muted">{ data.Description }</div>
+        }
+    </div>
+}
+
+// NumberField renders a Bootstrap number input field
+templ NumberField(data NumberFieldData) {
+    <div class="mb-3">
+        <label for={ data.Name } class="form-label">
+            { data.Label }
+            if data.Required {
+                <span class="text-danger">*</span>
+            }
+        </label>
+        <input 
+            type="number" 
+            class="form-control" 
+            id={ data.Name } 
+            name={ data.Name } 
+            value={ fmt.Sprintf("%.6g", data.Value) }
+            if data.Step != "" {
+                step={ data.Step }
+            } else {
+                step="any"
+            }
+            if data.Min != nil {
+                min={ fmt.Sprintf("%.6g", *data.Min) }
+            }
+            if data.Max != nil {
+                max={ fmt.Sprintf("%.6g", *data.Max) }
+            }
+            if data.Required {
+                required
+            }
+        />
+        if data.Description != "" {
+            <div class="form-text text-muted">{ data.Description }</div>
+        }
+    </div>
+}
+
+// CheckboxField renders a Bootstrap checkbox field
+templ CheckboxField(data CheckboxFieldData) {
+    <div class="mb-3">
+        <div class="form-check">
+            <input 
+                type="checkbox" 
+                class="form-check-input" 
+                id={ data.Name } 
+                name={ data.Name }
+                if data.Checked {
+                    checked
+                }
+            />
+            <label class="form-check-label" for={ data.Name }>
+                { data.Label }
+            </label>
+        </div>
+        if data.Description != "" {
+            <div class="form-text text-muted">{ data.Description }</div>
+        }
+    </div>
+}
+
+// SelectField renders a Bootstrap select field
+templ SelectField(data SelectFieldData) {
+    <div class="mb-3">
+        <label for={ data.Name } class="form-label">
+            { data.Label }
+            if data.Required {
+                <span class="text-danger">*</span>
+            }
+        </label>
+        <select 
+            class="form-select" 
+            id={ data.Name } 
+            name={ data.Name }
+            if data.Required {
+                required
+            }
+        >
+            for _, option := range data.Options {
+                <option 
+                    value={ option.Value }
+                    if option.Value == data.Value {
+                        selected
+                    }
+                >
+                    { option.Label }
+                </option>
+            }
+        </select>
+        if data.Description != "" {
+            <div class="form-text text-muted">{ data.Description }</div>
+        }
+    </div>
+}
+
+// DurationField renders a Bootstrap duration input field
+templ DurationField(data DurationFieldData) {
+    <div class="mb-3">
+        <label for={ data.Name } class="form-label">
+            { data.Label }
+            if data.Required {
+                <span class="text-danger">*</span>
+            }
+        </label>
+        <input 
+            type="text" 
+            class="form-control" 
+            id={ data.Name } 
+            name={ data.Name } 
+            value={ data.Value }
+            if data.Placeholder != "" {
+                placeholder={ data.Placeholder }
+            } else {
+                placeholder="e.g., 30m, 2h, 24h"
+            }
+            if data.Required {
+                required
+            }
+        />
+        if data.Description != "" {
+            <div class="form-text text-muted">{ data.Description }</div>
+        }
+    </div>
+}
+
+// DurationInputField renders a Bootstrap duration input with number + unit dropdown
+templ DurationInputField(data DurationInputFieldData) {
+	<div class="mb-3">
+		<label for={ data.Name } class="form-label">
+			{ data.Label }
+			if data.Required {
+				<span class="text-danger">*</span>
+			}
+		</label>
+		<div class="input-group">
+			<input 
+				type="number" 
+				class="form-control" 
+				id={ data.Name } 
+				name={ data.Name } 
+				value={ fmt.Sprintf("%.0f", convertSecondsToValue(data.Seconds, convertSecondsToUnit(data.Seconds))) }
+				step="1"
+				min="1"
+				if data.Required {
+					required
+				}
+			/>
+			<select 
+				class="form-select" 
+				id={ data.Name + "_unit" } 
+				name={ data.Name + "_unit" }
+				style="max-width: 120px;"
+			>
+				<option 
+					value="minutes"
+					if convertSecondsToUnit(data.Seconds) == "minutes" {
+						selected
+					}
+				>
+					Minutes
+				</option>
+				<option 
+					value="hours"
+					if convertSecondsToUnit(data.Seconds) == "hours" {
+						selected
+					}
+				>
+					Hours
+				</option>
+				<option 
+					value="days"
+					if convertSecondsToUnit(data.Seconds) == "days" {
+						selected
+					}
+				>
+					Days
+				</option>
+			</select>
+		</div>
+		if data.Description != "" {
+			<div class="form-text text-muted">{ data.Description }</div>
+		}
+	</div>
+}
+
+// Helper functions for duration conversion (used by DurationInputField)
+func convertSecondsToUnit(seconds int) string {
+	if seconds == 0 {
+		return "minutes"
+	}
+	
+	// Try days first
+	if seconds%(24*3600) == 0 && seconds >= 24*3600 {
+		return "days"
+	}
+	
+	// Try hours
+	if seconds%3600 == 0 && seconds >= 3600 {
+		return "hours"
+	}
+	
+	// Default to minutes
+	return "minutes"
+}
+
+func convertSecondsToValue(seconds int, unit string) float64 {
+	if seconds == 0 {
+		return 0
+	}
+	
+	switch unit {
+	case "days":
+		return float64(seconds / (24 * 3600))
+	case "hours":
+		return float64(seconds / 3600)
+	case "minutes":
+		return float64(seconds / 60)
+	default:
+		return float64(seconds / 60) // Default to minutes
+	}
+} 

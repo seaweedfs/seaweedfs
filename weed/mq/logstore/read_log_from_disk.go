@@ -1,6 +1,7 @@
 package logstore
 
 import (
+	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -74,7 +75,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				glog.Warningf("this should not happen. unexpected chunk manifest in %s/%s", partitionDir, entry.Name)
 				return
 			}
-			urlStrings, err = lookupFileIdFn(chunk.FileId)
+			urlStrings, err = lookupFileIdFn(context.Background(), chunk.FileId)
 			if err != nil {
 				err = fmt.Errorf("lookup %s: %v", chunk.FileId, err)
 				return
@@ -113,7 +114,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		stopTime := time.Unix(0, stopTsNs)
 		var processedTsNs int64
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer_pb.SeaweedList(client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+			return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 				if entry.IsDirectory {
 					return nil
 				}

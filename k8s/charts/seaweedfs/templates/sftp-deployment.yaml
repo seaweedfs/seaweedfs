@@ -1,0 +1,300 @@
+{{- if .Values.sftp.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "seaweedfs.name" . }}-sftp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: sftp
+{{- if .Values.sftp.annotations }}
+  annotations:
+    {{- toYaml .Values.sftp.annotations | nindent 4 }}
+{{- end }}
+spec:
+  replicas: {{ .Values.sftp.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: sftp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: sftp
+      {{ with .Values.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sftp.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      annotations:
+      {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sftp.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: {{ default .Values.global.restartPolicy .Values.sftp.restartPolicy }}
+      {{- if .Values.sftp.affinity }}
+      affinity:
+        {{ tpl .Values.sftp.affinity . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.sftp.topologySpreadConstraints }}
+      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "sftp") | nindent 6 }}
+      {{- end }}
+      {{- if .Values.sftp.tolerations }}
+      tolerations:
+        {{ tpl .Values.sftp.tolerations . | nindent 8 | trim }}
+      {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
+      terminationGracePeriodSeconds: 10
+      {{- if .Values.sftp.priorityClassName }}
+      priorityClassName: {{ .Values.sftp.priorityClassName | quote }}
+      {{- end }}
+      enableServiceLinks: false
+      {{- if .Values.sftp.serviceAccountName }}
+      serviceAccountName: {{ .Values.sftp.serviceAccountName | quote }}
+      {{- end }}
+      {{- if .Values.sftp.initContainers }}
+      initContainers:
+        {{ tpl .Values.sftp.initContainers . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.sftp.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.sftp.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: seaweedfs
+          image: {{ template "sftp.image" . }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SEAWEEDFS_FULLNAME
+              value: "{{ template "seaweedfs.name" . }}"
+            {{- if .Values.sftp.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.sftp.extraEnvironmentVars }}
+            - name: {{ $key }}
+            {{- if kindIs "string" $value }}
+              value: {{ $value | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- end -}}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.global.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
+            - name: {{ $key }}
+            {{- if kindIs "string" $value }}
+              value: {{ $value | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- end -}}
+            {{- end }}
+            {{- end }}
+          command:
+            - "/bin/sh"
+            - "-ec"
+            - |
+              exec /usr/bin/weed \
+              {{- if or (eq .Values.sftp.logs.type "hostPath") (eq .Values.sftp.logs.type "emptyDir") }}
+              -logdir=/logs \
+              {{- else }}
+              -logtostderr=true \
+              {{- end }}
+              {{- if .Values.sftp.loggingOverrideLevel }}
+              -v={{ .Values.sftp.loggingOverrideLevel }} \
+              {{- else }}
+              -v={{ .Values.global.loggingLevel }} \
+              {{- end }}
+              sftp \
+              -ip.bind={{ .Values.sftp.bindAddress }} \
+              -port={{ .Values.sftp.port }} \
+              {{- if .Values.sftp.metricsPort }}
+              -metricsPort={{ .Values.sftp.metricsPort }} \
+              {{- end }}
+              {{- if .Values.sftp.metricsIp }}
+              -metricsIp={{ .Values.sftp.metricsIp }} \
+              {{- end }}
+              {{- if .Values.sftp.sshPrivateKey }}
+              -sshPrivateKey={{ .Values.sftp.sshPrivateKey }} \
+              {{- end }}
+              {{- if .Values.sftp.hostKeysFolder }}
+              -hostKeysFolder={{ .Values.sftp.hostKeysFolder }} \
+              {{- end }}
+              {{- if .Values.sftp.authMethods }}
+              -authMethods={{ .Values.sftp.authMethods }} \
+              {{- end }}
+              {{- if .Values.sftp.maxAuthTries }}
+              -maxAuthTries={{ .Values.sftp.maxAuthTries }} \
+              {{- end }}
+              {{- if .Values.sftp.bannerMessage }}
+              -bannerMessage="{{ .Values.sftp.bannerMessage }}" \
+              {{- end }}
+              {{- if .Values.sftp.loginGraceTime }}
+              -loginGraceTime={{ .Values.sftp.loginGraceTime }} \
+              {{- end }}
+              {{- if .Values.sftp.clientAliveInterval }}
+              -clientAliveInterval={{ .Values.sftp.clientAliveInterval }} \
+              {{- end }}
+              {{- if .Values.sftp.clientAliveCountMax }}
+              -clientAliveCountMax={{ .Values.sftp.clientAliveCountMax }} \
+              {{- end }}
+              {{- if .Values.sftp.dataCenter }}
+              -dataCenter={{ .Values.sftp.dataCenter }} \
+              {{- end }}
+              {{- if .Values.sftp.localSocket }}
+              -localSocket={{ .Values.sftp.localSocket }} \
+              {{- end }}
+              {{- if .Values.global.enableSecurity }}
+              -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
+              -key.file=/usr/local/share/ca-certificates/client/tls.key \
+              {{- end }}
+              -userStoreFile=/etc/sw/seaweedfs_sftp_config \
+              -filer={{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}
+          volumeMounts:
+            {{- if or (eq .Values.sftp.logs.type "hostPath") (eq .Values.sftp.logs.type "emptyDir") }}
+            - name: logs
+              mountPath: "/logs/"
+            {{- end }}
+            {{- if .Values.sftp.enableAuth }}
+            - mountPath: /etc/sw
+              name: config-users
+              readOnly: true
+            {{- end }}
+            - mountPath: /etc/sw/ssh
+              name: config-ssh
+              readOnly: true
+            {{- if .Values.global.enableSecurity }}
+            - name: security-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/security.toml
+              subPath: security.toml
+            - name: ca-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/ca/
+            - name: master-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/master/
+            - name: volume-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/volume/
+            - name: filer-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/filer/
+            - name: client-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/client/
+            {{- end }}
+            {{ tpl .Values.sftp.extraVolumeMounts . | nindent 12 | trim }}
+          ports:
+            - containerPort: {{ .Values.sftp.port }}
+              name: swfs-sftp
+            {{- if .Values.sftp.metricsPort }}
+            - containerPort: {{ .Values.sftp.metricsPort }}
+              name: metrics
+            {{- end }}
+          {{- if .Values.sftp.readinessProbe.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.sftp.port }}
+            initialDelaySeconds: {{ .Values.sftp.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.sftp.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.sftp.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.sftp.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.sftp.readinessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.sftp.livenessProbe.enabled }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.sftp.port }}
+            initialDelaySeconds: {{ .Values.sftp.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.sftp.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.sftp.livenessProbe.successThreshold }}
+            failureThreshold: {{ .Values.sftp.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.sftp.livenessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- with .Values.sftp.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.sftp.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.sftp.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+      {{- if .Values.sftp.sidecars }}
+      {{- include "common.tplvalues.render" (dict "value" .Values.sftp.sidecars "context" $) | nindent 8 }}
+      {{- end }}
+      volumes:
+        {{- if .Values.sftp.enableAuth }}
+        - name: config-users
+          secret:
+            defaultMode: 420
+            {{- if .Values.sftp.existingConfigSecret }}
+            secretName: {{ .Values.sftp.existingConfigSecret }}
+            {{- else }}
+            secretName: seaweedfs-sftp-secret
+            {{- end }}
+        {{- end }}
+        - name: config-ssh
+          secret:
+            defaultMode: 420
+            {{- if .Values.sftp.existingSshConfigSecret }}
+            secretName: {{ .Values.sftp.existingSshConfigSecret }}
+            {{- else }}
+            secretName: seaweedfs-sftp-ssh-secret
+            {{- end }}
+        {{- if eq .Values.sftp.logs.type "hostPath" }}
+        - name: logs
+          hostPath:
+            path: {{ .Values.sftp.logs.hostPathPrefix }}/logs/seaweedfs/sftp
+            type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.sftp.logs.type "emptyDir" }}
+        - name: logs
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.global.enableSecurity }}
+        - name: security-config
+          configMap:
+            name: {{ template "seaweedfs.name" . }}-security-config
+        - name: ca-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+        - name: master-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-master-cert
+        - name: volume-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+        - name: filer-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+        - name: client-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-client-cert
+        {{- end }}
+        {{ tpl .Values.sftp.extraVolumes . | indent 8 | trim }}
+      {{- if .Values.sftp.nodeSelector }}
+      nodeSelector:
+        {{ tpl .Values.sftp.nodeSelector . | indent 8 | trim }}
+      {{- end }}
+{{- end }}

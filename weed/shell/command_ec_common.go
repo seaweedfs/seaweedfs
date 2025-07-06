@@ -7,7 +7,6 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -112,53 +111,6 @@ var (
 	// Overridable functions for testing.
 	getDefaultReplicaPlacement = _getDefaultReplicaPlacement
 )
-
-type ErrorWaitGroup struct {
-	maxConcurrency int
-	wg             *sync.WaitGroup
-	wgSem          chan bool
-	errors         []error
-	errorsMu       sync.Mutex
-}
-type ErrorWaitGroupTask func() error
-
-func NewErrorWaitGroup(maxConcurrency int) *ErrorWaitGroup {
-	if maxConcurrency <= 0 {
-		// No concurrency = one task at the time
-		maxConcurrency = 1
-	}
-	return &ErrorWaitGroup{
-		maxConcurrency: maxConcurrency,
-		wg:             &sync.WaitGroup{},
-		wgSem:          make(chan bool, maxConcurrency),
-	}
-}
-
-func (ewg *ErrorWaitGroup) Add(f ErrorWaitGroupTask) {
-	if ewg.maxConcurrency <= 1 {
-		// Keep run order deterministic when parallelization is off
-		ewg.errors = append(ewg.errors, f())
-		return
-	}
-
-	ewg.wg.Add(1)
-	go func() {
-		ewg.wgSem <- true
-
-		err := f()
-		ewg.errorsMu.Lock()
-		ewg.errors = append(ewg.errors, err)
-		ewg.errorsMu.Unlock()
-
-		<-ewg.wgSem
-		ewg.wg.Done()
-	}()
-}
-
-func (ewg *ErrorWaitGroup) Wait() error {
-	ewg.wg.Wait()
-	return errors.Join(ewg.errors...)
-}
 
 func _getDefaultReplicaPlacement(commandEnv *CommandEnv) (*super_block.ReplicaPlacement, error) {
 	var resp *master_pb.GetMasterConfigurationResponse

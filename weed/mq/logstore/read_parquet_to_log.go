@@ -1,8 +1,13 @@
 package logstore
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
+	"math"
+	"strings"
+
 	"github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
@@ -12,9 +17,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/protobuf/proto"
-	"io"
-	"math"
-	"strings"
 )
 
 var (
@@ -41,10 +43,6 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 		WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
 		RecordTypeEnd()
 
-	parquetSchema, err := schema.ToParquetSchema(t.Name, recordType)
-	if err != nil {
-		return nil
-	}
 	parquetLevels, err := schema.ToParquetLevels(recordType)
 	if err != nil {
 		return nil
@@ -54,17 +52,18 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 	eachFileFn := func(entry *filer_pb.Entry, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64) (processedTsNs int64, err error) {
 		// create readerAt for the parquet file
 		fileSize := filer.FileSize(entry)
-		visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+		visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
 		chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
 		readerCache := filer.NewReaderCache(32, chunkCache, lookupFileIdFn)
 		readerAt := filer.NewChunkReaderAtFromClient(readerCache, chunkViews, int64(fileSize))
 
 		// create parquet reader
-		parquetReader := parquet.NewReader(readerAt, parquetSchema)
+		parquetReader := parquet.NewReader(readerAt)
 		rows := make([]parquet.Row, 128)
 		for {
 			rowCount, readErr := parquetReader.ReadRows(rows)
 
+			// Process the rows first, even if EOF is returned
 			for i := 0; i < rowCount; i++ {
 				row := rows[i]
 				// convert parquet row to schema_pb.RecordValue
@@ -98,11 +97,15 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 				}
 			}
 
+			// Check for end conditions after processing rows
 			if readErr != nil {
 				if readErr == io.EOF {
 					return processedTsNs, nil
 				}
 				return processedTsNs, readErr
+			}
+			if rowCount == 0 {
+				return processedTsNs, nil
 			}
 		}
 		return
@@ -115,7 +118,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-			return filer_pb.SeaweedList(client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+			return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 				if entry.IsDirectory {
 					return nil
 				}

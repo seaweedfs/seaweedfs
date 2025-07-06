@@ -178,7 +178,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	}
 
 	// load the volume
-	v, e := NewVolume(l.Directory, l.IdxDirectory, collection, vid, needleMapKind, nil, nil, 0, 0, ldbTimeout)
+	v, e := NewVolume(l.Directory, l.IdxDirectory, collection, vid, needleMapKind, nil, nil, 0, needle.GetCurrentVersion(), 0, ldbTimeout)
 	if e != nil {
 		glog.V(0).Infof("new volume %s error %s", volumeName, e)
 		return false
@@ -290,7 +290,7 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 		errBuilder.WriteString("; ")
 	}
 	if errBuilder.Len() > 0 {
-		e = fmt.Errorf(errBuilder.String())
+		e = fmt.Errorf("%s", errBuilder.String())
 	}
 
 	return

@@ -2,11 +2,15 @@ package http
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
+
 	"io"
 	"net/http"
 	"net/url"
@@ -214,11 +218,11 @@ func NormalizeUrl(url string) (string, error) {
 	return GetGlobalHttpClient().NormalizeHttpScheme(url)
 }
 
-func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
+func ReadUrl(ctx context.Context, fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {
 
 	if cipherKey != nil {
 		var n int
-		_, err := readEncryptedUrl(fileUrl, "", cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
+		_, err := readEncryptedUrl(ctx, fileUrl, "", cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
 			n = copy(buf, data)
 		})
 		return int64(n), err
@@ -281,18 +285,18 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 	// drains the response body to avoid memory leak
 	data, _ := io.ReadAll(reader)
 	if len(data) != 0 {
-		glog.V(1).Infof("%s reader has remaining %d bytes", contentEncoding, len(data))
+		glog.V(1).InfofCtx(ctx, "%s reader has remaining %d bytes", contentEncoding, len(data))
 	}
 	return n, err
 }
 
-func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
-	return ReadUrlAsStreamAuthenticated(fileUrl, "", cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
+func ReadUrlAsStream(ctx context.Context, fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
+	return ReadUrlAsStreamAuthenticated(ctx, fileUrl, "", cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 }
 
-func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
+func ReadUrlAsStreamAuthenticated(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
 	if cipherKey != nil {
-		return readEncryptedUrl(fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
+		return readEncryptedUrl(ctx, fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
 
 	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
@@ -306,6 +310,7 @@ func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isConte
 	} else {
 		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 	}
+	request_id.InjectToRequest(ctx, req)
 
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
@@ -351,7 +356,7 @@ func ReadUrlAsStreamAuthenticated(fileUrl, jwt string, cipherKey []byte, isConte
 
 }
 
-func readEncryptedUrl(fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
+func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
 	encryptedData, retryable, err := GetAuthenticated(fileUrl, jwt)
 	if err != nil {
 		return retryable, fmt.Errorf("fetch %s: %v", fileUrl, err)
@@ -363,7 +368,7 @@ func readEncryptedUrl(fileUrl, jwt string, cipherKey []byte, isContentCompressed
 	if isContentCompressed {
 		decryptedData, err = util.DecompressData(decryptedData)
 		if err != nil {
-			glog.V(0).Infof("unzip decrypt %s: %v", fileUrl, err)
+			glog.V(0).InfofCtx(ctx, "unzip decrypt %s: %v", fileUrl, err)
 		}
 	}
 	if len(decryptedData) < int(offset)+size {
@@ -447,7 +452,7 @@ func (r *CountingReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func RetriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
+func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
 
 	var shouldRetry bool
 
@@ -457,7 +462,7 @@ func RetriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte,
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
-			shouldRetry, err = ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+			shouldRetry, err = ReadUrlAsStream(ctx, urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
 				if n < len(buffer) {
 					x := copy(buffer[n:], data)
 					n += x
@@ -467,13 +472,13 @@ func RetriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte,
 				break
 			}
 			if err != nil {
-				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
+				glog.V(0).InfofCtx(ctx, "read %s failed, err: %v", urlString, err)
 			} else {
 				break
 			}
 		}
 		if err != nil && shouldRetry {
-			glog.V(0).Infof("retry reading in %v", waitTime)
+			glog.V(0).InfofCtx(ctx, "retry reading in %v", waitTime)
 			time.Sleep(waitTime)
 		} else {
 			break

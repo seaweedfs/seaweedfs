@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -11,7 +12,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsRequest) (resp *filer_pb.StatisticsResponse, err error) {
@@ -94,13 +94,13 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		Signature:          fs.filer.Signature,
 		MetricsAddress:     fs.metricsAddress,
 		MetricsIntervalSec: int32(fs.metricsIntervalSec),
-		Version:            util.Version(),
+		Version:            version.Version(),
 		FilerGroup:         fs.option.FilerGroup,
-		MajorVersion:       util.MAJOR_VERSION,
-		MinorVersion:       util.MINOR_VERSION,
+		MajorVersion:       version.MAJOR_VERSION,
+		MinorVersion:       version.MINOR_VERSION,
 	}
 
-	glog.V(4).Infof("GetFilerConfiguration: %v", t)
+	glog.V(4).InfofCtx(ctx, "GetFilerConfiguration: %v", t)
 
 	return t, nil
 }

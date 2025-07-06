@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine as builder
+FROM golang:1.24-alpine as builder
 RUN apk add git g++ fuse
 RUN mkdir -p /go/src/github.com/seaweedfs/
 RUN git clone https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs
@@ -6,7 +6,7 @@ ARG BRANCH=${BRANCH:-master}
 ARG TAGS
 RUN cd /go/src/github.com/seaweedfs/seaweedfs && git checkout $BRANCH
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
-  && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(git rev-parse --short HEAD)" \
+  && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && CGO_ENABLED=0 go install -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}"
 
 FROM alpine AS final

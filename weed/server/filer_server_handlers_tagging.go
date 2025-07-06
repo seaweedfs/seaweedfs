@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
@@ -14,7 +13,7 @@ import (
 // curl -X PUT -H "Seaweed-Name1: value1" http://localhost:8888/path/to/a/file?tagging
 func (fs *FilerServer) PutTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
-	ctx := context.Background()
+	ctx := r.Context()
 
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
@@ -44,8 +43,8 @@ func (fs *FilerServer) PutTaggingHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, false, false, nil, false, fs.filer.MaxFilenameLength); dbErr != nil {
-		glog.V(0).Infof("failing to update %s tagging : %v", path, dbErr)
-		writeJsonError(w, r, http.StatusInternalServerError, err)
+		glog.V(0).InfofCtx(ctx, "failing to update %s tagging : %v", path, dbErr)
+		writeJsonError(w, r, http.StatusInternalServerError, dbErr)
 		return
 	}
 
@@ -57,7 +56,7 @@ func (fs *FilerServer) PutTaggingHandler(w http.ResponseWriter, r *http.Request)
 // curl -X DELETE http://localhost:8888/path/to/a/file?tagging
 func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
-	ctx := context.Background()
+	ctx := r.Context()
 
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
@@ -110,8 +109,8 @@ func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, false, false, nil, false, fs.filer.MaxFilenameLength); dbErr != nil {
-		glog.V(0).Infof("failing to delete %s tagging : %v", path, dbErr)
-		writeJsonError(w, r, http.StatusInternalServerError, err)
+		glog.V(0).InfofCtx(ctx, "failing to delete %s tagging : %v", path, dbErr)
+		writeJsonError(w, r, http.StatusInternalServerError, dbErr)
 		return
 	}
 

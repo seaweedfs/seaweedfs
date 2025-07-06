@@ -1,0 +1,129 @@
+package app
+
+import (
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ ClusterFilers(data dash.ClusterFilersData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<i class="fas fa-folder-open me-2"></i>Filers
+		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<button type="button" class="btn btn-sm btn-outline-primary" onclick="exportFilers()">
+					<i class="fas fa-download me-1"></i>Export
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="filers-content">
+		<!-- Summary Cards -->
+		<div class="row mb-4">
+			<div class="col-xl-12 col-md-12 mb-4">
+				<div class="card border-left-primary shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+									Total Filers
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ fmt.Sprintf("%d", data.TotalFilers) }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-folder-open fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Filers Table -->
+		<div class="card shadow mb-4">
+			<div class="card-header py-3">
+				<h6 class="m-0 font-weight-bold text-primary">
+					<i class="fas fa-folder-open me-2"></i>Filers
+				</h6>
+			</div>
+			<div class="card-body">
+				if len(data.Filers) > 0 {
+					<div class="table-responsive">
+						<table class="table table-hover" id="filersTable">
+							<thead>
+								<tr>
+									<th>Address</th>
+									<th>Version</th>
+									<th>Data Center</th>
+									<th>Rack</th>
+									<th>Created At</th>
+									<th>Actions</th>
+								</tr>
+							</thead>
+							<tbody>
+								for _, filer := range data.Filers {
+									<tr>
+										<td>
+											<a href={ templ.SafeURL(fmt.Sprintf("http://%s", filer.Address)) } target="_blank" class="text-decoration-none">
+												{ filer.Address }
+												<i class="fas fa-external-link-alt ms-1 text-muted"></i>
+											</a>
+										</td>
+										<td>
+											<span class="badge bg-light text-dark">{ filer.Version }</span>
+										</td>
+										<td>
+											<span class="badge bg-light text-dark">{ filer.DataCenter }</span>
+										</td>
+										<td>
+											<span class="badge bg-light text-dark">{ filer.Rack }</span>
+										</td>
+										<td>
+											if !filer.CreatedAt.IsZero() {
+												{ filer.CreatedAt.Format("2006-01-02 15:04:05") }
+											} else {
+												<span class="text-muted">N/A</span>
+											}
+										</td>
+										<td>
+											<div class="btn-group btn-group-sm">
+												<button type="button" class="btn btn-outline-primary btn-sm" title="View Details">
+													<i class="fas fa-eye"></i>
+												</button>
+												<button type="button" class="btn btn-outline-secondary btn-sm" title="File Browser" onclick={ templ.ComponentScript{Call: fmt.Sprintf("window.open('http://%s', '_blank')", filer.Address)} }>
+													<i class="fas fa-folder-open"></i>
+												</button>
+											</div>
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="text-center py-5">
+						<i class="fas fa-folder-open fa-3x text-muted mb-3"></i>
+						<h5 class="text-muted">No Filers Found</h5>
+						<p class="text-muted">No filer servers are currently available in the cluster.</p>
+					</div>
+				}
+			</div>
+		</div>
+
+		<!-- Last Updated -->
+		<div class="row">
+			<div class="col-12">
+				<small class="text-muted">
+					<i class="fas fa-clock me-1"></i>
+					Last updated: { data.LastUpdated.Format("2006-01-02 15:04:05") }
+				</small>
+			</div>
+		</div>
+	</div>
+}
+
+ 

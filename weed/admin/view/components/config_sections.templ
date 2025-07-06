@@ -1,0 +1,83 @@
+package components
+
+
+
+// ConfigSectionData represents data for a configuration section
+type ConfigSectionData struct {
+    Title       string
+    Icon        string
+    Description string
+    Fields      []interface{} // Will hold field data structures
+}
+
+// InfoSectionData represents data for an informational section
+type InfoSectionData struct {
+    Title   string
+    Icon    string
+    Type    string // "info", "warning", "success", "danger"
+    Content string
+}
+
+// ConfigSection renders a Bootstrap card for configuration settings
+templ ConfigSection(data ConfigSectionData) {
+    <div class="row">
+        <div class="col-12">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        if data.Icon != "" {
+                            <i class={ data.Icon + " me-2" }></i>
+                        }
+                        { data.Title }
+                    </h5>
+                    if data.Description != "" {
+                        <small class="text-muted">{ data.Description }</small>
+                    }
+                </div>
+                <div class="card-body">
+                    for _, field := range data.Fields {
+                        switch v := field.(type) {
+                        case TextFieldData:
+                            @TextField(v)
+                        case NumberFieldData:
+                            @NumberField(v)
+                        case CheckboxFieldData:
+                            @CheckboxField(v)
+                        case SelectFieldData:
+                            @SelectField(v)
+                        case DurationFieldData:
+                            @DurationField(v)
+                        case DurationInputFieldData:
+                            @DurationInputField(v)
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+// InfoSection renders a Bootstrap alert section for informational content
+templ InfoSection(data InfoSectionData) {
+    <div class="row">
+        <div class="col-12">
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        if data.Icon != "" {
+                            <i class={ data.Icon + " me-2" }></i>
+                        }
+                        { data.Title }
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class={ "alert alert-" + data.Type } role="alert">
+                        {data.Content}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+ 

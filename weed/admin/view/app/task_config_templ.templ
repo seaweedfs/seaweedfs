@@ -1,0 +1,160 @@
+package app
+
+import (
+    "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+    "github.com/seaweedfs/seaweedfs/weed/admin/view/components"
+)
+
+// TaskConfigTemplData represents data for templ-based task configuration
+type TaskConfigTemplData struct {
+    TaskType    maintenance.MaintenanceTaskType
+    TaskName    string
+    TaskIcon    string
+    Description string
+    ConfigSections []components.ConfigSectionData
+}
+
+templ TaskConfigTempl(data *TaskConfigTemplData) {
+    <div class="container-fluid">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2 class="mb-0">
+                        <i class={data.TaskIcon + " me-2"}></i>
+                        {data.TaskName} Configuration
+                    </h2>
+                    <div class="btn-group">
+                        <a href="/maintenance/config" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left me-1"></i>
+                            Back to Configuration
+                        </a>
+                        <a href="/maintenance/queue" class="btn btn-outline-info">
+                            <i class="fas fa-list me-1"></i>
+                            View Queue
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="alert alert-info" role="alert">
+                    <i class="fas fa-info-circle me-2"></i>
+                    {data.Description}
+                </div>
+            </div>
+        </div>
+
+        <form method="POST" class="needs-validation" novalidate>
+            <!-- Render all configuration sections -->
+            for _, section := range data.ConfigSections {
+                @components.ConfigSection(section)
+            }
+
+            <!-- Form actions -->
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-save me-1"></i>
+                                        Save Configuration
+                                    </button>
+                                    <button type="button" class="btn btn-outline-secondary ms-2" onclick="resetForm()">
+                                        <i class="fas fa-undo me-1"></i>
+                                        Reset
+                                    </button>
+                                </div>
+                                <div>
+                                    <button type="button" class="btn btn-outline-info" onclick="testConfiguration()">
+                                        <i class="fas fa-play me-1"></i>
+                                        Test Configuration
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // Form validation
+        (function() {
+            'use strict';
+            window.addEventListener('load', function() {
+                var forms = document.getElementsByClassName('needs-validation');
+                var validation = Array.prototype.filter.call(forms, function(form) {
+                    form.addEventListener('submit', function(event) {
+                        if (form.checkValidity() === false) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                        }
+                        form.classList.add('was-validated');
+                    }, false);
+                });
+            }, false);
+        })();
+
+        // Auto-save functionality
+        let autoSaveTimeout;
+        function autoSave() {
+            clearTimeout(autoSaveTimeout);
+            autoSaveTimeout = setTimeout(function() {
+                const formData = new FormData(document.querySelector('form'));
+                localStorage.setItem('task_config_' + '{data.TaskType}', JSON.stringify(Object.fromEntries(formData)));
+            }, 1000);
+        }
+
+        // Add auto-save listeners to all form inputs
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.querySelector('form');
+            if (form) {
+                form.addEventListener('input', autoSave);
+                form.addEventListener('change', autoSave);
+            }
+        });
+
+        // Reset form function
+        function resetForm() {
+            if (confirm('Are you sure you want to reset all changes?')) {
+                location.reload();
+            }
+        }
+
+        // Test configuration function
+        function testConfiguration() {
+            const formData = new FormData(document.querySelector('form'));
+            
+            // Show loading state
+            const testBtn = document.querySelector('button[onclick="testConfiguration()"]');
+            const originalContent = testBtn.innerHTML;
+            testBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Testing...';
+            testBtn.disabled = true;
+            
+            fetch('/maintenance/config/{data.TaskType}/test', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Configuration test successful!');
+                } else {
+                    alert('Configuration test failed: ' + data.error);
+                }
+            })
+            .catch(error => {
+                alert('Test failed: ' + error);
+            })
+            .finally(() => {
+                testBtn.innerHTML = originalContent;
+                testBtn.disabled = false;
+            });
+        }
+    </script>
+} 

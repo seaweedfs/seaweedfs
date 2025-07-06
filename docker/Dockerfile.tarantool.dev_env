@@ -1,0 +1,17 @@
+FROM tarantool/tarantool:3.3.1 AS builder
+
+# install dependencies
+RUN apt update && \
+  apt install -y git unzip cmake tt=2.7.0
+
+# init tt dir structure, create dir for app, create symlink
+RUN tt init && \
+  mkdir app && \
+  ln -sfn ${PWD}/app/ ${PWD}/instances.enabled/app
+
+# copy cluster configs
+COPY tarantool /opt/tarantool/app
+
+# build app
+RUN tt build app
+

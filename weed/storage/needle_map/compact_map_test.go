@@ -2,219 +2,476 @@ package needle_map
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/sequence"
-	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"log"
-	"os"
+	"math/rand"
+	"reflect"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-func TestSnowflakeSequencer(t *testing.T) {
-	m := NewCompactMap()
-	seq, _ := sequence.NewSnowflakeSequencer("for_test", 1)
+func TestSegmentBsearchKey(t *testing.T) {
+	testSegment := &CompactMapSegment{
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 10},
+			CompactNeedleValue{key: 20},
+			CompactNeedleValue{key: 21},
+			CompactNeedleValue{key: 26},
+			CompactNeedleValue{key: 30},
+		},
+		firstKey: 10,
+		lastKey:  30,
+	}
 
-	for i := 0; i < 200000; i++ {
-		id := seq.NextFileId(1)
-		oldOffset, oldSize := m.Set(NeedleId(id), ToOffset(8), 3000073)
-		if oldSize != 0 {
-			t.Errorf("id %d oldOffset %v oldSize %d", id, oldOffset, oldSize)
+	testCases := []struct {
+		name      string
+		cs        *CompactMapSegment
+		key       types.NeedleId
+		wantIndex int
+		wantFound bool
+	}{
+		{
+			name:      "empty segment",
+			cs:        newCompactMapSegment(0),
+			key:       123,
+			wantIndex: 0,
+			wantFound: false,
+		},
+		{
+			name:      "new key, insert at beggining",
+			cs:        testSegment,
+			key:       5,
+			wantIndex: 0,
+			wantFound: false,
+		},
+		{
+			name:      "new key, insert at end",
+			cs:        testSegment,
+			key:       100,
+			wantIndex: 5,
+			wantFound: false,
+		},
+		{
+			name:      "new key, insert second",
+			cs:        testSegment,
+			key:       12,
+			wantIndex: 1,
+			wantFound: false,
+		},
+		{
+			name:      "new key, insert in middle",
+			cs:        testSegment,
+			key:       23,
+			wantIndex: 3,
+			wantFound: false,
+		},
+		{
+			name:      "key #1",
+			cs:        testSegment,
+			key:       10,
+			wantIndex: 0,
+			wantFound: true,
+		},
+		{
+			name:      "key #2",
+			cs:        testSegment,
+			key:       20,
+			wantIndex: 1,
+			wantFound: true,
+		},
+		{
+			name:      "key #3",
+			cs:        testSegment,
+			key:       21,
+			wantIndex: 2,
+			wantFound: true,
+		},
+		{
+			name:      "key #4",
+			cs:        testSegment,
+			key:       26,
+			wantIndex: 3,
+			wantFound: true,
+		},
+		{
+			name:      "key #5",
+			cs:        testSegment,
+			key:       30,
+			wantIndex: 4,
+			wantFound: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			index, found := tc.cs.bsearchKey(tc.key)
+			if got, want := index, tc.wantIndex; got != want {
+				t.Errorf("expected %v, got %v", want, got)
+			}
+			if got, want := found, tc.wantFound; got != want {
+				t.Errorf("expected %v, got %v", want, got)
+			}
+		})
+	}
+}
+
+func TestSegmentSet(t *testing.T) {
+	testSegment := &CompactMapSegment{
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 10, offset: OffsetToCompact(types.Uint32ToOffset(0)), size: 100},
+			CompactNeedleValue{key: 20, offset: OffsetToCompact(types.Uint32ToOffset(100)), size: 200},
+			CompactNeedleValue{key: 30, offset: OffsetToCompact(types.Uint32ToOffset(300)), size: 300},
+		},
+		firstKey: 10,
+		lastKey:  30,
+	}
+
+	if got, want := testSegment.len(), 3; got != want {
+		t.Errorf("got starting size %d, want %d", got, want)
+	}
+	if got, want := testSegment.cap(), 3; got != want {
+		t.Errorf("got starting capacity %d, want %d", got, want)
+	}
+
+	testSets := []struct {
+		name       string
+		key        types.NeedleId
+		offset     types.Offset
+		size       types.Size
+		wantOffset types.Offset
+		wantSize   types.Size
+	}{
+		{
+			name: "insert at beggining",
+			key:  5, offset: types.Uint32ToOffset(1000), size: 123,
+			wantOffset: types.Uint32ToOffset(0), wantSize: 0,
+		},
+		{
+			name: "insert at end",
+			key:  51, offset: types.Uint32ToOffset(7000), size: 456,
+			wantOffset: types.Uint32ToOffset(0), wantSize: 0,
+		},
+		{
+			name: "insert in middle",
+			key:  25, offset: types.Uint32ToOffset(8000), size: 789,
+			wantOffset: types.Uint32ToOffset(0), wantSize: 0,
+		},
+		{
+			name: "update existing",
+			key:  30, offset: types.Uint32ToOffset(9000), size: 999,
+			wantOffset: types.Uint32ToOffset(300), wantSize: 300,
+		},
+	}
+
+	for _, ts := range testSets {
+		offset, size := testSegment.set(ts.key, ts.offset, ts.size)
+		if offset != ts.wantOffset {
+			t.Errorf("%s: got offset %v, want %v", ts.name, offset, ts.wantOffset)
+		}
+		if size != ts.wantSize {
+			t.Errorf("%s: got size %v, want %v", ts.name, size, ts.wantSize)
 		}
 	}
 
+	wantSegment := &CompactMapSegment{
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 5, offset: OffsetToCompact(types.Uint32ToOffset(1000)), size: 123},
+			CompactNeedleValue{key: 10, offset: OffsetToCompact(types.Uint32ToOffset(0)), size: 100},
+			CompactNeedleValue{key: 20, offset: OffsetToCompact(types.Uint32ToOffset(100)), size: 200},
+			CompactNeedleValue{key: 25, offset: OffsetToCompact(types.Uint32ToOffset(8000)), size: 789},
+			CompactNeedleValue{key: 30, offset: OffsetToCompact(types.Uint32ToOffset(9000)), size: 999},
+			CompactNeedleValue{key: 51, offset: OffsetToCompact(types.Uint32ToOffset(7000)), size: 456},
+		},
+		firstKey: 5,
+		lastKey:  51,
+	}
+	if !reflect.DeepEqual(testSegment, wantSegment) {
+		t.Errorf("got result segment %v, want %v", testSegment, wantSegment)
+	}
+
+	if got, want := testSegment.len(), 6; got != want {
+		t.Errorf("got result size %d, want %d", got, want)
+	}
+	if got, want := testSegment.cap(), 6; got != want {
+		t.Errorf("got result capacity %d, want %d", got, want)
+	}
 }
 
-func TestOverflow2(t *testing.T) {
-	m := NewCompactMap()
-	_, oldSize := m.Set(NeedleId(150088), ToOffset(8), 3000073)
-	if oldSize != 0 {
-		t.Fatalf("expecting no previous data")
+func TestSegmentSetOrdering(t *testing.T) {
+	keys := []types.NeedleId{}
+	for i := 0; i < SegmentChunkSize; i++ {
+		keys = append(keys, types.NeedleId(i))
 	}
-	_, oldSize = m.Set(NeedleId(150088), ToOffset(8), 3000073)
-	if oldSize != 3000073 {
-		t.Fatalf("expecting previous data size is %d, not %d", 3000073, oldSize)
-	}
-	m.Set(NeedleId(150073), ToOffset(8), 3000073)
-	m.Set(NeedleId(150089), ToOffset(8), 3000073)
-	m.Set(NeedleId(150076), ToOffset(8), 3000073)
-	m.Set(NeedleId(150124), ToOffset(8), 3000073)
-	m.Set(NeedleId(150137), ToOffset(8), 3000073)
-	m.Set(NeedleId(150147), ToOffset(8), 3000073)
-	m.Set(NeedleId(150145), ToOffset(8), 3000073)
-	m.Set(NeedleId(150158), ToOffset(8), 3000073)
-	m.Set(NeedleId(150162), ToOffset(8), 3000073)
 
-	m.AscendingVisit(func(value NeedleValue) error {
-		println("needle key:", value.Key)
+	r := rand.New(rand.NewSource(123456789))
+	r.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
+
+	cs := newCompactMapSegment(0)
+	for _, k := range keys {
+		_, _ = cs.set(k, types.Uint32ToOffset(123), 456)
+	}
+	if got, want := cs.len(), SegmentChunkSize; got != want {
+		t.Errorf("expected size %d, got %d", want, got)
+	}
+	for i := 1; i < cs.len(); i++ {
+		if ka, kb := cs.list[i-1].key, cs.list[i].key; ka >= kb {
+			t.Errorf("found out of order entries at (%d, %d) = (%d, %d)", i-1, i, ka, kb)
+		}
+	}
+}
+
+func TestSegmentGet(t *testing.T) {
+	testSegment := &CompactMapSegment{
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 10, offset: OffsetToCompact(types.Uint32ToOffset(0)), size: 100},
+			CompactNeedleValue{key: 20, offset: OffsetToCompact(types.Uint32ToOffset(100)), size: 200},
+			CompactNeedleValue{key: 30, offset: OffsetToCompact(types.Uint32ToOffset(300)), size: 300},
+		},
+		firstKey: 10,
+		lastKey:  30,
+	}
+
+	testCases := []struct {
+		name      string
+		key       types.NeedleId
+		wantValue *CompactNeedleValue
+		wantFound bool
+	}{
+		{
+			name:      "invalid key",
+			key:       99,
+			wantValue: nil,
+			wantFound: false,
+		},
+		{
+			name:      "key #1",
+			key:       10,
+			wantValue: &testSegment.list[0],
+			wantFound: true,
+		},
+		{
+			name:      "key #2",
+			key:       20,
+			wantValue: &testSegment.list[1],
+			wantFound: true,
+		},
+		{
+			name:      "key #3",
+			key:       30,
+			wantValue: &testSegment.list[2],
+			wantFound: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			value, found := testSegment.get(tc.key)
+			if got, want := value, tc.wantValue; got != want {
+				t.Errorf("got %v, want %v", got, want)
+			}
+			if got, want := found, tc.wantFound; got != want {
+				t.Errorf("got %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestSegmentDelete(t *testing.T) {
+	testSegment := &CompactMapSegment{
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 10, offset: OffsetToCompact(types.Uint32ToOffset(0)), size: 100},
+			CompactNeedleValue{key: 20, offset: OffsetToCompact(types.Uint32ToOffset(100)), size: 200},
+			CompactNeedleValue{key: 30, offset: OffsetToCompact(types.Uint32ToOffset(300)), size: 300},
+			CompactNeedleValue{key: 40, offset: OffsetToCompact(types.Uint32ToOffset(600)), size: 400},
+		},
+		firstKey: 10,
+		lastKey:  40,
+	}
+
+	testDeletes := []struct {
+		name string
+		key  types.NeedleId
+		want types.Size
+	}{
+		{
+			name: "invalid key",
+			key:  99,
+			want: 0,
+		},
+		{
+			name: "delete key #2",
+			key:  20,
+			want: 200,
+		},
+		{
+			name: "delete key #4",
+			key:  40,
+			want: 400,
+		},
+	}
+
+	for _, td := range testDeletes {
+		size := testSegment.delete(td.key)
+		if got, want := size, td.want; got != want {
+			t.Errorf("%s: got %v, want %v", td.name, got, want)
+		}
+	}
+
+	wantSegment := &CompactMapSegment{
+		list: []CompactNeedleValue{
+			CompactNeedleValue{key: 10, offset: OffsetToCompact(types.Uint32ToOffset(0)), size: 100},
+			CompactNeedleValue{key: 20, offset: OffsetToCompact(types.Uint32ToOffset(100)), size: -200},
+			CompactNeedleValue{key: 30, offset: OffsetToCompact(types.Uint32ToOffset(300)), size: 300},
+			CompactNeedleValue{key: 40, offset: OffsetToCompact(types.Uint32ToOffset(600)), size: -400},
+		},
+		firstKey: 10,
+		lastKey:  40,
+	}
+	if !reflect.DeepEqual(testSegment, wantSegment) {
+		t.Errorf("got result segment %v, want %v", testSegment, wantSegment)
+	}
+}
+
+func TestSegmentForKey(t *testing.T) {
+	testMap := NewCompactMap()
+
+	tests := []struct {
+		name string
+		key  types.NeedleId
+		want *CompactMapSegment
+	}{
+		{
+			name: "first segment",
+			key:  12,
+			want: &CompactMapSegment{
+				list:     []CompactNeedleValue{},
+				chunk:    0,
+				firstKey: MaxCompactKey,
+				lastKey:  0,
+			},
+		},
+		{
+			name: "second segment, gapless",
+			key:  SegmentChunkSize + 34,
+			want: &CompactMapSegment{
+				list:     []CompactNeedleValue{},
+				chunk:    1,
+				firstKey: MaxCompactKey,
+				lastKey:  0,
+			},
+		},
+		{
+			name: "gapped segment",
+			key:  (5 * SegmentChunkSize) + 56,
+			want: &CompactMapSegment{
+				list:     []CompactNeedleValue{},
+				chunk:    5,
+				firstKey: MaxCompactKey,
+				lastKey:  0,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := testMap.segmentForKey(tc.key)
+			if !reflect.DeepEqual(cs, tc.want) {
+				t.Errorf("got segment %v, want %v", cs, tc.want)
+			}
+		})
+	}
+
+	wantMap := &CompactMap{
+		segments: map[Chunk]*CompactMapSegment{
+			0: &CompactMapSegment{
+				list:     []CompactNeedleValue{},
+				chunk:    0,
+				firstKey: MaxCompactKey,
+				lastKey:  0,
+			},
+			1: &CompactMapSegment{
+				list:     []CompactNeedleValue{},
+				chunk:    1,
+				firstKey: MaxCompactKey,
+				lastKey:  0,
+			},
+			5: &CompactMapSegment{
+				list:     []CompactNeedleValue{},
+				chunk:    5,
+				firstKey: MaxCompactKey,
+				lastKey:  0,
+			},
+		},
+	}
+	if !reflect.DeepEqual(testMap, wantMap) {
+		t.Errorf("got map %v, want %v", testMap, wantMap)
+	}
+}
+
+func TestAscendingVisit(t *testing.T) {
+	cm := NewCompactMap()
+	for _, nid := range []types.NeedleId{20, 7, 40000, 300000, 0, 100, 500, 10000, 200000} {
+		cm.Set(nid, types.Uint32ToOffset(123), 456)
+	}
+
+	got := []NeedleValue{}
+	err := cm.AscendingVisit(func(nv NeedleValue) error {
+		got = append(got, nv)
 		return nil
 	})
+	if err != nil {
+		t.Errorf("got error %v, expected none", err)
+	}
+
+	want := []NeedleValue{
+		NeedleValue{Key: 0, Offset: types.Uint32ToOffset(123), Size: 456},
+		NeedleValue{Key: 7, Offset: types.Uint32ToOffset(123), Size: 456},
+		NeedleValue{Key: 20, Offset: types.Uint32ToOffset(123), Size: 456},
+		NeedleValue{Key: 100, Offset: types.Uint32ToOffset(123), Size: 456},
+		NeedleValue{Key: 500, Offset: types.Uint32ToOffset(123), Size: 456},
+		NeedleValue{Key: 10000, Offset: types.Uint32ToOffset(123), Size: 456},
+		NeedleValue{Key: 40000, Offset: types.Uint32ToOffset(123), Size: 456},
+		NeedleValue{Key: 200000, Offset: types.Uint32ToOffset(123), Size: 456},
+		NeedleValue{Key: 300000, Offset: types.Uint32ToOffset(123), Size: 456},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got values %v, want %v", got, want)
+	}
 }
 
-func TestIssue52(t *testing.T) {
-	m := NewCompactMap()
-	m.Set(NeedleId(10002), ToOffset(10002), 10002)
-	if element, ok := m.Get(NeedleId(10002)); ok {
-		fmt.Printf("key %d ok %v %d, %v, %d\n", 10002, ok, element.Key, element.Offset, element.Size)
-	}
-	m.Set(NeedleId(10001), ToOffset(10001), 10001)
-	if element, ok := m.Get(NeedleId(10002)); ok {
-		fmt.Printf("key %d ok %v %d, %v, %d\n", 10002, ok, element.Key, element.Offset, element.Size)
-	} else {
-		t.Fatal("key 10002 missing after setting 10001")
-	}
-}
-
-func TestCompactMap(t *testing.T) {
-	m := NewCompactMap()
-	for i := uint32(0); i < 100*batch; i += 2 {
-		m.Set(NeedleId(i), ToOffset(int64(i)), Size(i))
+func TestRandomInsert(t *testing.T) {
+	count := 8 * SegmentChunkSize
+	keys := []types.NeedleId{}
+	for i := 0; i < count; i++ {
+		keys = append(keys, types.NeedleId(i))
 	}
 
-	for i := uint32(0); i < 100*batch; i += 37 {
-		m.Delete(NeedleId(i))
+	r := rand.New(rand.NewSource(123456789))
+	r.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
+
+	cm := NewCompactMap()
+	for _, k := range keys {
+		_, _ = cm.Set(k, types.Uint32ToOffset(123), 456)
+	}
+	if got, want := cm.Len(), count; got != want {
+		t.Errorf("expected size %d, got %d", want, got)
 	}
 
-	for i := uint32(0); i < 10*batch; i += 3 {
-		m.Set(NeedleId(i), ToOffset(int64(i+11)), Size(i+5))
-	}
-
-	//	for i := uint32(0); i < 100; i++ {
-	//		if v := m.Get(Key(i)); v != nil {
-	//			glog.V(4).Infoln(i, "=", v.Key, v.Offset, v.Size)
-	//		}
-	//	}
-
-	for i := uint32(0); i < 10*batch; i++ {
-		v, ok := m.Get(NeedleId(i))
-		if i%3 == 0 {
-			if !ok {
-				t.Fatal("key", i, "missing!")
-			}
-			if v.Size != Size(i+5) {
-				t.Fatal("key", i, "size", v.Size)
-			}
-		} else if i%37 == 0 {
-			if ok && v.Size.IsValid() {
-				t.Fatal("key", i, "should have been deleted needle value", v)
-			}
-		} else if i%2 == 0 {
-			if v.Size != Size(i) {
-				t.Fatal("key", i, "size", v.Size)
-			}
+	last := -1
+	err := cm.AscendingVisit(func(nv NeedleValue) error {
+		key := int(nv.Key)
+		if key <= last {
+			return fmt.Errorf("found out of order entries (%d vs %d)", key, last)
 		}
+		last = key
+		return nil
+	})
+	if err != nil {
+		t.Errorf("got error %v, expected none", err)
 	}
 
-	for i := uint32(10 * batch); i < 100*batch; i++ {
-		v, ok := m.Get(NeedleId(i))
-		if i%37 == 0 {
-			if ok && v.Size.IsValid() {
-				t.Fatal("key", i, "should have been deleted needle value", v)
-			}
-		} else if i%2 == 0 {
-			if v == nil {
-				t.Fatal("key", i, "missing")
-			}
-			if v.Size != Size(i) {
-				t.Fatal("key", i, "size", v.Size)
-			}
-		}
-	}
-
-}
-
-func TestOverflow(t *testing.T) {
-	cs := NewCompactSection(1)
-
-	cs.setOverflowEntry(1, ToOffset(12), 12)
-	cs.setOverflowEntry(2, ToOffset(12), 12)
-	cs.setOverflowEntry(3, ToOffset(12), 12)
-	cs.setOverflowEntry(4, ToOffset(12), 12)
-	cs.setOverflowEntry(5, ToOffset(12), 12)
-
-	if cs.overflow[2].Key != 3 {
-		t.Fatalf("expecting o[2] has key 3: %+v", cs.overflow[2].Key)
-	}
-
-	cs.setOverflowEntry(3, ToOffset(24), 24)
-
-	if cs.overflow[2].Key != 3 {
-		t.Fatalf("expecting o[2] has key 3: %+v", cs.overflow[2].Key)
-	}
-
-	if cs.overflow[2].Size != 24 {
-		t.Fatalf("expecting o[2] has size 24: %+v", cs.overflow[2].Size)
-	}
-
-	cs.deleteOverflowEntry(4)
-
-	if len(cs.overflow) != 5 {
-		t.Fatalf("expecting 5 entries now: %+v", cs.overflow)
-	}
-
-	_, x, _ := cs.findOverflowEntry(5)
-	if x.Key != 5 {
-		t.Fatalf("expecting entry 5 now: %+v", x)
-	}
-
-	for i, x := range cs.overflow {
-		println("overflow[", i, "]:", x.Key)
-	}
-	println()
-
-	cs.deleteOverflowEntry(1)
-
-	for i, x := range cs.overflow {
-		println("overflow[", i, "]:", x.Key, "size", x.Size)
-	}
-	println()
-
-	cs.setOverflowEntry(4, ToOffset(44), 44)
-	for i, x := range cs.overflow {
-		println("overflow[", i, "]:", x.Key)
-	}
-	println()
-
-	cs.setOverflowEntry(1, ToOffset(11), 11)
-
-	for i, x := range cs.overflow {
-		println("overflow[", i, "]:", x.Key)
-	}
-	println()
-
-}
-
-func TestCompactSection_Get(t *testing.T) {
-	var maps []*CompactMap
-	totalRowCount := uint64(0)
-	indexFile, ie := os.OpenFile("../../../test/data/sample.idx",
-		os.O_RDWR|os.O_RDONLY, 0644)
-	defer indexFile.Close()
-	if ie != nil {
-		log.Fatalln(ie)
-	}
-
-	m, rowCount := loadNewNeedleMap(indexFile)
-	maps = append(maps, m)
-	totalRowCount += rowCount
-	m.Set(1574318345753513987, ToOffset(10002), 10002)
-	nv, ok := m.Get(1574318345753513987)
-	if ok {
-		t.Log(uint64(nv.Key))
-	}
-
-	nv1, ok := m.Get(1574318350048481283)
-	if ok {
-		t.Error(uint64(nv1.Key))
-	}
-
-	m.Set(1574318350048481283, ToOffset(10002), 10002)
-	nv2, ok1 := m.Get(1574318350048481283)
-	if ok1 {
-		t.Log(uint64(nv2.Key))
-	}
-
-	m.Delete(nv2.Key)
-	nv3, has := m.Get(nv2.Key)
-	if has && nv3.Size > 0 {
-		t.Error(uint64(nv3.Size))
+	// Given that we've written a integer multiple of SegmentChunkSize, all
+	// segments should be fully utilized and capacity-adjusted.
+	if l, c := cm.Len(), cm.Cap(); l != c {
+		t.Errorf("map length (%d) doesn't match capacity (%d)", l, c)
 	}
 }

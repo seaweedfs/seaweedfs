@@ -3,14 +3,13 @@ package erasure_coding
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"math"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
-	"slices"
-
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -112,7 +111,7 @@ func (ev *EcVolume) DeleteEcVolumeShard(shardId ShardId) (ecVolumeShard *EcVolum
 	}
 
 	ecVolumeShard = ev.Shards[foundPosition]
-
+	ecVolumeShard.Unmount()
 	ev.Shards = append(ev.Shards[:foundPosition], ev.Shards[foundPosition+1:]...)
 	return ecVolumeShard, true
 }
@@ -263,7 +262,7 @@ func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId t
 		key, offset, size = idx.IdxFileEntry(buf)
 		if key == needleId {
 			if processNeedleFn != nil {
-				err = processNeedleFn(ecxFile, m*types.NeedleHeaderSize)
+				err = processNeedleFn(ecxFile, m*types.NeedleMapEntrySize)
 			}
 			return
 		}

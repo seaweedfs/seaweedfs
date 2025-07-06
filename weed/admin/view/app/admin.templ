@@ -1,0 +1,306 @@
+package app
+
+import (
+    "fmt"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ Admin(data dash.AdminData) {
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">
+            <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+        </h1>
+        <div class="btn-toolbar mb-2 mb-md-0">
+            <div class="btn-group me-2">
+                				<a href="/s3/buckets" class="btn btn-sm btn-primary">
+					<i class="fas fa-cube me-1"></i>Object Store Buckets
+                </a>
+
+            </div>
+        </div>
+    </div>
+
+    <div id="dashboard-content">
+        <!-- Summary Cards -->
+        <div class="row mb-4">
+            <div class="col-xl-4 col-md-6 mb-4">
+                <div class="card border-left-success shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                    Total Volumes
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {fmt.Sprintf("%d", data.TotalVolumes)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-database fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-4 col-md-6 mb-4">
+                <div class="card border-left-info shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                    Total Files
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {formatNumber(data.TotalFiles)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-file fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-4 col-md-6 mb-4">
+                <div class="card border-left-warning shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                    Total Size
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {formatBytes(data.TotalSize)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Master Nodes Status -->
+        <div class="row mb-4">
+            <div class="col-lg-6">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-server me-2"></i>Master Nodes
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-bordered" width="100%" cellspacing="0">
+                                <thead>
+                                    <tr>
+                                        <th>Address</th>
+                                        <th>Role</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for _, master := range data.MasterNodes {
+                                        <tr>
+                                            <td>{master.Address}</td>
+                                            <td>
+                                                if master.IsLeader {
+                                                    <span class="badge bg-primary">Leader</span>
+                                                } else {
+                                                    <span class="badge bg-secondary">Follower</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Health -->
+            <div class="col-lg-6">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-chart-pie me-2"></i>System Health
+                        </h6>
+                    </div>
+                    <div class="card-body text-center">
+                        <div class="row">
+                            <div class="col-4">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h5>{fmt.Sprintf("%d", len(data.MasterNodes))}</h5>
+                                        <small class="text-muted">Masters</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h5>{fmt.Sprintf("%d", len(data.VolumeServers))}</h5>
+                                        <small class="text-muted">Volume Servers</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h5>{fmt.Sprintf("%d", len(data.FilerNodes))}</h5>
+                                        <small class="text-muted">Filers</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Volume Servers -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-database me-2"></i>Volume Servers
+                        </h6>
+                        <div class="dropdown no-arrow">
+                            <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                            </a>
+                            <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
+                                <div class="dropdown-header">Actions:</div>
+                                <a class="dropdown-item" href="/volumes">View Details</a>
+                                <a class="dropdown-item" href="/cluster">Topology View</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" width="100%" cellspacing="0">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Address</th>
+                                        <th>Data Center</th>
+                                        <th>Rack</th>
+                                        <th>Volumes</th>
+                                        <th>Capacity</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for _, vs := range data.VolumeServers {
+                                        <tr>
+                                            <td>{vs.ID}</td>
+                                            <td>
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", vs.PublicURL))} target="_blank">
+                                                    {vs.Address}
+                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                </a>
+                                            </td>
+                                            <td>{vs.DataCenter}</td>
+                                            <td>{vs.Rack}</td>
+                                            <td>
+                                                <div class="progress" style="height: 20px;">
+                                                    <div class="progress-bar" role="progressbar" 
+                                                         style={fmt.Sprintf("width: %d%%", calculatePercent(vs.Volumes, vs.MaxVolumes))}>
+                                                        {fmt.Sprintf("%d/%d", vs.Volumes, vs.MaxVolumes)}
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td>{formatBytes(vs.DiskUsage)} / {formatBytes(vs.DiskCapacity)}</td>
+                                        </tr>
+                                    }
+                                    if len(data.VolumeServers) == 0 {
+                                        <tr>
+                                            <td colspan="6" class="text-center text-muted py-4">
+                                                <i class="fas fa-info-circle me-2"></i>
+                                                No volume servers found
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filer Nodes -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-folder me-2"></i>Filer Nodes
+                        </h6>
+                        <div class="dropdown no-arrow">
+                            <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                            </a>
+                            <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
+                                <div class="dropdown-header">Actions:</div>
+                                <a class="dropdown-item" href="/filer">File Browser</a>
+                                <a class="dropdown-item" href="/cluster">Topology View</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" width="100%" cellspacing="0">
+                                <thead>
+                                    <tr>
+                                        <th>Address</th>
+                                        <th>Data Center</th>
+                                        <th>Rack</th>
+                                        <th>Last Updated</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for _, filer := range data.FilerNodes {
+                                        <tr>
+                                            <td>
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s", filer.Address))} target="_blank">
+                                                    {filer.Address}
+                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                </a>
+                                            </td>
+                                            <td>{filer.DataCenter}</td>
+                                            <td>{filer.Rack}</td>
+                                            <td>{filer.LastUpdated.Format("2006-01-02 15:04:05")}</td>
+                                        </tr>
+                                    }
+                                    if len(data.FilerNodes) == 0 {
+                                        <tr>
+                                            <td colspan="4" class="text-center text-muted py-4">
+                                                <i class="fas fa-info-circle me-2"></i>
+                                                No filer nodes found
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Last Updated -->
+        <div class="row">
+            <div class="col-12">
+                <small class="text-muted">
+                    <i class="fas fa-clock me-1"></i>
+                    Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
+                </small>
+            </div>
+        </div>
+    </div>
+} 

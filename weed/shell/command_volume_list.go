@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -73,9 +74,34 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
+func sortMapKey[T1 comparable, T2 any](m map[T1]T2) []T1 {
+	keys := make([]T1, 0, len(m))
+	for k, _ := range m {
+		keys = append(keys, k)
+	}
+
+	sort.Slice(keys, func(i, j int) bool {
+		switch v1 := any(keys[i]).(type) {
+		case int:
+			return v1 < any(keys[j]).(int)
+		case string:
+			if strings.Compare(v1, any(keys[j]).(string)) < 0 {
+				return true
+			}
+			return false
+		default:
+			return false
+		}
+	})
+	return keys
+}
+
 func diskInfosToString(diskInfos map[string]*master_pb.DiskInfo) string {
 	var buf bytes.Buffer
-	for diskType, diskInfo := range diskInfos {
+
+	for _, diskType := range sortMapKey(diskInfos) {
+		diskInfo := diskInfos[diskType]
+
 		if diskType == "" {
 			diskType = types.HddType
 		}
@@ -152,7 +178,8 @@ func (c *commandVolumeList) writeRackInfo(writer io.Writer, t *master_pb.RackInf
 func (c *commandVolumeList) writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo, verbosityLevel int, outRackInfo func()) statistics {
 	var s statistics
 	diskInfoFound := false
-	for _, diskInfo := range t.DiskInfos {
+	for _, diskType := range sortMapKey(t.DiskInfos) {
+		diskInfo := t.DiskInfos[diskType]
 		s = s.plus(c.writeDiskInfo(writer, diskInfo, verbosityLevel, func() {
 			outRackInfo()
 			output(verbosityLevel >= 3, writer, "      DataNode %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
@@ -190,7 +217,7 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 		diskType = types.HddType
 	}
 	slices.SortFunc(t.VolumeInfos, func(a, b *master_pb.VolumeInformationMessage) int {
-		return int(a.Id - b.Id)
+		return int(a.Id) - int(b.Id)
 	})
 	volumeInfosFound := false
 	for _, vi := range t.VolumeInfos {
