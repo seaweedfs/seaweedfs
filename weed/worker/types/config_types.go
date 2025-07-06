@@ -1,6 +1,7 @@
 package types
 
 import (
+	"sync"
 	"time"
 )
 
@@ -106,6 +107,30 @@ type MaintenanceWorkersData struct {
 	LastUpdated   time.Time            `json:"last_updated"`
 }
 
+// defaultCapabilities holds the default capabilities for workers
+var defaultCapabilities []TaskType
+var defaultCapabilitiesMutex sync.RWMutex
+
+// SetDefaultCapabilities sets the default capabilities for workers
+// This should be called after task registration is complete
+func SetDefaultCapabilities(capabilities []TaskType) {
+	defaultCapabilitiesMutex.Lock()
+	defer defaultCapabilitiesMutex.Unlock()
+	defaultCapabilities = make([]TaskType, len(capabilities))
+	copy(defaultCapabilities, capabilities)
+}
+
+// GetDefaultCapabilities returns the default capabilities for workers
+func GetDefaultCapabilities() []TaskType {
+	defaultCapabilitiesMutex.RLock()
+	defer defaultCapabilitiesMutex.RUnlock()
+
+	// Return a copy to prevent modification
+	result := make([]TaskType, len(defaultCapabilities))
+	copy(result, defaultCapabilities)
+	return result
+}
+
 // DefaultMaintenanceConfig returns default maintenance configuration
 func DefaultMaintenanceConfig() *MaintenanceConfig {
 	return &MaintenanceConfig{
@@ -144,17 +169,14 @@ func DefaultMaintenanceConfig() *MaintenanceConfig {
 
 // DefaultWorkerConfig returns default worker configuration
 func DefaultWorkerConfig() *WorkerConfig {
+	// Get dynamic capabilities from registered task types
+	capabilities := GetDefaultCapabilities()
+
 	return &WorkerConfig{
 		AdminServer:         "localhost:9333",
 		MaxConcurrent:       2,
 		HeartbeatInterval:   30 * time.Second,
 		TaskRequestInterval: 5 * time.Second,
-		Capabilities: []TaskType{
-			TaskTypeVacuum,
-			TaskTypeErasureCoding,
-			TaskTypeRemoteUpload,
-			TaskTypeFixReplication,
-			TaskTypeBalance,
-		},
+		Capabilities:        capabilities,
 	}
 }

@@ -63,3 +63,19 @@ func AutoRegisterUI(registerFunc func(*types.UIRegistry)) {
 	registerFunc(registry)
 	glog.V(1).Infof("Auto-registered task UI provider")
 }
+
+// SetDefaultCapabilitiesFromRegistry sets the default worker capabilities
+// based on all registered task types
+func SetDefaultCapabilitiesFromRegistry() {
+	typesRegistry := GetGlobalTypesRegistry()
+
+	var capabilities []types.TaskType
+	for taskType := range typesRegistry.GetAllDetectors() {
+		capabilities = append(capabilities, taskType)
+	}
+
+	// Set the default capabilities in the types package
+	types.SetDefaultCapabilities(capabilities)
+
+	glog.V(1).Infof("Set default worker capabilities from registry: %v", capabilities)
+}

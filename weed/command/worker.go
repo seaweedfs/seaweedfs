@@ -46,6 +46,10 @@ var (
 
 func init() {
 	cmdWorker.Run = runWorker
+
+	// Set default capabilities from registered task types
+	// This happens after package imports have triggered auto-registration
+	tasks.SetDefaultCapabilitiesFromRegistry()
 }
 
 func runWorker(cmd *Command, args []string) bool {
