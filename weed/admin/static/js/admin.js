@@ -923,53 +923,7 @@ async function deleteCollection(collectionName) {
     }
 }
 
-// Handle create collection form submission
-document.addEventListener('DOMContentLoaded', function() {
-    const createCollectionForm = document.getElementById('createCollectionForm');
-    if (createCollectionForm) {
-        createCollectionForm.addEventListener('submit', handleCreateCollection);
-    }
-});
 
-async function handleCreateCollection(event) {
-    event.preventDefault();
-    
-    const formData = new FormData(event.target);
-    const collectionData = {
-        name: formData.get('name'),
-        replication: formData.get('replication'),
-        diskType: formData.get('diskType')
-    };
-    
-    try {
-        const response = await fetch('/api/collections', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(collectionData)
-        });
-        
-        if (response.ok) {
-            showSuccessMessage(`Collection "${collectionData.name}" created successfully`);
-            // Hide modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('createCollectionModal'));
-            modal.hide();
-            // Reset form
-            event.target.reset();
-            // Refresh page
-            setTimeout(() => {
-                window.location.reload();
-            }, 1000);
-        } else {
-            const error = await response.json();
-            showErrorMessage(`Failed to create collection: ${error.error || 'Unknown error'}`);
-        }
-    } catch (error) {
-        console.error('Error creating collection:', error);
-        showErrorMessage('Failed to create collection. Please try again.');
-    }
-}
 
 // Download CSV utility function
 function downloadCSV(csvContent, filename) {
