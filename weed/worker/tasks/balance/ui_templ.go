@@ -16,6 +16,39 @@ func formatDurationFromSeconds(seconds int) string {
 	return d.String()
 }
 
+// Helper functions to convert between seconds and value+unit format
+func secondsToValueAndUnit(seconds int) (float64, string) {
+	if seconds == 0 {
+		return 0, "minutes"
+	}
+
+	// Try days first
+	if seconds%(24*3600) == 0 && seconds >= 24*3600 {
+		return float64(seconds / (24 * 3600)), "days"
+	}
+
+	// Try hours
+	if seconds%3600 == 0 && seconds >= 3600 {
+		return float64(seconds / 3600), "hours"
+	}
+
+	// Default to minutes
+	return float64(seconds / 60), "minutes"
+}
+
+func valueAndUnitToSeconds(value float64, unit string) int {
+	switch unit {
+	case "days":
+		return int(value * 24 * 3600)
+	case "hours":
+		return int(value * 3600)
+	case "minutes":
+		return int(value * 60)
+	default:
+		return int(value * 60) // Default to minutes
+	}
+}
+
 // UITemplProvider provides the templ-based UI for balance task configuration
 type UITemplProvider struct {
 	detector  *BalanceDetector
@@ -80,14 +113,14 @@ func (ui *UITemplProvider) RenderConfigSections(currentConfig interface{}) ([]co
 				Min:   floatPtr(0.0),
 				Max:   floatPtr(1.0),
 			},
-			components.DurationFieldData{
+			components.DurationInputFieldData{
 				FormFieldData: components.FormFieldData{
 					Name:        "scan_interval",
 					Label:       "Scan Interval",
 					Description: "How often to scan for imbalanced volumes",
 					Required:    true,
 				},
-				Value: formatDurationFromSeconds(config.ScanIntervalSeconds),
+				Seconds: config.ScanIntervalSeconds,
 			},
 		},
 	}
@@ -203,11 +236,15 @@ func (ui *UITemplProvider) ParseConfigForm(formData map[string][]string) (interf
 	}
 
 	// Parse scan interval
-	if intervalStr := formData["scan_interval"]; len(intervalStr) > 0 {
-		if interval, err := time.ParseDuration(intervalStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid scan interval: %v", err)
+	if valueStr := formData["scan_interval"]; len(valueStr) > 0 {
+		if value, err := strconv.ParseFloat(valueStr[0], 64); err != nil {
+			return nil, fmt.Errorf("invalid scan interval value: %v", err)
 		} else {
-			config.ScanIntervalSeconds = int(interval.Seconds())
+			unit := "minutes" // default
+			if unitStr := formData["scan_interval_unit"]; len(unitStr) > 0 {
+				unit = unitStr[0]
+			}
+			config.ScanIntervalSeconds = valueAndUnitToSeconds(value, unit)
 		}
 	}
 

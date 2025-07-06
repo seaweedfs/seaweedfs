@@ -16,6 +16,20 @@ func formatDurationFromSeconds(seconds int) string {
 	return d.String()
 }
 
+// Helper function to convert value and unit to seconds
+func valueAndUnitToSeconds(value float64, unit string) int {
+	switch unit {
+	case "days":
+		return int(value * 24 * 60 * 60)
+	case "hours":
+		return int(value * 60 * 60)
+	case "minutes":
+		return int(value * 60)
+	default:
+		return int(value * 60) // Default to minutes
+	}
+}
+
 // UITemplProvider provides the templ-based UI for erasure coding task configuration
 type UITemplProvider struct {
 	detector  *EcDetector
@@ -70,23 +84,23 @@ func (ui *UITemplProvider) RenderConfigSections(currentConfig interface{}) ([]co
 				},
 				Checked: config.Enabled,
 			},
-			components.DurationFieldData{
+			components.DurationInputFieldData{
 				FormFieldData: components.FormFieldData{
 					Name:        "scan_interval",
 					Label:       "Scan Interval",
 					Description: "How often to scan for volumes needing erasure coding",
 					Required:    true,
 				},
-				Value: formatDurationFromSeconds(config.ScanIntervalSeconds),
+				Seconds: config.ScanIntervalSeconds,
 			},
-			components.DurationFieldData{
+			components.DurationInputFieldData{
 				FormFieldData: components.FormFieldData{
 					Name:        "volume_age_threshold",
 					Label:       "Volume Age Threshold",
 					Description: "Only apply erasure coding to volumes older than this age",
 					Required:    true,
 				},
-				Value: formatDurationFromSeconds(config.VolumeAgeHoursSeconds),
+				Seconds: config.VolumeAgeHoursSeconds,
 			},
 		},
 	}
@@ -172,20 +186,28 @@ func (ui *UITemplProvider) ParseConfigForm(formData map[string][]string) (interf
 	config.Enabled = len(formData["enabled"]) > 0 && formData["enabled"][0] == "on"
 
 	// Parse volume age threshold
-	if ageStr := formData["volume_age_threshold"]; len(ageStr) > 0 {
-		if age, err := time.ParseDuration(ageStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid volume age threshold: %v", err)
+	if valueStr := formData["volume_age_threshold"]; len(valueStr) > 0 {
+		if value, err := strconv.ParseFloat(valueStr[0], 64); err != nil {
+			return nil, fmt.Errorf("invalid volume age threshold value: %v", err)
 		} else {
-			config.VolumeAgeHoursSeconds = int(age.Hours())
+			unit := "hours" // default
+			if unitStr := formData["volume_age_threshold_unit"]; len(unitStr) > 0 {
+				unit = unitStr[0]
+			}
+			config.VolumeAgeHoursSeconds = valueAndUnitToSeconds(value, unit)
 		}
 	}
 
 	// Parse scan interval
-	if intervalStr := formData["scan_interval"]; len(intervalStr) > 0 {
-		if interval, err := time.ParseDuration(intervalStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid scan interval: %v", err)
+	if valueStr := formData["scan_interval"]; len(valueStr) > 0 {
+		if value, err := strconv.ParseFloat(valueStr[0], 64); err != nil {
+			return nil, fmt.Errorf("invalid scan interval value: %v", err)
 		} else {
-			config.ScanIntervalSeconds = int(interval.Seconds())
+			unit := "hours" // default
+			if unitStr := formData["scan_interval_unit"]; len(unitStr) > 0 {
+				unit = unitStr[0]
+			}
+			config.ScanIntervalSeconds = valueAndUnitToSeconds(value, unit)
 		}
 	}
 
