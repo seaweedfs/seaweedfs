@@ -379,16 +379,15 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			if extractedCheckSumAlgorithm.String() != cr.checkSumAlgorithm {
 				errorMessage := fmt.Sprintf("checksum algorithm in trailer '%s' does not match the one advertised in the header '%s'", extractedCheckSumAlgorithm.String(), cr.checkSumAlgorithm)
 				glog.V(3).Info(errorMessage)
-				cr.err = errors.New(errorMessage)
+				cr.err = errors.New(s3err.ErrMsgChecksumAlgorithmMismatch)
 				return 0, cr.err
 			}
 
 			computedChecksum := cr.checkSumWriter.Sum(nil)
 			base64Checksum := base64.StdEncoding.EncodeToString(computedChecksum)
 			if string(extractedChecksum) != base64Checksum {
-				// TODO: Return BadDigest
 				glog.V(3).Infof("payload checksum '%s' does not match provided checksum '%s'", base64Checksum, string(extractedChecksum))
-				cr.err = errors.New("payload checksum does not match")
+				cr.err = errors.New(s3err.ErrMsgPayloadChecksumMismatch)
 				return 0, cr.err
 			}
 
@@ -449,7 +448,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			newSignature := cr.getChunkSignature(hashedChunk)
 			if !compareSignatureV4(cr.chunkSignature, newSignature) {
 				// Chunk signature doesn't match we return signature does not match.
-				cr.err = errors.New("chunk signature does not match")
+				cr.err = errors.New(s3err.ErrMsgChunkSignatureMismatch)
 				return 0, cr.err
 			}
 			// Newly calculated signature becomes the seed for the next chunk
