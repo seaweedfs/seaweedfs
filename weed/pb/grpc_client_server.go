@@ -24,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
 const (
@@ -311,4 +312,11 @@ func WithOneOfGrpcFilerClients(streamingMode bool, filerAddresses []ServerAddres
 	}
 
 	return err
+}
+
+func WithWorkerClient(streamingMode bool, workerAddress string, grpcDialOption grpc.DialOption, fn func(client worker_pb.WorkerServiceClient) error) error {
+	return WithGrpcClient(streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
+		client := worker_pb.NewWorkerServiceClient(grpcConnection)
+		return fn(client)
+	}, workerAddress, false, grpcDialOption)
 }

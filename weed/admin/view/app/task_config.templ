@@ -1,0 +1,160 @@
+package app
+
+import (
+    "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+)
+
+templ TaskConfig(data *maintenance.TaskConfigData) {
+    <div class="container-fluid">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2 class="mb-0">
+                        <i class={data.TaskIcon + " me-2"}></i>
+                        {data.TaskName} Configuration
+                    </h2>
+                    <div class="btn-group">
+                        <a href="/maintenance/config" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left me-1"></i>
+                            Back to Configuration
+                        </a>
+                        <a href="/maintenance" class="btn btn-outline-primary">
+                            <i class="fas fa-list me-1"></i>
+                            View Queue
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class={data.TaskIcon + " me-2"}></i>
+                            {data.TaskName} Settings
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-4">{data.Description}</p>
+                        
+                        <!-- Task-specific configuration form -->
+                        <form method="POST">
+                            <div class="task-config-form">
+                                @templ.Raw(string(data.ConfigFormHTML))
+                            </div>
+                            
+                            <hr class="my-4">
+                            
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save me-1"></i>
+                                    Save Configuration
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="resetForm()">
+                                    <i class="fas fa-undo me-1"></i>
+                                    Reset to Defaults
+                                </button>
+                                <a href="/maintenance/config" class="btn btn-outline-secondary">
+                                    <i class="fas fa-times me-1"></i>
+                                    Cancel
+                                </a>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Task Information -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Task Information
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-muted">Task Type</h6>
+                                <p class="mb-3">
+                                    <span class="badge bg-secondary">{string(data.TaskType)}</span>
+                                </p>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="text-muted">Display Name</h6>
+                                <p class="mb-3">{data.TaskName}</p>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-12">
+                                <h6 class="text-muted">Description</h6>
+                                <p class="mb-0">{data.Description}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function resetForm() {
+            if (confirm('Are you sure you want to reset all settings to their default values?')) {
+                // Find all form inputs and reset them
+                const form = document.querySelector('form');
+                if (form) {
+                    form.reset();
+                }
+            }
+        }
+
+        // Auto-save form data to localStorage for recovery
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.querySelector('form');
+            if (form) {
+                const taskType = '{string(data.TaskType)}';
+                const storageKey = 'taskConfig_' + taskType;
+
+                // Load saved data
+                const savedData = localStorage.getItem(storageKey);
+                if (savedData) {
+                    try {
+                        const data = JSON.parse(savedData);
+                        Object.keys(data).forEach(key => {
+                            const input = form.querySelector(`[name="${key}"]`);
+                            if (input) {
+                                if (input.type === 'checkbox') {
+                                    input.checked = data[key];
+                                } else {
+                                    input.value = data[key];
+                                }
+                            }
+                        });
+                    } catch (e) {
+                        console.warn('Failed to load saved configuration:', e);
+                    }
+                }
+
+                // Save data on input change
+                form.addEventListener('input', function() {
+                    const formData = new FormData(form);
+                    const data = {};
+                    for (let [key, value] of formData.entries()) {
+                        data[key] = value;
+                    }
+                    localStorage.setItem(storageKey, JSON.stringify(data));
+                });
+
+                // Clear saved data on successful submit
+                form.addEventListener('submit', function() {
+                    localStorage.removeItem(storageKey);
+                });
+            }
+        });
+    </script>
+} 

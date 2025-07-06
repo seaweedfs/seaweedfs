@@ -1,0 +1,244 @@
+package app
+
+import (
+    "fmt"
+    "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+)
+
+templ MaintenanceConfig(data *maintenance.MaintenanceConfigData) {
+    <div class="container-fluid">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2 class="mb-0">
+                        <i class="fas fa-cog me-2"></i>
+                        Maintenance Configuration
+                    </h2>
+                    <div class="btn-group">
+                        <a href="/maintenance" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left me-1"></i>
+                            Back to Queue
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">System Settings</h5>
+                    </div>
+                    <div class="card-body">
+                        <form>
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="enabled" checked?={data.IsEnabled}>
+                                    <label class="form-check-label" for="enabled">
+                                        <strong>Enable Maintenance System</strong>
+                                    </label>
+                                </div>
+                                <small class="form-text text-muted">
+                                    When enabled, the system will automatically scan for and execute maintenance tasks.
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="scanInterval" class="form-label">Scan Interval (minutes)</label>
+                                <input type="number" class="form-control" id="scanInterval" 
+                                       value={fmt.Sprintf("%.0f", float64(data.Config.ScanIntervalSeconds)/60)} min="1" max="1440">
+                                <small class="form-text text-muted">
+                                    How often to scan for maintenance tasks (1-1440 minutes).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="workerTimeout" class="form-label">Worker Timeout (minutes)</label>
+                                <input type="number" class="form-control" id="workerTimeout" 
+                                       value={fmt.Sprintf("%.0f", float64(data.Config.WorkerTimeoutSeconds)/60)} min="1" max="60">
+                                <small class="form-text text-muted">
+                                    How long to wait for worker heartbeat before considering it inactive (1-60 minutes).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="taskTimeout" class="form-label">Task Timeout (hours)</label>
+                                <input type="number" class="form-control" id="taskTimeout" 
+                                       value={fmt.Sprintf("%.0f", float64(data.Config.TaskTimeoutSeconds)/3600)} min="1" max="24">
+                                <small class="form-text text-muted">
+                                    Maximum time allowed for a single task to complete (1-24 hours).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="globalMaxConcurrent" class="form-label">Global Concurrent Limit</label>
+                                <input type="number" class="form-control" id="globalMaxConcurrent" 
+                                       value={fmt.Sprintf("%d", data.Config.Policy.GlobalMaxConcurrent)} min="1" max="20">
+                                <small class="form-text text-muted">
+                                    Maximum number of maintenance tasks that can run simultaneously across all workers (1-20).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="maxRetries" class="form-label">Default Max Retries</label>
+                                <input type="number" class="form-control" id="maxRetries" 
+                                       value={fmt.Sprintf("%d", data.Config.MaxRetries)} min="0" max="10">
+                                <small class="form-text text-muted">
+                                    Default number of times to retry failed tasks (0-10).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="retryDelay" class="form-label">Retry Delay (minutes)</label>
+                                <input type="number" class="form-control" id="retryDelay" 
+                                       value={fmt.Sprintf("%.0f", float64(data.Config.RetryDelaySeconds)/60)} min="1" max="120">
+                                <small class="form-text text-muted">
+                                    Time to wait before retrying failed tasks (1-120 minutes).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="taskRetention" class="form-label">Task Retention (days)</label>
+                                <input type="number" class="form-control" id="taskRetention" 
+                                       value={fmt.Sprintf("%.0f", float64(data.Config.TaskRetentionSeconds)/(24*3600))} min="1" max="30">
+                                <small class="form-text text-muted">
+                                    How long to keep completed/failed task records (1-30 days).
+                                </small>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-primary" onclick="saveConfiguration()">
+                                    <i class="fas fa-save me-1"></i>
+                                    Save Configuration
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="resetToDefaults()">
+                                    <i class="fas fa-undo me-1"></i>
+                                    Reset to Defaults
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Individual Task Configuration Menu -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-cogs me-2"></i>
+                            Task Configuration
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-3">Configure specific settings for each maintenance task type.</p>
+                        <div class="list-group">
+                            for _, menuItem := range data.MenuItems {
+                                <a href={templ.SafeURL(menuItem.Path)} class="list-group-item list-group-item-action">
+                                    <div class="d-flex w-100 justify-content-between">
+                                        <h6 class="mb-1">
+                                            <i class={menuItem.Icon + " me-2"}></i>
+                                            {menuItem.DisplayName}
+                                        </h6>
+                                        if data.Config.Policy.IsTaskEnabled(menuItem.TaskType) {
+                                            <span class="badge bg-success">Enabled</span>
+                                        } else {
+                                            <span class="badge bg-secondary">Disabled</span>
+                                        }
+                                    </div>
+                                    <p class="mb-1 small text-muted">{menuItem.Description}</p>
+                                </a>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistics Overview -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">System Statistics</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Last Scan</h6>
+                                    <p class="mb-0">{data.LastScanTime.Format("2006-01-02 15:04:05")}</p>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Next Scan</h6>
+                                    <p class="mb-0">{data.NextScanTime.Format("2006-01-02 15:04:05")}</p>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Total Tasks</h6>
+                                    <p class="mb-0">{fmt.Sprintf("%d", data.SystemStats.TotalTasks)}</p>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Active Workers</h6>
+                                    <p class="mb-0">{fmt.Sprintf("%d", data.SystemStats.ActiveWorkers)}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function saveConfiguration() {
+            const config = {
+                enabled: document.getElementById('enabled').checked,
+                scan_interval_seconds: parseInt(document.getElementById('scanInterval').value) * 60, // Convert to seconds
+                policy: {
+                    vacuum_enabled: document.getElementById('vacuumEnabled').checked,
+                    vacuum_garbage_ratio: parseFloat(document.getElementById('vacuumGarbageRatio').value) / 100,
+                    replication_fix_enabled: document.getElementById('replicationFixEnabled').checked,
+                }
+            };
+
+            fetch('/api/maintenance/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(config)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Configuration saved successfully');
+                } else {
+                    alert('Failed to save configuration: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                alert('Error: ' + error.message);
+            });
+        }
+
+        function resetToDefaults() {
+            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {
+                // Reset form to defaults
+                document.getElementById('enabled').checked = false;
+                document.getElementById('scanInterval').value = '30';
+                document.getElementById('vacuumEnabled').checked = false;
+                document.getElementById('vacuumGarbageRatio').value = '30';
+                document.getElementById('replicationFixEnabled').checked = false;
+            }
+        }
+    </script>
+} 

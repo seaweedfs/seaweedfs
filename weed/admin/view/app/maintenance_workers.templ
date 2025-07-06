@@ -1,0 +1,340 @@
+package app
+
+import (
+    "fmt"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+    "time"
+)
+
+templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h1 class="h3 mb-0 text-gray-800">Maintenance Workers</h1>
+                        <p class="text-muted">Monitor and manage maintenance workers</p>
+                    </div>
+                    <div class="text-end">
+                        <small class="text-muted">Last updated: { data.LastUpdated.Format("2006-01-02 15:04:05") }</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="row mb-4">
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-primary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                    Total Workers
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">{ fmt.Sprintf("%d", len(data.Workers)) }</div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-users fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-success shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                    Active Workers
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    { fmt.Sprintf("%d", data.ActiveWorkers) }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-check-circle fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-info shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                    Busy Workers
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    { fmt.Sprintf("%d", data.BusyWorkers) }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-spinner fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-warning shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                    Total Load
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    { fmt.Sprintf("%d", data.TotalLoad) }
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-tasks fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Workers Table -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3">
+                        <h6 class="m-0 font-weight-bold text-primary">Worker Details</h6>
+                    </div>
+                    <div class="card-body">
+                        if len(data.Workers) == 0 {
+                            <div class="text-center py-4">
+                                <i class="fas fa-users fa-3x text-gray-300 mb-3"></i>
+                                <h5 class="text-gray-600">No Workers Found</h5>
+                                <p class="text-muted">No maintenance workers are currently registered.</p>
+                                <div class="alert alert-info mt-3">
+                                    <strong>💡 Tip:</strong> To start a worker, run:
+                                    <br><code>weed worker -admin=&lt;admin_server&gt; -capabilities=vacuum,ec,replication</code>
+                                </div>
+                            </div>
+                        } else {
+                            <div class="table-responsive">
+                                <table class="table table-bordered table-hover" id="workersTable">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Worker ID</th>
+                                            <th>Address</th>
+                                            <th>Status</th>
+                                            <th>Capabilities</th>
+                                            <th>Load</th>
+                                            <th>Current Tasks</th>
+                                            <th>Performance</th>
+                                            <th>Last Heartbeat</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, worker := range data.Workers {
+                                            <tr>
+                                                <td>
+                                                    <code>{ worker.Worker.ID }</code>
+                                                </td>
+                                                <td>
+                                                    <code>{ worker.Worker.Address }</code>
+                                                </td>
+                                                <td>
+                                                    if worker.Worker.Status == "active" {
+                                                        <span class="badge bg-success">Active</span>
+                                                    } else if worker.Worker.Status == "busy" {
+                                                        <span class="badge bg-warning">Busy</span>
+                                                    } else {
+                                                        <span class="badge bg-danger">Inactive</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    <div class="d-flex flex-wrap gap-1">
+                                                        for _, capability := range worker.Worker.Capabilities {
+                                                            <span class="badge bg-secondary rounded-pill">{ string(capability) }</span>
+                                                        }
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="progress" style="height: 20px;">
+                                                        if worker.Worker.MaxConcurrent > 0 {
+                                                            <div class="progress-bar" role="progressbar" 
+                                                                 style={ fmt.Sprintf("width: %d%%", (worker.Worker.CurrentLoad*100)/worker.Worker.MaxConcurrent) }
+                                                                 aria-valuenow={ fmt.Sprintf("%d", worker.Worker.CurrentLoad) } 
+                                                                 aria-valuemin="0" 
+                                                                 aria-valuemax={ fmt.Sprintf("%d", worker.Worker.MaxConcurrent) }>
+                                                                { fmt.Sprintf("%d/%d", worker.Worker.CurrentLoad, worker.Worker.MaxConcurrent) }
+                                                            </div>
+                                                        } else {
+                                                            <div class="progress-bar" role="progressbar" style="width: 0%">0/0</div>
+                                                        }
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    { fmt.Sprintf("%d", len(worker.CurrentTasks)) }
+                                                </td>
+                                                <td>
+                                                    <small>
+                                                        <div>✅ { fmt.Sprintf("%d", worker.Performance.TasksCompleted) }</div>
+                                                        <div>❌ { fmt.Sprintf("%d", worker.Performance.TasksFailed) }</div>
+                                                        <div>📊 { fmt.Sprintf("%.1f%%", worker.Performance.SuccessRate) }</div>
+                                                    </small>
+                                                </td>
+                                                <td>
+                                                    if time.Since(worker.Worker.LastHeartbeat) < 2*time.Minute {
+                                                        <span class="text-success">
+                                                            <i class="fas fa-heartbeat"></i>
+                                                            { worker.Worker.LastHeartbeat.Format("15:04:05") }
+                                                        </span>
+                                                    } else {
+                                                        <span class="text-danger">
+                                                            <i class="fas fa-exclamation-triangle"></i>
+                                                            { worker.Worker.LastHeartbeat.Format("15:04:05") }
+                                                        </span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    <div class="btn-group btn-group-sm" role="group">
+                                                        <button type="button" class="btn btn-outline-info" onclick={ templ.ComponentScript{Call: "showWorkerDetails"} } data-worker-id={ worker.Worker.ID }>
+                                                            <i class="fas fa-info-circle"></i>
+                                                        </button>
+                                                        if worker.Worker.Status == "active" {
+                                                            <button type="button" class="btn btn-outline-warning" onclick={ templ.ComponentScript{Call: "pauseWorker"} } data-worker-id={ worker.Worker.ID }>
+                                                                <i class="fas fa-pause"></i>
+                                                            </button>
+                                                        }
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Worker Details Modal -->
+    <div class="modal fade" id="workerDetailsModal" tabindex="-1" aria-labelledby="workerDetailsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="workerDetailsModalLabel">Worker Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="workerDetailsContent">
+                    <!-- Content will be loaded dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function showWorkerDetails(event) {
+        const workerID = event.target.closest('button').getAttribute('data-worker-id');
+        
+        // Show modal
+        var modal = new bootstrap.Modal(document.getElementById('workerDetailsModal'));
+        
+        // Load worker details
+        fetch(`/api/maintenance/workers/${workerID}`)
+            .then(response => response.json())
+            .then(data => {
+                const content = document.getElementById('workerDetailsContent');
+                content.innerHTML = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Worker Information</h6>
+                            <ul class="list-unstyled">
+                                <li><strong>ID:</strong> ${data.worker.id}</li>
+                                <li><strong>Address:</strong> ${data.worker.address}</li>
+                                <li><strong>Status:</strong> ${data.worker.status}</li>
+                                <li><strong>Max Concurrent:</strong> ${data.worker.max_concurrent}</li>
+                                <li><strong>Current Load:</strong> ${data.worker.current_load}</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Performance Metrics</h6>
+                            <ul class="list-unstyled">
+                                <li><strong>Tasks Completed:</strong> ${data.performance.tasks_completed}</li>
+                                <li><strong>Tasks Failed:</strong> ${data.performance.tasks_failed}</li>
+                                <li><strong>Success Rate:</strong> ${data.performance.success_rate.toFixed(1)}%</li>
+                                <li><strong>Average Task Time:</strong> ${formatDuration(data.performance.average_task_time)}</li>
+                                <li><strong>Uptime:</strong> ${formatDuration(data.performance.uptime)}</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <hr>
+                    <h6>Current Tasks</h6>
+                    ${data.current_tasks.length === 0 ? 
+                        '<p class="text-muted">No current tasks</p>' :
+                        data.current_tasks.map(task => `
+                            <div class="card mb-2">
+                                <div class="card-body py-2">
+                                    <div class="d-flex justify-content-between">
+                                        <span><strong>${task.type}</strong> - Volume ${task.volume_id}</span>
+                                        <span class="badge bg-info">${task.status}</span>
+                                    </div>
+                                    <small class="text-muted">${task.reason}</small>
+                                </div>
+                            </div>
+                        `).join('')
+                    }
+                `;
+                modal.show();
+            })
+            .catch(error => {
+                console.error('Error loading worker details:', error);
+                const content = document.getElementById('workerDetailsContent');
+                content.innerHTML = '<div class="alert alert-danger">Failed to load worker details</div>';
+                modal.show();
+            });
+    }
+
+    function pauseWorker(event) {
+        const workerID = event.target.closest('button').getAttribute('data-worker-id');
+        
+        if (confirm('Are you sure you want to pause this worker?')) {
+            fetch(`/api/maintenance/workers/${workerID}/pause`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('Failed to pause worker: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error pausing worker:', error);
+                alert('Failed to pause worker');
+            });
+        }
+    }
+
+    function formatDuration(nanoseconds) {
+        const seconds = Math.floor(nanoseconds / 1000000000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        
+        if (hours > 0) {
+            return `${hours}h ${minutes % 60}m`;
+        } else if (minutes > 0) {
+            return `${minutes}m ${seconds % 60}s`;
+        } else {
+            return `${seconds}s`;
+        }
+    }
+    </script>
+} 

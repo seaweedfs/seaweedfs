@@ -17,6 +17,7 @@ type AdminHandlers struct {
 	clusterHandlers     *ClusterHandlers
 	fileBrowserHandlers *FileBrowserHandlers
 	userHandlers        *UserHandlers
+	maintenanceHandlers *MaintenanceHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
@@ -25,12 +26,14 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	clusterHandlers := NewClusterHandlers(adminServer)
 	fileBrowserHandlers := NewFileBrowserHandlers(adminServer)
 	userHandlers := NewUserHandlers(adminServer)
+	maintenanceHandlers := NewMaintenanceHandlers(adminServer)
 	return &AdminHandlers{
 		adminServer:         adminServer,
 		authHandlers:        authHandlers,
 		clusterHandlers:     clusterHandlers,
 		fileBrowserHandlers: fileBrowserHandlers,
 		userHandlers:        userHandlers,
+		maintenanceHandlers: maintenanceHandlers,
 	}
 }
 
@@ -69,13 +72,22 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
 		protected.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
 
+		// Maintenance system routes
+		protected.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
+		protected.GET("/maintenance/workers", h.maintenanceHandlers.ShowMaintenanceWorkers)
+		protected.GET("/maintenance/config", h.maintenanceHandlers.ShowMaintenanceConfig)
+		protected.POST("/maintenance/config", h.maintenanceHandlers.UpdateMaintenanceConfig)
+		protected.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
+		protected.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
+
 		// API routes for AJAX calls
 		api := protected.Group("/api")
 		{
 			api.GET("/cluster/topology", h.clusterHandlers.GetClusterTopology)
 			api.GET("/cluster/masters", h.clusterHandlers.GetMasters)
 			api.GET("/cluster/volumes", h.clusterHandlers.GetVolumeServers)
-			api.GET("/admin", h.adminServer.ShowAdmin) // JSON API for admin data
+			api.GET("/admin", h.adminServer.ShowAdmin)      // JSON API for admin data
+			api.GET("/config", h.adminServer.GetConfigInfo) // Configuration information
 
 			// S3 API routes
 			s3Api := api.Group("/s3")
@@ -117,6 +129,20 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 			volumeApi := api.Group("/volumes")
 			{
 				volumeApi.POST("/:id/:server/vacuum", h.clusterHandlers.VacuumVolume)
+			}
+
+			// Maintenance API routes
+			maintenanceApi := api.Group("/maintenance")
+			{
+				maintenanceApi.POST("/scan", h.adminServer.TriggerMaintenanceScan)
+				maintenanceApi.GET("/tasks", h.adminServer.GetMaintenanceTasks)
+				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
+				maintenanceApi.POST("/tasks/:id/cancel", h.adminServer.CancelMaintenanceTask)
+				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
+				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
+				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
+				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
+				maintenanceApi.PUT("/config", h.adminServer.UpdateMaintenanceConfigAPI)
 			}
 		}
 	} else {
@@ -140,13 +166,22 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		r.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
 		r.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
 
+		// Maintenance system routes
+		r.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
+		r.GET("/maintenance/workers", h.maintenanceHandlers.ShowMaintenanceWorkers)
+		r.GET("/maintenance/config", h.maintenanceHandlers.ShowMaintenanceConfig)
+		r.POST("/maintenance/config", h.maintenanceHandlers.UpdateMaintenanceConfig)
+		r.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
+		r.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
+
 		// API routes for AJAX calls
 		api := r.Group("/api")
 		{
 			api.GET("/cluster/topology", h.clusterHandlers.GetClusterTopology)
 			api.GET("/cluster/masters", h.clusterHandlers.GetMasters)
 			api.GET("/cluster/volumes", h.clusterHandlers.GetVolumeServers)
-			api.GET("/admin", h.adminServer.ShowAdmin) // JSON API for admin data
+			api.GET("/admin", h.adminServer.ShowAdmin)      // JSON API for admin data
+			api.GET("/config", h.adminServer.GetConfigInfo) // Configuration information
 
 			// S3 API routes
 			s3Api := api.Group("/s3")
@@ -188,6 +223,20 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 			volumeApi := api.Group("/volumes")
 			{
 				volumeApi.POST("/:id/:server/vacuum", h.clusterHandlers.VacuumVolume)
+			}
+
+			// Maintenance API routes
+			maintenanceApi := api.Group("/maintenance")
+			{
+				maintenanceApi.POST("/scan", h.adminServer.TriggerMaintenanceScan)
+				maintenanceApi.GET("/tasks", h.adminServer.GetMaintenanceTasks)
+				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
+				maintenanceApi.POST("/tasks/:id/cancel", h.adminServer.CancelMaintenanceTask)
+				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
+				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
+				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
+				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
+				maintenanceApi.PUT("/config", h.adminServer.UpdateMaintenanceConfigAPI)
 			}
 		}
 	}

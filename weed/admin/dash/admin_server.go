@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -22,6 +24,7 @@ import (
 type AdminServer struct {
 	masterAddress   string
 	templateFS      http.FileSystem
+	dataDir         string
 	grpcDialOption  grpc.DialOption
 	cacheExpiration time.Duration
 	lastCacheUpdate time.Time
@@ -34,17 +37,28 @@ type AdminServer struct {
 
 	// Credential management
 	credentialManager *credential.CredentialManager
+
+	// Configuration persistence
+	configPersistence *ConfigPersistence
+
+	// Maintenance system
+	maintenanceManager *maintenance.MaintenanceManager
+
+	// Worker gRPC server
+	workerGrpcServer *WorkerGrpcServer
 }
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masterAddress string, templateFS http.FileSystem) *AdminServer {
+func NewAdminServer(masterAddress string, templateFS http.FileSystem, dataDir string) *AdminServer {
 	server := &AdminServer{
 		masterAddress:        masterAddress,
 		templateFS:           templateFS,
+		dataDir:              dataDir,
 		grpcDialOption:       security.LoadClientTLS(util.GetViper(), "grpc.client"),
 		cacheExpiration:      10 * time.Second,
 		filerCacheExpiration: 30 * time.Second, // Cache filers for 30 seconds
+		configPersistence:    NewConfigPersistence(dataDir),
 	}
 
 	// Initialize credential manager with defaults
@@ -80,6 +94,27 @@ func NewAdminServer(masterAddress string, templateFS http.FileSystem) *AdminServ
 		} else {
 			server.credentialManager = credentialManager
 		}
+	}
+
+	// Initialize maintenance system with persistent configuration
+	if server.configPersistence.IsConfigured() {
+		maintenanceConfig, err := server.configPersistence.LoadMaintenanceConfig()
+		if err != nil {
+			glog.Errorf("Failed to load maintenance configuration: %v", err)
+			maintenanceConfig = maintenance.DefaultMaintenanceConfig()
+		}
+		server.InitMaintenanceManager(maintenanceConfig)
+
+		// Start maintenance manager if enabled
+		if maintenanceConfig.Enabled {
+			go func() {
+				if err := server.StartMaintenanceManager(); err != nil {
+					glog.Errorf("Failed to start maintenance manager: %v", err)
+				}
+			}()
+		}
+	} else {
+		glog.V(1).Infof("No data directory configured, maintenance system will run in memory-only mode")
 	}
 
 	return server
@@ -568,3 +603,598 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 // GetVolumeDetails method moved to volume_management.go
 
 // VacuumVolume method moved to volume_management.go
+
+// ShowMaintenanceQueue displays the maintenance queue page
+func (as *AdminServer) ShowMaintenanceQueue(c *gin.Context) {
+	data, err := as.getMaintenanceQueueData()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// This should not render HTML template, it should use the component approach
+	c.JSON(http.StatusOK, data)
+}
+
+// ShowMaintenanceWorkers displays the maintenance workers page
+func (as *AdminServer) ShowMaintenanceWorkers(c *gin.Context) {
+	workers, err := as.getMaintenanceWorkers()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Create worker details data
+	workersData := make([]*WorkerDetailsData, 0, len(workers))
+	for _, worker := range workers {
+		details, err := as.getMaintenanceWorkerDetails(worker.ID)
+		if err != nil {
+			// Create basic worker details if we can't get full details
+			details = &WorkerDetailsData{
+				Worker:       worker,
+				CurrentTasks: []*MaintenanceTask{},
+				RecentTasks:  []*MaintenanceTask{},
+				Performance: &WorkerPerformance{
+					TasksCompleted:  0,
+					TasksFailed:     0,
+					AverageTaskTime: 0,
+					Uptime:          0,
+					SuccessRate:     0,
+				},
+				LastUpdated: time.Now(),
+			}
+		}
+		workersData = append(workersData, details)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"workers": workersData,
+		"title":   "Maintenance Workers",
+	})
+}
+
+// ShowMaintenanceConfig displays the maintenance configuration page
+func (as *AdminServer) ShowMaintenanceConfig(c *gin.Context) {
+	config, err := as.getMaintenanceConfig()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// This should not render HTML template, it should use the component approach
+	c.JSON(http.StatusOK, config)
+}
+
+// UpdateMaintenanceConfig updates maintenance configuration from form
+func (as *AdminServer) UpdateMaintenanceConfig(c *gin.Context) {
+	var config MaintenanceConfig
+	if err := c.ShouldBind(&config); err != nil {
+		c.HTML(http.StatusBadRequest, "error.html", gin.H{"error": err.Error()})
+		return
+	}
+
+	err := as.updateMaintenanceConfig(&config)
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "error.html", gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Redirect(http.StatusSeeOther, "/maintenance/config")
+}
+
+// TriggerMaintenanceScan triggers a maintenance scan
+func (as *AdminServer) TriggerMaintenanceScan(c *gin.Context) {
+	err := as.triggerMaintenanceScan()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Maintenance scan triggered"})
+}
+
+// GetMaintenanceTasks returns all maintenance tasks
+func (as *AdminServer) GetMaintenanceTasks(c *gin.Context) {
+	tasks, err := as.getMaintenanceTasks()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, tasks)
+}
+
+// GetMaintenanceTask returns a specific maintenance task
+func (as *AdminServer) GetMaintenanceTask(c *gin.Context) {
+	taskID := c.Param("id")
+	task, err := as.getMaintenanceTask(taskID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, task)
+}
+
+// CancelMaintenanceTask cancels a pending maintenance task
+func (as *AdminServer) CancelMaintenanceTask(c *gin.Context) {
+	taskID := c.Param("id")
+	err := as.cancelMaintenanceTask(taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Task cancelled"})
+}
+
+// GetMaintenanceWorkersAPI returns all maintenance workers
+func (as *AdminServer) GetMaintenanceWorkersAPI(c *gin.Context) {
+	workers, err := as.getMaintenanceWorkers()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, workers)
+}
+
+// GetMaintenanceWorker returns a specific maintenance worker
+func (as *AdminServer) GetMaintenanceWorker(c *gin.Context) {
+	workerID := c.Param("id")
+	worker, err := as.getMaintenanceWorkerDetails(workerID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Worker not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, worker)
+}
+
+// GetMaintenanceStats returns maintenance statistics
+func (as *AdminServer) GetMaintenanceStats(c *gin.Context) {
+	stats, err := as.getMaintenanceStats()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
+
+// GetMaintenanceConfigAPI returns maintenance configuration
+func (as *AdminServer) GetMaintenanceConfigAPI(c *gin.Context) {
+	config, err := as.getMaintenanceConfig()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, config)
+}
+
+// UpdateMaintenanceConfigAPI updates maintenance configuration via API
+func (as *AdminServer) UpdateMaintenanceConfigAPI(c *gin.Context) {
+	var config MaintenanceConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err := as.updateMaintenanceConfig(&config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Configuration updated"})
+}
+
+// GetMaintenanceConfigData returns maintenance configuration data (public wrapper)
+func (as *AdminServer) GetMaintenanceConfigData() (*maintenance.MaintenanceConfigData, error) {
+	return as.getMaintenanceConfig()
+}
+
+// UpdateMaintenanceConfigData updates maintenance configuration (public wrapper)
+func (as *AdminServer) UpdateMaintenanceConfigData(config *maintenance.MaintenanceConfig) error {
+	return as.updateMaintenanceConfig(config)
+}
+
+// Helper methods for maintenance operations
+
+// getMaintenanceQueueData returns data for the maintenance queue UI
+func (as *AdminServer) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
+	tasks, err := as.getMaintenanceTasks()
+	if err != nil {
+		return nil, err
+	}
+
+	workers, err := as.getMaintenanceWorkers()
+	if err != nil {
+		return nil, err
+	}
+
+	stats, err := as.getMaintenanceQueueStats()
+	if err != nil {
+		return nil, err
+	}
+
+	return &maintenance.MaintenanceQueueData{
+		Tasks:       tasks,
+		Workers:     workers,
+		Stats:       stats,
+		LastUpdated: time.Now(),
+	}, nil
+}
+
+// getMaintenanceQueueStats returns statistics for the maintenance queue
+func (as *AdminServer) getMaintenanceQueueStats() (*maintenance.QueueStats, error) {
+	// This would integrate with the maintenance queue to get real statistics
+	// For now, return mock data
+	return &maintenance.QueueStats{
+		PendingTasks:   5,
+		RunningTasks:   2,
+		CompletedToday: 15,
+		FailedToday:    1,
+		TotalTasks:     23,
+	}, nil
+}
+
+// getMaintenanceTasks returns all maintenance tasks
+func (as *AdminServer) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
+	if as.maintenanceManager == nil {
+		return []*MaintenanceTask{}, nil
+	}
+	return as.maintenanceManager.GetTasks(maintenance.TaskStatusPending, "", 0), nil
+}
+
+// getMaintenanceTask returns a specific maintenance task
+func (as *AdminServer) getMaintenanceTask(taskID string) (*MaintenanceTask, error) {
+	if as.maintenanceManager == nil {
+		return nil, fmt.Errorf("maintenance manager not initialized")
+	}
+
+	// Search for the task across all statuses since we don't know which status it has
+	statuses := []MaintenanceTaskStatus{
+		TaskStatusPending,
+		TaskStatusAssigned,
+		TaskStatusInProgress,
+		TaskStatusCompleted,
+		TaskStatusFailed,
+		TaskStatusCancelled,
+	}
+
+	for _, status := range statuses {
+		tasks := as.maintenanceManager.GetTasks(status, "", 0) // Get all tasks with this status
+		for _, task := range tasks {
+			if task.ID == taskID {
+				return task, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("task %s not found", taskID)
+}
+
+// cancelMaintenanceTask cancels a pending maintenance task
+func (as *AdminServer) cancelMaintenanceTask(taskID string) error {
+	if as.maintenanceManager == nil {
+		return fmt.Errorf("maintenance manager not initialized")
+	}
+
+	return as.maintenanceManager.CancelTask(taskID)
+}
+
+// getMaintenanceWorkers returns all maintenance workers
+func (as *AdminServer) getMaintenanceWorkers() ([]*maintenance.MaintenanceWorker, error) {
+	if as.maintenanceManager == nil {
+		return []*MaintenanceWorker{}, nil
+	}
+	return as.maintenanceManager.GetWorkers(), nil
+}
+
+// getMaintenanceWorkerDetails returns detailed information about a worker
+func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDetailsData, error) {
+	if as.maintenanceManager == nil {
+		return nil, fmt.Errorf("maintenance manager not initialized")
+	}
+
+	workers := as.maintenanceManager.GetWorkers()
+	var targetWorker *MaintenanceWorker
+	for _, worker := range workers {
+		if worker.ID == workerID {
+			targetWorker = worker
+			break
+		}
+	}
+
+	if targetWorker == nil {
+		return nil, fmt.Errorf("worker %s not found", workerID)
+	}
+
+	// Get current tasks for this worker
+	currentTasks := as.maintenanceManager.GetTasks(TaskStatusInProgress, "", 0)
+	var workerCurrentTasks []*MaintenanceTask
+	for _, task := range currentTasks {
+		if task.WorkerID == workerID {
+			workerCurrentTasks = append(workerCurrentTasks, task)
+		}
+	}
+
+	// Get recent tasks for this worker
+	recentTasks := as.maintenanceManager.GetTasks(TaskStatusCompleted, "", 10)
+	var workerRecentTasks []*MaintenanceTask
+	for _, task := range recentTasks {
+		if task.WorkerID == workerID {
+			workerRecentTasks = append(workerRecentTasks, task)
+		}
+	}
+
+	// Calculate performance metrics
+	var totalDuration time.Duration
+	var completedTasks, failedTasks int
+	for _, task := range workerRecentTasks {
+		if task.Status == TaskStatusCompleted {
+			completedTasks++
+			if task.StartedAt != nil && task.CompletedAt != nil {
+				totalDuration += task.CompletedAt.Sub(*task.StartedAt)
+			}
+		} else if task.Status == TaskStatusFailed {
+			failedTasks++
+		}
+	}
+
+	var averageTaskTime time.Duration
+	var successRate float64
+	if completedTasks+failedTasks > 0 {
+		if completedTasks > 0 {
+			averageTaskTime = totalDuration / time.Duration(completedTasks)
+		}
+		successRate = float64(completedTasks) / float64(completedTasks+failedTasks) * 100
+	}
+
+	return &WorkerDetailsData{
+		Worker:       targetWorker,
+		CurrentTasks: workerCurrentTasks,
+		RecentTasks:  workerRecentTasks,
+		Performance: &WorkerPerformance{
+			TasksCompleted:  completedTasks,
+			TasksFailed:     failedTasks,
+			AverageTaskTime: averageTaskTime,
+			Uptime:          time.Since(targetWorker.LastHeartbeat), // This should be tracked properly
+			SuccessRate:     successRate,
+		},
+		LastUpdated: time.Now(),
+	}, nil
+}
+
+// getMaintenanceStats returns maintenance statistics
+func (as *AdminServer) getMaintenanceStats() (*MaintenanceStats, error) {
+	if as.maintenanceManager == nil {
+		return &MaintenanceStats{
+			TotalTasks:    0,
+			TasksByStatus: make(map[MaintenanceTaskStatus]int),
+			TasksByType:   make(map[MaintenanceTaskType]int),
+			ActiveWorkers: 0,
+		}, nil
+	}
+	return as.maintenanceManager.GetStats(), nil
+}
+
+// getMaintenanceConfig returns maintenance configuration
+func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigData, error) {
+	// Load configuration from persistent storage
+	config, err := as.configPersistence.LoadMaintenanceConfig()
+	if err != nil {
+		glog.Errorf("Failed to load maintenance configuration: %v", err)
+		// Fallback to default configuration
+		config = DefaultMaintenanceConfig()
+	}
+
+	// Get system stats from maintenance manager if available
+	var systemStats *MaintenanceStats
+	if as.maintenanceManager != nil {
+		systemStats = as.maintenanceManager.GetStats()
+	} else {
+		// Fallback stats
+		systemStats = &MaintenanceStats{
+			TotalTasks: 0,
+			TasksByStatus: map[MaintenanceTaskStatus]int{
+				TaskStatusPending:    0,
+				TaskStatusInProgress: 0,
+				TaskStatusCompleted:  0,
+				TaskStatusFailed:     0,
+			},
+			TasksByType:     make(map[MaintenanceTaskType]int),
+			ActiveWorkers:   0,
+			CompletedToday:  0,
+			FailedToday:     0,
+			AverageTaskTime: 0,
+			LastScanTime:    time.Now().Add(-time.Hour),
+			NextScanTime:    time.Now().Add(time.Duration(config.ScanIntervalSeconds) * time.Second),
+		}
+	}
+
+	return &MaintenanceConfigData{
+		Config:       config,
+		IsEnabled:    config.Enabled,
+		LastScanTime: systemStats.LastScanTime,
+		NextScanTime: systemStats.NextScanTime,
+		SystemStats:  systemStats,
+		MenuItems:    maintenance.BuildMaintenanceMenuItems(),
+	}, nil
+}
+
+// updateMaintenanceConfig updates maintenance configuration
+func (as *AdminServer) updateMaintenanceConfig(config *maintenance.MaintenanceConfig) error {
+	// Save configuration to persistent storage
+	if err := as.configPersistence.SaveMaintenanceConfig(config); err != nil {
+		return fmt.Errorf("failed to save maintenance configuration: %v", err)
+	}
+
+	// Update maintenance manager if available
+	if as.maintenanceManager != nil {
+		if err := as.maintenanceManager.UpdateConfig(config); err != nil {
+			glog.Errorf("Failed to update maintenance manager config: %v", err)
+			// Don't return error here, just log it
+		}
+	}
+
+	glog.V(1).Infof("Updated maintenance configuration (enabled: %v, scan interval: %ds)",
+		config.Enabled, config.ScanIntervalSeconds)
+	return nil
+}
+
+// triggerMaintenanceScan triggers a maintenance scan
+func (as *AdminServer) triggerMaintenanceScan() error {
+	if as.maintenanceManager == nil {
+		return fmt.Errorf("maintenance manager not initialized")
+	}
+
+	return as.maintenanceManager.TriggerScan()
+}
+
+// GetConfigInfo returns information about the admin configuration
+func (as *AdminServer) GetConfigInfo(c *gin.Context) {
+	configInfo := as.configPersistence.GetConfigInfo()
+
+	// Add additional admin server info
+	configInfo["master_address"] = as.masterAddress
+	configInfo["cache_expiration"] = as.cacheExpiration.String()
+	configInfo["filer_cache_expiration"] = as.filerCacheExpiration.String()
+
+	// Add maintenance system info
+	if as.maintenanceManager != nil {
+		configInfo["maintenance_enabled"] = true
+		configInfo["maintenance_running"] = as.maintenanceManager.IsRunning()
+	} else {
+		configInfo["maintenance_enabled"] = false
+		configInfo["maintenance_running"] = false
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"config_info": configInfo,
+		"title":       "Configuration Information",
+	})
+}
+
+// GetMaintenanceWorkersData returns workers data for the maintenance workers page
+func (as *AdminServer) GetMaintenanceWorkersData() (*MaintenanceWorkersData, error) {
+	workers, err := as.getMaintenanceWorkers()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create worker details data
+	workersData := make([]*WorkerDetailsData, 0, len(workers))
+	activeWorkers := 0
+	busyWorkers := 0
+	totalLoad := 0
+
+	for _, worker := range workers {
+		details, err := as.getMaintenanceWorkerDetails(worker.ID)
+		if err != nil {
+			// Create basic worker details if we can't get full details
+			details = &WorkerDetailsData{
+				Worker:       worker,
+				CurrentTasks: []*MaintenanceTask{},
+				RecentTasks:  []*MaintenanceTask{},
+				Performance: &WorkerPerformance{
+					TasksCompleted:  0,
+					TasksFailed:     0,
+					AverageTaskTime: 0,
+					Uptime:          0,
+					SuccessRate:     0,
+				},
+				LastUpdated: time.Now(),
+			}
+		}
+		workersData = append(workersData, details)
+
+		if worker.Status == "active" {
+			activeWorkers++
+		} else if worker.Status == "busy" {
+			busyWorkers++
+		}
+		totalLoad += worker.CurrentLoad
+	}
+
+	return &MaintenanceWorkersData{
+		Workers:       workersData,
+		ActiveWorkers: activeWorkers,
+		BusyWorkers:   busyWorkers,
+		TotalLoad:     totalLoad,
+		LastUpdated:   time.Now(),
+	}, nil
+}
+
+// StartWorkerGrpcServer starts the worker gRPC server
+func (s *AdminServer) StartWorkerGrpcServer(httpPort int) error {
+	if s.workerGrpcServer != nil {
+		return fmt.Errorf("worker gRPC server is already running")
+	}
+
+	// Calculate gRPC port (HTTP port + 10000)
+	grpcPort := httpPort + 10000
+
+	s.workerGrpcServer = NewWorkerGrpcServer(s)
+	return s.workerGrpcServer.StartWithTLS(grpcPort)
+}
+
+// StopWorkerGrpcServer stops the worker gRPC server
+func (s *AdminServer) StopWorkerGrpcServer() error {
+	if s.workerGrpcServer != nil {
+		err := s.workerGrpcServer.Stop()
+		s.workerGrpcServer = nil
+		return err
+	}
+	return nil
+}
+
+// GetWorkerGrpcServer returns the worker gRPC server
+func (s *AdminServer) GetWorkerGrpcServer() *WorkerGrpcServer {
+	return s.workerGrpcServer
+}
+
+// Maintenance system integration methods
+
+// InitMaintenanceManager initializes the maintenance manager
+func (s *AdminServer) InitMaintenanceManager(config *maintenance.MaintenanceConfig) {
+	s.maintenanceManager = maintenance.NewMaintenanceManager(s, config)
+	glog.V(1).Infof("Maintenance manager initialized (enabled: %v)", config.Enabled)
+}
+
+// GetMaintenanceManager returns the maintenance manager
+func (s *AdminServer) GetMaintenanceManager() *maintenance.MaintenanceManager {
+	return s.maintenanceManager
+}
+
+// StartMaintenanceManager starts the maintenance manager
+func (s *AdminServer) StartMaintenanceManager() error {
+	if s.maintenanceManager == nil {
+		return fmt.Errorf("maintenance manager not initialized")
+	}
+	return s.maintenanceManager.Start()
+}
+
+// StopMaintenanceManager stops the maintenance manager
+func (s *AdminServer) StopMaintenanceManager() {
+	if s.maintenanceManager != nil {
+		s.maintenanceManager.Stop()
+	}
+}
+
+// Shutdown gracefully shuts down the admin server
+func (s *AdminServer) Shutdown() {
+	glog.V(1).Infof("Shutting down admin server...")
+
+	// Stop maintenance manager
+	s.StopMaintenanceManager()
+
+	// Stop worker gRPC server
+	if err := s.StopWorkerGrpcServer(); err != nil {
+		glog.Errorf("Failed to stop worker gRPC server: %v", err)
+	}
+
+	glog.V(1).Infof("Admin server shutdown complete")
+}
