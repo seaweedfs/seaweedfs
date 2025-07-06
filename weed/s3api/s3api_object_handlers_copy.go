@@ -534,7 +534,7 @@ func (s3a *S3ApiServer) transferChunkData(srcUrl string, assignResult *filer_pb.
 
 	// Read the chunk data using ReadUrlAsStream
 	var chunkData []byte
-	shouldRetry, err := util_http.ReadUrlAsStream(srcUrl, nil, false, false, 0, int(size), func(data []byte) {
+	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, nil, false, false, 0, int(size), func(data []byte) {
 		chunkData = append(chunkData, data...)
 	})
 	if err != nil {
@@ -557,7 +557,7 @@ func (s3a *S3ApiServer) transferChunkData(srcUrl string, assignResult *filer_pb.
 	if err != nil {
 		return fmt.Errorf("create uploader: %v", err)
 	}
-	_, err = uploader.UploadData(chunkData, uploadOption)
+	_, err = uploader.UploadData(context.Background(), chunkData, uploadOption)
 	if err != nil {
 		return fmt.Errorf("upload chunk: %v", err)
 	}
@@ -571,7 +571,7 @@ func (s3a *S3ApiServer) transferChunkRangeData(srcUrl string, assignResult *file
 
 	// Read the specific range of chunk data using ReadUrlAsStream
 	var chunkData []byte
-	shouldRetry, err := util_http.ReadUrlAsStream(srcUrl, nil, false, false, offsetInChunk, int(size), func(data []byte) {
+	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, nil, false, false, offsetInChunk, int(size), func(data []byte) {
 		chunkData = append(chunkData, data...)
 	})
 	if err != nil {
@@ -594,7 +594,7 @@ func (s3a *S3ApiServer) transferChunkRangeData(srcUrl string, assignResult *file
 	if err != nil {
 		return fmt.Errorf("create uploader: %v", err)
 	}
-	_, err = uploader.UploadData(chunkData, uploadOption)
+	_, err = uploader.UploadData(context.Background(), chunkData, uploadOption)
 	if err != nil {
 		return fmt.Errorf("upload chunk range: %v", err)
 	}
