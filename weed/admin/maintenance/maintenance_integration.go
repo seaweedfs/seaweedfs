@@ -28,7 +28,7 @@ type MaintenanceIntegration struct {
 func NewMaintenanceIntegration(queue *MaintenanceQueue, policy *MaintenancePolicy) *MaintenanceIntegration {
 	integration := &MaintenanceIntegration{
 		taskRegistry:      tasks.GetGlobalTypesRegistry(), // Use global types registry with auto-registered tasks
-		uiRegistry:        types.NewUIRegistry(),
+		uiRegistry:        tasks.GetGlobalUIRegistry(),    // Use global UI registry with auto-registered UI providers
 		maintenanceQueue:  queue,
 		maintenancePolicy: policy,
 	}

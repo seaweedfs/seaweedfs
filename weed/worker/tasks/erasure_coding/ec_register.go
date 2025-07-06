@@ -50,4 +50,11 @@ func init() {
 		scheduler := NewScheduler()
 		registry.RegisterTask(detector, scheduler)
 	})
+
+	// Also register UI provider
+	tasks.AutoRegisterUI(func(uiRegistry *types.UIRegistry) {
+		detector := NewEcDetector()
+		scheduler := NewScheduler()
+		RegisterUI(uiRegistry, detector, scheduler)
+	})
 }

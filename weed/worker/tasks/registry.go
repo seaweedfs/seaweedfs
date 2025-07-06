@@ -10,8 +10,10 @@ import (
 var (
 	globalRegistry      *TaskRegistry
 	globalTypesRegistry *types.TaskRegistry
+	globalUIRegistry    *types.UIRegistry
 	registryOnce        sync.Once
 	typesRegistryOnce   sync.Once
+	uiRegistryOnce      sync.Once
 )
 
 // GetGlobalRegistry returns the global task registry (singleton)
@@ -32,6 +34,15 @@ func GetGlobalTypesRegistry() *types.TaskRegistry {
 	return globalTypesRegistry
 }
 
+// GetGlobalUIRegistry returns the global UI registry (singleton)
+func GetGlobalUIRegistry() *types.UIRegistry {
+	uiRegistryOnce.Do(func() {
+		globalUIRegistry = types.NewUIRegistry()
+		glog.V(1).Infof("Created global UI registry")
+	})
+	return globalUIRegistry
+}
+
 // AutoRegister registers a task directly with the global registry
 func AutoRegister(taskType types.TaskType, factory types.TaskFactory) {
 	registry := GetGlobalRegistry()
@@ -44,4 +55,11 @@ func AutoRegisterTypes(registerFunc func(*types.TaskRegistry)) {
 	registry := GetGlobalTypesRegistry()
 	registerFunc(registry)
 	glog.V(1).Infof("Auto-registered task with types registry")
+}
+
+// AutoRegisterUI registers a UI provider with the global UI registry
+func AutoRegisterUI(registerFunc func(*types.UIRegistry)) {
+	registry := GetGlobalUIRegistry()
+	registerFunc(registry)
+	glog.V(1).Infof("Auto-registered task UI provider")
 }

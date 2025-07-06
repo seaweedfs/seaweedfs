@@ -68,7 +68,6 @@ func init() {
 	taskTypes := []MaintenanceTaskType{
 		TaskTypeVacuum,
 		TaskTypeErasureCoding,
-		TaskTypeRemoteUpload,
 		TaskTypeFixReplication,
 		TaskTypeBalance,
 		TaskTypeClusterReplication,
@@ -106,7 +105,7 @@ func NewMaintenanceWorkerService(workerID, address, adminServer string) *Mainten
 		workerID:      workerID,
 		address:       address,
 		adminServer:   adminServer,
-		capabilities:  []MaintenanceTaskType{TaskTypeVacuum, TaskTypeErasureCoding, TaskTypeRemoteUpload, TaskTypeFixReplication, TaskTypeBalance, TaskTypeClusterReplication},
+		capabilities:  []MaintenanceTaskType{TaskTypeVacuum, TaskTypeErasureCoding, TaskTypeFixReplication, TaskTypeBalance, TaskTypeClusterReplication},
 		maxConcurrent: 2, // Default concurrent task limit
 		currentTasks:  make(map[string]*MaintenanceTask),
 		stopChan:      make(chan struct{}),
