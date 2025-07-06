@@ -26,6 +26,36 @@ type TaskExecutorFactory func() TaskExecutor
 // Global registry for task executor factories
 var taskExecutorFactories = make(map[MaintenanceTaskType]TaskExecutorFactory)
 var executorRegistryMutex sync.RWMutex
+var executorRegistryInitOnce sync.Once
+
+// initializeExecutorFactories dynamically registers executor factories for all auto-registered task types
+func initializeExecutorFactories() {
+	executorRegistryInitOnce.Do(func() {
+		// Get all registered task types from the global registry
+		typesRegistry := tasks.GetGlobalTypesRegistry()
+
+		var taskTypes []MaintenanceTaskType
+		for workerTaskType := range typesRegistry.GetAllDetectors() {
+			// Convert types.TaskType to MaintenanceTaskType by string conversion
+			maintenanceTaskType := MaintenanceTaskType(string(workerTaskType))
+			taskTypes = append(taskTypes, maintenanceTaskType)
+		}
+
+		// Also add any maintenance-specific task types that don't have worker equivalents
+		additionalTaskTypes := []MaintenanceTaskType{
+			TaskTypeFixReplication,
+			TaskTypeClusterReplication,
+		}
+		taskTypes = append(taskTypes, additionalTaskTypes...)
+
+		// Register generic executor for all task types
+		for _, taskType := range taskTypes {
+			RegisterTaskExecutorFactory(taskType, createGenericTaskExecutor)
+		}
+
+		glog.V(1).Infof("Dynamically registered generic task executor for %d task types: %v", len(taskTypes), taskTypes)
+	})
+}
 
 // RegisterTaskExecutorFactory registers a factory function for creating task executors
 func RegisterTaskExecutorFactory(taskType MaintenanceTaskType, factory TaskExecutorFactory) {
@@ -37,6 +67,9 @@ func RegisterTaskExecutorFactory(taskType MaintenanceTaskType, factory TaskExecu
 
 // GetTaskExecutorFactory returns the factory for a task type
 func GetTaskExecutorFactory(taskType MaintenanceTaskType) (TaskExecutorFactory, bool) {
+	// Ensure executor factories are initialized
+	initializeExecutorFactories()
+
 	executorRegistryMutex.RLock()
 	defer executorRegistryMutex.RUnlock()
 	factory, exists := taskExecutorFactories[taskType]
@@ -45,6 +78,9 @@ func GetTaskExecutorFactory(taskType MaintenanceTaskType) (TaskExecutorFactory, 
 
 // GetSupportedExecutorTaskTypes returns all task types with registered executor factories
 func GetSupportedExecutorTaskTypes() []MaintenanceTaskType {
+	// Ensure executor factories are initialized
+	initializeExecutorFactories()
+
 	executorRegistryMutex.RLock()
 	defer executorRegistryMutex.RUnlock()
 
@@ -62,22 +98,10 @@ func createGenericTaskExecutor() TaskExecutor {
 	}
 }
 
-// init registers the generic executor factory for all task types
+// init does minimal initialization - actual registration happens lazily
 func init() {
-	// Register generic executor for all task types
-	taskTypes := []MaintenanceTaskType{
-		TaskTypeVacuum,
-		TaskTypeErasureCoding,
-		TaskTypeFixReplication,
-		TaskTypeBalance,
-		TaskTypeClusterReplication,
-	}
-
-	for _, taskType := range taskTypes {
-		RegisterTaskExecutorFactory(taskType, createGenericTaskExecutor)
-	}
-
-	glog.V(1).Infof("Registered generic task executor for %d task types", len(taskTypes))
+	// Executor factory registration will happen lazily when first accessed
+	glog.V(1).Infof("Maintenance worker initialized - executor factories will be registered on first access")
 }
 
 type MaintenanceWorkerService struct {
