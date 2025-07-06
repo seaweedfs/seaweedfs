@@ -310,11 +310,22 @@ type QueueStats struct {
 
 // MaintenanceConfigData represents configuration data for the UI
 type MaintenanceConfigData struct {
-	Config       *MaintenanceConfig `json:"config"`
-	IsEnabled    bool               `json:"is_enabled"`
-	LastScanTime time.Time          `json:"last_scan_time"`
-	NextScanTime time.Time          `json:"next_scan_time"`
-	SystemStats  *MaintenanceStats  `json:"system_stats"`
+	Config       *MaintenanceConfig     `json:"config"`
+	IsEnabled    bool                   `json:"is_enabled"`
+	LastScanTime time.Time              `json:"last_scan_time"`
+	NextScanTime time.Time              `json:"next_scan_time"`
+	SystemStats  *MaintenanceStats      `json:"system_stats"`
+	MenuItems    []*MaintenanceMenuItem `json:"menu_items"`
+}
+
+// MaintenanceMenuItem represents a menu item for task configuration
+type MaintenanceMenuItem struct {
+	TaskType    MaintenanceTaskType `json:"task_type"`
+	DisplayName string              `json:"display_name"`
+	Description string              `json:"description"`
+	Icon        string              `json:"icon"`
+	IsEnabled   bool                `json:"is_enabled"`
+	Path        string              `json:"path"`
 }
 
 // WorkerDetailsData represents detailed worker information
@@ -464,4 +475,69 @@ func GetTaskIcon(taskType MaintenanceTaskType) string {
 
 	// Default icon if no UI provider found
 	return "fas fa-cog text-muted"
+}
+
+// GetTaskDisplayName returns the display name for a task type from its UI provider
+func GetTaskDisplayName(taskType MaintenanceTaskType) string {
+	typesRegistry := tasks.GetGlobalTypesRegistry()
+	uiRegistry := tasks.GetGlobalUIRegistry()
+
+	// Convert MaintenanceTaskType to TaskType
+	for workerTaskType := range typesRegistry.GetAllDetectors() {
+		if string(workerTaskType) == string(taskType) {
+			// Get the UI provider for this task type
+			provider := uiRegistry.GetProvider(workerTaskType)
+			if provider != nil {
+				return provider.GetDisplayName()
+			}
+			break
+		}
+	}
+
+	// Fallback to the task type string
+	return string(taskType)
+}
+
+// GetTaskDescription returns the description for a task type from its UI provider
+func GetTaskDescription(taskType MaintenanceTaskType) string {
+	typesRegistry := tasks.GetGlobalTypesRegistry()
+	uiRegistry := tasks.GetGlobalUIRegistry()
+
+	// Convert MaintenanceTaskType to TaskType
+	for workerTaskType := range typesRegistry.GetAllDetectors() {
+		if string(workerTaskType) == string(taskType) {
+			// Get the UI provider for this task type
+			provider := uiRegistry.GetProvider(workerTaskType)
+			if provider != nil {
+				return provider.GetDescription()
+			}
+			break
+		}
+	}
+
+	// Fallback to a generic description
+	return "Configure detailed settings for " + string(taskType) + " tasks."
+}
+
+// BuildMaintenanceMenuItems creates menu items for all registered task types
+func BuildMaintenanceMenuItems() []*MaintenanceMenuItem {
+	var menuItems []*MaintenanceMenuItem
+
+	// Get all registered task types
+	registeredTypes := GetRegisteredMaintenanceTaskTypes()
+
+	for _, taskType := range registeredTypes {
+		menuItem := &MaintenanceMenuItem{
+			TaskType:    taskType,
+			DisplayName: GetTaskDisplayName(taskType),
+			Description: GetTaskDescription(taskType),
+			Icon:        GetTaskIcon(taskType),
+			IsEnabled:   IsMaintenanceTaskTypeRegistered(taskType),
+			Path:        "/maintenance/config/" + string(taskType),
+		}
+
+		menuItems = append(menuItems, menuItem)
+	}
+
+	return menuItems
 }

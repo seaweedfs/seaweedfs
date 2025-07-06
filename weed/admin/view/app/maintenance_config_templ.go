@@ -77,59 +77,141 @@ func MaintenanceConfig(data *maintenance.MaintenanceConfigData) templ.Component 
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "> <label class=\"form-check-label\" for=\"replicationFixEnabled\"><strong>Enable Replication Fix Tasks</strong></label></div><small class=\"form-text text-muted\">Automatically fix under-replicated or over-replicated volumes.</small></div><div class=\"d-flex gap-2\"><button type=\"button\" class=\"btn btn-primary\" onclick=\"saveConfiguration()\"><i class=\"fas fa-save me-1\"></i> Save Configuration</button> <button type=\"button\" class=\"btn btn-secondary\" onclick=\"resetToDefaults()\"><i class=\"fas fa-undo me-1\"></i> Reset to Defaults</button></div></form></div></div></div></div><!-- Statistics Overview --><div class=\"row mt-4\"><div class=\"col-12\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\">System Statistics</h5></div><div class=\"card-body\"><div class=\"row\"><div class=\"col-md-3\"><div class=\"text-center\"><h6 class=\"text-muted\">Last Scan</h6><p class=\"mb-0\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "> <label class=\"form-check-label\" for=\"replicationFixEnabled\"><strong>Enable Replication Fix Tasks</strong></label></div><small class=\"form-text text-muted\">Automatically fix under-replicated or over-replicated volumes.</small></div><div class=\"d-flex gap-2\"><button type=\"button\" class=\"btn btn-primary\" onclick=\"saveConfiguration()\"><i class=\"fas fa-save me-1\"></i> Save Configuration</button> <button type=\"button\" class=\"btn btn-secondary\" onclick=\"resetToDefaults()\"><i class=\"fas fa-undo me-1\"></i> Reset to Defaults</button></div></form></div></div></div></div><!-- Individual Task Configuration Menu --><div class=\"row mt-4\"><div class=\"col-12\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-cogs me-2\"></i> Task Configuration</h5></div><div class=\"card-body\"><p class=\"text-muted mb-3\">Configure specific settings for each maintenance task type.</p><div class=\"list-group\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var3 string
-		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastScanTime.Format("2006-01-02 15:04:05"))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 119, Col: 100}
+		for _, menuItem := range data.MenuItems {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<a href=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var3 templ.SafeURL = templ.SafeURL(menuItem.Path)
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var3)))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "\" class=\"list-group-item list-group-item-action\"><div class=\"d-flex w-100 justify-content-between\"><h6 class=\"mb-1\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var4 = []any{menuItem.Icon + " me-2"}
+			templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var4...)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<i class=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var5 string
+			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var4).String())
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 1, Col: 0}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\"></i> ")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var6 string
+			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(menuItem.DisplayName)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 125, Col: 65}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</h6>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			if data.Config.Policy.IsTaskEnabled(menuItem.TaskType) {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<span class=\"badge bg-success\">Enabled</span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<span class=\"badge bg-secondary\">Disabled</span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "</div><p class=\"mb-1 small text-muted\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var7 string
+			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(menuItem.Description)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 133, Col: 90}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</p></a>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</div></div></div></div></div><!-- Statistics Overview --><div class=\"row mt-4\"><div class=\"col-12\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\">System Statistics</h5></div><div class=\"card-body\"><div class=\"row\"><div class=\"col-md-3\"><div class=\"text-center\"><h6 class=\"text-muted\">Last Scan</h6><p class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</p></div></div><div class=\"col-md-3\"><div class=\"text-center\"><h6 class=\"text-muted\">Next Scan</h6><p class=\"mb-0\">")
+		var templ_7745c5c3_Var8 string
+		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastScanTime.Format("2006-01-02 15:04:05"))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 154, Col: 100}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var4 string
-		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(data.NextScanTime.Format("2006-01-02 15:04:05"))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 125, Col: 100}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</p></div></div><div class=\"col-md-3\"><div class=\"text-center\"><h6 class=\"text-muted\">Next Scan</h6><p class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</p></div></div><div class=\"col-md-3\"><div class=\"text-center\"><h6 class=\"text-muted\">Total Tasks</h6><p class=\"mb-0\">")
+		var templ_7745c5c3_Var9 string
+		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(data.NextScanTime.Format("2006-01-02 15:04:05"))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 160, Col: 100}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var5 string
-		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.SystemStats.TotalTasks))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 131, Col: 99}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</p></div></div><div class=\"col-md-3\"><div class=\"text-center\"><h6 class=\"text-muted\">Total Tasks</h6><p class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</p></div></div><div class=\"col-md-3\"><div class=\"text-center\"><h6 class=\"text-muted\">Active Workers</h6><p class=\"mb-0\">")
+		var templ_7745c5c3_Var10 string
+		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.SystemStats.TotalTasks))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 166, Col: 99}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var6 string
-		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.SystemStats.ActiveWorkers))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 137, Col: 102}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "</p></div></div><div class=\"col-md-3\"><div class=\"text-center\"><h6 class=\"text-muted\">Active Workers</h6><p class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</p></div></div></div></div></div></div></div></div><script>\n        function saveConfiguration() {\n            const config = {\n                enabled: document.getElementById('enabled').checked,\n                scan_interval_seconds: parseInt(document.getElementById('scanInterval').value) * 60, // Convert to seconds\n                policy: {\n                    vacuum_enabled: document.getElementById('vacuumEnabled').checked,\n                    vacuum_garbage_ratio: parseFloat(document.getElementById('vacuumGarbageRatio').value) / 100,\n                    replication_fix_enabled: document.getElementById('replicationFixEnabled').checked,\n                }\n            };\n\n            fetch('/api/maintenance/config', {\n                method: 'PUT',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n                body: JSON.stringify(config)\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Configuration saved successfully');\n                } else {\n                    alert('Failed to save configuration: ' + (data.error || 'Unknown error'));\n                }\n            })\n            .catch(error => {\n                alert('Error: ' + error.message);\n            });\n        }\n\n        function resetToDefaults() {\n            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {\n                // Reset form to defaults\n                document.getElementById('enabled').checked = false;\n                document.getElementById('scanInterval').value = '30';\n                document.getElementById('vacuumEnabled').checked = false;\n                document.getElementById('vacuumGarbageRatio').value = '30';\n                document.getElementById('replicationFixEnabled').checked = false;\n            }\n        }\n    </script>")
+		var templ_7745c5c3_Var11 string
+		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.SystemStats.ActiveWorkers))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config.templ`, Line: 172, Col: 102}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "</p></div></div></div></div></div></div></div></div><script>\n        function saveConfiguration() {\n            const config = {\n                enabled: document.getElementById('enabled').checked,\n                scan_interval_seconds: parseInt(document.getElementById('scanInterval').value) * 60, // Convert to seconds\n                policy: {\n                    vacuum_enabled: document.getElementById('vacuumEnabled').checked,\n                    vacuum_garbage_ratio: parseFloat(document.getElementById('vacuumGarbageRatio').value) / 100,\n                    replication_fix_enabled: document.getElementById('replicationFixEnabled').checked,\n                }\n            };\n\n            fetch('/api/maintenance/config', {\n                method: 'PUT',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n                body: JSON.stringify(config)\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Configuration saved successfully');\n                } else {\n                    alert('Failed to save configuration: ' + (data.error || 'Unknown error'));\n                }\n            })\n            .catch(error => {\n                alert('Error: ' + error.message);\n            });\n        }\n\n        function resetToDefaults() {\n            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {\n                // Reset form to defaults\n                document.getElementById('enabled').checked = false;\n                document.getElementById('scanInterval').value = '30';\n                document.getElementById('vacuumEnabled').checked = false;\n                document.getElementById('vacuumGarbageRatio').value = '30';\n                document.getElementById('replicationFixEnabled').checked = false;\n            }\n        }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

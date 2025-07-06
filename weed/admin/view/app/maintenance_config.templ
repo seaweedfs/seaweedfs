@@ -104,6 +104,41 @@ templ MaintenanceConfig(data *maintenance.MaintenanceConfigData) {
             </div>
         </div>
 
+        <!-- Individual Task Configuration Menu -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-cogs me-2"></i>
+                            Task Configuration
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-3">Configure specific settings for each maintenance task type.</p>
+                        <div class="list-group">
+                            for _, menuItem := range data.MenuItems {
+                                <a href={templ.SafeURL(menuItem.Path)} class="list-group-item list-group-item-action">
+                                    <div class="d-flex w-100 justify-content-between">
+                                        <h6 class="mb-1">
+                                            <i class={menuItem.Icon + " me-2"}></i>
+                                            {menuItem.DisplayName}
+                                        </h6>
+                                        if data.Config.Policy.IsTaskEnabled(menuItem.TaskType) {
+                                            <span class="badge bg-success">Enabled</span>
+                                        } else {
+                                            <span class="badge bg-secondary">Disabled</span>
+                                        }
+                                    </div>
+                                    <p class="mb-1 small text-muted">{menuItem.Description}</p>
+                                </a>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Statistics Overview -->
         <div class="row mt-4">
             <div class="col-12">

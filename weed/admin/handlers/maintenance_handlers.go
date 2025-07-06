@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"html/template"
 	"net/http"
 	"time"
 
@@ -9,6 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // MaintenanceHandlers handles maintenance-related HTTP requests
@@ -80,6 +83,123 @@ func (h *MaintenanceHandlers) ShowMaintenanceConfig(c *gin.Context) {
 	}
 }
 
+// ShowTaskConfig displays the configuration page for a specific task type
+func (h *MaintenanceHandlers) ShowTaskConfig(c *gin.Context) {
+	taskTypeName := c.Param("taskType")
+
+	// Get the task type
+	taskType := maintenance.GetMaintenanceTaskType(taskTypeName)
+	if taskType == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task type not found"})
+		return
+	}
+
+	// Get the UI provider for this task type
+	uiRegistry := tasks.GetGlobalUIRegistry()
+	typesRegistry := tasks.GetGlobalTypesRegistry()
+
+	var provider types.TaskUIProvider
+	for workerTaskType := range typesRegistry.GetAllDetectors() {
+		if string(workerTaskType) == string(taskType) {
+			provider = uiRegistry.GetProvider(workerTaskType)
+			break
+		}
+	}
+
+	if provider == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "UI provider not found for task type"})
+		return
+	}
+
+	// Get current configuration
+	currentConfig := provider.GetCurrentConfig()
+
+	// Render configuration form
+	formHTML, err := provider.RenderConfigForm(currentConfig)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render configuration form: " + err.Error()})
+		return
+	}
+
+	// Create a simple template to wrap the form
+	configData := &TaskConfigData{
+		TaskType:       taskType,
+		TaskName:       provider.GetDisplayName(),
+		TaskIcon:       provider.GetIcon(),
+		Description:    provider.GetDescription(),
+		ConfigFormHTML: formHTML,
+	}
+
+	// For now, render as JSON until we create the TaskConfig template
+	c.Header("Content-Type", "application/json")
+	c.JSON(http.StatusOK, gin.H{
+		"task_type":   configData.TaskType,
+		"task_name":   configData.TaskName,
+		"task_icon":   configData.TaskIcon,
+		"description": configData.Description,
+		"config_form": string(configData.ConfigFormHTML),
+	})
+}
+
+// UpdateTaskConfig updates configuration for a specific task type
+func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
+	taskTypeName := c.Param("taskType")
+
+	// Get the task type
+	taskType := maintenance.GetMaintenanceTaskType(taskTypeName)
+	if taskType == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task type not found"})
+		return
+	}
+
+	// Get the UI provider for this task type
+	uiRegistry := tasks.GetGlobalUIRegistry()
+	typesRegistry := tasks.GetGlobalTypesRegistry()
+
+	var provider types.TaskUIProvider
+	for workerTaskType := range typesRegistry.GetAllDetectors() {
+		if string(workerTaskType) == string(taskType) {
+			provider = uiRegistry.GetProvider(workerTaskType)
+			break
+		}
+	}
+
+	if provider == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "UI provider not found for task type"})
+		return
+	}
+
+	// Parse form data
+	err := c.Request.ParseForm()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse form data: " + err.Error()})
+		return
+	}
+
+	// Convert form data to map
+	formData := make(map[string][]string)
+	for key, values := range c.Request.PostForm {
+		formData[key] = values
+	}
+
+	// Parse configuration from form
+	config, err := provider.ParseConfigForm(formData)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
+		return
+	}
+
+	// Apply configuration
+	err = provider.ApplyConfig(config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply configuration: " + err.Error()})
+		return
+	}
+
+	// Redirect back to task configuration page
+	c.Redirect(http.StatusSeeOther, "/maintenance/config/"+taskTypeName)
+}
+
 // UpdateMaintenanceConfig updates maintenance configuration from form
 func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 	var config maintenance.MaintenanceConfig
@@ -95,6 +215,15 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusSeeOther, "/maintenance/config")
+}
+
+// TaskConfigData represents data for individual task configuration page
+type TaskConfigData struct {
+	TaskType       maintenance.MaintenanceTaskType `json:"task_type"`
+	TaskName       string                          `json:"task_name"`
+	TaskIcon       string                          `json:"task_icon"`
+	Description    string                          `json:"description"`
+	ConfigFormHTML template.HTML                   `json:"config_form_html"`
 }
 
 // Helper methods that delegate to AdminServer

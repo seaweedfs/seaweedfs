@@ -1021,6 +1021,7 @@ func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigDat
 		LastScanTime: systemStats.LastScanTime,
 		NextScanTime: systemStats.NextScanTime,
 		SystemStats:  systemStats,
+		MenuItems:    maintenance.BuildMaintenanceMenuItems(),
 	}, nil
 }
 
