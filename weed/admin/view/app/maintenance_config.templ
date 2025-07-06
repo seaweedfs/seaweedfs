@@ -54,37 +54,56 @@ templ MaintenanceConfig(data *maintenance.MaintenanceConfigData) {
                             </div>
 
                             <div class="mb-3">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="vacuumEnabled" 
-                                           checked?={data.Config.Policy.IsTaskEnabled(maintenance.GetMaintenanceTaskType("vacuum"))}>
-                                    <label class="form-check-label" for="vacuumEnabled">
-                                        <strong>Enable Vacuum Tasks</strong>
-                                    </label>
-                                </div>
+                                <label for="workerTimeout" class="form-label">Worker Timeout (minutes)</label>
+                                <input type="number" class="form-control" id="workerTimeout" 
+                                       value={fmt.Sprintf("%.0f", float64(data.Config.WorkerTimeoutSeconds)/60)} min="1" max="60">
                                 <small class="form-text text-muted">
-                                    Automatically clean up deleted data from volumes.
+                                    How long to wait for worker heartbeat before considering it inactive (1-60 minutes).
                                 </small>
                             </div>
 
                             <div class="mb-3">
-                                <label for="vacuumGarbageRatio" class="form-label">Vacuum Trigger Ratio (%)</label>
-                                <input type="number" class="form-control" id="vacuumGarbageRatio" 
-                                       value="30" min="1" max="90" step="1">
+                                <label for="taskTimeout" class="form-label">Task Timeout (hours)</label>
+                                <input type="number" class="form-control" id="taskTimeout" 
+                                       value={fmt.Sprintf("%.0f", float64(data.Config.TaskTimeoutSeconds)/3600)} min="1" max="24">
                                 <small class="form-text text-muted">
-                                    Trigger vacuum when deleted data exceeds this percentage of volume size.
+                                    Maximum time allowed for a single task to complete (1-24 hours).
                                 </small>
                             </div>
 
                             <div class="mb-3">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="replicationFixEnabled" 
-                                           checked?={data.Config.Policy.IsTaskEnabled(maintenance.GetMaintenanceTaskType("fix_replication"))}>
-                                    <label class="form-check-label" for="replicationFixEnabled">
-                                        <strong>Enable Replication Fix Tasks</strong>
-                                    </label>
-                                </div>
+                                <label for="globalMaxConcurrent" class="form-label">Global Concurrent Limit</label>
+                                <input type="number" class="form-control" id="globalMaxConcurrent" 
+                                       value={fmt.Sprintf("%d", data.Config.Policy.GlobalMaxConcurrent)} min="1" max="20">
                                 <small class="form-text text-muted">
-                                    Automatically fix under-replicated or over-replicated volumes.
+                                    Maximum number of maintenance tasks that can run simultaneously across all workers (1-20).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="maxRetries" class="form-label">Default Max Retries</label>
+                                <input type="number" class="form-control" id="maxRetries" 
+                                       value={fmt.Sprintf("%d", data.Config.MaxRetries)} min="0" max="10">
+                                <small class="form-text text-muted">
+                                    Default number of times to retry failed tasks (0-10).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="retryDelay" class="form-label">Retry Delay (minutes)</label>
+                                <input type="number" class="form-control" id="retryDelay" 
+                                       value={fmt.Sprintf("%.0f", float64(data.Config.RetryDelaySeconds)/60)} min="1" max="120">
+                                <small class="form-text text-muted">
+                                    Time to wait before retrying failed tasks (1-120 minutes).
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="taskRetention" class="form-label">Task Retention (days)</label>
+                                <input type="number" class="form-control" id="taskRetention" 
+                                       value={fmt.Sprintf("%.0f", float64(data.Config.TaskRetentionSeconds)/(24*3600))} min="1" max="30">
+                                <small class="form-text text-muted">
+                                    How long to keep completed/failed task records (1-30 days).
                                 </small>
                             </div>
 
