@@ -10,7 +10,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+
+	// Import task packages to trigger their auto-registration
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 var cmdWorker = &Command{
@@ -116,13 +122,24 @@ func parseCapabilities(capabilityStr string) []types.TaskType {
 		return nil
 	}
 
-	capabilityMap := map[string]types.TaskType{
-		"vacuum":              types.TaskTypeVacuum,
-		"ec":                  types.TaskTypeErasureCoding,
-		"remote":              types.TaskTypeRemoteUpload,
-		"replication":         types.TaskTypeFixReplication,
-		"balance":             types.TaskTypeBalance,
-		"cluster_replication": types.TaskTypeClusterReplication,
+	capabilityMap := map[string]types.TaskType{}
+
+	// Populate capabilityMap with registered task types
+	typesRegistry := tasks.GetGlobalTypesRegistry()
+	for taskType := range typesRegistry.GetAllDetectors() {
+		// Use the task type string directly as the key
+		capabilityMap[strings.ToLower(string(taskType))] = taskType
+	}
+
+	// Add common aliases for convenience
+	if taskType, exists := capabilityMap["erasure_coding"]; exists {
+		capabilityMap["ec"] = taskType
+	}
+	if taskType, exists := capabilityMap["remote_upload"]; exists {
+		capabilityMap["remote"] = taskType
+	}
+	if taskType, exists := capabilityMap["fix_replication"]; exists {
+		capabilityMap["replication"] = taskType
 	}
 
 	var capabilities []types.TaskType
