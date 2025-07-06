@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
@@ -82,8 +83,9 @@ func runWorker(cmd *Command, args []string) bool {
 		return false
 	}
 
-	// Create admin client
-	adminClient, err := worker.CreateAdminClient(*workerAdminServer, workerInstance.ID(), "grpc")
+	// Create admin client with LoadClientTLS
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
+	adminClient, err := worker.CreateAdminClient(*workerAdminServer, workerInstance.ID(), grpcDialOption)
 	if err != nil {
 		glog.Fatalf("Failed to create admin client: %v", err)
 		return false

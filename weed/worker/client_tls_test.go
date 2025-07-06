@@ -4,36 +4,30 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestGrpcClientTLSDetection(t *testing.T) {
-	// Test TLS detection logic
-	client := NewGrpcAdminClient("localhost:33646", "test-worker")
+	// Test that the client can be created with a dial option
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	client := NewGrpcAdminClient("localhost:33646", "test-worker", dialOption)
 
-	// Test TLS connection attempt (will fail, but we check the logic)
-	conn, err := client.tryTLSConnection()
-	if err != nil {
-		t.Logf("TLS connection failed as expected: %v", err)
-	}
-	if conn != nil {
-		conn.Close()
+	// Test that the client has the correct dial option
+	if client.dialOption == nil {
+		t.Error("Client should have a dial option")
 	}
 
-	// Test insecure connection attempt (will fail, but we check the logic)
-	conn, err = client.tryInsecureConnection()
-	if err != nil {
-		t.Logf("Insecure connection failed as expected: %v", err)
-	}
-	if conn != nil {
-		conn.Close()
-	}
+	t.Logf("Client created successfully with dial option")
 }
 
 func TestCreateAdminClientGrpc(t *testing.T) {
 	// Test client creation - admin server port gets transformed to gRPC port
-	client, err := CreateAdminClient("localhost:23646", "test-worker", "grpc")
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	client, err := CreateAdminClient("localhost:23646", "test-worker", dialOption)
 	if err != nil {
-		t.Fatalf("Failed to create gRPC admin client: %v", err)
+		t.Fatalf("Failed to create admin client: %v", err)
 	}
 
 	if client == nil {
@@ -60,7 +54,8 @@ func TestCreateAdminClientGrpc(t *testing.T) {
 func TestConnectionTimeouts(t *testing.T) {
 	// Test that connections have proper timeouts
 	// Use localhost with a port that's definitely closed
-	client := NewGrpcAdminClient("localhost:1", "test-worker") // Port 1 is reserved and won't be open
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	client := NewGrpcAdminClient("localhost:1", "test-worker", dialOption) // Port 1 is reserved and won't be open
 
 	// Test that the connection creation fails when actually trying to use it
 	start := time.Now()
@@ -73,18 +68,18 @@ func TestConnectionTimeouts(t *testing.T) {
 		t.Logf("Connection failed as expected: %v", err)
 	}
 
-	// Should fail quickly but not too quickly (should try both TLS and insecure)
-	if duration > 15*time.Second {
+	// Should fail quickly but not too quickly
+	if duration > 10*time.Second {
 		t.Errorf("Connection attempt took too long: %v", duration)
 	}
 }
 
-func TestTLSAndInsecureConnectionLogic(t *testing.T) {
-	// Test that TLS is tried first, then insecure
-	// Use localhost with a port that's definitely closed
-	client := NewGrpcAdminClient("localhost:1", "test-worker") // Port 1 is reserved and won't be open
+func TestConnectionWithDialOption(t *testing.T) {
+	// Test that the connection uses the provided dial option
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	client := NewGrpcAdminClient("localhost:1", "test-worker", dialOption) // Port 1 is reserved and won't be open
 
-	// Test the actual connection with stream creation
+	// Test the actual connection
 	err := client.Connect()
 	if err == nil {
 		t.Error("Expected connection to closed port to fail")
@@ -103,40 +98,49 @@ func TestTLSAndInsecureConnectionLogic(t *testing.T) {
 	}
 }
 
-func TestTLSConnectionWithRealAddress(t *testing.T) {
-	// Test TLS connection behavior with a real address that doesn't support TLS
-	// This will help verify the TLS -> insecure fallback logic
-	client := NewGrpcAdminClient("www.google.com:80", "test-worker") // HTTP port, not gRPC
+func TestClientWithSecureDialOption(t *testing.T) {
+	// Test that the client correctly uses a secure dial option
+	// This would normally use LoadClientTLS, but for testing we'll use insecure
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	client := NewGrpcAdminClient("localhost:33646", "test-worker", dialOption)
 
-	conn, err := client.createConnection()
+	if client.dialOption == nil {
+		t.Error("Client should have a dial option")
+	}
+
+	t.Logf("Client created successfully with dial option")
+}
+
+func TestConnectionWithRealAddress(t *testing.T) {
+	// Test connection behavior with a real address that doesn't support gRPC
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	client := NewGrpcAdminClient("www.google.com:80", "test-worker", dialOption) // HTTP port, not gRPC
+
+	err := client.Connect()
 	if err == nil {
-		t.Log("Connection succeeded (fallback to insecure worked)")
-		if conn != nil {
-			conn.Close()
-		}
+		t.Log("Connection succeeded unexpectedly")
+		client.Disconnect()
 	} else {
-		t.Logf("Connection failed: %v", err)
+		t.Logf("Connection failed as expected: %v", err)
 	}
 }
 
-func TestTLSDetectionWithConnectionTest(t *testing.T) {
-	// Test the new TLS detection logic that actually tests the connection
-	client := NewGrpcAdminClient("localhost:1", "test-worker") // Port 1 won't support gRPC at all
+func TestDialOptionUsage(t *testing.T) {
+	// Test that the provided dial option is used for connections
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	client := NewGrpcAdminClient("localhost:1", "test-worker", dialOption) // Port 1 won't support gRPC at all
 
-	// This should fail when trying to test the TLS connection
-	conn, err := client.tryTLSConnection()
-	if conn != nil {
-		// If we got a connection, test it
-		works := client.testConnection(conn)
-		conn.Close()
-		if works {
-			t.Error("Connection test should fail for non-gRPC port")
-		} else {
-			t.Log("Connection test correctly detected that the connection doesn't work")
-		}
+	// Verify the dial option is stored
+	if client.dialOption == nil {
+		t.Error("Dial option should be stored in client")
 	}
 
-	if err != nil {
-		t.Logf("TLS connection creation failed as expected: %v", err)
+	// Test connection fails appropriately
+	err := client.Connect()
+	if err == nil {
+		t.Error("Connection should fail to non-gRPC port")
+		client.Disconnect()
+	} else {
+		t.Logf("Connection failed as expected: %v", err)
 	}
 }

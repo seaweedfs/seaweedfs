@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"sync"
@@ -13,14 +12,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // GrpcAdminClient implements AdminClient using gRPC bidirectional streaming
 type GrpcAdminClient struct {
 	adminAddress string
 	workerID     string
+	dialOption   grpc.DialOption
 
 	conn         *grpc.ClientConn
 	client       worker_pb.WorkerServiceClient
@@ -53,13 +51,14 @@ type GrpcAdminClient struct {
 }
 
 // NewGrpcAdminClient creates a new gRPC admin client
-func NewGrpcAdminClient(adminAddress string, workerID string) *GrpcAdminClient {
+func NewGrpcAdminClient(adminAddress string, workerID string, dialOption grpc.DialOption) *GrpcAdminClient {
 	// Admin uses HTTP port + 10000 as gRPC port
 	grpcAddress := pb.ServerToGrpcAddress(adminAddress)
 
 	return &GrpcAdminClient{
 		adminAddress:         grpcAddress,
 		workerID:             workerID,
+		dialOption:           dialOption,
 		shouldReconnect:      true,
 		maxReconnectAttempts: 0, // 0 means infinite attempts
 		reconnectBackoff:     1 * time.Second,
@@ -110,75 +109,18 @@ func (c *GrpcAdminClient) Connect() error {
 	return nil
 }
 
-// createConnection attempts to connect with TLS first, falls back to insecure
+// createConnection attempts to connect using the provided dial option
 func (c *GrpcAdminClient) createConnection() (*grpc.ClientConn, error) {
-	// First try TLS connection and test it
-	conn, err := c.tryTLSConnection()
-	if err == nil {
-		// Test the TLS connection by trying to create a client and ping
-		if c.testConnection(conn) {
-			glog.Infof("Connected to admin server using TLS")
-			return conn, nil
-		}
-		// TLS connection created but doesn't work, close it
-		conn.Close()
-		glog.V(2).Infof("TLS connection test failed, attempting insecure connection")
-	} else {
-		glog.V(2).Infof("TLS connection failed: %v, attempting insecure connection", err)
-	}
-
-	// Fall back to insecure connection
-	conn, err = c.tryInsecureConnection()
-	if err == nil {
-		glog.Infof("Connected to admin server using insecure connection")
-		return conn, nil
-	}
-
-	return nil, fmt.Errorf("both TLS and insecure connections failed: %v", err)
-}
-
-// testConnection verifies that a gRPC connection actually works
-func (c *GrpcAdminClient) testConnection(conn *grpc.ClientConn) bool {
-	// Create a test client and try a simple operation
-	client := worker_pb.NewWorkerServiceClient(conn)
-
-	// Try to create a stream with a short timeout to test the connection
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	stream, err := client.WorkerStream(ctx)
+	conn, err := pb.GrpcDial(ctx, c.adminAddress, false, c.dialOption)
 	if err != nil {
-		glog.V(3).Infof("Connection test failed: %v", err)
-		return false
+		return nil, fmt.Errorf("failed to connect to admin server: %v", err)
 	}
 
-	// Close the test stream immediately
-	stream.CloseSend()
-
-	return true
-}
-
-// tryTLSConnection attempts to connect using TLS
-func (c *GrpcAdminClient) tryTLSConnection() (*grpc.ClientConn, error) {
-	// Create TLS config that skips verification for self-signed certs
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true, // For development/self-signed certs
-		MinVersion:         tls.VersionTLS12,
-	}
-	creds := credentials.NewTLS(tlsConfig)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	return pb.GrpcDial(ctx, c.adminAddress, false, grpc.WithTransportCredentials(creds))
-}
-
-// tryInsecureConnection attempts to connect without TLS
-func (c *GrpcAdminClient) tryInsecureConnection() (*grpc.ClientConn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	return pb.GrpcDial(ctx, c.adminAddress, false, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	glog.Infof("Connected to admin server at %s", c.adminAddress)
+	return conn, nil
 }
 
 // Disconnect closes the gRPC connection
@@ -813,13 +755,7 @@ func (m *MockAdminClient) AddMockTask(task *types.Task) {
 	m.tasks = append(m.tasks, task)
 }
 
-// CreateAdminClient creates an admin client, defaulting to gRPC
-func CreateAdminClient(adminServer string, workerID string, clientType string) (AdminClient, error) {
-	switch clientType {
-	case "mock":
-		return NewMockAdminClient(), nil
-	default:
-		// Default to gRPC for all cases (including "grpc" and unknown types)
-		return NewGrpcAdminClient(adminServer, workerID), nil
-	}
+// CreateAdminClient creates an admin client with the provided dial option
+func CreateAdminClient(adminServer string, workerID string, dialOption grpc.DialOption) (AdminClient, error) {
+	return NewGrpcAdminClient(adminServer, workerID, dialOption), nil
 }

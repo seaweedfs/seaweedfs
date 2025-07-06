@@ -32,7 +32,8 @@ func TestGrpcConnection(t *testing.T) {
 
 func TestGrpcAdminClient_Connect(t *testing.T) {
 	// Test that the GrpcAdminClient can be created and attempt connection
-	client := NewGrpcAdminClient("localhost:23646", "test-worker")
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	client := NewGrpcAdminClient("localhost:23646", "test-worker", dialOption)
 
 	// This should not fail with transport security errors
 	err := client.Connect()
@@ -62,7 +63,8 @@ func TestAdminAddressToGrpcAddress(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		client := NewGrpcAdminClient(test.adminAddress, "test-worker")
+		dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+		client := NewGrpcAdminClient(test.adminAddress, "test-worker", dialOption)
 		result := client.adminAddress
 		if result != test.expected {
 			t.Errorf("For admin address %s, expected gRPC address %s, got %s",
@@ -97,22 +99,13 @@ func TestMockAdminClient(t *testing.T) {
 
 func TestCreateAdminClient(t *testing.T) {
 	// Test client creation
-	client, err := CreateAdminClient("localhost:9333", "test-worker", "grpc")
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	client, err := CreateAdminClient("localhost:9333", "test-worker", dialOption)
 	if err != nil {
-		t.Fatalf("Failed to create gRPC admin client: %v", err)
+		t.Fatalf("Failed to create admin client: %v", err)
 	}
 
 	if client == nil {
 		t.Fatal("Client should not be nil")
-	}
-
-	// Test mock client creation
-	mockClient, err := CreateAdminClient("localhost:9333", "test-worker", "mock")
-	if err != nil {
-		t.Fatalf("Failed to create mock admin client: %v", err)
-	}
-
-	if mockClient == nil {
-		t.Fatal("Mock client should not be nil")
 	}
 }
