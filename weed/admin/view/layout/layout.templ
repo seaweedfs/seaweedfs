@@ -14,6 +14,10 @@ templ Layout(c *gin.Context, content templ.Component) {
   if username == "" {
     username = "admin"
   }
+  
+  // Detect if we're on a configuration page to keep submenu expanded
+  currentPath := c.Request.URL.Path
+  isConfigPage := strings.HasPrefix(currentPath, "/maintenance/config") || currentPath == "/config"
 }}
 <!DOCTYPE html>
 <html lang="en">
@@ -160,31 +164,73 @@ templ Layout(c *gin.Context, content templ.Component) {
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
-                            <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#configurationSubmenu" aria-expanded="false" aria-controls="configurationSubmenu">
-                                <i class="fas fa-cogs me-2"></i>Configuration
-                                <i class="fas fa-chevron-down ms-auto"></i>
-                            </a>
-                            <div class="collapse" id="configurationSubmenu">
-                                <ul class="nav flex-column ms-3">
-                                    for _, menuItem := range GetConfigurationMenuItems() {
-                                        <li class="nav-item">
-                                            <a class="nav-link py-2" href={templ.SafeURL(menuItem.URL)}>
-                                                <i class={menuItem.Icon + " me-2"}></i>{menuItem.Name}
-                                            </a>
-                                        </li>
-                                    }
-                                </ul>
-                            </div>
+                            if isConfigPage {
+                                <a class="nav-link" href="#" data-bs-toggle="collapse" data-bs-target="#configurationSubmenu" aria-expanded="true" aria-controls="configurationSubmenu">
+                                    <i class="fas fa-cogs me-2"></i>Configuration
+                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                </a>
+                            } else {
+                                <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#configurationSubmenu" aria-expanded="false" aria-controls="configurationSubmenu">
+                                    <i class="fas fa-cogs me-2"></i>Configuration
+                                    <i class="fas fa-chevron-right ms-auto"></i>
+                                </a>
+                            }
+                            if isConfigPage {
+                                <div class="collapse show" id="configurationSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        for _, menuItem := range GetConfigurationMenuItems() {
+                                            {{
+                                                isActiveItem := currentPath == menuItem.URL
+                                            }}
+                                            <li class="nav-item">
+                                                if isActiveItem {
+                                                    <a class="nav-link py-2 active" href={templ.SafeURL(menuItem.URL)}>
+                                                        <i class={menuItem.Icon + " me-2"}></i>{menuItem.Name}
+                                                    </a>
+                                                } else {
+                                                    <a class="nav-link py-2" href={templ.SafeURL(menuItem.URL)}>
+                                                        <i class={menuItem.Icon + " me-2"}></i>{menuItem.Name}
+                                                    </a>
+                                                }
+                                            </li>
+                                        }
+                                    </ul>
+                                </div>
+                            } else {
+                                <div class="collapse" id="configurationSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        for _, menuItem := range GetConfigurationMenuItems() {
+                                            <li class="nav-item">
+                                                <a class="nav-link py-2" href={templ.SafeURL(menuItem.URL)}>
+                                                    <i class={menuItem.Icon + " me-2"}></i>{menuItem.Name}
+                                                </a>
+                                            </li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="/maintenance">
-                                <i class="fas fa-list me-2"></i>Maintenance Queue
-                            </a>
+                            if currentPath == "/maintenance" {
+                                <a class="nav-link active" href="/maintenance">
+                                    <i class="fas fa-list me-2"></i>Maintenance Queue
+                                </a>
+                            } else {
+                                <a class="nav-link" href="/maintenance">
+                                    <i class="fas fa-list me-2"></i>Maintenance Queue
+                                </a>
+                            }
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="/maintenance/workers">
-                                <i class="fas fa-user-cog me-2"></i>Maintenance Workers
-                            </a>
+                            if currentPath == "/maintenance/workers" {
+                                <a class="nav-link active" href="/maintenance/workers">
+                                    <i class="fas fa-user-cog me-2"></i>Maintenance Workers
+                                </a>
+                            } else {
+                                <a class="nav-link" href="/maintenance/workers">
+                                    <i class="fas fa-user-cog me-2"></i>Maintenance Workers
+                                </a>
+                            }
                         </li>
                     </ul>
                 </div>
