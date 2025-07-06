@@ -2,6 +2,7 @@ package maintenance
 
 import (
 	"html/template"
+	"sort"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ type AdminClient interface {
 type MaintenanceTaskType string
 
 // GetRegisteredMaintenanceTaskTypes returns all registered task types as MaintenanceTaskType values
+// sorted alphabetically for consistent menu ordering
 func GetRegisteredMaintenanceTaskTypes() []MaintenanceTaskType {
 	typesRegistry := tasks.GetGlobalTypesRegistry()
 	var taskTypes []MaintenanceTaskType
@@ -28,6 +30,11 @@ func GetRegisteredMaintenanceTaskTypes() []MaintenanceTaskType {
 		maintenanceTaskType := MaintenanceTaskType(string(workerTaskType))
 		taskTypes = append(taskTypes, maintenanceTaskType)
 	}
+
+	// Sort task types alphabetically to ensure consistent menu ordering
+	sort.Slice(taskTypes, func(i, j int) bool {
+		return string(taskTypes[i]) < string(taskTypes[j])
+	})
 
 	return taskTypes
 }
