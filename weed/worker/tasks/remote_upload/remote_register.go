@@ -3,7 +3,6 @@ package remote_upload
 import (
 	"fmt"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -48,28 +47,15 @@ func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
 	return task, nil
 }
 
-// Register registers the remote upload task with the given registry
-func Register(registry *tasks.TaskRegistry) {
-	factory := NewFactory()
-	registry.Register(types.TaskTypeRemoteUpload, factory)
-	glog.V(1).Infof("Registered remote upload task type")
-}
-
-// RegisterSimple registers the remote upload detector and scheduler with simplified system
-func RegisterSimple(registry *types.TaskRegistry) {
-	detector := NewRemoteUploadDetector()
-	scheduler := NewRemoteUploadScheduler()
-
-	registry.RegisterTask(detector, scheduler)
-
-	glog.V(1).Infof("Registered simplified remote upload task")
-}
-
 // Auto-register this task when the package is imported
 func init() {
 	factory := NewFactory()
 	tasks.AutoRegister(types.TaskTypeRemoteUpload, factory)
 
 	// Also register with types registry
-	tasks.AutoRegisterTypes(RegisterSimple)
+	tasks.AutoRegisterTypes(func(registry *types.TaskRegistry) {
+		detector := NewRemoteUploadDetector()
+		scheduler := NewRemoteUploadScheduler()
+		registry.RegisterTask(detector, scheduler)
+	})
 }
