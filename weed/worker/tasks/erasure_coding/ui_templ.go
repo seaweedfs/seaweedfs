@@ -12,12 +12,12 @@ import (
 
 // UITemplProvider provides the templ-based UI for erasure coding task configuration
 type UITemplProvider struct {
-	detector  *ECDetector
-	scheduler *ECScheduler
+	detector  *EcDetector
+	scheduler *Scheduler
 }
 
 // NewUITemplProvider creates a new erasure coding templ UI provider
-func NewUITemplProvider(detector *ECDetector, scheduler *ECScheduler) *UITemplProvider {
+func NewUITemplProvider(detector *EcDetector, scheduler *Scheduler) *UITemplProvider {
 	return &UITemplProvider{
 		detector:  detector,
 		scheduler: scheduler,
@@ -253,7 +253,7 @@ func (ui *UITemplProvider) ApplyConfig(config interface{}) error {
 // getCurrentECConfig gets the current configuration from detector and scheduler
 func (ui *UITemplProvider) getCurrentECConfig() *ECConfig {
 	config := &ECConfig{
-		// Default values
+		// Default values (fallback if detectors/schedulers are nil)
 		Enabled:            true,
 		VolumeAgeThreshold: 24 * time.Hour,
 		ScanInterval:       2 * time.Hour,
@@ -262,12 +262,14 @@ func (ui *UITemplProvider) getCurrentECConfig() *ECConfig {
 		ParityShards:       4,
 	}
 
-	// Get current values from detector and scheduler
+	// Get current values from detector
 	if ui.detector != nil {
 		config.Enabled = ui.detector.IsEnabled()
+		config.VolumeAgeThreshold = time.Duration(ui.detector.GetVolumeAgeHours()) * time.Hour
 		config.ScanInterval = ui.detector.ScanInterval()
 	}
 
+	// Get current values from scheduler
 	if ui.scheduler != nil {
 		config.MaxConcurrent = ui.scheduler.GetMaxConcurrent()
 	}
@@ -281,7 +283,7 @@ func floatPtr(f float64) *float64 {
 }
 
 // RegisterUITempl registers the erasure coding templ UI provider with the UI registry
-func RegisterUITempl(uiRegistry *types.UITemplRegistry, detector *ECDetector, scheduler *ECScheduler) {
+func RegisterUITempl(uiRegistry *types.UITemplRegistry, detector *EcDetector, scheduler *Scheduler) {
 	uiProvider := NewUITemplProvider(detector, scheduler)
 	uiRegistry.RegisterUI(uiProvider)
 

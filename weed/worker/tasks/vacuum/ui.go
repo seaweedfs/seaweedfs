@@ -221,17 +221,19 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 	if ui.detector != nil {
 		ui.detector.SetEnabled(vacuumConfig.Enabled)
 		ui.detector.SetGarbageThreshold(vacuumConfig.GarbageThreshold)
-		// Note: scan interval and min volume age would need setters
+		ui.detector.SetScanInterval(vacuumConfig.ScanInterval)
+		ui.detector.SetMinVolumeAge(vacuumConfig.MinVolumeAge)
 	}
 
 	// Apply to scheduler
 	if ui.scheduler != nil {
+		ui.scheduler.SetEnabled(vacuumConfig.Enabled)
 		ui.scheduler.SetMaxConcurrent(vacuumConfig.MaxConcurrent)
 		ui.scheduler.SetMinInterval(vacuumConfig.MinInterval)
 	}
 
-	glog.V(1).Infof("Applied vacuum configuration: enabled=%v, threshold=%.1f%%, max_concurrent=%d",
-		vacuumConfig.Enabled, vacuumConfig.GarbageThreshold*100, vacuumConfig.MaxConcurrent)
+	glog.V(1).Infof("Applied vacuum configuration: enabled=%v, threshold=%.1f%%, scan_interval=%v, max_concurrent=%d",
+		vacuumConfig.Enabled, vacuumConfig.GarbageThreshold*100, vacuumConfig.ScanInterval, vacuumConfig.MaxConcurrent)
 
 	return nil
 }
@@ -239,7 +241,7 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 // getCurrentVacuumConfig gets the current configuration from detector and scheduler
 func (ui *UIProvider) getCurrentVacuumConfig() *VacuumConfig {
 	config := &VacuumConfig{
-		// Default values
+		// Default values (fallback if detectors/schedulers are nil)
 		Enabled:          true,
 		GarbageThreshold: 0.3,
 		ScanInterval:     30 * time.Minute,
@@ -248,16 +250,18 @@ func (ui *UIProvider) getCurrentVacuumConfig() *VacuumConfig {
 		MinInterval:      6 * time.Hour,
 	}
 
-	// Get current values from detector and scheduler
+	// Get current values from detector
 	if ui.detector != nil {
 		config.Enabled = ui.detector.IsEnabled()
+		config.GarbageThreshold = ui.detector.GetGarbageThreshold()
 		config.ScanInterval = ui.detector.ScanInterval()
-		// Note: would need getters for threshold and min age
+		config.MinVolumeAge = ui.detector.GetMinVolumeAge()
 	}
 
+	// Get current values from scheduler
 	if ui.scheduler != nil {
 		config.MaxConcurrent = ui.scheduler.GetMaxConcurrent()
-		// Note: would need getter for min interval
+		config.MinInterval = ui.scheduler.GetMinInterval()
 	}
 
 	return config

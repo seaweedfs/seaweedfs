@@ -102,6 +102,21 @@ func (d *VacuumDetector) SetMinVolumeAge(age time.Duration) {
 	d.minVolumeAge = age
 }
 
+// GetGarbageThreshold returns the current garbage threshold
+func (d *VacuumDetector) GetGarbageThreshold() float64 {
+	return d.garbageThreshold
+}
+
+// GetMinVolumeAge returns the minimum volume age
+func (d *VacuumDetector) GetMinVolumeAge() time.Duration {
+	return d.minVolumeAge
+}
+
+// GetScanInterval returns the scan interval
+func (d *VacuumDetector) GetScanInterval() time.Duration {
+	return d.scanInterval
+}
+
 // ConfigureFromPolicy configures the detector based on the maintenance policy
 func (d *VacuumDetector) ConfigureFromPolicy(policy interface{}) {
 	// Type assert to the maintenance policy type we expect

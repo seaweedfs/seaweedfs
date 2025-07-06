@@ -39,22 +39,43 @@ func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
 	return task, nil
 }
 
+// Shared detector and scheduler instances
+var (
+	sharedDetector  *VacuumDetector
+	sharedScheduler *VacuumScheduler
+)
+
+// getSharedInstances returns the shared detector and scheduler instances
+func getSharedInstances() (*VacuumDetector, *VacuumScheduler) {
+	if sharedDetector == nil {
+		sharedDetector = NewVacuumDetector()
+	}
+	if sharedScheduler == nil {
+		sharedScheduler = NewVacuumScheduler()
+	}
+	return sharedDetector, sharedScheduler
+}
+
+// GetSharedInstances returns the shared detector and scheduler instances (public access)
+func GetSharedInstances() (*VacuumDetector, *VacuumScheduler) {
+	return getSharedInstances()
+}
+
 // Auto-register this task when the package is imported
 func init() {
 	factory := NewFactory()
 	tasks.AutoRegister(types.TaskTypeVacuum, factory)
 
-	// Also register with types registry
+	// Get shared instances for all registrations
+	detector, scheduler := getSharedInstances()
+
+	// Register with types registry
 	tasks.AutoRegisterTypes(func(registry *types.TaskRegistry) {
-		detector := NewVacuumDetector()
-		scheduler := NewVacuumScheduler()
 		registry.RegisterTask(detector, scheduler)
 	})
 
-	// Also register UI provider
+	// Register with UI registry using the same instances
 	tasks.AutoRegisterUI(func(uiRegistry *types.UIRegistry) {
-		detector := NewVacuumDetector()
-		scheduler := NewVacuumScheduler()
 		RegisterUI(uiRegistry, detector, scheduler)
 	})
 }

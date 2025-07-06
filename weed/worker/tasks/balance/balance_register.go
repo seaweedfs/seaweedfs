@@ -39,22 +39,43 @@ func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
 	return task, nil
 }
 
+// Shared detector and scheduler instances
+var (
+	sharedDetector  *BalanceDetector
+	sharedScheduler *BalanceScheduler
+)
+
+// getSharedInstances returns the shared detector and scheduler instances
+func getSharedInstances() (*BalanceDetector, *BalanceScheduler) {
+	if sharedDetector == nil {
+		sharedDetector = NewBalanceDetector()
+	}
+	if sharedScheduler == nil {
+		sharedScheduler = NewBalanceScheduler()
+	}
+	return sharedDetector, sharedScheduler
+}
+
+// GetSharedInstances returns the shared detector and scheduler instances (public access)
+func GetSharedInstances() (*BalanceDetector, *BalanceScheduler) {
+	return getSharedInstances()
+}
+
 // Auto-register this task when the package is imported
 func init() {
 	factory := NewFactory()
 	tasks.AutoRegister(types.TaskTypeBalance, factory)
 
-	// Also register with types registry
+	// Get shared instances for all registrations
+	detector, scheduler := getSharedInstances()
+
+	// Register with types registry
 	tasks.AutoRegisterTypes(func(registry *types.TaskRegistry) {
-		detector := NewBalanceDetector()
-		scheduler := NewBalanceScheduler()
 		registry.RegisterTask(detector, scheduler)
 	})
 
-	// Also register UI provider
+	// Register with UI registry using the same instances
 	tasks.AutoRegisterUI(func(uiRegistry *types.UIRegistry) {
-		detector := NewBalanceDetector()
-		scheduler := NewBalanceScheduler()
 		RegisterUI(uiRegistry, detector, scheduler)
 	})
 }

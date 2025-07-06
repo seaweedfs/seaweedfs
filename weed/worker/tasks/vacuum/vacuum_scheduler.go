@@ -104,3 +104,8 @@ func (s *VacuumScheduler) SetMaxConcurrent(max int) {
 func (s *VacuumScheduler) SetMinInterval(interval time.Duration) {
 	s.minInterval = interval
 }
+
+// GetMinInterval returns the minimum interval
+func (s *VacuumScheduler) GetMinInterval() time.Duration {
+	return s.minInterval
+}

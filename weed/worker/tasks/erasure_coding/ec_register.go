@@ -39,22 +39,50 @@ func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
 	return task, nil
 }
 
+// Shared detector and scheduler instances
+var (
+	sharedDetector  *EcDetector
+	sharedScheduler *Scheduler
+)
+
+// getSharedInstances returns the shared detector and scheduler instances
+func getSharedInstances() (*EcDetector, *Scheduler) {
+	if sharedDetector == nil {
+		sharedDetector = NewEcDetector()
+	}
+	if sharedScheduler == nil {
+		sharedScheduler = NewScheduler()
+	}
+	return sharedDetector, sharedScheduler
+}
+
+// GetSharedInstances returns the shared detector and scheduler instances (public access)
+func GetSharedInstances() (*EcDetector, *Scheduler) {
+	return getSharedInstances()
+}
+
+// GetSharedInstancesNew returns the shared instances as the newer types for templ UI
+func GetSharedInstancesNew() (*ECDetector, *ECScheduler) {
+	// For now, return nil since we need to reconcile the type differences
+	// This is a temporary solution until we standardize the types
+	return nil, nil
+}
+
 // Auto-register this task when the package is imported
 func init() {
 	factory := NewFactory()
 	tasks.AutoRegister(types.TaskTypeErasureCoding, factory)
 
-	// Also register with types registry
+	// Get shared instances for all registrations
+	detector, scheduler := getSharedInstances()
+
+	// Register with types registry
 	tasks.AutoRegisterTypes(func(registry *types.TaskRegistry) {
-		detector := NewEcDetector()
-		scheduler := NewScheduler()
 		registry.RegisterTask(detector, scheduler)
 	})
 
-	// Also register UI provider
+	// Register with UI registry using the same instances
 	tasks.AutoRegisterUI(func(uiRegistry *types.UIRegistry) {
-		detector := NewEcDetector()
-		scheduler := NewScheduler()
 		RegisterUI(uiRegistry, detector, scheduler)
 	})
 }

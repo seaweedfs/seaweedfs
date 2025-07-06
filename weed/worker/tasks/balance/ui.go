@@ -251,17 +251,23 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 	// Apply to detector
 	if ui.detector != nil {
 		ui.detector.SetEnabled(balanceConfig.Enabled)
-		// Note: would need setters for imbalance threshold and scan interval
+		ui.detector.SetThreshold(balanceConfig.ImbalanceThreshold)
+		ui.detector.SetMinCheckInterval(balanceConfig.ScanInterval)
 	}
 
 	// Apply to scheduler
 	if ui.scheduler != nil {
+		ui.scheduler.SetEnabled(balanceConfig.Enabled)
 		ui.scheduler.SetMaxConcurrent(balanceConfig.MaxConcurrent)
-		// Note: would need setters for min server count and off-hours settings
+		ui.scheduler.SetMinServerCount(balanceConfig.MinServerCount)
+		ui.scheduler.SetMoveDuringOffHours(balanceConfig.MoveDuringOffHours)
+		ui.scheduler.SetOffHoursStart(balanceConfig.OffHoursStart)
+		ui.scheduler.SetOffHoursEnd(balanceConfig.OffHoursEnd)
 	}
 
-	glog.V(1).Infof("Applied balance configuration: enabled=%v, threshold=%.1f%%, max_concurrent=%d, min_servers=%d",
-		balanceConfig.Enabled, balanceConfig.ImbalanceThreshold*100, balanceConfig.MaxConcurrent, balanceConfig.MinServerCount)
+	glog.V(1).Infof("Applied balance configuration: enabled=%v, threshold=%.1f%%, max_concurrent=%d, min_servers=%d, off_hours=%v",
+		balanceConfig.Enabled, balanceConfig.ImbalanceThreshold*100, balanceConfig.MaxConcurrent,
+		balanceConfig.MinServerCount, balanceConfig.MoveDuringOffHours)
 
 	return nil
 }
@@ -269,7 +275,7 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 // getCurrentBalanceConfig gets the current configuration from detector and scheduler
 func (ui *UIProvider) getCurrentBalanceConfig() *BalanceConfig {
 	config := &BalanceConfig{
-		// Default values
+		// Default values (fallback if detectors/schedulers are nil)
 		Enabled:            true,
 		ImbalanceThreshold: 0.1, // 10% imbalance
 		ScanInterval:       4 * time.Hour,
@@ -280,14 +286,20 @@ func (ui *UIProvider) getCurrentBalanceConfig() *BalanceConfig {
 		OffHoursEnd:        "06:00",
 	}
 
-	// Get current values from detector and scheduler
+	// Get current values from detector
 	if ui.detector != nil {
 		config.Enabled = ui.detector.IsEnabled()
+		config.ImbalanceThreshold = ui.detector.GetThreshold()
 		config.ScanInterval = ui.detector.ScanInterval()
 	}
 
+	// Get current values from scheduler
 	if ui.scheduler != nil {
 		config.MaxConcurrent = ui.scheduler.GetMaxConcurrent()
+		config.MinServerCount = ui.scheduler.GetMinServerCount()
+		config.MoveDuringOffHours = ui.scheduler.GetMoveDuringOffHours()
+		config.OffHoursStart = ui.scheduler.GetOffHoursStart()
+		config.OffHoursEnd = ui.scheduler.GetOffHoursEnd()
 	}
 
 	return config

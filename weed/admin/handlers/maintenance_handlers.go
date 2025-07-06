@@ -358,39 +358,17 @@ func initTemplUIRegistry() {
 	if globalTemplUIRegistry == nil {
 		globalTemplUIRegistry = types.NewUITemplRegistry()
 
-		// Register vacuum templ UI provider
-		typesRegistry := tasks.GetGlobalTypesRegistry()
-		if detector := typesRegistry.GetDetector(types.TaskTypeVacuum); detector != nil {
-			if scheduler := typesRegistry.GetScheduler(types.TaskTypeVacuum); scheduler != nil {
-				if vacuumDetector, ok := detector.(*vacuum.VacuumDetector); ok {
-					if vacuumScheduler, ok := scheduler.(*vacuum.VacuumScheduler); ok {
-						vacuum.RegisterUITempl(globalTemplUIRegistry, vacuumDetector, vacuumScheduler)
-					}
-				}
-			}
-		}
+		// Register vacuum templ UI provider using shared instances
+		vacuumDetector, vacuumScheduler := vacuum.GetSharedInstances()
+		vacuum.RegisterUITempl(globalTemplUIRegistry, vacuumDetector, vacuumScheduler)
 
-		// Register erasure coding templ UI provider
-		if detector := typesRegistry.GetDetector(types.TaskTypeErasureCoding); detector != nil {
-			if scheduler := typesRegistry.GetScheduler(types.TaskTypeErasureCoding); scheduler != nil {
-				if ecDetector, ok := detector.(*erasure_coding.ECDetector); ok {
-					if ecScheduler, ok := scheduler.(*erasure_coding.ECScheduler); ok {
-						erasure_coding.RegisterUITempl(globalTemplUIRegistry, ecDetector, ecScheduler)
-					}
-				}
-			}
-		}
+		// Register erasure coding templ UI provider using shared instances
+		erasureCodingDetector, erasureCodingScheduler := erasure_coding.GetSharedInstances()
+		erasure_coding.RegisterUITempl(globalTemplUIRegistry, erasureCodingDetector, erasureCodingScheduler)
 
-		// Register balance templ UI provider
-		if detector := typesRegistry.GetDetector(types.TaskTypeBalance); detector != nil {
-			if scheduler := typesRegistry.GetScheduler(types.TaskTypeBalance); scheduler != nil {
-				if balanceDetector, ok := detector.(*balance.BalanceDetector); ok {
-					if balanceScheduler, ok := scheduler.(*balance.BalanceScheduler); ok {
-						balance.RegisterUITempl(globalTemplUIRegistry, balanceDetector, balanceScheduler)
-					}
-				}
-			}
-		}
+		// Register balance templ UI provider using shared instances
+		balanceDetector, balanceScheduler := balance.GetSharedInstances()
+		balance.RegisterUITempl(globalTemplUIRegistry, balanceDetector, balanceScheduler)
 	}
 }
 

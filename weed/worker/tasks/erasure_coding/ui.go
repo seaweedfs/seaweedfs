@@ -231,16 +231,18 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 	// Apply to detector
 	if ui.detector != nil {
 		ui.detector.SetEnabled(ecConfig.Enabled)
-		// Note: would need setters for volume age threshold and scan interval
+		ui.detector.SetVolumeAgeHours(int(ecConfig.VolumeAgeThreshold.Hours()))
+		ui.detector.SetScanInterval(ecConfig.ScanInterval)
 	}
 
 	// Apply to scheduler
 	if ui.scheduler != nil {
+		ui.scheduler.SetEnabled(ecConfig.Enabled)
 		ui.scheduler.SetMaxConcurrent(ecConfig.MaxConcurrent)
 	}
 
-	glog.V(1).Infof("Applied erasure coding configuration: enabled=%v, max_concurrent=%d, shards=%d+%d",
-		ecConfig.Enabled, ecConfig.MaxConcurrent, ecConfig.DataShards, ecConfig.ParityShards)
+	glog.V(1).Infof("Applied erasure coding configuration: enabled=%v, age_threshold=%v, max_concurrent=%d, shards=%d+%d",
+		ecConfig.Enabled, ecConfig.VolumeAgeThreshold, ecConfig.MaxConcurrent, ecConfig.DataShards, ecConfig.ParityShards)
 
 	return nil
 }
@@ -248,7 +250,7 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 // getCurrentECConfig gets the current configuration from detector and scheduler
 func (ui *UIProvider) getCurrentECConfig() *ECConfig {
 	config := &ECConfig{
-		// Default values
+		// Default values (fallback if detectors/schedulers are nil)
 		Enabled:            true,
 		VolumeAgeThreshold: 24 * time.Hour,
 		ScanInterval:       2 * time.Hour,
@@ -257,12 +259,14 @@ func (ui *UIProvider) getCurrentECConfig() *ECConfig {
 		ParityShards:       4,
 	}
 
-	// Get current values from detector and scheduler
+	// Get current values from detector
 	if ui.detector != nil {
 		config.Enabled = ui.detector.IsEnabled()
+		config.VolumeAgeThreshold = time.Duration(ui.detector.GetVolumeAgeHours()) * time.Hour
 		config.ScanInterval = ui.detector.ScanInterval()
 	}
 
+	// Get current values from scheduler
 	if ui.scheduler != nil {
 		config.MaxConcurrent = ui.scheduler.GetMaxConcurrent()
 	}

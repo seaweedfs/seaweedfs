@@ -9,10 +9,14 @@ import (
 
 // BalanceScheduler implements TaskScheduler for balance tasks
 type BalanceScheduler struct {
-	enabled       bool
-	maxConcurrent int
-	minInterval   time.Duration
-	lastScheduled map[string]time.Time // track when we last scheduled a balance for each task type
+	enabled            bool
+	maxConcurrent      int
+	minInterval        time.Duration
+	lastScheduled      map[string]time.Time // track when we last scheduled a balance for each task type
+	minServerCount     int
+	moveDuringOffHours bool
+	offHoursStart      string
+	offHoursEnd        string
 }
 
 // Compile-time interface assertions
@@ -23,10 +27,14 @@ var (
 // NewBalanceScheduler creates a new balance scheduler
 func NewBalanceScheduler() *BalanceScheduler {
 	return &BalanceScheduler{
-		enabled:       true,
-		maxConcurrent: 1, // Only run one balance at a time
-		minInterval:   6 * time.Hour,
-		lastScheduled: make(map[string]time.Time),
+		enabled:            true,
+		maxConcurrent:      1, // Only run one balance at a time
+		minInterval:        6 * time.Hour,
+		lastScheduled:      make(map[string]time.Time),
+		minServerCount:     3,
+		moveDuringOffHours: true,
+		offHoursStart:      "23:00",
+		offHoursEnd:        "06:00",
 	}
 }
 
@@ -137,4 +145,53 @@ func (s *BalanceScheduler) GetLastScheduled(taskKey string) time.Time {
 // SetLastScheduled updates when we last scheduled this task type
 func (s *BalanceScheduler) SetLastScheduled(taskKey string, when time.Time) {
 	s.lastScheduled[taskKey] = when
+}
+
+// GetMinServerCount returns the minimum server count
+func (s *BalanceScheduler) GetMinServerCount() int {
+	return s.minServerCount
+}
+
+// SetMinServerCount sets the minimum server count
+func (s *BalanceScheduler) SetMinServerCount(count int) {
+	s.minServerCount = count
+	glog.V(1).Infof("🔄 Balance minimum server count set to: %d", count)
+}
+
+// GetMoveDuringOffHours returns whether to move only during off-hours
+func (s *BalanceScheduler) GetMoveDuringOffHours() bool {
+	return s.moveDuringOffHours
+}
+
+// SetMoveDuringOffHours sets whether to move only during off-hours
+func (s *BalanceScheduler) SetMoveDuringOffHours(enabled bool) {
+	s.moveDuringOffHours = enabled
+	glog.V(1).Infof("🔄 Balance move during off-hours: %v", enabled)
+}
+
+// GetOffHoursStart returns the off-hours start time
+func (s *BalanceScheduler) GetOffHoursStart() string {
+	return s.offHoursStart
+}
+
+// SetOffHoursStart sets the off-hours start time
+func (s *BalanceScheduler) SetOffHoursStart(start string) {
+	s.offHoursStart = start
+	glog.V(1).Infof("🔄 Balance off-hours start time set to: %s", start)
+}
+
+// GetOffHoursEnd returns the off-hours end time
+func (s *BalanceScheduler) GetOffHoursEnd() string {
+	return s.offHoursEnd
+}
+
+// SetOffHoursEnd sets the off-hours end time
+func (s *BalanceScheduler) SetOffHoursEnd(end string) {
+	s.offHoursEnd = end
+	glog.V(1).Infof("🔄 Balance off-hours end time set to: %s", end)
+}
+
+// GetMinInterval returns the minimum interval
+func (s *BalanceScheduler) GetMinInterval() time.Duration {
+	return s.minInterval
 }

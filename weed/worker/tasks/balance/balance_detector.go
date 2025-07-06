@@ -154,3 +154,18 @@ func (d *BalanceDetector) SetMinVolumeCount(count int) {
 	d.minVolumeCount = count
 	glog.V(1).Infof("🔄 Balance minimum volume count set to: %d", count)
 }
+
+// GetThreshold returns the current imbalance threshold
+func (d *BalanceDetector) GetThreshold() float64 {
+	return d.threshold
+}
+
+// GetMinCheckInterval returns the minimum check interval
+func (d *BalanceDetector) GetMinCheckInterval() time.Duration {
+	return d.minCheckInterval
+}
+
+// GetMinVolumeCount returns the minimum volume count
+func (d *BalanceDetector) GetMinVolumeCount() int {
+	return d.minVolumeCount
+}

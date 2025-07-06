@@ -107,6 +107,21 @@ func (d *EcDetector) SetScanInterval(interval time.Duration) {
 	d.scanInterval = interval
 }
 
+// GetVolumeAgeHours returns the current volume age threshold in hours
+func (d *EcDetector) GetVolumeAgeHours() int {
+	return d.volumeAgeHours
+}
+
+// GetFullnessRatio returns the current fullness ratio threshold
+func (d *EcDetector) GetFullnessRatio() float64 {
+	return d.fullnessRatio
+}
+
+// GetScanInterval returns the scan interval
+func (d *EcDetector) GetScanInterval() time.Duration {
+	return d.scanInterval
+}
+
 // ConfigureFromPolicy configures the detector based on the maintenance policy
 func (d *EcDetector) ConfigureFromPolicy(policy interface{}) {
 	// Type assert to the maintenance policy type we expect
