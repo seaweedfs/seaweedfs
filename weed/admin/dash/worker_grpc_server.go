@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 )
 
 // WorkerGrpcServer implements the WorkerService gRPC interface
@@ -158,6 +159,9 @@ func (s *WorkerGrpcServer) Stop() error {
 func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStreamServer) error {
 	ctx := stream.Context()
 
+	// get client address
+	address := findClientAddress(ctx)
+
 	// Wait for initial registration message
 	msg, err := stream.Recv()
 	if err != nil {
@@ -168,6 +172,7 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 	if registration == nil {
 		return fmt.Errorf("first message must be registration")
 	}
+	registration.Address = address
 
 	workerID := registration.WorkerId
 	if workerID == "" {
@@ -471,4 +476,18 @@ func convertTaskParameters(params map[string]interface{}) map[string]string {
 		result[key] = fmt.Sprintf("%v", value)
 	}
 	return result
+}
+
+func findClientAddress(ctx context.Context) string {
+	// fmt.Printf("FromContext %+v\n", ctx)
+	pr, ok := peer.FromContext(ctx)
+	if !ok {
+		glog.Error("failed to get peer from ctx")
+		return ""
+	}
+	if pr.Addr == net.Addr(nil) {
+		glog.Error("failed to get peer address")
+		return ""
+	}
+	return pr.Addr.String()
 }

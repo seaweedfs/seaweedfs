@@ -103,7 +103,7 @@ func runWorker(cmd *Command, args []string) bool {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	glog.Infof("Maintenance worker %s started successfully at %s", workerInstance.ID(), workerInstance.Address())
+	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 	glog.Infof("Press Ctrl+C to stop the worker")
 
 	// Wait for shutdown signal

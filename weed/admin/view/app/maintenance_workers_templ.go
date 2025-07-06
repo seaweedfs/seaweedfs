@@ -128,232 +128,223 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</code></td><td><a href=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</code></td><td><code>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var8 templ.SafeURL = templ.SafeURL(fmt.Sprintf("http://%s", worker.Worker.Address))
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var8)))
+				var templ_7745c5c3_Var8 string
+				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.Address)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 147, Col: 81}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\" target=\"_blank\" class=\"text-decoration-none\">")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var9 string
-				templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.Address)
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 148, Col: 79}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, " <i class=\"fas fa-external-link-alt fa-sm ms-1\"></i></a></td><td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</code></td><td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				if worker.Worker.Status == "active" {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "<span class=\"badge bg-success\">Active</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<span class=\"badge bg-success\">Active</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else if worker.Worker.Status == "busy" {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<span class=\"badge bg-warning\">Busy</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "<span class=\"badge bg-warning\">Busy</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<span class=\"badge bg-danger\">Inactive</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<span class=\"badge bg-danger\">Inactive</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "</td><td><div class=\"d-flex flex-wrap gap-1\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</td><td><div class=\"d-flex flex-wrap gap-1\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				for _, capability := range worker.Worker.Capabilities {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<span class=\"badge bg-secondary rounded-pill\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<span class=\"badge bg-secondary rounded-pill\">")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var9 string
+					templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(string(capability))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 161, Col: 126}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</span>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</div></td><td><div class=\"progress\" style=\"height: 20px;\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				if worker.Worker.MaxConcurrent > 0 {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<div class=\"progress-bar\" role=\"progressbar\" style=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var10 string
-					templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(string(capability))
+					templ_7745c5c3_Var10, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("width: %d%%", (worker.Worker.CurrentLoad*100)/worker.Worker.MaxConcurrent))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 164, Col: 126}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 169, Col: 160}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</span>")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</div></td><td><div class=\"progress\" style=\"height: 20px;\">")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				if worker.Worker.MaxConcurrent > 0 {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<div class=\"progress-bar\" role=\"progressbar\" style=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "\" aria-valuenow=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var11 string
-					templ_7745c5c3_Var11, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("width: %d%%", (worker.Worker.CurrentLoad*100)/worker.Worker.MaxConcurrent))
+					templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Worker.CurrentLoad))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 172, Col: 160}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 170, Col: 125}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\" aria-valuenow=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\" aria-valuemin=\"0\" aria-valuemax=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var12 string
-					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Worker.CurrentLoad))
+					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Worker.MaxConcurrent))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 173, Col: 125}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 172, Col: 127}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\" aria-valuemin=\"0\" aria-valuemax=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var13 string
-					templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Worker.MaxConcurrent))
+					templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/%d", worker.Worker.CurrentLoad, worker.Worker.MaxConcurrent))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 175, Col: 127}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 173, Col: 142}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\">")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					var templ_7745c5c3_Var14 string
-					templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/%d", worker.Worker.CurrentLoad, worker.Worker.MaxConcurrent))
-					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 176, Col: 142}
-					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</div>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</div>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "<div class=\"progress-bar\" role=\"progressbar\" style=\"width: 0%\">0/0</div>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "<div class=\"progress-bar\" role=\"progressbar\" style=\"width: 0%\">0/0</div>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</div></td><td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "</div></td><td>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var14 string
+				templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(worker.CurrentTasks)))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 181, Col: 97}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</td><td><small><div>✅ ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var15 string
-				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(worker.CurrentTasks)))
+				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Performance.TasksCompleted))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 184, Col: 97}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 185, Col: 119}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "</td><td><small><div>✅ ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "</div><div>❌ ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var16 string
-				templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Performance.TasksCompleted))
+				templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Performance.TasksFailed))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 188, Col: 119}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 186, Col: 116}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</div><div>❌ ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</div><div>📊 ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var17 string
-				templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Performance.TasksFailed))
+				templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1f%%", worker.Performance.SuccessRate))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 189, Col: 116}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 187, Col: 121}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "</div><div>📊 ")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var18 string
-				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1f%%", worker.Performance.SuccessRate))
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 190, Col: 121}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</div></small></td><td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "</div></small></td><td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				if time.Since(worker.Worker.LastHeartbeat) < 2*time.Minute {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "<span class=\"text-success\"><i class=\"fas fa-heartbeat\"></i> ")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "<span class=\"text-success\"><i class=\"fas fa-heartbeat\"></i> ")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var18 string
+					templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.LastHeartbeat.Format("15:04:05"))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 194, Col: 108}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "</span>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				} else {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "<span class=\"text-danger\"><i class=\"fas fa-exclamation-triangle\"></i> ")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var19 string
 					templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.LastHeartbeat.Format("15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 197, Col: 108}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 199, Col: 108}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "</span>")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "<span class=\"text-danger\"><i class=\"fas fa-exclamation-triangle\"></i> ")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					var templ_7745c5c3_Var20 string
-					templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.LastHeartbeat.Format("15:04:05"))
-					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 202, Col: 108}
-					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -361,29 +352,29 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "<button type=\"button\" class=\"btn btn-outline-info\" onclick=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "<button type=\"button\" class=\"btn btn-outline-info\" onclick=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var21 templ.ComponentScript = templ.ComponentScript{Call: "showWorkerDetails"}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var21.Call)
+				var templ_7745c5c3_Var20 templ.ComponentScript = templ.ComponentScript{Call: "showWorkerDetails"}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var20.Call)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "\" data-worker-id=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "\" data-worker-id=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var22 string
-				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.ID)
+				var templ_7745c5c3_Var21 string
+				templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.ID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 208, Col: 201}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 205, Col: 201}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "\"><i class=\"fas fa-info-circle\"></i></button> ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "\"><i class=\"fas fa-info-circle\"></i></button> ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -392,44 +383,44 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "<button type=\"button\" class=\"btn btn-outline-warning\" onclick=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "<button type=\"button\" class=\"btn btn-outline-warning\" onclick=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					var templ_7745c5c3_Var23 templ.ComponentScript = templ.ComponentScript{Call: "pauseWorker"}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var23.Call)
+					var templ_7745c5c3_Var22 templ.ComponentScript = templ.ComponentScript{Call: "pauseWorker"}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var22.Call)
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "\" data-worker-id=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "\" data-worker-id=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					var templ_7745c5c3_Var24 string
-					templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.ID)
+					var templ_7745c5c3_Var23 string
+					templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 212, Col: 202}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 209, Col: 202}
 					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "\"><i class=\"fas fa-pause\"></i></button>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "\"><i class=\"fas fa-pause\"></i></button>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "</div></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "</div></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, "</tbody></table></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "</tbody></table></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "</div></div></div></div></div><!-- Worker Details Modal --><div class=\"modal fade\" id=\"workerDetailsModal\" tabindex=\"-1\" aria-labelledby=\"workerDetailsModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"workerDetailsModalLabel\">Worker Details</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\" id=\"workerDetailsContent\"><!-- Content will be loaded dynamically --></div></div></div></div><script>\n    function showWorkerDetails(event) {\n        const workerID = event.target.closest('button').getAttribute('data-worker-id');\n        \n        // Show modal\n        var modal = new bootstrap.Modal(document.getElementById('workerDetailsModal'));\n        \n        // Load worker details\n        fetch(`/api/maintenance/workers/${workerID}`)\n            .then(response => response.json())\n            .then(data => {\n                const content = document.getElementById('workerDetailsContent');\n                content.innerHTML = `\n                    <div class=\"row\">\n                        <div class=\"col-md-6\">\n                            <h6>Worker Information</h6>\n                            <ul class=\"list-unstyled\">\n                                <li><strong>ID:</strong> ${data.worker.id}</li>\n                                <li><strong>Address:</strong> ${data.worker.address}</li>\n                                <li><strong>Status:</strong> ${data.worker.status}</li>\n                                <li><strong>Max Concurrent:</strong> ${data.worker.max_concurrent}</li>\n                                <li><strong>Current Load:</strong> ${data.worker.current_load}</li>\n                            </ul>\n                        </div>\n                        <div class=\"col-md-6\">\n                            <h6>Performance Metrics</h6>\n                            <ul class=\"list-unstyled\">\n                                <li><strong>Tasks Completed:</strong> ${data.performance.tasks_completed}</li>\n                                <li><strong>Tasks Failed:</strong> ${data.performance.tasks_failed}</li>\n                                <li><strong>Success Rate:</strong> ${data.performance.success_rate.toFixed(1)}%</li>\n                                <li><strong>Average Task Time:</strong> ${formatDuration(data.performance.average_task_time)}</li>\n                                <li><strong>Uptime:</strong> ${formatDuration(data.performance.uptime)}</li>\n                            </ul>\n                        </div>\n                    </div>\n                    <hr>\n                    <h6>Current Tasks</h6>\n                    ${data.current_tasks.length === 0 ? \n                        '<p class=\"text-muted\">No current tasks</p>' :\n                        data.current_tasks.map(task => `\n                            <div class=\"card mb-2\">\n                                <div class=\"card-body py-2\">\n                                    <div class=\"d-flex justify-content-between\">\n                                        <span><strong>${task.type}</strong> - Volume ${task.volume_id}</span>\n                                        <span class=\"badge bg-info\">${task.status}</span>\n                                    </div>\n                                    <small class=\"text-muted\">${task.reason}</small>\n                                </div>\n                            </div>\n                        `).join('')\n                    }\n                `;\n                modal.show();\n            })\n            .catch(error => {\n                console.error('Error loading worker details:', error);\n                const content = document.getElementById('workerDetailsContent');\n                content.innerHTML = '<div class=\"alert alert-danger\">Failed to load worker details</div>';\n                modal.show();\n            });\n    }\n\n    function pauseWorker(event) {\n        const workerID = event.target.closest('button').getAttribute('data-worker-id');\n        \n        if (confirm('Are you sure you want to pause this worker?')) {\n            fetch(`/api/maintenance/workers/${workerID}/pause`, {\n                method: 'POST'\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    location.reload();\n                } else {\n                    alert('Failed to pause worker: ' + data.error);\n                }\n            })\n            .catch(error => {\n                console.error('Error pausing worker:', error);\n                alert('Failed to pause worker');\n            });\n        }\n    }\n\n    function formatDuration(nanoseconds) {\n        const seconds = Math.floor(nanoseconds / 1000000000);\n        const minutes = Math.floor(seconds / 60);\n        const hours = Math.floor(minutes / 60);\n        \n        if (hours > 0) {\n            return `${hours}h ${minutes % 60}m`;\n        } else if (minutes > 0) {\n            return `${minutes}m ${seconds % 60}s`;\n        } else {\n            return `${seconds}s`;\n        }\n    }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, "</div></div></div></div></div><!-- Worker Details Modal --><div class=\"modal fade\" id=\"workerDetailsModal\" tabindex=\"-1\" aria-labelledby=\"workerDetailsModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"workerDetailsModalLabel\">Worker Details</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\" id=\"workerDetailsContent\"><!-- Content will be loaded dynamically --></div></div></div></div><script>\n    function showWorkerDetails(event) {\n        const workerID = event.target.closest('button').getAttribute('data-worker-id');\n        \n        // Show modal\n        var modal = new bootstrap.Modal(document.getElementById('workerDetailsModal'));\n        \n        // Load worker details\n        fetch(`/api/maintenance/workers/${workerID}`)\n            .then(response => response.json())\n            .then(data => {\n                const content = document.getElementById('workerDetailsContent');\n                content.innerHTML = `\n                    <div class=\"row\">\n                        <div class=\"col-md-6\">\n                            <h6>Worker Information</h6>\n                            <ul class=\"list-unstyled\">\n                                <li><strong>ID:</strong> ${data.worker.id}</li>\n                                <li><strong>Address:</strong> ${data.worker.address}</li>\n                                <li><strong>Status:</strong> ${data.worker.status}</li>\n                                <li><strong>Max Concurrent:</strong> ${data.worker.max_concurrent}</li>\n                                <li><strong>Current Load:</strong> ${data.worker.current_load}</li>\n                            </ul>\n                        </div>\n                        <div class=\"col-md-6\">\n                            <h6>Performance Metrics</h6>\n                            <ul class=\"list-unstyled\">\n                                <li><strong>Tasks Completed:</strong> ${data.performance.tasks_completed}</li>\n                                <li><strong>Tasks Failed:</strong> ${data.performance.tasks_failed}</li>\n                                <li><strong>Success Rate:</strong> ${data.performance.success_rate.toFixed(1)}%</li>\n                                <li><strong>Average Task Time:</strong> ${formatDuration(data.performance.average_task_time)}</li>\n                                <li><strong>Uptime:</strong> ${formatDuration(data.performance.uptime)}</li>\n                            </ul>\n                        </div>\n                    </div>\n                    <hr>\n                    <h6>Current Tasks</h6>\n                    ${data.current_tasks.length === 0 ? \n                        '<p class=\"text-muted\">No current tasks</p>' :\n                        data.current_tasks.map(task => `\n                            <div class=\"card mb-2\">\n                                <div class=\"card-body py-2\">\n                                    <div class=\"d-flex justify-content-between\">\n                                        <span><strong>${task.type}</strong> - Volume ${task.volume_id}</span>\n                                        <span class=\"badge bg-info\">${task.status}</span>\n                                    </div>\n                                    <small class=\"text-muted\">${task.reason}</small>\n                                </div>\n                            </div>\n                        `).join('')\n                    }\n                `;\n                modal.show();\n            })\n            .catch(error => {\n                console.error('Error loading worker details:', error);\n                const content = document.getElementById('workerDetailsContent');\n                content.innerHTML = '<div class=\"alert alert-danger\">Failed to load worker details</div>';\n                modal.show();\n            });\n    }\n\n    function pauseWorker(event) {\n        const workerID = event.target.closest('button').getAttribute('data-worker-id');\n        \n        if (confirm('Are you sure you want to pause this worker?')) {\n            fetch(`/api/maintenance/workers/${workerID}/pause`, {\n                method: 'POST'\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    location.reload();\n                } else {\n                    alert('Failed to pause worker: ' + data.error);\n                }\n            })\n            .catch(error => {\n                console.error('Error pausing worker:', error);\n                alert('Failed to pause worker');\n            });\n        }\n    }\n\n    function formatDuration(nanoseconds) {\n        const seconds = Math.floor(nanoseconds / 1000000000);\n        const minutes = Math.floor(seconds / 60);\n        const hours = Math.floor(minutes / 60);\n        \n        if (hours > 0) {\n            return `${hours}h ${minutes % 60}m`;\n        } else if (minutes > 0) {\n            return `${minutes}m ${seconds % 60}s`;\n        } else {\n            return `${seconds}s`;\n        }\n    }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

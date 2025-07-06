@@ -144,10 +144,7 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
                                                     <code>{ worker.Worker.ID }</code>
                                                 </td>
                                                 <td>
-                                                    <a href={ templ.SafeURL(fmt.Sprintf("http://%s", worker.Worker.Address)) } target="_blank" class="text-decoration-none">
-                                                        { worker.Worker.Address }
-                                                        <i class="fas fa-external-link-alt fa-sm ms-1"></i>
-                                                    </a>
+                                                    <code>{ worker.Worker.Address }</code>
                                                 </td>
                                                 <td>
                                                     if worker.Worker.Status == "active" {

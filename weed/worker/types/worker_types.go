@@ -19,7 +19,6 @@ type Worker struct {
 // WorkerStatus represents the current status of a worker
 type WorkerStatus struct {
 	WorkerID       string        `json:"worker_id"`
-	Address        string        `json:"address"`
 	Status         string        `json:"status"`
 	Capabilities   []TaskType    `json:"capabilities"`
 	MaxConcurrent  int           `json:"max_concurrent"`

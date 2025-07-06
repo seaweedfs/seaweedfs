@@ -19,7 +19,6 @@ import (
 // Worker represents a maintenance worker instance
 type Worker struct {
 	id              string
-	address         string
 	config          *types.WorkerConfig
 	registry        *tasks.TaskRegistry
 	currentTasks    map[string]*types.Task
@@ -56,15 +55,11 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 	hostname, _ := os.Hostname()
 	workerID := fmt.Sprintf("worker-%s-%d", hostname, time.Now().Unix())
 
-	// Auto-generate address
-	address := ":8082"
-
 	// Use the global registry that already has all tasks registered
 	registry := tasks.GetGlobalRegistry()
 
 	worker := &Worker{
 		id:           workerID,
-		address:      address,
 		config:       config,
 		registry:     registry,
 		currentTasks: make(map[string]*types.Task),
@@ -80,11 +75,6 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 // ID returns the worker ID
 func (w *Worker) ID() string {
 	return w.id
-}
-
-// Address returns the worker address
-func (w *Worker) Address() string {
-	return w.address
 }
 
 // Start starts the worker
@@ -111,7 +101,6 @@ func (w *Worker) Start() error {
 	// Register with admin server
 	workerInfo := &types.Worker{
 		ID:            w.id,
-		Address:       w.address,
 		Capabilities:  w.config.Capabilities,
 		MaxConcurrent: w.config.MaxConcurrent,
 		Status:        "active",
@@ -129,7 +118,7 @@ func (w *Worker) Start() error {
 	go w.heartbeatLoop()
 	go w.taskRequestLoop()
 
-	glog.Infof("Worker %s started at %s", w.id, w.address)
+	glog.Infof("Worker %s started", w.id)
 	return nil
 }
 
@@ -205,7 +194,6 @@ func (w *Worker) GetStatus() types.WorkerStatus {
 
 	return types.WorkerStatus{
 		WorkerID:       w.id,
-		Address:        w.address,
 		Status:         status,
 		Capabilities:   w.config.Capabilities,
 		MaxConcurrent:  w.config.MaxConcurrent,
@@ -342,7 +330,6 @@ func (w *Worker) sendHeartbeat() {
 	if w.adminClient != nil {
 		if err := w.adminClient.SendHeartbeat(w.id, &types.WorkerStatus{
 			WorkerID:      w.id,
-			Address:       w.address,
 			Status:        "active",
 			Capabilities:  w.config.Capabilities,
 			MaxConcurrent: w.config.MaxConcurrent,
