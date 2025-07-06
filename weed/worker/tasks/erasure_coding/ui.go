@@ -39,6 +39,11 @@ func (ui *UIProvider) GetDescription() string {
 	return "Converts volumes to erasure coded format for improved data durability and fault tolerance"
 }
 
+// GetIcon returns the icon CSS class for this task type
+func (ui *UIProvider) GetIcon() string {
+	return "fas fa-shield-alt text-info"
+}
+
 // ECConfig represents the erasure coding configuration
 type ECConfig struct {
 	Enabled            bool          `json:"enabled"`

@@ -213,15 +213,13 @@ type QueueStats = maintenance.QueueStats
 type WorkerDetailsData = maintenance.WorkerDetailsData
 type WorkerPerformance = maintenance.WorkerPerformance
 
-// Constants from maintenance package
-const (
-	TaskTypeVacuum             = maintenance.TaskTypeVacuum
-	TaskTypeErasureCoding      = maintenance.TaskTypeErasureCoding
-	TaskTypeRemoteUpload       = maintenance.TaskTypeRemoteUpload
-	TaskTypeFixReplication     = maintenance.TaskTypeFixReplication
-	TaskTypeBalance            = maintenance.TaskTypeBalance
-	TaskTypeClusterReplication = maintenance.TaskTypeClusterReplication
+// GetTaskIcon returns the icon CSS class for a task type from its UI provider
+func GetTaskIcon(taskType MaintenanceTaskType) string {
+	return maintenance.GetTaskIcon(taskType)
+}
 
+// Status constants (these are still static)
+const (
 	TaskStatusPending    = maintenance.TaskStatusPending
 	TaskStatusAssigned   = maintenance.TaskStatusAssigned
 	TaskStatusInProgress = maintenance.TaskStatusInProgress

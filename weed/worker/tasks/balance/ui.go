@@ -39,6 +39,11 @@ func (ui *UIProvider) GetDescription() string {
 	return "Redistributes volumes across volume servers to optimize storage utilization and performance"
 }
 
+// GetIcon returns the icon CSS class for this task type
+func (ui *UIProvider) GetIcon() string {
+	return "fas fa-balance-scale text-secondary"
+}
+
 // BalanceConfig represents the balance configuration
 type BalanceConfig struct {
 	Enabled            bool          `json:"enabled"`

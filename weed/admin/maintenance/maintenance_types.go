@@ -4,7 +4,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // AdminClient interface defines what the maintenance system needs from the admin server
@@ -15,14 +18,44 @@ type AdminClient interface {
 // MaintenanceTaskType represents different types of maintenance operations
 type MaintenanceTaskType string
 
-const (
-	TaskTypeVacuum             MaintenanceTaskType = "vacuum"
-	TaskTypeErasureCoding      MaintenanceTaskType = "erasure_coding"
-	TaskTypeRemoteUpload       MaintenanceTaskType = "remote_upload"
-	TaskTypeFixReplication     MaintenanceTaskType = "fix_replication"
-	TaskTypeBalance            MaintenanceTaskType = "balance"
-	TaskTypeClusterReplication MaintenanceTaskType = "cluster_replication"
-)
+// GetRegisteredMaintenanceTaskTypes returns all registered task types as MaintenanceTaskType values
+func GetRegisteredMaintenanceTaskTypes() []MaintenanceTaskType {
+	typesRegistry := tasks.GetGlobalTypesRegistry()
+	var taskTypes []MaintenanceTaskType
+
+	for workerTaskType := range typesRegistry.GetAllDetectors() {
+		maintenanceTaskType := MaintenanceTaskType(string(workerTaskType))
+		taskTypes = append(taskTypes, maintenanceTaskType)
+	}
+
+	return taskTypes
+}
+
+// GetMaintenanceTaskType returns a specific task type if it's registered, or empty string if not found
+func GetMaintenanceTaskType(taskTypeName string) MaintenanceTaskType {
+	typesRegistry := tasks.GetGlobalTypesRegistry()
+
+	for workerTaskType := range typesRegistry.GetAllDetectors() {
+		if string(workerTaskType) == taskTypeName {
+			return MaintenanceTaskType(taskTypeName)
+		}
+	}
+
+	return MaintenanceTaskType("")
+}
+
+// IsMaintenanceTaskTypeRegistered checks if a task type is registered
+func IsMaintenanceTaskTypeRegistered(taskType MaintenanceTaskType) bool {
+	typesRegistry := tasks.GetGlobalTypesRegistry()
+
+	for workerTaskType := range typesRegistry.GetAllDetectors() {
+		if string(workerTaskType) == string(taskType) {
+			return true
+		}
+	}
+
+	return false
+}
 
 // MaintenanceTaskPriority represents task execution priority
 type MaintenanceTaskPriority int
@@ -313,4 +346,122 @@ type ClusterReplicationTask struct {
 	FileSize        int64             `json:"file_size"`
 	CreatedAt       time.Time         `json:"created_at"`
 	Metadata        map[string]string `json:"metadata,omitempty"`
+}
+
+// BuildMaintenancePolicyFromTasks creates a maintenance policy with configurations
+// from all registered tasks using their UI providers
+func BuildMaintenancePolicyFromTasks() *MaintenancePolicy {
+	policy := &MaintenancePolicy{
+		TaskPolicies:          make(map[MaintenanceTaskType]*TaskPolicy),
+		GlobalMaxConcurrent:   4,
+		DefaultRepeatInterval: 6,
+		DefaultCheckInterval:  12,
+	}
+
+	// Get all registered task types from the UI registry
+	uiRegistry := tasks.GetGlobalUIRegistry()
+	typesRegistry := tasks.GetGlobalTypesRegistry()
+
+	for taskType, provider := range uiRegistry.GetAllProviders() {
+		// Convert task type to maintenance task type
+		maintenanceTaskType := MaintenanceTaskType(string(taskType))
+
+		// Get the default configuration from the UI provider
+		defaultConfig := provider.GetCurrentConfig()
+
+		// Create task policy from UI configuration
+		taskPolicy := &TaskPolicy{
+			Enabled:        true, // Default enabled
+			MaxConcurrent:  2,    // Default concurrency
+			RepeatInterval: policy.DefaultRepeatInterval,
+			CheckInterval:  policy.DefaultCheckInterval,
+			Configuration:  make(map[string]interface{}),
+		}
+
+		// Extract configuration from UI provider's config
+		if configMap, ok := defaultConfig.(map[string]interface{}); ok {
+			// Copy all configuration values
+			for key, value := range configMap {
+				taskPolicy.Configuration[key] = value
+			}
+
+			// Extract common fields
+			if enabled, exists := configMap["enabled"]; exists {
+				if enabledBool, ok := enabled.(bool); ok {
+					taskPolicy.Enabled = enabledBool
+				}
+			}
+			if maxConcurrent, exists := configMap["max_concurrent"]; exists {
+				if maxConcurrentInt, ok := maxConcurrent.(int); ok {
+					taskPolicy.MaxConcurrent = maxConcurrentInt
+				} else if maxConcurrentFloat, ok := maxConcurrent.(float64); ok {
+					taskPolicy.MaxConcurrent = int(maxConcurrentFloat)
+				}
+			}
+		}
+
+		// Also get defaults from scheduler if available (using types.TaskScheduler explicitly)
+		var scheduler types.TaskScheduler = typesRegistry.GetScheduler(taskType)
+		if scheduler != nil {
+			if taskPolicy.MaxConcurrent <= 0 {
+				taskPolicy.MaxConcurrent = scheduler.GetMaxConcurrent()
+			}
+			// Convert default repeat interval to hours
+			if repeatInterval := scheduler.GetDefaultRepeatInterval(); repeatInterval > 0 {
+				taskPolicy.RepeatInterval = int(repeatInterval.Hours())
+			}
+		}
+
+		// Also get defaults from detector if available (using types.TaskDetector explicitly)
+		var detector types.TaskDetector = typesRegistry.GetDetector(taskType)
+		if detector != nil {
+			// Convert scan interval to check interval (hours)
+			if scanInterval := detector.ScanInterval(); scanInterval > 0 {
+				taskPolicy.CheckInterval = int(scanInterval.Hours())
+			}
+		}
+
+		policy.TaskPolicies[maintenanceTaskType] = taskPolicy
+		glog.V(3).Infof("Built policy for task type %s: enabled=%v, max_concurrent=%d",
+			maintenanceTaskType, taskPolicy.Enabled, taskPolicy.MaxConcurrent)
+	}
+
+	glog.V(2).Infof("Built maintenance policy with %d task configurations", len(policy.TaskPolicies))
+	return policy
+}
+
+// SetPolicyFromTasks sets the maintenance policy from registered tasks
+func SetPolicyFromTasks(policy *MaintenancePolicy) {
+	if policy == nil {
+		return
+	}
+
+	// Build new policy from tasks
+	newPolicy := BuildMaintenancePolicyFromTasks()
+
+	// Copy task policies
+	policy.TaskPolicies = newPolicy.TaskPolicies
+
+	glog.V(1).Infof("Updated maintenance policy with %d task configurations from registered tasks", len(policy.TaskPolicies))
+}
+
+// GetTaskIcon returns the icon CSS class for a task type from its UI provider
+func GetTaskIcon(taskType MaintenanceTaskType) string {
+	typesRegistry := tasks.GetGlobalTypesRegistry()
+	uiRegistry := tasks.GetGlobalUIRegistry()
+
+	// Convert MaintenanceTaskType to TaskType
+	for workerTaskType := range typesRegistry.GetAllDetectors() {
+		if string(workerTaskType) == string(taskType) {
+			// Get the UI provider for this task type
+			provider := uiRegistry.GetProvider(workerTaskType)
+			if provider != nil {
+				return provider.GetIcon()
+			}
+			break
+		}
+	}
+
+	// Default icon if no UI provider found
+	return "fas fa-cog text-muted"
 }

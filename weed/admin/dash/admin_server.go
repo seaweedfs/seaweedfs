@@ -854,7 +854,7 @@ func (as *AdminServer) getMaintenanceTask(taskID string) (*MaintenanceTask, erro
 	// For now, return mock data
 	return &MaintenanceTask{
 		ID:        taskID,
-		Type:      TaskTypeVacuum,
+		Type:      GetVacuumTaskType(),
 		Status:    TaskStatusPending,
 		Priority:  PriorityNormal,
 		VolumeID:  123,

@@ -8,12 +8,9 @@ import (
 type TaskType string
 
 const (
-	TaskTypeVacuum             TaskType = "vacuum"
-	TaskTypeErasureCoding      TaskType = "erasure_coding"
-	TaskTypeRemoteUpload       TaskType = "remote_upload"
-	TaskTypeFixReplication     TaskType = "fix_replication"
-	TaskTypeBalance            TaskType = "balance"
-	TaskTypeClusterReplication TaskType = "cluster_replication"
+	TaskTypeVacuum        TaskType = "vacuum"
+	TaskTypeErasureCoding TaskType = "erasure_coding"
+	TaskTypeBalance       TaskType = "balance"
 )
 
 // TaskStatus represents the status of a maintenance task

@@ -56,7 +56,7 @@ templ MaintenanceConfig(data *maintenance.MaintenanceConfigData) {
                             <div class="mb-3">
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" id="vacuumEnabled" 
-                                           checked?={data.Config.Policy.IsTaskEnabled(maintenance.TaskTypeVacuum)}>
+                                           checked?={data.Config.Policy.IsTaskEnabled(maintenance.GetVacuumTaskType())}>
                                     <label class="form-check-label" for="vacuumEnabled">
                                         <strong>Enable Vacuum Tasks</strong>
                                     </label>
@@ -78,7 +78,7 @@ templ MaintenanceConfig(data *maintenance.MaintenanceConfigData) {
                             <div class="mb-3">
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" id="replicationFixEnabled" 
-                                           checked?={data.Config.Policy.IsTaskEnabled(maintenance.TaskTypeFixReplication)}>
+                                           checked?={data.Config.Policy.IsTaskEnabled(maintenance.GetFixReplicationTaskType())}>
                                     <label class="form-check-label" for="replicationFixEnabled">
                                         <strong>Enable Replication Fix Tasks</strong>
                                     </label>

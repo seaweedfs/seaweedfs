@@ -39,6 +39,11 @@ func (ui *UIProvider) GetDescription() string {
 	return "Reclaims disk space by removing deleted files from volumes"
 }
 
+// GetIcon returns the icon CSS class for this task type
+func (ui *UIProvider) GetIcon() string {
+	return "fas fa-broom text-primary"
+}
+
 // VacuumConfig represents the vacuum configuration
 type VacuumConfig struct {
 	Enabled          bool          `json:"enabled"`

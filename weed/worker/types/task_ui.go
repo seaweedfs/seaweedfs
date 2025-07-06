@@ -17,6 +17,9 @@ type TaskUIProvider interface {
 	// GetDescription returns a description of what this task does
 	GetDescription() string
 
+	// GetIcon returns the icon CSS class or HTML for this task type
+	GetIcon() string
+
 	// RenderConfigForm renders the configuration form HTML
 	RenderConfigForm(currentConfig interface{}) (template.HTML, error)
 

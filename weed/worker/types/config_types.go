@@ -25,36 +25,30 @@ type MaintenanceConfig struct {
 	Policy        *MaintenancePolicy `json:"policy"`
 }
 
-// MaintenancePolicy represents policies for different maintenance operations
+// MaintenancePolicy represents policies for maintenance operations
+// This is now dynamic - task configurations are stored by task type
 type MaintenancePolicy struct {
-	// Vacuum policies
-	VacuumEnabled       bool    `json:"vacuum_enabled"`
-	VacuumGarbageRatio  float64 `json:"vacuum_garbage_ratio"`  // Trigger vacuum when garbage > this ratio
-	VacuumMinInterval   int     `json:"vacuum_min_interval"`   // Minimum hours between vacuum operations
-	VacuumMaxConcurrent int     `json:"vacuum_max_concurrent"` // Max concurrent vacuum operations
+	// Task-specific configurations indexed by task type
+	TaskConfigs map[TaskType]interface{} `json:"task_configs"`
 
-	// Erasure Coding policies
-	ECEnabled        bool    `json:"ec_enabled"`
-	ECVolumeAgeHours int     `json:"ec_volume_age_hours"` // Convert volumes older than this to EC
-	ECFullnessRatio  float64 `json:"ec_fullness_ratio"`   // Convert volumes when fuller than this ratio
-	ECMaxConcurrent  int     `json:"ec_max_concurrent"`   // Max concurrent EC operations
+	// Global maintenance settings
+	GlobalSettings *GlobalMaintenanceSettings `json:"global_settings"`
+}
 
-	// Remote Upload policies
-	RemoteUploadEnabled       bool   `json:"remote_upload_enabled"`
-	RemoteUploadAgeHours      int    `json:"remote_upload_age_hours"` // Upload volumes older than this
-	RemoteUploadPattern       string `json:"remote_upload_pattern"`   // Collection pattern for remote upload
-	RemoteUploadMaxConcurrent int    `json:"remote_upload_max_concurrent"`
+// GlobalMaintenanceSettings contains settings that apply to all tasks
+type GlobalMaintenanceSettings struct {
+	DefaultMaxConcurrent int  `json:"default_max_concurrent"`
+	MaintenanceEnabled   bool `json:"maintenance_enabled"`
 
-	// Replication Fix policies
-	ReplicationFixEnabled    bool `json:"replication_fix_enabled"`
-	ReplicationCheckInterval int  `json:"replication_check_interval"` // Hours between replication checks
-	ReplicationMaxConcurrent int  `json:"replication_max_concurrent"`
+	// Global timing settings
+	DefaultScanInterval  time.Duration `json:"default_scan_interval"`
+	DefaultTaskTimeout   time.Duration `json:"default_task_timeout"`
+	DefaultRetryCount    int           `json:"default_retry_count"`
+	DefaultRetryInterval time.Duration `json:"default_retry_interval"`
 
-	// Balance policies
-	BalanceEnabled       bool    `json:"balance_enabled"`
-	BalanceCheckInterval int     `json:"balance_check_interval"` // Hours between balance checks
-	BalanceThreshold     float64 `json:"balance_threshold"`      // Trigger balance when imbalance > this ratio
-	BalanceMaxConcurrent int     `json:"balance_max_concurrent"`
+	// Global thresholds
+	DefaultPriorityBoostAge time.Duration `json:"default_priority_boost_age"`
+	GlobalConcurrentLimit   int           `json:"global_concurrent_limit"`
 }
 
 // MaintenanceStats represents statistics for the maintenance system
@@ -139,31 +133,7 @@ func DefaultMaintenanceConfig() *MaintenanceConfig {
 		CleanInterval: 6 * time.Hour,
 		TaskRetention: 7 * 24 * time.Hour, // 7 days
 		WorkerTimeout: 5 * time.Minute,
-		Policy: &MaintenancePolicy{
-			VacuumEnabled:       true,
-			VacuumGarbageRatio:  0.3,
-			VacuumMinInterval:   24, // hours
-			VacuumMaxConcurrent: 2,
-
-			ECEnabled:        true,
-			ECVolumeAgeHours: 168, // 1 week
-			ECFullnessRatio:  0.9,
-			ECMaxConcurrent:  1,
-
-			RemoteUploadEnabled:       false,
-			RemoteUploadAgeHours:      720, // 30 days
-			RemoteUploadPattern:       "",
-			RemoteUploadMaxConcurrent: 1,
-
-			ReplicationFixEnabled:    true,
-			ReplicationCheckInterval: 6, // hours
-			ReplicationMaxConcurrent: 3,
-
-			BalanceEnabled:       true,
-			BalanceCheckInterval: 12, // hours
-			BalanceThreshold:     0.1,
-			BalanceMaxConcurrent: 2,
-		},
+		Policy:        NewMaintenancePolicy(),
 	}
 }
 
@@ -179,4 +149,120 @@ func DefaultWorkerConfig() *WorkerConfig {
 		TaskRequestInterval: 5 * time.Second,
 		Capabilities:        capabilities,
 	}
+}
+
+// NewMaintenancePolicy creates a new dynamic maintenance policy
+func NewMaintenancePolicy() *MaintenancePolicy {
+	return &MaintenancePolicy{
+		TaskConfigs: make(map[TaskType]interface{}),
+		GlobalSettings: &GlobalMaintenanceSettings{
+			DefaultMaxConcurrent:    2,
+			MaintenanceEnabled:      true,
+			DefaultScanInterval:     30 * time.Minute,
+			DefaultTaskTimeout:      5 * time.Minute,
+			DefaultRetryCount:       3,
+			DefaultRetryInterval:    5 * time.Minute,
+			DefaultPriorityBoostAge: 24 * time.Hour,
+			GlobalConcurrentLimit:   5,
+		},
+	}
+}
+
+// SetTaskConfig sets the configuration for a specific task type
+func (p *MaintenancePolicy) SetTaskConfig(taskType TaskType, config interface{}) {
+	if p.TaskConfigs == nil {
+		p.TaskConfigs = make(map[TaskType]interface{})
+	}
+	p.TaskConfigs[taskType] = config
+}
+
+// GetTaskConfig returns the configuration for a specific task type
+func (p *MaintenancePolicy) GetTaskConfig(taskType TaskType) interface{} {
+	if p.TaskConfigs == nil {
+		return nil
+	}
+	return p.TaskConfigs[taskType]
+}
+
+// IsTaskEnabled returns whether a task type is enabled (generic helper)
+func (p *MaintenancePolicy) IsTaskEnabled(taskType TaskType) bool {
+	if !p.GlobalSettings.MaintenanceEnabled {
+		return false
+	}
+
+	config := p.GetTaskConfig(taskType)
+	if config == nil {
+		return false
+	}
+
+	// Try to get enabled field from config using type assertion
+	if configMap, ok := config.(map[string]interface{}); ok {
+		if enabled, exists := configMap["enabled"]; exists {
+			if enabledBool, ok := enabled.(bool); ok {
+				return enabledBool
+			}
+		}
+	}
+
+	// If we can't determine from config, default to global setting
+	return p.GlobalSettings.MaintenanceEnabled
+}
+
+// GetMaxConcurrent returns the max concurrent setting for a task type
+func (p *MaintenancePolicy) GetMaxConcurrent(taskType TaskType) int {
+	config := p.GetTaskConfig(taskType)
+	if config == nil {
+		return p.GlobalSettings.DefaultMaxConcurrent
+	}
+
+	// Try to get max_concurrent field from config
+	if configMap, ok := config.(map[string]interface{}); ok {
+		if maxConcurrent, exists := configMap["max_concurrent"]; exists {
+			if maxConcurrentInt, ok := maxConcurrent.(int); ok {
+				return maxConcurrentInt
+			}
+			if maxConcurrentFloat, ok := maxConcurrent.(float64); ok {
+				return int(maxConcurrentFloat)
+			}
+		}
+	}
+
+	return p.GlobalSettings.DefaultMaxConcurrent
+}
+
+// GetScanInterval returns the scan interval for a task type
+func (p *MaintenancePolicy) GetScanInterval(taskType TaskType) time.Duration {
+	config := p.GetTaskConfig(taskType)
+	if config == nil {
+		return p.GlobalSettings.DefaultScanInterval
+	}
+
+	// Try to get scan_interval field from config
+	if configMap, ok := config.(map[string]interface{}); ok {
+		if scanInterval, exists := configMap["scan_interval"]; exists {
+			if scanIntervalDuration, ok := scanInterval.(time.Duration); ok {
+				return scanIntervalDuration
+			}
+			if scanIntervalString, ok := scanInterval.(string); ok {
+				if duration, err := time.ParseDuration(scanIntervalString); err == nil {
+					return duration
+				}
+			}
+		}
+	}
+
+	return p.GlobalSettings.DefaultScanInterval
+}
+
+// GetAllTaskTypes returns all configured task types
+func (p *MaintenancePolicy) GetAllTaskTypes() []TaskType {
+	if p.TaskConfigs == nil {
+		return []TaskType{}
+	}
+
+	taskTypes := make([]TaskType, 0, len(p.TaskConfigs))
+	for taskType := range p.TaskConfigs {
+		taskTypes = append(taskTypes, taskType)
+	}
+	return taskTypes
 }

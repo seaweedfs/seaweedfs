@@ -43,10 +43,16 @@ func initializeExecutorFactories() {
 
 		// Also add any maintenance-specific task types that don't have worker equivalents
 		additionalTaskTypes := []MaintenanceTaskType{
-			TaskTypeFixReplication,
-			TaskTypeClusterReplication,
+			GetFixReplicationTaskType(),
+			GetClusterReplicationTaskType(),
 		}
-		taskTypes = append(taskTypes, additionalTaskTypes...)
+
+		// Only add additional types if they're not empty (i.e., if they're registered)
+		for _, additionalType := range additionalTaskTypes {
+			if string(additionalType) != "" {
+				taskTypes = append(taskTypes, additionalType)
+			}
+		}
 
 		// Register generic executor for all task types
 		for _, taskType := range taskTypes {
@@ -125,11 +131,14 @@ type MaintenanceWorkerService struct {
 
 // NewMaintenanceWorkerService creates a new maintenance worker service
 func NewMaintenanceWorkerService(workerID, address, adminServer string) *MaintenanceWorkerService {
+	// Get all registered maintenance task types dynamically
+	capabilities := GetRegisteredMaintenanceTaskTypes()
+
 	worker := &MaintenanceWorkerService{
 		workerID:      workerID,
 		address:       address,
 		adminServer:   adminServer,
-		capabilities:  []MaintenanceTaskType{TaskTypeVacuum, TaskTypeErasureCoding, TaskTypeFixReplication, TaskTypeBalance, TaskTypeClusterReplication},
+		capabilities:  capabilities,
 		maxConcurrent: 2, // Default concurrent task limit
 		currentTasks:  make(map[string]*MaintenanceTask),
 		stopChan:      make(chan struct{}),

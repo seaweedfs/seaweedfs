@@ -188,22 +188,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
 
 // Helper components
 templ TaskTypeIcon(taskType maintenance.MaintenanceTaskType) {
-    switch taskType {
-    case maintenance.TaskTypeVacuum:
-        <i class="fas fa-broom text-primary me-1"></i>
-    case maintenance.TaskTypeErasureCoding:
-        <i class="fas fa-shield-alt text-info me-1"></i>
-    case maintenance.TaskTypeRemoteUpload:
-        <i class="fas fa-cloud-upload-alt text-warning me-1"></i>
-    case maintenance.TaskTypeFixReplication:
-        <i class="fas fa-copy text-success me-1"></i>
-    case maintenance.TaskTypeBalance:
-        <i class="fas fa-balance-scale text-secondary me-1"></i>
-    case maintenance.TaskTypeClusterReplication:
-        <i class="fas fa-network-wired text-info me-1"></i>
-    default:
-        <i class="fas fa-cog text-muted me-1"></i>
-    }
+    <i class={maintenance.GetTaskIcon(taskType) + " me-1"}></i>
 }
 
 templ PriorityBadge(priority maintenance.MaintenanceTaskPriority) {
