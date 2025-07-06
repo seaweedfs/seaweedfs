@@ -61,13 +61,6 @@ func GetSharedInstances() (*EcDetector, *Scheduler) {
 	return getSharedInstances()
 }
 
-// GetSharedInstancesNew returns the shared instances as the newer types for templ UI
-func GetSharedInstancesNew() (*ECDetector, *ECScheduler) {
-	// For now, return nil since we need to reconcile the type differences
-	// This is a temporary solution until we standardize the types
-	return nil, nil
-}
-
 // Auto-register this task when the package is imported
 func init() {
 	factory := NewFactory()
