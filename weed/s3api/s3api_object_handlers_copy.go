@@ -90,13 +90,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Process metadata and tags
-	tagErr := processMetadata(r.Header, nil, replaceMeta, replaceTagging, s3a.getTags, dir, name)
-	if tagErr != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
-		return
-	}
-
 	// Create new entry for destination
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
@@ -108,8 +101,20 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		Extended: make(map[string][]byte),
 	}
 
-	// Copy extended attributes
+	// Copy extended attributes from source
 	for k, v := range entry.Extended {
+		dstEntry.Extended[k] = v
+	}
+
+	// Process metadata and tags and apply to destination
+	processedMetadata, tagErr := processMetadataBytes(r.Header, entry.Extended, replaceMeta, replaceTagging)
+	if tagErr != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+		return
+	}
+
+	// Apply processed metadata to destination entry
+	for k, v := range processedMetadata {
 		dstEntry.Extended[k] = v
 	}
 
@@ -188,6 +193,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	partIDString := r.URL.Query().Get("partNumber")
+	uploadID := r.URL.Query().Get("uploadId")
 
 	partID, err := strconv.Atoi(partIDString)
 	if err != nil {
@@ -195,7 +201,14 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	glog.V(3).Infof("CopyObjectPartHandler %s %s => %s part %d", srcBucket, srcObject, dstBucket, partID)
+	// Check if the upload ID is valid
+	err = s3a.checkUploadId(dstObject, uploadID)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
+
+	glog.V(3).Infof("CopyObjectPartHandler %s %s => %s part %d upload %s", srcBucket, srcObject, dstBucket, partID, uploadID)
 
 	// check partID with maximum part ID for multipart objects
 	if partID > globalMaxPartID {
@@ -223,7 +236,11 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		}
 	} else {
 		startOffset = 0
-		endOffset = int64(entry.Attributes.FileSize) - 1
+		if entry.Attributes.FileSize == 0 {
+			endOffset = -1 // For zero-size files, use -1 as endOffset
+		} else {
+			endOffset = int64(entry.Attributes.FileSize) - 1
+		}
 	}
 
 	// Create new entry for the part
@@ -247,17 +264,19 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	dstEntry.Chunks = dstChunks
 
-	// Save the part entry
-	dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
-	dstDir, dstName := dstPath.DirAndName()
-	if err := s3a.touch(dstDir, dstName, dstEntry); err != nil {
+	// Save the part entry to the multipart uploads folder
+	uploadDir := s3a.genUploadsFolder(dstBucket) + "/" + uploadID
+	partName := fmt.Sprintf("%04d_%s.part", partID, "copy")
+
+	if err := s3a.touch(uploadDir, partName, dstEntry); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
 	// Calculate ETag for the part
+	partPath := util.FullPath(uploadDir + "/" + partName)
 	filerEntry := &filer.Entry{
-		FullPath: dstPath,
+		FullPath: partPath,
 		Attr: filer.Attr{
 			FileSize: dstEntry.Attributes.FileSize,
 			Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
