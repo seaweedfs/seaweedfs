@@ -279,7 +279,7 @@ func (ms *MasterServer) startAdminScripts() {
 	glog.V(0).Infof("adminScripts: %v", adminScripts)
 
 	v.SetDefault("master.maintenance.sleep_minutes", 17)
-	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
+	sleepMinutes := v.GetFloat64("master.maintenance.sleep_minutes")
 
 	scriptLines := strings.Split(adminScripts, "\n")
 	if !strings.Contains(adminScripts, "lock") {
