@@ -28,14 +28,28 @@ type GrpcAdminClient struct {
 	streamCtx    context.Context
 	streamCancel context.CancelFunc
 
-	connected bool
-	mutex     sync.RWMutex
+	connected       bool
+	reconnecting    bool
+	shouldReconnect bool
+	mutex           sync.RWMutex
+
+	// Reconnection parameters
+	maxReconnectAttempts int
+	reconnectBackoff     time.Duration
+	maxReconnectBackoff  time.Duration
+	reconnectMultiplier  float64
+
+	// Worker registration info for re-registration after reconnection
+	lastWorkerInfo *types.Worker
 
 	// Channels for communication
 	outgoing       chan *worker_pb.WorkerMessage
 	incoming       chan *worker_pb.AdminMessage
 	responseChans  map[string]chan *worker_pb.AdminMessage
 	responsesMutex sync.RWMutex
+
+	// Shutdown channel
+	shutdownChan chan struct{}
 }
 
 // NewGrpcAdminClient creates a new gRPC admin client
@@ -44,11 +58,17 @@ func NewGrpcAdminClient(adminAddress string, workerID string) *GrpcAdminClient {
 	grpcAddress := pb.ServerToGrpcAddress(adminAddress)
 
 	return &GrpcAdminClient{
-		adminAddress:  grpcAddress,
-		workerID:      workerID,
-		outgoing:      make(chan *worker_pb.WorkerMessage, 100),
-		incoming:      make(chan *worker_pb.AdminMessage, 100),
-		responseChans: make(map[string]chan *worker_pb.AdminMessage),
+		adminAddress:         grpcAddress,
+		workerID:             workerID,
+		shouldReconnect:      true,
+		maxReconnectAttempts: 0, // 0 means infinite attempts
+		reconnectBackoff:     1 * time.Second,
+		maxReconnectBackoff:  30 * time.Second,
+		reconnectMultiplier:  1.5,
+		outgoing:             make(chan *worker_pb.WorkerMessage, 100),
+		incoming:             make(chan *worker_pb.AdminMessage, 100),
+		responseChans:        make(map[string]chan *worker_pb.AdminMessage),
+		shutdownChan:         make(chan struct{}),
 	}
 }
 
@@ -81,9 +101,10 @@ func (c *GrpcAdminClient) Connect() error {
 	c.stream = stream
 	c.connected = true
 
-	// Start stream handlers
+	// Start stream handlers and reconnection loop
 	go c.handleOutgoing()
 	go c.handleIncoming()
+	go c.reconnectionLoop()
 
 	glog.Infof("Connected to admin server at %s", c.adminAddress)
 	return nil
@@ -170,6 +191,13 @@ func (c *GrpcAdminClient) Disconnect() error {
 	}
 
 	c.connected = false
+	c.shouldReconnect = false
+
+	// Send shutdown signal to stop reconnection loop
+	select {
+	case c.shutdownChan <- struct{}{}:
+	default:
+	}
 
 	// Send shutdown message
 	shutdownMsg := &worker_pb.WorkerMessage{
@@ -212,15 +240,159 @@ func (c *GrpcAdminClient) Disconnect() error {
 	return nil
 }
 
+// reconnectionLoop handles automatic reconnection with exponential backoff
+func (c *GrpcAdminClient) reconnectionLoop() {
+	backoff := c.reconnectBackoff
+	attempts := 0
+
+	for {
+		select {
+		case <-c.shutdownChan:
+			return
+		default:
+		}
+
+		c.mutex.RLock()
+		shouldReconnect := c.shouldReconnect && !c.connected && !c.reconnecting
+		c.mutex.RUnlock()
+
+		if !shouldReconnect {
+			time.Sleep(time.Second)
+			continue
+		}
+
+		c.mutex.Lock()
+		c.reconnecting = true
+		c.mutex.Unlock()
+
+		glog.Infof("Attempting to reconnect to admin server (attempt %d)", attempts+1)
+
+		// Attempt to reconnect
+		if err := c.reconnect(); err != nil {
+			attempts++
+			glog.Errorf("Reconnection attempt %d failed: %v", attempts, err)
+
+			// Reset reconnecting flag
+			c.mutex.Lock()
+			c.reconnecting = false
+			c.mutex.Unlock()
+
+			// Check if we should give up
+			if c.maxReconnectAttempts > 0 && attempts >= c.maxReconnectAttempts {
+				glog.Errorf("Max reconnection attempts (%d) reached, giving up", c.maxReconnectAttempts)
+				c.mutex.Lock()
+				c.shouldReconnect = false
+				c.mutex.Unlock()
+				return
+			}
+
+			// Wait with exponential backoff
+			glog.Infof("Waiting %v before next reconnection attempt", backoff)
+
+			select {
+			case <-c.shutdownChan:
+				return
+			case <-time.After(backoff):
+			}
+
+			// Increase backoff
+			backoff = time.Duration(float64(backoff) * c.reconnectMultiplier)
+			if backoff > c.maxReconnectBackoff {
+				backoff = c.maxReconnectBackoff
+			}
+		} else {
+			// Successful reconnection
+			attempts = 0
+			backoff = c.reconnectBackoff
+			glog.Infof("Successfully reconnected to admin server")
+
+			c.mutex.Lock()
+			c.reconnecting = false
+			c.mutex.Unlock()
+		}
+	}
+}
+
+// reconnect attempts to re-establish the connection
+func (c *GrpcAdminClient) reconnect() error {
+	// Clean up existing connection completely
+	c.mutex.Lock()
+	if c.streamCancel != nil {
+		c.streamCancel()
+	}
+	if c.stream != nil {
+		c.stream.CloseSend()
+	}
+	if c.conn != nil {
+		c.conn.Close()
+	}
+	c.mutex.Unlock()
+
+	// Create new connection
+	conn, err := c.createConnection()
+	if err != nil {
+		return fmt.Errorf("failed to create connection: %v", err)
+	}
+
+	client := worker_pb.NewWorkerServiceClient(conn)
+
+	// Create new stream
+	streamCtx, streamCancel := context.WithCancel(context.Background())
+	stream, err := client.WorkerStream(streamCtx)
+	if err != nil {
+		conn.Close()
+		streamCancel()
+		return fmt.Errorf("failed to create stream: %v", err)
+	}
+
+	// Update client state
+	c.mutex.Lock()
+	c.conn = conn
+	c.client = client
+	c.stream = stream
+	c.streamCtx = streamCtx
+	c.streamCancel = streamCancel
+	c.connected = true
+	c.mutex.Unlock()
+
+	// Restart stream handlers
+	go c.handleOutgoing()
+	go c.handleIncoming()
+
+	// Re-register worker if we have previous registration info
+	c.mutex.RLock()
+	workerInfo := c.lastWorkerInfo
+	c.mutex.RUnlock()
+
+	if workerInfo != nil {
+		glog.Infof("Re-registering worker after reconnection...")
+		if err := c.sendRegistration(workerInfo); err != nil {
+			glog.Errorf("Failed to re-register worker: %v", err)
+			// Don't fail the reconnection because of registration failure
+			// The registration will be retried on next heartbeat or operation
+		}
+	}
+
+	return nil
+}
+
 // handleOutgoing processes outgoing messages to admin
 func (c *GrpcAdminClient) handleOutgoing() {
 	for msg := range c.outgoing {
-		if !c.connected {
+		c.mutex.RLock()
+		connected := c.connected
+		stream := c.stream
+		c.mutex.RUnlock()
+
+		if !connected {
 			break
 		}
 
-		if err := c.stream.Send(msg); err != nil {
+		if err := stream.Send(msg); err != nil {
 			glog.Errorf("Failed to send message to admin: %v", err)
+			c.mutex.Lock()
+			c.connected = false
+			c.mutex.Unlock()
 			break
 		}
 	}
@@ -229,17 +401,25 @@ func (c *GrpcAdminClient) handleOutgoing() {
 // handleIncoming processes incoming messages from admin
 func (c *GrpcAdminClient) handleIncoming() {
 	for {
-		if !c.connected {
+		c.mutex.RLock()
+		connected := c.connected
+		stream := c.stream
+		c.mutex.RUnlock()
+
+		if !connected {
 			break
 		}
 
-		msg, err := c.stream.Recv()
+		msg, err := stream.Recv()
 		if err != nil {
 			if err == io.EOF {
 				glog.Infof("Admin server closed the stream")
 			} else {
 				glog.Errorf("Failed to receive message from admin: %v", err)
 			}
+			c.mutex.Lock()
+			c.connected = false
+			c.mutex.Unlock()
 			break
 		}
 
@@ -258,6 +438,16 @@ func (c *GrpcAdminClient) RegisterWorker(worker *types.Worker) error {
 		return fmt.Errorf("not connected to admin server")
 	}
 
+	// Store worker info for re-registration after reconnection
+	c.mutex.Lock()
+	c.lastWorkerInfo = worker
+	c.mutex.Unlock()
+
+	return c.sendRegistration(worker)
+}
+
+// sendRegistration sends the registration message and waits for response
+func (c *GrpcAdminClient) sendRegistration(worker *types.Worker) error {
 	capabilities := make([]string, len(worker.Capabilities))
 	for i, cap := range worker.Capabilities {
 		capabilities[i] = string(cap)
@@ -306,7 +496,10 @@ func (c *GrpcAdminClient) RegisterWorker(worker *types.Worker) error {
 // SendHeartbeat sends heartbeat to admin server
 func (c *GrpcAdminClient) SendHeartbeat(workerID string, status *types.WorkerStatus) error {
 	if !c.connected {
-		return fmt.Errorf("not connected to admin server")
+		// Wait for reconnection for a short time
+		if err := c.waitForConnection(10 * time.Second); err != nil {
+			return fmt.Errorf("not connected to admin server: %v", err)
+		}
 	}
 
 	taskIds := make([]string, len(status.CurrentTasks))
@@ -342,7 +535,10 @@ func (c *GrpcAdminClient) SendHeartbeat(workerID string, status *types.WorkerSta
 // RequestTask requests a new task from admin server
 func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.TaskType) (*types.Task, error) {
 	if !c.connected {
-		return nil, fmt.Errorf("not connected to admin server")
+		// Wait for reconnection for a short time
+		if err := c.waitForConnection(5 * time.Second); err != nil {
+			return nil, fmt.Errorf("not connected to admin server: %v", err)
+		}
 	}
 
 	caps := make([]string, len(capabilities))
@@ -405,7 +601,10 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 // CompleteTask reports task completion to admin server
 func (c *GrpcAdminClient) CompleteTask(taskID string, success bool, errorMsg string) error {
 	if !c.connected {
-		return fmt.Errorf("not connected to admin server")
+		// Wait for reconnection for a short time
+		if err := c.waitForConnection(5 * time.Second); err != nil {
+			return fmt.Errorf("not connected to admin server: %v", err)
+		}
 	}
 
 	msg := &worker_pb.WorkerMessage{
@@ -433,7 +632,10 @@ func (c *GrpcAdminClient) CompleteTask(taskID string, success bool, errorMsg str
 // UpdateTaskProgress updates task progress to admin server
 func (c *GrpcAdminClient) UpdateTaskProgress(taskID string, progress float64) error {
 	if !c.connected {
-		return fmt.Errorf("not connected to admin server")
+		// Wait for reconnection for a short time
+		if err := c.waitForConnection(5 * time.Second); err != nil {
+			return fmt.Errorf("not connected to admin server: %v", err)
+		}
 	}
 
 	msg := &worker_pb.WorkerMessage{
@@ -462,6 +664,61 @@ func (c *GrpcAdminClient) IsConnected() bool {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	return c.connected
+}
+
+// IsReconnecting returns whether the client is currently attempting to reconnect
+func (c *GrpcAdminClient) IsReconnecting() bool {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.reconnecting
+}
+
+// SetReconnectionSettings allows configuration of reconnection behavior
+func (c *GrpcAdminClient) SetReconnectionSettings(maxAttempts int, initialBackoff, maxBackoff time.Duration, multiplier float64) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.maxReconnectAttempts = maxAttempts
+	c.reconnectBackoff = initialBackoff
+	c.maxReconnectBackoff = maxBackoff
+	c.reconnectMultiplier = multiplier
+}
+
+// StopReconnection stops the reconnection loop
+func (c *GrpcAdminClient) StopReconnection() {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.shouldReconnect = false
+}
+
+// StartReconnection starts the reconnection loop
+func (c *GrpcAdminClient) StartReconnection() {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.shouldReconnect = true
+}
+
+// waitForConnection waits for the connection to be established or timeout
+func (c *GrpcAdminClient) waitForConnection(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		c.mutex.RLock()
+		connected := c.connected
+		shouldReconnect := c.shouldReconnect
+		c.mutex.RUnlock()
+
+		if connected {
+			return nil
+		}
+
+		if !shouldReconnect {
+			return fmt.Errorf("reconnection is disabled")
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return fmt.Errorf("timeout waiting for connection")
 }
 
 // MockAdminClient provides a mock implementation for testing
