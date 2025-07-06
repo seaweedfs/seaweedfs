@@ -3,7 +3,6 @@ package command
 import (
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,9 +17,12 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/handlers"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -30,8 +32,6 @@ var (
 type AdminOptions struct {
 	port          *int
 	masters       *string
-	tlsCertPath   *string
-	tlsKeyPath    *string
 	adminUser     *string
 	adminPassword *string
 	dataDir       *string
@@ -41,8 +41,6 @@ func init() {
 	cmdAdmin.Run = runAdmin // break init cycle
 	a.port = cmdAdmin.Flag.Int("port", 23646, "admin server port")
 	a.masters = cmdAdmin.Flag.String("masters", "localhost:9333", "comma-separated master servers")
-	a.tlsCertPath = cmdAdmin.Flag.String("tlsCert", "", "path to TLS certificate file")
-	a.tlsKeyPath = cmdAdmin.Flag.String("tlsKey", "", "path to TLS private key file")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
@@ -98,6 +96,9 @@ var cmdAdmin = &Command{
 }
 
 func runAdmin(cmd *Command, args []string) bool {
+	// Load security configuration
+	util.LoadSecurityConfiguration()
+
 	// Validate required parameters
 	if *a.masters == "" {
 		fmt.Println("Error: masters parameter is required")
@@ -105,22 +106,10 @@ func runAdmin(cmd *Command, args []string) bool {
 		return false
 	}
 
-	// Validate TLS configuration
-	if (*a.tlsCertPath != "" && *a.tlsKeyPath == "") ||
-		(*a.tlsCertPath == "" && *a.tlsKeyPath != "") {
-		fmt.Println("Error: Both tlsCert and tlsKey must be provided for TLS")
-		return false
-	}
-
 	// Security warnings
 	if *a.adminPassword == "" {
 		fmt.Println("WARNING: Admin interface is running without authentication!")
 		fmt.Println("         Set -adminPassword for production use")
-	}
-
-	if *a.tlsCertPath == "" {
-		fmt.Println("WARNING: Admin interface is running without TLS encryption!")
-		fmt.Println("         Use -tlsCert and -tlsKey for production use")
 	}
 
 	fmt.Printf("Starting SeaweedFS Admin Interface on port %d\n", *a.port)
@@ -135,11 +124,6 @@ func runAdmin(cmd *Command, args []string) bool {
 		fmt.Printf("Authentication: Enabled (user: %s)\n", *a.adminUser)
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
-	}
-	if *a.tlsCertPath != "" {
-		fmt.Printf("TLS: Enabled\n")
-	} else {
-		fmt.Printf("TLS: Disabled\n")
 	}
 
 	// Set up graceful shutdown
@@ -226,15 +210,9 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}
 
 	// Start worker gRPC server for worker connections
-	err = adminServer.StartWorkerGrpcServer(*options.port, *options.tlsCertPath, *options.tlsKeyPath)
+	err = adminServer.StartWorkerGrpcServer(*options.port)
 	if err != nil {
 		return fmt.Errorf("failed to start worker gRPC server: %v", err)
-	}
-
-	if *options.tlsCertPath != "" && *options.tlsKeyPath != "" {
-		fmt.Printf("Worker gRPC server (TLS) started on port %d\n", *options.port+10000)
-	} else {
-		fmt.Printf("Worker gRPC server started on port %d\n", *options.port+10000)
 	}
 
 	// Set up cleanup for gRPC server
@@ -255,21 +233,37 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 		Handler: r,
 	}
 
-	// TLS configuration
-	if *options.tlsCertPath != "" && *options.tlsKeyPath != "" {
-		server.TLSConfig = &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		}
-	}
-
 	// Start server
 	go func() {
 		log.Printf("Starting SeaweedFS Admin Server on port %d", *options.port)
 
-		var err error
-		if *options.tlsCertPath != "" && *options.tlsKeyPath != "" {
-			log.Printf("Using TLS with cert: %s, key: %s", *options.tlsCertPath, *options.tlsKeyPath)
-			err = server.ListenAndServeTLS(*options.tlsCertPath, *options.tlsKeyPath)
+		// start http or https server with security.toml
+		var (
+			clientCertFile,
+			certFile,
+			keyFile string
+		)
+		useTLS := false
+		useMTLS := false
+
+		if viper.GetString("https.admin.key") != "" {
+			useTLS = true
+			certFile = viper.GetString("https.admin.cert")
+			keyFile = viper.GetString("https.admin.key")
+		}
+
+		if viper.GetString("https.admin.ca") != "" {
+			useMTLS = true
+			clientCertFile = viper.GetString("https.admin.ca")
+		}
+
+		if useMTLS {
+			server.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
+		}
+
+		if useTLS {
+			log.Printf("Starting SeaweedFS Admin Server with TLS on port %d", *options.port)
+			err = server.ListenAndServeTLS(certFile, keyFile)
 		} else {
 			err = server.ListenAndServe()
 		}
