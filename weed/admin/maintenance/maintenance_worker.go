@@ -41,19 +41,6 @@ func initializeExecutorFactories() {
 			taskTypes = append(taskTypes, maintenanceTaskType)
 		}
 
-		// Also add any maintenance-specific task types that don't have worker equivalents
-		additionalTaskTypes := []MaintenanceTaskType{
-			GetFixReplicationTaskType(),
-			GetClusterReplicationTaskType(),
-		}
-
-		// Only add additional types if they're not empty (i.e., if they're registered)
-		for _, additionalType := range additionalTaskTypes {
-			if string(additionalType) != "" {
-				taskTypes = append(taskTypes, additionalType)
-			}
-		}
-
 		// Register generic executor for all task types
 		for _, taskType := range taskTypes {
 			RegisterTaskExecutorFactory(taskType, createGenericTaskExecutor)

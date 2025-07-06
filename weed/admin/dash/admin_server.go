@@ -850,26 +850,39 @@ func (as *AdminServer) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, er
 
 // getMaintenanceTask returns a specific maintenance task
 func (as *AdminServer) getMaintenanceTask(taskID string) (*MaintenanceTask, error) {
-	// This would integrate with the maintenance queue to get the specific task
-	// For now, return mock data
-	return &MaintenanceTask{
-		ID:        taskID,
-		Type:      GetVacuumTaskType(),
-		Status:    TaskStatusPending,
-		Priority:  PriorityNormal,
-		VolumeID:  123,
-		Server:    "localhost:8080",
-		Reason:    "High garbage ratio",
-		CreatedAt: time.Now().Add(-time.Hour),
-		Progress:  0,
-	}, nil
+	if as.maintenanceManager == nil {
+		return nil, fmt.Errorf("maintenance manager not initialized")
+	}
+
+	// Search for the task across all statuses since we don't know which status it has
+	statuses := []MaintenanceTaskStatus{
+		TaskStatusPending,
+		TaskStatusAssigned,
+		TaskStatusInProgress,
+		TaskStatusCompleted,
+		TaskStatusFailed,
+		TaskStatusCancelled,
+	}
+
+	for _, status := range statuses {
+		tasks := as.maintenanceManager.GetTasks(status, "", 0) // Get all tasks with this status
+		for _, task := range tasks {
+			if task.ID == taskID {
+				return task, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("task %s not found", taskID)
 }
 
 // cancelMaintenanceTask cancels a pending maintenance task
 func (as *AdminServer) cancelMaintenanceTask(taskID string) error {
-	// This would integrate with the maintenance queue to cancel the task
-	// For now, simulate cancellation
-	return nil
+	if as.maintenanceManager == nil {
+		return fmt.Errorf("maintenance manager not initialized")
+	}
+
+	return as.maintenanceManager.CancelTask(taskID)
 }
 
 // getMaintenanceWorkers returns all maintenance workers
@@ -1033,9 +1046,11 @@ func (as *AdminServer) updateMaintenanceConfig(config *maintenance.MaintenanceCo
 
 // triggerMaintenanceScan triggers a maintenance scan
 func (as *AdminServer) triggerMaintenanceScan() error {
-	// This would integrate with the maintenance scanner to trigger a scan
-	// For now, simulate scan trigger
-	return nil
+	if as.maintenanceManager == nil {
+		return fmt.Errorf("maintenance manager not initialized")
+	}
+
+	return as.maintenanceManager.TriggerScan()
 }
 
 // GetConfigInfo returns information about the admin configuration

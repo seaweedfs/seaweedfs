@@ -61,7 +61,7 @@ func MaintenanceConfig(data *maintenance.MaintenanceConfigData) templ.Component 
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if data.Config.Policy.IsTaskEnabled(maintenance.GetVacuumTaskType()) {
+		if data.Config.Policy.IsTaskEnabled(maintenance.GetMaintenanceTaskType("vacuum")) {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, " checked")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
@@ -71,7 +71,7 @@ func MaintenanceConfig(data *maintenance.MaintenanceConfigData) templ.Component 
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if data.Config.Policy.IsTaskEnabled(maintenance.GetFixReplicationTaskType()) {
+		if data.Config.Policy.IsTaskEnabled(maintenance.GetMaintenanceTaskType("fix_replication")) {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, " checked")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
