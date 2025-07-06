@@ -4,15 +4,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/worker/types"
-
-	// Import task packages to trigger their auto-registration
-
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // MaintenanceIntegration bridges the task system with existing maintenance
