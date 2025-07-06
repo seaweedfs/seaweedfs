@@ -118,15 +118,20 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		dstEntry.Extended[k] = v
 	}
 
-	// Replicate chunks
-	dstChunks, err := s3a.copyChunks(entry, r.URL.Path)
-	if err != nil {
-		glog.Errorf("CopyObjectHandler copy chunks error: %v", err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
+	// For zero-size files or files without chunks, use the original approach
+	if entry.Attributes.FileSize == 0 || len(entry.GetChunks()) == 0 {
+		// Just copy the entry structure without chunks for zero-size files
+		dstEntry.Chunks = nil
+	} else {
+		// Replicate chunks for files with content
+		dstChunks, err := s3a.copyChunks(entry, r.URL.Path)
+		if err != nil {
+			glog.Errorf("CopyObjectHandler copy chunks error: %v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		dstEntry.Chunks = dstChunks
 	}
-
-	dstEntry.Chunks = dstChunks
 
 	// Save the new entry
 	dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
@@ -254,15 +259,20 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		Extended: make(map[string][]byte),
 	}
 
-	// Copy chunks that overlap with the range
-	dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, r.URL.Path)
-	if err != nil {
-		glog.Errorf("CopyObjectPartHandler copy chunks error: %v", err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
+	// Handle zero-size files or empty ranges
+	if entry.Attributes.FileSize == 0 || endOffset < startOffset {
+		// For zero-size files or invalid ranges, create an empty part
+		dstEntry.Chunks = nil
+	} else {
+		// Copy chunks that overlap with the range
+		dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, r.URL.Path)
+		if err != nil {
+			glog.Errorf("CopyObjectPartHandler copy chunks error: %v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		dstEntry.Chunks = dstChunks
 	}
-
-	dstEntry.Chunks = dstChunks
 
 	// Save the part entry to the multipart uploads folder
 	uploadDir := s3a.genUploadsFolder(dstBucket) + "/" + uploadID
