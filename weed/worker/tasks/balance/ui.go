@@ -46,14 +46,39 @@ func (ui *UIProvider) GetIcon() string {
 
 // BalanceConfig represents the balance configuration
 type BalanceConfig struct {
-	Enabled            bool          `json:"enabled"`
-	ImbalanceThreshold float64       `json:"imbalance_threshold"`
-	ScanInterval       time.Duration `json:"scan_interval"`
-	MaxConcurrent      int           `json:"max_concurrent"`
-	MinServerCount     int           `json:"min_server_count"`
-	MoveDuringOffHours bool          `json:"move_during_off_hours"`
-	OffHoursStart      string        `json:"off_hours_start"`
-	OffHoursEnd        string        `json:"off_hours_end"`
+	Enabled             bool    `json:"enabled"`
+	ImbalanceThreshold  float64 `json:"imbalance_threshold"`
+	ScanIntervalSeconds int     `json:"scan_interval_seconds"`
+	MaxConcurrent       int     `json:"max_concurrent"`
+	MinServerCount      int     `json:"min_server_count"`
+	MoveDuringOffHours  bool    `json:"move_during_off_hours"`
+	OffHoursStart       string  `json:"off_hours_start"`
+	OffHoursEnd         string  `json:"off_hours_end"`
+	MinIntervalSeconds  int     `json:"min_interval_seconds"`
+}
+
+// Helper functions for duration conversion
+func secondsToDuration(seconds int) time.Duration {
+	return time.Duration(seconds) * time.Second
+}
+
+func durationToSeconds(d time.Duration) int {
+	return int(d.Seconds())
+}
+
+// formatDurationForUser formats seconds as a user-friendly duration string
+func formatDurationForUser(seconds int) string {
+	d := secondsToDuration(seconds)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%.0fm", d.Minutes())
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%.1fh", d.Hours())
+	}
+	return fmt.Sprintf("%.1fd", d.Hours()/24)
 }
 
 // RenderConfigForm renders the configuration form HTML
@@ -79,13 +104,7 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		true,
 	)
 
-	form.AddDurationField(
-		"scan_interval",
-		"Scan Interval",
-		"How often to scan for imbalanced volumes",
-		config.ScanInterval,
-		true,
-	)
+	form.AddDurationField("scan_interval", "Scan Interval", "How often to scan for imbalanced volumes", secondsToDuration(config.ScanIntervalSeconds), true)
 
 	// Scheduling Settings
 	form.AddNumberField(
@@ -127,6 +146,9 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		config.OffHoursEnd,
 		false,
 	)
+
+	// Timing constraints
+	form.AddDurationField("min_interval", "Min Interval", "Minimum time between balance operations", secondsToDuration(config.MinIntervalSeconds), true)
 
 	// Generate organized form sections using Bootstrap components
 	html := `
@@ -195,7 +217,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 		if err != nil {
 			return nil, fmt.Errorf("invalid scan interval: %v", err)
 		}
-		config.ScanInterval = duration
+		config.ScanIntervalSeconds = int(duration.Seconds())
 	}
 
 	// Parse max concurrent
@@ -233,6 +255,15 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 		config.OffHoursEnd = values[0]
 	}
 
+	// Parse min interval
+	if values, ok := formData["min_interval"]; ok && len(values) > 0 {
+		duration, err := time.ParseDuration(values[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid min interval: %v", err)
+		}
+		config.MinIntervalSeconds = int(duration.Seconds())
+	}
+
 	return config, nil
 }
 
@@ -252,7 +283,7 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 	if ui.detector != nil {
 		ui.detector.SetEnabled(balanceConfig.Enabled)
 		ui.detector.SetThreshold(balanceConfig.ImbalanceThreshold)
-		ui.detector.SetMinCheckInterval(balanceConfig.ScanInterval)
+		ui.detector.SetMinCheckInterval(secondsToDuration(balanceConfig.ScanIntervalSeconds))
 	}
 
 	// Apply to scheduler
@@ -276,21 +307,22 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 func (ui *UIProvider) getCurrentBalanceConfig() *BalanceConfig {
 	config := &BalanceConfig{
 		// Default values (fallback if detectors/schedulers are nil)
-		Enabled:            true,
-		ImbalanceThreshold: 0.1, // 10% imbalance
-		ScanInterval:       4 * time.Hour,
-		MaxConcurrent:      1,
-		MinServerCount:     3,
-		MoveDuringOffHours: true,
-		OffHoursStart:      "23:00",
-		OffHoursEnd:        "06:00",
+		Enabled:             true,
+		ImbalanceThreshold:  0.1, // 10% imbalance
+		ScanIntervalSeconds: durationToSeconds(4 * time.Hour),
+		MaxConcurrent:       1,
+		MinServerCount:      3,
+		MoveDuringOffHours:  true,
+		OffHoursStart:       "23:00",
+		OffHoursEnd:         "06:00",
+		MinIntervalSeconds:  durationToSeconds(1 * time.Hour),
 	}
 
 	// Get current values from detector
 	if ui.detector != nil {
 		config.Enabled = ui.detector.IsEnabled()
 		config.ImbalanceThreshold = ui.detector.GetThreshold()
-		config.ScanInterval = ui.detector.ScanInterval()
+		config.ScanIntervalSeconds = int(ui.detector.ScanInterval().Seconds())
 	}
 
 	// Get current values from scheduler
@@ -311,4 +343,19 @@ func RegisterUI(uiRegistry *types.UIRegistry, detector *BalanceDetector, schedul
 	uiRegistry.RegisterUI(uiProvider)
 
 	glog.V(1).Infof("✅ Registered balance task UI provider")
+}
+
+// DefaultBalanceConfig returns default balance configuration
+func DefaultBalanceConfig() *BalanceConfig {
+	return &BalanceConfig{
+		Enabled:             false,
+		ImbalanceThreshold:  0.3,
+		ScanIntervalSeconds: durationToSeconds(4 * time.Hour),
+		MaxConcurrent:       1,
+		MinServerCount:      3,
+		MoveDuringOffHours:  false,
+		OffHoursStart:       "22:00",
+		OffHoursEnd:         "06:00",
+		MinIntervalSeconds:  durationToSeconds(1 * time.Hour),
+	}
 }

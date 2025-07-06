@@ -10,6 +10,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
+// Helper function to format seconds as duration string
+func formatDurationFromSeconds(seconds int) string {
+	d := time.Duration(seconds) * time.Second
+	return d.String()
+}
+
 // UITemplProvider provides the templ-based UI for balance task configuration
 type UITemplProvider struct {
 	detector  *BalanceDetector
@@ -81,7 +87,7 @@ func (ui *UITemplProvider) RenderConfigSections(currentConfig interface{}) ([]co
 					Description: "How often to scan for imbalanced volumes",
 					Required:    true,
 				},
-				Value: config.ScanInterval.String(),
+				Value: formatDurationFromSeconds(config.ScanIntervalSeconds),
 			},
 		},
 	}
@@ -201,7 +207,7 @@ func (ui *UITemplProvider) ParseConfigForm(formData map[string][]string) (interf
 		if interval, err := time.ParseDuration(intervalStr[0]); err != nil {
 			return nil, fmt.Errorf("invalid scan interval: %v", err)
 		} else {
-			config.ScanInterval = interval
+			config.ScanIntervalSeconds = int(interval.Seconds())
 		}
 	}
 
@@ -259,7 +265,7 @@ func (ui *UITemplProvider) ApplyConfig(config interface{}) error {
 	if ui.detector != nil {
 		ui.detector.SetEnabled(balanceConfig.Enabled)
 		ui.detector.SetThreshold(balanceConfig.ImbalanceThreshold)
-		ui.detector.SetMinCheckInterval(balanceConfig.ScanInterval)
+		ui.detector.SetMinCheckInterval(time.Duration(balanceConfig.ScanIntervalSeconds) * time.Second)
 	}
 
 	// Apply to scheduler
@@ -283,21 +289,21 @@ func (ui *UITemplProvider) ApplyConfig(config interface{}) error {
 func (ui *UITemplProvider) getCurrentBalanceConfig() *BalanceConfig {
 	config := &BalanceConfig{
 		// Default values (fallback if detectors/schedulers are nil)
-		Enabled:            true,
-		ImbalanceThreshold: 0.1, // 10% imbalance
-		ScanInterval:       4 * time.Hour,
-		MaxConcurrent:      1,
-		MinServerCount:     3,
-		MoveDuringOffHours: true,
-		OffHoursStart:      "23:00",
-		OffHoursEnd:        "06:00",
+		Enabled:             true,
+		ImbalanceThreshold:  0.1, // 10% imbalance
+		ScanIntervalSeconds: int((4 * time.Hour).Seconds()),
+		MaxConcurrent:       1,
+		MinServerCount:      3,
+		MoveDuringOffHours:  true,
+		OffHoursStart:       "23:00",
+		OffHoursEnd:         "06:00",
 	}
 
 	// Get current values from detector
 	if ui.detector != nil {
 		config.Enabled = ui.detector.IsEnabled()
 		config.ImbalanceThreshold = ui.detector.GetThreshold()
-		config.ScanInterval = ui.detector.ScanInterval()
+		config.ScanIntervalSeconds = int(ui.detector.ScanInterval().Seconds())
 	}
 
 	// Get current values from scheduler
