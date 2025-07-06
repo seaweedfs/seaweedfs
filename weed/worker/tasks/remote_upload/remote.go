@@ -136,4 +136,7 @@ func Register(registry *tasks.TaskRegistry) {
 func init() {
 	factory := NewFactory()
 	tasks.AutoRegister(types.TaskTypeRemoteUpload, factory)
+
+	// Also register with types registry
+	tasks.AutoRegisterTypes(RegisterSimple)
 }

@@ -4,11 +4,15 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+
+	// Import task packages to trigger their auto-registration
+
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote_upload"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 // MaintenanceIntegration bridges the task system with existing maintenance
@@ -30,7 +34,7 @@ type MaintenanceIntegration struct {
 // NewMaintenanceIntegration creates the integration bridge
 func NewMaintenanceIntegration(queue *MaintenanceQueue, policy *MaintenancePolicy) *MaintenanceIntegration {
 	integration := &MaintenanceIntegration{
-		taskRegistry:      types.NewTaskRegistry(),
+		taskRegistry:      tasks.GetGlobalTypesRegistry(), // Use global types registry with auto-registered tasks
 		uiRegistry:        types.NewUIRegistry(),
 		maintenanceQueue:  queue,
 		maintenancePolicy: policy,
@@ -92,17 +96,8 @@ func (s *MaintenanceIntegration) buildTaskTypeMappings() {
 
 // registerAllTasks registers all available tasks
 func (s *MaintenanceIntegration) registerAllTasks() {
-	// Register vacuum task with both logic and UI
-	vacuum.RegisterSimple(s.taskRegistry)
-
-	// Register erasure coding task
-	erasure_coding.RegisterSimple(s.taskRegistry)
-
-	// Register remote upload task
-	remote_upload.RegisterSimple(s.taskRegistry)
-
-	// Register balance task
-	balance.RegisterSimple(s.taskRegistry)
+	// Tasks are already auto-registered via import statements
+	// No manual registration needed
 
 	// Build dynamic type mappings from registered tasks
 	s.buildTaskTypeMappings()
