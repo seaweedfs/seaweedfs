@@ -1,6 +1,7 @@
 package maintenance
 
 import (
+	"html/template"
 	"sync"
 	"time"
 
@@ -344,6 +345,15 @@ type WorkerPerformance struct {
 	AverageTaskTime time.Duration `json:"average_task_time"`
 	Uptime          time.Duration `json:"uptime"`
 	SuccessRate     float64       `json:"success_rate"`
+}
+
+// TaskConfigData represents data for individual task configuration page
+type TaskConfigData struct {
+	TaskType       MaintenanceTaskType `json:"task_type"`
+	TaskName       string              `json:"task_name"`
+	TaskIcon       string              `json:"task_icon"`
+	Description    string              `json:"description"`
+	ConfigFormHTML template.HTML       `json:"config_form_html"`
 }
 
 // ClusterReplicationTask represents a cluster replication task parameters

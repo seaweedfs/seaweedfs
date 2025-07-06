@@ -128,22 +128,44 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		false,
 	)
 
-	// Wrap in a form with proper sections
-	html := `<div class="balance-config">
-	<div class="config-section">
-		<h3>Detection Settings</h3>
-		<p>Configure when balance tasks should be triggered based on storage imbalance.</p>
-	</div>
-	` + string(form.Build()) + `
-	<div class="config-section">
-		<h3>Performance Impact</h3>
-		<div class="info-box">
-			<p><strong>Note:</strong> Volume balancing involves data movement and can impact cluster performance.</p>
-			<p><strong>Recommendation:</strong> Enable off-hours restriction to minimize impact on production workloads.</p>
-			<p><strong>Safety:</strong> Requires at least ` + fmt.Sprintf("%d", config.MinServerCount) + ` servers to ensure data safety during moves.</p>
+	// Generate organized form sections using Bootstrap components
+	html := `
+<div class="row">
+	<div class="col-12">
+		<div class="card mb-4">
+			<div class="card-header">
+				<h5 class="mb-0">
+					<i class="fas fa-balance-scale me-2"></i>
+					Balance Configuration
+				</h5>
+			</div>
+			<div class="card-body">
+` + string(form.Build()) + `
+			</div>
 		</div>
 	</div>
-	</div>`
+</div>
+
+<div class="row">
+	<div class="col-12">
+		<div class="card mb-3">
+			<div class="card-header">
+				<h5 class="mb-0">
+					<i class="fas fa-exclamation-triangle me-2"></i>
+					Performance Considerations
+				</h5>
+			</div>
+			<div class="card-body">
+				<div class="alert alert-warning" role="alert">
+					<h6 class="alert-heading">Important Considerations:</h6>
+					<p class="mb-2"><strong>Performance:</strong> Volume balancing involves data movement and can impact cluster performance.</p>
+					<p class="mb-2"><strong>Recommendation:</strong> Enable off-hours restriction to minimize impact on production workloads.</p>
+					<p class="mb-0"><strong>Safety:</strong> Requires at least ` + fmt.Sprintf("%d", config.MinServerCount) + ` servers to ensure data safety during moves.</p>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>`
 
 	return template.HTML(html), nil
 }

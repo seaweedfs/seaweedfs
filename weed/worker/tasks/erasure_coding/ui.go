@@ -111,21 +111,43 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		true,
 	)
 
-	// Wrap in a form with proper sections
-	html := `<div class="erasure-coding-config">
-	<div class="config-section">
-		<h3>Detection Settings</h3>
-		<p>Configure when erasure coding tasks should be triggered.</p>
-	</div>
-	` + string(form.Build()) + `
-	<div class="config-section">
-		<h3>Performance Impact</h3>
-		<div class="info-box">
-			<p><strong>Note:</strong> Erasure coding is CPU and I/O intensive. Consider running during off-peak hours.</p>
-			<p><strong>Durability:</strong> With ` + fmt.Sprintf("%d+%d", config.DataShards, config.ParityShards) + ` configuration, can tolerate up to ` + fmt.Sprintf("%d", config.ParityShards) + ` shard failures.</p>
+	// Generate organized form sections using Bootstrap components
+	html := `
+<div class="row">
+	<div class="col-12">
+		<div class="card mb-4">
+			<div class="card-header">
+				<h5 class="mb-0">
+					<i class="fas fa-shield-alt me-2"></i>
+					Erasure Coding Configuration
+				</h5>
+			</div>
+			<div class="card-body">
+` + string(form.Build()) + `
+			</div>
 		</div>
 	</div>
-	</div>`
+</div>
+
+<div class="row">
+	<div class="col-12">
+		<div class="card mb-3">
+			<div class="card-header">
+				<h5 class="mb-0">
+					<i class="fas fa-info-circle me-2"></i>
+					Performance Impact
+				</h5>
+			</div>
+			<div class="card-body">
+				<div class="alert alert-info" role="alert">
+					<h6 class="alert-heading">Important Notes:</h6>
+					<p class="mb-2"><strong>Performance:</strong> Erasure coding is CPU and I/O intensive. Consider running during off-peak hours.</p>
+					<p class="mb-0"><strong>Durability:</strong> With ` + fmt.Sprintf("%d+%d", config.DataShards, config.ParityShards) + ` configuration, can tolerate up to ` + fmt.Sprintf("%d", config.ParityShards) + ` shard failures.</p>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>`
 
 	return template.HTML(html), nil
 }

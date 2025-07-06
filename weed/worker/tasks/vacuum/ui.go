@@ -110,25 +110,22 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		true,
 	)
 
-	// Wrap in a form with proper sections
+	// Generate organized form sections using Bootstrap components
 	html := `
-<div class="task-config-container">
-	<h3>Vacuum Task Configuration</h3>
-	<p class="task-description">` + ui.GetDescription() + `</p>
-	
-	<form method="POST" action="/admin/maintenance/config/vacuum" class="task-config-form">
-		<fieldset class="config-section">
-			<legend>Detection Settings</legend>
-			<div class="config-fields">
+<div class="row">
+	<div class="col-12">
+		<div class="card mb-4">
+			<div class="card-header">
+				<h5 class="mb-0">
+					<i class="fas fa-search me-2"></i>
+					Detection Settings
+				</h5>
+			</div>
+			<div class="card-body">
 ` + string(form.Build()) + `
 			</div>
-		</fieldset>
-		
-		<div class="form-actions">
-			<button type="submit" class="btn-primary">Update Vacuum Configuration</button>
-			<button type="button" class="btn-secondary" onclick="resetForm()">Reset</button>
 		</div>
-	</form>
+	</div>
 </div>
 
 <script>
@@ -144,92 +141,6 @@ function resetForm() {
 	}
 }
 </script>
-
-<style>
-.task-config-container {
-	max-width: 600px;
-	margin: 0 auto;
-	padding: 20px;
-}
-
-.config-section {
-	border: 1px solid #ddd;
-	border-radius: 6px;
-	padding: 20px;
-	margin-bottom: 20px;
-}
-
-.config-section legend {
-	font-weight: bold;
-	padding: 0 10px;
-	color: #333;
-}
-
-.form-field {
-	margin-bottom: 15px;
-}
-
-.form-field label {
-	display: block;
-	font-weight: 500;
-	margin-bottom: 5px;
-	color: #555;
-}
-
-.form-field input, .form-field select {
-	width: 100%;
-	padding: 8px 12px;
-	border: 1px solid #ccc;
-	border-radius: 4px;
-	font-size: 14px;
-}
-
-.form-field input[type="checkbox"] {
-	width: auto;
-	margin-right: 8px;
-}
-
-.field-description {
-	display: block;
-	color: #666;
-	font-size: 12px;
-	margin-top: 4px;
-	font-style: italic;
-}
-
-.form-actions {
-	text-align: right;
-	padding-top: 20px;
-	border-top: 1px solid #eee;
-}
-
-.btn-primary, .btn-secondary {
-	padding: 10px 20px;
-	border: none;
-	border-radius: 4px;
-	cursor: pointer;
-	margin-left: 10px;
-	font-size: 14px;
-}
-
-.btn-primary {
-	background-color: #007bff;
-	color: white;
-}
-
-.btn-secondary {
-	background-color: #6c757d;
-	color: white;
-}
-
-.btn-primary:hover {
-	background-color: #0056b3;
-}
-
-.btn-secondary:hover {
-	background-color: #545b62;
-}
-</style>
 `
 
 	return template.HTML(html), nil

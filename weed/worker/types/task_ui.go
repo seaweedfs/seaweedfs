@@ -190,55 +190,65 @@ func (fb *FormBuilder) AddDurationField(name, label, description string, value t
 	return fb
 }
 
-// Build generates the HTML form
+// Build generates the HTML form fields with Bootstrap styling
 func (fb *FormBuilder) Build() template.HTML {
-	html := "<div class=\"task-config-form\">\n"
+	html := ""
 
 	for _, field := range fb.fields {
 		html += fb.renderField(field)
 	}
 
-	html += "</div>\n"
 	return template.HTML(html)
 }
 
-// renderField renders a single form field
+// renderField renders a single form field with Bootstrap classes
 func (fb *FormBuilder) renderField(field FormField) string {
-	html := "<div class=\"form-field\">\n"
+	html := "<div class=\"mb-3\">\n"
 
-	// Label
+	// Special handling for checkbox fields
+	if field.Type == "checkbox" {
+		checked := ""
+		if field.Value.(bool) {
+			checked = " checked"
+		}
+		html += "  <div class=\"form-check\">\n"
+		html += "    <input type=\"checkbox\" class=\"form-check-input\" id=\"" + field.Name + "\" name=\"" + field.Name + "\"" + checked + ">\n"
+		html += "    <label class=\"form-check-label\" for=\"" + field.Name + "\">" + field.Label + "</label>\n"
+		html += "  </div>\n"
+		// Description for checkbox
+		if field.Description != "" {
+			html += "  <div class=\"form-text text-muted\">" + field.Description + "</div>\n"
+		}
+		html += "</div>\n"
+		return html
+	}
+
+	// Label for non-checkbox fields
 	required := ""
 	if field.Required {
-		required = " *"
+		required = " <span class=\"text-danger\">*</span>"
 	}
-	html += "  <label for=\"" + field.Name + "\">" + field.Label + required + "</label>\n"
+	html += "  <label for=\"" + field.Name + "\" class=\"form-label\">" + field.Label + required + "</label>\n"
 
 	// Input based on type
 	switch field.Type {
 	case "text":
-		html += "  <input type=\"text\" name=\"" + field.Name + "\" value=\"" + field.Value.(string) + "\""
+		html += "  <input type=\"text\" class=\"form-control\" id=\"" + field.Name + "\" name=\"" + field.Name + "\" value=\"" + field.Value.(string) + "\""
 		if field.Required {
 			html += " required"
 		}
 		html += ">\n"
 
 	case "number":
-		html += "  <input type=\"number\" name=\"" + field.Name + "\" step=\"any\" value=\"" +
+		html += "  <input type=\"number\" class=\"form-control\" id=\"" + field.Name + "\" name=\"" + field.Name + "\" step=\"any\" value=\"" +
 			fmt.Sprintf("%v", field.Value) + "\""
 		if field.Required {
 			html += " required"
 		}
 		html += ">\n"
 
-	case "checkbox":
-		checked := ""
-		if field.Value.(bool) {
-			checked = " checked"
-		}
-		html += "  <input type=\"checkbox\" name=\"" + field.Name + "\"" + checked + ">\n"
-
 	case "select":
-		html += "  <select name=\"" + field.Name + "\""
+		html += "  <select class=\"form-select\" id=\"" + field.Name + "\" name=\"" + field.Name + "\""
 		if field.Required {
 			html += " required"
 		}
@@ -253,7 +263,7 @@ func (fb *FormBuilder) renderField(field FormField) string {
 		html += "  </select>\n"
 
 	case "duration":
-		html += "  <input type=\"text\" name=\"" + field.Name + "\" value=\"" + field.Value.(string) +
+		html += "  <input type=\"text\" class=\"form-control\" id=\"" + field.Name + "\" name=\"" + field.Name + "\" value=\"" + field.Value.(string) +
 			"\" placeholder=\"e.g., 30m, 2h, 24h\""
 		if field.Required {
 			html += " required"
@@ -261,9 +271,9 @@ func (fb *FormBuilder) renderField(field FormField) string {
 		html += ">\n"
 	}
 
-	// Description
+	// Description for non-checkbox fields
 	if field.Description != "" {
-		html += "  <small class=\"field-description\">" + field.Description + "</small>\n"
+		html += "  <div class=\"form-text text-muted\">" + field.Description + "</div>\n"
 	}
 
 	html += "</div>\n"

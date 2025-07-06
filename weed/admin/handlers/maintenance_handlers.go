@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"html/template"
 	"net/http"
 	"time"
 
@@ -121,8 +120,8 @@ func (h *MaintenanceHandlers) ShowTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Create a simple template to wrap the form
-	configData := &TaskConfigData{
+	// Create task configuration data
+	configData := &maintenance.TaskConfigData{
 		TaskType:       taskType,
 		TaskName:       provider.GetDisplayName(),
 		TaskIcon:       provider.GetIcon(),
@@ -130,15 +129,15 @@ func (h *MaintenanceHandlers) ShowTaskConfig(c *gin.Context) {
 		ConfigFormHTML: formHTML,
 	}
 
-	// For now, render as JSON until we create the TaskConfig template
-	c.Header("Content-Type", "application/json")
-	c.JSON(http.StatusOK, gin.H{
-		"task_type":   configData.TaskType,
-		"task_name":   configData.TaskName,
-		"task_icon":   configData.TaskIcon,
-		"description": configData.Description,
-		"config_form": string(configData.ConfigFormHTML),
-	})
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	taskConfigComponent := app.TaskConfig(configData)
+	layoutComponent := layout.Layout(c, taskConfigComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
 }
 
 // UpdateTaskConfig updates configuration for a specific task type
@@ -215,15 +214,6 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusSeeOther, "/maintenance/config")
-}
-
-// TaskConfigData represents data for individual task configuration page
-type TaskConfigData struct {
-	TaskType       maintenance.MaintenanceTaskType `json:"task_type"`
-	TaskName       string                          `json:"task_name"`
-	TaskIcon       string                          `json:"task_icon"`
-	Description    string                          `json:"description"`
-	ConfigFormHTML template.HTML                   `json:"config_form_html"`
 }
 
 // Helper methods that delegate to AdminServer
