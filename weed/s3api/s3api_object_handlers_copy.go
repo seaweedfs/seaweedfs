@@ -455,6 +455,52 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	return dstChunk, nil
 }
 
+// copySingleChunkForRange copies a portion of a chunk for range operations
+func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer_pb.FileChunk, rangeStart, rangeEnd int64, dstPath string) (*filer_pb.FileChunk, error) {
+	// Create a new chunk with same properties but new file ID
+	dstChunk := &filer_pb.FileChunk{
+		Offset:       rangeChunk.Offset,
+		Size:         rangeChunk.Size,
+		ModifiedTsNs: time.Now().UnixNano(),
+		ETag:         rangeChunk.ETag,
+		IsCompressed: rangeChunk.IsCompressed,
+		CipherKey:    rangeChunk.CipherKey,
+	}
+
+	// Get new file ID using filer's AssignVolume
+	assignResult, err := s3a.assignNewVolume(dstPath)
+	if err != nil {
+		return nil, fmt.Errorf("assign volume: %v", err)
+	}
+
+	dstChunk.FileId = assignResult.FileId
+	fid, err := filer_pb.ToFileIdObject(assignResult.FileId)
+	if err != nil {
+		return nil, fmt.Errorf("parse file ID: %v", err)
+	}
+	dstChunk.Fid = fid
+
+	// Get source URL using LookupFileId
+	srcUrl, _, err := operation.LookupFileId(func(_ context.Context) pb.ServerAddress {
+		return pb.ServerAddress(s3a.option.Filer.ToGrpcAddress())
+	}, s3a.option.GrpcDialOption, originalChunk.GetFileIdString())
+	if err != nil {
+		return nil, fmt.Errorf("lookup source file ID: %v", err)
+	}
+
+	// Calculate the portion of the original chunk that we need to copy
+	chunkStart := originalChunk.Offset
+	overlapStart := max(rangeStart, chunkStart)
+	offsetInChunk := overlapStart - chunkStart
+
+	// Download and upload the chunk portion
+	if err := s3a.transferChunkRangeData(srcUrl, assignResult, offsetInChunk, int64(rangeChunk.Size)); err != nil {
+		return nil, fmt.Errorf("transfer chunk range data: %v", err)
+	}
+
+	return dstChunk, nil
+}
+
 // assignNewVolume assigns a new volume for the chunk
 func (s3a *S3ApiServer) assignNewVolume(dstPath string) (*filer_pb.AssignVolumeResponse, error) {
 	var assignResult *filer_pb.AssignVolumeResponse
@@ -488,7 +534,7 @@ func (s3a *S3ApiServer) transferChunkData(srcUrl string, assignResult *filer_pb.
 
 	// Read the chunk data using ReadUrlAsStream
 	var chunkData []byte
-	shouldRetry, err := util_http.ReadUrlAsStream(srcUrl, nil, false, false, offset, int(size), func(data []byte) {
+	shouldRetry, err := util_http.ReadUrlAsStream(srcUrl, nil, false, false, 0, int(size), func(data []byte) {
 		chunkData = append(chunkData, data...)
 	})
 	if err != nil {
@@ -519,6 +565,59 @@ func (s3a *S3ApiServer) transferChunkData(srcUrl string, assignResult *filer_pb.
 	return nil
 }
 
+// transferChunkRangeData downloads a specific range of data from the source chunk and uploads it to destination
+func (s3a *S3ApiServer) transferChunkRangeData(srcUrl string, assignResult *filer_pb.AssignVolumeResponse, offsetInChunk, size int64) error {
+	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
+
+	// Read the specific range of chunk data using ReadUrlAsStream
+	var chunkData []byte
+	shouldRetry, err := util_http.ReadUrlAsStream(srcUrl, nil, false, false, offsetInChunk, int(size), func(data []byte) {
+		chunkData = append(chunkData, data...)
+	})
+	if err != nil {
+		return fmt.Errorf("download chunk range: %v", err)
+	}
+	if shouldRetry {
+		return fmt.Errorf("download chunk range: retry needed")
+	}
+
+	// Upload chunk to new location
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         dstUrl,
+		Cipher:            false,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               security.EncodedJwt(assignResult.Auth),
+	}
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return fmt.Errorf("create uploader: %v", err)
+	}
+	_, err = uploader.UploadData(chunkData, uploadOption)
+	if err != nil {
+		return fmt.Errorf("upload chunk range: %v", err)
+	}
+
+	return nil
+}
+
+// min returns the minimum of two int64 values
+func min(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// max returns the maximum of two int64 values
+func max(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // parseRangeHeader parses the x-amz-copy-source-range header
 func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err error) {
 	// Remove "bytes=" prefix if present
@@ -547,31 +646,54 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 
 	// Find chunks that overlap with the range
 	for _, chunk := range entry.GetChunks() {
-		maxStart := max(startOffset, chunk.Offset)
-		minStop := min(chunk.Offset+int64(chunk.Size), endOffset+1)
-		if maxStart < minStop {
-			// Create a new chunk with adjusted offset and size
+		chunkStart := chunk.Offset
+		chunkEnd := chunk.Offset + int64(chunk.Size)
+
+		// Check if chunk overlaps with the range
+		if chunkStart < endOffset+1 && chunkEnd > startOffset {
+			// Calculate the overlap
+			overlapStart := max(startOffset, chunkStart)
+			overlapEnd := min(endOffset+1, chunkEnd)
+
+			// Create a new chunk with adjusted offset and size relative to the range
 			newChunk := &filer_pb.FileChunk{
-				Offset:       maxStart,
-				Size:         uint64(minStop - maxStart),
+				FileId:       chunk.FileId,
+				Offset:       overlapStart - startOffset, // Offset relative to the range start
+				Size:         uint64(overlapEnd - overlapStart),
 				ModifiedTsNs: time.Now().UnixNano(),
 				ETag:         chunk.ETag,
 				IsCompressed: chunk.IsCompressed,
 				CipherKey:    chunk.CipherKey,
+				Fid:          chunk.Fid,
 			}
 			relevantChunks = append(relevantChunks, newChunk)
 		}
 	}
 
-	// Copy the relevant chunks
+	// Copy the relevant chunks using a specialized method for range copies
 	dstChunks := make([]*filer_pb.FileChunk, len(relevantChunks))
 	executor := util.NewLimitedConcurrentExecutor(4)
 	errChan := make(chan error, len(relevantChunks))
 
+	// Create a map to track original chunks for each relevant chunk
+	originalChunks := make([]*filer_pb.FileChunk, len(relevantChunks))
+	relevantIndex := 0
+	for _, chunk := range entry.GetChunks() {
+		chunkStart := chunk.Offset
+		chunkEnd := chunk.Offset + int64(chunk.Size)
+
+		// Check if chunk overlaps with the range
+		if chunkStart < endOffset+1 && chunkEnd > startOffset {
+			originalChunks[relevantIndex] = chunk
+			relevantIndex++
+		}
+	}
+
 	for i, chunk := range relevantChunks {
 		chunkIndex := i
+		originalChunk := originalChunks[i] // Get the corresponding original chunk
 		executor.Execute(func() {
-			dstChunk, err := s3a.copySingleChunk(chunk, dstPath)
+			dstChunk, err := s3a.copySingleChunkForRange(originalChunk, chunk, startOffset, endOffset, dstPath)
 			if err != nil {
 				errChan <- fmt.Errorf("chunk %d: %v", chunkIndex, err)
 				return
