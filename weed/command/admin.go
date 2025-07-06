@@ -65,7 +65,6 @@ var cmdAdmin = &Command{
 
   Example Usage:
     weed admin -port=23646 -masters="master1:9333,master2:9333"
-    weed admin -port=443 -tlsCert=/etc/ssl/admin.crt -tlsKey=/etc/ssl/admin.key
     weed admin -port=23646 -masters="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
     weed admin -port=23646 -masters="localhost:9333" -dataDir="~/seaweedfs-admin"
 
@@ -80,17 +79,30 @@ var cmdAdmin = &Command{
     - If adminPassword is set, users must login with adminUser/adminPassword
     - Sessions are secured with auto-generated session keys
 
-  Security:
-    - Use HTTPS in production by providing TLS certificates
-    - TLS certificates also secure the worker gRPC communication
+  Security Configuration:
+    - The admin server reads TLS configuration from security.toml
+    - Configure [https.admin] section in security.toml for HTTPS support
+    - If https.admin.key is set, the server will start in TLS mode
+    - If https.admin.ca is set, mutual TLS authentication is enabled
     - Set strong adminPassword for production deployments
     - Configure firewall rules to restrict admin interface access
-    - Workers automatically detect and use TLS when available
+
+  security.toml Example:
+    [https.admin]
+    cert = "/etc/ssl/admin.crt"
+    key = "/etc/ssl/admin.key"
+    ca = "/etc/ssl/ca.crt"     # optional, for mutual TLS
 
   Worker Communication:
     - Workers connect via gRPC on HTTP port + 10000
-    - TLS is automatically used if certificates are provided
+    - Workers use [grpc.admin] configuration from security.toml
+    - TLS is automatically used if certificates are configured
     - Workers fall back to insecure connections if TLS is unavailable
+
+  Configuration File:
+    - The security.toml file is read from ".", "$HOME/.seaweedfs/", 
+      "/usr/local/etc/seaweedfs/", or "/etc/seaweedfs/", in that order
+    - Generate example security.toml: weed scaffold -config=security
 
 `,
 }
