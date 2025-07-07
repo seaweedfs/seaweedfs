@@ -253,7 +253,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 			return keyI < keyJ
 		}
 		if !lastModifiedI.Equal(lastModifiedJ) {
-			return lastModifiedI.Before(lastModifiedJ)
+			return lastModifiedI.After(lastModifiedJ)
 		}
 		return versionIdI < versionIdJ
 	})
