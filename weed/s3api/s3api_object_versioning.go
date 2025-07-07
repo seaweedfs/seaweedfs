@@ -59,7 +59,7 @@ func (s3a *S3ApiServer) isVersioningEnabled(bucket string) (bool, error) {
 
 // getVersionedObjectDir returns the directory path for storing object versions
 func (s3a *S3ApiServer) getVersionedObjectDir(bucket, object string) string {
-	return fmt.Sprintf("%s%s%s.versions", s3a.option.BucketsPath, bucket, object)
+	return path.Join(s3a.option.BucketsPath, bucket, object+".versions")
 }
 
 // getVersionFileName returns the filename for a specific version
