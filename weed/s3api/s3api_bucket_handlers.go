@@ -677,9 +677,27 @@ func (s3a *S3ApiServer) GetBucketVersioningHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Read versioning configuration from bucket metadata
+	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	versioningStatus := s3.BucketVersioningStatusSuspended
+	if bucketEntry.Extended != nil {
+		if status, exists := bucketEntry.Extended[s3_constants.ExtVersioningKey]; exists {
+			versioningStatus = string(status)
+		}
+	}
+
 	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, &s3.PutBucketVersioningInput{
 		VersioningConfiguration: &s3.VersioningConfiguration{
-			Status: aws.String(s3.BucketVersioningStatusSuspended),
+			Status: aws.String(versioningStatus),
 		},
 	})
 }

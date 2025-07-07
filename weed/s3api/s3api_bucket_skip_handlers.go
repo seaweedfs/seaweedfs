@@ -1,11 +1,16 @@
 package s3api
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"encoding/xml"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // GetBucketCorsHandler Get bucket CORS
@@ -44,10 +49,67 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 	s3err.WriteErrorResponse(w, r, http.StatusNoContent)
 }
 
-// PutBucketVersioningHandler Put bucket Versionin
+// PutBucketVersioningHandler Put bucket Versioning
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html
 func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *http.Request) {
-	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketVersioning %s", bucket)
+
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+
+	if r.Body == nil || r.Body == http.NoBody {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	var versioningConfig s3.VersioningConfiguration
+	defer util_http.CloseRequest(r)
+
+	err := xmlutil.UnmarshalXML(&versioningConfig, xml.NewDecoder(r.Body), "")
+	if err != nil {
+		glog.Warningf("PutBucketVersioningHandler xml decode: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+
+	if versioningConfig.Status == nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	status := *versioningConfig.Status
+	if status != "Enabled" && status != "Suspended" {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	// Update bucket metadata with versioning configuration
+	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	if bucketEntry.Extended == nil {
+		bucketEntry.Extended = make(map[string][]byte)
+	}
+	bucketEntry.Extended[s3_constants.ExtVersioningKey] = []byte(status)
+
+	err = s3a.updateEntry(s3a.option.BucketsPath, bucketEntry)
+	if err != nil {
+		glog.Errorf("PutBucketVersioningHandler save config: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	writeSuccessResponseEmpty(w, r)
 }
 
 // GetBucketTaggingHandler Returns the tag set associated with the bucket

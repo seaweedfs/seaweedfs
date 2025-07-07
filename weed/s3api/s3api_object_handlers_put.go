@@ -71,19 +71,42 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	} else {
-		uploadUrl := s3a.toFilerUrl(bucket, object)
-		if objectContentType == "" {
-			dataReader = mimeDetect(r, dataReader)
-		}
-
-		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
-
-		if errCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, errCode)
+		// Check if versioning is enabled for the bucket
+		versioningEnabled, err := s3a.isVersioningEnabled(bucket)
+		if err != nil {
+			glog.Errorf("Error checking versioning status for bucket %s: %v", bucket, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
 
-		setEtag(w, etag)
+		if versioningEnabled {
+			// Handle versioned PUT
+			versionId, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
+			if errCode != s3err.ErrNone {
+				s3err.WriteErrorResponse(w, r, errCode)
+				return
+			}
+
+			// Set version ID in response header
+			if versionId != "" {
+				w.Header().Set("x-amz-version-id", versionId)
+			}
+		} else {
+			// Handle regular PUT (non-versioned)
+			uploadUrl := s3a.toFilerUrl(bucket, object)
+			if objectContentType == "" {
+				dataReader = mimeDetect(r, dataReader)
+			}
+
+			etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
+
+			if errCode != s3err.ErrNone {
+				s3err.WriteErrorResponse(w, r, errCode)
+				return
+			}
+
+			setEtag(w, etag)
+		}
 	}
 	stats_collect.RecordBucketActiveTime(bucket)
 	stats_collect.S3UploadedObjectsCounter.WithLabelValues(bucket).Inc()
@@ -194,4 +217,56 @@ func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string 
 		encodedJwt = security.GenJwtForFilerServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec)
 	}
 	return string(encodedJwt)
+}
+
+// putVersionedObject handles PUT operations for versioned buckets
+func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (string, s3err.ErrorCode) {
+	// Generate version ID
+	versionId := generateVersionId()
+
+	// Create the object entry
+	hash := md5.New()
+	var body = io.TeeReader(dataReader, hash)
+
+	// Upload to filer first
+	uploadUrl := s3a.toFilerUrl(bucket, object)
+	if objectContentType == "" {
+		body = mimeDetect(r, body)
+	}
+
+	etag, errCode := s3a.putToFiler(r, uploadUrl, body, "", bucket)
+	if errCode != s3err.ErrNone {
+		return "", errCode
+	}
+
+	// Get the uploaded entry to add versioning metadata
+	entry, err := s3a.getEntry(s3a.option.BucketsPath+"/"+bucket, strings.TrimPrefix(object, "/"))
+	if err != nil {
+		glog.Errorf("Failed to get entry after upload: %v", err)
+		return "", s3err.ErrInternalError
+	}
+
+	// Mark previous versions as not latest
+	err = s3a.markPreviousVersionsAsNotLatest(bucket, object)
+	if err != nil {
+		glog.Warningf("Failed to mark previous versions as not latest: %v", err)
+	}
+
+	// Store the versioned object
+	err = s3a.storeVersionedObject(bucket, object, versionId, entry, true)
+	if err != nil {
+		glog.Errorf("Failed to store versioned object: %v", err)
+		return "", s3err.ErrInternalError
+	}
+
+	// Set ETag in response
+	if etag != "" {
+		if strings.HasPrefix(etag, "\"") {
+			r.Header.Set("ETag", etag)
+		} else {
+			r.Header.Set("ETag", "\""+etag+"\"")
+		}
+	}
+
+	return versionId, s3err.ErrNone
 }

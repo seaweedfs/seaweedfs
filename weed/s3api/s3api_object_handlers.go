@@ -3,13 +3,14 @@ package s3api
 import (
 	"bytes"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -120,7 +121,56 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	destUrl := s3a.toFilerUrl(bucket, object)
+	// Check for specific version ID in query parameters
+	versionId := r.URL.Query().Get("versionId")
+
+	// Check if versioning is enabled for the bucket
+	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
+	if err != nil {
+		glog.Errorf("Error checking versioning status for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	var destUrl string
+
+	if versioningEnabled && versionId != "" {
+		// Handle versioned GET - retrieve specific version
+		entry, err := s3a.getSpecificObjectVersion(bucket, object, versionId)
+		if err != nil {
+			glog.Errorf("Failed to get specific version %s: %v", versionId, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			return
+		}
+
+		// Check if this is a delete marker
+		if entry.Extended != nil {
+			if deleteMarker, exists := entry.Extended[s3_constants.ExtDeleteMarkerKey]; exists && string(deleteMarker) == "true" {
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
+		}
+
+		// Construct URL for versioned object
+		destUrl = fmt.Sprintf("http://%s%s/%s%s.versions/%s",
+			s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object, versionId)
+
+		// Set version ID in response header
+		w.Header().Set("x-amz-version-id", versionId)
+	} else {
+		// Handle regular GET (current version)
+		destUrl = s3a.toFilerUrl(bucket, object)
+
+		// If versioning is enabled, set the current version ID in response
+		if versioningEnabled {
+			entry, err := s3a.getEntry(s3a.option.BucketsPath+"/"+bucket, strings.TrimPrefix(object, "/"))
+			if err == nil && entry.Extended != nil {
+				if currentVersionId, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
+					w.Header().Set("x-amz-version-id", string(currentVersionId))
+				}
+			}
+		}
+	}
 
 	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
 }
@@ -130,7 +180,56 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
-	destUrl := s3a.toFilerUrl(bucket, object)
+	// Check for specific version ID in query parameters
+	versionId := r.URL.Query().Get("versionId")
+
+	// Check if versioning is enabled for the bucket
+	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
+	if err != nil {
+		glog.Errorf("Error checking versioning status for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	var destUrl string
+
+	if versioningEnabled && versionId != "" {
+		// Handle versioned HEAD - retrieve specific version metadata
+		entry, err := s3a.getSpecificObjectVersion(bucket, object, versionId)
+		if err != nil {
+			glog.Errorf("Failed to get specific version %s: %v", versionId, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			return
+		}
+
+		// Check if this is a delete marker
+		if entry.Extended != nil {
+			if deleteMarker, exists := entry.Extended[s3_constants.ExtDeleteMarkerKey]; exists && string(deleteMarker) == "true" {
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
+		}
+
+		// Construct URL for versioned object
+		destUrl = fmt.Sprintf("http://%s%s/%s%s.versions/%s",
+			s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object, versionId)
+
+		// Set version ID in response header
+		w.Header().Set("x-amz-version-id", versionId)
+	} else {
+		// Handle regular HEAD (current version)
+		destUrl = s3a.toFilerUrl(bucket, object)
+
+		// If versioning is enabled, set the current version ID in response
+		if versioningEnabled {
+			entry, err := s3a.getEntry(s3a.option.BucketsPath+"/"+bucket, strings.TrimPrefix(object, "/"))
+			if err == nil && entry.Extended != nil {
+				if currentVersionId, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
+					w.Header().Set("x-amz-version-id", string(currentVersionId))
+				}
+			}
+		}
+	}
 
 	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
 }
