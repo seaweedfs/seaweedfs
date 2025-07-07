@@ -136,7 +136,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	// Save the new entry
 	dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
 	dstDir, dstName := dstPath.DirAndName()
-	if err := s3a.touch(dstDir, dstName, dstEntry); err != nil {
+	if err := s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+		entry.Attributes = dstEntry.Attributes
+		entry.Extended = dstEntry.Extended
+	}); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -278,7 +281,10 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	uploadDir := s3a.genUploadsFolder(dstBucket) + "/" + uploadID
 	partName := fmt.Sprintf("%04d_%s.part", partID, "copy")
 
-	if err := s3a.touch(uploadDir, partName, dstEntry); err != nil {
+	if err := s3a.mkFile(uploadDir, partName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+		entry.Attributes = dstEntry.Attributes
+		entry.Extended = dstEntry.Extended
+	}); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
