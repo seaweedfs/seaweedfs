@@ -12,7 +12,6 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/postgres"
-	_ "github.com/seaweedfs/seaweedfs/weed/credential/sqlite"
 )
 
 func TestStoreRegistration(t *testing.T) {
@@ -22,7 +21,7 @@ func TestStoreRegistration(t *testing.T) {
 		t.Fatal("No credential stores registered")
 	}
 
-	expectedStores := []string{string(credential.StoreTypeFilerEtc), string(credential.StoreTypeMemory), string(credential.StoreTypeSQLite), string(credential.StoreTypePostgres)}
+	expectedStores := []string{string(credential.StoreTypeFilerEtc), string(credential.StoreTypeMemory), string(credential.StoreTypePostgres)}
 
 	// Verify all expected stores are present
 	for _, expected := range expectedStores {

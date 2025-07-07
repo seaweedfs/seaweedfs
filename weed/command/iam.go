@@ -21,7 +21,6 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/postgres"
-	_ "github.com/seaweedfs/seaweedfs/weed/credential/sqlite"
 )
 
 var (
