@@ -262,9 +262,9 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Set ETag in response
 	if etag != "" {
 		if strings.HasPrefix(etag, "\"") {
-			r.Header.Set("ETag", etag)
+			w.Header().Set("ETag", etag)
 		} else {
-			r.Header.Set("ETag", "\""+etag+"\"")
+			w.Header().Set("ETag", "\""+etag+"\"")
 		}
 	}
 
