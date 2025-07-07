@@ -4,8 +4,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"net/http"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +28,23 @@ type ObjectVersion struct {
 	ETag           string
 	Size           int64
 	Entry          *filer_pb.Entry
+}
+
+// ListObjectVersionsResult is the response for ListObjectVersions API
+type ListObjectVersionsResult struct {
+	XMLName             xml.Name            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListVersionsResult"`
+	Name                string              `xml:"Name"`
+	Prefix              string              `xml:"Prefix"`
+	KeyMarker           string              `xml:"KeyMarker,omitempty"`
+	VersionIdMarker     string              `xml:"VersionIdMarker,omitempty"`
+	NextKeyMarker       string              `xml:"NextKeyMarker,omitempty"`
+	NextVersionIdMarker string              `xml:"NextVersionIdMarker,omitempty"`
+	MaxKeys             int                 `xml:"MaxKeys"`
+	Delimiter           string              `xml:"Delimiter,omitempty"`
+	IsTruncated         bool                `xml:"IsTruncated"`
+	Versions            []VersionEntry      `xml:"Version,omitempty"`
+	DeleteMarkers       []DeleteMarkerEntry `xml:"DeleteMarker,omitempty"`
+	CommonPrefixes      []PrefixEntry       `xml:"CommonPrefixes,omitempty"`
 }
 
 // generateVersionId creates a unique version ID for an object
@@ -87,7 +106,7 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 
 	// If this is the latest version, also store/update the current version
 	if isLatest {
-		return s3a.touch(s3a.option.BucketsPath+bucket, object[1:], entry) // Remove leading slash
+		return s3a.touch(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"), entry)
 	}
 
 	return nil
@@ -148,17 +167,17 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	}
 
 	// Remove current object if it exists (logical deletion)
-	s3a.rm(s3a.option.BucketsPath+bucket, strings.TrimPrefix(object, "/"), false, false)
+	s3a.rm(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"), false, false)
 
 	return versionId, nil
 }
 
 // listObjectVersions lists all versions of an object
-func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*ListVersionsResult, error) {
+func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*ListObjectVersionsResult, error) {
 	var allVersions []interface{} // Can contain VersionEntry or DeleteMarkerEntry
 
 	// List all objects in bucket
-	entries, _, err := s3a.list(s3a.option.BucketsPath+"/"+bucket, prefix, keyMarker, false, uint32(maxKeys*2))
+	entries, _, err := s3a.list(path.Join(s3a.option.BucketsPath, bucket), prefix, keyMarker, false, uint32(maxKeys*2))
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +259,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	})
 
 	// Build result
-	result := &ListVersionsResult{
+	result := &ListObjectVersionsResult{
 		Name:        bucket,
 		Prefix:      prefix,
 		KeyMarker:   keyMarker,
@@ -269,9 +288,9 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	for _, version := range allVersions {
 		switch v := version.(type) {
 		case *VersionEntry:
-			result.Version = *v
+			result.Versions = append(result.Versions, *v)
 		case *DeleteMarkerEntry:
-			result.DeleteMarker = *v
+			result.DeleteMarkers = append(result.DeleteMarkers, *v)
 		}
 	}
 
@@ -338,7 +357,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId string) (*filer_pb.Entry, error) {
 	if versionId == "" {
 		// Get current version
-		return s3a.getEntry(s3a.option.BucketsPath+bucket, strings.TrimPrefix(object, "/"))
+		return s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"))
 	}
 
 	// Get specific version
