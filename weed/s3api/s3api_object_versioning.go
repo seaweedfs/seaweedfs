@@ -202,25 +202,41 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		}
 	}
 
-	// Sort by key, then by version ID
+	// Sort by key, then by LastModified and VersionId
 	sort.Slice(allVersions, func(i, j int) bool {
 		var keyI, keyJ string
+		var lastModifiedI, lastModifiedJ time.Time
+		var versionIdI, versionIdJ string
 
 		switch v := allVersions[i].(type) {
 		case *VersionEntry:
 			keyI = v.Key
+			lastModifiedI = v.LastModified
+			versionIdI = v.VersionId
 		case *DeleteMarkerEntry:
 			keyI = v.Key
+			lastModifiedI = v.LastModified
+			versionIdI = v.VersionId
 		}
 
 		switch v := allVersions[j].(type) {
 		case *VersionEntry:
 			keyJ = v.Key
+			lastModifiedJ = v.LastModified
+			versionIdJ = v.VersionId
 		case *DeleteMarkerEntry:
 			keyJ = v.Key
+			lastModifiedJ = v.LastModified
+			versionIdJ = v.VersionId
 		}
 
-		return keyI < keyJ
+		if keyI != keyJ {
+			return keyI < keyJ
+		}
+		if !lastModifiedI.Equal(lastModifiedJ) {
+			return lastModifiedI.Before(lastModifiedJ)
+		}
+		return versionIdI < versionIdJ
 	})
 
 	// Build result
