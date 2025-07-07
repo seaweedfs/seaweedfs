@@ -136,6 +136,16 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	// Save the new entry
 	dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
 	dstDir, dstName := dstPath.DirAndName()
+
+	// Check if destination exists and remove it first (S3 copy overwrites)
+	if exists, _ := s3a.exists(dstDir, dstName, false); exists {
+		if err := s3a.rm(dstDir, dstName, false, false); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
+
+	// Create the new file
 	if err := s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 		entry.Attributes = dstEntry.Attributes
 		entry.Extended = dstEntry.Extended
@@ -280,6 +290,14 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	// Save the part entry to the multipart uploads folder
 	uploadDir := s3a.genUploadsFolder(dstBucket) + "/" + uploadID
 	partName := fmt.Sprintf("%04d_%s.part", partID, "copy")
+
+	// Check if part exists and remove it first (allow re-copying same part)
+	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
+		if err := s3a.rm(uploadDir, partName, false, false); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
 
 	if err := s3a.mkFile(uploadDir, partName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 		entry.Attributes = dstEntry.Attributes
