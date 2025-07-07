@@ -206,7 +206,7 @@ func TestVersionEntryConversion(t *testing.T) {
 	assert.Equal(t, lastModified, versionEntry.LastModified)
 	assert.Equal(t, etag, versionEntry.ETag)
 	assert.Equal(t, size, versionEntry.Size)
-	assert.Equal(t, "STANDARD", versionEntry.StorageClass)
+	assert.Equal(t, "STANDARD", string(versionEntry.StorageClass))
 }
 
 func TestDeleteMarkerEntryConversion(t *testing.T) {
