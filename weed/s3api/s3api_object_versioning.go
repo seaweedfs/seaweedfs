@@ -32,7 +32,10 @@ type ObjectVersion struct {
 func generateVersionId() string {
 	// Generate a random 16-byte value
 	randBytes := make([]byte, 16)
-	rand.Read(randBytes)
+	if _, err := rand.Read(randBytes); err != nil {
+		glog.Errorf("Failed to generate random bytes for version ID: %v", err)
+		return ""
+	}
 
 	// Hash with current timestamp for uniqueness
 	hash := sha256.Sum256(append(randBytes, []byte(fmt.Sprintf("%d", time.Now().UnixNano()))...))
