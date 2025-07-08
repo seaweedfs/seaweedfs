@@ -44,8 +44,14 @@ build-weed:
 
 check-deps: build-weed
 	@echo "Checking dependencies..."
+	@echo "🔍 DEBUG: Checking Go installation..."
 	@command -v go >/dev/null 2>&1 || (echo "Go is required but not installed" && exit 1)
+	@echo "🔍 DEBUG: Go version: $$(go version)"
+	@echo "🔍 DEBUG: Checking binary at $(WEED_BINARY)..."
 	@test -f $(WEED_BINARY) || (echo "SeaweedFS binary not found at $(WEED_BINARY)" && exit 1)
+	@echo "🔍 DEBUG: Binary size: $$(ls -lh $(WEED_BINARY) | awk '{print $$5}')"
+	@echo "🔍 DEBUG: Binary permissions: $$(ls -la $(WEED_BINARY) | awk '{print $$1}')"
+	@echo "🔍 DEBUG: Checking Go module dependencies..."
 	@go list -m github.com/aws/aws-sdk-go-v2 >/dev/null 2>&1 || (echo "AWS SDK Go v2 not found. Run 'go mod tidy'." && exit 1)
 	@go list -m github.com/stretchr/testify >/dev/null 2>&1 || (echo "Testify not found. Run 'go mod tidy'." && exit 1)
 	@echo "✅ All dependencies are available"
@@ -53,9 +59,18 @@ check-deps: build-weed
 # Start SeaweedFS server for testing
 start-server: check-deps
 	@echo "Starting SeaweedFS server..."
+	@echo "🔍 DEBUG: Current working directory: $$(pwd)"
+	@echo "🔍 DEBUG: Checking for existing weed processes..."
+	@ps aux | grep weed | grep -v grep || echo "No existing weed processes found"
+	@echo "🔍 DEBUG: Killing existing weed processes..."
 	@pkill -f "weed.*server" || true
 	@sleep 2
-	@echo "Launching SeaweedFS server in background..."
+	@echo "🔍 DEBUG: Checking binary at $(WEED_BINARY)"
+	@ls -la $(WEED_BINARY) || (echo "❌ Binary not found!" && exit 1)
+	@echo "🔍 DEBUG: Checking config file at ../../../docker/compose/s3.json"
+	@ls -la ../../../docker/compose/s3.json || echo "⚠️  Config file not found, continuing without it"
+	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) server -debug -s3 -s3.port=$(S3_PORT) -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -filer -filer.maxMB=64 -master.volumeSizeLimitMB=50 -volume.max=100 -volume.preStopSeconds=1 -metricsPort=9324"
 	@$(WEED_BINARY) server \
 		-debug \
 		-s3 \
@@ -70,12 +85,30 @@ start-server: check-deps
 		-volume.preStopSeconds=1 \
 		-metricsPort=9324 \
 		> weed-test.log 2>&1 &
-	@echo "Server PID: $$!"
-	@echo "Waiting for server to start (up to 90 seconds)..."
+	@echo "🔍 DEBUG: Server PID: $$!"
+	@echo "🔍 DEBUG: Checking if PID is still running..."
+	@sleep 2
+	@ps -p $$! || echo "⚠️  Server PID $$! not found after 2 seconds"
+	@echo "🔍 DEBUG: Waiting for server to start (up to 90 seconds)..."
 	@for i in $$(seq 1 90); do \
+		echo "🔍 DEBUG: Attempt $$i/90 - checking port $(S3_PORT)"; \
 		if curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1; then \
 			echo "✅ SeaweedFS server started successfully on port $(S3_PORT) after $$i seconds"; \
 			exit 0; \
+		fi; \
+		if [ $$i -eq 5 ]; then \
+			echo "🔍 DEBUG: After 5 seconds, checking process and logs..."; \
+			ps aux | grep weed | grep -v grep || echo "No weed processes found"; \
+			if [ -f weed-test.log ]; then \
+				echo "=== First server logs ==="; \
+				head -20 weed-test.log; \
+			fi; \
+		fi; \
+		if [ $$i -eq 15 ]; then \
+			echo "🔍 DEBUG: After 15 seconds, checking port bindings..."; \
+			netstat -tlnp 2>/dev/null | grep $(S3_PORT) || echo "Port $(S3_PORT) not bound"; \
+			netstat -tlnp 2>/dev/null | grep 9333 || echo "Port 9333 not bound"; \
+			netstat -tlnp 2>/dev/null | grep 8080 || echo "Port 8080 not bound"; \
 		fi; \
 		if [ $$i -eq 30 ]; then \
 			echo "⚠️  Server taking longer than expected (30s), checking logs..."; \
@@ -87,6 +120,10 @@ start-server: check-deps
 		sleep 1; \
 	done; \
 	echo "❌ Server failed to start within 90 seconds"; \
+	echo "🔍 DEBUG: Final process check:"; \
+	ps aux | grep weed | grep -v grep || echo "No weed processes found"; \
+	echo "🔍 DEBUG: Final port check:"; \
+	netstat -tlnp 2>/dev/null | grep -E "(8333|9333|8080)" || echo "No ports bound"; \
 	echo "=== Full server logs ==="; \
 	if [ -f weed-test.log ]; then \
 		cat weed-test.log; \
@@ -137,8 +174,11 @@ test-all: check-deps
 
 # Run tests with automatic server management
 test-with-server: start-server
+	@echo "🔍 DEBUG: Server started successfully, now running versioning tests..."
+	@echo "🔍 DEBUG: Test pattern: $(TEST_PATTERN)"
+	@echo "🔍 DEBUG: Test timeout: $(TEST_TIMEOUT)"
 	@echo "Running versioning tests with managed server..."
-	@$(MAKE) test-versioning || (echo "❌ Tests failed, showing server logs:" && tail -50 weed-test.log && $(MAKE) stop-server && exit 1)
+	@$(MAKE) test-versioning || (echo "❌ Tests failed, showing server logs:" && echo "=== Last 50 lines of server logs ===" && tail -50 weed-test.log && echo "=== End of server logs ===" && $(MAKE) stop-server && exit 1)
 	@$(MAKE) stop-server
 	@echo "✅ Tests completed and server stopped"
 
