@@ -2,6 +2,8 @@ name: "S3 Versioning Tests (Go)"
 
 on:
   pull_request:
+  push:
+    branches: [add-object-versioning]
   
 concurrency:
   group: ${{ github.head_ref }}/s3-versioning
@@ -37,27 +39,27 @@ jobs:
         run: |
           go install -buildvcs=false
 
-             - name: Run S3 Versioning Tests - ${{ matrix.test-type }}
-         timeout-minutes: 15
-         working-directory: weed/s3api/versioning_tests
-         run: |
-           set -x
-           # Run tests with automatic server management
-           # The test-with-server target handles server startup/shutdown automatically
-           if [ "${{ matrix.test-type }}" = "quick" ]; then
-             # Override TEST_PATTERN for quick tests only
-             make test-with-server TEST_PATTERN="TestBucketListReturnDataVersioning|TestVersioningBasicWorkflow|TestVersioningDeleteMarkers"
-           else
-             # Run all versioning tests
-             make test-with-server
-           fi
+      - name: Run S3 Versioning Tests - ${{ matrix.test-type }}
+        timeout-minutes: 15
+        working-directory: test/s3/versioning
+        run: |
+          set -x
+          # Run tests with automatic server management
+          # The test-with-server target handles server startup/shutdown automatically
+          if [ "${{ matrix.test-type }}" = "quick" ]; then
+            # Override TEST_PATTERN for quick tests only
+            make test-with-server TEST_PATTERN="TestBucketListReturnDataVersioning|TestVersioningBasicWorkflow|TestVersioningDeleteMarkers"
+          else
+            # Run all versioning tests
+            make test-with-server
+          fi
 
       - name: Upload test logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: s3-versioning-test-logs-${{ matrix.test-type }}
-          path: weed/s3api/versioning_tests/weed-test*.log
+          path: test/s3/versioning/weed-test*.log
           retention-days: 3
 
   s3-versioning-compatibility:
@@ -81,7 +83,7 @@ jobs:
 
       - name: Run Core Versioning Test (Python s3tests equivalent)
         timeout-minutes: 10
-        working-directory: weed/s3api/versioning_tests
+        working-directory: test/s3/versioning
         run: |
           set -x
           # Run the specific test that is equivalent to the Python s3tests
@@ -99,7 +101,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: s3-versioning-compatibility-logs
-          path: weed/s3api/versioning_tests/weed-test*.log
+          path: test/s3/versioning/weed-test*.log
           retention-days: 3
 
   s3-versioning-stress:
@@ -125,7 +127,7 @@ jobs:
 
       - name: Run S3 Versioning Stress Tests
         timeout-minutes: 20
-        working-directory: weed/s3api/versioning_tests
+        working-directory: test/s3/versioning
         run: |
           set -x
           # Run stress tests (concurrent operations)
@@ -145,5 +147,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: s3-versioning-stress-logs
-          path: weed/s3api/versioning_tests/weed-test*.log
+          path: test/s3/versioning/weed-test*.log
           retention-days: 7 
