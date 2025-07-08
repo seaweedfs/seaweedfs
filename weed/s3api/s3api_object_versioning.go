@@ -75,6 +75,8 @@ func (s3a *S3ApiServer) getVersionFileName(versionId string) string {
 
 // storeVersionedObject stores an object with versioning metadata
 func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, entry *filer_pb.Entry, isLatest bool) error {
+	glog.Infof("🚀 STORE VERSIONED OBJECT START: bucket=%s, object=%s, versionId=%s, isLatest=%v", bucket, object, versionId, isLatest)
+
 	// Add version metadata to entry
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
@@ -83,32 +85,118 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 	entry.Extended[s3_constants.ExtIsLatestKey] = []byte(strconv.FormatBool(isLatest))
 
 	// Ensure the .versions directory exists before storing the versioned object
+	glog.Infof("🔧 Ensuring versions directory exists for bucket=%s, object=%s", bucket, object)
 	versionsDir, err := s3a.ensureVersionedDirectory(bucket, object)
 	if err != nil {
+		glog.Errorf("❌ ensureVersionedDirectory failed: %v", err)
 		return err
 	}
+	glog.Infof("🔧 ensureVersionedDirectory returned: %s", versionsDir)
 
 	// Double-check that the directory exists before trying to create the versioned object
 	versionsDirPath, versionsDirName := path.Split(versionsDir)
-	glog.V(2).Infof("Verifying versions directory exists: path=%s, name=%s (full path: %s)", versionsDirPath, versionsDirName, versionsDir)
+	glog.Infof("🔍 VERIFICATION: Checking if versions directory exists before storing object")
+	glog.Infof("🔍 Verifying path=%s, name=%s (full path: %s)", versionsDirPath, versionsDirName, versionsDir)
 	exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true)
+	glog.Infof("🔍 Verification result: exists=%v, checkErr=%v", exists, checkErr)
+
 	if checkErr != nil || !exists {
-		glog.Errorf("Versions directory %s does not exist after creation attempt (exists=%v, err=%v, path=%s, name=%s)", versionsDir, exists, checkErr, versionsDirPath, versionsDirName)
+		glog.Errorf("❌ VERIFICATION FAILED: Versions directory %s does not exist after creation attempt (exists=%v, err=%v, path=%s, name=%s)", versionsDir, exists, checkErr, versionsDirPath, versionsDirName)
+
+		// List parent directory contents to see what actually exists
+		glog.Infof("🔍 LISTING PARENT DIRECTORY: %s", versionsDirPath)
+		parentEntries, _, listErr := s3a.list(versionsDirPath, "", "", false, 100)
+		if listErr != nil {
+			glog.Errorf("❌ Failed to list parent directory %s: %v", versionsDirPath, listErr)
+		} else {
+			glog.Infof("🔍 Parent directory %s contains %d entries:", versionsDirPath, len(parentEntries))
+			for i, entry := range parentEntries {
+				entryType := "FILE"
+				if entry.IsDirectory {
+					entryType = "DIR"
+				}
+				glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+			}
+			if len(parentEntries) == 0 {
+				glog.Infof("🔍   (directory is empty)")
+			}
+		}
 		// Try to create it one more time
-		glog.V(2).Infof("Attempting to create versions directory again: bucket=%s, object=%s", bucket, object)
+		glog.Infof("🔧 RETRY: Attempting to create versions directory again: bucket=%s, object=%s", bucket, object)
 		_, retryErr := s3a.ensureVersionedDirectory(bucket, object)
 		if retryErr != nil {
+			glog.Errorf("❌ RETRY FAILED: failed to create versions directory %s: %v", versionsDir, retryErr)
 			return fmt.Errorf("failed to create versions directory %s: %v", versionsDir, retryErr)
 		}
 		// Check again
-		glog.V(2).Infof("Verifying versions directory exists after retry: path=%s, name=%s", versionsDirPath, versionsDirName)
+		glog.Infof("🔍 RETRY VERIFICATION: Checking if versions directory exists after retry: path=%s, name=%s", versionsDirPath, versionsDirName)
 		exists, checkErr = s3a.exists(versionsDirPath, versionsDirName, true)
+		glog.Infof("🔍 Retry verification result: exists=%v, checkErr=%v", exists, checkErr)
 		if checkErr != nil || !exists {
+			glog.Errorf("❌ RETRY VERIFICATION FAILED: versions directory %s still does not exist after retry (exists=%v, err=%v)", versionsDir, exists, checkErr)
+
+			// List parent directory contents after retry failure
+			glog.Infof("🔍 LISTING PARENT DIRECTORY AFTER RETRY: %s", versionsDirPath)
+			parentEntries, _, listErr := s3a.list(versionsDirPath, "", "", false, 100)
+			if listErr != nil {
+				glog.Errorf("❌ Failed to list parent directory after retry %s: %v", versionsDirPath, listErr)
+			} else {
+				glog.Infof("🔍 Parent directory %s contains %d entries after retry:", versionsDirPath, len(parentEntries))
+				for i, entry := range parentEntries {
+					entryType := "FILE"
+					if entry.IsDirectory {
+						entryType = "DIR"
+					}
+					glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+				}
+				if len(parentEntries) == 0 {
+					glog.Infof("🔍   (directory is empty)")
+				}
+			}
+
 			return fmt.Errorf("versions directory %s still does not exist after retry (exists=%v, err=%v)", versionsDir, exists, checkErr)
 		}
-		glog.V(2).Infof("Successfully created versions directory on retry: %s", versionsDir)
+		glog.Infof("✅ RETRY SUCCESS: Successfully created versions directory on retry: %s", versionsDir)
+
+		// List parent directory to confirm what exists during successful retry
+		glog.Infof("🔍 LISTING PARENT DIRECTORY DURING SUCCESSFUL RETRY: %s", versionsDirPath)
+		parentEntries, _, listErr = s3a.list(versionsDirPath, "", "", false, 100)
+		if listErr != nil {
+			glog.Errorf("❌ Failed to list parent directory during retry %s: %v", versionsDirPath, listErr)
+		} else {
+			glog.Infof("🔍 Parent directory %s contains %d entries during retry:", versionsDirPath, len(parentEntries))
+			for i, entry := range parentEntries {
+				entryType := "FILE"
+				if entry.IsDirectory {
+					entryType = "DIR"
+				}
+				glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+			}
+			if len(parentEntries) == 0 {
+				glog.Infof("🔍   (directory is empty)")
+			}
+		}
 	} else {
-		glog.V(2).Infof("Versions directory %s already exists", versionsDir)
+		glog.Infof("✅ VERIFICATION SUCCESS: Versions directory %s already exists", versionsDir)
+
+		// List parent directory to confirm what exists during successful verification
+		glog.Infof("🔍 LISTING PARENT DIRECTORY DURING SUCCESSFUL VERIFICATION: %s", versionsDirPath)
+		parentEntries, _, listErr := s3a.list(versionsDirPath, "", "", false, 100)
+		if listErr != nil {
+			glog.Errorf("❌ Failed to list parent directory during verification %s: %v", versionsDirPath, listErr)
+		} else {
+			glog.Infof("🔍 Parent directory %s contains %d entries during verification:", versionsDirPath, len(parentEntries))
+			for i, entry := range parentEntries {
+				entryType := "FILE"
+				if entry.IsDirectory {
+					entryType = "DIR"
+				}
+				glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+			}
+			if len(parentEntries) == 0 {
+				glog.Infof("🔍   (directory is empty)")
+			}
+		}
 	}
 
 	// Store the versioned object (create a copy with the version ID as the name)
@@ -120,24 +208,34 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 		Extended:    entry.Extended,
 	}
 
+	glog.Infof("💾 STORING: About to store versioned object")
+	glog.Infof("💾 Store path: %s", versionsDir)
+	glog.Infof("💾 Store name: %s", versionEntry.Name)
+	glog.Infof("💾 Full store path: %s/%s", versionsDir, versionEntry.Name)
+
 	err = s3a.touch(versionsDir, versionEntry.Name, versionEntry)
 	if err != nil {
-		glog.Errorf("Failed to store versioned object %s/%s: %v", versionsDir, versionId, err)
+		glog.Errorf("❌ STORE FAILED: Failed to store versioned object %s/%s: %v", versionsDir, versionId, err)
 		return err
 	}
+
+	glog.Infof("✅ STORE SUCCESS: Successfully stored versioned object %s/%s", versionsDir, versionId)
 
 	// If this is the latest version, also store/update the current version
 	if isLatest {
 		bucketDir := path.Join(s3a.option.BucketsPath, bucket)
 		objectName := strings.TrimPrefix(object, "/")
 
+		glog.Infof("💾 Updating current version: %s/%s", bucketDir, objectName)
 		err = s3a.touch(bucketDir, objectName, entry)
 		if err != nil {
-			glog.Errorf("Failed to update current version %s/%s: %v", bucketDir, objectName, err)
+			glog.Errorf("❌ Failed to update current version %s/%s: %v", bucketDir, objectName, err)
 			return err
 		}
+		glog.Infof("✅ Successfully updated current version: %s/%s", bucketDir, objectName)
 	}
 
+	glog.Infof("🎉 STORE VERSIONED OBJECT COMPLETE: bucket=%s, object=%s, versionId=%s", bucket, object, versionId)
 	return nil
 }
 
@@ -182,6 +280,7 @@ func (s3a *S3ApiServer) markPreviousVersionsAsNotLatest(bucket, object string) e
 // createDeleteMarker creates a delete marker for versioned delete operations
 func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error) {
 	versionId := generateVersionId()
+	glog.Infof("🚀 CREATE DELETE MARKER START: bucket=%s, object=%s, versionId=%s", bucket, object, versionId)
 
 	// Create delete marker entry
 	deleteMarkerEntry := &filer_pb.Entry{
@@ -198,50 +297,146 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	}
 
 	// Mark previous versions as not latest
+	glog.Infof("🔧 Marking previous versions as not latest for bucket=%s, object=%s", bucket, object)
 	err := s3a.markPreviousVersionsAsNotLatest(bucket, object)
 	if err != nil {
-		glog.Warningf("Failed to mark previous versions as not latest: %v", err)
+		glog.Warningf("⚠️ Failed to mark previous versions as not latest: %v", err)
 	}
 
 	// Ensure the .versions directory exists before storing the delete marker
+	glog.Infof("🔧 Ensuring versions directory exists for delete marker: bucket=%s, object=%s", bucket, object)
 	versionsDir, err := s3a.ensureVersionedDirectory(bucket, object)
 	if err != nil {
+		glog.Errorf("❌ ensureVersionedDirectory failed for delete marker: %v", err)
 		return "", err
 	}
+	glog.Infof("🔧 ensureVersionedDirectory returned for delete marker: %s", versionsDir)
 
 	// Double-check that the directory exists before trying to create the delete marker
 	versionsDirPath, versionsDirName := path.Split(versionsDir)
-	glog.V(2).Infof("Verifying versions directory exists for delete marker: path=%s, name=%s (full path: %s)", versionsDirPath, versionsDirName, versionsDir)
+	glog.Infof("🔍 DELETE MARKER VERIFICATION: Checking if versions directory exists before storing delete marker")
+	glog.Infof("🔍 Verifying path=%s, name=%s (full path: %s)", versionsDirPath, versionsDirName, versionsDir)
 	exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true)
+	glog.Infof("🔍 Delete marker verification result: exists=%v, checkErr=%v", exists, checkErr)
+
 	if checkErr != nil || !exists {
-		glog.Errorf("Versions directory %s does not exist after creation attempt (exists=%v, err=%v, path=%s, name=%s)", versionsDir, exists, checkErr, versionsDirPath, versionsDirName)
+		glog.Errorf("❌ DELETE MARKER VERIFICATION FAILED: Versions directory %s does not exist after creation attempt (exists=%v, err=%v, path=%s, name=%s)", versionsDir, exists, checkErr, versionsDirPath, versionsDirName)
+
+		// List parent directory contents to see what actually exists for delete marker
+		glog.Infof("🔍 LISTING PARENT DIRECTORY FOR DELETE MARKER: %s", versionsDirPath)
+		parentEntries, _, listErr := s3a.list(versionsDirPath, "", "", false, 100)
+		if listErr != nil {
+			glog.Errorf("❌ Failed to list parent directory for delete marker %s: %v", versionsDirPath, listErr)
+		} else {
+			glog.Infof("🔍 Parent directory %s contains %d entries for delete marker:", versionsDirPath, len(parentEntries))
+			for i, entry := range parentEntries {
+				entryType := "FILE"
+				if entry.IsDirectory {
+					entryType = "DIR"
+				}
+				glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+			}
+			if len(parentEntries) == 0 {
+				glog.Infof("🔍   (directory is empty)")
+			}
+		}
 		// Try to create it one more time
-		glog.V(2).Infof("Attempting to create versions directory again for delete marker: bucket=%s, object=%s", bucket, object)
+		glog.Infof("🔧 DELETE MARKER RETRY: Attempting to create versions directory again for delete marker: bucket=%s, object=%s", bucket, object)
 		_, retryErr := s3a.ensureVersionedDirectory(bucket, object)
 		if retryErr != nil {
+			glog.Errorf("❌ DELETE MARKER RETRY FAILED: failed to create versions directory %s: %v", versionsDir, retryErr)
 			return "", fmt.Errorf("failed to create versions directory %s: %v", versionsDir, retryErr)
 		}
 		// Check again
-		glog.V(2).Infof("Verifying versions directory exists after retry for delete marker: path=%s, name=%s", versionsDirPath, versionsDirName)
+		glog.Infof("🔍 DELETE MARKER RETRY VERIFICATION: Checking if versions directory exists after retry: path=%s, name=%s", versionsDirPath, versionsDirName)
 		exists, checkErr = s3a.exists(versionsDirPath, versionsDirName, true)
+		glog.Infof("🔍 Delete marker retry verification result: exists=%v, checkErr=%v", exists, checkErr)
 		if checkErr != nil || !exists {
+			glog.Errorf("❌ DELETE MARKER RETRY VERIFICATION FAILED: versions directory %s still does not exist after retry (exists=%v, err=%v)", versionsDir, exists, checkErr)
+
+			// List parent directory contents after delete marker retry failure
+			glog.Infof("🔍 LISTING PARENT DIRECTORY AFTER DELETE MARKER RETRY: %s", versionsDirPath)
+			parentEntries, _, listErr := s3a.list(versionsDirPath, "", "", false, 100)
+			if listErr != nil {
+				glog.Errorf("❌ Failed to list parent directory after delete marker retry %s: %v", versionsDirPath, listErr)
+			} else {
+				glog.Infof("🔍 Parent directory %s contains %d entries after delete marker retry:", versionsDirPath, len(parentEntries))
+				for i, entry := range parentEntries {
+					entryType := "FILE"
+					if entry.IsDirectory {
+						entryType = "DIR"
+					}
+					glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+				}
+				if len(parentEntries) == 0 {
+					glog.Infof("🔍   (directory is empty)")
+				}
+			}
+
 			return "", fmt.Errorf("versions directory %s still does not exist after retry (exists=%v, err=%v)", versionsDir, exists, checkErr)
 		}
-		glog.V(2).Infof("Successfully created versions directory on retry for delete marker: %s", versionsDir)
+		glog.Infof("✅ DELETE MARKER RETRY SUCCESS: Successfully created versions directory on retry: %s", versionsDir)
+
+		// List parent directory to confirm what exists during successful delete marker retry
+		glog.Infof("🔍 LISTING PARENT DIRECTORY DURING SUCCESSFUL DELETE MARKER RETRY: %s", versionsDirPath)
+		parentEntries, _, listErr = s3a.list(versionsDirPath, "", "", false, 100)
+		if listErr != nil {
+			glog.Errorf("❌ Failed to list parent directory during delete marker retry %s: %v", versionsDirPath, listErr)
+		} else {
+			glog.Infof("🔍 Parent directory %s contains %d entries during delete marker retry:", versionsDirPath, len(parentEntries))
+			for i, entry := range parentEntries {
+				entryType := "FILE"
+				if entry.IsDirectory {
+					entryType = "DIR"
+				}
+				glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+			}
+			if len(parentEntries) == 0 {
+				glog.Infof("🔍   (directory is empty)")
+			}
+		}
 	} else {
-		glog.V(2).Infof("Versions directory %s already exists for delete marker", versionsDir)
+		glog.Infof("✅ DELETE MARKER VERIFICATION SUCCESS: Versions directory %s already exists for delete marker", versionsDir)
+
+		// List parent directory to confirm what exists during successful delete marker verification
+		glog.Infof("🔍 LISTING PARENT DIRECTORY DURING SUCCESSFUL DELETE MARKER VERIFICATION: %s", versionsDirPath)
+		parentEntries, _, listErr := s3a.list(versionsDirPath, "", "", false, 100)
+		if listErr != nil {
+			glog.Errorf("❌ Failed to list parent directory during delete marker verification %s: %v", versionsDirPath, listErr)
+		} else {
+			glog.Infof("🔍 Parent directory %s contains %d entries during delete marker verification:", versionsDirPath, len(parentEntries))
+			for i, entry := range parentEntries {
+				entryType := "FILE"
+				if entry.IsDirectory {
+					entryType = "DIR"
+				}
+				glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+			}
+			if len(parentEntries) == 0 {
+				glog.Infof("🔍   (directory is empty)")
+			}
+		}
 	}
 
 	// Store delete marker
+	glog.Infof("💾 DELETE MARKER STORING: About to store delete marker")
+	glog.Infof("💾 Delete marker path: %s", versionsDir)
+	glog.Infof("💾 Delete marker name: %s", deleteMarkerEntry.Name)
+	glog.Infof("💾 Full delete marker path: %s/%s", versionsDir, deleteMarkerEntry.Name)
+
 	err = s3a.touch(versionsDir, deleteMarkerEntry.Name, deleteMarkerEntry)
 	if err != nil {
-		glog.Errorf("Failed to store delete marker %s/%s: %v", versionsDir, deleteMarkerEntry.Name, err)
+		glog.Errorf("❌ DELETE MARKER STORE FAILED: Failed to store delete marker %s/%s: %v", versionsDir, deleteMarkerEntry.Name, err)
 		return "", err
 	}
 
+	glog.Infof("✅ DELETE MARKER STORE SUCCESS: Successfully stored delete marker %s/%s", versionsDir, deleteMarkerEntry.Name)
+
 	// Remove current object if it exists (logical deletion)
+	glog.Infof("🗑️ Removing current object (logical deletion): bucket=%s, object=%s", bucket, object)
 	s3a.rm(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"), false, false)
 
+	glog.Infof("🎉 CREATE DELETE MARKER COMPLETE: bucket=%s, object=%s, versionId=%s", bucket, object, versionId)
 	return versionId, nil
 }
 
@@ -503,41 +698,69 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionsDirPath, versionsDirName := path.Split(versionsDir)
 
-	glog.V(3).Infof("ensureVersionedDirectory: bucket=%s, object=%s, versionsDir=%s, path=%s, name=%s",
-		bucket, object, versionsDir, versionsDirPath, versionsDirName)
+	glog.Infof("🔧 ensureVersionedDirectory START: bucket=%s, object=%s", bucket, object)
+	glog.Infof("🔧 Directory paths: versionsDir=%s, path=%s, name=%s", versionsDir, versionsDirPath, versionsDirName)
 
 	// Check if directory already exists
+	glog.Infof("🔧 Checking if versions directory exists: path=%s, name=%s", versionsDirPath, versionsDirName)
 	exists, err := s3a.exists(versionsDirPath, versionsDirName, true)
 	if err != nil {
-		glog.Errorf("Failed to check if versions directory exists %s (path=%s, name=%s): %v",
+		glog.Errorf("❌ Failed to check if versions directory exists %s (path=%s, name=%s): %v",
 			versionsDir, versionsDirPath, versionsDirName, err)
 		return versionsDir, err
 	}
 
+	glog.Infof("🔧 Directory existence check result: exists=%v, err=%v", exists, err)
 	if exists {
-		glog.V(3).Infof("Versions directory already exists: %s", versionsDir)
+		glog.Infof("✅ Versions directory already exists: %s", versionsDir)
+
+		// List existing directory contents to see what's already there
+		glog.Infof("🔍 LISTING EXISTING VERSIONS DIRECTORY: %s", versionsDir)
+		existingEntries, _, listErr := s3a.list(versionsDir, "", "", false, 100)
+		if listErr != nil {
+			glog.Errorf("❌ Failed to list existing versions directory %s: %v", versionsDir, listErr)
+		} else {
+			glog.Infof("🔍 Existing versions directory %s contains %d entries:", versionsDir, len(existingEntries))
+			for i, entry := range existingEntries {
+				entryType := "FILE"
+				if entry.IsDirectory {
+					entryType = "DIR"
+				}
+				glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+			}
+			if len(existingEntries) == 0 {
+				glog.Infof("🔍   (directory is empty)")
+			}
+		}
+
 		return versionsDir, nil
 	}
 
-	glog.V(2).Infof("Creating versions directory: %s (path=%s, name=%s)",
+	glog.Infof("🔧 Creating versions directory: %s (path=%s, name=%s)",
 		versionsDir, versionsDirPath, versionsDirName)
 
 	// Ensure the parent directory exists first
 	parentPath, parentName := path.Split(strings.TrimSuffix(versionsDirPath, "/"))
+	glog.Infof("🔧 Checking parent directory: parentPath=%s, parentName=%s", parentPath, parentName)
 	if parentName != "" {
+		glog.Infof("🔧 Verifying parent directory exists: path=%s, name=%s", parentPath, parentName)
 		parentExists, parentErr := s3a.exists(parentPath, parentName, true)
+		glog.Infof("🔧 Parent directory check result: exists=%v, err=%v", parentExists, parentErr)
 		if parentErr != nil {
-			glog.Errorf("Failed to check parent directory %s/%s: %v", parentPath, parentName, parentErr)
+			glog.Errorf("❌ Failed to check parent directory %s/%s: %v", parentPath, parentName, parentErr)
 			return versionsDir, parentErr
 		}
 		if !parentExists {
-			glog.Errorf("Parent directory does not exist: %s/%s", parentPath, parentName)
+			glog.Errorf("❌ Parent directory does not exist: %s/%s", parentPath, parentName)
 			return versionsDir, fmt.Errorf("parent directory does not exist: %s/%s", parentPath, parentName)
 		}
+		glog.Infof("✅ Parent directory exists: %s/%s", parentPath, parentName)
+	} else {
+		glog.Infof("🔧 No parent directory to check (root level)")
 	}
 
 	// Create the .versions directory
-	glog.V(2).Infof("Calling mkdir with path=%s, name=%s (full path: %s)", versionsDirPath, versionsDirName, versionsDir)
+	glog.Infof("🔧 Calling mkdir: path=%s, name=%s (full path: %s)", versionsDirPath, versionsDirName, versionsDir)
 	err = s3a.mkdir(versionsDirPath, versionsDirName, func(entry *filer_pb.Entry) {
 		// Set directory attributes
 		if entry.Attributes == nil {
@@ -545,27 +768,66 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 		}
 		entry.Attributes.Mtime = time.Now().Unix()
 		entry.Attributes.FileMode = 0755 // Standard directory permissions
-		glog.V(2).Infof("Setting directory attributes for %s: mtime=%d, mode=%o", versionsDir, entry.Attributes.Mtime, entry.Attributes.FileMode)
+		glog.Infof("🔧 Setting directory attributes for %s: mtime=%d, mode=%o", versionsDir, entry.Attributes.Mtime, entry.Attributes.FileMode)
 	})
 
 	if err != nil {
-		glog.Errorf("mkdir failed for %s (path=%s, name=%s): %v", versionsDir, versionsDirPath, versionsDirName, err)
+		glog.Errorf("❌ mkdir failed for %s (path=%s, name=%s): %v", versionsDir, versionsDirPath, versionsDirName, err)
 
 		// Handle race condition - directory might have been created by another process
 		// Check again if it exists now
-		glog.V(2).Infof("Checking if directory exists after mkdir failure: path=%s, name=%s", versionsDirPath, versionsDirName)
+		glog.Infof("🔧 Checking if directory exists after mkdir failure: path=%s, name=%s", versionsDirPath, versionsDirName)
 		exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true)
+		glog.Infof("🔧 Post-failure existence check result: exists=%v, checkErr=%v", exists, checkErr)
 		if checkErr == nil && exists {
-			glog.V(2).Infof("Versions directory %s was created by another process", versionsDir)
+			glog.Infof("✅ Versions directory %s was created by another process", versionsDir)
 			return versionsDir, nil
 		}
 
-		glog.Errorf("Failed to create versions directory %s (checkErr=%v, exists=%v): %v", versionsDir, checkErr, exists, err)
+		// List parent directory contents when mkdir fails to see what actually exists
+		glog.Infof("🔍 LISTING PARENT DIRECTORY AFTER MKDIR FAILURE: %s", versionsDirPath)
+		parentEntries, _, listErr := s3a.list(versionsDirPath, "", "", false, 100)
+		if listErr != nil {
+			glog.Errorf("❌ Failed to list parent directory after mkdir failure %s: %v", versionsDirPath, listErr)
+		} else {
+			glog.Infof("🔍 Parent directory %s contains %d entries after mkdir failure:", versionsDirPath, len(parentEntries))
+			for i, entry := range parentEntries {
+				entryType := "FILE"
+				if entry.IsDirectory {
+					entryType = "DIR"
+				}
+				glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+			}
+			if len(parentEntries) == 0 {
+				glog.Infof("🔍   (directory is empty)")
+			}
+		}
+
+		glog.Errorf("❌ Failed to create versions directory %s (checkErr=%v, exists=%v): %v", versionsDir, checkErr, exists, err)
 		return versionsDir, err
 	}
 
-	glog.V(2).Infof("mkdir returned success for %s", versionsDir)
+	glog.Infof("✅ mkdir returned success for %s", versionsDir)
 
-	glog.V(2).Infof("Successfully created versions directory: %s", versionsDir)
+	// List parent directory to verify what was created
+	glog.Infof("🔍 LISTING PARENT DIRECTORY AFTER SUCCESSFUL MKDIR: %s", versionsDirPath)
+	parentEntries, _, listErr := s3a.list(versionsDirPath, "", "", false, 100)
+	if listErr != nil {
+		glog.Errorf("❌ Failed to list parent directory after mkdir %s: %v", versionsDirPath, listErr)
+	} else {
+		glog.Infof("🔍 Parent directory %s contains %d entries after mkdir:", versionsDirPath, len(parentEntries))
+		for i, entry := range parentEntries {
+			entryType := "FILE"
+			if entry.IsDirectory {
+				entryType = "DIR"
+			}
+			glog.Infof("🔍   [%d] %s: %s (size: %d, mtime: %d)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.Mtime)
+		}
+		if len(parentEntries) == 0 {
+			glog.Infof("🔍   (directory is empty)")
+		}
+	}
+
+	glog.Infof("✅ Successfully created versions directory: %s", versionsDir)
 	return versionsDir, nil
 }
