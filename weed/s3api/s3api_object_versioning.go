@@ -88,6 +88,29 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 		return err
 	}
 
+	// Double-check that the directory exists before trying to create the versioned object
+	versionsDirPath, versionsDirName := path.Split(versionsDir)
+	glog.V(2).Infof("Verifying versions directory exists: path=%s, name=%s (full path: %s)", versionsDirPath, versionsDirName, versionsDir)
+	exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true)
+	if checkErr != nil || !exists {
+		glog.Errorf("Versions directory %s does not exist after creation attempt (exists=%v, err=%v, path=%s, name=%s)", versionsDir, exists, checkErr, versionsDirPath, versionsDirName)
+		// Try to create it one more time
+		glog.V(2).Infof("Attempting to create versions directory again: bucket=%s, object=%s", bucket, object)
+		_, retryErr := s3a.ensureVersionedDirectory(bucket, object)
+		if retryErr != nil {
+			return fmt.Errorf("failed to create versions directory %s: %v", versionsDir, retryErr)
+		}
+		// Check again
+		glog.V(2).Infof("Verifying versions directory exists after retry: path=%s, name=%s", versionsDirPath, versionsDirName)
+		exists, checkErr = s3a.exists(versionsDirPath, versionsDirName, true)
+		if checkErr != nil || !exists {
+			return fmt.Errorf("versions directory %s still does not exist after retry (exists=%v, err=%v)", versionsDir, exists, checkErr)
+		}
+		glog.V(2).Infof("Successfully created versions directory on retry: %s", versionsDir)
+	} else {
+		glog.V(2).Infof("Versions directory %s already exists", versionsDir)
+	}
+
 	// Store the versioned object (create a copy with the version ID as the name)
 	versionEntry := &filer_pb.Entry{
 		Name:        s3a.getVersionFileName(versionId),
@@ -184,6 +207,29 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	versionsDir, err := s3a.ensureVersionedDirectory(bucket, object)
 	if err != nil {
 		return "", err
+	}
+
+	// Double-check that the directory exists before trying to create the delete marker
+	versionsDirPath, versionsDirName := path.Split(versionsDir)
+	glog.V(2).Infof("Verifying versions directory exists for delete marker: path=%s, name=%s (full path: %s)", versionsDirPath, versionsDirName, versionsDir)
+	exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true)
+	if checkErr != nil || !exists {
+		glog.Errorf("Versions directory %s does not exist after creation attempt (exists=%v, err=%v, path=%s, name=%s)", versionsDir, exists, checkErr, versionsDirPath, versionsDirName)
+		// Try to create it one more time
+		glog.V(2).Infof("Attempting to create versions directory again for delete marker: bucket=%s, object=%s", bucket, object)
+		_, retryErr := s3a.ensureVersionedDirectory(bucket, object)
+		if retryErr != nil {
+			return "", fmt.Errorf("failed to create versions directory %s: %v", versionsDir, retryErr)
+		}
+		// Check again
+		glog.V(2).Infof("Verifying versions directory exists after retry for delete marker: path=%s, name=%s", versionsDirPath, versionsDirName)
+		exists, checkErr = s3a.exists(versionsDirPath, versionsDirName, true)
+		if checkErr != nil || !exists {
+			return "", fmt.Errorf("versions directory %s still does not exist after retry (exists=%v, err=%v)", versionsDir, exists, checkErr)
+		}
+		glog.V(2).Infof("Successfully created versions directory on retry for delete marker: %s", versionsDir)
+	} else {
+		glog.V(2).Infof("Versions directory %s already exists for delete marker", versionsDir)
 	}
 
 	// Store delete marker
@@ -491,7 +537,7 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 	}
 
 	// Create the .versions directory
-	glog.V(2).Infof("Calling mkdir with path=%s, name=%s", versionsDirPath, versionsDirName)
+	glog.V(2).Infof("Calling mkdir with path=%s, name=%s (full path: %s)", versionsDirPath, versionsDirName, versionsDir)
 	err = s3a.mkdir(versionsDirPath, versionsDirName, func(entry *filer_pb.Entry) {
 		// Set directory attributes
 		if entry.Attributes == nil {
@@ -499,7 +545,7 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 		}
 		entry.Attributes.Mtime = time.Now().Unix()
 		entry.Attributes.FileMode = 0755 // Standard directory permissions
-		glog.V(3).Infof("Setting directory attributes: mtime=%d, mode=%o", entry.Attributes.Mtime, entry.Attributes.FileMode)
+		glog.V(2).Infof("Setting directory attributes for %s: mtime=%d, mode=%o", versionsDir, entry.Attributes.Mtime, entry.Attributes.FileMode)
 	})
 
 	if err != nil {
@@ -514,9 +560,11 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 			return versionsDir, nil
 		}
 
-		glog.Errorf("Failed to create versions directory %s: %v", versionsDir, err)
+		glog.Errorf("Failed to create versions directory %s (checkErr=%v, exists=%v): %v", versionsDir, checkErr, exists, err)
 		return versionsDir, err
 	}
+
+	glog.V(2).Infof("mkdir returned success for %s", versionsDir)
 
 	glog.V(2).Infof("Successfully created versions directory: %s", versionsDir)
 	return versionsDir, nil
