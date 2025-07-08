@@ -1,10 +1,10 @@
 # S3 API Test Makefile
 # This Makefile provides comprehensive targets for running S3 versioning tests
 
-.PHONY: help setup-server start-server stop-server test-versioning test-versioning-quick test-versioning-comprehensive test-all clean logs check-deps
+.PHONY: help build-weed setup-server start-server stop-server test-versioning test-versioning-quick test-versioning-comprehensive test-all clean logs check-deps
 
 # Configuration
-WEED_BINARY := ../../weed
+WEED_BINARY := ../../../weed/weed_binary
 S3_PORT := 8333
 MASTER_PORT := 9333
 VOLUME_PORT := 8080
@@ -18,7 +18,8 @@ help:
 	@echo ""
 	@echo "Available targets:"
 	@echo "  help                    - Show this help message"
-	@echo "  check-deps             - Check if required dependencies are available"
+	@echo "  build-weed             - Build the SeaweedFS binary"
+	@echo "  check-deps             - Check dependencies and build binary if needed"
 	@echo "  start-server           - Start SeaweedFS server for testing"
 	@echo "  stop-server            - Stop SeaweedFS server"
 	@echo "  test-versioning        - Run all versioning tests"
@@ -34,10 +35,17 @@ help:
 	@echo "  TEST_TIMEOUT=${TEST_TIMEOUT}"
 
 # Check dependencies
-check-deps:
+# Build the SeaweedFS binary
+build-weed:
+	@echo "Building SeaweedFS binary..."
+	@cd ../../../weed && go build -o weed_binary .
+	@chmod +x $(WEED_BINARY)
+	@echo "✅ SeaweedFS binary built at $(WEED_BINARY)"
+
+check-deps: build-weed
 	@echo "Checking dependencies..."
 	@command -v go >/dev/null 2>&1 || (echo "Go is required but not installed" && exit 1)
-	@test -f $(WEED_BINARY) || (echo "SeaweedFS binary not found at $(WEED_BINARY). Run 'make install' in project root." && exit 1)
+	@test -f $(WEED_BINARY) || (echo "SeaweedFS binary not found at $(WEED_BINARY)" && exit 1)
 	@go list -m github.com/aws/aws-sdk-go-v2 >/dev/null 2>&1 || (echo "AWS SDK Go v2 not found. Run 'go mod tidy'." && exit 1)
 	@go list -m github.com/stretchr/testify >/dev/null 2>&1 || (echo "Testify not found. Run 'go mod tidy'." && exit 1)
 	@echo "✅ All dependencies are available"
@@ -48,6 +56,7 @@ start-server: check-deps
 	@pkill -f "weed.*server" || true
 	@sleep 2
 	@$(WEED_BINARY) server \
+		-debug \
 		-s3 \
 		-s3.port=$(S3_PORT) \
 		-s3.allowEmptyFolder=false \

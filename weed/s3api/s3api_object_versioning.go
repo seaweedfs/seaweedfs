@@ -479,6 +479,7 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 
 	// Try to create the directory - this is idempotent and handles race conditions
 	err := s3a.mkdir(versionsDirPath, versionsDirName, func(entry *filer_pb.Entry) {
+		entry.IsDirectory = true // Explicitly set as directory
 		if entry.Attributes == nil {
 			entry.Attributes = &filer_pb.FuseAttributes{}
 		}
@@ -490,7 +491,7 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 		// Check if directory already exists (race condition)
 		if exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true); checkErr == nil && exists {
 			// Directory was created by another process, which is fine
-			s3a.versionDirCache.Set(versionsDir) // Cache the successful creation
+			s3a.versionDirCache.Set(versionsDir)
 			return versionsDir, nil
 		}
 		return versionsDir, fmt.Errorf("failed to create versions directory %s: %v", versionsDir, err)
