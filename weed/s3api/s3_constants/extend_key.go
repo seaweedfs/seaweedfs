@@ -8,4 +8,5 @@ const (
 	ExtVersionIdKey    = "Seaweed-X-Amz-Version-Id"
 	ExtDeleteMarkerKey = "Seaweed-X-Amz-Delete-Marker"
 	ExtIsLatestKey     = "Seaweed-X-Amz-Is-Latest"
+	ExtETagKey         = "Seaweed-X-Amz-ETag"
 )
