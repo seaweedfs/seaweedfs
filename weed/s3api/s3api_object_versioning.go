@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	s3_constants "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) moveCurrentObjectToVersions(bucket, object string) error
 
 	// Preserve ETag if it doesn't exist (for older objects)
 	if _, hasETag := currentEntry.Extended[s3_constants.ExtETagKey]; !hasETag {
-		fallbackETag := s3a.calculateETagFromChunks(currentEntry.Chunks)
+		fallbackETag := "\"" + filer.ETagChunks(currentEntry.Chunks) + "\""
 		currentEntry.Extended[s3_constants.ExtETagKey] = []byte(fallbackETag)
 	}
 
@@ -423,7 +423,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 					version.ETag = string(etagBytes)
 				} else {
 					// Fallback: calculate ETag from chunks
-					version.ETag = s3a.calculateETagFromChunks(currentEntry.Chunks)
+					version.ETag = "\"" + filer.ETagChunks(currentEntry.Chunks) + "\""
 				}
 				version.Size = int64(currentEntry.Attributes.FileSize)
 			}
@@ -471,7 +471,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 				version.ETag = string(etagBytes)
 			} else {
 				// Fallback: calculate ETag from chunks
-				version.ETag = s3a.calculateETagFromChunks(entry.Chunks)
+				version.ETag = "\"" + filer.ETagChunks(entry.Chunks) + "\""
 			}
 			version.Size = int64(entry.Attributes.FileSize)
 		}
@@ -486,72 +486,6 @@ sortAndReturn:
 	})
 
 	return versions, nil
-}
-
-// calculateETagFromChunks calculates ETag from file chunks following S3 multipart rules
-func (s3a *S3ApiServer) calculateETagFromChunks(chunks []*filer_pb.FileChunk) string {
-	if chunks == nil || len(chunks) == 0 {
-		return "\"\""
-	}
-
-	// For single chunk, use the chunk's existing ETag (already MD5 of chunk data)
-	if len(chunks) == 1 {
-		if chunks[0].ETag != "" {
-			// Remove quotes if present and re-add them for consistency
-			etag := strings.Trim(chunks[0].ETag, "\"")
-			return fmt.Sprintf("\"%s\"", etag)
-		}
-		// Fallback if no ETag in chunk
-		return "\"\""
-	}
-
-	// For multipart files, implement S3 multipart ETag calculation:
-	// 1. Use existing MD5 hash from each chunk's ETag field
-	// 2. Concatenate binary digests (not hex representations)
-	// 3. MD5 of concatenated digests
-	// 4. Append part count
-
-	var partDigests [][]byte
-
-	// Extract MD5 digest from each chunk's ETag field
-	for _, chunk := range chunks {
-		if chunk.ETag == "" {
-			// Skip chunks without ETag - this shouldn't happen in normal operation
-			continue
-		}
-
-		// Remove quotes from ETag and decode hex to binary
-		etag := strings.Trim(chunk.ETag, "\"")
-		digest, err := hex.DecodeString(etag)
-		if err != nil {
-			// If ETag is not valid hex, skip this chunk
-			glog.Warningf("Invalid ETag hex in chunk %s: %s", chunk.FileId, etag)
-			continue
-		}
-		partDigests = append(partDigests, digest)
-	}
-
-	if len(partDigests) == 0 {
-		return "\"\""
-	}
-
-	if len(partDigests) == 1 {
-		// Single valid chunk, return its ETag
-		return fmt.Sprintf("\"%x\"", partDigests[0])
-	}
-
-	// Concatenate binary digests
-	concatenatedDigests := make([]byte, 0, len(partDigests)*16) // MD5 is 16 bytes
-	for _, digest := range partDigests {
-		concatenatedDigests = append(concatenatedDigests, digest...)
-	}
-
-	// Calculate MD5 of concatenated digests
-	finalHash := md5.New()
-	finalHash.Write(concatenatedDigests)
-
-	// Format with part count: hash-partcount
-	return fmt.Sprintf("\"%x-%d\"", finalHash.Sum(nil), len(partDigests))
 }
 
 // getSpecificObjectVersion retrieves a specific version of an object
