@@ -506,16 +506,32 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		return fmt.Errorf("version ID is required for version-specific deletion")
 	}
 
+	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
+	objectName := strings.TrimPrefix(object, "/")
+
+	// First check if the version ID matches the current object
+	currentEntry, err := s3a.getEntry(bucketDir, objectName)
+	if err == nil && currentEntry.Extended != nil {
+		if currentVersionIdBytes, hasVersionId := currentEntry.Extended[s3_constants.ExtVersionIdKey]; hasVersionId {
+			currentVersionId := string(currentVersionIdBytes)
+			if currentVersionId == versionId {
+				// This is the current version, delete it from main location
+				return s3a.rm(bucketDir, objectName, true, false)
+			}
+		}
+	}
+
+	// If not the current version, check the .versions directory
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionFile := s3a.getVersionFileName(versionId)
 
-	// Check if this version exists
-	_, err := s3a.getEntry(versionsDir, versionFile)
+	// Check if this version exists in .versions directory
+	_, err = s3a.getEntry(versionsDir, versionFile)
 	if err != nil {
 		return err
 	}
 
-	// Delete the version
+	// Delete the version from .versions directory
 	return s3a.rm(versionsDir, versionFile, true, false)
 }
 
