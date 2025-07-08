@@ -457,15 +457,37 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionsDirPath, versionsDirName := path.Split(versionsDir)
 
+	glog.V(3).Infof("ensureVersionedDirectory: bucket=%s, object=%s, versionsDir=%s, path=%s, name=%s",
+		bucket, object, versionsDir, versionsDirPath, versionsDirName)
+
 	// Check if directory already exists
 	exists, err := s3a.exists(versionsDirPath, versionsDirName, true)
 	if err != nil {
-		glog.Errorf("Failed to check if versions directory exists %s: %v", versionsDir, err)
+		glog.Errorf("Failed to check if versions directory exists %s (path=%s, name=%s): %v",
+			versionsDir, versionsDirPath, versionsDirName, err)
 		return versionsDir, err
 	}
 
 	if exists {
+		glog.V(3).Infof("Versions directory already exists: %s", versionsDir)
 		return versionsDir, nil
+	}
+
+	glog.V(2).Infof("Creating versions directory: %s (path=%s, name=%s)",
+		versionsDir, versionsDirPath, versionsDirName)
+
+	// Ensure the parent directory exists first
+	parentPath, parentName := path.Split(strings.TrimSuffix(versionsDirPath, "/"))
+	if parentName != "" {
+		parentExists, parentErr := s3a.exists(parentPath, parentName, true)
+		if parentErr != nil {
+			glog.Errorf("Failed to check parent directory %s/%s: %v", parentPath, parentName, parentErr)
+			return versionsDir, parentErr
+		}
+		if !parentExists {
+			glog.Errorf("Parent directory does not exist: %s/%s", parentPath, parentName)
+			return versionsDir, fmt.Errorf("parent directory does not exist: %s/%s", parentPath, parentName)
+		}
 	}
 
 	// Create the .versions directory
@@ -479,11 +501,13 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 	})
 
 	if err != nil {
+		glog.Errorf("mkdir failed for %s (path=%s, name=%s): %v", versionsDir, versionsDirPath, versionsDirName, err)
+
 		// Handle race condition - directory might have been created by another process
 		// Check again if it exists now
 		exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true)
 		if checkErr == nil && exists {
-			glog.V(3).Infof("Versions directory %s was created by another process", versionsDir)
+			glog.V(2).Infof("Versions directory %s was created by another process", versionsDir)
 			return versionsDir, nil
 		}
 
@@ -491,6 +515,17 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 		return versionsDir, err
 	}
 
-	glog.V(2).Infof("Created versions directory: %s", versionsDir)
+	// Verify the directory was created successfully
+	exists, verifyErr := s3a.exists(versionsDirPath, versionsDirName, true)
+	if verifyErr != nil {
+		glog.Errorf("Failed to verify created directory %s: %v", versionsDir, verifyErr)
+		return versionsDir, verifyErr
+	}
+	if !exists {
+		glog.Errorf("Directory creation succeeded but directory does not exist: %s", versionsDir)
+		return versionsDir, fmt.Errorf("directory creation succeeded but directory does not exist: %s", versionsDir)
+	}
+
+	glog.V(2).Infof("Successfully created versions directory: %s", versionsDir)
 	return versionsDir, nil
 }
