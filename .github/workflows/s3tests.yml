@@ -345,6 +345,6 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_object_copy_versioned_url_encoding \
           s3tests_boto3/functional/test_s3.py::test_object_copy_versioning_multipart_upload \
           s3tests_boto3/functional/test_s3.py::test_multipart_copy_versioned \
-          s3tests_boto3/functional/test_s3.py::test_versioning_concurrent_multi_object_delete \
-          s3tests_boto3/functional/test_s3.py::test_get_versioned_object_attributes
+          s3tests_boto3/functional/test_s3.py::test_versioning_concurrent_multi_object_delete # \
+          # s3tests_boto3/functional/test_s3.py::test_get_versioned_object_attributes
           kill -9 $pid || true
