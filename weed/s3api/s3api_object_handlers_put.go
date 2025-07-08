@@ -81,7 +81,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versioningEnabled {
 			// Handle versioned PUT
-			versionId, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
+			versionId, etag, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
 				return
@@ -91,6 +91,9 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			if versionId != "" {
 				w.Header().Set("x-amz-version-id", versionId)
 			}
+
+			// Set ETag in response
+			setEtag(w, etag)
 		} else {
 			// Handle regular PUT (non-versioned)
 			uploadUrl := s3a.toFilerUrl(bucket, object)
@@ -220,9 +223,9 @@ func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string 
 }
 
 // putVersionedObject handles PUT operations for versioned buckets
-func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (string, s3err.ErrorCode) {
+func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (versionId string, etag string, errCode s3err.ErrorCode) {
 	// Generate version ID
-	versionId := generateVersionId()
+	versionId = generateVersionId()
 
 	// Create the object entry
 	hash := md5.New()
@@ -234,16 +237,16 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 		body = mimeDetect(r, body)
 	}
 
-	etag, errCode := s3a.putToFiler(r, uploadUrl, body, "", bucket)
+	etag, errCode = s3a.putToFiler(r, uploadUrl, body, "", bucket)
 	if errCode != s3err.ErrNone {
-		return "", errCode
+		return "", "", errCode
 	}
 
 	// Get the uploaded entry to add versioning metadata
 	entry, err := s3a.getEntry(s3a.option.BucketsPath+"/"+bucket, strings.TrimPrefix(object, "/"))
 	if err != nil {
 		glog.Errorf("Failed to get entry after upload: %v", err)
-		return "", s3err.ErrInternalError
+		return "", "", s3err.ErrInternalError
 	}
 
 	// Mark previous versions as not latest
@@ -256,17 +259,8 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	err = s3a.storeVersionedObject(bucket, object, versionId, entry, true)
 	if err != nil {
 		glog.Errorf("Failed to store versioned object: %v", err)
-		return "", s3err.ErrInternalError
+		return "", "", s3err.ErrInternalError
 	}
 
-	// Set ETag in response
-	if etag != "" {
-		if strings.HasPrefix(etag, "\"") {
-			w.Header().Set("ETag", etag)
-		} else {
-			w.Header().Set("ETag", "\""+etag+"\"")
-		}
-	}
-
-	return versionId, s3err.ErrNone
+	return versionId, etag, s3err.ErrNone
 }

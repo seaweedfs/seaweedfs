@@ -552,25 +552,17 @@ func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *htt
 		return
 	}
 
-	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
-	if err != nil {
-		if err == filer_pb.ErrNotFound {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-			return
-		}
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+	// Check if ownership needs to be updated
+	currentOwnership, errCode := s3a.getBucketOwnership(bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
-	oldOwnership, ok := bucketEntry.Extended[s3_constants.ExtOwnershipKey]
-	if !ok || string(oldOwnership) != ownership {
-		if bucketEntry.Extended == nil {
-			bucketEntry.Extended = make(map[string][]byte)
-		}
-		bucketEntry.Extended[s3_constants.ExtOwnershipKey] = []byte(ownership)
-		err = s3a.updateEntry(s3a.option.BucketsPath, bucketEntry)
-		if err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+	if currentOwnership != ownership {
+		errCode = s3a.setBucketOwnership(bucket, ownership)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
 	}
@@ -596,22 +588,15 @@ func (s3a *S3ApiServer) GetBucketOwnershipControls(w http.ResponseWriter, r *htt
 		return
 	}
 
-	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
-	if err != nil {
-		if err == filer_pb.ErrNotFound {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-			return
-		}
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+	// Get ownership using new bucket config system
+	ownership, errCode := s3a.getBucketOwnership(bucket)
+	if errCode == s3err.ErrNoSuchBucket {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		return
-	}
-
-	v, ok := bucketEntry.Extended[s3_constants.ExtOwnershipKey]
-	if !ok {
+	} else if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, s3err.OwnershipControlsNotFoundError)
 		return
 	}
-	ownership := string(v)
 
 	result := &s3.PutBucketOwnershipControlsInput{
 		OwnershipControls: &s3.OwnershipControls{
@@ -677,22 +662,11 @@ func (s3a *S3ApiServer) GetBucketVersioningHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Read versioning configuration from bucket metadata
-	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
-	if err != nil {
-		if err == filer_pb.ErrNotFound {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-			return
-		}
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+	// Get versioning status using new bucket config system
+	versioningStatus, errCode := s3a.getBucketVersioningStatus(bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
-	}
-
-	versioningStatus := s3.BucketVersioningStatusSuspended
-	if bucketEntry.Extended != nil {
-		if status, exists := bucketEntry.Extended[s3_constants.ExtVersioningKey]; exists {
-			versioningStatus = string(status)
-		}
 	}
 
 	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, &s3.PutBucketVersioningInput{
@@ -700,4 +674,51 @@ func (s3a *S3ApiServer) GetBucketVersioningHandler(w http.ResponseWriter, r *htt
 			Status: aws.String(versioningStatus),
 		},
 	})
+}
+
+// PutBucketVersioningHandler Put bucket Versioning
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html
+func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketVersioning %s", bucket)
+
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+
+	if r.Body == nil || r.Body == http.NoBody {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	var versioningConfig s3.VersioningConfiguration
+	defer util_http.CloseRequest(r)
+
+	err := xmlutil.UnmarshalXML(&versioningConfig, xml.NewDecoder(r.Body), "")
+	if err != nil {
+		glog.Warningf("PutBucketVersioningHandler xml decode: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+
+	if versioningConfig.Status == nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	status := *versioningConfig.Status
+	if status != "Enabled" && status != "Suspended" {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	// Update bucket versioning configuration using new bucket config system
+	if errCode := s3a.setBucketVersioningStatus(bucket, status); errCode != s3err.ErrNone {
+		glog.Errorf("PutBucketVersioningHandler save config: %s", errCode)
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	writeSuccessResponseEmpty(w, r)
 }

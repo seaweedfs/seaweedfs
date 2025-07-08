@@ -63,22 +63,6 @@ func generateVersionId() string {
 	return hex.EncodeToString(hash[:])[:32]
 }
 
-// isVersioningEnabled checks if versioning is enabled for a bucket
-func (s3a *S3ApiServer) isVersioningEnabled(bucket string) (bool, error) {
-	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
-	if err != nil {
-		return false, err
-	}
-
-	if bucketEntry.Extended != nil {
-		if status, exists := bucketEntry.Extended[s3_constants.ExtVersioningKey]; exists {
-			return string(status) == "Enabled", nil
-		}
-	}
-
-	return false, nil
-}
-
 // getVersionedObjectDir returns the directory path for storing object versions
 func (s3a *S3ApiServer) getVersionedObjectDir(bucket, object string) string {
 	return path.Join(s3a.option.BucketsPath, bucket, object+".versions")
