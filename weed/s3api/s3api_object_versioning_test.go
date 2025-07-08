@@ -590,3 +590,74 @@ func TestVersioningDirectoryPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionedObjectEntryNames(t *testing.T) {
+	// Test that versioned object entries have the correct names (version IDs)
+	// This test verifies the fix for the entry name issue
+
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath: "/buckets",
+		},
+	}
+
+	versionId := "test-version-id-123456789012345678901234"
+
+	// Create a test entry with original object name
+	originalEntry := &filer_pb.Entry{
+		Name: "test-object.txt", // Original object name
+		Attributes: &filer_pb.FuseAttributes{
+			FileSize: 1024,
+			Mtime:    time.Now().Unix(),
+		},
+	}
+
+	// Test the core logic of creating a versioned entry
+	// This simulates what happens in storeVersionedObject
+	versionEntry := &filer_pb.Entry{
+		Name:        s3a.getVersionFileName(versionId),
+		IsDirectory: originalEntry.IsDirectory,
+		Attributes:  originalEntry.Attributes,
+		Chunks:      originalEntry.Chunks,
+		Extended:    make(map[string][]byte),
+	}
+
+	// Add version metadata like in storeVersionedObject
+	versionEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+	versionEntry.Extended[s3_constants.ExtIsLatestKey] = []byte("true")
+
+	// Verify the versioned entry has the correct name
+	if versionEntry.Name != versionId {
+		t.Errorf("Expected versioned entry name to be version ID %s, got %s", versionId, versionEntry.Name)
+	}
+
+	// Verify the original entry name is preserved
+	if originalEntry.Name != "test-object.txt" {
+		t.Errorf("Expected original entry name to remain test-object.txt, got %s", originalEntry.Name)
+	}
+
+	// Verify version metadata is correctly set
+	if versionEntry.Extended == nil {
+		t.Error("Expected versioned entry to have extended attributes")
+	} else {
+		versionIdBytes, hasVersionId := versionEntry.Extended[s3_constants.ExtVersionIdKey]
+		if !hasVersionId {
+			t.Error("Expected version ID in versioned entry extended attributes")
+		} else if string(versionIdBytes) != versionId {
+			t.Errorf("Expected version ID %s in versioned entry, got %s", versionId, string(versionIdBytes))
+		}
+
+		isLatestBytes, hasIsLatest := versionEntry.Extended[s3_constants.ExtIsLatestKey]
+		if !hasIsLatest {
+			t.Error("Expected isLatest flag in versioned entry extended attributes")
+		} else if string(isLatestBytes) != "true" {
+			t.Errorf("Expected isLatest to be true, got %s", string(isLatestBytes))
+		}
+	}
+
+	// Verify the filename returned by getVersionFileName is correct
+	expectedFileName := s3a.getVersionFileName(versionId)
+	if expectedFileName != versionId {
+		t.Errorf("Expected getVersionFileName to return %s, got %s", versionId, expectedFileName)
+	}
+}

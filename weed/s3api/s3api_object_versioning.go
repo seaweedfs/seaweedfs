@@ -88,8 +88,16 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 		return err
 	}
 
-	// Store the versioned object
-	err = s3a.touch(versionsDir, s3a.getVersionFileName(versionId), entry)
+	// Store the versioned object (create a copy with the version ID as the name)
+	versionEntry := &filer_pb.Entry{
+		Name:        s3a.getVersionFileName(versionId),
+		IsDirectory: entry.IsDirectory,
+		Attributes:  entry.Attributes,
+		Chunks:      entry.Chunks,
+		Extended:    entry.Extended,
+	}
+
+	err = s3a.touch(versionsDir, versionEntry.Name, versionEntry)
 	if err != nil {
 		glog.Errorf("Failed to store versioned object %s/%s: %v", versionsDir, versionId, err)
 		return err
