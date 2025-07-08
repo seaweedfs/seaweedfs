@@ -284,3 +284,67 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_list_long_name \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_special_prefix
           kill -9 $pid || true
+
+  s3tests-versioning:
+    name: S3 Versioning tests
+    runs-on: ubuntu-22.04
+    container:
+      image: docker.io/kmlebedev/ceph-s3-tests:0.0.2
+    timeout-minutes: 25
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Run S3 Versioning tests with KV store
+        timeout-minutes: 20
+        env:
+          S3TEST_CONF: /__w/seaweedfs/seaweedfs/docker/compose/s3tests.conf
+        shell: bash
+        run: |
+          cd /__w/seaweedfs/seaweedfs/weed
+          go install -buildvcs=false
+          set -x
+          weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
+            -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
+            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+          pid=$!
+          sleep 10          
+          cd /s3-tests
+          tox -- \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_return_data_versioning \
+          s3tests_boto3/functional/test_s3.py::test_versioning_bucket_create_suspend \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_create_read_remove \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_create_read_remove_head \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_plain_null_version_removal \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_plain_null_version_overwrite_suspended \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_suspend_versions \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_suspended_copy \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_create_versions_remove_all \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_create_versions_remove_special_names \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_create_overwrite_multipart \
+          s3tests_boto3/functional/test_s3.py::test_versioning_obj_list_marker \
+          s3tests_boto3/functional/test_s3.py::test_versioning_copy_obj_version \
+          s3tests_boto3/functional/test_s3.py::test_versioning_multi_object_delete \
+          s3tests_boto3/functional/test_s3.py::test_versioning_multi_object_delete_with_marker \
+          s3tests_boto3/functional/test_s3.py::test_versioning_multi_object_delete_with_marker_create \
+          s3tests_boto3/functional/test_s3.py::test_versioned_object_acl \
+          s3tests_boto3/functional/test_s3.py::test_versioned_object_acl_no_version_specified \
+          s3tests_boto3/functional/test_s3.py::test_versioned_concurrent_object_create_concurrent_remove \
+          s3tests_boto3/functional/test_s3.py::test_versioned_concurrent_object_create_and_remove \
+          s3tests_boto3/functional/test_s3.py::test_versioning_bucket_atomic_upload_return_version_id \
+          s3tests_boto3/functional/test_s3.py::test_versioning_bucket_multipart_upload_return_version_id \
+          s3tests_boto3/functional/test_s3.py::test_object_copy_versioned_bucket \
+          s3tests_boto3/functional/test_s3.py::test_object_copy_versioned_url_encoding \
+          s3tests_boto3/functional/test_s3.py::test_object_copy_versioning_multipart_upload \
+          s3tests_boto3/functional/test_s3.py::test_multipart_copy_versioned \
+          s3tests_boto3/functional/test_s3.py::test_versioning_concurrent_multi_object_delete \
+          s3tests_boto3/functional/test_s3.py::test_get_versioned_object_attributes
+          kill -9 $pid || true
