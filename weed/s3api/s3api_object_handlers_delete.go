@@ -35,6 +35,10 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	// Check if versioning is enabled for the bucket
 	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
 	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
 		glog.Errorf("Error checking versioning status for bucket %s: %v", bucket, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
