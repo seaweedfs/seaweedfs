@@ -231,11 +231,17 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Generate version ID
 	versionId = generateVersionId()
 
+	// Move existing current object to .versions directory (if it has version metadata)
+	err := s3a.moveCurrentObjectToVersions(bucket, object)
+	if err != nil {
+		glog.Warningf("Failed to move current object to versions: %v", err)
+	}
+
 	// Create the object entry
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
 
-	// Upload to filer first
+	// Upload to filer
 	uploadUrl := s3a.toFilerUrl(bucket, object)
 	if objectContentType == "" {
 		body = mimeDetect(r, body)
@@ -253,16 +259,23 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 		return "", "", s3err.ErrInternalError
 	}
 
-	// Mark previous versions as not latest
-	err = s3a.markPreviousVersionsAsNotLatest(bucket, object)
-	if err != nil {
-		glog.Warningf("Failed to mark previous versions as not latest: %v", err)
+	// Add versioning metadata to the current object
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
 	}
+	entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+	entry.Extended[s3_constants.ExtIsLatestKey] = []byte("true")
 
-	// Store the versioned object
-	err = s3a.storeVersionedObject(bucket, object, versionId, entry, true)
+	// Update the entry with versioning metadata
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	objectName := strings.TrimPrefix(object, "/")
+	err = s3a.mkFile(bucketDir, objectName, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = entry.Extended
+		updatedEntry.Attributes = entry.Attributes
+		updatedEntry.Chunks = entry.Chunks
+	})
 	if err != nil {
-		glog.Errorf("Failed to store versioned object: %v", err)
+		glog.Errorf("Failed to update entry with versioning metadata: %v", err)
 		return "", "", s3err.ErrInternalError
 	}
 

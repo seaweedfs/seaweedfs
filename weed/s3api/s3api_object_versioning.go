@@ -83,36 +83,17 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 	entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
 	entry.Extended[s3_constants.ExtIsLatestKey] = []byte(strconv.FormatBool(isLatest))
 
-	// Ensure the .versions directory exists before storing the versioned object
-	versionsDir, err := s3a.ensureVersionedDirectory(bucket, object)
-	if err != nil {
-		return err
-	}
+	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
+	objectName := strings.TrimPrefix(object, "/")
 
-	// Store the versioned object (create a copy with the version ID as the name)
-	versionEntry := &filer_pb.Entry{
-		Name:        s3a.getVersionFileName(versionId),
-		IsDirectory: entry.IsDirectory,
-		Attributes:  entry.Attributes,
-		Chunks:      entry.Chunks,
-		Extended:    entry.Extended,
-	}
-
-	err = s3a.mkFile(versionsDir, versionEntry.Name, versionEntry.Chunks, func(entry *filer_pb.Entry) {
-		entry.Name = versionEntry.Name
-		entry.IsDirectory = versionEntry.IsDirectory
-		entry.Attributes = versionEntry.Attributes
-		entry.Extended = versionEntry.Extended
-	})
-	if err != nil {
-		return fmt.Errorf("failed to store versioned object %s/%s: %v", versionsDir, versionId, err)
-	}
-
-	// If this is the latest version, also store/update the current version
 	if isLatest {
-		bucketDir := path.Join(s3a.option.BucketsPath, bucket)
-		objectName := strings.TrimPrefix(object, "/")
+		// Move existing current object to .versions directory (if it exists and has version metadata)
+		err := s3a.moveCurrentObjectToVersions(bucket, object)
+		if err != nil {
+			glog.Warningf("Failed to move current object to versions: %v", err)
+		}
 
+		// Store the new version as the current object
 		err = s3a.mkFile(bucketDir, objectName, entry.Chunks, func(currentEntry *filer_pb.Entry) {
 			currentEntry.Name = objectName
 			currentEntry.IsDirectory = entry.IsDirectory
@@ -120,8 +101,91 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 			currentEntry.Extended = entry.Extended
 		})
 		if err != nil {
-			return fmt.Errorf("failed to update current version %s/%s: %v", bucketDir, objectName, err)
+			return fmt.Errorf("failed to store current version %s/%s: %v", bucketDir, objectName, err)
 		}
+	} else {
+		// Store non-latest version directly in .versions directory
+		versionsDir, err := s3a.ensureVersionedDirectory(bucket, object)
+		if err != nil {
+			return err
+		}
+
+		versionEntry := &filer_pb.Entry{
+			Name:        s3a.getVersionFileName(versionId),
+			IsDirectory: entry.IsDirectory,
+			Attributes:  entry.Attributes,
+			Chunks:      entry.Chunks,
+			Extended:    entry.Extended,
+		}
+
+		err = s3a.mkFile(versionsDir, versionEntry.Name, versionEntry.Chunks, func(entry *filer_pb.Entry) {
+			entry.Name = versionEntry.Name
+			entry.IsDirectory = versionEntry.IsDirectory
+			entry.Attributes = versionEntry.Attributes
+			entry.Extended = versionEntry.Extended
+		})
+		if err != nil {
+			return fmt.Errorf("failed to store versioned object %s/%s: %v", versionsDir, versionId, err)
+		}
+	}
+
+	return nil
+}
+
+// moveCurrentObjectToVersions moves the current object to .versions directory
+func (s3a *S3ApiServer) moveCurrentObjectToVersions(bucket, object string) error {
+	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
+	objectName := strings.TrimPrefix(object, "/")
+
+	// Check if current object exists and has version metadata
+	currentEntry, err := s3a.getEntry(bucketDir, objectName)
+	if err != nil {
+		// No current object exists, nothing to move
+		return nil
+	}
+
+	// Only move if it has version metadata (i.e., it's a versioned object)
+	if currentEntry.Extended == nil {
+		// Not a versioned object, nothing to move
+		return nil
+	}
+
+	versionIdBytes, hasVersionId := currentEntry.Extended[s3_constants.ExtVersionIdKey]
+	if !hasVersionId {
+		// Not a versioned object, nothing to move
+		return nil
+	}
+
+	versionId := string(versionIdBytes)
+
+	// Ensure the .versions directory exists
+	versionsDir, err := s3a.ensureVersionedDirectory(bucket, object)
+	if err != nil {
+		return err
+	}
+
+	// Update metadata to mark as not latest
+	if currentEntry.Extended == nil {
+		currentEntry.Extended = make(map[string][]byte)
+	}
+	currentEntry.Extended[s3_constants.ExtIsLatestKey] = []byte("false")
+
+	// Store in .versions directory
+	versionFileName := s3a.getVersionFileName(versionId)
+	err = s3a.mkFile(versionsDir, versionFileName, currentEntry.Chunks, func(entry *filer_pb.Entry) {
+		entry.Name = versionFileName
+		entry.IsDirectory = currentEntry.IsDirectory
+		entry.Attributes = currentEntry.Attributes
+		entry.Extended = currentEntry.Extended
+	})
+	if err != nil {
+		return fmt.Errorf("failed to move object to versions: %v", err)
+	}
+
+	// Remove from current location (we'll replace it with the new version)
+	err = s3a.rm(bucketDir, objectName, false, false)
+	if err != nil {
+		glog.Warningf("Failed to remove current object after moving to versions: %v", err)
 	}
 
 	return nil
@@ -165,49 +229,32 @@ func (s3a *S3ApiServer) markPreviousVersionsAsNotLatest(bucket, object string) e
 func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error) {
 	versionId := generateVersionId()
 
-	// Create delete marker entry
-	deleteMarkerEntry := &filer_pb.Entry{
-		Name:        s3a.getVersionFileName(versionId),
-		IsDirectory: false,
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime: time.Now().Unix(),
-		},
-		Extended: map[string][]byte{
-			s3_constants.ExtVersionIdKey:    []byte(versionId),
-			s3_constants.ExtDeleteMarkerKey: []byte("true"),
-			s3_constants.ExtIsLatestKey:     []byte("true"),
-		},
-	}
-
-	// Mark previous versions as not latest
-	err := s3a.markPreviousVersionsAsNotLatest(bucket, object)
+	// Move existing current object to .versions directory (if it exists and has version metadata)
+	err := s3a.moveCurrentObjectToVersions(bucket, object)
 	if err != nil {
-		glog.Warningf("Failed to mark previous versions as not latest: %v", err)
+		glog.Warningf("Failed to move current object to versions before delete marker: %v", err)
 	}
 
-	// Ensure the .versions directory exists before storing the delete marker
-	versionsDir, err := s3a.ensureVersionedDirectory(bucket, object)
-	if err != nil {
-		return "", err
-	}
-
-	// Store the delete marker (as a file with no chunks)
-	err = s3a.mkFile(versionsDir, deleteMarkerEntry.Name, nil, func(entry *filer_pb.Entry) {
-		entry.Name = deleteMarkerEntry.Name
-		entry.IsDirectory = deleteMarkerEntry.IsDirectory
-		entry.Attributes = deleteMarkerEntry.Attributes
-		entry.Extended = deleteMarkerEntry.Extended
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to store delete marker: %v", err)
-	}
-
-	// Remove the current version of the object (if it exists)
+	// Create delete marker as the new current object
 	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
 	objectName := strings.TrimPrefix(object, "/")
-	err = s3a.rm(bucketDir, objectName, false, false)
+
+	err = s3a.mkFile(bucketDir, objectName, nil, func(entry *filer_pb.Entry) {
+		entry.Name = objectName
+		entry.IsDirectory = false
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+		entry.Attributes.Mtime = time.Now().Unix()
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
+		entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+		entry.Extended[s3_constants.ExtDeleteMarkerKey] = []byte("true")
+		entry.Extended[s3_constants.ExtIsLatestKey] = []byte("true")
+	})
 	if err != nil {
-		glog.V(2).Infof("Could not remove current version %s/%s (might not exist): %v", bucketDir, objectName, err)
+		return "", fmt.Errorf("failed to create delete marker %s/%s: %v", bucketDir, objectName, err)
 	}
 
 	return versionId, nil
@@ -229,7 +276,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 			continue
 		}
 
-		objectKey := "/" + entry.Name
+		objectKey := entry.Name
 		versions, err := s3a.getObjectVersionList(bucket, objectKey)
 		if err != nil {
 			glog.Warningf("Failed to get versions for object %s: %v", objectKey, err)
@@ -342,11 +389,44 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVersion, error) {
 	var versions []*ObjectVersion
 
+	// First, check if there's a current object (might be a delete marker or latest version)
+	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
+	objectName := strings.TrimPrefix(object, "/")
+	currentEntry, err := s3a.getEntry(bucketDir, objectName)
+	if err == nil && currentEntry.Extended != nil {
+		// Check if current object has version metadata (delete marker or versioned object)
+		if versionIdBytes, hasVersionId := currentEntry.Extended[s3_constants.ExtVersionIdKey]; hasVersionId {
+			versionId := string(versionIdBytes)
+			isLatestBytes, _ := currentEntry.Extended[s3_constants.ExtIsLatestKey]
+			isLatest := string(isLatestBytes) == "true"
+			isDeleteMarkerBytes, _ := currentEntry.Extended[s3_constants.ExtDeleteMarkerKey]
+			isDeleteMarker := string(isDeleteMarkerBytes) == "true"
+
+			version := &ObjectVersion{
+				VersionId:      versionId,
+				IsLatest:       isLatest,
+				IsDeleteMarker: isDeleteMarker,
+				LastModified:   time.Unix(currentEntry.Attributes.Mtime, 0),
+				Entry:          currentEntry,
+			}
+
+			if !isDeleteMarker {
+				if currentEntry.Chunks != nil && len(currentEntry.Chunks) > 0 {
+					version.ETag = fmt.Sprintf("\"%x\"", currentEntry.Attributes.Mtime)
+				}
+				version.Size = int64(currentEntry.Attributes.FileSize)
+			}
+
+			versions = append(versions, version)
+		}
+	}
+
+	// Then, check the .versions directory for previous versions
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
 	if err != nil {
-		// No versions directory exists, return empty list
-		return versions, nil
+		// No versions directory exists, return only current object versions
+		goto sortAndReturn
 	}
 
 	for _, entry := range entries {
@@ -386,6 +466,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 		versions = append(versions, version)
 	}
 
+sortAndReturn:
 	// Sort by modification time (newest first)
 	sort.Slice(versions, func(i, j int) bool {
 		return versions[i].LastModified.After(versions[j].LastModified)
