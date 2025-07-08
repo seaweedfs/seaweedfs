@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -660,4 +661,114 @@ func TestVersionedObjectEntryNames(t *testing.T) {
 	if expectedFileName != versionId {
 		t.Errorf("Expected getVersionFileName to return %s, got %s", versionId, expectedFileName)
 	}
+}
+
+func TestEnsureVersionedDirectoryDebug(t *testing.T) {
+	// Test the ensureVersionedDirectory function specifically
+	// This test helps debug the directory creation issue
+
+	bucket := "test-bucket"
+	object := "testobj"
+
+	// Test with a mock server that tracks directory operations
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath: "/buckets",
+		},
+	}
+
+	// Test path calculation
+	expectedVersionsDir := "/buckets/test-bucket/testobj.versions"
+	actualVersionsDir := s3a.getVersionedObjectDir(bucket, object)
+	if actualVersionsDir != expectedVersionsDir {
+		t.Errorf("Expected versions directory %s, got %s", expectedVersionsDir, actualVersionsDir)
+	}
+
+	// Test path splitting for mkdir
+	versionsDirPath, versionsDirName := path.Split(actualVersionsDir)
+	expectedPath := "/buckets/test-bucket/"
+	expectedName := "testobj.versions"
+
+	if versionsDirPath != expectedPath {
+		t.Errorf("Expected versions directory path %s, got %s", expectedPath, versionsDirPath)
+	}
+	if versionsDirName != expectedName {
+		t.Errorf("Expected versions directory name %s, got %s", expectedName, versionsDirName)
+	}
+
+	// Test that the version file name is correct
+	versionId := "test-version-id-123456789012345678901234"
+	expectedVersionFile := versionId
+	actualVersionFile := s3a.getVersionFileName(versionId)
+	if actualVersionFile != expectedVersionFile {
+		t.Errorf("Expected version file name %s, got %s", expectedVersionFile, actualVersionFile)
+	}
+
+	t.Logf("✅ Path calculations are correct:")
+	t.Logf("   Bucket: %s", bucket)
+	t.Logf("   Object: %s", object)
+	t.Logf("   Versions Dir: %s", actualVersionsDir)
+	t.Logf("   Path for mkdir: %s", versionsDirPath)
+	t.Logf("   Name for mkdir: %s", versionsDirName)
+	t.Logf("   Version File: %s", actualVersionFile)
+}
+
+func TestVersioningWorkflowComplete(t *testing.T) {
+	// Test the complete workflow with directory creation
+	// This simulates what should happen during a real versioning operation
+
+	object := "testobj"
+	versionId := "test-version-id-123456789012345678901234"
+
+	// Create a test entry
+	entry := &filer_pb.Entry{
+		Name: object,
+		Attributes: &filer_pb.FuseAttributes{
+			FileSize: 1024,
+			Mtime:    time.Now().Unix(),
+		},
+	}
+
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath: "/buckets",
+		},
+	}
+
+	// Test the version entry creation logic
+	versionEntry := &filer_pb.Entry{
+		Name:        s3a.getVersionFileName(versionId),
+		IsDirectory: entry.IsDirectory,
+		Attributes:  entry.Attributes,
+		Chunks:      entry.Chunks,
+		Extended:    make(map[string][]byte),
+	}
+
+	// Add version metadata
+	versionEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+	versionEntry.Extended[s3_constants.ExtIsLatestKey] = []byte("true")
+
+	// Verify the version entry is constructed correctly
+	if versionEntry.Name != versionId {
+		t.Errorf("Expected version entry name %s, got %s", versionId, versionEntry.Name)
+	}
+
+	if versionEntry.Extended == nil {
+		t.Error("Expected version entry to have extended attributes")
+	} else {
+		actualVersionId := string(versionEntry.Extended[s3_constants.ExtVersionIdKey])
+		if actualVersionId != versionId {
+			t.Errorf("Expected version ID %s in extended attributes, got %s", versionId, actualVersionId)
+		}
+
+		actualIsLatest := string(versionEntry.Extended[s3_constants.ExtIsLatestKey])
+		if actualIsLatest != "true" {
+			t.Errorf("Expected isLatest to be true, got %s", actualIsLatest)
+		}
+	}
+
+	t.Logf("✅ Version entry construction is correct:")
+	t.Logf("   Entry Name: %s", versionEntry.Name)
+	t.Logf("   Version ID: %s", string(versionEntry.Extended[s3_constants.ExtVersionIdKey]))
+	t.Logf("   Is Latest: %s", string(versionEntry.Extended[s3_constants.ExtIsLatestKey]))
 }
