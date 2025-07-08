@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
@@ -496,4 +497,96 @@ func BenchmarkBucketConfigCache(b *testing.B) {
 			cache.Remove(fmt.Sprintf("%s-%d", bucketName, i))
 		}
 	})
+}
+
+func TestVersionedDirectoryCreation(t *testing.T) {
+	// Mock S3ApiServer
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath: "/buckets",
+		},
+	}
+
+	bucket := "test-bucket"
+	object := "test/object.txt"
+
+	// Test getVersionedObjectDir
+	expectedDir := "/buckets/test-bucket/test/object.txt.versions"
+	actualDir := s3a.getVersionedObjectDir(bucket, object)
+	if actualDir != expectedDir {
+		t.Errorf("Expected directory %s, got %s", expectedDir, actualDir)
+	}
+
+	// Test with root object
+	object = "root.txt"
+	expectedDir = "/buckets/test-bucket/root.txt.versions"
+	actualDir = s3a.getVersionedObjectDir(bucket, object)
+	if actualDir != expectedDir {
+		t.Errorf("Expected directory %s, got %s", expectedDir, actualDir)
+	}
+}
+
+func TestVersioningMetadataHandling(t *testing.T) {
+	// Test that versioning metadata is properly handled
+	object := "test-object.txt"
+	versionId := "test-version-id-123456789012345678901234"
+
+	// Create a test entry
+	entry := &filer_pb.Entry{
+		Name: object,
+		Attributes: &filer_pb.FuseAttributes{
+			FileSize: 1024,
+			Mtime:    time.Now().Unix(),
+		},
+	}
+
+	// Test that we can add versioning metadata
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+	entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+	entry.Extended[s3_constants.ExtIsLatestKey] = []byte("true")
+
+	// Verify metadata was added correctly
+	versionIdBytes, hasVersionId := entry.Extended[s3_constants.ExtVersionIdKey]
+	if !hasVersionId {
+		t.Error("Expected version ID in entry extended attributes")
+	} else if string(versionIdBytes) != versionId {
+		t.Errorf("Expected version ID %s, got %s", versionId, string(versionIdBytes))
+	}
+
+	isLatestBytes, hasIsLatest := entry.Extended[s3_constants.ExtIsLatestKey]
+	if !hasIsLatest {
+		t.Error("Expected isLatest flag in entry extended attributes")
+	} else if string(isLatestBytes) != "true" {
+		t.Errorf("Expected isLatest to be true, got %s", string(isLatestBytes))
+	}
+}
+
+func TestVersioningDirectoryPaths(t *testing.T) {
+	// Test directory path calculations for versioning
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath: "/buckets",
+		},
+	}
+
+	tests := []struct {
+		bucket       string
+		object       string
+		expectedPath string
+	}{
+		{"test-bucket", "test-object.txt", "/buckets/test-bucket/test-object.txt.versions"},
+		{"my-bucket", "/path/to/file.jpg", "/buckets/my-bucket/path/to/file.jpg.versions"},
+		{"bucket", "root.txt", "/buckets/bucket/root.txt.versions"},
+		{"test", "/deep/nested/path/file.dat", "/buckets/test/deep/nested/path/file.dat.versions"},
+	}
+
+	for _, test := range tests {
+		actualPath := s3a.getVersionedObjectDir(test.bucket, test.object)
+		if actualPath != test.expectedPath {
+			t.Errorf("For bucket=%s, object=%s: expected path %s, got %s",
+				test.bucket, test.object, test.expectedPath, actualPath)
+		}
+	}
 }

@@ -82,15 +82,29 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 	entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
 	entry.Extended[s3_constants.ExtIsLatestKey] = []byte(strconv.FormatBool(isLatest))
 
-	// Store the versioned object
-	err := s3a.touch(s3a.getVersionedObjectDir(bucket, object), s3a.getVersionFileName(versionId), entry)
+	// Ensure the .versions directory exists before storing the versioned object
+	versionsDir, err := s3a.ensureVersionedDirectory(bucket, object)
 	if err != nil {
+		return err
+	}
+
+	// Store the versioned object
+	err = s3a.touch(versionsDir, s3a.getVersionFileName(versionId), entry)
+	if err != nil {
+		glog.Errorf("Failed to store versioned object %s/%s: %v", versionsDir, versionId, err)
 		return err
 	}
 
 	// If this is the latest version, also store/update the current version
 	if isLatest {
-		return s3a.touch(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"), entry)
+		bucketDir := path.Join(s3a.option.BucketsPath, bucket)
+		objectName := strings.TrimPrefix(object, "/")
+
+		err = s3a.touch(bucketDir, objectName, entry)
+		if err != nil {
+			glog.Errorf("Failed to update current version %s/%s: %v", bucketDir, objectName, err)
+			return err
+		}
 	}
 
 	return nil
@@ -100,18 +114,33 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 func (s3a *S3ApiServer) markPreviousVersionsAsNotLatest(bucket, object string) error {
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 
+	// Check if the versions directory exists
+	versionsDirPath, versionsDirName := path.Split(versionsDir)
+	exists, err := s3a.exists(versionsDirPath, versionsDirName, true)
+	if err != nil || !exists {
+		// Directory doesn't exist yet, which is fine for the first version
+		glog.V(3).Infof("Versions directory %s does not exist yet, skipping mark previous versions", versionsDir)
+		return nil
+	}
+
 	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
 	if err != nil {
-		// Directory might not exist yet, which is fine
+		// Directory might have been deleted or is empty, which is fine
+		glog.V(3).Infof("Could not list versions directory %s: %v", versionsDir, err)
 		return nil
 	}
 
 	for _, entry := range entries {
 		if entry.Extended != nil {
-			entry.Extended[s3_constants.ExtIsLatestKey] = []byte("false")
-			err := s3a.updateEntry(versionsDir, entry)
-			if err != nil {
-				glog.Warningf("Failed to update version %s for object %s: %v", entry.Name, object, err)
+			// Only update if it's currently marked as latest
+			if isLatestBytes, exists := entry.Extended[s3_constants.ExtIsLatestKey]; exists && string(isLatestBytes) == "true" {
+				entry.Extended[s3_constants.ExtIsLatestKey] = []byte("false")
+				err := s3a.updateEntry(versionsDir, entry)
+				if err != nil {
+					glog.Warningf("Failed to update version %s for object %s: %v", entry.Name, object, err)
+				} else {
+					glog.V(2).Infof("Marked version %s as not latest for object %s", entry.Name, object)
+				}
 			}
 		}
 	}
@@ -143,10 +172,16 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 		glog.Warningf("Failed to mark previous versions as not latest: %v", err)
 	}
 
+	// Ensure the .versions directory exists before storing the delete marker
+	versionsDir, err := s3a.ensureVersionedDirectory(bucket, object)
+	if err != nil {
+		return "", err
+	}
+
 	// Store delete marker
-	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	err = s3a.touch(versionsDir, deleteMarkerEntry.Name, deleteMarkerEntry)
 	if err != nil {
+		glog.Errorf("Failed to store delete marker %s/%s: %v", versionsDir, deleteMarkerEntry.Name, err)
 		return "", err
 	}
 
@@ -407,4 +442,47 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	}
 
 	writeSuccessResponseXML(w, r, result)
+}
+
+// ensureVersionedDirectory ensures the .versions directory exists for an object
+func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string, error) {
+	versionsDir := s3a.getVersionedObjectDir(bucket, object)
+	versionsDirPath, versionsDirName := path.Split(versionsDir)
+
+	// Check if directory already exists
+	exists, err := s3a.exists(versionsDirPath, versionsDirName, true)
+	if err != nil {
+		glog.Errorf("Failed to check if versions directory exists %s: %v", versionsDir, err)
+		return versionsDir, err
+	}
+
+	if exists {
+		return versionsDir, nil
+	}
+
+	// Create the .versions directory
+	err = s3a.mkdir(versionsDirPath, versionsDirName, func(entry *filer_pb.Entry) {
+		// Set directory attributes
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+		entry.Attributes.Mtime = time.Now().Unix()
+		entry.Attributes.FileMode = 0755 // Standard directory permissions
+	})
+
+	if err != nil {
+		// Handle race condition - directory might have been created by another process
+		// Check again if it exists now
+		exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true)
+		if checkErr == nil && exists {
+			glog.V(3).Infof("Versions directory %s was created by another process", versionsDir)
+			return versionsDir, nil
+		}
+
+		glog.Errorf("Failed to create versions directory %s: %v", versionsDir, err)
+		return versionsDir, err
+	}
+
+	glog.V(2).Infof("Created versions directory: %s", versionsDir)
+	return versionsDir, nil
 }
