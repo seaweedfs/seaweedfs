@@ -98,7 +98,12 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 		Extended:    entry.Extended,
 	}
 
-	err = s3a.touch(versionsDir, versionEntry.Name, versionEntry)
+	err = s3a.mkFile(versionsDir, versionEntry.Name, versionEntry.Chunks, func(entry *filer_pb.Entry) {
+		entry.Name = versionEntry.Name
+		entry.IsDirectory = versionEntry.IsDirectory
+		entry.Attributes = versionEntry.Attributes
+		entry.Extended = versionEntry.Extended
+	})
 	if err != nil {
 		return fmt.Errorf("failed to store versioned object %s/%s: %v", versionsDir, versionId, err)
 	}
@@ -108,7 +113,12 @@ func (s3a *S3ApiServer) storeVersionedObject(bucket, object, versionId string, e
 		bucketDir := path.Join(s3a.option.BucketsPath, bucket)
 		objectName := strings.TrimPrefix(object, "/")
 
-		err = s3a.touch(bucketDir, objectName, entry)
+		err = s3a.mkFile(bucketDir, objectName, entry.Chunks, func(currentEntry *filer_pb.Entry) {
+			currentEntry.Name = objectName
+			currentEntry.IsDirectory = entry.IsDirectory
+			currentEntry.Attributes = entry.Attributes
+			currentEntry.Extended = entry.Extended
+		})
 		if err != nil {
 			return fmt.Errorf("failed to update current version %s/%s: %v", bucketDir, objectName, err)
 		}
@@ -181,8 +191,13 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 		return "", err
 	}
 
-	// Store the delete marker
-	err = s3a.touch(versionsDir, deleteMarkerEntry.Name, deleteMarkerEntry)
+	// Store the delete marker (as a file with no chunks)
+	err = s3a.mkFile(versionsDir, deleteMarkerEntry.Name, nil, func(entry *filer_pb.Entry) {
+		entry.Name = deleteMarkerEntry.Name
+		entry.IsDirectory = deleteMarkerEntry.IsDirectory
+		entry.Attributes = deleteMarkerEntry.Attributes
+		entry.Extended = deleteMarkerEntry.Extended
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to store delete marker: %v", err)
 	}
