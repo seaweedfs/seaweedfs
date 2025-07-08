@@ -511,11 +511,33 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 		return s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"))
 	}
 
-	// Get specific version
+	// First try to get specific version from .versions directory
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionFile := s3a.getVersionFileName(versionId)
 
-	return s3a.getEntry(versionsDir, versionFile)
+	entry, err := s3a.getEntry(versionsDir, versionFile)
+	if err == nil {
+		return entry, nil
+	}
+
+	// If not found in .versions directory, check if it's the current version
+	currentEntry, currentErr := s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"))
+	if currentErr != nil {
+		// Neither found in .versions nor current location
+		return nil, err
+	}
+
+	// Check if the current entry has the requested version ID
+	if currentEntry.Extended != nil {
+		if currentVersionIdBytes, hasVersionId := currentEntry.Extended[s3_constants.ExtVersionIdKey]; hasVersionId {
+			if string(currentVersionIdBytes) == versionId {
+				return currentEntry, nil
+			}
+		}
+	}
+
+	// Version not found anywhere
+	return nil, err
 }
 
 // deleteSpecificObjectVersion deletes a specific version of an object
