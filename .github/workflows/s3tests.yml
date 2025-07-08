@@ -202,7 +202,23 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_copy_object_ifnonematch_failed \
           s3tests_boto3/functional/test_s3.py::test_lifecycle_set \
           s3tests_boto3/functional/test_s3.py::test_lifecycle_get \
-          s3tests_boto3/functional/test_s3.py::test_lifecycle_set_filter
+          s3tests_boto3/functional/test_s3.py::test_lifecycle_set_filter \
+          s3tests_boto3/functional/test_s3.py::test_bucket_versioning_default \
+          s3tests_boto3/functional/test_s3.py::test_bucket_versioning_enabled \
+          s3tests_boto3/functional/test_s3.py::test_bucket_versioning_suspended \
+          s3tests_boto3/functional/test_s3.py::test_object_versioning_put \
+          s3tests_boto3/functional/test_s3.py::test_object_versioning_get \
+          s3tests_boto3/functional/test_s3.py::test_object_versioning_delete \
+          s3tests_boto3/functional/test_s3.py::test_object_versioning_list \
+          s3tests_boto3/functional/test_s3.py::test_object_versioning_overwrite \
+          s3tests_boto3/functional/test_s3.py::test_object_versioning_delete_marker \
+          s3tests_boto3/functional/test_s3.py::test_object_versioning_copy \
+          s3tests_boto3/functional/test_s3.py::test_object_versioning_multipart \
+          s3tests_boto3/functional/test_s3.py::test_list_object_versions \
+          s3tests_boto3/functional/test_s3.py::test_list_object_versions_pagination \
+          s3tests_boto3/functional/test_s3.py::test_versioning_concurrent_multi_object_delete \
+          s3tests_boto3/functional/test_s3.py::test_object_copy_versioned_bucket \
+          s3tests_boto3/functional/test_s3.py::test_object_copy_versioned_bucket_version_id
           kill -9 $pid || true
 
       - name: Run Ceph S3 tests with SQL store
