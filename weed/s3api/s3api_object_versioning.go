@@ -515,17 +515,32 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 		return versionsDir, err
 	}
 
-	// Verify the directory was created successfully
-	exists, verifyErr := s3a.exists(versionsDirPath, versionsDirName, true)
-	if verifyErr != nil {
-		glog.Errorf("Failed to verify created directory %s: %v", versionsDir, verifyErr)
-		return versionsDir, verifyErr
-	}
-	if !exists {
-		glog.Errorf("Directory creation succeeded but directory does not exist: %s", versionsDir)
-		return versionsDir, fmt.Errorf("directory creation succeeded but directory does not exist: %s", versionsDir)
+	// Verify the directory was created successfully with retry for eventual consistency
+	maxRetries := 5
+	retryDelay := 50 * time.Millisecond
+
+	for i := 0; i < maxRetries; i++ {
+		exists, verifyErr := s3a.exists(versionsDirPath, versionsDirName, true)
+		if verifyErr != nil {
+			glog.Errorf("Failed to verify created directory %s (attempt %d/%d): %v", versionsDir, i+1, maxRetries, verifyErr)
+			if i == maxRetries-1 {
+				return versionsDir, verifyErr
+			}
+			time.Sleep(retryDelay)
+			continue
+		}
+		if exists {
+			glog.V(2).Infof("Successfully verified versions directory exists: %s (after %d attempts)", versionsDir, i+1)
+			return versionsDir, nil
+		}
+
+		if i < maxRetries-1 {
+			glog.V(3).Infof("Directory not yet visible, retrying in %v (attempt %d/%d)", retryDelay, i+1, maxRetries)
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // Exponential backoff
+		}
 	}
 
-	glog.V(2).Infof("Successfully created versions directory: %s", versionsDir)
-	return versionsDir, nil
+	glog.Errorf("Directory creation succeeded but directory does not exist after %d verification attempts: %s", maxRetries, versionsDir)
+	return versionsDir, fmt.Errorf("directory creation succeeded but directory does not exist after %d verification attempts: %s", maxRetries, versionsDir)
 }
