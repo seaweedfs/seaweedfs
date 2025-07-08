@@ -140,6 +140,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	if versioningEnabled && versionId != "" {
 		// Handle versioned GET - retrieve specific version
+		glog.Infof("GetObject: requesting version %s for %s/%s", versionId, bucket, object)
 		entry, err := s3a.getSpecificObjectVersion(bucket, object, versionId)
 		if err != nil {
 			glog.Errorf("Failed to get specific version %s: %v", versionId, err)
@@ -156,8 +157,30 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		// Construct URL for versioned object
-		destUrl = fmt.Sprintf("http://%s%s/%s%s.versions/%s",
-			s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object, versionId)
+		// Check if this is the current version (stored in main location) or historical version (stored in .versions)
+		isCurrentVersion := false
+		if entry.Extended != nil {
+			if isLatestBytes, exists := entry.Extended[s3_constants.ExtIsLatestKey]; exists {
+				isCurrentVersion = string(isLatestBytes) == "true"
+				glog.Infof("GetObject: version %s isLatest=%s, isCurrentVersion=%v", versionId, string(isLatestBytes), isCurrentVersion)
+			} else {
+				glog.Infof("GetObject: version %s has no ExtIsLatestKey", versionId)
+			}
+		} else {
+			glog.Infof("GetObject: version %s has no Extended metadata", versionId)
+		}
+
+		if isCurrentVersion {
+			// Current version is stored in main location
+			destUrl = s3a.toFilerUrl(bucket, object)
+			glog.Infof("GetObject: current version URL: %s", destUrl)
+		} else {
+			// Historical version is stored in .versions directory
+			escapedObject := urlPathEscape(removeDuplicateSlashes(object))
+			destUrl = fmt.Sprintf("http://%s%s/%s%s.versions/%s",
+				s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, escapedObject, versionId)
+			glog.Infof("GetObject: historical version URL: %s", destUrl)
+		}
 
 		// Set version ID in response header
 		w.Header().Set("x-amz-version-id", versionId)
@@ -219,8 +242,23 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		// Construct URL for versioned object
-		destUrl = fmt.Sprintf("http://%s%s/%s%s.versions/%s",
-			s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object, versionId)
+		// Check if this is the current version (stored in main location) or historical version (stored in .versions)
+		isCurrentVersion := false
+		if entry.Extended != nil {
+			if isLatestBytes, exists := entry.Extended[s3_constants.ExtIsLatestKey]; exists {
+				isCurrentVersion = string(isLatestBytes) == "true"
+			}
+		}
+
+		if isCurrentVersion {
+			// Current version is stored in main location
+			destUrl = s3a.toFilerUrl(bucket, object)
+		} else {
+			// Historical version is stored in .versions directory
+			escapedObject := urlPathEscape(removeDuplicateSlashes(object))
+			destUrl = fmt.Sprintf("http://%s%s/%s%s.versions/%s",
+				s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, escapedObject, versionId)
+		}
 
 		// Set version ID in response header
 		w.Header().Set("x-amz-version-id", versionId)

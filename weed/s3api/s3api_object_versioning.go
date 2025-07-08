@@ -173,12 +173,13 @@ func (s3a *S3ApiServer) moveCurrentObjectToVersions(bucket, object string) error
 
 	// Preserve ETag if it doesn't exist (for older objects)
 	if _, hasETag := currentEntry.Extended[s3_constants.ExtETagKey]; !hasETag {
-		fallbackETag := "\"" + filer.ETagChunks(currentEntry.Chunks) + "\""
+		fallbackETag := s3a.calculateETagFromChunks(currentEntry.Chunks)
 		currentEntry.Extended[s3_constants.ExtETagKey] = []byte(fallbackETag)
 	}
 
 	// Store in .versions directory
 	versionFileName := s3a.getVersionFileName(versionId)
+
 	err = s3a.mkFile(versionsDir, versionFileName, currentEntry.Chunks, func(entry *filer_pb.Entry) {
 		entry.Name = versionFileName
 		entry.IsDirectory = currentEntry.IsDirectory
@@ -423,7 +424,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 					version.ETag = string(etagBytes)
 				} else {
 					// Fallback: calculate ETag from chunks
-					version.ETag = "\"" + filer.ETagChunks(currentEntry.Chunks) + "\""
+					version.ETag = s3a.calculateETagFromChunks(currentEntry.Chunks)
 				}
 				version.Size = int64(currentEntry.Attributes.FileSize)
 			}
@@ -471,7 +472,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 				version.ETag = string(etagBytes)
 			} else {
 				// Fallback: calculate ETag from chunks
-				version.ETag = "\"" + filer.ETagChunks(entry.Chunks) + "\""
+				version.ETag = s3a.calculateETagFromChunks(entry.Chunks)
 			}
 			version.Size = int64(entry.Attributes.FileSize)
 		}
@@ -488,6 +489,21 @@ sortAndReturn:
 	return versions, nil
 }
 
+// calculateETagFromChunks calculates ETag from file chunks following S3 multipart rules
+// This is a wrapper around filer.ETagChunks that adds quotes for S3 compatibility
+func (s3a *S3ApiServer) calculateETagFromChunks(chunks []*filer_pb.FileChunk) string {
+	if chunks == nil || len(chunks) == 0 {
+		return "\"\""
+	}
+
+	// Use the existing filer ETag calculation and add quotes for S3 compatibility
+	etag := filer.ETagChunks(chunks)
+	if etag == "" {
+		return "\"\""
+	}
+	return fmt.Sprintf("\"%s\"", etag)
+}
+
 // getSpecificObjectVersion retrieves a specific version of an object
 func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId string) (*filer_pb.Entry, error) {
 	if versionId == "" {
@@ -497,7 +513,9 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 
 	// Get specific version
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
-	return s3a.getEntry(versionsDir, s3a.getVersionFileName(versionId))
+	versionFile := s3a.getVersionFileName(versionId)
+
+	return s3a.getEntry(versionsDir, versionFile)
 }
 
 // deleteSpecificObjectVersion deletes a specific version of an object
@@ -506,32 +524,16 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		return fmt.Errorf("version ID is required for version-specific deletion")
 	}
 
-	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
-	objectName := strings.TrimPrefix(object, "/")
-
-	// First check if the version ID matches the current object
-	currentEntry, err := s3a.getEntry(bucketDir, objectName)
-	if err == nil && currentEntry.Extended != nil {
-		if currentVersionIdBytes, hasVersionId := currentEntry.Extended[s3_constants.ExtVersionIdKey]; hasVersionId {
-			currentVersionId := string(currentVersionIdBytes)
-			if currentVersionId == versionId {
-				// This is the current version, delete it from main location
-				return s3a.rm(bucketDir, objectName, true, false)
-			}
-		}
-	}
-
-	// If not the current version, check the .versions directory
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionFile := s3a.getVersionFileName(versionId)
 
-	// Check if this version exists in .versions directory
-	_, err = s3a.getEntry(versionsDir, versionFile)
+	// Check if this version exists
+	_, err := s3a.getEntry(versionsDir, versionFile)
 	if err != nil {
 		return err
 	}
 
-	// Delete the version from .versions directory
+	// Delete the version
 	return s3a.rm(versionsDir, versionFile, true, false)
 }
 

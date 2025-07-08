@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -319,13 +320,22 @@ func TestVersioningSpecificVersionRetrieval(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Read and verify content
-		body := make([]byte, len(expectedContent))
-		n, err := getResp.Body.Read(body)
-		require.NoError(t, err)
+		// Read and verify content - read all available data, not just expected length
+		body, err := io.ReadAll(getResp.Body)
+		if err != nil {
+			t.Logf("Error reading response body for version %d: %v", i+1, err)
+			if getResp.ContentLength != nil {
+				t.Logf("Content length: %d", *getResp.ContentLength)
+			}
+			if getResp.VersionId != nil {
+				t.Logf("Version ID: %s", *getResp.VersionId)
+			}
+			require.NoError(t, err)
+		}
 		getResp.Body.Close()
 
-		actualContent := string(body[:n])
+		actualContent := string(body)
+		t.Logf("Expected: %s, Actual: %s", expectedContent, actualContent)
 		assert.Equal(t, expectedContent, actualContent, "Content mismatch for version %d", i+1)
 		assert.Equal(t, versionIds[i], *getResp.VersionId, "Version ID mismatch")
 	}
@@ -337,12 +347,11 @@ func TestVersioningSpecificVersionRetrieval(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	body := make([]byte, len(contents[len(contents)-1]))
-	n, err := getLatestResp.Body.Read(body)
+	body, err := io.ReadAll(getLatestResp.Body)
 	require.NoError(t, err)
 	getLatestResp.Body.Close()
 
-	latestContent := string(body[:n])
+	latestContent := string(body)
 	assert.Equal(t, contents[len(contents)-1], latestContent)
 	assert.Equal(t, versionIds[len(versionIds)-1], *getLatestResp.VersionId)
 }
