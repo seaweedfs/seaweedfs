@@ -469,75 +469,34 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 // ensureVersionedDirectory ensures the .versions directory exists for an object
 func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string, error) {
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
-	versionsDirPath, versionsDirName := path.Split(versionsDir)
 
-	glog.Infof("ensureVersionedDirectory: bucket=%s, object=%s, versionsDir=%s", bucket, object, versionsDir)
-	glog.Infof("ensureVersionedDirectory: path=%s, name=%s", versionsDirPath, versionsDirName)
-
-	// Check if directory already exists
-	exists, err := s3a.exists(versionsDirPath, versionsDirName, true)
-	if err != nil {
-		glog.Errorf("ensureVersionedDirectory: failed to check existence: %v", err)
-		return versionsDir, err
-	}
-
-	glog.Infof("ensureVersionedDirectory: directory exists=%v", exists)
-
-	if exists {
-		glog.Infof("ensureVersionedDirectory: directory already exists, returning: %s", versionsDir)
+	// Check cache first to avoid repeated creation attempts
+	if s3a.versionDirCache.IsCached(versionsDir) {
 		return versionsDir, nil
 	}
 
-	// Create the .versions directory
-	glog.Infof("ensureVersionedDirectory: creating directory %s in parent %s", versionsDirName, versionsDirPath)
-	err = s3a.mkdir(versionsDirPath, versionsDirName, func(entry *filer_pb.Entry) {
-		// Set directory attributes
+	versionsDirPath, versionsDirName := path.Split(versionsDir)
+
+	// Try to create the directory - this is idempotent and handles race conditions
+	err := s3a.mkdir(versionsDirPath, versionsDirName, func(entry *filer_pb.Entry) {
 		if entry.Attributes == nil {
 			entry.Attributes = &filer_pb.FuseAttributes{}
 		}
 		entry.Attributes.Mtime = time.Now().Unix()
-		// Ensure proper directory permissions and mode
 		entry.Attributes.FileMode = uint32(0755 | os.ModeDir)
-		glog.Infof("ensureVersionedDirectory: mkdir callback - name=%s, isDirectory=%v, fileMode=%o", entry.Name, entry.IsDirectory, entry.Attributes.FileMode)
 	})
 
 	if err != nil {
-		glog.Errorf("ensureVersionedDirectory: mkdir failed: %v", err)
-		// Handle race condition - directory might have been created by another process
-		// Check again if it exists now
-		exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true)
-		glog.Infof("ensureVersionedDirectory: post-failure check - exists=%v, checkErr=%v", exists, checkErr)
-		if checkErr == nil && exists {
-			glog.Infof("ensureVersionedDirectory: directory was created by another process")
+		// Check if directory already exists (race condition)
+		if exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true); checkErr == nil && exists {
+			// Directory was created by another process, which is fine
+			s3a.versionDirCache.Set(versionsDir) // Cache the successful creation
 			return versionsDir, nil
 		}
-		return versionsDir, err
+		return versionsDir, fmt.Errorf("failed to create versions directory %s: %v", versionsDir, err)
 	}
 
-	glog.Infof("ensureVersionedDirectory: mkdir succeeded for %s", versionsDir)
-
-	// Verify the directory was created and list parent directory contents
-	glog.Infof("ensureVersionedDirectory: verifying creation by listing parent directory: %s", versionsDirPath)
-	parentEntries, _, listErr := s3a.list(versionsDirPath, "", "", false, 100)
-	if listErr != nil {
-		glog.Errorf("ensureVersionedDirectory: failed to list parent directory %s: %v", versionsDirPath, listErr)
-	} else {
-		glog.Infof("ensureVersionedDirectory: parent directory %s contains %d entries:", versionsDirPath, len(parentEntries))
-		for i, entry := range parentEntries {
-			entryType := "FILE"
-			if entry.IsDirectory {
-				entryType = "DIR"
-			}
-			glog.Infof("ensureVersionedDirectory:   [%d] %s: %s (size: %d, mode: %o)", i+1, entryType, entry.Name, entry.Attributes.FileSize, entry.Attributes.FileMode)
-		}
-		if len(parentEntries) == 0 {
-			glog.Infof("ensureVersionedDirectory:   (parent directory is empty)")
-		}
-	}
-
-	// Final verification that the directory exists as expected
-	finalExists, finalErr := s3a.exists(versionsDirPath, versionsDirName, true)
-	glog.Infof("ensureVersionedDirectory: final verification - exists=%v, err=%v", finalExists, finalErr)
-
+	// Cache the successful creation to prevent repeated attempts
+	s3a.versionDirCache.Set(versionsDir)
 	return versionsDir, nil
 }
