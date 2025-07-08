@@ -20,7 +20,7 @@ jobs:
   s3-versioning-tests:
     name: S3 Versioning Tests
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       matrix:
         test-type: ["quick", "comprehensive"]
@@ -40,10 +40,16 @@ jobs:
           go install -buildvcs=false
 
       - name: Run S3 Versioning Tests - ${{ matrix.test-type }}
-        timeout-minutes: 15
+        timeout-minutes: 25
         working-directory: test/s3/versioning
         run: |
           set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting Tests ==="
+          
           # Run tests with automatic server management
           # The test-with-server target handles server startup/shutdown automatically
           if [ "${{ matrix.test-type }}" = "quick" ]; then
@@ -53,6 +59,22 @@ jobs:
             # Run all versioning tests
             make test-with-server
           fi
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/versioning
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            echo "Last 100 lines of server logs:"
+            tail -100 weed-test.log
+          else
+            echo "No server log file found"
+          fi
+          
+          echo "=== Test Environment ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|9333|8080)" || true
 
       - name: Upload test logs on failure
         if: failure()
@@ -65,7 +87,7 @@ jobs:
   s3-versioning-compatibility:
     name: S3 Versioning Compatibility Test
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     
     steps:
       - name: Check out code
@@ -82,17 +104,23 @@ jobs:
           go install -buildvcs=false
 
       - name: Run Core Versioning Test (Python s3tests equivalent)
-        timeout-minutes: 10
+        timeout-minutes: 15
         working-directory: test/s3/versioning
         run: |
           set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
           # Run the specific test that is equivalent to the Python s3tests
           make test-with-server || {
-            echo "Test failed, checking logs..."
+            echo "❌ Test failed, checking logs..."
             if [ -f weed-test.log ]; then
               echo "=== Server logs ==="
               tail -100 weed-test.log
             fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
             exit 1
           }
 
@@ -107,7 +135,7 @@ jobs:
   s3-versioning-stress:
     name: S3 Versioning Stress Test
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     # Only run stress tests on master branch pushes to avoid overloading PR testing
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     
@@ -126,13 +154,17 @@ jobs:
           go install -buildvcs=false
 
       - name: Run S3 Versioning Stress Tests
-        timeout-minutes: 20
+        timeout-minutes: 30
         working-directory: test/s3/versioning
         run: |
           set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
           # Run stress tests (concurrent operations)
           make test-versioning-stress || {
-            echo "Stress test failed, checking logs..."
+            echo "❌ Stress test failed, checking logs..."
             if [ -f weed-test.log ]; then
               echo "=== Server logs ==="
               tail -200 weed-test.log

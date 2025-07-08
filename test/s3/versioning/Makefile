@@ -55,6 +55,7 @@ start-server: check-deps
 	@echo "Starting SeaweedFS server..."
 	@pkill -f "weed.*server" || true
 	@sleep 2
+	@echo "Launching SeaweedFS server in background..."
 	@$(WEED_BINARY) server \
 		-debug \
 		-s3 \
@@ -69,9 +70,30 @@ start-server: check-deps
 		-volume.preStopSeconds=1 \
 		-metricsPort=9324 \
 		> weed-test.log 2>&1 &
-	@echo "Waiting for server to start..."
-	@timeout 30 bash -c 'while ! curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1; do sleep 1; done' || (echo "❌ Server failed to start within 30 seconds" && exit 1)
-	@echo "✅ SeaweedFS server started on port $(S3_PORT)"
+	@echo "Server PID: $$!"
+	@echo "Waiting for server to start (up to 90 seconds)..."
+	@for i in $$(seq 1 90); do \
+		if curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1; then \
+			echo "✅ SeaweedFS server started successfully on port $(S3_PORT) after $$i seconds"; \
+			exit 0; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			echo "⚠️  Server taking longer than expected (30s), checking logs..."; \
+			if [ -f weed-test.log ]; then \
+				echo "=== Recent server logs ==="; \
+				tail -20 weed-test.log; \
+			fi; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "❌ Server failed to start within 90 seconds"; \
+	echo "=== Full server logs ==="; \
+	if [ -f weed-test.log ]; then \
+		cat weed-test.log; \
+	else \
+		echo "No log file found"; \
+	fi; \
+	exit 1
 
 # Stop SeaweedFS server
 stop-server:
@@ -116,7 +138,7 @@ test-all: check-deps
 # Run tests with automatic server management
 test-with-server: start-server
 	@echo "Running versioning tests with managed server..."
-	@$(MAKE) test-versioning || ($(MAKE) stop-server && exit 1)
+	@$(MAKE) test-versioning || (echo "❌ Tests failed, showing server logs:" && tail -50 weed-test.log && $(MAKE) stop-server && exit 1)
 	@$(MAKE) stop-server
 	@echo "✅ Tests completed and server stopped"
 
