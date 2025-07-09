@@ -83,8 +83,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
+		glog.V(1).Infof("PutObjectHandler: bucket %s, object %s, versioningEnabled=%v", bucket, object, versioningEnabled)
+
 		if versioningEnabled {
 			// Handle versioned PUT
+			glog.V(1).Infof("PutObjectHandler: using versioned PUT for %s/%s", bucket, object)
 			versionId, etag, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -100,6 +103,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			setEtag(w, etag)
 		} else {
 			// Handle regular PUT (non-versioned)
+			glog.V(1).Infof("PutObjectHandler: using regular PUT for %s/%s", bucket, object)
 			uploadUrl := s3a.toFilerUrl(bucket, object)
 			if objectContentType == "" {
 				dataReader = mimeDetect(r, dataReader)
@@ -226,70 +230,71 @@ func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string 
 	return string(encodedJwt)
 }
 
-// putVersionedObject handles PUT operations for versioned buckets
+// putVersionedObject handles PUT operations for versioned buckets using the new layout
+// where all versions (including latest) are stored in the .versions directory
 func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (versionId string, etag string, errCode s3err.ErrorCode) {
 	// Generate version ID
 	versionId = generateVersionId()
 
-	glog.V(2).Infof("putVersionedObject: starting upload of %s/%s with version ID %s", bucket, object, versionId)
+	glog.V(2).Infof("putVersionedObject: creating version %s for %s/%s", versionId, bucket, object)
 
-	// Create a unique temporary file name for this version
-	tempObject := fmt.Sprintf("%s.tmp.%s.%d", object, versionId, time.Now().UnixNano())
-	tempUploadUrl := s3a.toFilerUrl(bucket, tempObject)
+	// Create the version file name
+	versionFileName := s3a.getVersionFileName(versionId)
 
-	// Upload to temporary location first
+	// Upload directly to the versions directory
+	// We need to construct the object path relative to the bucket
+	versionObjectPath := object + ".versions/" + versionFileName
+	versionUploadUrl := s3a.toFilerUrl(bucket, versionObjectPath)
+
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
 	if objectContentType == "" {
 		body = mimeDetect(r, body)
 	}
 
-	glog.V(2).Infof("putVersionedObject: uploading %s/%s to temporary location %s", bucket, object, tempUploadUrl)
+	glog.V(2).Infof("putVersionedObject: uploading %s/%s version %s to %s", bucket, object, versionId, versionUploadUrl)
 
-	etag, errCode = s3a.putToFiler(r, tempUploadUrl, body, "", bucket)
+	etag, errCode = s3a.putToFiler(r, versionUploadUrl, body, "", bucket)
 	if errCode != s3err.ErrNone {
-		glog.Errorf("putVersionedObject: failed to upload %s/%s to temporary location: %v", bucket, object, errCode)
+		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode
 	}
 
-	// Add versioning metadata to the temporary entry
+	// Get the uploaded entry to add versioning metadata
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	tempObjectName := strings.TrimPrefix(tempObject, "/")
-	tempEntry, err := s3a.getEntry(bucketDir, tempObjectName)
+	versionEntry, err := s3a.getEntry(bucketDir, versionObjectPath)
 	if err != nil {
-		glog.Errorf("putVersionedObject: failed to get temporary entry: %v", err)
+		glog.Errorf("putVersionedObject: failed to get version entry: %v", err)
 		return "", "", s3err.ErrInternalError
 	}
 
-	if tempEntry.Extended == nil {
-		tempEntry.Extended = make(map[string][]byte)
+	// Add versioning metadata to this version
+	if versionEntry.Extended == nil {
+		versionEntry.Extended = make(map[string][]byte)
 	}
-	tempEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
-	tempEntry.Extended[s3_constants.ExtIsLatestKey] = []byte("true")
+	versionEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+
 	// Store ETag with quotes for S3 compatibility
 	if !strings.HasPrefix(etag, "\"") {
 		etag = "\"" + etag + "\""
 	}
-	tempEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+	versionEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
-	// Update the temporary entry with versioning metadata
-	err = s3a.mkFile(bucketDir, tempObjectName, tempEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = tempEntry.Extended
-		updatedEntry.Attributes = tempEntry.Attributes
-		updatedEntry.Chunks = tempEntry.Chunks
+	// Update the version entry with metadata
+	err = s3a.mkFile(bucketDir, versionObjectPath, versionEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = versionEntry.Extended
+		updatedEntry.Attributes = versionEntry.Attributes
+		updatedEntry.Chunks = versionEntry.Chunks
 	})
 	if err != nil {
-		glog.Errorf("putVersionedObject: failed to update temporary entry metadata: %v", err)
+		glog.Errorf("putVersionedObject: failed to update version metadata: %v", err)
 		return "", "", s3err.ErrInternalError
 	}
 
-	// Now perform the atomic version creation process
-	// This is where we handle the race condition properly
-	err = s3a.atomicVersionCreation(bucket, object, tempObject, versionId)
+	// Update the .versions directory metadata to indicate this is the latest version
+	err = s3a.updateLatestVersionInDirectory(bucket, object, versionId, versionFileName)
 	if err != nil {
-		glog.Errorf("putVersionedObject: failed to create version atomically: %v", err)
-		// Clean up temporary file
-		s3a.rm(bucketDir, tempObjectName, true, false)
+		glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
 		return "", "", s3err.ErrInternalError
 	}
 
@@ -297,46 +302,34 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	return versionId, etag, s3err.ErrNone
 }
 
-// atomicVersionCreation handles the atomic creation of a version by:
-// 1. Moving existing current object to versions directory (if exists)
-// 2. Moving temporary file to current location
-// This approach avoids race conditions by using the filer's atomic operations
-func (s3a *S3ApiServer) atomicVersionCreation(bucket, object, tempObject, versionId string) error {
+// updateLatestVersionInDirectory updates the .versions directory metadata to indicate the latest version
+func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId, versionFileName string) error {
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	objectName := strings.TrimPrefix(object, "/")
-	tempObjectName := strings.TrimPrefix(tempObject, "/")
+	versionsObjectPath := object + ".versions"
 
-	// Step 1: Move existing current object to versions directory (if it exists and has version metadata)
-	err := s3a.moveCurrentObjectToVersions(bucket, object)
+	// Get the current .versions directory entry
+	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
-		glog.Warningf("atomicVersionCreation: failed to move current object to versions: %v", err)
-		// Continue anyway - this is not fatal for version creation
+		glog.Errorf("updateLatestVersionInDirectory: failed to get .versions entry: %v", err)
+		return fmt.Errorf("failed to get .versions entry: %v", err)
 	}
 
-	// Step 2: Get the temporary entry
-	tempEntry, err := s3a.getEntry(bucketDir, tempObjectName)
-	if err != nil {
-		return fmt.Errorf("failed to get temporary entry: %v", err)
+	// Add or update the latest version metadata
+	if versionsEntry.Extended == nil {
+		versionsEntry.Extended = make(map[string][]byte)
 	}
+	versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(versionId)
+	versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(versionFileName)
 
-	// Step 3: Atomically move temporary file to current location
-	// This is the critical atomic operation
-	err = s3a.mkFile(bucketDir, objectName, tempEntry.Chunks, func(entry *filer_pb.Entry) {
-		entry.Name = objectName
-		entry.IsDirectory = tempEntry.IsDirectory
-		entry.Attributes = tempEntry.Attributes
-		entry.Extended = tempEntry.Extended
-		entry.Chunks = tempEntry.Chunks
+	// Update the .versions directory entry with metadata
+	err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = versionsEntry.Extended
+		updatedEntry.Attributes = versionsEntry.Attributes
+		updatedEntry.Chunks = versionsEntry.Chunks
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create versioned object at current location: %v", err)
-	}
-
-	// Step 4: Clean up temporary file
-	err = s3a.rm(bucketDir, tempObjectName, true, false)
-	if err != nil {
-		glog.Warningf("atomicVersionCreation: failed to clean up temporary file %s: %v", tempObject, err)
-		// Non-fatal - the object was created successfully
+		glog.Errorf("updateLatestVersionInDirectory: failed to update .versions directory metadata: %v", err)
+		return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 	}
 
 	return nil

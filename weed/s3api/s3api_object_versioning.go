@@ -269,18 +269,20 @@ func (s3a *S3ApiServer) markPreviousVersionsAsNotLatest(bucket, object string) e
 func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error) {
 	versionId := generateVersionId()
 
-	// Move existing current object to .versions directory (if it exists and has version metadata)
-	err := s3a.moveCurrentObjectToVersions(bucket, object)
-	if err != nil {
-		glog.Warningf("Failed to move current object to versions before delete marker: %v", err)
-	}
+	glog.V(2).Infof("createDeleteMarker: creating delete marker %s for %s/%s", versionId, bucket, object)
 
-	// Create delete marker as the new current object
-	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
-	objectName := strings.TrimPrefix(object, "/")
+	// Create the version file name for the delete marker
+	versionFileName := s3a.getVersionFileName(versionId)
 
-	err = s3a.mkFile(bucketDir, objectName, nil, func(entry *filer_pb.Entry) {
-		entry.Name = objectName
+	// Store delete marker in the .versions directory
+	// Make sure to clean up the object path to remove leading slashes
+	cleanObject := strings.TrimPrefix(object, "/")
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	versionsDir := bucketDir + "/" + cleanObject + ".versions"
+
+	// Create the delete marker entry in the .versions directory
+	err := s3a.mkFile(versionsDir, versionFileName, nil, func(entry *filer_pb.Entry) {
+		entry.Name = versionFileName
 		entry.IsDirectory = false
 		if entry.Attributes == nil {
 			entry.Attributes = &filer_pb.FuseAttributes{}
@@ -291,12 +293,19 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 		}
 		entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
 		entry.Extended[s3_constants.ExtDeleteMarkerKey] = []byte("true")
-		entry.Extended[s3_constants.ExtIsLatestKey] = []byte("true")
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to create delete marker %s/%s: %v", bucketDir, objectName, err)
+		return "", fmt.Errorf("failed to create delete marker in .versions directory: %v", err)
 	}
 
+	// Update the .versions directory metadata to indicate this delete marker is the latest version
+	err = s3a.updateLatestVersionInDirectory(bucket, cleanObject, versionId, versionFileName)
+	if err != nil {
+		glog.Errorf("createDeleteMarker: failed to update latest version in directory: %v", err)
+		return "", fmt.Errorf("failed to update latest version in directory: %v", err)
+	}
+
+	glog.V(2).Infof("createDeleteMarker: successfully created delete marker %s for %s/%s", versionId, bucket, object)
 	return versionId, nil
 }
 
@@ -304,19 +313,26 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*ListObjectVersionsResult, error) {
 	var allVersions []interface{} // Can contain VersionEntry or DeleteMarkerEntry
 
-	// List all objects in bucket
+	// List all entries in bucket
 	entries, _, err := s3a.list(path.Join(s3a.option.BucketsPath, bucket), prefix, keyMarker, false, uint32(maxKeys*2))
 	if err != nil {
 		return nil, err
 	}
 
-	// For each object, collect its versions
+	// For each entry, check if it's a .versions directory
 	for _, entry := range entries {
-		if entry.IsDirectory {
+		if !entry.IsDirectory {
 			continue
 		}
 
-		objectKey := entry.Name
+		// Check if this is a .versions directory
+		if !strings.HasSuffix(entry.Name, ".versions") {
+			continue
+		}
+
+		// Extract object name from .versions directory name
+		objectKey := strings.TrimSuffix(entry.Name, ".versions")
+
 		versions, err := s3a.getObjectVersionList(bucket, objectKey)
 		if err != nil {
 			glog.Warningf("Failed to get versions for object %s: %v", objectKey, err)
@@ -429,63 +445,39 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVersion, error) {
 	var versions []*ObjectVersion
 
-	glog.V(2).Infof("getObjectVersionList: looking for versions of %s/%s", bucket, object)
+	glog.V(2).Infof("getObjectVersionList: looking for versions of %s/%s in .versions directory", bucket, object)
 
-	// First, check if there's a current object (might be a delete marker or latest version)
-	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
-	objectName := strings.TrimPrefix(object, "/")
-	currentEntry, err := s3a.getEntry(bucketDir, objectName)
-	if err == nil && currentEntry.Extended != nil {
-		// Check if current object has version metadata (delete marker or versioned object)
-		if versionIdBytes, hasVersionId := currentEntry.Extended[s3_constants.ExtVersionIdKey]; hasVersionId {
-			versionId := string(versionIdBytes)
-			isLatestBytes, _ := currentEntry.Extended[s3_constants.ExtIsLatestKey]
-			isLatest := string(isLatestBytes) == "true"
-			isDeleteMarkerBytes, _ := currentEntry.Extended[s3_constants.ExtDeleteMarkerKey]
-			isDeleteMarker := string(isDeleteMarkerBytes) == "true"
+	// All versions are now stored in the .versions directory only
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	versionsObjectPath := object + ".versions"
+	glog.V(2).Infof("getObjectVersionList: checking versions directory %s", versionsObjectPath)
 
-			glog.V(2).Infof("getObjectVersionList: found current object version %s, isLatest=%v, isDeleteMarker=%v", versionId, isLatest, isDeleteMarker)
-
-			version := &ObjectVersion{
-				VersionId:      versionId,
-				IsLatest:       isLatest,
-				IsDeleteMarker: isDeleteMarker,
-				LastModified:   time.Unix(currentEntry.Attributes.Mtime, 0),
-				Entry:          currentEntry,
-			}
-
-			if !isDeleteMarker {
-				// Try to get ETag from Extended attributes first
-				if etagBytes, hasETag := currentEntry.Extended[s3_constants.ExtETagKey]; hasETag {
-					version.ETag = string(etagBytes)
-				} else {
-					// Fallback: calculate ETag from chunks
-					version.ETag = s3a.calculateETagFromChunks(currentEntry.Chunks)
-				}
-				version.Size = int64(currentEntry.Attributes.FileSize)
-			}
-
-			versions = append(versions, version)
-		} else {
-			glog.V(2).Infof("getObjectVersionList: current object exists but has no version metadata")
-		}
-	} else if err != nil {
-		glog.V(2).Infof("getObjectVersionList: no current object found: %v", err)
-	} else {
-		glog.V(2).Infof("getObjectVersionList: current object exists but has no Extended metadata")
+	// Get the .versions directory entry to read latest version metadata
+	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
+	if err != nil {
+		// No versions directory exists, return empty list
+		glog.V(2).Infof("getObjectVersionList: no versions directory found: %v", err)
+		return versions, nil
 	}
 
-	// Then, check the .versions directory for previous versions
-	versionsDir := s3a.getVersionedObjectDir(bucket, object)
-	glog.V(2).Infof("getObjectVersionList: checking versions directory %s", versionsDir)
-	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
+	// Get the latest version info from directory metadata
+	var latestVersionId string
+	if versionsEntry.Extended != nil {
+		if latestVersionIdBytes, hasLatestVersionId := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]; hasLatestVersionId {
+			latestVersionId = string(latestVersionIdBytes)
+			glog.V(2).Infof("getObjectVersionList: latest version ID from directory metadata: %s", latestVersionId)
+		}
+	}
+
+	// List all version files in the .versions directory
+	entries, _, err := s3a.list(bucketDir+"/"+versionsObjectPath, "", "", false, 1000)
 	if err != nil {
-		// No versions directory exists, return only current object versions
-		glog.V(2).Infof("getObjectVersionList: no versions directory found: %v", err)
-		goto sortAndReturn
+		glog.V(2).Infof("getObjectVersionList: failed to list version files: %v", err)
+		return versions, nil
 	}
 
 	glog.V(2).Infof("getObjectVersionList: found %d entries in versions directory", len(entries))
+
 	for i, entry := range entries {
 		if entry.Extended == nil {
 			glog.V(2).Infof("getObjectVersionList: entry %d has no Extended metadata, skipping", i)
@@ -499,13 +491,14 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 		}
 
 		versionId := string(versionIdBytes)
-		isLatestBytes, _ := entry.Extended[s3_constants.ExtIsLatestKey]
-		isLatest := string(isLatestBytes) == "true"
+
+		// Check if this version is the latest by comparing with directory metadata
+		isLatest := (versionId == latestVersionId)
 
 		isDeleteMarkerBytes, _ := entry.Extended[s3_constants.ExtDeleteMarkerKey]
 		isDeleteMarker := string(isDeleteMarkerBytes) == "true"
 
-		glog.V(2).Infof("getObjectVersionList: found version %s in .versions directory, isLatest=%v, isDeleteMarker=%v", versionId, isLatest, isDeleteMarker)
+		glog.V(2).Infof("getObjectVersionList: found version %s, isLatest=%v, isDeleteMarker=%v", versionId, isLatest, isDeleteMarker)
 
 		version := &ObjectVersion{
 			VersionId:      versionId,
@@ -529,7 +522,6 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 		versions = append(versions, version)
 	}
 
-sortAndReturn:
 	// Sort by modification time (newest first)
 	sort.Slice(versions, func(i, j int) bool {
 		return versions[i].LastModified.After(versions[j].LastModified)
@@ -727,4 +719,42 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 	// Cache the successful creation to prevent repeated attempts
 	s3a.versionDirCache.Set(versionsDir)
 	return versionsDir, nil
+}
+
+// getLatestObjectVersion finds the latest version of an object by reading .versions directory metadata
+func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb.Entry, error) {
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	versionsObjectPath := object + ".versions"
+
+	// Get the .versions directory entry to read latest version metadata
+	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get .versions directory: %v", err)
+	}
+
+	// Check if directory has latest version metadata
+	if versionsEntry.Extended == nil {
+		return nil, fmt.Errorf("no version metadata found in .versions directory for %s/%s", bucket, object)
+	}
+
+	latestVersionIdBytes, hasLatestVersionId := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]
+	latestVersionFileBytes, hasLatestVersionFile := versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
+
+	if !hasLatestVersionId || !hasLatestVersionFile {
+		return nil, fmt.Errorf("incomplete latest version metadata in .versions directory for %s/%s", bucket, object)
+	}
+
+	latestVersionId := string(latestVersionIdBytes)
+	latestVersionFile := string(latestVersionFileBytes)
+
+	glog.V(2).Infof("getLatestObjectVersion: found latest version %s (file: %s) for %s/%s", latestVersionId, latestVersionFile, bucket, object)
+
+	// Get the actual latest version file entry
+	latestVersionPath := versionsObjectPath + "/" + latestVersionFile
+	latestVersionEntry, err := s3a.getEntry(bucketDir, latestVersionPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest version file %s: %v", latestVersionPath, err)
+	}
+
+	return latestVersionEntry, nil
 }
