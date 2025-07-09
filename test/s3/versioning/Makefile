@@ -166,21 +166,18 @@ stop-server:
 		rm -f weed-server.pid; \
 	else \
 		echo "No PID file found, checking for running processes..."; \
-		WEED_PIDS=$$(pgrep -f "weed_binary.*server" 2>/dev/null | tr '\n' ' '); \
-		if [ -n "$$WEED_PIDS" ]; then \
-			echo "Found running weed processes: $$WEED_PIDS"; \
-			for pid in $$WEED_PIDS; do \
-				echo "Stopping process $$pid"; \
-				kill -TERM $$pid 2>/dev/null || true; \
-			done; \
-			sleep 2; \
-			WEED_PIDS=$$(pgrep -f "weed_binary.*server" 2>/dev/null | tr '\n' ' '); \
-			if [ -n "$$WEED_PIDS" ]; then \
-				echo "Force killing remaining processes: $$WEED_PIDS"; \
-				for pid in $$WEED_PIDS; do \
-					echo "Force killing process $$pid"; \
-					kill -KILL $$pid 2>/dev/null || true; \
-				done; \
+		if pgrep -f "weed_binary.*server" >/dev/null 2>&1; then \
+			echo "Found running weed processes, attempting to stop them..."; \
+			timeout 10 sh -c ' \
+				pkill -TERM -f "weed_binary.*server" 2>/dev/null || true; \
+				sleep 3; \
+				pkill -KILL -f "weed_binary.*server" 2>/dev/null || true; \
+			' || echo "Timeout occurred during process cleanup"; \
+			sleep 1; \
+			if pgrep -f "weed_binary.*server" >/dev/null 2>&1; then \
+				echo "⚠️  Some processes may still be running"; \
+			else \
+				echo "✅ All weed processes stopped"; \
 			fi; \
 		else \
 			echo "No running weed processes found"; \
