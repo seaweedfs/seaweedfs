@@ -233,64 +233,111 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 
 	glog.V(2).Infof("putVersionedObject: starting upload of %s/%s with version ID %s", bucket, object, versionId)
 
-	// Move existing current object to .versions directory (if it has version metadata)
-	err := s3a.moveCurrentObjectToVersions(bucket, object)
-	if err != nil {
-		glog.Warningf("Failed to move current object to versions: %v", err)
-	}
+	// Create a unique temporary file name for this version
+	tempObject := fmt.Sprintf("%s.tmp.%s.%d", object, versionId, time.Now().UnixNano())
+	tempUploadUrl := s3a.toFilerUrl(bucket, tempObject)
 
-	// Create the object entry
+	// Upload to temporary location first
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
-
-	// Upload to filer
-	uploadUrl := s3a.toFilerUrl(bucket, object)
 	if objectContentType == "" {
 		body = mimeDetect(r, body)
 	}
 
-	glog.V(2).Infof("putVersionedObject: uploading %s/%s to %s", bucket, object, uploadUrl)
+	glog.V(2).Infof("putVersionedObject: uploading %s/%s to temporary location %s", bucket, object, tempUploadUrl)
 
-	etag, errCode = s3a.putToFiler(r, uploadUrl, body, "", bucket)
+	etag, errCode = s3a.putToFiler(r, tempUploadUrl, body, "", bucket)
 	if errCode != s3err.ErrNone {
-		glog.Errorf("putVersionedObject: failed to upload %s/%s: %v", bucket, object, errCode)
+		glog.Errorf("putVersionedObject: failed to upload %s/%s to temporary location: %v", bucket, object, errCode)
 		return "", "", errCode
 	}
 
-	glog.V(2).Infof("putVersionedObject: successfully uploaded %s/%s, adding version metadata", bucket, object)
-
-	// Get the uploaded entry to add versioning metadata
-	entry, err := s3a.getEntry(s3a.option.BucketsPath+"/"+bucket, strings.TrimPrefix(object, "/"))
+	// Add versioning metadata to the temporary entry
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	tempObjectName := strings.TrimPrefix(tempObject, "/")
+	tempEntry, err := s3a.getEntry(bucketDir, tempObjectName)
 	if err != nil {
-		glog.Errorf("Failed to get entry after upload: %v", err)
+		glog.Errorf("putVersionedObject: failed to get temporary entry: %v", err)
 		return "", "", s3err.ErrInternalError
 	}
 
-	// Add versioning metadata to the current object
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
+	if tempEntry.Extended == nil {
+		tempEntry.Extended = make(map[string][]byte)
 	}
-	entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
-	entry.Extended[s3_constants.ExtIsLatestKey] = []byte("true")
+	tempEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+	tempEntry.Extended[s3_constants.ExtIsLatestKey] = []byte("true")
 	// Store ETag with quotes for S3 compatibility
 	if !strings.HasPrefix(etag, "\"") {
 		etag = "\"" + etag + "\""
 	}
-	entry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+	tempEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
-	// Update the entry with versioning metadata
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	objectName := strings.TrimPrefix(object, "/")
-	err = s3a.mkFile(bucketDir, objectName, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = entry.Extended
-		updatedEntry.Attributes = entry.Attributes
-		updatedEntry.Chunks = entry.Chunks
+	// Update the temporary entry with versioning metadata
+	err = s3a.mkFile(bucketDir, tempObjectName, tempEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = tempEntry.Extended
+		updatedEntry.Attributes = tempEntry.Attributes
+		updatedEntry.Chunks = tempEntry.Chunks
 	})
 	if err != nil {
-		glog.Errorf("Failed to update entry with versioning metadata: %v", err)
+		glog.Errorf("putVersionedObject: failed to update temporary entry metadata: %v", err)
+		return "", "", s3err.ErrInternalError
+	}
+
+	// Now perform the atomic version creation process
+	// This is where we handle the race condition properly
+	err = s3a.atomicVersionCreation(bucket, object, tempObject, versionId)
+	if err != nil {
+		glog.Errorf("putVersionedObject: failed to create version atomically: %v", err)
+		// Clean up temporary file
+		s3a.rm(bucketDir, tempObjectName, true, false)
 		return "", "", s3err.ErrInternalError
 	}
 
 	glog.V(2).Infof("putVersionedObject: successfully created version %s for %s/%s", versionId, bucket, object)
 	return versionId, etag, s3err.ErrNone
+}
+
+// atomicVersionCreation handles the atomic creation of a version by:
+// 1. Moving existing current object to versions directory (if exists)
+// 2. Moving temporary file to current location
+// This approach avoids race conditions by using the filer's atomic operations
+func (s3a *S3ApiServer) atomicVersionCreation(bucket, object, tempObject, versionId string) error {
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	objectName := strings.TrimPrefix(object, "/")
+	tempObjectName := strings.TrimPrefix(tempObject, "/")
+
+	// Step 1: Move existing current object to versions directory (if it exists and has version metadata)
+	err := s3a.moveCurrentObjectToVersions(bucket, object)
+	if err != nil {
+		glog.Warningf("atomicVersionCreation: failed to move current object to versions: %v", err)
+		// Continue anyway - this is not fatal for version creation
+	}
+
+	// Step 2: Get the temporary entry
+	tempEntry, err := s3a.getEntry(bucketDir, tempObjectName)
+	if err != nil {
+		return fmt.Errorf("failed to get temporary entry: %v", err)
+	}
+
+	// Step 3: Atomically move temporary file to current location
+	// This is the critical atomic operation
+	err = s3a.mkFile(bucketDir, objectName, tempEntry.Chunks, func(entry *filer_pb.Entry) {
+		entry.Name = objectName
+		entry.IsDirectory = tempEntry.IsDirectory
+		entry.Attributes = tempEntry.Attributes
+		entry.Extended = tempEntry.Extended
+		entry.Chunks = tempEntry.Chunks
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create versioned object at current location: %v", err)
+	}
+
+	// Step 4: Clean up temporary file
+	err = s3a.rm(bucketDir, tempObjectName, true, false)
+	if err != nil {
+		glog.Warningf("atomicVersionCreation: failed to clean up temporary file %s: %v", tempObject, err)
+		// Non-fatal - the object was created successfully
+	}
+
+	return nil
 }
