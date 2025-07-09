@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -52,45 +51,6 @@ type S3ApiServer struct {
 	bucketRegistry    *BucketRegistry
 	credentialManager *credential.CredentialManager
 	bucketConfigCache *BucketConfigCache
-	versionDirCache   *VersionDirCache
-}
-
-// VersionDirCache caches created versioned directories to prevent repeated creation attempts
-type VersionDirCache struct {
-	cache map[string]time.Time
-	mutex sync.RWMutex
-	ttl   time.Duration
-}
-
-func NewVersionDirCache(ttl time.Duration) *VersionDirCache {
-	return &VersionDirCache{
-		cache: make(map[string]time.Time),
-		ttl:   ttl,
-	}
-}
-
-func (vdc *VersionDirCache) IsCached(versionsDir string) bool {
-	vdc.mutex.RLock()
-	defer vdc.mutex.RUnlock()
-
-	created, exists := vdc.cache[versionsDir]
-	if !exists {
-		return false
-	}
-
-	// Check if entry is expired
-	if time.Since(created) > vdc.ttl {
-		return false
-	}
-
-	return true
-}
-
-func (vdc *VersionDirCache) Set(versionsDir string) {
-	vdc.mutex.Lock()
-	defer vdc.mutex.Unlock()
-
-	vdc.cache[versionsDir] = time.Now()
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -129,7 +89,6 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		cb:                NewCircuitBreaker(option),
 		credentialManager: iam.credentialManager,
 		bucketConfigCache: NewBucketConfigCache(5 * time.Minute),
-		versionDirCache:   NewVersionDirCache(5 * time.Minute),
 	}
 
 	if option.Config != "" {

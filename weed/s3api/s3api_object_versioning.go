@@ -688,12 +688,6 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 // ensureVersionedDirectory ensures the .versions directory exists for an object
 func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string, error) {
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
-
-	// Check cache first to avoid repeated creation attempts
-	if s3a.versionDirCache.IsCached(versionsDir) {
-		return versionsDir, nil
-	}
-
 	versionsDirPath, versionsDirName := path.Split(versionsDir)
 
 	// Try to create the directory - this is idempotent and handles race conditions
@@ -710,14 +704,11 @@ func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string,
 		// Check if directory already exists (race condition)
 		if exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true); checkErr == nil && exists {
 			// Directory was created by another process, which is fine
-			s3a.versionDirCache.Set(versionsDir)
 			return versionsDir, nil
 		}
 		return versionsDir, fmt.Errorf("failed to create versions directory %s: %v", versionsDir, err)
 	}
 
-	// Cache the successful creation to prevent repeated attempts
-	s3a.versionDirCache.Set(versionsDir)
 	return versionsDir, nil
 }
 
