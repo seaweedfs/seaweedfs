@@ -640,54 +640,6 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 	}, nil
 }
 
-// GetTopics retrieves message queue topics data
-func (s *AdminServer) GetTopics() (*TopicsData, error) {
-	var topics []TopicInfo
-
-	// TODO: Implement actual topic retrieval from message queue brokers
-	// For now, return empty data structure
-	// In the future, this would query the message queue brokers to get:
-	// - Topic names and configurations
-	// - Partition counts
-	// - Subscriber counts
-	// - Message statistics
-
-	return &TopicsData{
-		Topics:        topics,
-		TotalTopics:   len(topics),
-		TotalMessages: 0,
-		TotalSize:     0,
-		LastUpdated:   time.Now(),
-	}, nil
-}
-
-// GetSubscribers retrieves message queue subscribers data
-func (s *AdminServer) GetSubscribers() (*SubscribersData, error) {
-	var subscribers []SubscriberInfo
-
-	// TODO: Implement actual subscriber retrieval from message queue brokers
-	// For now, return empty data structure
-	// In the future, this would query the message queue brokers to get:
-	// - Active subscribers/consumers
-	// - Consumer group information
-	// - Subscription status
-	// - Message processing statistics
-
-	activeCount := 0
-	for _, sub := range subscribers {
-		if sub.Status == "active" {
-			activeCount++
-		}
-	}
-
-	return &SubscribersData{
-		Subscribers:       subscribers,
-		TotalSubscribers:  len(subscribers),
-		ActiveSubscribers: activeCount,
-		LastUpdated:       time.Now(),
-	}, nil
-}
-
 // GetAllFilers method moved to client_management.go
 
 // GetVolumeDetails method moved to volume_management.go
