@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/k0kubun/pp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -429,10 +430,7 @@ func TestVersioningConcurrentOperations(t *testing.T) {
 	listResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
 		Bucket: aws.String(bucketName),
 	})
-	t.Logf("ListObjectVersions response: %+v", listResp)
-	for _, version := range listResp.Versions {
-		t.Logf("Version: %+v", version)
-	}
+	pp.Println(listResp)
 	require.NoError(t, err)
 	assert.Len(t, listResp.Versions, numObjects)
 
