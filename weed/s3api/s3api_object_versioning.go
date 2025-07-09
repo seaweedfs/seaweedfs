@@ -7,7 +7,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
-	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -493,33 +492,6 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	}
 
 	writeSuccessResponseXML(w, r, result)
-}
-
-// ensureVersionedDirectory ensures the .versions directory exists for an object
-func (s3a *S3ApiServer) ensureVersionedDirectory(bucket, object string) (string, error) {
-	versionsDir := s3a.getVersionedObjectDir(bucket, object)
-	versionsDirPath, versionsDirName := path.Split(versionsDir)
-
-	// Try to create the directory - this is idempotent and handles race conditions
-	err := s3a.mkdir(versionsDirPath, versionsDirName, func(entry *filer_pb.Entry) {
-		entry.IsDirectory = true // Explicitly set as directory
-		if entry.Attributes == nil {
-			entry.Attributes = &filer_pb.FuseAttributes{}
-		}
-		entry.Attributes.Mtime = time.Now().Unix()
-		entry.Attributes.FileMode = uint32(0755 | os.ModeDir)
-	})
-
-	if err != nil {
-		// Check if directory already exists (race condition)
-		if exists, checkErr := s3a.exists(versionsDirPath, versionsDirName, true); checkErr == nil && exists {
-			// Directory was created by another process, which is fine
-			return versionsDir, nil
-		}
-		return versionsDir, fmt.Errorf("failed to create versions directory %s: %v", versionsDir, err)
-	}
-
-	return versionsDir, nil
 }
 
 // getLatestObjectVersion finds the latest version of an object by reading .versions directory metadata
