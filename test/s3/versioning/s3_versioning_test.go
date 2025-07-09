@@ -429,6 +429,10 @@ func TestVersioningConcurrentOperations(t *testing.T) {
 	listResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
 		Bucket: aws.String(bucketName),
 	})
+	t.Logf("ListObjectVersions response: %+v", listResp)
+	for _, version := range listResp.Versions {
+		t.Logf("Version: %+v", version)
+	}
 	require.NoError(t, err)
 	assert.Len(t, listResp.Versions, numObjects)
 
