@@ -165,37 +165,56 @@ func (s3a *S3ApiServer) moveCurrentObjectToVersions(bucket, object string) error
 		return err
 	}
 
-	// Update metadata to mark as not latest
-	if currentEntry.Extended == nil {
-		currentEntry.Extended = make(map[string][]byte)
+	// Check if this version already exists in the .versions directory
+	// This handles race conditions where multiple goroutines try to move the same object
+	versionFileName := s3a.getVersionFileName(versionId)
+	_, existsErr := s3a.getEntry(versionsDir, versionFileName)
+	if existsErr == nil {
+		// Version already exists in .versions directory, nothing to do
+		// This is a race condition - another goroutine already moved this object
+		return nil
 	}
-	currentEntry.Extended[s3_constants.ExtIsLatestKey] = []byte("false")
+
+	// Create a copy of the entry for the versions directory
+	versionEntry := &filer_pb.Entry{
+		Name:        versionFileName,
+		IsDirectory: currentEntry.IsDirectory,
+		Attributes:  currentEntry.Attributes,
+		Chunks:      currentEntry.Chunks,
+		Extended:    make(map[string][]byte),
+	}
+
+	// Copy extended attributes
+	for k, v := range currentEntry.Extended {
+		versionEntry.Extended[k] = v
+	}
+
+	// Update metadata to mark as not latest
+	versionEntry.Extended[s3_constants.ExtIsLatestKey] = []byte("false")
 
 	// Preserve ETag if it doesn't exist (for older objects)
-	if _, hasETag := currentEntry.Extended[s3_constants.ExtETagKey]; !hasETag {
-		fallbackETag := s3a.calculateETagFromChunks(currentEntry.Chunks)
-		currentEntry.Extended[s3_constants.ExtETagKey] = []byte(fallbackETag)
+	if _, hasETag := versionEntry.Extended[s3_constants.ExtETagKey]; !hasETag {
+		fallbackETag := s3a.calculateETagFromChunks(versionEntry.Chunks)
+		versionEntry.Extended[s3_constants.ExtETagKey] = []byte(fallbackETag)
 	}
 
 	// Store in .versions directory
-	versionFileName := s3a.getVersionFileName(versionId)
-
-	err = s3a.mkFile(versionsDir, versionFileName, currentEntry.Chunks, func(entry *filer_pb.Entry) {
-		entry.Name = versionFileName
-		entry.IsDirectory = currentEntry.IsDirectory
-		entry.Attributes = currentEntry.Attributes
-		entry.Extended = currentEntry.Extended
+	err = s3a.mkFile(versionsDir, versionFileName, versionEntry.Chunks, func(entry *filer_pb.Entry) {
+		entry.Name = versionEntry.Name
+		entry.IsDirectory = versionEntry.IsDirectory
+		entry.Attributes = versionEntry.Attributes
+		entry.Extended = versionEntry.Extended
 	})
 	if err != nil {
+		// Check if another goroutine already created this version file
+		if _, existsErr := s3a.getEntry(versionsDir, versionFileName); existsErr == nil {
+			// Another goroutine already created this version, which is fine
+			return nil
+		}
 		return fmt.Errorf("failed to move object to versions: %v", err)
 	}
 
-	// Remove from current location (we'll replace it with the new version)
-	err = s3a.rm(bucketDir, objectName, false, false)
-	if err != nil {
-		glog.Warningf("Failed to remove current object after moving to versions: %v", err)
-	}
-
+	// Successfully moved to versions directory
 	return nil
 }
 
@@ -549,14 +568,53 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionFile := s3a.getVersionFileName(versionId)
 
-	// Check if this version exists
+	// First try to delete from .versions directory
 	_, err := s3a.getEntry(versionsDir, versionFile)
-	if err != nil {
-		return err
+	if err == nil {
+		// Version exists in .versions directory, delete it
+		deleteErr := s3a.rm(versionsDir, versionFile, true, false)
+		if deleteErr != nil {
+			// Check if file was already deleted by another process
+			if _, checkErr := s3a.getEntry(versionsDir, versionFile); checkErr != nil {
+				// File doesn't exist anymore, deletion was successful
+				return nil
+			}
+			return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
+		}
+		return nil
 	}
 
-	// Delete the version
-	return s3a.rm(versionsDir, versionFile, true, false)
+	// If not found in .versions directory, check if it's the current version
+	currentPath := path.Join(s3a.option.BucketsPath, bucket)
+	currentFile := strings.TrimPrefix(object, "/")
+
+	currentEntry, currentErr := s3a.getEntry(currentPath, currentFile)
+	if currentErr != nil {
+		// Neither found in .versions nor current location
+		return fmt.Errorf("version %s not found", versionId)
+	}
+
+	// Check if the current entry has the requested version ID
+	if currentEntry.Extended != nil {
+		if currentVersionIdBytes, hasVersionId := currentEntry.Extended[s3_constants.ExtVersionIdKey]; hasVersionId {
+			if string(currentVersionIdBytes) == versionId {
+				// This is the current version, delete it
+				deleteErr := s3a.rm(currentPath, currentFile, true, false)
+				if deleteErr != nil {
+					// Check if file was already deleted by another process
+					if _, checkErr := s3a.getEntry(currentPath, currentFile); checkErr != nil {
+						// File doesn't exist anymore, deletion was successful
+						return nil
+					}
+					return fmt.Errorf("failed to delete current version %s: %v", versionId, deleteErr)
+				}
+				return nil
+			}
+		}
+	}
+
+	// Version not found anywhere
+	return fmt.Errorf("version %s not found", versionId)
 }
 
 // ListObjectVersionsHandler handles the list object versions request
