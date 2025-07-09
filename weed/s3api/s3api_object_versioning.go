@@ -347,7 +347,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 // calculateETagFromChunks calculates ETag from file chunks following S3 multipart rules
 // This is a wrapper around filer.ETagChunks that adds quotes for S3 compatibility
 func (s3a *S3ApiServer) calculateETagFromChunks(chunks []*filer_pb.FileChunk) string {
-	if chunks == nil || len(chunks) == 0 {
+	if len(chunks) == 0 {
 		return "\"\""
 	}
 
