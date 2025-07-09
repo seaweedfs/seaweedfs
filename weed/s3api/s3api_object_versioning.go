@@ -366,33 +366,16 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 		return s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"))
 	}
 
-	// First try to get specific version from .versions directory
+	// Get specific version from .versions directory
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionFile := s3a.getVersionFileName(versionId)
 
 	entry, err := s3a.getEntry(versionsDir, versionFile)
-	if err == nil {
-		return entry, nil
+	if err != nil {
+		return nil, fmt.Errorf("version %s not found: %v", versionId, err)
 	}
 
-	// If not found in .versions directory, check if it's the current version
-	currentEntry, currentErr := s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"))
-	if currentErr != nil {
-		// Neither found in .versions nor current location
-		return nil, err
-	}
-
-	// Check if the current entry has the requested version ID
-	if currentEntry.Extended != nil {
-		if currentVersionIdBytes, hasVersionId := currentEntry.Extended[s3_constants.ExtVersionIdKey]; hasVersionId {
-			if string(currentVersionIdBytes) == versionId {
-				return currentEntry, nil
-			}
-		}
-	}
-
-	// Version not found anywhere
-	return nil, err
+	return entry, nil
 }
 
 // deleteSpecificObjectVersion deletes a specific version of an object
@@ -404,53 +387,23 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionFile := s3a.getVersionFileName(versionId)
 
-	// First try to delete from .versions directory
+	// Delete the specific version from .versions directory
 	_, err := s3a.getEntry(versionsDir, versionFile)
-	if err == nil {
-		// Version exists in .versions directory, delete it
-		deleteErr := s3a.rm(versionsDir, versionFile, true, false)
-		if deleteErr != nil {
-			// Check if file was already deleted by another process
-			if _, checkErr := s3a.getEntry(versionsDir, versionFile); checkErr != nil {
-				// File doesn't exist anymore, deletion was successful
-				return nil
-			}
-			return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
+	if err != nil {
+		return fmt.Errorf("version %s not found: %v", versionId, err)
+	}
+
+	// Version exists, delete it
+	deleteErr := s3a.rm(versionsDir, versionFile, true, false)
+	if deleteErr != nil {
+		// Check if file was already deleted by another process
+		if _, checkErr := s3a.getEntry(versionsDir, versionFile); checkErr != nil {
+			// File doesn't exist anymore, deletion was successful
+			return nil
 		}
-		return nil
+		return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
 	}
-
-	// If not found in .versions directory, check if it's the current version
-	currentPath := path.Join(s3a.option.BucketsPath, bucket)
-	currentFile := strings.TrimPrefix(object, "/")
-
-	currentEntry, currentErr := s3a.getEntry(currentPath, currentFile)
-	if currentErr != nil {
-		// Neither found in .versions nor current location
-		return fmt.Errorf("version %s not found", versionId)
-	}
-
-	// Check if the current entry has the requested version ID
-	if currentEntry.Extended != nil {
-		if currentVersionIdBytes, hasVersionId := currentEntry.Extended[s3_constants.ExtVersionIdKey]; hasVersionId {
-			if string(currentVersionIdBytes) == versionId {
-				// This is the current version, delete it
-				deleteErr := s3a.rm(currentPath, currentFile, true, false)
-				if deleteErr != nil {
-					// Check if file was already deleted by another process
-					if _, checkErr := s3a.getEntry(currentPath, currentFile); checkErr != nil {
-						// File doesn't exist anymore, deletion was successful
-						return nil
-					}
-					return fmt.Errorf("failed to delete current version %s: %v", versionId, deleteErr)
-				}
-				return nil
-			}
-		}
-	}
-
-	// Version not found anywhere
-	return fmt.Errorf("version %s not found", versionId)
+	return nil
 }
 
 // ListObjectVersionsHandler handles the list object versions request
