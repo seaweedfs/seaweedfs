@@ -1,10 +1,10 @@
 package s3api
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -42,12 +42,6 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketPolicy.html
 func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
 	s3err.WriteErrorResponse(w, r, http.StatusNoContent)
-}
-
-// PutBucketVersioningHandler Put bucket Versionin
-// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html
-func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *http.Request) {
-	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 }
 
 // GetBucketTaggingHandler Returns the tag set associated with the bucket
