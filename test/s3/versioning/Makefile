@@ -78,8 +78,10 @@ start-server: check-deps
 	@ls -la $(WEED_BINARY) || (echo "❌ Binary not found!" && exit 1)
 	@echo "🔍 DEBUG: Checking config file at ../../../docker/compose/s3.json"
 	@ls -la ../../../docker/compose/s3.json || echo "⚠️  Config file not found, continuing without it"
+	@echo "🔍 DEBUG: Creating volume directory..."
+	@mkdir -p ./test-volume-data
 	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) server -debug -s3 -s3.port=$(S3_PORT) -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -filer -filer.maxMB=64 -master.volumeSizeLimitMB=50 -volume.max=100 -volume.preStopSeconds=1 -metricsPort=9324"
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) server -debug -s3 -s3.port=$(S3_PORT) -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -filer -filer.maxMB=64 -master.volumeSizeLimitMB=50 -volume.max=100 -dir=./test-volume-data -volume.preStopSeconds=1 -metricsPort=9324"
 	@$(WEED_BINARY) server \
 		-debug \
 		-s3 \
@@ -91,6 +93,7 @@ start-server: check-deps
 		-filer.maxMB=64 \
 		-master.volumeSizeLimitMB=50 \
 		-volume.max=100 \
+		-dir=./test-volume-data \
 		-volume.preStopSeconds=1 \
 		-metricsPort=9324 \
 		> weed-test.log 2>&1 & echo $$! > weed-server.pid
@@ -252,6 +255,7 @@ clean:
 	@$(MAKE) stop-server
 	@rm -f weed-test*.log weed-server.pid weed-config*.pid
 	@rm -rf reports/
+	@rm -rf test-volume-data/
 	@go clean -testcache
 	@echo "✅ Cleanup completed"
 
@@ -259,6 +263,7 @@ clean:
 debug-server:
 	@echo "Starting SeaweedFS server in debug mode..."
 	@$(MAKE) stop-server
+	@mkdir -p ./test-volume-data
 	@$(WEED_BINARY) server \
 		-debug \
 		-s3 \
@@ -270,6 +275,7 @@ debug-server:
 		-filer.maxMB=16 \
 		-master.volumeSizeLimitMB=50 \
 		-volume.max=100 \
+		-dir=./test-volume-data \
 		-volume.preStopSeconds=1 \
 		-metricsPort=9324
 

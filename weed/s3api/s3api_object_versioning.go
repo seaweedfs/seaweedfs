@@ -138,30 +138,37 @@ func (s3a *S3ApiServer) moveCurrentObjectToVersions(bucket, object string) error
 	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
 	objectName := strings.TrimPrefix(object, "/")
 
+	glog.V(2).Infof("moveCurrentObjectToVersions: attempting to move %s/%s", bucket, object)
+
 	// Check if current object exists and has version metadata
 	currentEntry, err := s3a.getEntry(bucketDir, objectName)
 	if err != nil {
 		// No current object exists, nothing to move
+		glog.V(2).Infof("moveCurrentObjectToVersions: no current object exists for %s/%s: %v", bucket, object, err)
 		return nil
 	}
 
 	// Only move if it has version metadata (i.e., it's a versioned object)
 	if currentEntry.Extended == nil {
 		// Not a versioned object, nothing to move
+		glog.V(2).Infof("moveCurrentObjectToVersions: current object %s/%s has no Extended metadata, nothing to move", bucket, object)
 		return nil
 	}
 
 	versionIdBytes, hasVersionId := currentEntry.Extended[s3_constants.ExtVersionIdKey]
 	if !hasVersionId {
 		// Not a versioned object, nothing to move
+		glog.V(2).Infof("moveCurrentObjectToVersions: current object %s/%s has no version ID, nothing to move", bucket, object)
 		return nil
 	}
 
 	versionId := string(versionIdBytes)
+	glog.V(2).Infof("moveCurrentObjectToVersions: found current object %s/%s with version ID %s", bucket, object, versionId)
 
 	// Ensure the .versions directory exists
 	versionsDir, err := s3a.ensureVersionedDirectory(bucket, object)
 	if err != nil {
+		glog.Errorf("moveCurrentObjectToVersions: failed to ensure versions directory for %s/%s: %v", bucket, object, err)
 		return err
 	}
 
@@ -172,8 +179,11 @@ func (s3a *S3ApiServer) moveCurrentObjectToVersions(bucket, object string) error
 	if existsErr == nil {
 		// Version already exists in .versions directory, nothing to do
 		// This is a race condition - another goroutine already moved this object
+		glog.V(2).Infof("moveCurrentObjectToVersions: version %s already exists in .versions directory for %s/%s, race condition detected", versionId, bucket, object)
 		return nil
 	}
+
+	glog.V(2).Infof("moveCurrentObjectToVersions: moving version %s to .versions directory for %s/%s", versionId, bucket, object)
 
 	// Create a copy of the entry for the versions directory
 	versionEntry := &filer_pb.Entry{
@@ -209,12 +219,15 @@ func (s3a *S3ApiServer) moveCurrentObjectToVersions(bucket, object string) error
 		// Check if another goroutine already created this version file
 		if _, existsErr := s3a.getEntry(versionsDir, versionFileName); existsErr == nil {
 			// Another goroutine already created this version, which is fine
+			glog.V(2).Infof("moveCurrentObjectToVersions: another goroutine already created version %s for %s/%s", versionId, bucket, object)
 			return nil
 		}
+		glog.Errorf("moveCurrentObjectToVersions: failed to move object to versions for %s/%s: %v", bucket, object, err)
 		return fmt.Errorf("failed to move object to versions: %v", err)
 	}
 
 	// Successfully moved to versions directory
+	glog.V(2).Infof("moveCurrentObjectToVersions: successfully moved version %s to .versions directory for %s/%s", versionId, bucket, object)
 	return nil
 }
 
@@ -416,6 +429,8 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVersion, error) {
 	var versions []*ObjectVersion
 
+	glog.V(2).Infof("getObjectVersionList: looking for versions of %s/%s", bucket, object)
+
 	// First, check if there's a current object (might be a delete marker or latest version)
 	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
 	objectName := strings.TrimPrefix(object, "/")
@@ -428,6 +443,8 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 			isLatest := string(isLatestBytes) == "true"
 			isDeleteMarkerBytes, _ := currentEntry.Extended[s3_constants.ExtDeleteMarkerKey]
 			isDeleteMarker := string(isDeleteMarkerBytes) == "true"
+
+			glog.V(2).Infof("getObjectVersionList: found current object version %s, isLatest=%v, isDeleteMarker=%v", versionId, isLatest, isDeleteMarker)
 
 			version := &ObjectVersion{
 				VersionId:      versionId,
@@ -449,24 +466,35 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 			}
 
 			versions = append(versions, version)
+		} else {
+			glog.V(2).Infof("getObjectVersionList: current object exists but has no version metadata")
 		}
+	} else if err != nil {
+		glog.V(2).Infof("getObjectVersionList: no current object found: %v", err)
+	} else {
+		glog.V(2).Infof("getObjectVersionList: current object exists but has no Extended metadata")
 	}
 
 	// Then, check the .versions directory for previous versions
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
+	glog.V(2).Infof("getObjectVersionList: checking versions directory %s", versionsDir)
 	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
 	if err != nil {
 		// No versions directory exists, return only current object versions
+		glog.V(2).Infof("getObjectVersionList: no versions directory found: %v", err)
 		goto sortAndReturn
 	}
 
-	for _, entry := range entries {
+	glog.V(2).Infof("getObjectVersionList: found %d entries in versions directory", len(entries))
+	for i, entry := range entries {
 		if entry.Extended == nil {
+			glog.V(2).Infof("getObjectVersionList: entry %d has no Extended metadata, skipping", i)
 			continue
 		}
 
 		versionIdBytes, hasVersionId := entry.Extended[s3_constants.ExtVersionIdKey]
 		if !hasVersionId {
+			glog.V(2).Infof("getObjectVersionList: entry %d has no version ID, skipping", i)
 			continue
 		}
 
@@ -476,6 +504,8 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 
 		isDeleteMarkerBytes, _ := entry.Extended[s3_constants.ExtDeleteMarkerKey]
 		isDeleteMarker := string(isDeleteMarkerBytes) == "true"
+
+		glog.V(2).Infof("getObjectVersionList: found version %s in .versions directory, isLatest=%v, isDeleteMarker=%v", versionId, isLatest, isDeleteMarker)
 
 		version := &ObjectVersion{
 			VersionId:      versionId,
@@ -504,6 +534,11 @@ sortAndReturn:
 	sort.Slice(versions, func(i, j int) bool {
 		return versions[i].LastModified.After(versions[j].LastModified)
 	})
+
+	glog.V(2).Infof("getObjectVersionList: returning %d total versions for %s/%s", len(versions), bucket, object)
+	for i, version := range versions {
+		glog.V(2).Infof("getObjectVersionList: version %d: %s (isLatest=%v, isDeleteMarker=%v)", i, version.VersionId, version.IsLatest, version.IsDeleteMarker)
+	}
 
 	return versions, nil
 }
