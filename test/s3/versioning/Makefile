@@ -65,11 +65,15 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Current working directory: $$(pwd)"
 	@echo "🔍 DEBUG: Checking for existing weed processes..."
 	@ps aux | grep weed | grep -v grep || echo "No existing weed processes found"
-	@echo "🔍 DEBUG: Killing existing weed processes..."
-	@pgrep -f "weed_binary.*server" | xargs -r kill -TERM || true
-	@sleep 2
-	@pgrep -f "weed_binary.*server" | xargs -r kill -KILL || true
-	@sleep 1
+	@echo "🔍 DEBUG: Cleaning up any existing PID file..."
+	@rm -f weed-server.pid
+	@echo "🔍 DEBUG: Checking for port conflicts..."
+	@if netstat -tlnp 2>/dev/null | grep $(S3_PORT) >/dev/null; then \
+		echo "⚠️  Port $(S3_PORT) is already in use, trying to find the process..."; \
+		netstat -tlnp 2>/dev/null | grep $(S3_PORT) || true; \
+	else \
+		echo "✅ Port $(S3_PORT) is available"; \
+	fi
 	@echo "🔍 DEBUG: Checking binary at $(WEED_BINARY)"
 	@ls -la $(WEED_BINARY) || (echo "❌ Binary not found!" && exit 1)
 	@echo "🔍 DEBUG: Checking config file at ../../../docker/compose/s3.json"
@@ -148,15 +152,35 @@ stop-server:
 	@if [ -f weed-server.pid ]; then \
 		SERVER_PID=$$(cat weed-server.pid); \
 		echo "Killing server PID $$SERVER_PID"; \
-		kill -TERM $$SERVER_PID 2>/dev/null || true; \
-		sleep 2; \
-		kill -KILL $$SERVER_PID 2>/dev/null || true; \
+		if ps -p $$SERVER_PID >/dev/null 2>&1; then \
+			kill -TERM $$SERVER_PID 2>/dev/null || true; \
+			sleep 2; \
+			if ps -p $$SERVER_PID >/dev/null 2>&1; then \
+				echo "Process still running, sending KILL signal..."; \
+				kill -KILL $$SERVER_PID 2>/dev/null || true; \
+				sleep 1; \
+			fi; \
+		else \
+			echo "Process $$SERVER_PID not found (already stopped)"; \
+		fi; \
 		rm -f weed-server.pid; \
+	else \
+		echo "No PID file found, checking for running processes..."; \
+		if pgrep -f "weed_binary.*server" >/dev/null 2>&1; then \
+			echo "Found running weed processes, stopping them..."; \
+			pgrep -f "weed_binary.*server" | while read pid; do \
+				echo "Stopping process $$pid"; \
+				kill -TERM $$pid 2>/dev/null || true; \
+			done; \
+			sleep 2; \
+			pgrep -f "weed_binary.*server" | while read pid; do \
+				echo "Force killing process $$pid"; \
+				kill -KILL $$pid 2>/dev/null || true; \
+			done; \
+		else \
+			echo "No running weed processes found"; \
+		fi; \
 	fi
-	@pgrep -f "weed_binary.*server" | xargs -r kill -TERM || true
-	@sleep 2
-	@pgrep -f "weed_binary.*server" | xargs -r kill -KILL || true
-	@sleep 1
 	@echo "✅ SeaweedFS server stopped"
 
 # Show server logs
@@ -207,16 +231,16 @@ test-with-server: start-server
 test-versioning-with-configs: check-deps
 	@echo "Testing with different S3 configurations..."
 	@echo "Testing with empty folder allowed..."
-	@$(WEED_BINARY) server -s3 -s3.port=$(S3_PORT) -s3.allowEmptyFolder=true -filer -master.volumeSizeLimitMB=1024 -volume.max=100 > weed-test-config1.log 2>&1 &
+	@$(WEED_BINARY) server -s3 -s3.port=$(S3_PORT) -s3.allowEmptyFolder=true -filer -master.volumeSizeLimitMB=1024 -volume.max=100 > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
-	@pgrep -f "weed_binary.*server" | xargs -r kill -TERM || true
+	@if [ -f weed-config1.pid ]; then kill -TERM $$(cat weed-config1.pid) 2>/dev/null || true; rm -f weed-config1.pid; fi
 	@sleep 2
 	@echo "Testing with delete bucket not empty disabled..."
-	@$(WEED_BINARY) server -s3 -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false -filer -master.volumeSizeLimitMB=1024 -volume.max=100 > weed-test-config2.log 2>&1 &
+	@$(WEED_BINARY) server -s3 -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false -filer -master.volumeSizeLimitMB=1024 -volume.max=100 > weed-test-config2.log 2>&1 & echo $$! > weed-config2.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
-	@pgrep -f "weed_binary.*server" | xargs -r kill -TERM || true
+	@if [ -f weed-config2.pid ]; then kill -TERM $$(cat weed-config2.pid) 2>/dev/null || true; rm -f weed-config2.pid; fi
 	@echo "✅ Configuration tests completed"
 
 # Performance/stress testing
@@ -238,7 +262,7 @@ test-report: check-deps
 clean:
 	@echo "Cleaning up test artifacts..."
 	@$(MAKE) stop-server
-	@rm -f weed-test*.log weed-server.pid
+	@rm -f weed-test*.log weed-server.pid weed-config*.pid
 	@rm -rf reports/
 	@go clean -testcache
 	@echo "✅ Cleanup completed"
