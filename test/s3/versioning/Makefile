@@ -21,14 +21,17 @@ help:
 	@echo "  build-weed             - Build the SeaweedFS binary"
 	@echo "  check-deps             - Check dependencies and build binary if needed"
 	@echo "  start-server           - Start SeaweedFS server for testing"
+	@echo "  start-server-simple    - Start server without process cleanup (for CI)"
 	@echo "  stop-server            - Stop SeaweedFS server"
 	@echo "  test-versioning        - Run all versioning tests"
 	@echo "  test-versioning-quick  - Run core versioning tests only"
+	@echo "  test-versioning-simple - Run tests without server management"
 	@echo "  test-versioning-comprehensive - Run comprehensive versioning tests"
 	@echo "  test-all               - Run all S3 API tests"
 	@echo "  test-with-server       - Start server, run tests, stop server"
 	@echo "  logs                   - Show server logs"
 	@echo "  clean                  - Clean up test artifacts and stop server"
+	@echo "  health-check           - Check if server is accessible"
 	@echo ""
 	@echo "Configuration:"
 	@echo "  S3_PORT=${S3_PORT}"
@@ -63,8 +66,10 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Checking for existing weed processes..."
 	@ps aux | grep weed | grep -v grep || echo "No existing weed processes found"
 	@echo "🔍 DEBUG: Killing existing weed processes..."
-	@pkill -f "weed.*server" || true
+	@pgrep -f "weed_binary.*server" | xargs -r kill -TERM || true
 	@sleep 2
+	@pgrep -f "weed_binary.*server" | xargs -r kill -KILL || true
+	@sleep 1
 	@echo "🔍 DEBUG: Checking binary at $(WEED_BINARY)"
 	@ls -la $(WEED_BINARY) || (echo "❌ Binary not found!" && exit 1)
 	@echo "🔍 DEBUG: Checking config file at ../../../docker/compose/s3.json"
@@ -84,11 +89,16 @@ start-server: check-deps
 		-volume.max=100 \
 		-volume.preStopSeconds=1 \
 		-metricsPort=9324 \
-		> weed-test.log 2>&1 &
-	@echo "🔍 DEBUG: Server PID: $$!"
+		> weed-test.log 2>&1 & echo $$! > weed-server.pid
+	@echo "🔍 DEBUG: Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
 	@echo "🔍 DEBUG: Checking if PID is still running..."
 	@sleep 2
-	@ps -p $$! || echo "⚠️  Server PID $$! not found after 2 seconds"
+	@if [ -f weed-server.pid ]; then \
+		SERVER_PID=$$(cat weed-server.pid); \
+		ps -p $$SERVER_PID || echo "⚠️  Server PID $$SERVER_PID not found after 2 seconds"; \
+	else \
+		echo "⚠️  PID file not found"; \
+	fi
 	@echo "🔍 DEBUG: Waiting for server to start (up to 90 seconds)..."
 	@for i in $$(seq 1 90); do \
 		echo "🔍 DEBUG: Attempt $$i/90 - checking port $(S3_PORT)"; \
@@ -135,8 +145,18 @@ start-server: check-deps
 # Stop SeaweedFS server
 stop-server:
 	@echo "Stopping SeaweedFS server..."
-	@pkill -f "weed.*server" || true
+	@if [ -f weed-server.pid ]; then \
+		SERVER_PID=$$(cat weed-server.pid); \
+		echo "Killing server PID $$SERVER_PID"; \
+		kill -TERM $$SERVER_PID 2>/dev/null || true; \
+		sleep 2; \
+		kill -KILL $$SERVER_PID 2>/dev/null || true; \
+		rm -f weed-server.pid; \
+	fi
+	@pgrep -f "weed_binary.*server" | xargs -r kill -TERM || true
 	@sleep 2
+	@pgrep -f "weed_binary.*server" | xargs -r kill -KILL || true
+	@sleep 1
 	@echo "✅ SeaweedFS server stopped"
 
 # Show server logs
@@ -178,7 +198,8 @@ test-with-server: start-server
 	@echo "🔍 DEBUG: Test pattern: $(TEST_PATTERN)"
 	@echo "🔍 DEBUG: Test timeout: $(TEST_TIMEOUT)"
 	@echo "Running versioning tests with managed server..."
-	@$(MAKE) test-versioning || (echo "❌ Tests failed, showing server logs:" && echo "=== Last 50 lines of server logs ===" && tail -50 weed-test.log && echo "=== End of server logs ===" && $(MAKE) stop-server && exit 1)
+	@trap "$(MAKE) stop-server" EXIT; \
+	$(MAKE) test-versioning || (echo "❌ Tests failed, showing server logs:" && echo "=== Last 50 lines of server logs ===" && tail -50 weed-test.log && echo "=== End of server logs ===" && exit 1)
 	@$(MAKE) stop-server
 	@echo "✅ Tests completed and server stopped"
 
@@ -189,13 +210,13 @@ test-versioning-with-configs: check-deps
 	@$(WEED_BINARY) server -s3 -s3.port=$(S3_PORT) -s3.allowEmptyFolder=true -filer -master.volumeSizeLimitMB=1024 -volume.max=100 > weed-test-config1.log 2>&1 &
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
-	@pkill -f "weed.*server" || true
+	@pgrep -f "weed_binary.*server" | xargs -r kill -TERM || true
 	@sleep 2
 	@echo "Testing with delete bucket not empty disabled..."
 	@$(WEED_BINARY) server -s3 -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false -filer -master.volumeSizeLimitMB=1024 -volume.max=100 > weed-test-config2.log 2>&1 &
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
-	@pkill -f "weed.*server" || true
+	@pgrep -f "weed_binary.*server" | xargs -r kill -TERM || true
 	@echo "✅ Configuration tests completed"
 
 # Performance/stress testing
@@ -217,7 +238,7 @@ test-report: check-deps
 clean:
 	@echo "Cleaning up test artifacts..."
 	@$(MAKE) stop-server
-	@rm -f weed-test*.log
+	@rm -f weed-test*.log weed-server.pid
 	@rm -rf reports/
 	@go clean -testcache
 	@echo "✅ Cleanup completed"
@@ -270,6 +291,34 @@ health-check:
 	@echo "Running health check..."
 	@curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1 && echo "✅ S3 API is accessible" || echo "❌ S3 API is not accessible"
 	@curl -s http://localhost:9324/metrics >/dev/null 2>&1 && echo "✅ Metrics endpoint is accessible" || echo "❌ Metrics endpoint is not accessible"
+
+# Simple server start without process cleanup (for CI troubleshooting)
+start-server-simple: check-deps
+	@echo "Starting SeaweedFS server (simple mode)..."
+	@$(WEED_BINARY) server \
+		-debug \
+		-s3 \
+		-s3.port=$(S3_PORT) \
+		-s3.allowEmptyFolder=false \
+		-s3.allowDeleteBucketNotEmpty=true \
+		-s3.config=../../../docker/compose/s3.json \
+		-filer \
+		-filer.maxMB=64 \
+		-master.volumeSizeLimitMB=50 \
+		-volume.max=100 \
+		-volume.preStopSeconds=1 \
+		-metricsPort=9324 \
+		> weed-test.log 2>&1 & echo $$! > weed-server.pid
+	@echo "Server PID: $$(cat weed-server.pid)"
+	@echo "Waiting for server to start..."
+	@sleep 10
+	@curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1 && echo "✅ Server started successfully" || echo "❌ Server failed to start"
+
+# Simple test run without server management
+test-versioning-simple: check-deps
+	@echo "Running versioning tests (assuming server is already running)..."
+	@go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" .
+	@echo "✅ Tests completed"
 
 # Compare with Python s3tests (if available)
 compare-python-tests:
