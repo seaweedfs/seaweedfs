@@ -166,17 +166,22 @@ stop-server:
 		rm -f weed-server.pid; \
 	else \
 		echo "No PID file found, checking for running processes..."; \
-		if pgrep -f "weed_binary.*server" >/dev/null 2>&1; then \
-			echo "Found running weed processes, stopping them..."; \
-			pgrep -f "weed_binary.*server" | while read pid; do \
+		WEED_PIDS=$$(pgrep -f "weed_binary.*server" 2>/dev/null | tr '\n' ' '); \
+		if [ -n "$$WEED_PIDS" ]; then \
+			echo "Found running weed processes: $$WEED_PIDS"; \
+			for pid in $$WEED_PIDS; do \
 				echo "Stopping process $$pid"; \
 				kill -TERM $$pid 2>/dev/null || true; \
 			done; \
 			sleep 2; \
-			pgrep -f "weed_binary.*server" | while read pid; do \
-				echo "Force killing process $$pid"; \
-				kill -KILL $$pid 2>/dev/null || true; \
-			done; \
+			WEED_PIDS=$$(pgrep -f "weed_binary.*server" 2>/dev/null | tr '\n' ' '); \
+			if [ -n "$$WEED_PIDS" ]; then \
+				echo "Force killing remaining processes: $$WEED_PIDS"; \
+				for pid in $$WEED_PIDS; do \
+					echo "Force killing process $$pid"; \
+					kill -KILL $$pid 2>/dev/null || true; \
+				done; \
+			fi; \
 		else \
 			echo "No running weed processes found"; \
 		fi; \
