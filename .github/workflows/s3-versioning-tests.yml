@@ -1,7 +1,6 @@
 name: "S3 Versioning Tests (Go)"
 
 on:
-  pull_request:
   push:
     branches: [add-object-versioning]
   
