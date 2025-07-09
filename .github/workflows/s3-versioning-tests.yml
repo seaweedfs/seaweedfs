@@ -1,8 +1,7 @@
 name: "S3 Versioning Tests (Go)"
 
 on:
-  push:
-    branches: [add-object-versioning]
+  pull_request:
   
 concurrency:
   group: ${{ github.head_ref }}/s3-versioning

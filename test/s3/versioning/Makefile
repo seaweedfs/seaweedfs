@@ -166,22 +166,8 @@ stop-server:
 		rm -f weed-server.pid; \
 	else \
 		echo "No PID file found, checking for running processes..."; \
-		if pgrep -f "weed_binary.*server" >/dev/null 2>&1; then \
-			echo "Found running weed processes, attempting to stop them..."; \
-			timeout 10 sh -c ' \
-				pkill -TERM -f "weed_binary.*server" 2>/dev/null || true; \
-				sleep 3; \
-				pkill -KILL -f "weed_binary.*server" 2>/dev/null || true; \
-			' || echo "Timeout occurred during process cleanup"; \
-			sleep 1; \
-			if pgrep -f "weed_binary.*server" >/dev/null 2>&1; then \
-				echo "⚠️  Some processes may still be running"; \
-			else \
-				echo "✅ All weed processes stopped"; \
-			fi; \
-		else \
-			echo "No running weed processes found"; \
-		fi; \
+		echo "⚠️  Skipping automatic process cleanup to avoid CI issues"; \
+		echo "Note: Any remaining weed processes should be cleaned up by the CI environment"; \
 	fi
 	@echo "✅ SeaweedFS server stopped"
 
@@ -345,6 +331,17 @@ test-versioning-simple: check-deps
 	@echo "Running versioning tests (assuming server is already running)..."
 	@go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" .
 	@echo "✅ Tests completed"
+
+# Force cleanup all weed processes (use with caution)
+force-cleanup:
+	@echo "⚠️  Force cleaning up all weed processes..."
+	@echo "This will attempt to kill ALL weed processes on the system"
+	@ps aux | grep weed | grep -v grep || echo "No weed processes found"
+	@killall -TERM weed_binary 2>/dev/null || echo "No weed_binary processes to terminate"
+	@sleep 2
+	@killall -KILL weed_binary 2>/dev/null || echo "No weed_binary processes to kill"
+	@rm -f weed-server.pid weed-config*.pid
+	@echo "✅ Force cleanup completed"
 
 # Compare with Python s3tests (if available)
 compare-python-tests:
