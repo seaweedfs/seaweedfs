@@ -215,6 +215,33 @@ func (h *ClusterHandlers) ShowClusterFilers(c *gin.Context) {
 	}
 }
 
+// ShowClusterBrokers renders the cluster message brokers page
+func (h *ClusterHandlers) ShowClusterBrokers(c *gin.Context) {
+	// Get cluster brokers data
+	brokersData, err := h.adminServer.GetClusterBrokers()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster brokers: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	brokersData.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	brokersComponent := app.ClusterBrokers(*brokersData)
+	layoutComponent := layout.Layout(c, brokersComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
 // GetClusterTopology returns the cluster topology as JSON
 func (h *ClusterHandlers) GetClusterTopology(c *gin.Context) {
 	topology, err := h.adminServer.GetClusterTopology()

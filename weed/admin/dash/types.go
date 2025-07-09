@@ -189,6 +189,58 @@ type ClusterFilersData struct {
 	LastUpdated time.Time   `json:"last_updated"`
 }
 
+type MessageBrokerInfo struct {
+	Address    string    `json:"address"`
+	DataCenter string    `json:"datacenter"`
+	Rack       string    `json:"rack"`
+	Version    string    `json:"version"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type ClusterBrokersData struct {
+	Username     string              `json:"username"`
+	Brokers      []MessageBrokerInfo `json:"brokers"`
+	TotalBrokers int                 `json:"total_brokers"`
+	LastUpdated  time.Time           `json:"last_updated"`
+}
+
+type TopicInfo struct {
+	Name         string    `json:"name"`
+	Partitions   int       `json:"partitions"`
+	Subscribers  int       `json:"subscribers"`
+	MessageCount int64     `json:"message_count"`
+	TotalSize    int64     `json:"total_size"`
+	LastMessage  time.Time `json:"last_message"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type TopicsData struct {
+	Username      string      `json:"username"`
+	Topics        []TopicInfo `json:"topics"`
+	TotalTopics   int         `json:"total_topics"`
+	TotalMessages int64       `json:"total_messages"`
+	TotalSize     int64       `json:"total_size"`
+	LastUpdated   time.Time   `json:"last_updated"`
+}
+
+type SubscriberInfo struct {
+	Name          string    `json:"name"`
+	Topic         string    `json:"topic"`
+	ConsumerGroup string    `json:"consumer_group"`
+	Status        string    `json:"status"`
+	LastSeen      time.Time `json:"last_seen"`
+	MessageCount  int64     `json:"message_count"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type SubscribersData struct {
+	Username          string           `json:"username"`
+	Subscribers       []SubscriberInfo `json:"subscribers"`
+	TotalSubscribers  int              `json:"total_subscribers"`
+	ActiveSubscribers int              `json:"active_subscribers"`
+	LastUpdated       time.Time        `json:"last_updated"`
+}
+
 // Volume server management structures
 type ClusterVolumeServersData struct {
 	Username           string         `json:"username"`

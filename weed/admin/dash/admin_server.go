@@ -598,6 +598,96 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 	}, nil
 }
 
+// GetClusterBrokers retrieves cluster message brokers data
+func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
+	var brokers []MessageBrokerInfo
+
+	// Get broker information from master using ListClusterNodes
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.BrokerType,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Process each broker node
+		for _, node := range resp.ClusterNodes {
+			createdAt := time.Unix(0, node.CreatedAtNs)
+
+			brokerInfo := MessageBrokerInfo{
+				Address:    node.Address,
+				DataCenter: node.DataCenter,
+				Rack:       node.Rack,
+				Version:    node.Version,
+				CreatedAt:  createdAt,
+			}
+
+			brokers = append(brokers, brokerInfo)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get broker nodes from master: %v", err)
+	}
+
+	return &ClusterBrokersData{
+		Brokers:      brokers,
+		TotalBrokers: len(brokers),
+		LastUpdated:  time.Now(),
+	}, nil
+}
+
+// GetTopics retrieves message queue topics data
+func (s *AdminServer) GetTopics() (*TopicsData, error) {
+	var topics []TopicInfo
+
+	// TODO: Implement actual topic retrieval from message queue brokers
+	// For now, return empty data structure
+	// In the future, this would query the message queue brokers to get:
+	// - Topic names and configurations
+	// - Partition counts
+	// - Subscriber counts
+	// - Message statistics
+
+	return &TopicsData{
+		Topics:        topics,
+		TotalTopics:   len(topics),
+		TotalMessages: 0,
+		TotalSize:     0,
+		LastUpdated:   time.Now(),
+	}, nil
+}
+
+// GetSubscribers retrieves message queue subscribers data
+func (s *AdminServer) GetSubscribers() (*SubscribersData, error) {
+	var subscribers []SubscriberInfo
+
+	// TODO: Implement actual subscriber retrieval from message queue brokers
+	// For now, return empty data structure
+	// In the future, this would query the message queue brokers to get:
+	// - Active subscribers/consumers
+	// - Consumer group information
+	// - Subscription status
+	// - Message processing statistics
+
+	activeCount := 0
+	for _, sub := range subscribers {
+		if sub.Status == "active" {
+			activeCount++
+		}
+	}
+
+	return &SubscribersData{
+		Subscribers:       subscribers,
+		TotalSubscribers:  len(subscribers),
+		ActiveSubscribers: activeCount,
+		LastUpdated:       time.Now(),
+	}, nil
+}
+
 // GetAllFilers method moved to client_management.go
 
 // GetVolumeDetails method moved to volume_management.go

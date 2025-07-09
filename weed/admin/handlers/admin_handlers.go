@@ -18,6 +18,7 @@ type AdminHandlers struct {
 	fileBrowserHandlers *FileBrowserHandlers
 	userHandlers        *UserHandlers
 	maintenanceHandlers *MaintenanceHandlers
+	mqHandlers          *MessageQueueHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
@@ -27,6 +28,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	fileBrowserHandlers := NewFileBrowserHandlers(adminServer)
 	userHandlers := NewUserHandlers(adminServer)
 	maintenanceHandlers := NewMaintenanceHandlers(adminServer)
+	mqHandlers := NewMessageQueueHandlers(adminServer)
 	return &AdminHandlers{
 		adminServer:         adminServer,
 		authHandlers:        authHandlers,
@@ -34,6 +36,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 		fileBrowserHandlers: fileBrowserHandlers,
 		userHandlers:        userHandlers,
 		maintenanceHandlers: maintenanceHandlers,
+		mqHandlers:          mqHandlers,
 	}
 }
 
@@ -71,6 +74,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
 		protected.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
 		protected.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
+
+		// Message Queue management routes
+		protected.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
+		protected.GET("/mq/topics", h.mqHandlers.ShowTopics)
+		protected.GET("/mq/subscribers", h.mqHandlers.ShowSubscribers)
 
 		// Maintenance system routes
 		protected.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
@@ -165,6 +173,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		r.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
 		r.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
 		r.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
+
+		// Message Queue management routes
+		r.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
+		r.GET("/mq/topics", h.mqHandlers.ShowTopics)
+		r.GET("/mq/subscribers", h.mqHandlers.ShowSubscribers)
 
 		// Maintenance system routes
 		r.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)

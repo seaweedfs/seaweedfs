@@ -1,0 +1,154 @@
+package app
+
+import "fmt"
+import "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+import "github.com/seaweedfs/seaweedfs/weed/util"
+
+templ Topics(data dash.TopicsData) {
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1 class="h3 mb-0">Message Queue Topics</h1>
+                    <small class="text-muted">Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}</small>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="row mb-4">
+                    <div class="col-md-3">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Total Topics</h5>
+                                <h3 class="text-primary">{fmt.Sprintf("%d", data.TotalTopics)}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Total Messages</h5>
+                                <h3 class="text-info">{fmt.Sprintf("%d", data.TotalMessages)}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Total Size</h5>
+                                <h3 class="text-success">{util.BytesToHumanReadable(uint64(data.TotalSize))}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Active Topics</h5>
+                                <h3 class="text-warning">{fmt.Sprintf("%d", len(data.Topics))}</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Topics Table -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Topics</h5>
+                        <div>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="exportTopicsCSV()">
+                                <i class="fas fa-download me-1"></i>Export CSV
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        if len(data.Topics) == 0 {
+                            <div class="text-center py-4">
+                                <i class="fas fa-list-alt fa-3x text-muted mb-3"></i>
+                                <h5>No Topics Found</h5>
+                                <p class="text-muted">No message queue topics are currently configured.</p>
+                            </div>
+                        } else {
+                            <div class="table-responsive">
+                                <table class="table table-striped" id="topicsTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Topic Name</th>
+                                            <th>Partitions</th>
+                                            <th>Subscribers</th>
+                                            <th>Messages</th>
+                                            <th>Size</th>
+                                            <th>Last Message</th>
+                                            <th>Created</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, topic := range data.Topics {
+                                            <tr>
+                                                <td>
+                                                    <strong>{topic.Name}</strong>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-info">{fmt.Sprintf("%d", topic.Partitions)}</span>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-primary">{fmt.Sprintf("%d", topic.Subscribers)}</span>
+                                                </td>
+                                                <td>{fmt.Sprintf("%d", topic.MessageCount)}</td>
+                                                <td>{util.BytesToHumanReadable(uint64(topic.TotalSize))}</td>
+                                                <td>
+                                                    if !topic.LastMessage.IsZero() {
+                                                        <span class="text-muted">{topic.LastMessage.Format("2006-01-02 15:04:05")}</span>
+                                                    } else {
+                                                        <span class="text-muted">Never</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    <span class="text-muted">{topic.CreatedAt.Format("2006-01-02 15:04:05")}</span>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function exportTopicsCSV() {
+            const table = document.getElementById('topicsTable');
+            if (!table) return;
+            
+            let csv = 'Topic Name,Partitions,Subscribers,Messages,Size,Last Message,Created\n';
+            
+            const rows = table.querySelectorAll('tbody tr');
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 7) {
+                    const rowData = [
+                        cells[0].querySelector('strong')?.textContent || '',
+                        cells[1].querySelector('.badge')?.textContent || '',
+                        cells[2].querySelector('.badge')?.textContent || '',
+                        cells[3].textContent || '',
+                        cells[4].textContent || '',
+                        cells[5].querySelector('span')?.textContent || '',
+                        cells[6].querySelector('span')?.textContent || ''
+                    ];
+                    csv += rowData.map(field => `"${field.replace(/"/g, '""')}"`).join(',') + '\n';
+                }
+            });
+            
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'topics.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+} 

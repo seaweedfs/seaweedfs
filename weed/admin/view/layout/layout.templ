@@ -18,6 +18,9 @@ templ Layout(c *gin.Context, content templ.Component) {
   // Detect if we're on a configuration page to keep submenu expanded
   currentPath := c.Request.URL.Path
   isConfigPage := strings.HasPrefix(currentPath, "/maintenance/config") || currentPath == "/config"
+  
+  // Detect if we're on a message queue page to keep submenu expanded
+  isMQPage := strings.HasPrefix(currentPath, "/mq/")
 }}
 <!DOCTYPE html>
 <html lang="en">
@@ -146,6 +149,78 @@ templ Layout(c *gin.Context, content templ.Component) {
                                     </li>
                                 </ul>
                             </div>
+                        </li>
+                        <li class="nav-item">
+                            if isMQPage {
+                                <a class="nav-link" href="#" data-bs-toggle="collapse" data-bs-target="#messageQueueSubmenu" aria-expanded="true" aria-controls="messageQueueSubmenu">
+                                    <i class="fas fa-comments me-2"></i>Message Queue
+                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                </a>
+                            } else {
+                                <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#messageQueueSubmenu" aria-expanded="false" aria-controls="messageQueueSubmenu">
+                                    <i class="fas fa-comments me-2"></i>Message Queue
+                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                </a>
+                            }
+                            if isMQPage {
+                                <div class="collapse show" id="messageQueueSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        <li class="nav-item">
+                                            if currentPath == "/mq/brokers" {
+                                                <a class="nav-link py-2 active" href="/mq/brokers">
+                                                    <i class="fas fa-server me-2"></i>Brokers
+                                                </a>
+                                            } else {
+                                                <a class="nav-link py-2" href="/mq/brokers">
+                                                    <i class="fas fa-server me-2"></i>Brokers
+                                                </a>
+                                            }
+                                        </li>
+                                        <li class="nav-item">
+                                            if currentPath == "/mq/topics" {
+                                                <a class="nav-link py-2 active" href="/mq/topics">
+                                                    <i class="fas fa-list-alt me-2"></i>Topics
+                                                </a>
+                                            } else {
+                                                <a class="nav-link py-2" href="/mq/topics">
+                                                    <i class="fas fa-list-alt me-2"></i>Topics
+                                                </a>
+                                            }
+                                        </li>
+                                        <li class="nav-item">
+                                            if currentPath == "/mq/subscribers" {
+                                                <a class="nav-link py-2 active" href="/mq/subscribers">
+                                                    <i class="fas fa-user-friends me-2"></i>Subscribers
+                                                </a>
+                                            } else {
+                                                <a class="nav-link py-2" href="/mq/subscribers">
+                                                    <i class="fas fa-user-friends me-2"></i>Subscribers
+                                                </a>
+                                            }
+                                        </li>
+                                    </ul>
+                                </div>
+                            } else {
+                                <div class="collapse" id="messageQueueSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/mq/brokers">
+                                                <i class="fas fa-server me-2"></i>Brokers
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/mq/topics">
+                                                <i class="fas fa-list-alt me-2"></i>Topics
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/mq/subscribers">
+                                                <i class="fas fa-user-friends me-2"></i>Subscribers
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            }
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href="/metrics">
