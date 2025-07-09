@@ -409,6 +409,7 @@ func TestVersioningConcurrentOperations(t *testing.T) {
 	for i := 0; i < numObjects; i++ {
 		select {
 		case versionId := <-versionIds:
+			t.Logf("Received Version ID %d: %s", i, versionId)
 			collectedVersionIds = append(collectedVersionIds, versionId)
 		case err := <-errors:
 			t.Fatalf("Concurrent put failed: %v", err)
