@@ -201,3 +201,38 @@ func (h *MessageQueueHandlers) CreateTopicAPI(c *gin.Context) {
 		"topic":   fmt.Sprintf("%s.%s", req.Namespace, req.Name),
 	})
 }
+
+type UpdateTopicRetentionRequest struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Retention struct {
+		Enabled          bool  `json:"enabled"`
+		RetentionSeconds int64 `json:"retention_seconds"`
+	} `json:"retention"`
+}
+
+func (h *MessageQueueHandlers) UpdateTopicRetentionAPI(c *gin.Context) {
+	var request UpdateTopicRetentionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate required fields
+	if request.Namespace == "" || request.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "namespace and name are required"})
+		return
+	}
+
+	// Update the topic retention
+	err := h.adminServer.UpdateTopicRetention(request.Namespace, request.Name, request.Retention.Enabled, request.Retention.RetentionSeconds)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Topic retention updated successfully",
+		"topic":   request.Namespace + "." + request.Name,
+	})
+}

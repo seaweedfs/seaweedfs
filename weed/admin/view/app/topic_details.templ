@@ -110,10 +110,13 @@ templ TopicDetails(data dash.TopicDetailsData) {
                     </div>
                     <div class="col-md-6">
                         <div class="card">
-                            <div class="card-header">
+                            <div class="card-header d-flex justify-content-between align-items-center">
                                 <h5 class="mb-0">
                                     <i class="fas fa-clock me-2"></i>Retention Policy
                                 </h5>
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="showEditRetentionModal()">
+                                    <i class="fas fa-edit me-1"></i>Edit
+                                </button>
                             </div>
                             <div class="card-body">
                                 <dl class="row">
@@ -481,5 +484,194 @@ templ TopicDetails(data dash.TopicDetailsData) {
             link.click();
             document.body.removeChild(link);
         }
+
+        // Edit retention functions
+        function showEditRetentionModal() {
+            const modal = new bootstrap.Modal(document.getElementById('editRetentionModal'));
+            
+            // Get current retention values from the page
+            const currentEnabled = document.querySelector('dd .badge.bg-success') !== null;
+            const currentDurationElement = document.querySelector('dd .text-success');
+            
+            let currentValue = 7;
+            let currentUnit = 'days';
+            
+            if (currentEnabled && currentDurationElement) {
+                const durationText = currentDurationElement.textContent.trim();
+                const parts = durationText.split(' ');
+                if (parts.length >= 2) {
+                    currentValue = parseInt(parts[0]) || 7;
+                    currentUnit = parts[1].toLowerCase();
+                    // Handle plural forms
+                    if (currentUnit.endsWith('s')) {
+                        currentUnit = currentUnit.slice(0, -1);
+                    }
+                    // Map to our dropdown values
+                    if (currentUnit === 'hour') {
+                        currentUnit = 'hours';
+                    } else if (currentUnit === 'day') {
+                        currentUnit = 'days';
+                    }
+                }
+            }
+            
+            // Set current values in the modal
+            document.getElementById('editEnableRetention').checked = currentEnabled;
+            document.getElementById('editRetentionValue').value = currentValue;
+            document.getElementById('editRetentionUnit').value = currentUnit;
+            
+            // Show/hide retention fields based on current state
+            toggleEditRetentionFields();
+            
+            modal.show();
+        }
+
+        function toggleEditRetentionFields() {
+            const enableRetention = document.getElementById('editEnableRetention');
+            const retentionFields = document.getElementById('editRetentionFields');
+            
+            if (enableRetention.checked) {
+                retentionFields.style.display = 'block';
+            } else {
+                retentionFields.style.display = 'none';
+            }
+        }
+
+        function updateRetention() {
+            const form = document.getElementById('editRetentionForm');
+            const formData = new FormData(form);
+            
+            // Get topic details from the page
+            const topicName = document.querySelector('h1').textContent.replace('Topic Details: ', '');
+            const parts = topicName.split('.');
+            
+            if (parts.length < 2) {
+                alert('Invalid topic name format');
+                return;
+            }
+            
+            const namespace = parts[0];
+            const name = parts.slice(1).join('.');
+            
+            // Convert form data to JSON
+            const data = {
+                namespace: namespace,
+                name: name,
+                retention: {
+                    enabled: formData.get('editEnableRetention') === 'on',
+                    retention_seconds: 0
+                }
+            };
+
+            // Calculate retention seconds if enabled
+            if (data.retention.enabled) {
+                const retentionValue = parseInt(formData.get('editRetentionValue'));
+                const retentionUnit = formData.get('editRetentionUnit');
+                
+                if (retentionUnit === 'hours') {
+                    data.retention.retention_seconds = retentionValue * 3600;
+                } else if (retentionUnit === 'days') {
+                    data.retention.retention_seconds = retentionValue * 86400;
+                }
+            }
+
+            // Show loading state
+            const updateButton = document.querySelector('#editRetentionModal .btn-primary');
+            updateButton.disabled = true;
+            updateButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Updating...';
+
+            // Send API request
+            fetch('/api/mq/topics/retention/update', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.error) {
+                    alert('Failed to update retention: ' + result.error);
+                } else {
+                    alert('Retention policy updated successfully!');
+                    // Close modal and refresh page
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('editRetentionModal'));
+                    modal.hide();
+                    window.location.reload();
+                }
+            })
+            .catch(error => {
+                alert('Failed to update retention: ' + error.message);
+            })
+            .finally(() => {
+                // Reset button state
+                updateButton.disabled = false;
+                updateButton.innerHTML = '<i class="fas fa-save me-1"></i>Update Retention';
+            });
+        }
     </script>
+
+    <!-- Edit Retention Modal -->
+    <div class="modal fade" id="editRetentionModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-edit me-2"></i>Edit Retention Policy
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editRetentionForm">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-clock me-2"></i>Retention Configuration
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-check mb-3">
+                                    <input class="form-check-input" type="checkbox" id="editEnableRetention" 
+                                           name="editEnableRetention" onchange="toggleEditRetentionFields()">
+                                    <label class="form-check-label" for="editEnableRetention">
+                                        Enable data retention
+                                    </label>
+                                </div>
+                                <div id="editRetentionFields" style="display: none;">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="editRetentionValue" class="form-label">Retention Duration</label>
+                                                <input type="number" class="form-control" id="editRetentionValue" 
+                                                       name="editRetentionValue" min="1" value="7">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="editRetentionUnit" class="form-label">Unit</label>
+                                                <select class="form-control" id="editRetentionUnit" name="editRetentionUnit">
+                                                    <option value="hours">Hours</option>
+                                                    <option value="days" selected>Days</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-info-circle me-2"></i>
+                                        Data older than this duration will be automatically purged to save storage space.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="updateRetention()">
+                        <i class="fas fa-save me-1"></i>Update Retention
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 } 

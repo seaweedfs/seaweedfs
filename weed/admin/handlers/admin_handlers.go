@@ -158,6 +158,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 			{
 				mqApi.GET("/topics/:namespace/:topic", h.mqHandlers.GetTopicDetailsAPI)
 				mqApi.POST("/topics/create", h.mqHandlers.CreateTopicAPI)
+				mqApi.POST("/topics/retention/update", h.mqHandlers.UpdateTopicRetentionAPI)
 				mqApi.POST("/retention/purge", h.adminServer.TriggerTopicRetentionPurgeAPI)
 			}
 		}
@@ -265,6 +266,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 			{
 				mqApi.GET("/topics/:namespace/:topic", h.mqHandlers.GetTopicDetailsAPI)
 				mqApi.POST("/topics/create", h.mqHandlers.CreateTopicAPI)
+				mqApi.POST("/topics/retention/update", h.mqHandlers.UpdateTopicRetentionAPI)
 				mqApi.POST("/retention/purge", h.adminServer.TriggerTopicRetentionPurgeAPI)
 			}
 		}

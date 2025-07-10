@@ -1307,6 +1307,79 @@ func (s *AdminServer) CreateTopicWithRetention(namespace, name string, partition
 	return nil
 }
 
+// UpdateTopicRetention updates the retention configuration for an existing topic
+func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool, retentionSeconds int64) error {
+	// Get broker information from master
+	var brokerAddress string
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.BrokerType,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Find the first available broker
+		for _, node := range resp.ClusterNodes {
+			brokerAddress = node.Address
+			break
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to get broker nodes from master: %v", err)
+	}
+
+	if brokerAddress == "" {
+		return fmt.Errorf("no active brokers found")
+	}
+
+	// Create gRPC connection
+	conn, err := grpc.Dial(brokerAddress, s.grpcDialOption)
+	if err != nil {
+		return fmt.Errorf("failed to connect to broker: %v", err)
+	}
+	defer conn.Close()
+
+	client := mq_pb.NewSeaweedMessagingClient(conn)
+
+	// Create the topic configuration request
+	configRequest := &mq_pb.ConfigureTopicRequest{
+		Topic: &schema_pb.Topic{
+			Namespace: namespace,
+			Name:      name,
+		},
+		// Don't change partition count, only retention
+		PartitionCount: -1, // -1 means don't change
+	}
+
+	// Add retention configuration
+	if enabled {
+		configRequest.Retention = &mq_pb.TopicRetention{
+			RetentionSeconds: retentionSeconds,
+			Enabled:          true,
+		}
+	} else {
+		// Set retention to disabled
+		configRequest.Retention = &mq_pb.TopicRetention{
+			RetentionSeconds: 0,
+			Enabled:          false,
+		}
+	}
+
+	// Send the configuration request
+	_, err = client.ConfigureTopic(context.Background(), configRequest)
+	if err != nil {
+		return fmt.Errorf("failed to update topic retention: %v", err)
+	}
+
+	glog.V(0).Infof("Updated topic %s.%s retention (enabled: %v, seconds: %d)",
+		namespace, name, enabled, retentionSeconds)
+	return nil
+}
+
 // Shutdown gracefully shuts down the admin server
 func (s *AdminServer) Shutdown() {
 	glog.V(1).Infof("Shutting down admin server...")

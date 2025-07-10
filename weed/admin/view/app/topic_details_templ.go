@@ -215,7 +215,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</dd></dl></div></div></div><div class=\"col-md-6\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-clock me-2\"></i>Retention Policy</h5></div><div class=\"card-body\"><dl class=\"row\"><dt class=\"col-sm-4\">Status:</dt><dd class=\"col-sm-8\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</dd></dl></div></div></div><div class=\"col-md-6\"><div class=\"card\"><div class=\"card-header d-flex justify-content-between align-items-center\"><h5 class=\"mb-0\"><i class=\"fas fa-clock me-2\"></i>Retention Policy</h5><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"showEditRetentionModal()\"><i class=\"fas fa-edit me-1\"></i>Edit</button></div><div class=\"card-body\"><dl class=\"row\"><dt class=\"col-sm-4\">Status:</dt><dd class=\"col-sm-8\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -242,7 +242,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Retention.DisplayValue))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 132, Col: 95}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 135, Col: 95}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -255,7 +255,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(data.Retention.DisplayUnit)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 132, Col: 124}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 135, Col: 124}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -293,7 +293,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var18 string
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(field.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 167, Col: 77}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 170, Col: 77}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
@@ -306,7 +306,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var19 string
 				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(field.Type)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 168, Col: 104}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 171, Col: 104}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
@@ -359,7 +359,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var20 string
 				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", partition.ID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 222, Col: 115}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 225, Col: 115}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 				if templ_7745c5c3_Err != nil {
@@ -372,7 +372,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var21 string
 				templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(partition.LeaderBroker)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 225, Col: 83}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 228, Col: 83}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 				if templ_7745c5c3_Err != nil {
@@ -390,7 +390,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var22 string
 					templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(partition.FollowerBroker)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 229, Col: 106}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 232, Col: 106}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 					if templ_7745c5c3_Err != nil {
@@ -413,7 +413,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var23 string
 				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", partition.MessageCount))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 234, Col: 94}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 237, Col: 94}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 				if templ_7745c5c3_Err != nil {
@@ -426,7 +426,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var24 string
 				templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(uint64(partition.TotalSize)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 235, Col: 107}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 238, Col: 107}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 				if templ_7745c5c3_Err != nil {
@@ -444,7 +444,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var25 string
 					templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(partition.LastDataTime.Format("2006-01-02 15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 238, Col: 134}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 241, Col: 134}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 					if templ_7745c5c3_Err != nil {
@@ -467,7 +467,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var26 string
 				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(partition.CreatedAt.Format("2006-01-02 15:04:05"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 244, Col: 127}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 247, Col: 127}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 				if templ_7745c5c3_Err != nil {
@@ -490,7 +490,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Publishers)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 260, Col: 138}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 263, Col: 138}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 		if templ_7745c5c3_Err != nil {
@@ -518,7 +518,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var28 string
 				templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(publisher.PublisherName)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 284, Col: 84}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 287, Col: 84}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 				if templ_7745c5c3_Err != nil {
@@ -531,7 +531,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var29 string
 				templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", publisher.PartitionID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 285, Col: 132}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 288, Col: 132}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 				if templ_7745c5c3_Err != nil {
@@ -544,7 +544,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var30 string
 				templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(publisher.Broker)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 286, Col: 77}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 289, Col: 77}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 				if templ_7745c5c3_Err != nil {
@@ -577,7 +577,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var31 string
 					templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", publisher.LastPublishedOffset))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 296, Col: 138}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 299, Col: 138}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 					if templ_7745c5c3_Err != nil {
@@ -605,7 +605,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var32 string
 					templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", publisher.LastAckedOffset))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 303, Col: 134}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 306, Col: 134}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 					if templ_7745c5c3_Err != nil {
@@ -633,7 +633,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var33 string
 					templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(publisher.LastSeenTime.Format("15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 310, Col: 131}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 313, Col: 131}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 					if templ_7745c5c3_Err != nil {
@@ -666,7 +666,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var34 string
 		templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Subscribers)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 330, Col: 137}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 333, Col: 137}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 		if templ_7745c5c3_Err != nil {
@@ -694,7 +694,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var35 string
 				templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(subscriber.ConsumerGroup)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 355, Col: 85}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 358, Col: 85}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 				if templ_7745c5c3_Err != nil {
@@ -707,7 +707,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var36 string
 				templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(subscriber.ConsumerID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 356, Col: 82}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 359, Col: 82}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 				if templ_7745c5c3_Err != nil {
@@ -720,7 +720,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var37 string
 				templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", subscriber.PartitionID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 357, Col: 133}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 360, Col: 133}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 				if templ_7745c5c3_Err != nil {
@@ -733,7 +733,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var38 string
 				templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(subscriber.Broker)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 358, Col: 78}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 361, Col: 78}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 				if templ_7745c5c3_Err != nil {
@@ -766,7 +766,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var39 string
 					templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", subscriber.LastReceivedOffset))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 368, Col: 138}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 371, Col: 138}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 					if templ_7745c5c3_Err != nil {
@@ -794,7 +794,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var40 string
 					templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", subscriber.CurrentOffset))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 375, Col: 133}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 378, Col: 133}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
 					if templ_7745c5c3_Err != nil {
@@ -822,7 +822,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var41 string
 					templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(subscriber.LastSeenTime.Format("15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 382, Col: 132}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 385, Col: 132}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 					if templ_7745c5c3_Err != nil {
@@ -855,7 +855,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var42 string
 		templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.ConsumerGroupOffsets)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 403, Col: 153}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 406, Col: 153}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 		if templ_7745c5c3_Err != nil {
@@ -883,7 +883,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var43 string
 				templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinStringErrs(offset.ConsumerGroup)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 425, Col: 114}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 428, Col: 114}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 				if templ_7745c5c3_Err != nil {
@@ -896,7 +896,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var44 string
 				templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", offset.PartitionID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 428, Col: 129}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 431, Col: 129}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 				if templ_7745c5c3_Err != nil {
@@ -909,7 +909,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var45 string
 				templ_7745c5c3_Var45, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", offset.Offset))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 431, Col: 101}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 434, Col: 101}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var45))
 				if templ_7745c5c3_Err != nil {
@@ -922,7 +922,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var46 string
 				templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.JoinStringErrs(offset.LastUpdated.Format("2006-01-02 15:04:05"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 434, Col: 134}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 437, Col: 134}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var46))
 				if templ_7745c5c3_Err != nil {
@@ -938,7 +938,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 110, "</div></div></div></div></div></div></div><script>\n        function exportPartitionsCSV() {\n            const table = document.getElementById('partitionsTable');\n            if (!table) return;\n            \n            let csv = 'Partition ID,Leader Broker,Follower Broker,Messages,Size,Last Data Time,Created\\n';\n            \n            const rows = table.querySelectorAll('tbody tr');\n            rows.forEach(row => {\n                const cells = row.querySelectorAll('td');\n                if (cells.length >= 7) {\n                    const rowData = [\n                        cells[0].querySelector('.badge')?.textContent || '',\n                        cells[1].querySelector('strong')?.textContent || '',\n                        cells[2].textContent || '',\n                        cells[3].textContent || '',\n                        cells[4].textContent || '',\n                        cells[5].querySelector('span')?.textContent || '',\n                        cells[6].querySelector('span')?.textContent || ''\n                    ];\n                    csv += rowData.map(field => `\"${field.replace(/\"/g, '\"\"')}\"`).join(',') + '\\n';\n                }\n            });\n            \n            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });\n            const link = document.createElement('a');\n            const url = URL.createObjectURL(blob);\n            link.setAttribute('href', url);\n            link.setAttribute('download', 'topic_partitions.csv');\n            link.style.visibility = 'hidden';\n            document.body.appendChild(link);\n            link.click();\n            document.body.removeChild(link);\n        }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 110, "</div></div></div></div></div></div></div><script>\n        function exportPartitionsCSV() {\n            const table = document.getElementById('partitionsTable');\n            if (!table) return;\n            \n            let csv = 'Partition ID,Leader Broker,Follower Broker,Messages,Size,Last Data Time,Created\\n';\n            \n            const rows = table.querySelectorAll('tbody tr');\n            rows.forEach(row => {\n                const cells = row.querySelectorAll('td');\n                if (cells.length >= 7) {\n                    const rowData = [\n                        cells[0].querySelector('.badge')?.textContent || '',\n                        cells[1].querySelector('strong')?.textContent || '',\n                        cells[2].textContent || '',\n                        cells[3].textContent || '',\n                        cells[4].textContent || '',\n                        cells[5].querySelector('span')?.textContent || '',\n                        cells[6].querySelector('span')?.textContent || ''\n                    ];\n                    csv += rowData.map(field => `\"${field.replace(/\"/g, '\"\"')}\"`).join(',') + '\\n';\n                }\n            });\n            \n            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });\n            const link = document.createElement('a');\n            const url = URL.createObjectURL(blob);\n            link.setAttribute('href', url);\n            link.setAttribute('download', 'topic_partitions.csv');\n            link.style.visibility = 'hidden';\n            document.body.appendChild(link);\n            link.click();\n            document.body.removeChild(link);\n        }\n\n        // Edit retention functions\n        function showEditRetentionModal() {\n            const modal = new bootstrap.Modal(document.getElementById('editRetentionModal'));\n            \n            // Get current retention values from the page\n            const currentEnabled = document.querySelector('dd .badge.bg-success') !== null;\n            const currentDurationElement = document.querySelector('dd .text-success');\n            \n            let currentValue = 7;\n            let currentUnit = 'days';\n            \n            if (currentEnabled && currentDurationElement) {\n                const durationText = currentDurationElement.textContent.trim();\n                const parts = durationText.split(' ');\n                if (parts.length >= 2) {\n                    currentValue = parseInt(parts[0]) || 7;\n                    currentUnit = parts[1].toLowerCase();\n                    // Handle plural forms\n                    if (currentUnit.endsWith('s')) {\n                        currentUnit = currentUnit.slice(0, -1);\n                    }\n                    // Map to our dropdown values\n                    if (currentUnit === 'hour') {\n                        currentUnit = 'hours';\n                    } else if (currentUnit === 'day') {\n                        currentUnit = 'days';\n                    }\n                }\n            }\n            \n            // Set current values in the modal\n            document.getElementById('editEnableRetention').checked = currentEnabled;\n            document.getElementById('editRetentionValue').value = currentValue;\n            document.getElementById('editRetentionUnit').value = currentUnit;\n            \n            // Show/hide retention fields based on current state\n            toggleEditRetentionFields();\n            \n            modal.show();\n        }\n\n        function toggleEditRetentionFields() {\n            const enableRetention = document.getElementById('editEnableRetention');\n            const retentionFields = document.getElementById('editRetentionFields');\n            \n            if (enableRetention.checked) {\n                retentionFields.style.display = 'block';\n            } else {\n                retentionFields.style.display = 'none';\n            }\n        }\n\n        function updateRetention() {\n            const form = document.getElementById('editRetentionForm');\n            const formData = new FormData(form);\n            \n            // Get topic details from the page\n            const topicName = document.querySelector('h1').textContent.replace('Topic Details: ', '');\n            const parts = topicName.split('.');\n            \n            if (parts.length < 2) {\n                alert('Invalid topic name format');\n                return;\n            }\n            \n            const namespace = parts[0];\n            const name = parts.slice(1).join('.');\n            \n            // Convert form data to JSON\n            const data = {\n                namespace: namespace,\n                name: name,\n                retention: {\n                    enabled: formData.get('editEnableRetention') === 'on',\n                    retention_seconds: 0\n                }\n            };\n\n            // Calculate retention seconds if enabled\n            if (data.retention.enabled) {\n                const retentionValue = parseInt(formData.get('editRetentionValue'));\n                const retentionUnit = formData.get('editRetentionUnit');\n                \n                if (retentionUnit === 'hours') {\n                    data.retention.retention_seconds = retentionValue * 3600;\n                } else if (retentionUnit === 'days') {\n                    data.retention.retention_seconds = retentionValue * 86400;\n                }\n            }\n\n            // Show loading state\n            const updateButton = document.querySelector('#editRetentionModal .btn-primary');\n            updateButton.disabled = true;\n            updateButton.innerHTML = '<i class=\"fas fa-spinner fa-spin me-1\"></i>Updating...';\n\n            // Send API request\n            fetch('/api/mq/topics/retention/update', {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n                body: JSON.stringify(data)\n            })\n            .then(response => response.json())\n            .then(result => {\n                if (result.error) {\n                    alert('Failed to update retention: ' + result.error);\n                } else {\n                    alert('Retention policy updated successfully!');\n                    // Close modal and refresh page\n                    const modal = bootstrap.Modal.getInstance(document.getElementById('editRetentionModal'));\n                    modal.hide();\n                    window.location.reload();\n                }\n            })\n            .catch(error => {\n                alert('Failed to update retention: ' + error.message);\n            })\n            .finally(() => {\n                // Reset button state\n                updateButton.disabled = false;\n                updateButton.innerHTML = '<i class=\"fas fa-save me-1\"></i>Update Retention';\n            });\n        }\n    </script><!-- Edit Retention Modal --><div class=\"modal fade\" id=\"editRetentionModal\" tabindex=\"-1\" role=\"dialog\"><div class=\"modal-dialog modal-lg\" role=\"document\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\"><i class=\"fas fa-edit me-2\"></i>Edit Retention Policy</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button></div><div class=\"modal-body\"><form id=\"editRetentionForm\"><div class=\"card\"><div class=\"card-header\"><h6 class=\"mb-0\"><i class=\"fas fa-clock me-2\"></i>Retention Configuration</h6></div><div class=\"card-body\"><div class=\"form-check mb-3\"><input class=\"form-check-input\" type=\"checkbox\" id=\"editEnableRetention\" name=\"editEnableRetention\" onchange=\"toggleEditRetentionFields()\"> <label class=\"form-check-label\" for=\"editEnableRetention\">Enable data retention</label></div><div id=\"editRetentionFields\" style=\"display: none;\"><div class=\"row\"><div class=\"col-md-6\"><div class=\"mb-3\"><label for=\"editRetentionValue\" class=\"form-label\">Retention Duration</label> <input type=\"number\" class=\"form-control\" id=\"editRetentionValue\" name=\"editRetentionValue\" min=\"1\" value=\"7\"></div></div><div class=\"col-md-6\"><div class=\"mb-3\"><label for=\"editRetentionUnit\" class=\"form-label\">Unit</label> <select class=\"form-control\" id=\"editRetentionUnit\" name=\"editRetentionUnit\"><option value=\"hours\">Hours</option> <option value=\"days\" selected>Days</option></select></div></div></div><div class=\"alert alert-info\"><i class=\"fas fa-info-circle me-2\"></i> Data older than this duration will be automatically purged to save storage space.</div></div></div></div></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" onclick=\"updateRetention()\"><i class=\"fas fa-save me-1\"></i>Update Retention</button></div></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
