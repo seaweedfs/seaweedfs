@@ -206,7 +206,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
 
                 <!-- Publishers and Subscribers -->
                 <div class="row mb-4">
-                    <div class="col-md-6">
+                    <div class="col-12">
                         <div class="card">
                             <div class="card-header">
                                 <h5 class="mb-0">Active Publishers <span class="badge bg-success">{fmt.Sprintf("%d", len(data.Publishers))}</span></h5>
@@ -273,7 +273,10 @@ templ TopicDetails(data dash.TopicDetailsData) {
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-6">
+                </div>
+                
+                <div class="row mb-4">
+                    <div class="col-12">
                         <div class="card">
                             <div class="card-header">
                                 <h5 class="mb-0">Active Subscribers <span class="badge bg-info">{fmt.Sprintf("%d", len(data.Subscribers))}</span></h5>
