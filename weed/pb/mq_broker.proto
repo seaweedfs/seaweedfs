@@ -29,6 +29,8 @@ service SeaweedMessaging {
     }
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
+    rpc GetTopicConfiguration (GetTopicConfigurationRequest) returns (GetTopicConfigurationResponse) {
+    }
 
     // invoked by the balancer, running on each broker
     rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
@@ -121,6 +123,17 @@ message BrokerPartitionAssignment {
     schema_pb.Partition partition = 1;
     string leader_broker = 2;
     string follower_broker = 3;
+}
+message GetTopicConfigurationRequest {
+    schema_pb.Topic topic = 1;
+}
+message GetTopicConfigurationResponse {
+    schema_pb.Topic topic = 1;
+    int32 partition_count = 2;
+    schema_pb.RecordType record_type = 3;
+    repeated BrokerPartitionAssignment broker_partition_assignments = 4;
+    int64 created_at_ns = 5;
+    int64 last_updated_ns = 6;
 }
 
 message AssignTopicPartitionsRequest {

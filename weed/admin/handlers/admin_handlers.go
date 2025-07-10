@@ -78,6 +78,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		// Message Queue management routes
 		protected.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
 		protected.GET("/mq/topics", h.mqHandlers.ShowTopics)
+		protected.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
 		protected.GET("/mq/subscribers", h.mqHandlers.ShowSubscribers)
 
 		// Maintenance system routes
@@ -152,6 +153,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
 				maintenanceApi.PUT("/config", h.adminServer.UpdateMaintenanceConfigAPI)
 			}
+
+			// Message Queue API routes
+			mqApi := api.Group("/mq")
+			{
+				mqApi.GET("/topics/:namespace/:topic", h.mqHandlers.GetTopicDetailsAPI)
+			}
 		}
 	} else {
 		// No authentication required - all routes are public
@@ -177,6 +184,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		// Message Queue management routes
 		r.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
 		r.GET("/mq/topics", h.mqHandlers.ShowTopics)
+		r.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
 		r.GET("/mq/subscribers", h.mqHandlers.ShowSubscribers)
 
 		// Maintenance system routes
@@ -250,6 +258,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
 				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
 				maintenanceApi.PUT("/config", h.adminServer.UpdateMaintenanceConfigAPI)
+			}
+
+			// Message Queue API routes
+			mqApi := api.Group("/mq")
+			{
+				mqApi.GET("/topics/:namespace/:topic", h.mqHandlers.GetTopicDetailsAPI)
 			}
 		}
 	}

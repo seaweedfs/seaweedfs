@@ -241,6 +241,36 @@ type SubscribersData struct {
 	LastUpdated       time.Time        `json:"last_updated"`
 }
 
+// Topic Details structures
+type PartitionInfo struct {
+	ID             int32     `json:"id"`
+	LeaderBroker   string    `json:"leader_broker"`
+	FollowerBroker string    `json:"follower_broker"`
+	MessageCount   int64     `json:"message_count"`
+	TotalSize      int64     `json:"total_size"`
+	LastDataTime   time.Time `json:"last_data_time"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type SchemaFieldInfo struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Required bool   `json:"required"`
+}
+
+type TopicDetailsData struct {
+	Username     string            `json:"username"`
+	TopicName    string            `json:"topic_name"`
+	Namespace    string            `json:"namespace"`
+	Name         string            `json:"name"`
+	Partitions   []PartitionInfo   `json:"partitions"`
+	Schema       []SchemaFieldInfo `json:"schema"`
+	MessageCount int64             `json:"message_count"`
+	TotalSize    int64             `json:"total_size"`
+	CreatedAt    time.Time         `json:"created_at"`
+	LastUpdated  time.Time         `json:"last_updated"`
+}
+
 // Volume server management structures
 type ClusterVolumeServersData struct {
 	Username           string         `json:"username"`

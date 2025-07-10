@@ -9,8 +9,8 @@ import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
 import "fmt"
+import "strings"
 import "github.com/seaweedfs/seaweedfs/weed/admin/dash"
-import "github.com/seaweedfs/seaweedfs/weed/util"
 
 func Topics(data dash.TopicsData) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
@@ -46,7 +46,7 @@ func Topics(data dash.TopicsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</small></div><!-- Summary Cards --><div class=\"row mb-4\"><div class=\"col-md-3\"><div class=\"card text-center\"><div class=\"card-body\"><h5 class=\"card-title\">Total Topics</h5><h3 class=\"text-primary\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</small></div><!-- Summary Cards --><div class=\"row mb-4\"><div class=\"col-md-6\"><div class=\"card text-center\"><div class=\"card-body\"><h5 class=\"card-title\">Total Topics</h5><h3 class=\"text-primary\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -59,68 +59,80 @@ func Topics(data dash.TopicsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</h3></div></div></div><div class=\"col-md-3\"><div class=\"card text-center\"><div class=\"card-body\"><h5 class=\"card-title\">Total Messages</h5><h3 class=\"text-info\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</h3></div></div></div><div class=\"col-md-6\"><div class=\"card text-center\"><div class=\"card-body\"><h5 class=\"card-title\">Available Topics</h5><h3 class=\"text-info\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var4 string
-		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalMessages))
+		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Topics)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 30, Col: 92}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 30, Col: 90}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</h3></div></div></div><div class=\"col-md-3\"><div class=\"card text-center\"><div class=\"card-body\"><h5 class=\"card-title\">Total Size</h5><h3 class=\"text-success\">")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var5 string
-		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(uint64(data.TotalSize)))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 38, Col: 107}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</h3></div></div></div><div class=\"col-md-3\"><div class=\"card text-center\"><div class=\"card-body\"><h5 class=\"card-title\">Active Topics</h5><h3 class=\"text-warning\">")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var6 string
-		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Topics)))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 46, Col: 93}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</h3></div></div></div></div><!-- Topics Table --><div class=\"card\"><div class=\"card-header d-flex justify-content-between align-items-center\"><h5 class=\"mb-0\">Topics</h5><div><button class=\"btn btn-sm btn-outline-secondary\" onclick=\"exportTopicsCSV()\"><i class=\"fas fa-download me-1\"></i>Export CSV</button></div></div><div class=\"card-body\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</h3></div></div></div></div><!-- Topics Table --><div class=\"card\"><div class=\"card-header d-flex justify-content-between align-items-center\"><h5 class=\"mb-0\">Topics</h5><div><button class=\"btn btn-sm btn-outline-secondary\" onclick=\"exportTopicsCSV()\"><i class=\"fas fa-download me-1\"></i>Export CSV</button></div></div><div class=\"card-body\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if len(data.Topics) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"text-center py-4\"><i class=\"fas fa-list-alt fa-3x text-muted mb-3\"></i><h5>No Topics Found</h5><p class=\"text-muted\">No message queue topics are currently configured.</p></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<div class=\"text-center py-4\"><i class=\"fas fa-list-alt fa-3x text-muted mb-3\"></i><h5>No Topics Found</h5><p class=\"text-muted\">No message queue topics are currently configured.</p></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<div class=\"table-responsive\"><table class=\"table table-striped\" id=\"topicsTable\"><thead><tr><th>Topic Name</th><th>Partitions</th><th>Subscribers</th><th>Messages</th><th>Size</th><th>Last Message</th><th>Created</th></tr></thead> <tbody>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<div class=\"table-responsive\"><table class=\"table table-striped\" id=\"topicsTable\"><thead><tr><th>Namespace</th><th>Topic Name</th><th>Partitions</th><th>Actions</th></tr></thead> <tbody>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			for _, topic := range data.Topics {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<tr><td><strong>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<tr class=\"topic-row\" data-topic-name=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var5 string
+				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(topic.Name)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 66, Col: 93}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\" style=\"cursor: pointer;\"><td><span class=\"badge bg-secondary\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var6 string
+				templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(func() string {
+					idx := strings.LastIndex(topic.Name, ".")
+					if idx == -1 {
+						return "default"
+					}
+					return topic.Name[:idx]
+				}())
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 74, Col: 55}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</span></td><td><strong>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var7 string
-				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(topic.Name)
+				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(func() string {
+					idx := strings.LastIndex(topic.Name, ".")
+					if idx == -1 {
+						return topic.Name
+					}
+					return topic.Name[idx+1:]
+				}())
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 87, Col: 71}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 83, Col: 55}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 				if templ_7745c5c3_Err != nil {
@@ -133,103 +145,53 @@ func Topics(data dash.TopicsData) templ.Component {
 				var templ_7745c5c3_Var8 string
 				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", topic.Partitions))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 90, Col: 116}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 86, Col: 116}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</span></td><td><span class=\"badge bg-primary\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</span></td><td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var9 string
-				templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", topic.Subscribers))
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 93, Col: 120}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
+				templ_7745c5c3_Err = templ.RenderScriptItems(ctx, templ_7745c5c3_Buffer, templ.ComponentScript{Call: fmt.Sprintf("viewTopicDetails('%s')", topic.Name)})
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</span></td><td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<button class=\"btn btn-sm btn-outline-primary\" onclick=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var9 templ.ComponentScript = templ.ComponentScript{Call: fmt.Sprintf("viewTopicDetails('%s')", topic.Name)}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9.Call)
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\"><i class=\"fas fa-info-circle me-1\"></i>Details</button></td></tr><tr class=\"topic-details-row\" id=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var10 string
-				templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", topic.MessageCount))
+				templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("details-%s", strings.ReplaceAll(topic.Name, ".", "_")))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 95, Col: 90}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 94, Col: 146}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</td><td>")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var11 string
-				templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(uint64(topic.TotalSize)))
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 96, Col: 103}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</td><td>")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				if !topic.LastMessage.IsZero() {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<span class=\"text-muted\">")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					var templ_7745c5c3_Var12 string
-					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(topic.LastMessage.Format("2006-01-02 15:04:05"))
-					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 99, Col: 129}
-					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "</span>")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<span class=\"text-muted\">Never</span>")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</td><td><span class=\"text-muted\">")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var13 string
-				templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(topic.CreatedAt.Format("2006-01-02 15:04:05"))
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 105, Col: 123}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</span></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "\" style=\"display: none;\"><td colspan=\"4\"><div class=\"topic-details-content\"><div class=\"text-center py-3\"><i class=\"fas fa-spinner fa-spin\"></i> Loading topic details...</div></div></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</tbody></table></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</tbody></table></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "</div></div></div></div></div><script>\n        function exportTopicsCSV() {\n            const table = document.getElementById('topicsTable');\n            if (!table) return;\n            \n            let csv = 'Topic Name,Partitions,Subscribers,Messages,Size,Last Message,Created\\n';\n            \n            const rows = table.querySelectorAll('tbody tr');\n            rows.forEach(row => {\n                const cells = row.querySelectorAll('td');\n                if (cells.length >= 7) {\n                    const rowData = [\n                        cells[0].querySelector('strong')?.textContent || '',\n                        cells[1].querySelector('.badge')?.textContent || '',\n                        cells[2].querySelector('.badge')?.textContent || '',\n                        cells[3].textContent || '',\n                        cells[4].textContent || '',\n                        cells[5].querySelector('span')?.textContent || '',\n                        cells[6].querySelector('span')?.textContent || ''\n                    ];\n                    csv += rowData.map(field => `\"${field.replace(/\"/g, '\"\"')}\"`).join(',') + '\\n';\n                }\n            });\n            \n            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });\n            const link = document.createElement('a');\n            const url = URL.createObjectURL(blob);\n            link.setAttribute('href', url);\n            link.setAttribute('download', 'topics.csv');\n            link.style.visibility = 'hidden';\n            document.body.appendChild(link);\n            link.click();\n            document.body.removeChild(link);\n        }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "</div></div></div></div></div><script>\n        function viewTopicDetails(topicName) {\n            const parts = topicName.split('.');\n            if (parts.length >= 2) {\n                const namespace = parts[0];\n                const topic = parts.slice(1).join('.');\n                window.location.href = `/mq/topics/${namespace}/${topic}`;\n            }\n        }\n\n        function toggleTopicDetails(topicName) {\n            const safeName = topicName.replace(/\\./g, '_');\n            const detailsRow = document.getElementById(`details-${safeName}`);\n            if (!detailsRow) return;\n\n            if (detailsRow.style.display === 'none') {\n                // Show details row and load data\n                detailsRow.style.display = 'table-row';\n                loadTopicDetails(topicName);\n            } else {\n                // Hide details row\n                detailsRow.style.display = 'none';\n            }\n        }\n\n        function loadTopicDetails(topicName) {\n            const parts = topicName.split('.');\n            if (parts.length < 2) return;\n            \n            const namespace = parts[0];\n            const topic = parts.slice(1).join('.');\n            const safeName = topicName.replace(/\\./g, '_');\n            const contentDiv = document.querySelector(`#details-${safeName} .topic-details-content`);\n            \n            if (!contentDiv) return;\n\n            // Show loading spinner\n            contentDiv.innerHTML = `\n                <div class=\"text-center py-3\">\n                    <i class=\"fas fa-spinner fa-spin\"></i> Loading topic details...\n                </div>\n            `;\n\n            // Make AJAX call to get topic details\n            fetch(`/api/mq/topics/${namespace}/${topic}`)\n                .then(response => response.json())\n                .then(data => {\n                    if (data.error) {\n                        contentDiv.innerHTML = `\n                            <div class=\"alert alert-danger\" role=\"alert\">\n                                <i class=\"fas fa-exclamation-triangle\"></i> Error: ${data.error}\n                            </div>\n                        `;\n                        return;\n                    }\n\n                    // Render topic details\n                    contentDiv.innerHTML = renderTopicDetails(data);\n                })\n                .catch(error => {\n                    contentDiv.innerHTML = `\n                        <div class=\"alert alert-danger\" role=\"alert\">\n                            <i class=\"fas fa-exclamation-triangle\"></i> Failed to load topic details: ${error.message}\n                        </div>\n                    `;\n                });\n        }\n\n        function renderTopicDetails(data) {\n            const createdAt = new Date(data.created_at).toLocaleString();\n            const lastUpdated = new Date(data.last_updated).toLocaleString();\n\n            let schemaHtml = '';\n            if (data.schema && data.schema.length > 0) {\n                schemaHtml = `\n                    <div class=\"col-md-6\">\n                        <h6>Schema Fields</h6>\n                        <div class=\"table-responsive\">\n                            <table class=\"table table-sm\">\n                                <thead>\n                                    <tr>\n                                        <th>Field</th>\n                                        <th>Type</th>\n                                        <th>Required</th>\n                                    </tr>\n                                </thead>\n                                <tbody>\n                                    ${data.schema.map(field => `\n                                        <tr>\n                                            <td>${field.name}</td>\n                                            <td><span class=\"badge bg-secondary\">${field.type}</span></td>\n                                            <td>${field.required ? '<span class=\"badge bg-success\">Yes</span>' : '<span class=\"badge bg-light text-dark\">No</span>'}</td>\n                                        </tr>\n                                    `).join('')}\n                                </tbody>\n                            </table>\n                        </div>\n                    </div>\n                `;\n            }\n\n            let partitionsHtml = '';\n            if (data.partitions && data.partitions.length > 0) {\n                partitionsHtml = `\n                    <div class=\"col-md-6\">\n                        <h6>Partitions</h6>\n                        <div class=\"table-responsive\">\n                            <table class=\"table table-sm\">\n                                <thead>\n                                    <tr>\n                                        <th>ID</th>\n                                        <th>Leader</th>\n                                        <th>Follower</th>\n                                    </tr>\n                                </thead>\n                                <tbody>\n                                    ${data.partitions.map(partition => `\n                                        <tr>\n                                            <td>${partition.id}</td>\n                                            <td>${partition.leader_broker || 'N/A'}</td>\n                                            <td>${partition.follower_broker || 'N/A'}</td>\n                                        </tr>\n                                    `).join('')}\n                                </tbody>\n                            </table>\n                        </div>\n                    </div>\n                `;\n            }\n\n            return `\n                <div class=\"card\">\n                    <div class=\"card-header\">\n                        <h5>Topic Details: ${data.namespace}.${data.name}</h5>\n                    </div>\n                    <div class=\"card-body\">\n                        <div class=\"row mb-3\">\n                            <div class=\"col-md-3\">\n                                <strong>Namespace:</strong> ${data.namespace}\n                            </div>\n                            <div class=\"col-md-3\">\n                                <strong>Topic Name:</strong> ${data.name}\n                            </div>\n                            <div class=\"col-md-3\">\n                                <strong>Created:</strong> ${createdAt}\n                            </div>\n                            <div class=\"col-md-3\">\n                                <strong>Last Updated:</strong> ${lastUpdated}\n                            </div>\n                        </div>\n                        <div class=\"row\">\n                            ${schemaHtml}\n                            ${partitionsHtml}\n                        </div>\n                    </div>\n                </div>\n            `;\n        }\n\n        function exportTopicsCSV() {\n            const table = document.getElementById('topicsTable');\n            if (!table) return;\n            \n            let csv = 'Namespace,Topic Name,Partitions\\n';\n            \n            const rows = table.querySelectorAll('tbody tr.topic-row');\n            rows.forEach(row => {\n                const cells = row.querySelectorAll('td');\n                if (cells.length >= 3) {\n                    const rowData = [\n                        cells[0].querySelector('.badge')?.textContent || '',  // Namespace\n                        cells[1].querySelector('strong')?.textContent || '',  // Topic Name\n                        cells[2].querySelector('.badge')?.textContent || ''   // Partitions\n                    ];\n                    csv += rowData.map(field => `\"${field.replace(/\"/g, '\"\"')}\"`).join(',') + '\\n';\n                }\n            });\n            \n            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });\n            const link = document.createElement('a');\n            const url = URL.createObjectURL(blob);\n            link.setAttribute('href', url);\n            link.setAttribute('download', 'topics.csv');\n            link.style.visibility = 'hidden';\n            document.body.appendChild(link);\n            link.click();\n            document.body.removeChild(link);\n        }\n\n        // Add click event listeners to topic rows\n        document.addEventListener('DOMContentLoaded', function() {\n            document.querySelectorAll('.topic-row').forEach(row => {\n                row.addEventListener('click', function() {\n                    const topicName = this.getAttribute('data-topic-name');\n                    toggleTopicDetails(topicName);\n                });\n            });\n        });\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

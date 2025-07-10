@@ -95,3 +95,8 @@ docker/weed_sub
 docker/weed_pub
 weed/mq/schema/example.parquet
 docker/agent_sub_record
+test/mq/bin/consumer
+test/mq/bin/producer
+test/producer
+bin/weed
+weed_binary

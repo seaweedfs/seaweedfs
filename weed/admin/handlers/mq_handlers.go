@@ -101,3 +101,61 @@ func (h *MessageQueueHandlers) ShowSubscribers(c *gin.Context) {
 		return
 	}
 }
+
+// ShowTopicDetails renders the topic details page
+func (h *MessageQueueHandlers) ShowTopicDetails(c *gin.Context) {
+	// Get topic parameters from URL
+	namespace := c.Param("namespace")
+	topicName := c.Param("topic")
+
+	if namespace == "" || topicName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing namespace or topic name"})
+		return
+	}
+
+	// Get topic details data
+	topicDetailsData, err := h.adminServer.GetTopicDetails(namespace, topicName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get topic details: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	topicDetailsData.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	topicDetailsComponent := app.TopicDetails(*topicDetailsData)
+	layoutComponent := layout.Layout(c, topicDetailsComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
+// GetTopicDetailsAPI returns topic details as JSON for AJAX calls
+func (h *MessageQueueHandlers) GetTopicDetailsAPI(c *gin.Context) {
+	// Get topic parameters from URL
+	namespace := c.Param("namespace")
+	topicName := c.Param("topic")
+
+	if namespace == "" || topicName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing namespace or topic name"})
+		return
+	}
+
+	// Get topic details data
+	topicDetailsData, err := h.adminServer.GetTopicDetails(namespace, topicName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get topic details: " + err.Error()})
+		return
+	}
+
+	// Return JSON data
+	c.JSON(http.StatusOK, topicDetailsData)
+}

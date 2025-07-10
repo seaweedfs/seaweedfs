@@ -9,24 +9,21 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 // GetTopics retrieves message queue topics data
 func (s *AdminServer) GetTopics() (*TopicsData, error) {
 	var topics []TopicInfo
-	var totalMessages int64
-	var totalSize int64
 
 	// Find broker leader and get topics
 	brokerLeader, err := s.findBrokerLeader()
 	if err != nil {
 		// If no broker leader found, return empty data
 		return &TopicsData{
-			Topics:        topics,
-			TotalTopics:   len(topics),
-			TotalMessages: 0,
-			TotalSize:     0,
-			LastUpdated:   time.Now(),
+			Topics:      topics,
+			TotalTopics: len(topics),
+			LastUpdated: time.Now(),
 		}, nil
 	}
 
@@ -40,16 +37,11 @@ func (s *AdminServer) GetTopics() (*TopicsData, error) {
 			return err
 		}
 
-		// Convert protobuf topics to TopicInfo
+		// Convert protobuf topics to TopicInfo - only include available data
 		for _, pbTopic := range resp.Topics {
 			topicInfo := TopicInfo{
-				Name:         fmt.Sprintf("%s.%s", pbTopic.Namespace, pbTopic.Name),
-				Partitions:   0,           // Will be populated when we look up topic brokers
-				Subscribers:  0,           // Will be populated from broker stats
-				MessageCount: 0,           // Will be populated from broker stats
-				TotalSize:    0,           // Will be populated from broker stats
-				LastMessage:  time.Time{}, // Will be populated from broker stats
-				CreatedAt:    time.Now(),  // Default to now, could be enhanced
+				Name:       fmt.Sprintf("%s.%s", pbTopic.Namespace, pbTopic.Name),
+				Partitions: 0, // Will be populated by LookupTopicBrokers call
 			}
 
 			// Get topic configuration to get partition count
@@ -69,20 +61,17 @@ func (s *AdminServer) GetTopics() (*TopicsData, error) {
 	if err != nil {
 		// If connection fails, return empty data
 		return &TopicsData{
-			Topics:        topics,
-			TotalTopics:   len(topics),
-			TotalMessages: 0,
-			TotalSize:     0,
-			LastUpdated:   time.Now(),
+			Topics:      topics,
+			TotalTopics: len(topics),
+			LastUpdated: time.Now(),
 		}, nil
 	}
 
 	return &TopicsData{
-		Topics:        topics,
-		TotalTopics:   len(topics),
-		TotalMessages: totalMessages,
-		TotalSize:     totalSize,
-		LastUpdated:   time.Now(),
+		Topics:      topics,
+		TotalTopics: len(topics),
+		LastUpdated: time.Now(),
+		// Don't include TotalMessages and TotalSize as they're not available
 	}, nil
 }
 
@@ -137,6 +126,143 @@ func (s *AdminServer) GetSubscribers() (*SubscribersData, error) {
 		ActiveSubscribers: activeCount,
 		LastUpdated:       time.Now(),
 	}, nil
+}
+
+// GetTopicDetails retrieves detailed information about a specific topic
+func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetailsData, error) {
+	// Find broker leader
+	brokerLeader, err := s.findBrokerLeader()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find broker leader: %v", err)
+	}
+
+	var topicDetails *TopicDetailsData
+
+	// Connect to broker leader and get topic configuration
+	err = s.withBrokerClient(brokerLeader, func(client mq_pb.SeaweedMessagingClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Get topic configuration using the new API
+		configResp, err := client.GetTopicConfiguration(ctx, &mq_pb.GetTopicConfigurationRequest{
+			Topic: &schema_pb.Topic{
+				Namespace: namespace,
+				Name:      topicName,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to get topic configuration: %v", err)
+		}
+
+		// Initialize topic details
+		topicDetails = &TopicDetailsData{
+			TopicName:   fmt.Sprintf("%s.%s", namespace, topicName),
+			Namespace:   namespace,
+			Name:        topicName,
+			Partitions:  []PartitionInfo{},
+			Schema:      []SchemaFieldInfo{},
+			CreatedAt:   time.Unix(0, configResp.CreatedAtNs),
+			LastUpdated: time.Unix(0, configResp.LastUpdatedNs),
+		}
+
+		// Set current time if timestamps are not available
+		if configResp.CreatedAtNs == 0 {
+			topicDetails.CreatedAt = time.Now()
+		}
+		if configResp.LastUpdatedNs == 0 {
+			topicDetails.LastUpdated = time.Now()
+		}
+
+		// Process partitions
+		for _, assignment := range configResp.BrokerPartitionAssignments {
+			if assignment.Partition != nil {
+				partitionInfo := PartitionInfo{
+					ID:             assignment.Partition.RangeStart,
+					LeaderBroker:   assignment.LeaderBroker,
+					FollowerBroker: assignment.FollowerBroker,
+					MessageCount:   0,           // Will be enhanced later with actual stats
+					TotalSize:      0,           // Will be enhanced later with actual stats
+					LastDataTime:   time.Time{}, // Will be enhanced later
+					CreatedAt:      time.Now(),
+				}
+				topicDetails.Partitions = append(topicDetails.Partitions, partitionInfo)
+			}
+		}
+
+		// Process schema from RecordType
+		if configResp.RecordType != nil {
+			topicDetails.Schema = convertRecordTypeToSchemaFields(configResp.RecordType)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return topicDetails, nil
+}
+
+// convertRecordTypeToSchemaFields converts a protobuf RecordType to SchemaFieldInfo slice
+func convertRecordTypeToSchemaFields(recordType *schema_pb.RecordType) []SchemaFieldInfo {
+	var schemaFields []SchemaFieldInfo
+
+	if recordType == nil || recordType.Fields == nil {
+		return schemaFields
+	}
+
+	for _, field := range recordType.Fields {
+		schemaField := SchemaFieldInfo{
+			Name:     field.Name,
+			Type:     getFieldTypeString(field.Type),
+			Required: field.IsRequired,
+		}
+		schemaFields = append(schemaFields, schemaField)
+	}
+
+	return schemaFields
+}
+
+// getFieldTypeString converts a protobuf Type to a human-readable string
+func getFieldTypeString(fieldType *schema_pb.Type) string {
+	if fieldType == nil {
+		return "unknown"
+	}
+
+	switch kind := fieldType.Kind.(type) {
+	case *schema_pb.Type_ScalarType:
+		return getScalarTypeString(kind.ScalarType)
+	case *schema_pb.Type_RecordType:
+		return "record"
+	case *schema_pb.Type_ListType:
+		elementType := getFieldTypeString(kind.ListType.ElementType)
+		return fmt.Sprintf("list<%s>", elementType)
+	default:
+		return "unknown"
+	}
+}
+
+// getScalarTypeString converts a protobuf ScalarType to a string
+func getScalarTypeString(scalarType schema_pb.ScalarType) string {
+	switch scalarType {
+	case schema_pb.ScalarType_BOOL:
+		return "bool"
+	case schema_pb.ScalarType_INT32:
+		return "int32"
+	case schema_pb.ScalarType_INT64:
+		return "int64"
+	case schema_pb.ScalarType_FLOAT:
+		return "float"
+	case schema_pb.ScalarType_DOUBLE:
+		return "double"
+	case schema_pb.ScalarType_BYTES:
+		return "bytes"
+	case schema_pb.ScalarType_STRING:
+		return "string"
+	default:
+		return "unknown"
+	}
 }
 
 // findBrokerLeader finds the current broker leader

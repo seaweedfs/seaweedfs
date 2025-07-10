@@ -1,8 +1,8 @@
 package app
 
 import "fmt"
+import "strings"
 import "github.com/seaweedfs/seaweedfs/weed/admin/dash"
-import "github.com/seaweedfs/seaweedfs/weed/util"
 
 templ Topics(data dash.TopicsData) {
     <div class="container-fluid">
@@ -15,7 +15,7 @@ templ Topics(data dash.TopicsData) {
 
                 <!-- Summary Cards -->
                 <div class="row mb-4">
-                    <div class="col-md-3">
+                    <div class="col-md-6">
                         <div class="card text-center">
                             <div class="card-body">
                                 <h5 class="card-title">Total Topics</h5>
@@ -23,27 +23,11 @@ templ Topics(data dash.TopicsData) {
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-6">
                         <div class="card text-center">
                             <div class="card-body">
-                                <h5 class="card-title">Total Messages</h5>
-                                <h3 class="text-info">{fmt.Sprintf("%d", data.TotalMessages)}</h3>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="card text-center">
-                            <div class="card-body">
-                                <h5 class="card-title">Total Size</h5>
-                                <h3 class="text-success">{util.BytesToHumanReadable(uint64(data.TotalSize))}</h3>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="card text-center">
-                            <div class="card-body">
-                                <h5 class="card-title">Active Topics</h5>
-                                <h3 class="text-warning">{fmt.Sprintf("%d", len(data.Topics))}</h3>
+                                <h5 class="card-title">Available Topics</h5>
+                                <h3 class="text-info">{fmt.Sprintf("%d", len(data.Topics))}</h3>
                             </div>
                         </div>
                     </div>
@@ -71,38 +55,49 @@ templ Topics(data dash.TopicsData) {
                                 <table class="table table-striped" id="topicsTable">
                                     <thead>
                                         <tr>
+                                            <th>Namespace</th>
                                             <th>Topic Name</th>
                                             <th>Partitions</th>
-                                            <th>Subscribers</th>
-                                            <th>Messages</th>
-                                            <th>Size</th>
-                                            <th>Last Message</th>
-                                            <th>Created</th>
+                                            <th>Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         for _, topic := range data.Topics {
-                                            <tr>
+                                            <tr class="topic-row" data-topic-name={topic.Name} style="cursor: pointer;">
                                                 <td>
-                                                    <strong>{topic.Name}</strong>
+                                                    <span class="badge bg-secondary">{func() string {
+                                                        idx := strings.LastIndex(topic.Name, ".")
+                                                        if idx == -1 {
+                                                            return "default"
+                                                        }
+                                                        return topic.Name[:idx]
+                                                    }()}</span>
+                                                </td>
+                                                <td>
+                                                    <strong>{func() string {
+                                                        idx := strings.LastIndex(topic.Name, ".")
+                                                        if idx == -1 {
+                                                            return topic.Name
+                                                        }
+                                                        return topic.Name[idx+1:]
+                                                    }()}</strong>
                                                 </td>
                                                 <td>
                                                     <span class="badge bg-info">{fmt.Sprintf("%d", topic.Partitions)}</span>
                                                 </td>
                                                 <td>
-                                                    <span class="badge bg-primary">{fmt.Sprintf("%d", topic.Subscribers)}</span>
+                                                    <button class="btn btn-sm btn-outline-primary" onclick={ templ.ComponentScript{Call: fmt.Sprintf("viewTopicDetails('%s')", topic.Name)} }>
+                                                        <i class="fas fa-info-circle me-1"></i>Details
+                                                    </button>
                                                 </td>
-                                                <td>{fmt.Sprintf("%d", topic.MessageCount)}</td>
-                                                <td>{util.BytesToHumanReadable(uint64(topic.TotalSize))}</td>
-                                                <td>
-                                                    if !topic.LastMessage.IsZero() {
-                                                        <span class="text-muted">{topic.LastMessage.Format("2006-01-02 15:04:05")}</span>
-                                                    } else {
-                                                        <span class="text-muted">Never</span>
-                                                    }
-                                                </td>
-                                                <td>
-                                                    <span class="text-muted">{topic.CreatedAt.Format("2006-01-02 15:04:05")}</span>
+                                            </tr>
+                                            <tr class="topic-details-row" id={ fmt.Sprintf("details-%s", strings.ReplaceAll(topic.Name, ".", "_")) } style="display: none;">
+                                                <td colspan="4">
+                                                    <div class="topic-details-content">
+                                                        <div class="text-center py-3">
+                                                            <i class="fas fa-spinner fa-spin"></i> Loading topic details...
+                                                        </div>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         }
@@ -117,24 +112,178 @@ templ Topics(data dash.TopicsData) {
     </div>
 
     <script>
+        function viewTopicDetails(topicName) {
+            const parts = topicName.split('.');
+            if (parts.length >= 2) {
+                const namespace = parts[0];
+                const topic = parts.slice(1).join('.');
+                window.location.href = `/mq/topics/${namespace}/${topic}`;
+            }
+        }
+
+        function toggleTopicDetails(topicName) {
+            const safeName = topicName.replace(/\./g, '_');
+            const detailsRow = document.getElementById(`details-${safeName}`);
+            if (!detailsRow) return;
+
+            if (detailsRow.style.display === 'none') {
+                // Show details row and load data
+                detailsRow.style.display = 'table-row';
+                loadTopicDetails(topicName);
+            } else {
+                // Hide details row
+                detailsRow.style.display = 'none';
+            }
+        }
+
+        function loadTopicDetails(topicName) {
+            const parts = topicName.split('.');
+            if (parts.length < 2) return;
+            
+            const namespace = parts[0];
+            const topic = parts.slice(1).join('.');
+            const safeName = topicName.replace(/\./g, '_');
+            const contentDiv = document.querySelector(`#details-${safeName} .topic-details-content`);
+            
+            if (!contentDiv) return;
+
+            // Show loading spinner
+            contentDiv.innerHTML = `
+                <div class="text-center py-3">
+                    <i class="fas fa-spinner fa-spin"></i> Loading topic details...
+                </div>
+            `;
+
+            // Make AJAX call to get topic details
+            fetch(`/api/mq/topics/${namespace}/${topic}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        contentDiv.innerHTML = `
+                            <div class="alert alert-danger" role="alert">
+                                <i class="fas fa-exclamation-triangle"></i> Error: ${data.error}
+                            </div>
+                        `;
+                        return;
+                    }
+
+                    // Render topic details
+                    contentDiv.innerHTML = renderTopicDetails(data);
+                })
+                .catch(error => {
+                    contentDiv.innerHTML = `
+                        <div class="alert alert-danger" role="alert">
+                            <i class="fas fa-exclamation-triangle"></i> Failed to load topic details: ${error.message}
+                        </div>
+                    `;
+                });
+        }
+
+        function renderTopicDetails(data) {
+            const createdAt = new Date(data.created_at).toLocaleString();
+            const lastUpdated = new Date(data.last_updated).toLocaleString();
+
+            let schemaHtml = '';
+            if (data.schema && data.schema.length > 0) {
+                schemaHtml = `
+                    <div class="col-md-6">
+                        <h6>Schema Fields</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Field</th>
+                                        <th>Type</th>
+                                        <th>Required</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.schema.map(field => `
+                                        <tr>
+                                            <td>${field.name}</td>
+                                            <td><span class="badge bg-secondary">${field.type}</span></td>
+                                            <td>${field.required ? '<span class="badge bg-success">Yes</span>' : '<span class="badge bg-light text-dark">No</span>'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            }
+
+            let partitionsHtml = '';
+            if (data.partitions && data.partitions.length > 0) {
+                partitionsHtml = `
+                    <div class="col-md-6">
+                        <h6>Partitions</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Leader</th>
+                                        <th>Follower</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.partitions.map(partition => `
+                                        <tr>
+                                            <td>${partition.id}</td>
+                                            <td>${partition.leader_broker || 'N/A'}</td>
+                                            <td>${partition.follower_broker || 'N/A'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Topic Details: ${data.namespace}.${data.name}</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <strong>Namespace:</strong> ${data.namespace}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Topic Name:</strong> ${data.name}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Created:</strong> ${createdAt}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Last Updated:</strong> ${lastUpdated}
+                            </div>
+                        </div>
+                        <div class="row">
+                            ${schemaHtml}
+                            ${partitionsHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function exportTopicsCSV() {
             const table = document.getElementById('topicsTable');
             if (!table) return;
             
-            let csv = 'Topic Name,Partitions,Subscribers,Messages,Size,Last Message,Created\n';
+            let csv = 'Namespace,Topic Name,Partitions\n';
             
-            const rows = table.querySelectorAll('tbody tr');
+            const rows = table.querySelectorAll('tbody tr.topic-row');
             rows.forEach(row => {
                 const cells = row.querySelectorAll('td');
-                if (cells.length >= 7) {
+                if (cells.length >= 3) {
                     const rowData = [
-                        cells[0].querySelector('strong')?.textContent || '',
-                        cells[1].querySelector('.badge')?.textContent || '',
-                        cells[2].querySelector('.badge')?.textContent || '',
-                        cells[3].textContent || '',
-                        cells[4].textContent || '',
-                        cells[5].querySelector('span')?.textContent || '',
-                        cells[6].querySelector('span')?.textContent || ''
+                        cells[0].querySelector('.badge')?.textContent || '',  // Namespace
+                        cells[1].querySelector('strong')?.textContent || '',  // Topic Name
+                        cells[2].querySelector('.badge')?.textContent || ''   // Partitions
                     ];
                     csv += rowData.map(field => `"${field.replace(/"/g, '""')}"`).join(',') + '\n';
                 }
@@ -150,5 +299,15 @@ templ Topics(data dash.TopicsData) {
             link.click();
             document.body.removeChild(link);
         }
+
+        // Add click event listeners to topic rows
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.topic-row').forEach(row => {
+                row.addEventListener('click', function() {
+                    const topicName = this.getAttribute('data-topic-name');
+                    toggleTopicDetails(topicName);
+                });
+            });
+        });
     </script>
 } 
