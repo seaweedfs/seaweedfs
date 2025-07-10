@@ -79,7 +79,6 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
 		protected.GET("/mq/topics", h.mqHandlers.ShowTopics)
 		protected.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
-		protected.GET("/mq/subscribers", h.mqHandlers.ShowSubscribers)
 
 		// Maintenance system routes
 		protected.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
@@ -185,7 +184,6 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		r.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
 		r.GET("/mq/topics", h.mqHandlers.ShowTopics)
 		r.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
-		r.GET("/mq/subscribers", h.mqHandlers.ShowSubscribers)
 
 		// Maintenance system routes
 		r.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
