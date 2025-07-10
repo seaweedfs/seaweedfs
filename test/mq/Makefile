@@ -5,7 +5,7 @@ GO_BUILD_CMD=go build -o bin/$(1) $(2)
 GO_RUN_CMD=go run $(1) $(2)
 
 # Default values
-AGENT_ADDR?=10.21.152.113:16777
+AGENT_ADDR?=192.168.10.182:16777
 TOPIC_NAMESPACE?=test
 TOPIC_NAME?=test-topic
 PARTITION_COUNT?=4

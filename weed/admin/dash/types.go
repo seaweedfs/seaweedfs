@@ -259,25 +259,28 @@ type SchemaFieldInfo struct {
 }
 
 type PublisherInfo struct {
-	PublisherName string    `json:"publisher_name"`
-	ClientID      string    `json:"client_id"`
-	PartitionID   int32     `json:"partition_id"`
-	Broker        string    `json:"broker"`
-	ConnectTime   time.Time `json:"connect_time"`
-	LastSeenTime  time.Time `json:"last_seen_time"`
-	IsActive      bool      `json:"is_active"`
+	PublisherName       string    `json:"publisher_name"`
+	ClientID            string    `json:"client_id"`
+	PartitionID         int32     `json:"partition_id"`
+	Broker              string    `json:"broker"`
+	ConnectTime         time.Time `json:"connect_time"`
+	LastSeenTime        time.Time `json:"last_seen_time"`
+	IsActive            bool      `json:"is_active"`
+	LastPublishedOffset int64     `json:"last_published_offset"`
+	LastAckedOffset     int64     `json:"last_acked_offset"`
 }
 
 type TopicSubscriberInfo struct {
-	ConsumerGroup string    `json:"consumer_group"`
-	ConsumerID    string    `json:"consumer_id"`
-	ClientID      string    `json:"client_id"`
-	PartitionID   int32     `json:"partition_id"`
-	Broker        string    `json:"broker"`
-	ConnectTime   time.Time `json:"connect_time"`
-	LastSeenTime  time.Time `json:"last_seen_time"`
-	IsActive      bool      `json:"is_active"`
-	CurrentOffset int64     `json:"current_offset"`
+	ConsumerGroup      string    `json:"consumer_group"`
+	ConsumerID         string    `json:"consumer_id"`
+	ClientID           string    `json:"client_id"`
+	PartitionID        int32     `json:"partition_id"`
+	Broker             string    `json:"broker"`
+	ConnectTime        time.Time `json:"connect_time"`
+	LastSeenTime       time.Time `json:"last_seen_time"`
+	IsActive           bool      `json:"is_active"`
+	CurrentOffset      int64     `json:"current_offset"`       // last acknowledged offset
+	LastReceivedOffset int64     `json:"last_received_offset"` // last received offset
 }
 
 type TopicDetailsData struct {

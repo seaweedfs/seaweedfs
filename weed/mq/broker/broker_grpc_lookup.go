@@ -217,18 +217,21 @@ func (b *MessageQueueBroker) GetTopicPublishers(ctx context.Context, request *mq
 			partition := topic.FromPbPartition(assignment.Partition)
 			if localPartition := b.localTopicManager.GetLocalPartition(t, partition); localPartition != nil {
 				// Get publisher information from local partition
-				publisherNames := localPartition.Publishers.GetPublisherNames()
-				for _, clientName := range publisherNames {
+				localPartition.Publishers.ForEachPublisher(func(clientName string, publisher *topic.LocalPublisher) {
+					connectTimeNs, lastSeenTimeNs := publisher.GetTimestamps()
+					lastPublishedOffset, lastAckedOffset := publisher.GetOffsets()
 					publishers = append(publishers, &mq_pb.TopicPublisher{
-						PublisherName:  clientName,
-						ClientId:       clientName, // For now, client name is used as client ID
-						Partition:      assignment.Partition,
-						ConnectTimeNs:  0, // This information is not currently tracked
-						LastSeenTimeNs: 0, // This information is not currently tracked
-						Broker:         assignment.LeaderBroker,
-						IsActive:       true,
+						PublisherName:       clientName,
+						ClientId:            clientName, // For now, client name is used as client ID
+						Partition:           assignment.Partition,
+						ConnectTimeNs:       connectTimeNs,
+						LastSeenTimeNs:      lastSeenTimeNs,
+						Broker:              assignment.LeaderBroker,
+						IsActive:            true,
+						LastPublishedOffset: lastPublishedOffset,
+						LastAckedOffset:     lastAckedOffset,
 					})
-				}
+				})
 			}
 		}
 	}
@@ -268,8 +271,7 @@ func (b *MessageQueueBroker) GetTopicSubscribers(ctx context.Context, request *m
 			partition := topic.FromPbPartition(assignment.Partition)
 			if localPartition := b.localTopicManager.GetLocalPartition(t, partition); localPartition != nil {
 				// Get subscriber information from local partition
-				subscriberNames := localPartition.Subscribers.GetSubscriberNames()
-				for _, clientName := range subscriberNames {
+				localPartition.Subscribers.ForEachSubscriber(func(clientName string, subscriber *topic.LocalSubscriber) {
 					// Parse client name to extract consumer group and consumer ID
 					// Format is typically: "consumerGroup/consumerID"
 					consumerGroup := "default"
@@ -279,18 +281,22 @@ func (b *MessageQueueBroker) GetTopicSubscribers(ctx context.Context, request *m
 						consumerID = clientName[idx+1:]
 					}
 
+					connectTimeNs, lastSeenTimeNs := subscriber.GetTimestamps()
+					lastReceivedOffset, lastAckedOffset := subscriber.GetOffsets()
+
 					subscribers = append(subscribers, &mq_pb.TopicSubscriber{
-						ConsumerGroup:  consumerGroup,
-						ConsumerId:     consumerID,
-						ClientId:       clientName, // Full client name as client ID
-						Partition:      assignment.Partition,
-						ConnectTimeNs:  0, // This information is not currently tracked
-						LastSeenTimeNs: 0, // This information is not currently tracked
-						Broker:         assignment.LeaderBroker,
-						IsActive:       true,
-						CurrentOffset:  0, // This information is not currently tracked
+						ConsumerGroup:      consumerGroup,
+						ConsumerId:         consumerID,
+						ClientId:           clientName, // Full client name as client ID
+						Partition:          assignment.Partition,
+						ConnectTimeNs:      connectTimeNs,
+						LastSeenTimeNs:     lastSeenTimeNs,
+						Broker:             assignment.LeaderBroker,
+						IsActive:           true,
+						CurrentOffset:      lastAckedOffset, // for compatibility
+						LastReceivedOffset: lastReceivedOffset,
 					})
-				}
+				})
 			}
 		}
 	}

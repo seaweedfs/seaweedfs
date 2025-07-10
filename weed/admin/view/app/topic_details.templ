@@ -225,6 +225,9 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                                     <th>Partition</th>
                                                     <th>Broker</th>
                                                     <th>Status</th>
+                                                    <th>Published</th>
+                                                    <th>Acknowledged</th>
+                                                    <th>Last Seen</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -238,6 +241,27 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                                                 <span class="badge bg-success">Active</span>
                                                             } else {
                                                                 <span class="badge bg-secondary">Inactive</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if publisher.LastPublishedOffset > 0 {
+                                                                <span class="text-muted">{fmt.Sprintf("%d", publisher.LastPublishedOffset)}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if publisher.LastAckedOffset > 0 {
+                                                                <span class="text-muted">{fmt.Sprintf("%d", publisher.LastAckedOffset)}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if !publisher.LastSeenTime.IsZero() {
+                                                                <span class="text-muted">{publisher.LastSeenTime.Format("15:04:05")}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
                                                             }
                                                         </td>
                                                     </tr>
@@ -269,6 +293,9 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                                     <th>Partition</th>
                                                     <th>Broker</th>
                                                     <th>Status</th>
+                                                    <th>Received</th>
+                                                    <th>Acknowledged</th>
+                                                    <th>Last Seen</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -283,6 +310,27 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                                                 <span class="badge bg-success">Active</span>
                                                             } else {
                                                                 <span class="badge bg-secondary">Inactive</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if subscriber.LastReceivedOffset > 0 {
+                                                                <span class="text-muted">{fmt.Sprintf("%d", subscriber.LastReceivedOffset)}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if subscriber.CurrentOffset > 0 {
+                                                                <span class="text-muted">{fmt.Sprintf("%d", subscriber.CurrentOffset)}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if !subscriber.LastSeenTime.IsZero() {
+                                                                <span class="text-muted">{subscriber.LastSeenTime.Format("15:04:05")}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
                                                             }
                                                         </td>
                                                     </tr>

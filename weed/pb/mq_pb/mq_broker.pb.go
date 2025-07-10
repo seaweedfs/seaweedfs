@@ -1083,16 +1083,18 @@ func (x *GetTopicSubscribersResponse) GetSubscribers() []*TopicSubscriber {
 }
 
 type TopicPublisher struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	PublisherName  string                 `protobuf:"bytes,1,opt,name=publisher_name,json=publisherName,proto3" json:"publisher_name,omitempty"`
-	ClientId       string                 `protobuf:"bytes,2,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
-	Partition      *schema_pb.Partition   `protobuf:"bytes,3,opt,name=partition,proto3" json:"partition,omitempty"`
-	ConnectTimeNs  int64                  `protobuf:"varint,4,opt,name=connect_time_ns,json=connectTimeNs,proto3" json:"connect_time_ns,omitempty"`
-	LastSeenTimeNs int64                  `protobuf:"varint,5,opt,name=last_seen_time_ns,json=lastSeenTimeNs,proto3" json:"last_seen_time_ns,omitempty"`
-	Broker         string                 `protobuf:"bytes,6,opt,name=broker,proto3" json:"broker,omitempty"`
-	IsActive       bool                   `protobuf:"varint,7,opt,name=is_active,json=isActive,proto3" json:"is_active,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	PublisherName       string                 `protobuf:"bytes,1,opt,name=publisher_name,json=publisherName,proto3" json:"publisher_name,omitempty"`
+	ClientId            string                 `protobuf:"bytes,2,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Partition           *schema_pb.Partition   `protobuf:"bytes,3,opt,name=partition,proto3" json:"partition,omitempty"`
+	ConnectTimeNs       int64                  `protobuf:"varint,4,opt,name=connect_time_ns,json=connectTimeNs,proto3" json:"connect_time_ns,omitempty"`
+	LastSeenTimeNs      int64                  `protobuf:"varint,5,opt,name=last_seen_time_ns,json=lastSeenTimeNs,proto3" json:"last_seen_time_ns,omitempty"`
+	Broker              string                 `protobuf:"bytes,6,opt,name=broker,proto3" json:"broker,omitempty"`
+	IsActive            bool                   `protobuf:"varint,7,opt,name=is_active,json=isActive,proto3" json:"is_active,omitempty"`
+	LastPublishedOffset int64                  `protobuf:"varint,8,opt,name=last_published_offset,json=lastPublishedOffset,proto3" json:"last_published_offset,omitempty"`
+	LastAckedOffset     int64                  `protobuf:"varint,9,opt,name=last_acked_offset,json=lastAckedOffset,proto3" json:"last_acked_offset,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *TopicPublisher) Reset() {
@@ -1174,19 +1176,34 @@ func (x *TopicPublisher) GetIsActive() bool {
 	return false
 }
 
+func (x *TopicPublisher) GetLastPublishedOffset() int64 {
+	if x != nil {
+		return x.LastPublishedOffset
+	}
+	return 0
+}
+
+func (x *TopicPublisher) GetLastAckedOffset() int64 {
+	if x != nil {
+		return x.LastAckedOffset
+	}
+	return 0
+}
+
 type TopicSubscriber struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	ConsumerGroup  string                 `protobuf:"bytes,1,opt,name=consumer_group,json=consumerGroup,proto3" json:"consumer_group,omitempty"`
-	ConsumerId     string                 `protobuf:"bytes,2,opt,name=consumer_id,json=consumerId,proto3" json:"consumer_id,omitempty"`
-	ClientId       string                 `protobuf:"bytes,3,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
-	Partition      *schema_pb.Partition   `protobuf:"bytes,4,opt,name=partition,proto3" json:"partition,omitempty"`
-	ConnectTimeNs  int64                  `protobuf:"varint,5,opt,name=connect_time_ns,json=connectTimeNs,proto3" json:"connect_time_ns,omitempty"`
-	LastSeenTimeNs int64                  `protobuf:"varint,6,opt,name=last_seen_time_ns,json=lastSeenTimeNs,proto3" json:"last_seen_time_ns,omitempty"`
-	Broker         string                 `protobuf:"bytes,7,opt,name=broker,proto3" json:"broker,omitempty"`
-	IsActive       bool                   `protobuf:"varint,8,opt,name=is_active,json=isActive,proto3" json:"is_active,omitempty"`
-	CurrentOffset  int64                  `protobuf:"varint,9,opt,name=current_offset,json=currentOffset,proto3" json:"current_offset,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	ConsumerGroup      string                 `protobuf:"bytes,1,opt,name=consumer_group,json=consumerGroup,proto3" json:"consumer_group,omitempty"`
+	ConsumerId         string                 `protobuf:"bytes,2,opt,name=consumer_id,json=consumerId,proto3" json:"consumer_id,omitempty"`
+	ClientId           string                 `protobuf:"bytes,3,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Partition          *schema_pb.Partition   `protobuf:"bytes,4,opt,name=partition,proto3" json:"partition,omitempty"`
+	ConnectTimeNs      int64                  `protobuf:"varint,5,opt,name=connect_time_ns,json=connectTimeNs,proto3" json:"connect_time_ns,omitempty"`
+	LastSeenTimeNs     int64                  `protobuf:"varint,6,opt,name=last_seen_time_ns,json=lastSeenTimeNs,proto3" json:"last_seen_time_ns,omitempty"`
+	Broker             string                 `protobuf:"bytes,7,opt,name=broker,proto3" json:"broker,omitempty"`
+	IsActive           bool                   `protobuf:"varint,8,opt,name=is_active,json=isActive,proto3" json:"is_active,omitempty"`
+	CurrentOffset      int64                  `protobuf:"varint,9,opt,name=current_offset,json=currentOffset,proto3" json:"current_offset,omitempty"` // last acknowledged offset
+	LastReceivedOffset int64                  `protobuf:"varint,10,opt,name=last_received_offset,json=lastReceivedOffset,proto3" json:"last_received_offset,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *TopicSubscriber) Reset() {
@@ -1278,6 +1295,13 @@ func (x *TopicSubscriber) GetIsActive() bool {
 func (x *TopicSubscriber) GetCurrentOffset() int64 {
 	if x != nil {
 		return x.CurrentOffset
+	}
+	return 0
+}
+
+func (x *TopicSubscriber) GetLastReceivedOffset() int64 {
+	if x != nil {
+		return x.LastReceivedOffset
 	}
 	return 0
 }
@@ -3417,7 +3441,7 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x1aGetTopicSubscribersRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"^\n" +
 	"\x1bGetTopicSubscribersResponse\x12?\n" +
-	"\vsubscribers\x18\x01 \x03(\v2\x1d.messaging_pb.TopicSubscriberR\vsubscribers\"\x90\x02\n" +
+	"\vsubscribers\x18\x01 \x03(\v2\x1d.messaging_pb.TopicSubscriberR\vsubscribers\"\xf0\x02\n" +
 	"\x0eTopicPublisher\x12%\n" +
 	"\x0epublisher_name\x18\x01 \x01(\tR\rpublisherName\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\x122\n" +
@@ -3425,7 +3449,9 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x0fconnect_time_ns\x18\x04 \x01(\x03R\rconnectTimeNs\x12)\n" +
 	"\x11last_seen_time_ns\x18\x05 \x01(\x03R\x0elastSeenTimeNs\x12\x16\n" +
 	"\x06broker\x18\x06 \x01(\tR\x06broker\x12\x1b\n" +
-	"\tis_active\x18\a \x01(\bR\bisActive\"\xd9\x02\n" +
+	"\tis_active\x18\a \x01(\bR\bisActive\x122\n" +
+	"\x15last_published_offset\x18\b \x01(\x03R\x13lastPublishedOffset\x12*\n" +
+	"\x11last_acked_offset\x18\t \x01(\x03R\x0flastAckedOffset\"\x8b\x03\n" +
 	"\x0fTopicSubscriber\x12%\n" +
 	"\x0econsumer_group\x18\x01 \x01(\tR\rconsumerGroup\x12\x1f\n" +
 	"\vconsumer_id\x18\x02 \x01(\tR\n" +
@@ -3436,7 +3462,9 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x11last_seen_time_ns\x18\x06 \x01(\x03R\x0elastSeenTimeNs\x12\x16\n" +
 	"\x06broker\x18\a \x01(\tR\x06broker\x12\x1b\n" +
 	"\tis_active\x18\b \x01(\bR\bisActive\x12%\n" +
-	"\x0ecurrent_offset\x18\t \x01(\x03R\rcurrentOffset\"\xef\x01\n" +
+	"\x0ecurrent_offset\x18\t \x01(\x03R\rcurrentOffset\x120\n" +
+	"\x14last_received_offset\x18\n" +
+	" \x01(\x03R\x12lastReceivedOffset\"\xef\x01\n" +
 	"\x1cAssignTopicPartitionsRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12i\n" +
 	"\x1cbroker_partition_assignments\x18\x02 \x03(\v2'.messaging_pb.BrokerPartitionAssignmentR\x1abrokerPartitionAssignments\x12\x1b\n" +

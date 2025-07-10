@@ -304,11 +304,13 @@ func convertTopicPublishers(publishers []*mq_pb.TopicPublisher) []PublisherInfo 
 
 	for _, publisher := range publishers {
 		publisherInfo := PublisherInfo{
-			PublisherName: publisher.PublisherName,
-			ClientID:      publisher.ClientId,
-			PartitionID:   publisher.Partition.RangeStart,
-			Broker:        publisher.Broker,
-			IsActive:      publisher.IsActive,
+			PublisherName:       publisher.PublisherName,
+			ClientID:            publisher.ClientId,
+			PartitionID:         publisher.Partition.RangeStart,
+			Broker:              publisher.Broker,
+			IsActive:            publisher.IsActive,
+			LastPublishedOffset: publisher.LastPublishedOffset,
+			LastAckedOffset:     publisher.LastAckedOffset,
 		}
 
 		// Convert timestamps
@@ -331,13 +333,14 @@ func convertTopicSubscribers(subscribers []*mq_pb.TopicSubscriber) []TopicSubscr
 
 	for _, subscriber := range subscribers {
 		subscriberInfo := TopicSubscriberInfo{
-			ConsumerGroup: subscriber.ConsumerGroup,
-			ConsumerID:    subscriber.ConsumerId,
-			ClientID:      subscriber.ClientId,
-			PartitionID:   subscriber.Partition.RangeStart,
-			Broker:        subscriber.Broker,
-			IsActive:      subscriber.IsActive,
-			CurrentOffset: subscriber.CurrentOffset,
+			ConsumerGroup:      subscriber.ConsumerGroup,
+			ConsumerID:         subscriber.ConsumerId,
+			ClientID:           subscriber.ClientId,
+			PartitionID:        subscriber.Partition.RangeStart,
+			Broker:             subscriber.Broker,
+			IsActive:           subscriber.IsActive,
+			CurrentOffset:      subscriber.CurrentOffset,
+			LastReceivedOffset: subscriber.LastReceivedOffset,
 		}
 
 		// Convert timestamps

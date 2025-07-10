@@ -162,6 +162,8 @@ message TopicPublisher {
     int64 last_seen_time_ns = 5;
     string broker = 6;
     bool is_active = 7;
+    int64 last_published_offset = 8;
+    int64 last_acked_offset = 9;
 }
 
 message TopicSubscriber {
@@ -173,7 +175,8 @@ message TopicSubscriber {
     int64 last_seen_time_ns = 6;
     string broker = 7;
     bool is_active = 8;
-    int64 current_offset = 9;
+    int64 current_offset = 9; // last acknowledged offset
+    int64 last_received_offset = 10;
 }
 
 message AssignTopicPartitionsRequest {
