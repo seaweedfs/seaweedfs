@@ -73,6 +73,19 @@ templ TopicDetails(data dash.TopicDetailsData) {
                         </div>
                     </div>
                 </div>
+                
+                <!-- Consumer Group Offsets Summary -->
+                <div class="row mb-4">
+                    <div class="col-md-12">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Consumer Group Offsets</h5>
+                                <h3 class="text-warning">{fmt.Sprintf("%d", len(data.ConsumerGroupOffsets))}</h3>
+                                <p class="text-muted">Saved consumer progress checkpoints</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Topic Information -->
                 <div class="row mb-4">
@@ -335,6 +348,55 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                                             } else {
                                                                 <span class="text-muted">-</span>
                                                             }
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Consumer Group Offsets -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">Consumer Group Offsets <span class="badge bg-warning">{fmt.Sprintf("%d", len(data.ConsumerGroupOffsets))}</span></h5>
+                            </div>
+                            <div class="card-body">
+                                if len(data.ConsumerGroupOffsets) == 0 {
+                                    <div class="alert alert-info mb-0">
+                                        <i class="fas fa-info-circle"></i> No consumer group offsets found for this topic.
+                                    </div>
+                                } else {
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Consumer Group</th>
+                                                    <th>Partition</th>
+                                                    <th>Offset</th>
+                                                    <th>Last Updated</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                for _, offset := range data.ConsumerGroupOffsets {
+                                                    <tr>
+                                                        <td>
+                                                            <span class="badge bg-secondary">{offset.ConsumerGroup}</span>
+                                                        </td>
+                                                        <td>
+                                                            <span class="badge bg-primary">{fmt.Sprintf("%d", offset.PartitionID)}</span>
+                                                        </td>
+                                                        <td>
+                                                            <strong>{fmt.Sprintf("%d", offset.Offset)}</strong>
+                                                        </td>
+                                                        <td>
+                                                            <span class="text-muted">{offset.LastUpdated.Format("2006-01-02 15:04:05")}</span>
                                                         </td>
                                                     </tr>
                                                 }

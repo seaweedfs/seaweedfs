@@ -283,19 +283,27 @@ type TopicSubscriberInfo struct {
 	LastReceivedOffset int64     `json:"last_received_offset"` // last received offset
 }
 
+type ConsumerGroupOffsetInfo struct {
+	ConsumerGroup string    `json:"consumer_group"`
+	PartitionID   int32     `json:"partition_id"`
+	Offset        int64     `json:"offset"`
+	LastUpdated   time.Time `json:"last_updated"`
+}
+
 type TopicDetailsData struct {
-	Username     string                `json:"username"`
-	TopicName    string                `json:"topic_name"`
-	Namespace    string                `json:"namespace"`
-	Name         string                `json:"name"`
-	Partitions   []PartitionInfo       `json:"partitions"`
-	Schema       []SchemaFieldInfo     `json:"schema"`
-	Publishers   []PublisherInfo       `json:"publishers"`
-	Subscribers  []TopicSubscriberInfo `json:"subscribers"`
-	MessageCount int64                 `json:"message_count"`
-	TotalSize    int64                 `json:"total_size"`
-	CreatedAt    time.Time             `json:"created_at"`
-	LastUpdated  time.Time             `json:"last_updated"`
+	Username             string                    `json:"username"`
+	TopicName            string                    `json:"topic_name"`
+	Namespace            string                    `json:"namespace"`
+	Name                 string                    `json:"name"`
+	Partitions           []PartitionInfo           `json:"partitions"`
+	Schema               []SchemaFieldInfo         `json:"schema"`
+	Publishers           []PublisherInfo           `json:"publishers"`
+	Subscribers          []TopicSubscriberInfo     `json:"subscribers"`
+	ConsumerGroupOffsets []ConsumerGroupOffsetInfo `json:"consumer_group_offsets"`
+	MessageCount         int64                     `json:"message_count"`
+	TotalSize            int64                     `json:"total_size"`
+	CreatedAt            time.Time                 `json:"created_at"`
+	LastUpdated          time.Time                 `json:"last_updated"`
 }
 
 // Volume server management structures

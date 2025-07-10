@@ -3,14 +3,21 @@ package dash
 import (
 	"context"
 	"fmt"
+	"io"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // GetTopics retrieves message queue topics data
@@ -157,15 +164,16 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 
 		// Initialize topic details
 		topicDetails = &TopicDetailsData{
-			TopicName:   fmt.Sprintf("%s.%s", namespace, topicName),
-			Namespace:   namespace,
-			Name:        topicName,
-			Partitions:  []PartitionInfo{},
-			Schema:      []SchemaFieldInfo{},
-			Publishers:  []PublisherInfo{},
-			Subscribers: []TopicSubscriberInfo{},
-			CreatedAt:   time.Unix(0, configResp.CreatedAtNs),
-			LastUpdated: time.Unix(0, configResp.LastUpdatedNs),
+			TopicName:            fmt.Sprintf("%s.%s", namespace, topicName),
+			Namespace:            namespace,
+			Name:                 topicName,
+			Partitions:           []PartitionInfo{},
+			Schema:               []SchemaFieldInfo{},
+			Publishers:           []PublisherInfo{},
+			Subscribers:          []TopicSubscriberInfo{},
+			ConsumerGroupOffsets: []ConsumerGroupOffsetInfo{},
+			CreatedAt:            time.Unix(0, configResp.CreatedAtNs),
+			LastUpdated:          time.Unix(0, configResp.LastUpdatedNs),
 		}
 
 		// Set current time if timestamps are not available
@@ -234,7 +242,152 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 		return nil, err
 	}
 
+	// Get consumer group offsets from the filer
+	offsets, err := s.GetConsumerGroupOffsets(namespace, topicName)
+	if err != nil {
+		// Log error but don't fail the entire request
+		glog.V(0).Infof("failed to get consumer group offsets for %s.%s: %v", namespace, topicName, err)
+	} else {
+		glog.V(1).Infof("got %d consumer group offsets for topic %s.%s", len(offsets), namespace, topicName)
+		topicDetails.ConsumerGroupOffsets = offsets
+	}
+
 	return topicDetails, nil
+}
+
+// GetConsumerGroupOffsets retrieves consumer group offsets for a topic from the filer
+func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]ConsumerGroupOffsetInfo, error) {
+	var offsets []ConsumerGroupOffsetInfo
+
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// Get the topic directory: /topics/namespace/topicName
+		topicObj := topic.NewTopic(namespace, topicName)
+		topicDir := topicObj.Dir()
+
+		// List all version directories under the topic directory (e.g., v2025-07-10-05-44-34)
+		versionStream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+			Directory:          topicDir,
+			Prefix:             "",
+			StartFromFileName:  "",
+			InclusiveStartFrom: false,
+			Limit:              1000,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list topic directory %s: %v", topicDir, err)
+		}
+
+		// Process each version directory
+		for {
+			versionResp, err := versionStream.Recv()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return fmt.Errorf("failed to receive version entries: %v", err)
+			}
+
+			// Only process directories that are versions (start with "v")
+			if versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
+				versionDir := filepath.Join(topicDir, versionResp.Entry.Name)
+
+				// List all partition directories under the version directory (e.g., 0315-0630)
+				partitionStream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+					Directory:          versionDir,
+					Prefix:             "",
+					StartFromFileName:  "",
+					InclusiveStartFrom: false,
+					Limit:              1000,
+				})
+				if err != nil {
+					glog.Warningf("Failed to list version directory %s: %v", versionDir, err)
+					continue
+				}
+
+				// Process each partition directory
+				for {
+					partitionResp, err := partitionStream.Recv()
+					if err != nil {
+						if err == io.EOF {
+							break
+						}
+						glog.Warningf("Failed to receive partition entries: %v", err)
+						break
+					}
+
+					// Only process directories that are partitions (format: NNNN-NNNN)
+					if partitionResp.Entry.IsDirectory {
+						// Parse partition range to get partition start ID (e.g., "0315-0630" -> 315)
+						var partitionStart, partitionStop int32
+						if n, err := fmt.Sscanf(partitionResp.Entry.Name, "%04d-%04d", &partitionStart, &partitionStop); n != 2 || err != nil {
+							// Skip directories that don't match the partition format
+							continue
+						}
+
+						partitionDir := filepath.Join(versionDir, partitionResp.Entry.Name)
+
+						// List all .offset files in this partition directory
+						offsetStream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+							Directory:          partitionDir,
+							Prefix:             "",
+							StartFromFileName:  "",
+							InclusiveStartFrom: false,
+							Limit:              1000,
+						})
+						if err != nil {
+							glog.Warningf("Failed to list partition directory %s: %v", partitionDir, err)
+							continue
+						}
+
+						// Process each offset file
+						for {
+							offsetResp, err := offsetStream.Recv()
+							if err != nil {
+								if err == io.EOF {
+									break
+								}
+								glog.Warningf("Failed to receive offset entries: %v", err)
+								break
+							}
+
+							// Only process .offset files
+							if !offsetResp.Entry.IsDirectory && strings.HasSuffix(offsetResp.Entry.Name, ".offset") {
+								consumerGroup := strings.TrimSuffix(offsetResp.Entry.Name, ".offset")
+
+								// Read the offset value from the file
+								offsetData, err := filer.ReadInsideFiler(client, partitionDir, offsetResp.Entry.Name)
+								if err != nil {
+									glog.Warningf("Failed to read offset file %s: %v", offsetResp.Entry.Name, err)
+									continue
+								}
+
+								if len(offsetData) == 8 {
+									offset := int64(util.BytesToUint64(offsetData))
+
+									// Get the file modification time
+									lastUpdated := time.Unix(offsetResp.Entry.Attributes.Mtime, 0)
+
+									offsets = append(offsets, ConsumerGroupOffsetInfo{
+										ConsumerGroup: consumerGroup,
+										PartitionID:   partitionStart, // Use partition start as the ID
+										Offset:        offset,
+										LastUpdated:   lastUpdated,
+									})
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get consumer group offsets: %v", err)
+	}
+
+	return offsets, nil
 }
 
 // convertRecordTypeToSchemaFields converts a protobuf RecordType to SchemaFieldInfo slice
