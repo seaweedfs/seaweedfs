@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -22,9 +23,9 @@ func init() {
 }
 
 var cmdFix = &Command{
-	UsageLine: "fix [-volumeId=234] [-collection=bigData] /tmp",
+	UsageLine: "fix [-remoteFile=false] [-volumeId=234] [-collection=bigData] /tmp",
 	Short:     "run weed tool fix on files or whole folders to recreate index file(s) if corrupted",
-	Long: `Fix runs the SeaweedFS fix command on dat files or whole folders to re-create the index .idx file.
+	Long: `Fix runs the SeaweedFS fix command on local dat files ( or remote files) or whole folders to re-create the index .idx file. If fixing remote files, you need to synchronize master.toml to the same directory on the current node as on the master node.
   You Need to stop the volume server when running this command.
 `,
 }
@@ -34,6 +35,7 @@ var (
 	fixVolumeId         = cmdFix.Flag.Int64("volumeId", 0, "an optional volume id, if not 0 (default) only it will be processed")
 	fixIncludeDeleted   = cmdFix.Flag.Bool("includeDeleted", true, "include deleted entries in the index file")
 	fixIgnoreError      = cmdFix.Flag.Bool("ignoreError", false, "an optional, if true will be processed despite errors")
+	fixRemoteFile       = cmdFix.Flag.Bool("remoteFile", false, "an optional, if true will not try to load the local .dat file, but only the remote file")
 )
 
 type VolumeFileScanner4Fix struct {
@@ -96,8 +98,15 @@ func runFix(cmd *Command, args []string) bool {
 			files = []fs.DirEntry{fs.FileInfoToDirEntry(fileInfo)}
 		}
 
+		ext := ".dat"
+		if *fixRemoteFile {
+			ext = ".idx"
+			util.LoadConfiguration("master", false)
+			backend.LoadConfiguration(util.GetViper())
+		}
+
 		for _, file := range files {
-			if !strings.HasSuffix(file.Name(), ".dat") {
+			if !strings.HasSuffix(file.Name(), ext) {
 				continue
 			}
 			if *fixVolumeCollection != "" {
@@ -152,14 +161,12 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 	nmDeleted := needle_map.NewMemDb()
 	defer nm.Close()
 	defer nmDeleted.Close()
-
 	vid := needle.VolumeId(volumeId)
 	scanner := &VolumeFileScanner4Fix{
 		nm:             nm,
 		nmDeleted:      nmDeleted,
 		includeDeleted: fixIncludeDeleted,
 	}
-
 	if err := storage.ScanVolumeFile(basepath, collection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		err := fmt.Errorf("scan .dat File: %v", err)
 		if *fixIgnoreError {
