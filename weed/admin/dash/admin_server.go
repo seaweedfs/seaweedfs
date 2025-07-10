@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -265,14 +266,41 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					quotaEnabled = false
 				}
 
+				// Get versioning and object lock information from extended attributes
+				versioningEnabled := false
+				objectLockEnabled := false
+				objectLockMode := ""
+				var objectLockDuration int32 = 0
+
+				if resp.Entry.Extended != nil {
+					if versioningBytes, exists := resp.Entry.Extended["s3.versioning"]; exists {
+						versioningEnabled = string(versioningBytes) == "Enabled"
+					}
+					if objectLockBytes, exists := resp.Entry.Extended["s3.objectlock"]; exists {
+						objectLockEnabled = string(objectLockBytes) == "Enabled"
+					}
+					if objectLockModeBytes, exists := resp.Entry.Extended["s3.objectlock.mode"]; exists {
+						objectLockMode = string(objectLockModeBytes)
+					}
+					if objectLockDurationBytes, exists := resp.Entry.Extended["s3.objectlock.duration"]; exists {
+						if duration, err := strconv.ParseInt(string(objectLockDurationBytes), 10, 32); err == nil {
+							objectLockDuration = int32(duration)
+						}
+					}
+				}
+
 				bucket := S3Bucket{
-					Name:         bucketName,
-					CreatedAt:    time.Unix(resp.Entry.Attributes.Crtime, 0),
-					Size:         size,
-					ObjectCount:  objectCount,
-					LastModified: time.Unix(resp.Entry.Attributes.Mtime, 0),
-					Quota:        quota,
-					QuotaEnabled: quotaEnabled,
+					Name:               bucketName,
+					CreatedAt:          time.Unix(resp.Entry.Attributes.Crtime, 0),
+					Size:               size,
+					ObjectCount:        objectCount,
+					LastModified:       time.Unix(resp.Entry.Attributes.Mtime, 0),
+					Quota:              quota,
+					QuotaEnabled:       quotaEnabled,
+					VersioningEnabled:  versioningEnabled,
+					ObjectLockEnabled:  objectLockEnabled,
+					ObjectLockMode:     objectLockMode,
+					ObjectLockDuration: objectLockDuration,
 				}
 				buckets = append(buckets, bucket)
 			}
@@ -312,6 +340,45 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 
 		details.Bucket.CreatedAt = time.Unix(bucketResp.Entry.Attributes.Crtime, 0)
 		details.Bucket.LastModified = time.Unix(bucketResp.Entry.Attributes.Mtime, 0)
+
+		// Get quota information from entry
+		quota := bucketResp.Entry.Quota
+		quotaEnabled := quota > 0
+		if quota < 0 {
+			// Negative quota means disabled
+			quota = -quota
+			quotaEnabled = false
+		}
+		details.Bucket.Quota = quota
+		details.Bucket.QuotaEnabled = quotaEnabled
+
+		// Get versioning and object lock information from extended attributes
+		versioningEnabled := false
+		objectLockEnabled := false
+		objectLockMode := ""
+		var objectLockDuration int32 = 0
+
+		if bucketResp.Entry.Extended != nil {
+			if versioningBytes, exists := bucketResp.Entry.Extended["s3.versioning"]; exists {
+				versioningEnabled = string(versioningBytes) == "Enabled"
+			}
+			if objectLockBytes, exists := bucketResp.Entry.Extended["s3.objectlock"]; exists {
+				objectLockEnabled = string(objectLockBytes) == "Enabled"
+			}
+			if objectLockModeBytes, exists := bucketResp.Entry.Extended["s3.objectlock.mode"]; exists {
+				objectLockMode = string(objectLockModeBytes)
+			}
+			if objectLockDurationBytes, exists := bucketResp.Entry.Extended["s3.objectlock.duration"]; exists {
+				if duration, err := strconv.ParseInt(string(objectLockDurationBytes), 10, 32); err == nil {
+					objectLockDuration = int32(duration)
+				}
+			}
+		}
+
+		details.Bucket.VersioningEnabled = versioningEnabled
+		details.Bucket.ObjectLockEnabled = objectLockEnabled
+		details.Bucket.ObjectLockMode = objectLockMode
+		details.Bucket.ObjectLockDuration = objectLockDuration
 
 		// List objects in bucket (recursively)
 		return s.listBucketObjects(client, bucketPath, "", details)
@@ -1345,17 +1412,33 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
 
-	// Create the topic configuration request
+	// First, get the current topic configuration to preserve existing settings
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	currentConfig, err := client.GetTopicConfiguration(ctx, &mq_pb.GetTopicConfigurationRequest{
+		Topic: &schema_pb.Topic{
+			Namespace: namespace,
+			Name:      name,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get current topic configuration: %v", err)
+	}
+
+	// Create the topic configuration request, preserving all existing settings
 	configRequest := &mq_pb.ConfigureTopicRequest{
 		Topic: &schema_pb.Topic{
 			Namespace: namespace,
 			Name:      name,
 		},
-		// Don't change partition count, only retention
-		PartitionCount: -1, // -1 means don't change
+		// Preserve existing partition count - this is critical!
+		PartitionCount: currentConfig.PartitionCount,
+		// Preserve existing record type if it exists
+		RecordType: currentConfig.RecordType,
 	}
 
-	// Add retention configuration
+	// Update only the retention configuration
 	if enabled {
 		configRequest.Retention = &mq_pb.TopicRetention{
 			RetentionSeconds: retentionSeconds,
@@ -1369,14 +1452,14 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 		}
 	}
 
-	// Send the configuration request
-	_, err = client.ConfigureTopic(context.Background(), configRequest)
+	// Send the configuration request with preserved settings
+	_, err = client.ConfigureTopic(ctx, configRequest)
 	if err != nil {
 		return fmt.Errorf("failed to update topic retention: %v", err)
 	}
 
-	glog.V(0).Infof("Updated topic %s.%s retention (enabled: %v, seconds: %d)",
-		namespace, name, enabled, retentionSeconds)
+	glog.V(0).Infof("Updated topic %s.%s retention (enabled: %v, seconds: %d) while preserving %d partitions",
+		namespace, name, enabled, retentionSeconds, currentConfig.PartitionCount)
 	return nil
 }
 

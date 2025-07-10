@@ -117,6 +117,8 @@ templ S3Buckets(data dash.S3BucketsData) {
                                         <th>Objects</th>
                                         <th>Size</th>
                                         <th>Quota</th>
+                                        <th>Versioning</th>
+                                        <th>Object Lock</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
@@ -152,6 +154,33 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                 }
                                             </td>
                                             <td>
+                                                if bucket.VersioningEnabled {
+                                                    <span class="badge bg-success">
+                                                        <i class="fas fa-check me-1"></i>Enabled
+                                                    </span>
+                                                } else {
+                                                    <span class="badge bg-secondary">
+                                                        <i class="fas fa-times me-1"></i>Disabled
+                                                    </span>
+                                                }
+                                            </td>
+                                            <td>
+                                                if bucket.ObjectLockEnabled {
+                                                    <div>
+                                                        <span class="badge bg-warning">
+                                                            <i class="fas fa-lock me-1"></i>Enabled
+                                                        </span>
+                                                        <div class="small text-muted">
+                                                            {bucket.ObjectLockMode} • {fmt.Sprintf("%d days", bucket.ObjectLockDuration)}
+                                                        </div>
+                                                    </div>
+                                                } else {
+                                                    <span class="badge bg-secondary">
+                                                        <i class="fas fa-unlock me-1"></i>Disabled
+                                                    </span>
+                                                }
+                                            </td>
+                                            <td>
                                                 <div class="btn-group btn-group-sm" role="group">
                                                     <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))} 
                                                        class="btn btn-outline-success btn-sm"
@@ -183,7 +212,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     }
                                     if len(data.Buckets) == 0 {
                                         <tr>
-                                            <td colspan="6" class="text-center text-muted py-4">
+                                            <td colspan="8" class="text-center text-muted py-4">
                                                 <i class="fas fa-cube fa-3x mb-3 text-muted"></i>
                                                 <div>
                                                     					<h5>No Object Store buckets found</h5>
@@ -266,6 +295,53 @@ templ S3Buckets(data dash.S3BucketsData) {
                             </div>
                             <div class="form-text">
                                 Set the maximum storage size for this bucket.
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="enableVersioning" name="versioning_enabled">
+                                <label class="form-check-label" for="enableVersioning">
+                                    Enable Object Versioning
+                                </label>
+                            </div>
+                            <div class="form-text">
+                                Keep multiple versions of objects in this bucket.
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="enableObjectLock" name="object_lock_enabled">
+                                <label class="form-check-label" for="enableObjectLock">
+                                    Enable Object Lock
+                                </label>
+                            </div>
+                            <div class="form-text">
+                                Prevent objects from being deleted or overwritten for a specified period. Automatically enables versioning.
+                            </div>
+                        </div>
+
+                        <div class="mb-3" id="objectLockSettings" style="display: none;">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <label for="objectLockMode" class="form-label">Object Lock Mode</label>
+                                    <select class="form-select" id="objectLockMode" name="object_lock_mode">
+                                        <option value="GOVERNANCE" selected>Governance</option>
+                                        <option value="COMPLIANCE">Compliance</option>
+                                    </select>
+                                    <div class="form-text">
+                                        Governance allows override with special permissions, Compliance is immutable.
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="objectLockDuration" class="form-label">Default Retention (days)</label>
+                                    <input type="number" class="form-control" id="objectLockDuration" name="object_lock_duration" 
+                                           placeholder="30" min="1" max="36500" step="1">
+                                    <div class="form-text">
+                                        Default retention period for new objects (1-36500 days).
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -365,6 +441,200 @@ templ S3Buckets(data dash.S3BucketsData) {
             </div>
         </div>
     </div>
+
+    <!-- JavaScript for bucket management -->
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const quotaCheckbox = document.getElementById('enableQuota');
+        const quotaSettings = document.getElementById('quotaSettings');
+        const versioningCheckbox = document.getElementById('enableVersioning');
+        const objectLockCheckbox = document.getElementById('enableObjectLock');
+        const objectLockSettings = document.getElementById('objectLockSettings');
+        const createBucketForm = document.getElementById('createBucketForm');
+
+        // Toggle quota settings
+        quotaCheckbox.addEventListener('change', function() {
+            quotaSettings.style.display = this.checked ? 'block' : 'none';
+        });
+
+        // Toggle object lock settings and automatically enable versioning
+        objectLockCheckbox.addEventListener('change', function() {
+            objectLockSettings.style.display = this.checked ? 'block' : 'none';
+            if (this.checked) {
+                versioningCheckbox.checked = true;
+                versioningCheckbox.disabled = true;
+            } else {
+                versioningCheckbox.disabled = false;
+            }
+        });
+
+        // Handle form submission
+        createBucketForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const data = {
+                name: formData.get('name'),
+                region: formData.get('region') || '',
+                quota_size: quotaCheckbox.checked ? parseInt(formData.get('quota_size')) || 0 : 0,
+                quota_unit: formData.get('quota_unit') || 'MB',
+                quota_enabled: quotaCheckbox.checked,
+                versioning_enabled: versioningCheckbox.checked,
+                object_lock_enabled: objectLockCheckbox.checked,
+                object_lock_mode: formData.get('object_lock_mode') || 'GOVERNANCE',
+                object_lock_duration: objectLockCheckbox.checked ? parseInt(formData.get('object_lock_duration')) || 30 : 0
+            };
+
+            // Validate object lock settings
+            if (data.object_lock_enabled && data.object_lock_duration <= 0) {
+                alert('Please enter a valid retention duration for object lock.');
+                return;
+            }
+
+            fetch('/api/s3/buckets', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error creating bucket: ' + data.error);
+                } else {
+                    alert('Bucket created successfully!');
+                    location.reload();
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error creating bucket: ' + error.message);
+            });
+        });
+
+        // Handle delete bucket
+        document.querySelectorAll('.delete-bucket-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const bucketName = this.dataset.bucketName;
+                document.getElementById('deleteBucketName').textContent = bucketName;
+                window.currentBucketToDelete = bucketName;
+                new bootstrap.Modal(document.getElementById('deleteBucketModal')).show();
+            });
+        });
+
+        // Handle quota management
+        document.querySelectorAll('.quota-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const bucketName = this.dataset.bucketName;
+                const currentQuota = parseInt(this.dataset.currentQuota);
+                const quotaEnabled = this.dataset.quotaEnabled === 'true';
+                
+                document.getElementById('quotaBucketName').value = bucketName;
+                document.getElementById('quotaEnabled').checked = quotaEnabled;
+                document.getElementById('quotaSizeMB').value = currentQuota;
+                
+                // Toggle quota size settings
+                document.getElementById('quotaSizeSettings').style.display = quotaEnabled ? 'block' : 'none';
+                
+                window.currentBucketToUpdate = bucketName;
+                new bootstrap.Modal(document.getElementById('manageQuotaModal')).show();
+            });
+        });
+
+        // Handle quota form submission
+        document.getElementById('quotaForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const enabled = document.getElementById('quotaEnabled').checked;
+            const data = {
+                quota_size: enabled ? parseInt(formData.get('quota_size')) || 0 : 0,
+                quota_unit: formData.get('quota_unit') || 'MB',
+                quota_enabled: enabled
+            };
+
+            fetch(`/api/s3/buckets/${window.currentBucketToUpdate}/quota`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error updating quota: ' + data.error);
+                } else {
+                    alert('Quota updated successfully!');
+                    location.reload();
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error updating quota: ' + error.message);
+            });
+        });
+
+        // Handle quota enabled checkbox
+        document.getElementById('quotaEnabled').addEventListener('change', function() {
+            document.getElementById('quotaSizeSettings').style.display = this.checked ? 'block' : 'none';
+        });
+    });
+
+    function deleteBucket() {
+        const bucketName = window.currentBucketToDelete;
+        if (!bucketName) return;
+
+        fetch(`/api/s3/buckets/${bucketName}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                alert('Error deleting bucket: ' + data.error);
+            } else {
+                alert('Bucket deleted successfully!');
+                location.reload();
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error deleting bucket: ' + error.message);
+        });
+    }
+
+    function exportBucketList() {
+        // Simple CSV export
+        const buckets = Array.from(document.querySelectorAll('#bucketsTable tbody tr')).map(row => {
+            const cells = row.querySelectorAll('td');
+            if (cells.length > 1) {
+                return {
+                    name: cells[0].textContent.trim(),
+                    created: cells[1].textContent.trim(),
+                    objects: cells[2].textContent.trim(),
+                    size: cells[3].textContent.trim(),
+                    quota: cells[4].textContent.trim(),
+                    versioning: cells[5].textContent.trim(),
+                    objectLock: cells[6].textContent.trim()
+                };
+            }
+            return null;
+        }).filter(bucket => bucket !== null);
+
+        const csvContent = "data:text/csv;charset=utf-8," + 
+            "Name,Created,Objects,Size,Quota,Versioning,Object Lock\n" +
+            buckets.map(b => `"${b.name}","${b.created}","${b.objects}","${b.size}","${b.quota}","${b.versioning}","${b.objectLock}"`).join("\n");
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "buckets.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+    </script>
 }
 
 // Helper functions for template

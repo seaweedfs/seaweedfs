@@ -48,13 +48,17 @@ type VolumeServer struct {
 
 // S3 Bucket management structures
 type S3Bucket struct {
-	Name         string    `json:"name"`
-	CreatedAt    time.Time `json:"created_at"`
-	Size         int64     `json:"size"`
-	ObjectCount  int64     `json:"object_count"`
-	LastModified time.Time `json:"last_modified"`
-	Quota        int64     `json:"quota"`         // Quota in bytes, 0 means no quota
-	QuotaEnabled bool      `json:"quota_enabled"` // Whether quota is enabled
+	Name               string    `json:"name"`
+	CreatedAt          time.Time `json:"created_at"`
+	Size               int64     `json:"size"`
+	ObjectCount        int64     `json:"object_count"`
+	LastModified       time.Time `json:"last_modified"`
+	Quota              int64     `json:"quota"`                // Quota in bytes, 0 means no quota
+	QuotaEnabled       bool      `json:"quota_enabled"`        // Whether quota is enabled
+	VersioningEnabled  bool      `json:"versioning_enabled"`   // Whether versioning is enabled
+	ObjectLockEnabled  bool      `json:"object_lock_enabled"`  // Whether object lock is enabled
+	ObjectLockMode     string    `json:"object_lock_mode"`     // Object lock mode: "GOVERNANCE" or "COMPLIANCE"
+	ObjectLockDuration int32     `json:"object_lock_duration"` // Default retention duration in days
 }
 
 type S3Object struct {
