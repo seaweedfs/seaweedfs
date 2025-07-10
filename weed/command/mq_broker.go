@@ -83,13 +83,30 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 	}
 
 	// start grpc listener
-	grpcL, _, err := util.NewIpAndLocalListeners("", *mqBrokerOpt.port, 0)
+	grpcL, localL, err := util.NewIpAndLocalListeners("", *mqBrokerOpt.port, 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *mqBrokerOpt.port, err)
 	}
+
+	// Create main gRPC server
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.msg_broker"))
 	mq_pb.RegisterSeaweedMessagingServer(grpcS, qs)
 	reflection.Register(grpcS)
+
+	// Start localhost listener if available
+	if localL != nil {
+		localGrpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.msg_broker"))
+		mq_pb.RegisterSeaweedMessagingServer(localGrpcS, qs)
+		reflection.Register(localGrpcS)
+		go func() {
+			glog.V(0).Infof("MQ Broker listening on localhost:%d", *mqBrokerOpt.port)
+			if err := localGrpcS.Serve(localL); err != nil {
+				glog.Errorf("MQ Broker localhost listener error: %v", err)
+			}
+		}()
+	}
+
+	glog.V(0).Infof("MQ Broker listening on %s:%d", *mqBrokerOpt.ip, *mqBrokerOpt.port)
 	grpcS.Serve(grpcL)
 
 	return true
