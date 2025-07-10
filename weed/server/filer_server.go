@@ -50,6 +50,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/notification/google_pub_sub"
 	_ "github.com/seaweedfs/seaweedfs/weed/notification/kafka"
 	_ "github.com/seaweedfs/seaweedfs/weed/notification/log"
+	_ "github.com/seaweedfs/seaweedfs/weed/notification/webhook"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
