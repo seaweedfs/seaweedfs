@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -184,6 +185,119 @@ func (b *MessageQueueBroker) GetTopicConfiguration(ctx context.Context, request 
 	}
 
 	return ret, nil
+}
+
+// GetTopicPublishers returns the active publishers for a topic
+func (b *MessageQueueBroker) GetTopicPublishers(ctx context.Context, request *mq_pb.GetTopicPublishersRequest) (resp *mq_pb.GetTopicPublishersResponse, err error) {
+	if !b.isLockOwner() {
+		proxyErr := b.withBrokerClient(false, pb.ServerAddress(b.lockAsBalancer.LockOwner()), func(client mq_pb.SeaweedMessagingClient) error {
+			resp, err = client.GetTopicPublishers(ctx, request)
+			return nil
+		})
+		if proxyErr != nil {
+			return nil, proxyErr
+		}
+		return resp, err
+	}
+
+	t := topic.FromPbTopic(request.Topic)
+	var publishers []*mq_pb.TopicPublisher
+
+	// Get topic configuration to find partition assignments
+	var conf *mq_pb.ConfigureTopicResponse
+	if conf, _, _, err = b.fca.ReadTopicConfFromFilerWithMetadata(t); err != nil {
+		glog.V(0).Infof("get topic configuration for publishers %s: %v", request.Topic, err)
+		return nil, fmt.Errorf("failed to read topic configuration: %v", err)
+	}
+
+	// Collect publishers from each partition that is hosted on this broker
+	for _, assignment := range conf.BrokerPartitionAssignments {
+		// Only collect from partitions where this broker is the leader
+		if assignment.LeaderBroker == b.option.BrokerAddress().String() {
+			partition := topic.FromPbPartition(assignment.Partition)
+			if localPartition := b.localTopicManager.GetLocalPartition(t, partition); localPartition != nil {
+				// Get publisher information from local partition
+				publisherNames := localPartition.Publishers.GetPublisherNames()
+				for _, clientName := range publisherNames {
+					publishers = append(publishers, &mq_pb.TopicPublisher{
+						PublisherName:  clientName,
+						ClientId:       clientName, // For now, client name is used as client ID
+						Partition:      assignment.Partition,
+						ConnectTimeNs:  0, // This information is not currently tracked
+						LastSeenTimeNs: 0, // This information is not currently tracked
+						Broker:         assignment.LeaderBroker,
+						IsActive:       true,
+					})
+				}
+			}
+		}
+	}
+
+	return &mq_pb.GetTopicPublishersResponse{
+		Publishers: publishers,
+	}, nil
+}
+
+// GetTopicSubscribers returns the active subscribers for a topic
+func (b *MessageQueueBroker) GetTopicSubscribers(ctx context.Context, request *mq_pb.GetTopicSubscribersRequest) (resp *mq_pb.GetTopicSubscribersResponse, err error) {
+	if !b.isLockOwner() {
+		proxyErr := b.withBrokerClient(false, pb.ServerAddress(b.lockAsBalancer.LockOwner()), func(client mq_pb.SeaweedMessagingClient) error {
+			resp, err = client.GetTopicSubscribers(ctx, request)
+			return nil
+		})
+		if proxyErr != nil {
+			return nil, proxyErr
+		}
+		return resp, err
+	}
+
+	t := topic.FromPbTopic(request.Topic)
+	var subscribers []*mq_pb.TopicSubscriber
+
+	// Get topic configuration to find partition assignments
+	var conf *mq_pb.ConfigureTopicResponse
+	if conf, _, _, err = b.fca.ReadTopicConfFromFilerWithMetadata(t); err != nil {
+		glog.V(0).Infof("get topic configuration for subscribers %s: %v", request.Topic, err)
+		return nil, fmt.Errorf("failed to read topic configuration: %v", err)
+	}
+
+	// Collect subscribers from each partition that is hosted on this broker
+	for _, assignment := range conf.BrokerPartitionAssignments {
+		// Only collect from partitions where this broker is the leader
+		if assignment.LeaderBroker == b.option.BrokerAddress().String() {
+			partition := topic.FromPbPartition(assignment.Partition)
+			if localPartition := b.localTopicManager.GetLocalPartition(t, partition); localPartition != nil {
+				// Get subscriber information from local partition
+				subscriberNames := localPartition.Subscribers.GetSubscriberNames()
+				for _, clientName := range subscriberNames {
+					// Parse client name to extract consumer group and consumer ID
+					// Format is typically: "consumerGroup/consumerID"
+					consumerGroup := "default"
+					consumerID := clientName
+					if idx := strings.Index(clientName, "/"); idx != -1 {
+						consumerGroup = clientName[:idx]
+						consumerID = clientName[idx+1:]
+					}
+
+					subscribers = append(subscribers, &mq_pb.TopicSubscriber{
+						ConsumerGroup:  consumerGroup,
+						ConsumerId:     consumerID,
+						ClientId:       clientName, // Full client name as client ID
+						Partition:      assignment.Partition,
+						ConnectTimeNs:  0, // This information is not currently tracked
+						LastSeenTimeNs: 0, // This information is not currently tracked
+						Broker:         assignment.LeaderBroker,
+						IsActive:       true,
+						CurrentOffset:  0, // This information is not currently tracked
+					})
+				}
+			}
+		}
+	}
+
+	return &mq_pb.GetTopicSubscribersResponse{
+		Subscribers: subscribers,
+	}, nil
 }
 
 func (b *MessageQueueBroker) isLockOwner() bool {

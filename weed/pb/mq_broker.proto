@@ -31,6 +31,10 @@ service SeaweedMessaging {
     }
     rpc GetTopicConfiguration (GetTopicConfigurationRequest) returns (GetTopicConfigurationResponse) {
     }
+    rpc GetTopicPublishers (GetTopicPublishersRequest) returns (GetTopicPublishersResponse) {
+    }
+    rpc GetTopicSubscribers (GetTopicSubscribersRequest) returns (GetTopicSubscribersResponse) {
+    }
 
     // invoked by the balancer, running on each broker
     rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
@@ -134,6 +138,42 @@ message GetTopicConfigurationResponse {
     repeated BrokerPartitionAssignment broker_partition_assignments = 4;
     int64 created_at_ns = 5;
     int64 last_updated_ns = 6;
+}
+
+message GetTopicPublishersRequest {
+    schema_pb.Topic topic = 1;
+}
+message GetTopicPublishersResponse {
+    repeated TopicPublisher publishers = 1;
+}
+
+message GetTopicSubscribersRequest {
+    schema_pb.Topic topic = 1;
+}
+message GetTopicSubscribersResponse {
+    repeated TopicSubscriber subscribers = 1;
+}
+
+message TopicPublisher {
+    string publisher_name = 1;
+    string client_id = 2;
+    schema_pb.Partition partition = 3;
+    int64 connect_time_ns = 4;
+    int64 last_seen_time_ns = 5;
+    string broker = 6;
+    bool is_active = 7;
+}
+
+message TopicSubscriber {
+    string consumer_group = 1;
+    string consumer_id = 2;
+    string client_id = 3;
+    schema_pb.Partition partition = 4;
+    int64 connect_time_ns = 5;
+    int64 last_seen_time_ns = 6;
+    string broker = 7;
+    bool is_active = 8;
+    int64 current_offset = 9;
 }
 
 message AssignTopicPartitionsRequest {

@@ -241,6 +241,88 @@ templ Topics(data dash.TopicsData) {
                 `;
             }
 
+            let publishersHtml = '';
+            if (data.publishers && data.publishers.length > 0) {
+                publishersHtml = `
+                    <div class="col-md-6">
+                        <h6>Active Publishers <span class="badge bg-success">${data.publishers.length}</span></h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Publisher</th>
+                                        <th>Partition</th>
+                                        <th>Broker</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.publishers.map(publisher => `
+                                        <tr>
+                                            <td>${publisher.publisher_name}</td>
+                                            <td>${publisher.partition_id}</td>
+                                            <td>${publisher.broker}</td>
+                                            <td>${publisher.is_active ? '<span class="badge bg-success">Active</span>' : '<span class="badge bg-secondary">Inactive</span>'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            } else if (data.publishers !== undefined) {
+                publishersHtml = `
+                    <div class="col-md-6">
+                        <h6>Active Publishers <span class="badge bg-secondary">0</span></h6>
+                        <div class="alert alert-info mb-0">
+                            <i class="fas fa-info-circle"></i> No active publishers found for this topic.
+                        </div>
+                    </div>
+                `;
+            }
+
+            let subscribersHtml = '';
+            if (data.subscribers && data.subscribers.length > 0) {
+                subscribersHtml = `
+                    <div class="col-md-6">
+                        <h6>Active Subscribers <span class="badge bg-info">${data.subscribers.length}</span></h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Consumer Group</th>
+                                        <th>Consumer ID</th>
+                                        <th>Partition</th>
+                                        <th>Broker</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.subscribers.map(subscriber => `
+                                        <tr>
+                                            <td>${subscriber.consumer_group}</td>
+                                            <td>${subscriber.consumer_id}</td>
+                                            <td>${subscriber.partition_id}</td>
+                                            <td>${subscriber.broker}</td>
+                                            <td>${subscriber.is_active ? '<span class="badge bg-success">Active</span>' : '<span class="badge bg-secondary">Inactive</span>'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            } else if (data.subscribers !== undefined) {
+                subscribersHtml = `
+                    <div class="col-md-6">
+                        <h6>Active Subscribers <span class="badge bg-secondary">0</span></h6>
+                        <div class="alert alert-info mb-0">
+                            <i class="fas fa-info-circle"></i> No active subscribers found for this topic.
+                        </div>
+                    </div>
+                `;
+            }
+
             return `
                 <div class="card">
                     <div class="card-header">
@@ -261,10 +343,16 @@ templ Topics(data dash.TopicsData) {
                                 <strong>Last Updated:</strong> ${lastUpdated}
                             </div>
                         </div>
-                        <div class="row">
+                        <div class="row mb-3">
                             ${schemaHtml}
                             ${partitionsHtml}
                         </div>
+                        ${(data.publishers !== undefined || data.subscribers !== undefined) ? `
+                            <div class="row">
+                                ${publishersHtml}
+                                ${subscribersHtml}
+                            </div>
+                        ` : ''}
                     </div>
                 </div>
             `;

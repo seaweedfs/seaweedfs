@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -161,6 +162,8 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 			Name:        topicName,
 			Partitions:  []PartitionInfo{},
 			Schema:      []SchemaFieldInfo{},
+			Publishers:  []PublisherInfo{},
+			Subscribers: []TopicSubscriberInfo{},
 			CreatedAt:   time.Unix(0, configResp.CreatedAtNs),
 			LastUpdated: time.Unix(0, configResp.LastUpdatedNs),
 		}
@@ -192,6 +195,36 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 		// Process schema from RecordType
 		if configResp.RecordType != nil {
 			topicDetails.Schema = convertRecordTypeToSchemaFields(configResp.RecordType)
+		}
+
+		// Get publishers information
+		publishersResp, err := client.GetTopicPublishers(ctx, &mq_pb.GetTopicPublishersRequest{
+			Topic: &schema_pb.Topic{
+				Namespace: namespace,
+				Name:      topicName,
+			},
+		})
+		if err != nil {
+			// Log error but don't fail the entire request
+			glog.V(0).Infof("failed to get topic publishers for %s.%s: %v", namespace, topicName, err)
+		} else {
+			glog.V(1).Infof("got %d publishers for topic %s.%s", len(publishersResp.Publishers), namespace, topicName)
+			topicDetails.Publishers = convertTopicPublishers(publishersResp.Publishers)
+		}
+
+		// Get subscribers information
+		subscribersResp, err := client.GetTopicSubscribers(ctx, &mq_pb.GetTopicSubscribersRequest{
+			Topic: &schema_pb.Topic{
+				Namespace: namespace,
+				Name:      topicName,
+			},
+		})
+		if err != nil {
+			// Log error but don't fail the entire request
+			glog.V(0).Infof("failed to get topic subscribers for %s.%s: %v", namespace, topicName, err)
+		} else {
+			glog.V(1).Infof("got %d subscribers for topic %s.%s", len(subscribersResp.Subscribers), namespace, topicName)
+			topicDetails.Subscribers = convertTopicSubscribers(subscribersResp.Subscribers)
 		}
 
 		return nil
@@ -263,6 +296,62 @@ func getScalarTypeString(scalarType schema_pb.ScalarType) string {
 	default:
 		return "unknown"
 	}
+}
+
+// convertTopicPublishers converts protobuf TopicPublisher slice to PublisherInfo slice
+func convertTopicPublishers(publishers []*mq_pb.TopicPublisher) []PublisherInfo {
+	publisherInfos := make([]PublisherInfo, 0, len(publishers))
+
+	for _, publisher := range publishers {
+		publisherInfo := PublisherInfo{
+			PublisherName: publisher.PublisherName,
+			ClientID:      publisher.ClientId,
+			PartitionID:   publisher.Partition.RangeStart,
+			Broker:        publisher.Broker,
+			IsActive:      publisher.IsActive,
+		}
+
+		// Convert timestamps
+		if publisher.ConnectTimeNs > 0 {
+			publisherInfo.ConnectTime = time.Unix(0, publisher.ConnectTimeNs)
+		}
+		if publisher.LastSeenTimeNs > 0 {
+			publisherInfo.LastSeenTime = time.Unix(0, publisher.LastSeenTimeNs)
+		}
+
+		publisherInfos = append(publisherInfos, publisherInfo)
+	}
+
+	return publisherInfos
+}
+
+// convertTopicSubscribers converts protobuf TopicSubscriber slice to TopicSubscriberInfo slice
+func convertTopicSubscribers(subscribers []*mq_pb.TopicSubscriber) []TopicSubscriberInfo {
+	subscriberInfos := make([]TopicSubscriberInfo, 0, len(subscribers))
+
+	for _, subscriber := range subscribers {
+		subscriberInfo := TopicSubscriberInfo{
+			ConsumerGroup: subscriber.ConsumerGroup,
+			ConsumerID:    subscriber.ConsumerId,
+			ClientID:      subscriber.ClientId,
+			PartitionID:   subscriber.Partition.RangeStart,
+			Broker:        subscriber.Broker,
+			IsActive:      subscriber.IsActive,
+			CurrentOffset: subscriber.CurrentOffset,
+		}
+
+		// Convert timestamps
+		if subscriber.ConnectTimeNs > 0 {
+			subscriberInfo.ConnectTime = time.Unix(0, subscriber.ConnectTimeNs)
+		}
+		if subscriber.LastSeenTimeNs > 0 {
+			subscriberInfo.LastSeenTime = time.Unix(0, subscriber.LastSeenTimeNs)
+		}
+
+		subscriberInfos = append(subscriberInfos, subscriberInfo)
+	}
+
+	return subscriberInfos
 }
 
 // findBrokerLeader finds the current broker leader

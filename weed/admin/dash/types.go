@@ -258,17 +258,41 @@ type SchemaFieldInfo struct {
 	Required bool   `json:"required"`
 }
 
+type PublisherInfo struct {
+	PublisherName string    `json:"publisher_name"`
+	ClientID      string    `json:"client_id"`
+	PartitionID   int32     `json:"partition_id"`
+	Broker        string    `json:"broker"`
+	ConnectTime   time.Time `json:"connect_time"`
+	LastSeenTime  time.Time `json:"last_seen_time"`
+	IsActive      bool      `json:"is_active"`
+}
+
+type TopicSubscriberInfo struct {
+	ConsumerGroup string    `json:"consumer_group"`
+	ConsumerID    string    `json:"consumer_id"`
+	ClientID      string    `json:"client_id"`
+	PartitionID   int32     `json:"partition_id"`
+	Broker        string    `json:"broker"`
+	ConnectTime   time.Time `json:"connect_time"`
+	LastSeenTime  time.Time `json:"last_seen_time"`
+	IsActive      bool      `json:"is_active"`
+	CurrentOffset int64     `json:"current_offset"`
+}
+
 type TopicDetailsData struct {
-	Username     string            `json:"username"`
-	TopicName    string            `json:"topic_name"`
-	Namespace    string            `json:"namespace"`
-	Name         string            `json:"name"`
-	Partitions   []PartitionInfo   `json:"partitions"`
-	Schema       []SchemaFieldInfo `json:"schema"`
-	MessageCount int64             `json:"message_count"`
-	TotalSize    int64             `json:"total_size"`
-	CreatedAt    time.Time         `json:"created_at"`
-	LastUpdated  time.Time         `json:"last_updated"`
+	Username     string                `json:"username"`
+	TopicName    string                `json:"topic_name"`
+	Namespace    string                `json:"namespace"`
+	Name         string                `json:"name"`
+	Partitions   []PartitionInfo       `json:"partitions"`
+	Schema       []SchemaFieldInfo     `json:"schema"`
+	Publishers   []PublisherInfo       `json:"publishers"`
+	Subscribers  []TopicSubscriberInfo `json:"subscribers"`
+	MessageCount int64                 `json:"message_count"`
+	TotalSize    int64                 `json:"total_size"`
+	CreatedAt    time.Time             `json:"created_at"`
+	LastUpdated  time.Time             `json:"last_updated"`
 }
 
 // Volume server management structures

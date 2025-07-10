@@ -54,3 +54,25 @@ func (p *LocalPartitionSubscribers) Size() int {
 
 	return len(p.Subscribers)
 }
+
+// GetSubscriberNames returns the names of all subscribers
+func (p *LocalPartitionSubscribers) GetSubscriberNames() []string {
+	p.SubscribersLock.RLock()
+	defer p.SubscribersLock.RUnlock()
+
+	names := make([]string, 0, len(p.Subscribers))
+	for name := range p.Subscribers {
+		names = append(names, name)
+	}
+	return names
+}
+
+// ForEachSubscriber iterates over all subscribers
+func (p *LocalPartitionSubscribers) ForEachSubscriber(fn func(name string, subscriber *LocalSubscriber)) {
+	p.SubscribersLock.RLock()
+	defer p.SubscribersLock.RUnlock()
+
+	for name, subscriber := range p.Subscribers {
+		fn(name, subscriber)
+	}
+}

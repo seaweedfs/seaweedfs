@@ -50,3 +50,25 @@ func (p *LocalPartitionPublishers) Size() int {
 
 	return len(p.publishers)
 }
+
+// GetPublisherNames returns the names of all publishers
+func (p *LocalPartitionPublishers) GetPublisherNames() []string {
+	p.publishersLock.RLock()
+	defer p.publishersLock.RUnlock()
+
+	names := make([]string, 0, len(p.publishers))
+	for name := range p.publishers {
+		names = append(names, name)
+	}
+	return names
+}
+
+// ForEachPublisher iterates over all publishers
+func (p *LocalPartitionPublishers) ForEachPublisher(fn func(name string, publisher *LocalPublisher)) {
+	p.publishersLock.RLock()
+	defer p.publishersLock.RUnlock()
+
+	for name, publisher := range p.publishers {
+		fn(name, publisher)
+	}
+}

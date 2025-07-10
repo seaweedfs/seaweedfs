@@ -24,7 +24,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
 
                 <!-- Summary Cards -->
                 <div class="row mb-4">
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <div class="card text-center">
                             <div class="card-body">
                                 <h5 class="card-title">Partitions</h5>
@@ -32,7 +32,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <div class="card text-center">
                             <div class="card-body">
                                 <h5 class="card-title">Schema Fields</h5>
@@ -40,7 +40,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <div class="card text-center">
                             <div class="card-body">
                                 <h5 class="card-title">Total Messages</h5>
@@ -48,11 +48,27 @@ templ TopicDetails(data dash.TopicDetailsData) {
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <div class="card text-center">
                             <div class="card-body">
                                 <h5 class="card-title">Total Size</h5>
                                 <h3 class="text-warning">{util.BytesToHumanReadable(uint64(data.TotalSize))}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Publishers</h5>
+                                <h3 class="text-success">{fmt.Sprintf("%d", len(data.Publishers))}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Subscribers</h5>
+                                <h3 class="text-info">{fmt.Sprintf("%d", len(data.Subscribers))}</h3>
                             </div>
                         </div>
                     </div>
@@ -185,6 +201,98 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                 </table>
                             </div>
                         }
+                    </div>
+                </div>
+
+                <!-- Publishers and Subscribers -->
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">Active Publishers <span class="badge bg-success">{fmt.Sprintf("%d", len(data.Publishers))}</span></h5>
+                            </div>
+                            <div class="card-body">
+                                if len(data.Publishers) == 0 {
+                                    <div class="alert alert-info mb-0">
+                                        <i class="fas fa-info-circle"></i> No active publishers found for this topic.
+                                    </div>
+                                } else {
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Publisher</th>
+                                                    <th>Partition</th>
+                                                    <th>Broker</th>
+                                                    <th>Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                for _, publisher := range data.Publishers {
+                                                    <tr>
+                                                        <td>{publisher.PublisherName}</td>
+                                                        <td><span class="badge bg-primary">{fmt.Sprintf("%d", publisher.PartitionID)}</span></td>
+                                                        <td>{publisher.Broker}</td>
+                                                        <td>
+                                                            if publisher.IsActive {
+                                                                <span class="badge bg-success">Active</span>
+                                                            } else {
+                                                                <span class="badge bg-secondary">Inactive</span>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">Active Subscribers <span class="badge bg-info">{fmt.Sprintf("%d", len(data.Subscribers))}</span></h5>
+                            </div>
+                            <div class="card-body">
+                                if len(data.Subscribers) == 0 {
+                                    <div class="alert alert-info mb-0">
+                                        <i class="fas fa-info-circle"></i> No active subscribers found for this topic.
+                                    </div>
+                                } else {
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Consumer Group</th>
+                                                    <th>Consumer ID</th>
+                                                    <th>Partition</th>
+                                                    <th>Broker</th>
+                                                    <th>Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                for _, subscriber := range data.Subscribers {
+                                                    <tr>
+                                                        <td>{subscriber.ConsumerGroup}</td>
+                                                        <td>{subscriber.ConsumerID}</td>
+                                                        <td><span class="badge bg-primary">{fmt.Sprintf("%d", subscriber.PartitionID)}</span></td>
+                                                        <td>{subscriber.Broker}</td>
+                                                        <td>
+                                                            if subscriber.IsActive {
+                                                                <span class="badge bg-success">Active</span>
+                                                            } else {
+                                                                <span class="badge bg-secondary">Inactive</span>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
