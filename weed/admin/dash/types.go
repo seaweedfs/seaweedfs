@@ -290,6 +290,13 @@ type ConsumerGroupOffsetInfo struct {
 	LastUpdated   time.Time `json:"last_updated"`
 }
 
+type TopicRetentionInfo struct {
+	Enabled          bool   `json:"enabled"`
+	RetentionSeconds int64  `json:"retention_seconds"`
+	DisplayValue     int32  `json:"display_value"` // for UI rendering
+	DisplayUnit      string `json:"display_unit"`  // for UI rendering
+}
+
 type TopicDetailsData struct {
 	Username             string                    `json:"username"`
 	TopicName            string                    `json:"topic_name"`
@@ -300,6 +307,7 @@ type TopicDetailsData struct {
 	Publishers           []PublisherInfo           `json:"publishers"`
 	Subscribers          []TopicSubscriberInfo     `json:"subscribers"`
 	ConsumerGroupOffsets []ConsumerGroupOffsetInfo `json:"consumer_group_offsets"`
+	Retention            TopicRetentionInfo        `json:"retention"`
 	MessageCount         int64                     `json:"message_count"`
 	TotalSize            int64                     `json:"total_size"`
 	CreatedAt            time.Time                 `json:"created_at"`

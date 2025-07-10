@@ -182,6 +182,7 @@ func (b *MessageQueueBroker) GetTopicConfiguration(ctx context.Context, request 
 		BrokerPartitionAssignments: conf.BrokerPartitionAssignments,
 		CreatedAtNs:                createdAtNs,
 		LastUpdatedNs:              modifiedAtNs,
+		Retention:                  conf.Retention,
 	}
 
 	return ret, nil

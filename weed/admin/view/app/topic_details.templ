@@ -111,6 +111,41 @@ templ TopicDetails(data dash.TopicDetailsData) {
                     <div class="col-md-6">
                         <div class="card">
                             <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-clock me-2"></i>Retention Policy
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <dl class="row">
+                                    <dt class="col-sm-4">Status:</dt>
+                                    <dd class="col-sm-8">
+                                        if data.Retention.Enabled {
+                                            <span class="badge bg-success">Enabled</span>
+                                        } else {
+                                            <span class="badge bg-secondary">Disabled</span>
+                                        }
+                                    </dd>
+                                    <dt class="col-sm-4">Duration:</dt>
+                                    <dd class="col-sm-8">
+                                        if data.Retention.Enabled {
+                                            <span class="text-success">
+                                                {fmt.Sprintf("%d", data.Retention.DisplayValue)} {data.Retention.DisplayUnit}
+                                            </span>
+                                        } else {
+                                            <span class="text-muted">No retention configured</span>
+                                        }
+                                    </dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Schema Information -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
                                 <h5 class="mb-0">Schema Definition</h5>
                             </div>
                             <div class="card-body">

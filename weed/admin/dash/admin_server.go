@@ -16,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -44,6 +46,9 @@ type AdminServer struct {
 	// Maintenance system
 	maintenanceManager *maintenance.MaintenanceManager
 
+	// Topic retention purger
+	topicRetentionPurger *TopicRetentionPurger
+
 	// Worker gRPC server
 	workerGrpcServer *WorkerGrpcServer
 }
@@ -60,6 +65,9 @@ func NewAdminServer(masterAddress string, templateFS http.FileSystem, dataDir st
 		filerCacheExpiration: 30 * time.Second, // Cache filers for 30 seconds
 		configPersistence:    NewConfigPersistence(dataDir),
 	}
+
+	// Initialize topic retention purger
+	server.topicRetentionPurger = NewTopicRetentionPurger(server)
 
 	// Initialize credential manager with defaults
 	credentialManager, err := credential.NewCredentialManagerWithDefaults("")
@@ -1096,6 +1104,17 @@ func (as *AdminServer) triggerMaintenanceScan() error {
 	return as.maintenanceManager.TriggerScan()
 }
 
+// TriggerTopicRetentionPurgeAPI triggers topic retention purge via HTTP API
+func (as *AdminServer) TriggerTopicRetentionPurgeAPI(c *gin.Context) {
+	err := as.TriggerTopicRetentionPurge()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Topic retention purge triggered successfully"})
+}
+
 // GetConfigInfo returns information about the admin configuration
 func (as *AdminServer) GetConfigInfo(c *gin.Context) {
 	configInfo := as.configPersistence.GetConfigInfo()
@@ -1224,6 +1243,68 @@ func (s *AdminServer) StopMaintenanceManager() {
 	if s.maintenanceManager != nil {
 		s.maintenanceManager.Stop()
 	}
+}
+
+// TriggerTopicRetentionPurge triggers topic data purging based on retention policies
+func (s *AdminServer) TriggerTopicRetentionPurge() error {
+	if s.topicRetentionPurger == nil {
+		return fmt.Errorf("topic retention purger not initialized")
+	}
+
+	glog.V(0).Infof("Triggering topic retention purge")
+	return s.topicRetentionPurger.PurgeExpiredTopicData()
+}
+
+// GetTopicRetentionPurger returns the topic retention purger
+func (s *AdminServer) GetTopicRetentionPurger() *TopicRetentionPurger {
+	return s.topicRetentionPurger
+}
+
+// CreateTopicWithRetention creates a new topic with optional retention configuration
+func (s *AdminServer) CreateTopicWithRetention(namespace, name string, partitionCount int32, retentionEnabled bool, retentionSeconds int64) error {
+	// Find broker leader to create the topic
+	brokerLeader, err := s.findBrokerLeader()
+	if err != nil {
+		return fmt.Errorf("failed to find broker leader: %v", err)
+	}
+
+	// Create retention configuration
+	var retention *mq_pb.TopicRetention
+	if retentionEnabled {
+		retention = &mq_pb.TopicRetention{
+			Enabled:          true,
+			RetentionSeconds: retentionSeconds,
+		}
+	} else {
+		retention = &mq_pb.TopicRetention{
+			Enabled:          false,
+			RetentionSeconds: 0,
+		}
+	}
+
+	// Create the topic via broker
+	err = s.withBrokerClient(brokerLeader, func(client mq_pb.SeaweedMessagingClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := client.ConfigureTopic(ctx, &mq_pb.ConfigureTopicRequest{
+			Topic: &schema_pb.Topic{
+				Namespace: namespace,
+				Name:      name,
+			},
+			PartitionCount: partitionCount,
+			Retention:      retention,
+		})
+		return err
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create topic: %v", err)
+	}
+
+	glog.V(0).Infof("Created topic %s.%s with %d partitions (retention: enabled=%v, seconds=%d)",
+		namespace, name, partitionCount, retentionEnabled, retentionSeconds)
+	return nil
 }
 
 // Shutdown gracefully shuts down the admin server

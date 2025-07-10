@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -158,4 +159,45 @@ func (h *MessageQueueHandlers) GetTopicDetailsAPI(c *gin.Context) {
 
 	// Return JSON data
 	c.JSON(http.StatusOK, topicDetailsData)
+}
+
+// CreateTopicAPI creates a new topic with retention configuration
+func (h *MessageQueueHandlers) CreateTopicAPI(c *gin.Context) {
+	var req struct {
+		Namespace      string `json:"namespace" binding:"required"`
+		Name           string `json:"name" binding:"required"`
+		PartitionCount int32  `json:"partition_count" binding:"required"`
+		Retention      struct {
+			Enabled          bool  `json:"enabled"`
+			RetentionSeconds int64 `json:"retention_seconds"`
+		} `json:"retention"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Validate inputs
+	if req.PartitionCount < 1 || req.PartitionCount > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Partition count must be between 1 and 100"})
+		return
+	}
+
+	if req.Retention.Enabled && req.Retention.RetentionSeconds <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Retention seconds must be positive when retention is enabled"})
+		return
+	}
+
+	// Create the topic via admin server
+	err := h.adminServer.CreateTopicWithRetention(req.Namespace, req.Name, req.PartitionCount, req.Retention.Enabled, req.Retention.RetentionSeconds)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create topic: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Topic created successfully",
+		"topic":   fmt.Sprintf("%s.%s", req.Namespace, req.Name),
+	})
 }

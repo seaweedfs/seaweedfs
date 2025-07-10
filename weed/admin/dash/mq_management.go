@@ -172,6 +172,7 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 			Publishers:           []PublisherInfo{},
 			Subscribers:          []TopicSubscriberInfo{},
 			ConsumerGroupOffsets: []ConsumerGroupOffsetInfo{},
+			Retention:            convertTopicRetention(configResp.Retention),
 			CreatedAt:            time.Unix(0, configResp.CreatedAtNs),
 			LastUpdated:          time.Unix(0, configResp.LastUpdatedNs),
 		}
@@ -563,4 +564,39 @@ func (s *AdminServer) findBrokerLeader() (string, error) {
 // withBrokerClient connects to a message queue broker and executes a function
 func (s *AdminServer) withBrokerClient(brokerAddress string, fn func(client mq_pb.SeaweedMessagingClient) error) error {
 	return pb.WithBrokerGrpcClient(false, brokerAddress, s.grpcDialOption, fn)
+}
+
+// convertTopicRetention converts protobuf retention to TopicRetentionInfo
+func convertTopicRetention(retention *mq_pb.TopicRetention) TopicRetentionInfo {
+	if retention == nil || !retention.Enabled {
+		return TopicRetentionInfo{
+			Enabled:          false,
+			RetentionSeconds: 0,
+			DisplayValue:     0,
+			DisplayUnit:      "days",
+		}
+	}
+
+	// Convert seconds to human-readable format
+	seconds := retention.RetentionSeconds
+	var displayValue int32
+	var displayUnit string
+
+	if seconds >= 86400 { // >= 1 day
+		displayValue = int32(seconds / 86400)
+		displayUnit = "days"
+	} else if seconds >= 3600 { // >= 1 hour
+		displayValue = int32(seconds / 3600)
+		displayUnit = "hours"
+	} else {
+		displayValue = int32(seconds)
+		displayUnit = "seconds"
+	}
+
+	return TopicRetentionInfo{
+		Enabled:          retention.Enabled,
+		RetentionSeconds: seconds,
+		DisplayValue:     displayValue,
+		DisplayUnit:      displayUnit,
+	}
 }
