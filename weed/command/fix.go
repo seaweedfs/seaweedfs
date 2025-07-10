@@ -161,12 +161,14 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 	nmDeleted := needle_map.NewMemDb()
 	defer nm.Close()
 	defer nmDeleted.Close()
+
 	vid := needle.VolumeId(volumeId)
 	scanner := &VolumeFileScanner4Fix{
 		nm:             nm,
 		nmDeleted:      nmDeleted,
 		includeDeleted: fixIncludeDeleted,
 	}
+
 	if err := storage.ScanVolumeFile(basepath, collection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		err := fmt.Errorf("scan .dat File: %v", err)
 		if *fixIgnoreError {
