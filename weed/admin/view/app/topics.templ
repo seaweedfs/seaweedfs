@@ -61,6 +61,7 @@ templ Topics(data dash.TopicsData) {
                                             <th>Namespace</th>
                                             <th>Topic Name</th>
                                             <th>Partitions</th>
+                                            <th>Retention</th>
                                             <th>Actions</th>
                                         </tr>
                                     </thead>
@@ -89,13 +90,25 @@ templ Topics(data dash.TopicsData) {
                                                     <span class="badge bg-info">{fmt.Sprintf("%d", topic.Partitions)}</span>
                                                 </td>
                                                 <td>
+                                                    if topic.Retention.Enabled {
+                                                        <span class="badge bg-success">
+                                                            <i class="fas fa-clock me-1"></i>
+                                                            {fmt.Sprintf("%d %s", topic.Retention.DisplayValue, topic.Retention.DisplayUnit)}
+                                                        </span>
+                                                    } else {
+                                                        <span class="badge bg-secondary">
+                                                            <i class="fas fa-times me-1"></i>Disabled
+                                                        </span>
+                                                    }
+                                                </td>
+                                                <td>
                                                     <button class="btn btn-sm btn-outline-primary" onclick={ templ.ComponentScript{Call: fmt.Sprintf("viewTopicDetails('%s')", topic.Name)} }>
                                                         <i class="fas fa-info-circle me-1"></i>Details
                                                     </button>
                                                 </td>
                                             </tr>
                                             <tr class="topic-details-row" id={ fmt.Sprintf("details-%s", strings.ReplaceAll(topic.Name, ".", "_")) } style="display: none;">
-                                                <td colspan="4">
+                                                <td colspan="5">
                                                     <div class="topic-details-content">
                                                         <div class="text-center py-3">
                                                             <i class="fas fa-spinner fa-spin"></i> Loading topic details...
@@ -282,16 +295,17 @@ templ Topics(data dash.TopicsData) {
             const table = document.getElementById('topicsTable');
             if (!table) return;
             
-            let csv = 'Namespace,Topic Name,Partitions\n';
+            let csv = 'Namespace,Topic Name,Partitions,Retention\n';
             
             const rows = table.querySelectorAll('tbody tr.topic-row');
             rows.forEach(row => {
                 const cells = row.querySelectorAll('td');
-                if (cells.length >= 3) {
+                if (cells.length >= 4) {
                     const rowData = [
                         cells[0].querySelector('.badge')?.textContent || '',  // Namespace
                         cells[1].querySelector('strong')?.textContent || '',  // Topic Name
-                        cells[2].querySelector('.badge')?.textContent || ''   // Partitions
+                        cells[2].querySelector('.badge')?.textContent || '', // Partitions
+                        cells[3].querySelector('.badge')?.textContent || ''   // Retention
                     ];
                     csv += rowData.map(field => `"${field.replace(/"/g, '""')}"`).join(',') + '\n';
                 }

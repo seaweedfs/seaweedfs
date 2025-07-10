@@ -205,13 +205,14 @@ type ClusterBrokersData struct {
 }
 
 type TopicInfo struct {
-	Name         string    `json:"name"`
-	Partitions   int       `json:"partitions"`
-	Subscribers  int       `json:"subscribers"`
-	MessageCount int64     `json:"message_count"`
-	TotalSize    int64     `json:"total_size"`
-	LastMessage  time.Time `json:"last_message"`
-	CreatedAt    time.Time `json:"created_at"`
+	Name         string             `json:"name"`
+	Partitions   int                `json:"partitions"`
+	Subscribers  int                `json:"subscribers"`
+	MessageCount int64              `json:"message_count"`
+	TotalSize    int64              `json:"total_size"`
+	LastMessage  time.Time          `json:"last_message"`
+	CreatedAt    time.Time          `json:"created_at"`
+	Retention    TopicRetentionInfo `json:"retention"`
 }
 
 type TopicsData struct {

@@ -50,14 +50,27 @@ func (s *AdminServer) GetTopics() (*TopicsData, error) {
 			topicInfo := TopicInfo{
 				Name:       fmt.Sprintf("%s.%s", pbTopic.Namespace, pbTopic.Name),
 				Partitions: 0, // Will be populated by LookupTopicBrokers call
+				Retention: TopicRetentionInfo{
+					Enabled:      false,
+					DisplayValue: 0,
+					DisplayUnit:  "days",
+				},
 			}
 
-			// Get topic configuration to get partition count
+			// Get topic configuration to get partition count and retention info
 			lookupResp, err := client.LookupTopicBrokers(ctx, &mq_pb.LookupTopicBrokersRequest{
 				Topic: pbTopic,
 			})
 			if err == nil {
 				topicInfo.Partitions = len(lookupResp.BrokerPartitionAssignments)
+			}
+
+			// Get topic configuration for retention information
+			configResp, err := client.GetTopicConfiguration(ctx, &mq_pb.GetTopicConfigurationRequest{
+				Topic: pbTopic,
+			})
+			if err == nil && configResp.Retention != nil {
+				topicInfo.Retention = convertTopicRetention(configResp.Retention)
 			}
 
 			topics = append(topics, topicInfo)
