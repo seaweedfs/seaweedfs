@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-	"google.golang.org/protobuf/proto"
 )
 
 type httpClient struct {
@@ -22,13 +21,8 @@ func newHTTPClient(cfg *config) (*httpClient, error) {
 	}, nil
 }
 
-func (h *httpClient) sendMessage(key string, message proto.Message) error {
-	payload := map[string]interface{}{
-		"key":     key,
-		"message": message,
-	}
-
-	jsonData, err := json.Marshal(payload)
+func (h *httpClient) sendMessage(message *webhookMessage) error {
+	jsonData, err := json.Marshal(message)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %v", err)
 	}
