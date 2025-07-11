@@ -1,0 +1,677 @@
+package app
+
+import "fmt"
+import "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+import "github.com/seaweedfs/seaweedfs/weed/util"
+
+templ TopicDetails(data dash.TopicDetailsData) {
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-12">
+                <!-- Header -->
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <nav aria-label="breadcrumb">
+                            <ol class="breadcrumb">
+                                <li class="breadcrumb-item"><a href="/mq/topics">Topics</a></li>
+                                <li class="breadcrumb-item active" aria-current="page">{data.TopicName}</li>
+                            </ol>
+                        </nav>
+                        <h1 class="h3 mb-0">Topic Details: {data.TopicName}</h1>
+                    </div>
+                    <small class="text-muted">Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}</small>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="row mb-4">
+                    <div class="col-md-2">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Partitions</h5>
+                                <h3 class="text-primary">{fmt.Sprintf("%d", len(data.Partitions))}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Schema Fields</h5>
+                                <h3 class="text-info">{fmt.Sprintf("%d", len(data.Schema))}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Total Messages</h5>
+                                <h3 class="text-success">{fmt.Sprintf("%d", data.MessageCount)}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Total Size</h5>
+                                <h3 class="text-warning">{util.BytesToHumanReadable(uint64(data.TotalSize))}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Publishers</h5>
+                                <h3 class="text-success">{fmt.Sprintf("%d", len(data.Publishers))}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Subscribers</h5>
+                                <h3 class="text-info">{fmt.Sprintf("%d", len(data.Subscribers))}</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Consumer Group Offsets Summary -->
+                <div class="row mb-4">
+                    <div class="col-md-12">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Consumer Group Offsets</h5>
+                                <h3 class="text-warning">{fmt.Sprintf("%d", len(data.ConsumerGroupOffsets))}</h3>
+                                <p class="text-muted">Saved consumer progress checkpoints</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Topic Information -->
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">Topic Information</h5>
+                            </div>
+                            <div class="card-body">
+                                <dl class="row">
+                                    <dt class="col-sm-4">Namespace:</dt>
+                                    <dd class="col-sm-8">{data.Namespace}</dd>
+                                    <dt class="col-sm-4">Name:</dt>
+                                    <dd class="col-sm-8">{data.Name}</dd>
+                                    <dt class="col-sm-4">Full Name:</dt>
+                                    <dd class="col-sm-8">{data.TopicName}</dd>
+                                    <dt class="col-sm-4">Created:</dt>
+                                    <dd class="col-sm-8">{data.CreatedAt.Format("2006-01-02 15:04:05")}</dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-clock me-2"></i>Retention Policy
+                                </h5>
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="showEditRetentionModal()">
+                                    <i class="fas fa-edit me-1"></i>Edit
+                                </button>
+                            </div>
+                            <div class="card-body">
+                                <dl class="row">
+                                    <dt class="col-sm-4">Status:</dt>
+                                    <dd class="col-sm-8">
+                                        if data.Retention.Enabled {
+                                            <span class="badge bg-success">Enabled</span>
+                                        } else {
+                                            <span class="badge bg-secondary">Disabled</span>
+                                        }
+                                    </dd>
+                                    <dt class="col-sm-4">Duration:</dt>
+                                    <dd class="col-sm-8">
+                                        if data.Retention.Enabled {
+                                            <span class="text-success">
+                                                {fmt.Sprintf("%d", data.Retention.DisplayValue)} {data.Retention.DisplayUnit}
+                                            </span>
+                                        } else {
+                                            <span class="text-muted">No retention configured</span>
+                                        }
+                                    </dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Schema Information -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">Schema Definition</h5>
+                            </div>
+                            <div class="card-body">
+                                if len(data.Schema) == 0 {
+                                    <p class="text-muted">No schema information available</p>
+                                } else {
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Field</th>
+                                                    <th>Type</th>
+                                                    <th>Required</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                for _, field := range data.Schema {
+                                                    <tr>
+                                                        <td><code>{field.Name}</code></td>
+                                                        <td><span class="badge bg-secondary">{field.Type}</span></td>
+                                                        <td>
+                                                            if field.Required {
+                                                                <i class="fas fa-check text-success"></i>
+                                                            } else {
+                                                                <i class="fas fa-times text-muted"></i>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Partitions Table -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Partitions</h5>
+                        <div>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="exportPartitionsCSV()">
+                                <i class="fas fa-download me-1"></i>Export CSV
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        if len(data.Partitions) == 0 {
+                            <div class="text-center py-4">
+                                <i class="fas fa-server fa-3x text-muted mb-3"></i>
+                                <h5>No Partitions Found</h5>
+                                <p class="text-muted">No partitions are configured for this topic.</p>
+                            </div>
+                        } else {
+                            <div class="table-responsive">
+                                <table class="table table-striped" id="partitionsTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Partition ID</th>
+                                            <th>Leader Broker</th>
+                                            <th>Follower Broker</th>
+                                            <th>Messages</th>
+                                            <th>Size</th>
+                                            <th>Last Data Time</th>
+                                            <th>Created</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, partition := range data.Partitions {
+                                            <tr>
+                                                <td>
+                                                    <span class="badge bg-primary">{fmt.Sprintf("%d", partition.ID)}</span>
+                                                </td>
+                                                <td>
+                                                    <strong>{partition.LeaderBroker}</strong>
+                                                </td>
+                                                <td>
+                                                    if partition.FollowerBroker != "" {
+                                                        <span class="text-muted">{partition.FollowerBroker}</span>
+                                                    } else {
+                                                        <span class="text-muted">None</span>
+                                                    }
+                                                </td>
+                                                <td>{fmt.Sprintf("%d", partition.MessageCount)}</td>
+                                                <td>{util.BytesToHumanReadable(uint64(partition.TotalSize))}</td>
+                                                <td>
+                                                    if !partition.LastDataTime.IsZero() {
+                                                        <span class="text-muted">{partition.LastDataTime.Format("2006-01-02 15:04:05")}</span>
+                                                    } else {
+                                                        <span class="text-muted">Never</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    <span class="text-muted">{partition.CreatedAt.Format("2006-01-02 15:04:05")}</span>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <!-- Publishers and Subscribers -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">Active Publishers <span class="badge bg-success">{fmt.Sprintf("%d", len(data.Publishers))}</span></h5>
+                            </div>
+                            <div class="card-body">
+                                if len(data.Publishers) == 0 {
+                                    <div class="alert alert-info mb-0">
+                                        <i class="fas fa-info-circle"></i> No active publishers found for this topic.
+                                    </div>
+                                } else {
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Publisher</th>
+                                                    <th>Partition</th>
+                                                    <th>Broker</th>
+                                                    <th>Status</th>
+                                                    <th>Published</th>
+                                                    <th>Acknowledged</th>
+                                                    <th>Last Seen</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                for _, publisher := range data.Publishers {
+                                                    <tr>
+                                                        <td>{publisher.PublisherName}</td>
+                                                        <td><span class="badge bg-primary">{fmt.Sprintf("%d", publisher.PartitionID)}</span></td>
+                                                        <td>{publisher.Broker}</td>
+                                                        <td>
+                                                            if publisher.IsActive {
+                                                                <span class="badge bg-success">Active</span>
+                                                            } else {
+                                                                <span class="badge bg-secondary">Inactive</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if publisher.LastPublishedOffset > 0 {
+                                                                <span class="text-muted">{fmt.Sprintf("%d", publisher.LastPublishedOffset)}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if publisher.LastAckedOffset > 0 {
+                                                                <span class="text-muted">{fmt.Sprintf("%d", publisher.LastAckedOffset)}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if !publisher.LastSeenTime.IsZero() {
+                                                                <span class="text-muted">{publisher.LastSeenTime.Format("15:04:05")}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">Active Subscribers <span class="badge bg-info">{fmt.Sprintf("%d", len(data.Subscribers))}</span></h5>
+                            </div>
+                            <div class="card-body">
+                                if len(data.Subscribers) == 0 {
+                                    <div class="alert alert-info mb-0">
+                                        <i class="fas fa-info-circle"></i> No active subscribers found for this topic.
+                                    </div>
+                                } else {
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Consumer Group</th>
+                                                    <th>Consumer ID</th>
+                                                    <th>Partition</th>
+                                                    <th>Broker</th>
+                                                    <th>Status</th>
+                                                    <th>Received</th>
+                                                    <th>Acknowledged</th>
+                                                    <th>Last Seen</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                for _, subscriber := range data.Subscribers {
+                                                    <tr>
+                                                        <td>{subscriber.ConsumerGroup}</td>
+                                                        <td>{subscriber.ConsumerID}</td>
+                                                        <td><span class="badge bg-primary">{fmt.Sprintf("%d", subscriber.PartitionID)}</span></td>
+                                                        <td>{subscriber.Broker}</td>
+                                                        <td>
+                                                            if subscriber.IsActive {
+                                                                <span class="badge bg-success">Active</span>
+                                                            } else {
+                                                                <span class="badge bg-secondary">Inactive</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if subscriber.LastReceivedOffset > 0 {
+                                                                <span class="text-muted">{fmt.Sprintf("%d", subscriber.LastReceivedOffset)}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if subscriber.CurrentOffset > 0 {
+                                                                <span class="text-muted">{fmt.Sprintf("%d", subscriber.CurrentOffset)}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if !subscriber.LastSeenTime.IsZero() {
+                                                                <span class="text-muted">{subscriber.LastSeenTime.Format("15:04:05")}</span>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Consumer Group Offsets -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">Consumer Group Offsets <span class="badge bg-warning">{fmt.Sprintf("%d", len(data.ConsumerGroupOffsets))}</span></h5>
+                            </div>
+                            <div class="card-body">
+                                if len(data.ConsumerGroupOffsets) == 0 {
+                                    <div class="alert alert-info mb-0">
+                                        <i class="fas fa-info-circle"></i> No consumer group offsets found for this topic.
+                                    </div>
+                                } else {
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Consumer Group</th>
+                                                    <th>Partition</th>
+                                                    <th>Offset</th>
+                                                    <th>Last Updated</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                for _, offset := range data.ConsumerGroupOffsets {
+                                                    <tr>
+                                                        <td>
+                                                            <span class="badge bg-secondary">{offset.ConsumerGroup}</span>
+                                                        </td>
+                                                        <td>
+                                                            <span class="badge bg-primary">{fmt.Sprintf("%d", offset.PartitionID)}</span>
+                                                        </td>
+                                                        <td>
+                                                            <strong>{fmt.Sprintf("%d", offset.Offset)}</strong>
+                                                        </td>
+                                                        <td>
+                                                            <span class="text-muted">{offset.LastUpdated.Format("2006-01-02 15:04:05")}</span>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function exportPartitionsCSV() {
+            const table = document.getElementById('partitionsTable');
+            if (!table) return;
+            
+            let csv = 'Partition ID,Leader Broker,Follower Broker,Messages,Size,Last Data Time,Created\n';
+            
+            const rows = table.querySelectorAll('tbody tr');
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 7) {
+                    const rowData = [
+                        cells[0].querySelector('.badge')?.textContent || '',
+                        cells[1].querySelector('strong')?.textContent || '',
+                        cells[2].textContent || '',
+                        cells[3].textContent || '',
+                        cells[4].textContent || '',
+                        cells[5].querySelector('span')?.textContent || '',
+                        cells[6].querySelector('span')?.textContent || ''
+                    ];
+                    csv += rowData.map(field => `"${field.replace(/"/g, '""')}"`).join(',') + '\n';
+                }
+            });
+            
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'topic_partitions.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Edit retention functions
+        function showEditRetentionModal() {
+            const modal = new bootstrap.Modal(document.getElementById('editRetentionModal'));
+            
+            // Get current retention values from the page
+            const currentEnabled = document.querySelector('dd .badge.bg-success') !== null;
+            const currentDurationElement = document.querySelector('dd .text-success');
+            
+            let currentValue = 7;
+            let currentUnit = 'days';
+            
+            if (currentEnabled && currentDurationElement) {
+                const durationText = currentDurationElement.textContent.trim();
+                const parts = durationText.split(' ');
+                if (parts.length >= 2) {
+                    currentValue = parseInt(parts[0]) || 7;
+                    currentUnit = parts[1].toLowerCase();
+                    // Handle plural forms
+                    if (currentUnit.endsWith('s')) {
+                        currentUnit = currentUnit.slice(0, -1);
+                    }
+                    // Map to our dropdown values
+                    if (currentUnit === 'hour') {
+                        currentUnit = 'hours';
+                    } else if (currentUnit === 'day') {
+                        currentUnit = 'days';
+                    }
+                }
+            }
+            
+            // Set current values in the modal
+            document.getElementById('editEnableRetention').checked = currentEnabled;
+            document.getElementById('editRetentionValue').value = currentValue;
+            document.getElementById('editRetentionUnit').value = currentUnit;
+            
+            // Show/hide retention fields based on current state
+            toggleEditRetentionFields();
+            
+            modal.show();
+        }
+
+        function toggleEditRetentionFields() {
+            const enableRetention = document.getElementById('editEnableRetention');
+            const retentionFields = document.getElementById('editRetentionFields');
+            
+            if (enableRetention.checked) {
+                retentionFields.style.display = 'block';
+            } else {
+                retentionFields.style.display = 'none';
+            }
+        }
+
+        function updateRetention() {
+            const form = document.getElementById('editRetentionForm');
+            const formData = new FormData(form);
+            
+            // Get topic details from the page
+            const topicName = document.querySelector('h1').textContent.replace('Topic Details: ', '');
+            const parts = topicName.split('.');
+            
+            if (parts.length < 2) {
+                alert('Invalid topic name format');
+                return;
+            }
+            
+            const namespace = parts[0];
+            const name = parts.slice(1).join('.');
+            
+            // Convert form data to JSON
+            const data = {
+                namespace: namespace,
+                name: name,
+                retention: {
+                    enabled: formData.get('editEnableRetention') === 'on',
+                    retention_seconds: 0
+                }
+            };
+
+            // Calculate retention seconds if enabled
+            if (data.retention.enabled) {
+                const retentionValue = parseInt(formData.get('editRetentionValue'));
+                const retentionUnit = formData.get('editRetentionUnit');
+                
+                if (retentionUnit === 'hours') {
+                    data.retention.retention_seconds = retentionValue * 3600;
+                } else if (retentionUnit === 'days') {
+                    data.retention.retention_seconds = retentionValue * 86400;
+                }
+            }
+
+            // Show loading state
+            const updateButton = document.querySelector('#editRetentionModal .btn-primary');
+            updateButton.disabled = true;
+            updateButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Updating...';
+
+            // Send API request
+            fetch('/api/mq/topics/retention/update', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.error) {
+                    alert('Failed to update retention: ' + result.error);
+                } else {
+                    alert('Retention policy updated successfully!');
+                    // Close modal and refresh page
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('editRetentionModal'));
+                    modal.hide();
+                    window.location.reload();
+                }
+            })
+            .catch(error => {
+                alert('Failed to update retention: ' + error.message);
+            })
+            .finally(() => {
+                // Reset button state
+                updateButton.disabled = false;
+                updateButton.innerHTML = '<i class="fas fa-save me-1"></i>Update Retention';
+            });
+        }
+    </script>
+
+    <!-- Edit Retention Modal -->
+    <div class="modal fade" id="editRetentionModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-edit me-2"></i>Edit Retention Policy
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editRetentionForm">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-clock me-2"></i>Retention Configuration
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-check mb-3">
+                                    <input class="form-check-input" type="checkbox" id="editEnableRetention" 
+                                           name="editEnableRetention" onchange="toggleEditRetentionFields()">
+                                    <label class="form-check-label" for="editEnableRetention">
+                                        Enable data retention
+                                    </label>
+                                </div>
+                                <div id="editRetentionFields" style="display: none;">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="editRetentionValue" class="form-label">Retention Duration</label>
+                                                <input type="number" class="form-control" id="editRetentionValue" 
+                                                       name="editRetentionValue" min="1" value="7">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="editRetentionUnit" class="form-label">Unit</label>
+                                                <select class="form-control" id="editRetentionUnit" name="editRetentionUnit">
+                                                    <option value="hours">Hours</option>
+                                                    <option value="days" selected>Days</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-info-circle me-2"></i>
+                                        Data older than this duration will be automatically purged to save storage space.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="updateRetention()">
+                        <i class="fas fa-save me-1"></i>Update Retention
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+} 

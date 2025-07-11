@@ -22,11 +22,15 @@ type S3BucketsData struct {
 }
 
 type CreateBucketRequest struct {
-	Name         string `json:"name" binding:"required"`
-	Region       string `json:"region"`
-	QuotaSize    int64  `json:"quota_size"`    // Quota size in bytes
-	QuotaUnit    string `json:"quota_unit"`    // Unit: MB, GB, TB
-	QuotaEnabled bool   `json:"quota_enabled"` // Whether quota is enabled
+	Name               string `json:"name" binding:"required"`
+	Region             string `json:"region"`
+	QuotaSize          int64  `json:"quota_size"`           // Quota size in bytes
+	QuotaUnit          string `json:"quota_unit"`           // Unit: MB, GB, TB
+	QuotaEnabled       bool   `json:"quota_enabled"`        // Whether quota is enabled
+	VersioningEnabled  bool   `json:"versioning_enabled"`   // Whether versioning is enabled
+	ObjectLockEnabled  bool   `json:"object_lock_enabled"`  // Whether object lock is enabled
+	ObjectLockMode     string `json:"object_lock_mode"`     // Object lock mode: "GOVERNANCE" or "COMPLIANCE"
+	ObjectLockDuration int32  `json:"object_lock_duration"` // Default retention duration in days
 }
 
 // S3 Bucket Management Handlers
@@ -89,21 +93,43 @@ func (s *AdminServer) CreateBucket(c *gin.Context) {
 		return
 	}
 
+	// Validate object lock settings
+	if req.ObjectLockEnabled {
+		// Object lock requires versioning to be enabled
+		req.VersioningEnabled = true
+
+		// Validate object lock mode
+		if req.ObjectLockMode != "GOVERNANCE" && req.ObjectLockMode != "COMPLIANCE" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Object lock mode must be either GOVERNANCE or COMPLIANCE"})
+			return
+		}
+
+		// Validate retention duration
+		if req.ObjectLockDuration <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Object lock duration must be greater than 0 days"})
+			return
+		}
+	}
+
 	// Convert quota to bytes
 	quotaBytes := convertQuotaToBytes(req.QuotaSize, req.QuotaUnit)
 
-	err := s.CreateS3BucketWithQuota(req.Name, quotaBytes, req.QuotaEnabled)
+	err := s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.ObjectLockDuration)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create bucket: " + err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message":       "Bucket created successfully",
-		"bucket":        req.Name,
-		"quota_size":    req.QuotaSize,
-		"quota_unit":    req.QuotaUnit,
-		"quota_enabled": req.QuotaEnabled,
+		"message":              "Bucket created successfully",
+		"bucket":               req.Name,
+		"quota_size":           req.QuotaSize,
+		"quota_unit":           req.QuotaUnit,
+		"quota_enabled":        req.QuotaEnabled,
+		"versioning_enabled":   req.VersioningEnabled,
+		"object_lock_enabled":  req.ObjectLockEnabled,
+		"object_lock_mode":     req.ObjectLockMode,
+		"object_lock_duration": req.ObjectLockDuration,
 	})
 }
 
@@ -258,6 +284,11 @@ func (s *AdminServer) SetBucketQuota(bucketName string, quotaBytes int64, quotaE
 
 // CreateS3BucketWithQuota creates a new S3 bucket with quota settings
 func (s *AdminServer) CreateS3BucketWithQuota(bucketName string, quotaBytes int64, quotaEnabled bool) error {
+	return s.CreateS3BucketWithObjectLock(bucketName, quotaBytes, quotaEnabled, false, false, "", 0)
+}
+
+// CreateS3BucketWithObjectLock creates a new S3 bucket with quota, versioning, and object lock settings
+func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes int64, quotaEnabled, versioningEnabled, objectLockEnabled bool, objectLockMode string, objectLockDuration int32) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// First ensure /buckets directory exists
 		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
@@ -299,21 +330,41 @@ func (s *AdminServer) CreateS3BucketWithQuota(bucketName string, quotaBytes int6
 			quota = 0
 		}
 
+		// Prepare bucket attributes with versioning and object lock metadata
+		attributes := &filer_pb.FuseAttributes{
+			FileMode: uint32(0755 | os.ModeDir), // Directory mode
+			Uid:      filer_pb.OS_UID,
+			Gid:      filer_pb.OS_GID,
+			Crtime:   time.Now().Unix(),
+			Mtime:    time.Now().Unix(),
+			TtlSec:   0,
+		}
+
+		// Create extended attributes map for versioning and object lock
+		extended := make(map[string][]byte)
+		if versioningEnabled {
+			extended["s3.versioning"] = []byte("Enabled")
+		} else {
+			extended["s3.versioning"] = []byte("Suspended")
+		}
+
+		if objectLockEnabled {
+			extended["s3.objectlock"] = []byte("Enabled")
+			extended["s3.objectlock.mode"] = []byte(objectLockMode)
+			extended["s3.objectlock.duration"] = []byte(fmt.Sprintf("%d", objectLockDuration))
+		} else {
+			extended["s3.objectlock"] = []byte("Disabled")
+		}
+
 		// Create bucket directory under /buckets
 		_, err = client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
 			Directory: "/buckets",
 			Entry: &filer_pb.Entry{
 				Name:        bucketName,
 				IsDirectory: true,
-				Attributes: &filer_pb.FuseAttributes{
-					FileMode: uint32(0755 | os.ModeDir), // Directory mode
-					Uid:      filer_pb.OS_UID,
-					Gid:      filer_pb.OS_GID,
-					Crtime:   time.Now().Unix(),
-					Mtime:    time.Now().Unix(),
-					TtlSec:   0,
-				},
-				Quota: quota,
+				Attributes:  attributes,
+				Extended:    extended,
+				Quota:       quota,
 			},
 		})
 		if err != nil {

@@ -12,15 +12,16 @@ import (
 )
 
 type AdminData struct {
-	Username      string         `json:"username"`
-	TotalVolumes  int            `json:"total_volumes"`
-	TotalFiles    int64          `json:"total_files"`
-	TotalSize     int64          `json:"total_size"`
-	MasterNodes   []MasterNode   `json:"master_nodes"`
-	VolumeServers []VolumeServer `json:"volume_servers"`
-	FilerNodes    []FilerNode    `json:"filer_nodes"`
-	DataCenters   []DataCenter   `json:"datacenters"`
-	LastUpdated   time.Time      `json:"last_updated"`
+	Username       string              `json:"username"`
+	TotalVolumes   int                 `json:"total_volumes"`
+	TotalFiles     int64               `json:"total_files"`
+	TotalSize      int64               `json:"total_size"`
+	MasterNodes    []MasterNode        `json:"master_nodes"`
+	VolumeServers  []VolumeServer      `json:"volume_servers"`
+	FilerNodes     []FilerNode         `json:"filer_nodes"`
+	MessageBrokers []MessageBrokerNode `json:"message_brokers"`
+	DataCenters    []DataCenter        `json:"datacenters"`
+	LastUpdated    time.Time           `json:"last_updated"`
 }
 
 // Object Store Users management structures
@@ -76,6 +77,13 @@ type FilerNode struct {
 	LastUpdated time.Time `json:"last_updated"`
 }
 
+type MessageBrokerNode struct {
+	Address     string    `json:"address"`
+	DataCenter  string    `json:"datacenter"`
+	Rack        string    `json:"rack"`
+	LastUpdated time.Time `json:"last_updated"`
+}
+
 // GetAdminData retrieves admin data as a struct (for reuse by both JSON and HTML handlers)
 func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	if username == "" {
@@ -95,17 +103,21 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	// Get filer nodes status
 	filerNodes := s.getFilerNodesStatus()
 
+	// Get message broker nodes status
+	messageBrokers := s.getMessageBrokerNodesStatus()
+
 	// Prepare admin data
 	adminData := AdminData{
-		Username:      username,
-		TotalVolumes:  topology.TotalVolumes,
-		TotalFiles:    topology.TotalFiles,
-		TotalSize:     topology.TotalSize,
-		MasterNodes:   masterNodes,
-		VolumeServers: topology.VolumeServers,
-		FilerNodes:    filerNodes,
-		DataCenters:   topology.DataCenters,
-		LastUpdated:   topology.UpdatedAt,
+		Username:       username,
+		TotalVolumes:   topology.TotalVolumes,
+		TotalFiles:     topology.TotalFiles,
+		TotalSize:      topology.TotalSize,
+		MasterNodes:    masterNodes,
+		VolumeServers:  topology.VolumeServers,
+		FilerNodes:     filerNodes,
+		MessageBrokers: messageBrokers,
+		DataCenters:    topology.DataCenters,
+		LastUpdated:    topology.UpdatedAt,
 	}
 
 	return adminData, nil
@@ -199,4 +211,39 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 	}
 
 	return filerNodes
+}
+
+// getMessageBrokerNodesStatus checks status of all message broker nodes using master's ListClusterNodes
+func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
+	var messageBrokers []MessageBrokerNode
+
+	// Get message broker nodes from master using ListClusterNodes
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.BrokerType,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Process each message broker node
+		for _, node := range resp.ClusterNodes {
+			messageBrokers = append(messageBrokers, MessageBrokerNode{
+				Address:     node.Address,
+				DataCenter:  node.DataCenter,
+				Rack:        node.Rack,
+				LastUpdated: time.Now(),
+			})
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		glog.Errorf("Failed to get message broker nodes from master %s: %v", s.masterAddress, err)
+		// Return empty list if we can't get broker info from master
+		return []MessageBrokerNode{}
+	}
+
+	return messageBrokers
 }

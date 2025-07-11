@@ -430,18 +430,71 @@ func (*BalanceTopicsResponse) Descriptor() ([]byte, []int) {
 }
 
 // ////////////////////////////////////////////////
+type TopicRetention struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	RetentionSeconds int64                  `protobuf:"varint,1,opt,name=retention_seconds,json=retentionSeconds,proto3" json:"retention_seconds,omitempty"` // retention duration in seconds
+	Enabled          bool                   `protobuf:"varint,2,opt,name=enabled,proto3" json:"enabled,omitempty"`                                           // whether retention is enabled
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *TopicRetention) Reset() {
+	*x = TopicRetention{}
+	mi := &file_mq_broker_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TopicRetention) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TopicRetention) ProtoMessage() {}
+
+func (x *TopicRetention) ProtoReflect() protoreflect.Message {
+	mi := &file_mq_broker_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TopicRetention.ProtoReflect.Descriptor instead.
+func (*TopicRetention) Descriptor() ([]byte, []int) {
+	return file_mq_broker_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *TopicRetention) GetRetentionSeconds() int64 {
+	if x != nil {
+		return x.RetentionSeconds
+	}
+	return 0
+}
+
+func (x *TopicRetention) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
 type ConfigureTopicRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Topic          *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
 	PartitionCount int32                  `protobuf:"varint,2,opt,name=partition_count,json=partitionCount,proto3" json:"partition_count,omitempty"`
 	RecordType     *schema_pb.RecordType  `protobuf:"bytes,3,opt,name=record_type,json=recordType,proto3" json:"record_type,omitempty"`
+	Retention      *TopicRetention        `protobuf:"bytes,4,opt,name=retention,proto3" json:"retention,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ConfigureTopicRequest) Reset() {
 	*x = ConfigureTopicRequest{}
-	mi := &file_mq_broker_proto_msgTypes[8]
+	mi := &file_mq_broker_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -453,7 +506,7 @@ func (x *ConfigureTopicRequest) String() string {
 func (*ConfigureTopicRequest) ProtoMessage() {}
 
 func (x *ConfigureTopicRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[8]
+	mi := &file_mq_broker_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -466,7 +519,7 @@ func (x *ConfigureTopicRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigureTopicRequest.ProtoReflect.Descriptor instead.
 func (*ConfigureTopicRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{8}
+	return file_mq_broker_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ConfigureTopicRequest) GetTopic() *schema_pb.Topic {
@@ -490,17 +543,25 @@ func (x *ConfigureTopicRequest) GetRecordType() *schema_pb.RecordType {
 	return nil
 }
 
+func (x *ConfigureTopicRequest) GetRetention() *TopicRetention {
+	if x != nil {
+		return x.Retention
+	}
+	return nil
+}
+
 type ConfigureTopicResponse struct {
 	state                      protoimpl.MessageState       `protogen:"open.v1"`
 	BrokerPartitionAssignments []*BrokerPartitionAssignment `protobuf:"bytes,2,rep,name=broker_partition_assignments,json=brokerPartitionAssignments,proto3" json:"broker_partition_assignments,omitempty"`
 	RecordType                 *schema_pb.RecordType        `protobuf:"bytes,3,opt,name=record_type,json=recordType,proto3" json:"record_type,omitempty"`
+	Retention                  *TopicRetention              `protobuf:"bytes,4,opt,name=retention,proto3" json:"retention,omitempty"`
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *ConfigureTopicResponse) Reset() {
 	*x = ConfigureTopicResponse{}
-	mi := &file_mq_broker_proto_msgTypes[9]
+	mi := &file_mq_broker_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -512,7 +573,7 @@ func (x *ConfigureTopicResponse) String() string {
 func (*ConfigureTopicResponse) ProtoMessage() {}
 
 func (x *ConfigureTopicResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[9]
+	mi := &file_mq_broker_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -525,7 +586,7 @@ func (x *ConfigureTopicResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigureTopicResponse.ProtoReflect.Descriptor instead.
 func (*ConfigureTopicResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{9}
+	return file_mq_broker_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ConfigureTopicResponse) GetBrokerPartitionAssignments() []*BrokerPartitionAssignment {
@@ -542,6 +603,13 @@ func (x *ConfigureTopicResponse) GetRecordType() *schema_pb.RecordType {
 	return nil
 }
 
+func (x *ConfigureTopicResponse) GetRetention() *TopicRetention {
+	if x != nil {
+		return x.Retention
+	}
+	return nil
+}
+
 type ListTopicsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -550,7 +618,7 @@ type ListTopicsRequest struct {
 
 func (x *ListTopicsRequest) Reset() {
 	*x = ListTopicsRequest{}
-	mi := &file_mq_broker_proto_msgTypes[10]
+	mi := &file_mq_broker_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -562,7 +630,7 @@ func (x *ListTopicsRequest) String() string {
 func (*ListTopicsRequest) ProtoMessage() {}
 
 func (x *ListTopicsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[10]
+	mi := &file_mq_broker_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -575,7 +643,7 @@ func (x *ListTopicsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTopicsRequest.ProtoReflect.Descriptor instead.
 func (*ListTopicsRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{10}
+	return file_mq_broker_proto_rawDescGZIP(), []int{11}
 }
 
 type ListTopicsResponse struct {
@@ -587,7 +655,7 @@ type ListTopicsResponse struct {
 
 func (x *ListTopicsResponse) Reset() {
 	*x = ListTopicsResponse{}
-	mi := &file_mq_broker_proto_msgTypes[11]
+	mi := &file_mq_broker_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -599,7 +667,7 @@ func (x *ListTopicsResponse) String() string {
 func (*ListTopicsResponse) ProtoMessage() {}
 
 func (x *ListTopicsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[11]
+	mi := &file_mq_broker_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -612,7 +680,7 @@ func (x *ListTopicsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTopicsResponse.ProtoReflect.Descriptor instead.
 func (*ListTopicsResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{11}
+	return file_mq_broker_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListTopicsResponse) GetTopics() []*schema_pb.Topic {
@@ -631,7 +699,7 @@ type LookupTopicBrokersRequest struct {
 
 func (x *LookupTopicBrokersRequest) Reset() {
 	*x = LookupTopicBrokersRequest{}
-	mi := &file_mq_broker_proto_msgTypes[12]
+	mi := &file_mq_broker_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -643,7 +711,7 @@ func (x *LookupTopicBrokersRequest) String() string {
 func (*LookupTopicBrokersRequest) ProtoMessage() {}
 
 func (x *LookupTopicBrokersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[12]
+	mi := &file_mq_broker_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -656,7 +724,7 @@ func (x *LookupTopicBrokersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupTopicBrokersRequest.ProtoReflect.Descriptor instead.
 func (*LookupTopicBrokersRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{12}
+	return file_mq_broker_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *LookupTopicBrokersRequest) GetTopic() *schema_pb.Topic {
@@ -676,7 +744,7 @@ type LookupTopicBrokersResponse struct {
 
 func (x *LookupTopicBrokersResponse) Reset() {
 	*x = LookupTopicBrokersResponse{}
-	mi := &file_mq_broker_proto_msgTypes[13]
+	mi := &file_mq_broker_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -688,7 +756,7 @@ func (x *LookupTopicBrokersResponse) String() string {
 func (*LookupTopicBrokersResponse) ProtoMessage() {}
 
 func (x *LookupTopicBrokersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[13]
+	mi := &file_mq_broker_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -701,7 +769,7 @@ func (x *LookupTopicBrokersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupTopicBrokersResponse.ProtoReflect.Descriptor instead.
 func (*LookupTopicBrokersResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{13}
+	return file_mq_broker_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *LookupTopicBrokersResponse) GetTopic() *schema_pb.Topic {
@@ -729,7 +797,7 @@ type BrokerPartitionAssignment struct {
 
 func (x *BrokerPartitionAssignment) Reset() {
 	*x = BrokerPartitionAssignment{}
-	mi := &file_mq_broker_proto_msgTypes[14]
+	mi := &file_mq_broker_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -741,7 +809,7 @@ func (x *BrokerPartitionAssignment) String() string {
 func (*BrokerPartitionAssignment) ProtoMessage() {}
 
 func (x *BrokerPartitionAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[14]
+	mi := &file_mq_broker_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -754,7 +822,7 @@ func (x *BrokerPartitionAssignment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BrokerPartitionAssignment.ProtoReflect.Descriptor instead.
 func (*BrokerPartitionAssignment) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{14}
+	return file_mq_broker_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *BrokerPartitionAssignment) GetPartition() *schema_pb.Partition {
@@ -778,6 +846,542 @@ func (x *BrokerPartitionAssignment) GetFollowerBroker() string {
 	return ""
 }
 
+type GetTopicConfigurationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Topic         *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTopicConfigurationRequest) Reset() {
+	*x = GetTopicConfigurationRequest{}
+	mi := &file_mq_broker_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTopicConfigurationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTopicConfigurationRequest) ProtoMessage() {}
+
+func (x *GetTopicConfigurationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mq_broker_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTopicConfigurationRequest.ProtoReflect.Descriptor instead.
+func (*GetTopicConfigurationRequest) Descriptor() ([]byte, []int) {
+	return file_mq_broker_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GetTopicConfigurationRequest) GetTopic() *schema_pb.Topic {
+	if x != nil {
+		return x.Topic
+	}
+	return nil
+}
+
+type GetTopicConfigurationResponse struct {
+	state                      protoimpl.MessageState       `protogen:"open.v1"`
+	Topic                      *schema_pb.Topic             `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	PartitionCount             int32                        `protobuf:"varint,2,opt,name=partition_count,json=partitionCount,proto3" json:"partition_count,omitempty"`
+	RecordType                 *schema_pb.RecordType        `protobuf:"bytes,3,opt,name=record_type,json=recordType,proto3" json:"record_type,omitempty"`
+	BrokerPartitionAssignments []*BrokerPartitionAssignment `protobuf:"bytes,4,rep,name=broker_partition_assignments,json=brokerPartitionAssignments,proto3" json:"broker_partition_assignments,omitempty"`
+	CreatedAtNs                int64                        `protobuf:"varint,5,opt,name=created_at_ns,json=createdAtNs,proto3" json:"created_at_ns,omitempty"`
+	LastUpdatedNs              int64                        `protobuf:"varint,6,opt,name=last_updated_ns,json=lastUpdatedNs,proto3" json:"last_updated_ns,omitempty"`
+	Retention                  *TopicRetention              `protobuf:"bytes,7,opt,name=retention,proto3" json:"retention,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *GetTopicConfigurationResponse) Reset() {
+	*x = GetTopicConfigurationResponse{}
+	mi := &file_mq_broker_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTopicConfigurationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTopicConfigurationResponse) ProtoMessage() {}
+
+func (x *GetTopicConfigurationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mq_broker_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTopicConfigurationResponse.ProtoReflect.Descriptor instead.
+func (*GetTopicConfigurationResponse) Descriptor() ([]byte, []int) {
+	return file_mq_broker_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *GetTopicConfigurationResponse) GetTopic() *schema_pb.Topic {
+	if x != nil {
+		return x.Topic
+	}
+	return nil
+}
+
+func (x *GetTopicConfigurationResponse) GetPartitionCount() int32 {
+	if x != nil {
+		return x.PartitionCount
+	}
+	return 0
+}
+
+func (x *GetTopicConfigurationResponse) GetRecordType() *schema_pb.RecordType {
+	if x != nil {
+		return x.RecordType
+	}
+	return nil
+}
+
+func (x *GetTopicConfigurationResponse) GetBrokerPartitionAssignments() []*BrokerPartitionAssignment {
+	if x != nil {
+		return x.BrokerPartitionAssignments
+	}
+	return nil
+}
+
+func (x *GetTopicConfigurationResponse) GetCreatedAtNs() int64 {
+	if x != nil {
+		return x.CreatedAtNs
+	}
+	return 0
+}
+
+func (x *GetTopicConfigurationResponse) GetLastUpdatedNs() int64 {
+	if x != nil {
+		return x.LastUpdatedNs
+	}
+	return 0
+}
+
+func (x *GetTopicConfigurationResponse) GetRetention() *TopicRetention {
+	if x != nil {
+		return x.Retention
+	}
+	return nil
+}
+
+type GetTopicPublishersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Topic         *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTopicPublishersRequest) Reset() {
+	*x = GetTopicPublishersRequest{}
+	mi := &file_mq_broker_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTopicPublishersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTopicPublishersRequest) ProtoMessage() {}
+
+func (x *GetTopicPublishersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mq_broker_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTopicPublishersRequest.ProtoReflect.Descriptor instead.
+func (*GetTopicPublishersRequest) Descriptor() ([]byte, []int) {
+	return file_mq_broker_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *GetTopicPublishersRequest) GetTopic() *schema_pb.Topic {
+	if x != nil {
+		return x.Topic
+	}
+	return nil
+}
+
+type GetTopicPublishersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Publishers    []*TopicPublisher      `protobuf:"bytes,1,rep,name=publishers,proto3" json:"publishers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTopicPublishersResponse) Reset() {
+	*x = GetTopicPublishersResponse{}
+	mi := &file_mq_broker_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTopicPublishersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTopicPublishersResponse) ProtoMessage() {}
+
+func (x *GetTopicPublishersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mq_broker_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTopicPublishersResponse.ProtoReflect.Descriptor instead.
+func (*GetTopicPublishersResponse) Descriptor() ([]byte, []int) {
+	return file_mq_broker_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *GetTopicPublishersResponse) GetPublishers() []*TopicPublisher {
+	if x != nil {
+		return x.Publishers
+	}
+	return nil
+}
+
+type GetTopicSubscribersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Topic         *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTopicSubscribersRequest) Reset() {
+	*x = GetTopicSubscribersRequest{}
+	mi := &file_mq_broker_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTopicSubscribersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTopicSubscribersRequest) ProtoMessage() {}
+
+func (x *GetTopicSubscribersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mq_broker_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTopicSubscribersRequest.ProtoReflect.Descriptor instead.
+func (*GetTopicSubscribersRequest) Descriptor() ([]byte, []int) {
+	return file_mq_broker_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *GetTopicSubscribersRequest) GetTopic() *schema_pb.Topic {
+	if x != nil {
+		return x.Topic
+	}
+	return nil
+}
+
+type GetTopicSubscribersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Subscribers   []*TopicSubscriber     `protobuf:"bytes,1,rep,name=subscribers,proto3" json:"subscribers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTopicSubscribersResponse) Reset() {
+	*x = GetTopicSubscribersResponse{}
+	mi := &file_mq_broker_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTopicSubscribersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTopicSubscribersResponse) ProtoMessage() {}
+
+func (x *GetTopicSubscribersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mq_broker_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTopicSubscribersResponse.ProtoReflect.Descriptor instead.
+func (*GetTopicSubscribersResponse) Descriptor() ([]byte, []int) {
+	return file_mq_broker_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *GetTopicSubscribersResponse) GetSubscribers() []*TopicSubscriber {
+	if x != nil {
+		return x.Subscribers
+	}
+	return nil
+}
+
+type TopicPublisher struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	PublisherName       string                 `protobuf:"bytes,1,opt,name=publisher_name,json=publisherName,proto3" json:"publisher_name,omitempty"`
+	ClientId            string                 `protobuf:"bytes,2,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Partition           *schema_pb.Partition   `protobuf:"bytes,3,opt,name=partition,proto3" json:"partition,omitempty"`
+	ConnectTimeNs       int64                  `protobuf:"varint,4,opt,name=connect_time_ns,json=connectTimeNs,proto3" json:"connect_time_ns,omitempty"`
+	LastSeenTimeNs      int64                  `protobuf:"varint,5,opt,name=last_seen_time_ns,json=lastSeenTimeNs,proto3" json:"last_seen_time_ns,omitempty"`
+	Broker              string                 `protobuf:"bytes,6,opt,name=broker,proto3" json:"broker,omitempty"`
+	IsActive            bool                   `protobuf:"varint,7,opt,name=is_active,json=isActive,proto3" json:"is_active,omitempty"`
+	LastPublishedOffset int64                  `protobuf:"varint,8,opt,name=last_published_offset,json=lastPublishedOffset,proto3" json:"last_published_offset,omitempty"`
+	LastAckedOffset     int64                  `protobuf:"varint,9,opt,name=last_acked_offset,json=lastAckedOffset,proto3" json:"last_acked_offset,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *TopicPublisher) Reset() {
+	*x = TopicPublisher{}
+	mi := &file_mq_broker_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TopicPublisher) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TopicPublisher) ProtoMessage() {}
+
+func (x *TopicPublisher) ProtoReflect() protoreflect.Message {
+	mi := &file_mq_broker_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TopicPublisher.ProtoReflect.Descriptor instead.
+func (*TopicPublisher) Descriptor() ([]byte, []int) {
+	return file_mq_broker_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *TopicPublisher) GetPublisherName() string {
+	if x != nil {
+		return x.PublisherName
+	}
+	return ""
+}
+
+func (x *TopicPublisher) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *TopicPublisher) GetPartition() *schema_pb.Partition {
+	if x != nil {
+		return x.Partition
+	}
+	return nil
+}
+
+func (x *TopicPublisher) GetConnectTimeNs() int64 {
+	if x != nil {
+		return x.ConnectTimeNs
+	}
+	return 0
+}
+
+func (x *TopicPublisher) GetLastSeenTimeNs() int64 {
+	if x != nil {
+		return x.LastSeenTimeNs
+	}
+	return 0
+}
+
+func (x *TopicPublisher) GetBroker() string {
+	if x != nil {
+		return x.Broker
+	}
+	return ""
+}
+
+func (x *TopicPublisher) GetIsActive() bool {
+	if x != nil {
+		return x.IsActive
+	}
+	return false
+}
+
+func (x *TopicPublisher) GetLastPublishedOffset() int64 {
+	if x != nil {
+		return x.LastPublishedOffset
+	}
+	return 0
+}
+
+func (x *TopicPublisher) GetLastAckedOffset() int64 {
+	if x != nil {
+		return x.LastAckedOffset
+	}
+	return 0
+}
+
+type TopicSubscriber struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	ConsumerGroup      string                 `protobuf:"bytes,1,opt,name=consumer_group,json=consumerGroup,proto3" json:"consumer_group,omitempty"`
+	ConsumerId         string                 `protobuf:"bytes,2,opt,name=consumer_id,json=consumerId,proto3" json:"consumer_id,omitempty"`
+	ClientId           string                 `protobuf:"bytes,3,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Partition          *schema_pb.Partition   `protobuf:"bytes,4,opt,name=partition,proto3" json:"partition,omitempty"`
+	ConnectTimeNs      int64                  `protobuf:"varint,5,opt,name=connect_time_ns,json=connectTimeNs,proto3" json:"connect_time_ns,omitempty"`
+	LastSeenTimeNs     int64                  `protobuf:"varint,6,opt,name=last_seen_time_ns,json=lastSeenTimeNs,proto3" json:"last_seen_time_ns,omitempty"`
+	Broker             string                 `protobuf:"bytes,7,opt,name=broker,proto3" json:"broker,omitempty"`
+	IsActive           bool                   `protobuf:"varint,8,opt,name=is_active,json=isActive,proto3" json:"is_active,omitempty"`
+	CurrentOffset      int64                  `protobuf:"varint,9,opt,name=current_offset,json=currentOffset,proto3" json:"current_offset,omitempty"` // last acknowledged offset
+	LastReceivedOffset int64                  `protobuf:"varint,10,opt,name=last_received_offset,json=lastReceivedOffset,proto3" json:"last_received_offset,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *TopicSubscriber) Reset() {
+	*x = TopicSubscriber{}
+	mi := &file_mq_broker_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TopicSubscriber) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TopicSubscriber) ProtoMessage() {}
+
+func (x *TopicSubscriber) ProtoReflect() protoreflect.Message {
+	mi := &file_mq_broker_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TopicSubscriber.ProtoReflect.Descriptor instead.
+func (*TopicSubscriber) Descriptor() ([]byte, []int) {
+	return file_mq_broker_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *TopicSubscriber) GetConsumerGroup() string {
+	if x != nil {
+		return x.ConsumerGroup
+	}
+	return ""
+}
+
+func (x *TopicSubscriber) GetConsumerId() string {
+	if x != nil {
+		return x.ConsumerId
+	}
+	return ""
+}
+
+func (x *TopicSubscriber) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *TopicSubscriber) GetPartition() *schema_pb.Partition {
+	if x != nil {
+		return x.Partition
+	}
+	return nil
+}
+
+func (x *TopicSubscriber) GetConnectTimeNs() int64 {
+	if x != nil {
+		return x.ConnectTimeNs
+	}
+	return 0
+}
+
+func (x *TopicSubscriber) GetLastSeenTimeNs() int64 {
+	if x != nil {
+		return x.LastSeenTimeNs
+	}
+	return 0
+}
+
+func (x *TopicSubscriber) GetBroker() string {
+	if x != nil {
+		return x.Broker
+	}
+	return ""
+}
+
+func (x *TopicSubscriber) GetIsActive() bool {
+	if x != nil {
+		return x.IsActive
+	}
+	return false
+}
+
+func (x *TopicSubscriber) GetCurrentOffset() int64 {
+	if x != nil {
+		return x.CurrentOffset
+	}
+	return 0
+}
+
+func (x *TopicSubscriber) GetLastReceivedOffset() int64 {
+	if x != nil {
+		return x.LastReceivedOffset
+	}
+	return 0
+}
+
 type AssignTopicPartitionsRequest struct {
 	state                      protoimpl.MessageState       `protogen:"open.v1"`
 	Topic                      *schema_pb.Topic             `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
@@ -790,7 +1394,7 @@ type AssignTopicPartitionsRequest struct {
 
 func (x *AssignTopicPartitionsRequest) Reset() {
 	*x = AssignTopicPartitionsRequest{}
-	mi := &file_mq_broker_proto_msgTypes[15]
+	mi := &file_mq_broker_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -802,7 +1406,7 @@ func (x *AssignTopicPartitionsRequest) String() string {
 func (*AssignTopicPartitionsRequest) ProtoMessage() {}
 
 func (x *AssignTopicPartitionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[15]
+	mi := &file_mq_broker_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -815,7 +1419,7 @@ func (x *AssignTopicPartitionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignTopicPartitionsRequest.ProtoReflect.Descriptor instead.
 func (*AssignTopicPartitionsRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{15}
+	return file_mq_broker_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *AssignTopicPartitionsRequest) GetTopic() *schema_pb.Topic {
@@ -854,7 +1458,7 @@ type AssignTopicPartitionsResponse struct {
 
 func (x *AssignTopicPartitionsResponse) Reset() {
 	*x = AssignTopicPartitionsResponse{}
-	mi := &file_mq_broker_proto_msgTypes[16]
+	mi := &file_mq_broker_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -866,7 +1470,7 @@ func (x *AssignTopicPartitionsResponse) String() string {
 func (*AssignTopicPartitionsResponse) ProtoMessage() {}
 
 func (x *AssignTopicPartitionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[16]
+	mi := &file_mq_broker_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -879,7 +1483,7 @@ func (x *AssignTopicPartitionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignTopicPartitionsResponse.ProtoReflect.Descriptor instead.
 func (*AssignTopicPartitionsResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{16}
+	return file_mq_broker_proto_rawDescGZIP(), []int{25}
 }
 
 type SubscriberToSubCoordinatorRequest struct {
@@ -896,7 +1500,7 @@ type SubscriberToSubCoordinatorRequest struct {
 
 func (x *SubscriberToSubCoordinatorRequest) Reset() {
 	*x = SubscriberToSubCoordinatorRequest{}
-	mi := &file_mq_broker_proto_msgTypes[17]
+	mi := &file_mq_broker_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -908,7 +1512,7 @@ func (x *SubscriberToSubCoordinatorRequest) String() string {
 func (*SubscriberToSubCoordinatorRequest) ProtoMessage() {}
 
 func (x *SubscriberToSubCoordinatorRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[17]
+	mi := &file_mq_broker_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -921,7 +1525,7 @@ func (x *SubscriberToSubCoordinatorRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use SubscriberToSubCoordinatorRequest.ProtoReflect.Descriptor instead.
 func (*SubscriberToSubCoordinatorRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{17}
+	return file_mq_broker_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SubscriberToSubCoordinatorRequest) GetMessage() isSubscriberToSubCoordinatorRequest_Message {
@@ -995,7 +1599,7 @@ type SubscriberToSubCoordinatorResponse struct {
 
 func (x *SubscriberToSubCoordinatorResponse) Reset() {
 	*x = SubscriberToSubCoordinatorResponse{}
-	mi := &file_mq_broker_proto_msgTypes[18]
+	mi := &file_mq_broker_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1007,7 +1611,7 @@ func (x *SubscriberToSubCoordinatorResponse) String() string {
 func (*SubscriberToSubCoordinatorResponse) ProtoMessage() {}
 
 func (x *SubscriberToSubCoordinatorResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[18]
+	mi := &file_mq_broker_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1020,7 +1624,7 @@ func (x *SubscriberToSubCoordinatorResponse) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use SubscriberToSubCoordinatorResponse.ProtoReflect.Descriptor instead.
 func (*SubscriberToSubCoordinatorResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{18}
+	return file_mq_broker_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *SubscriberToSubCoordinatorResponse) GetMessage() isSubscriberToSubCoordinatorResponse_Message {
@@ -1077,7 +1681,7 @@ type ControlMessage struct {
 
 func (x *ControlMessage) Reset() {
 	*x = ControlMessage{}
-	mi := &file_mq_broker_proto_msgTypes[19]
+	mi := &file_mq_broker_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1089,7 +1693,7 @@ func (x *ControlMessage) String() string {
 func (*ControlMessage) ProtoMessage() {}
 
 func (x *ControlMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[19]
+	mi := &file_mq_broker_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1102,7 +1706,7 @@ func (x *ControlMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlMessage.ProtoReflect.Descriptor instead.
 func (*ControlMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{19}
+	return file_mq_broker_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ControlMessage) GetIsClose() bool {
@@ -1131,7 +1735,7 @@ type DataMessage struct {
 
 func (x *DataMessage) Reset() {
 	*x = DataMessage{}
-	mi := &file_mq_broker_proto_msgTypes[20]
+	mi := &file_mq_broker_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1143,7 +1747,7 @@ func (x *DataMessage) String() string {
 func (*DataMessage) ProtoMessage() {}
 
 func (x *DataMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[20]
+	mi := &file_mq_broker_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1156,7 +1760,7 @@ func (x *DataMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataMessage.ProtoReflect.Descriptor instead.
 func (*DataMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{20}
+	return file_mq_broker_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *DataMessage) GetKey() []byte {
@@ -1200,7 +1804,7 @@ type PublishMessageRequest struct {
 
 func (x *PublishMessageRequest) Reset() {
 	*x = PublishMessageRequest{}
-	mi := &file_mq_broker_proto_msgTypes[21]
+	mi := &file_mq_broker_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1212,7 +1816,7 @@ func (x *PublishMessageRequest) String() string {
 func (*PublishMessageRequest) ProtoMessage() {}
 
 func (x *PublishMessageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[21]
+	mi := &file_mq_broker_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1225,7 +1829,7 @@ func (x *PublishMessageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishMessageRequest.ProtoReflect.Descriptor instead.
 func (*PublishMessageRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{21}
+	return file_mq_broker_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *PublishMessageRequest) GetMessage() isPublishMessageRequest_Message {
@@ -1280,7 +1884,7 @@ type PublishMessageResponse struct {
 
 func (x *PublishMessageResponse) Reset() {
 	*x = PublishMessageResponse{}
-	mi := &file_mq_broker_proto_msgTypes[22]
+	mi := &file_mq_broker_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1292,7 +1896,7 @@ func (x *PublishMessageResponse) String() string {
 func (*PublishMessageResponse) ProtoMessage() {}
 
 func (x *PublishMessageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[22]
+	mi := &file_mq_broker_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1305,7 +1909,7 @@ func (x *PublishMessageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishMessageResponse.ProtoReflect.Descriptor instead.
 func (*PublishMessageResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{22}
+	return file_mq_broker_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *PublishMessageResponse) GetAckSequence() int64 {
@@ -1344,7 +1948,7 @@ type PublishFollowMeRequest struct {
 
 func (x *PublishFollowMeRequest) Reset() {
 	*x = PublishFollowMeRequest{}
-	mi := &file_mq_broker_proto_msgTypes[23]
+	mi := &file_mq_broker_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1356,7 +1960,7 @@ func (x *PublishFollowMeRequest) String() string {
 func (*PublishFollowMeRequest) ProtoMessage() {}
 
 func (x *PublishFollowMeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[23]
+	mi := &file_mq_broker_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1369,7 +1973,7 @@ func (x *PublishFollowMeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishFollowMeRequest.ProtoReflect.Descriptor instead.
 func (*PublishFollowMeRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{23}
+	return file_mq_broker_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *PublishFollowMeRequest) GetMessage() isPublishFollowMeRequest_Message {
@@ -1452,7 +2056,7 @@ type PublishFollowMeResponse struct {
 
 func (x *PublishFollowMeResponse) Reset() {
 	*x = PublishFollowMeResponse{}
-	mi := &file_mq_broker_proto_msgTypes[24]
+	mi := &file_mq_broker_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1464,7 +2068,7 @@ func (x *PublishFollowMeResponse) String() string {
 func (*PublishFollowMeResponse) ProtoMessage() {}
 
 func (x *PublishFollowMeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[24]
+	mi := &file_mq_broker_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1477,7 +2081,7 @@ func (x *PublishFollowMeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishFollowMeResponse.ProtoReflect.Descriptor instead.
 func (*PublishFollowMeResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{24}
+	return file_mq_broker_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *PublishFollowMeResponse) GetAckTsNs() int64 {
@@ -1500,7 +2104,7 @@ type SubscribeMessageRequest struct {
 
 func (x *SubscribeMessageRequest) Reset() {
 	*x = SubscribeMessageRequest{}
-	mi := &file_mq_broker_proto_msgTypes[25]
+	mi := &file_mq_broker_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1512,7 +2116,7 @@ func (x *SubscribeMessageRequest) String() string {
 func (*SubscribeMessageRequest) ProtoMessage() {}
 
 func (x *SubscribeMessageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[25]
+	mi := &file_mq_broker_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1525,7 +2129,7 @@ func (x *SubscribeMessageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeMessageRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeMessageRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{25}
+	return file_mq_broker_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *SubscribeMessageRequest) GetMessage() isSubscribeMessageRequest_Message {
@@ -1582,7 +2186,7 @@ type SubscribeMessageResponse struct {
 
 func (x *SubscribeMessageResponse) Reset() {
 	*x = SubscribeMessageResponse{}
-	mi := &file_mq_broker_proto_msgTypes[26]
+	mi := &file_mq_broker_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1594,7 +2198,7 @@ func (x *SubscribeMessageResponse) String() string {
 func (*SubscribeMessageResponse) ProtoMessage() {}
 
 func (x *SubscribeMessageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[26]
+	mi := &file_mq_broker_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1607,7 +2211,7 @@ func (x *SubscribeMessageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeMessageResponse.ProtoReflect.Descriptor instead.
 func (*SubscribeMessageResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{26}
+	return file_mq_broker_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *SubscribeMessageResponse) GetMessage() isSubscribeMessageResponse_Message {
@@ -1665,7 +2269,7 @@ type SubscribeFollowMeRequest struct {
 
 func (x *SubscribeFollowMeRequest) Reset() {
 	*x = SubscribeFollowMeRequest{}
-	mi := &file_mq_broker_proto_msgTypes[27]
+	mi := &file_mq_broker_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1677,7 +2281,7 @@ func (x *SubscribeFollowMeRequest) String() string {
 func (*SubscribeFollowMeRequest) ProtoMessage() {}
 
 func (x *SubscribeFollowMeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[27]
+	mi := &file_mq_broker_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1690,7 +2294,7 @@ func (x *SubscribeFollowMeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeFollowMeRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeFollowMeRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{27}
+	return file_mq_broker_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *SubscribeFollowMeRequest) GetMessage() isSubscribeFollowMeRequest_Message {
@@ -1758,7 +2362,7 @@ type SubscribeFollowMeResponse struct {
 
 func (x *SubscribeFollowMeResponse) Reset() {
 	*x = SubscribeFollowMeResponse{}
-	mi := &file_mq_broker_proto_msgTypes[28]
+	mi := &file_mq_broker_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1770,7 +2374,7 @@ func (x *SubscribeFollowMeResponse) String() string {
 func (*SubscribeFollowMeResponse) ProtoMessage() {}
 
 func (x *SubscribeFollowMeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[28]
+	mi := &file_mq_broker_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1783,7 +2387,7 @@ func (x *SubscribeFollowMeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeFollowMeResponse.ProtoReflect.Descriptor instead.
 func (*SubscribeFollowMeResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{28}
+	return file_mq_broker_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *SubscribeFollowMeResponse) GetAckTsNs() int64 {
@@ -1803,7 +2407,7 @@ type ClosePublishersRequest struct {
 
 func (x *ClosePublishersRequest) Reset() {
 	*x = ClosePublishersRequest{}
-	mi := &file_mq_broker_proto_msgTypes[29]
+	mi := &file_mq_broker_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1815,7 +2419,7 @@ func (x *ClosePublishersRequest) String() string {
 func (*ClosePublishersRequest) ProtoMessage() {}
 
 func (x *ClosePublishersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[29]
+	mi := &file_mq_broker_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1828,7 +2432,7 @@ func (x *ClosePublishersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClosePublishersRequest.ProtoReflect.Descriptor instead.
 func (*ClosePublishersRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{29}
+	return file_mq_broker_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ClosePublishersRequest) GetTopic() *schema_pb.Topic {
@@ -1853,7 +2457,7 @@ type ClosePublishersResponse struct {
 
 func (x *ClosePublishersResponse) Reset() {
 	*x = ClosePublishersResponse{}
-	mi := &file_mq_broker_proto_msgTypes[30]
+	mi := &file_mq_broker_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1865,7 +2469,7 @@ func (x *ClosePublishersResponse) String() string {
 func (*ClosePublishersResponse) ProtoMessage() {}
 
 func (x *ClosePublishersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[30]
+	mi := &file_mq_broker_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1878,7 +2482,7 @@ func (x *ClosePublishersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClosePublishersResponse.ProtoReflect.Descriptor instead.
 func (*ClosePublishersResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{30}
+	return file_mq_broker_proto_rawDescGZIP(), []int{39}
 }
 
 type CloseSubscribersRequest struct {
@@ -1891,7 +2495,7 @@ type CloseSubscribersRequest struct {
 
 func (x *CloseSubscribersRequest) Reset() {
 	*x = CloseSubscribersRequest{}
-	mi := &file_mq_broker_proto_msgTypes[31]
+	mi := &file_mq_broker_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1903,7 +2507,7 @@ func (x *CloseSubscribersRequest) String() string {
 func (*CloseSubscribersRequest) ProtoMessage() {}
 
 func (x *CloseSubscribersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[31]
+	mi := &file_mq_broker_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1916,7 +2520,7 @@ func (x *CloseSubscribersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSubscribersRequest.ProtoReflect.Descriptor instead.
 func (*CloseSubscribersRequest) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{31}
+	return file_mq_broker_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *CloseSubscribersRequest) GetTopic() *schema_pb.Topic {
@@ -1941,7 +2545,7 @@ type CloseSubscribersResponse struct {
 
 func (x *CloseSubscribersResponse) Reset() {
 	*x = CloseSubscribersResponse{}
-	mi := &file_mq_broker_proto_msgTypes[32]
+	mi := &file_mq_broker_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1953,7 +2557,7 @@ func (x *CloseSubscribersResponse) String() string {
 func (*CloseSubscribersResponse) ProtoMessage() {}
 
 func (x *CloseSubscribersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[32]
+	mi := &file_mq_broker_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1966,7 +2570,7 @@ func (x *CloseSubscribersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSubscribersResponse.ProtoReflect.Descriptor instead.
 func (*CloseSubscribersResponse) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{32}
+	return file_mq_broker_proto_rawDescGZIP(), []int{41}
 }
 
 type PublisherToPubBalancerRequest_InitMessage struct {
@@ -1978,7 +2582,7 @@ type PublisherToPubBalancerRequest_InitMessage struct {
 
 func (x *PublisherToPubBalancerRequest_InitMessage) Reset() {
 	*x = PublisherToPubBalancerRequest_InitMessage{}
-	mi := &file_mq_broker_proto_msgTypes[34]
+	mi := &file_mq_broker_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1990,7 +2594,7 @@ func (x *PublisherToPubBalancerRequest_InitMessage) String() string {
 func (*PublisherToPubBalancerRequest_InitMessage) ProtoMessage() {}
 
 func (x *PublisherToPubBalancerRequest_InitMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[34]
+	mi := &file_mq_broker_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2034,7 +2638,7 @@ type SubscriberToSubCoordinatorRequest_InitMessage struct {
 
 func (x *SubscriberToSubCoordinatorRequest_InitMessage) Reset() {
 	*x = SubscriberToSubCoordinatorRequest_InitMessage{}
-	mi := &file_mq_broker_proto_msgTypes[35]
+	mi := &file_mq_broker_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2046,7 +2650,7 @@ func (x *SubscriberToSubCoordinatorRequest_InitMessage) String() string {
 func (*SubscriberToSubCoordinatorRequest_InitMessage) ProtoMessage() {}
 
 func (x *SubscriberToSubCoordinatorRequest_InitMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[35]
+	mi := &file_mq_broker_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2059,7 +2663,7 @@ func (x *SubscriberToSubCoordinatorRequest_InitMessage) ProtoReflect() protorefl
 
 // Deprecated: Use SubscriberToSubCoordinatorRequest_InitMessage.ProtoReflect.Descriptor instead.
 func (*SubscriberToSubCoordinatorRequest_InitMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{17, 0}
+	return file_mq_broker_proto_rawDescGZIP(), []int{26, 0}
 }
 
 func (x *SubscriberToSubCoordinatorRequest_InitMessage) GetConsumerGroup() string {
@@ -2106,7 +2710,7 @@ type SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage struct {
 
 func (x *SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage) Reset() {
 	*x = SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage{}
-	mi := &file_mq_broker_proto_msgTypes[36]
+	mi := &file_mq_broker_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2118,7 +2722,7 @@ func (x *SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage) String() stri
 func (*SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage) ProtoMessage() {}
 
 func (x *SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[36]
+	mi := &file_mq_broker_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2131,7 +2735,7 @@ func (x *SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage) ProtoReflect(
 
 // Deprecated: Use SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage.ProtoReflect.Descriptor instead.
 func (*SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{17, 1}
+	return file_mq_broker_proto_rawDescGZIP(), []int{26, 1}
 }
 
 func (x *SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage) GetPartition() *schema_pb.Partition {
@@ -2150,7 +2754,7 @@ type SubscriberToSubCoordinatorRequest_AckAssignmentMessage struct {
 
 func (x *SubscriberToSubCoordinatorRequest_AckAssignmentMessage) Reset() {
 	*x = SubscriberToSubCoordinatorRequest_AckAssignmentMessage{}
-	mi := &file_mq_broker_proto_msgTypes[37]
+	mi := &file_mq_broker_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2162,7 +2766,7 @@ func (x *SubscriberToSubCoordinatorRequest_AckAssignmentMessage) String() string
 func (*SubscriberToSubCoordinatorRequest_AckAssignmentMessage) ProtoMessage() {}
 
 func (x *SubscriberToSubCoordinatorRequest_AckAssignmentMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[37]
+	mi := &file_mq_broker_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2175,7 +2779,7 @@ func (x *SubscriberToSubCoordinatorRequest_AckAssignmentMessage) ProtoReflect() 
 
 // Deprecated: Use SubscriberToSubCoordinatorRequest_AckAssignmentMessage.ProtoReflect.Descriptor instead.
 func (*SubscriberToSubCoordinatorRequest_AckAssignmentMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{17, 2}
+	return file_mq_broker_proto_rawDescGZIP(), []int{26, 2}
 }
 
 func (x *SubscriberToSubCoordinatorRequest_AckAssignmentMessage) GetPartition() *schema_pb.Partition {
@@ -2194,7 +2798,7 @@ type SubscriberToSubCoordinatorResponse_Assignment struct {
 
 func (x *SubscriberToSubCoordinatorResponse_Assignment) Reset() {
 	*x = SubscriberToSubCoordinatorResponse_Assignment{}
-	mi := &file_mq_broker_proto_msgTypes[38]
+	mi := &file_mq_broker_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2206,7 +2810,7 @@ func (x *SubscriberToSubCoordinatorResponse_Assignment) String() string {
 func (*SubscriberToSubCoordinatorResponse_Assignment) ProtoMessage() {}
 
 func (x *SubscriberToSubCoordinatorResponse_Assignment) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[38]
+	mi := &file_mq_broker_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2219,7 +2823,7 @@ func (x *SubscriberToSubCoordinatorResponse_Assignment) ProtoReflect() protorefl
 
 // Deprecated: Use SubscriberToSubCoordinatorResponse_Assignment.ProtoReflect.Descriptor instead.
 func (*SubscriberToSubCoordinatorResponse_Assignment) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{18, 0}
+	return file_mq_broker_proto_rawDescGZIP(), []int{27, 0}
 }
 
 func (x *SubscriberToSubCoordinatorResponse_Assignment) GetPartitionAssignment() *BrokerPartitionAssignment {
@@ -2238,7 +2842,7 @@ type SubscriberToSubCoordinatorResponse_UnAssignment struct {
 
 func (x *SubscriberToSubCoordinatorResponse_UnAssignment) Reset() {
 	*x = SubscriberToSubCoordinatorResponse_UnAssignment{}
-	mi := &file_mq_broker_proto_msgTypes[39]
+	mi := &file_mq_broker_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2250,7 +2854,7 @@ func (x *SubscriberToSubCoordinatorResponse_UnAssignment) String() string {
 func (*SubscriberToSubCoordinatorResponse_UnAssignment) ProtoMessage() {}
 
 func (x *SubscriberToSubCoordinatorResponse_UnAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[39]
+	mi := &file_mq_broker_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2263,7 +2867,7 @@ func (x *SubscriberToSubCoordinatorResponse_UnAssignment) ProtoReflect() protore
 
 // Deprecated: Use SubscriberToSubCoordinatorResponse_UnAssignment.ProtoReflect.Descriptor instead.
 func (*SubscriberToSubCoordinatorResponse_UnAssignment) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{18, 1}
+	return file_mq_broker_proto_rawDescGZIP(), []int{27, 1}
 }
 
 func (x *SubscriberToSubCoordinatorResponse_UnAssignment) GetPartition() *schema_pb.Partition {
@@ -2286,7 +2890,7 @@ type PublishMessageRequest_InitMessage struct {
 
 func (x *PublishMessageRequest_InitMessage) Reset() {
 	*x = PublishMessageRequest_InitMessage{}
-	mi := &file_mq_broker_proto_msgTypes[40]
+	mi := &file_mq_broker_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2298,7 +2902,7 @@ func (x *PublishMessageRequest_InitMessage) String() string {
 func (*PublishMessageRequest_InitMessage) ProtoMessage() {}
 
 func (x *PublishMessageRequest_InitMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[40]
+	mi := &file_mq_broker_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2311,7 +2915,7 @@ func (x *PublishMessageRequest_InitMessage) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use PublishMessageRequest_InitMessage.ProtoReflect.Descriptor instead.
 func (*PublishMessageRequest_InitMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{21, 0}
+	return file_mq_broker_proto_rawDescGZIP(), []int{30, 0}
 }
 
 func (x *PublishMessageRequest_InitMessage) GetTopic() *schema_pb.Topic {
@@ -2359,7 +2963,7 @@ type PublishFollowMeRequest_InitMessage struct {
 
 func (x *PublishFollowMeRequest_InitMessage) Reset() {
 	*x = PublishFollowMeRequest_InitMessage{}
-	mi := &file_mq_broker_proto_msgTypes[41]
+	mi := &file_mq_broker_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2371,7 +2975,7 @@ func (x *PublishFollowMeRequest_InitMessage) String() string {
 func (*PublishFollowMeRequest_InitMessage) ProtoMessage() {}
 
 func (x *PublishFollowMeRequest_InitMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[41]
+	mi := &file_mq_broker_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2384,7 +2988,7 @@ func (x *PublishFollowMeRequest_InitMessage) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use PublishFollowMeRequest_InitMessage.ProtoReflect.Descriptor instead.
 func (*PublishFollowMeRequest_InitMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{23, 0}
+	return file_mq_broker_proto_rawDescGZIP(), []int{32, 0}
 }
 
 func (x *PublishFollowMeRequest_InitMessage) GetTopic() *schema_pb.Topic {
@@ -2410,7 +3014,7 @@ type PublishFollowMeRequest_FlushMessage struct {
 
 func (x *PublishFollowMeRequest_FlushMessage) Reset() {
 	*x = PublishFollowMeRequest_FlushMessage{}
-	mi := &file_mq_broker_proto_msgTypes[42]
+	mi := &file_mq_broker_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2422,7 +3026,7 @@ func (x *PublishFollowMeRequest_FlushMessage) String() string {
 func (*PublishFollowMeRequest_FlushMessage) ProtoMessage() {}
 
 func (x *PublishFollowMeRequest_FlushMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[42]
+	mi := &file_mq_broker_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2435,7 +3039,7 @@ func (x *PublishFollowMeRequest_FlushMessage) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use PublishFollowMeRequest_FlushMessage.ProtoReflect.Descriptor instead.
 func (*PublishFollowMeRequest_FlushMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{23, 1}
+	return file_mq_broker_proto_rawDescGZIP(), []int{32, 1}
 }
 
 func (x *PublishFollowMeRequest_FlushMessage) GetTsNs() int64 {
@@ -2453,7 +3057,7 @@ type PublishFollowMeRequest_CloseMessage struct {
 
 func (x *PublishFollowMeRequest_CloseMessage) Reset() {
 	*x = PublishFollowMeRequest_CloseMessage{}
-	mi := &file_mq_broker_proto_msgTypes[43]
+	mi := &file_mq_broker_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2465,7 +3069,7 @@ func (x *PublishFollowMeRequest_CloseMessage) String() string {
 func (*PublishFollowMeRequest_CloseMessage) ProtoMessage() {}
 
 func (x *PublishFollowMeRequest_CloseMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[43]
+	mi := &file_mq_broker_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2478,7 +3082,7 @@ func (x *PublishFollowMeRequest_CloseMessage) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use PublishFollowMeRequest_CloseMessage.ProtoReflect.Descriptor instead.
 func (*PublishFollowMeRequest_CloseMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{23, 2}
+	return file_mq_broker_proto_rawDescGZIP(), []int{32, 2}
 }
 
 type SubscribeMessageRequest_InitMessage struct {
@@ -2498,7 +3102,7 @@ type SubscribeMessageRequest_InitMessage struct {
 
 func (x *SubscribeMessageRequest_InitMessage) Reset() {
 	*x = SubscribeMessageRequest_InitMessage{}
-	mi := &file_mq_broker_proto_msgTypes[44]
+	mi := &file_mq_broker_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2510,7 +3114,7 @@ func (x *SubscribeMessageRequest_InitMessage) String() string {
 func (*SubscribeMessageRequest_InitMessage) ProtoMessage() {}
 
 func (x *SubscribeMessageRequest_InitMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[44]
+	mi := &file_mq_broker_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2523,7 +3127,7 @@ func (x *SubscribeMessageRequest_InitMessage) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use SubscribeMessageRequest_InitMessage.ProtoReflect.Descriptor instead.
 func (*SubscribeMessageRequest_InitMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{25, 0}
+	return file_mq_broker_proto_rawDescGZIP(), []int{34, 0}
 }
 
 func (x *SubscribeMessageRequest_InitMessage) GetConsumerGroup() string {
@@ -2599,7 +3203,7 @@ type SubscribeMessageRequest_AckMessage struct {
 
 func (x *SubscribeMessageRequest_AckMessage) Reset() {
 	*x = SubscribeMessageRequest_AckMessage{}
-	mi := &file_mq_broker_proto_msgTypes[45]
+	mi := &file_mq_broker_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2611,7 +3215,7 @@ func (x *SubscribeMessageRequest_AckMessage) String() string {
 func (*SubscribeMessageRequest_AckMessage) ProtoMessage() {}
 
 func (x *SubscribeMessageRequest_AckMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[45]
+	mi := &file_mq_broker_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2624,7 +3228,7 @@ func (x *SubscribeMessageRequest_AckMessage) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use SubscribeMessageRequest_AckMessage.ProtoReflect.Descriptor instead.
 func (*SubscribeMessageRequest_AckMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{25, 1}
+	return file_mq_broker_proto_rawDescGZIP(), []int{34, 1}
 }
 
 func (x *SubscribeMessageRequest_AckMessage) GetSequence() int64 {
@@ -2652,7 +3256,7 @@ type SubscribeMessageResponse_SubscribeCtrlMessage struct {
 
 func (x *SubscribeMessageResponse_SubscribeCtrlMessage) Reset() {
 	*x = SubscribeMessageResponse_SubscribeCtrlMessage{}
-	mi := &file_mq_broker_proto_msgTypes[46]
+	mi := &file_mq_broker_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2664,7 +3268,7 @@ func (x *SubscribeMessageResponse_SubscribeCtrlMessage) String() string {
 func (*SubscribeMessageResponse_SubscribeCtrlMessage) ProtoMessage() {}
 
 func (x *SubscribeMessageResponse_SubscribeCtrlMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[46]
+	mi := &file_mq_broker_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2677,7 +3281,7 @@ func (x *SubscribeMessageResponse_SubscribeCtrlMessage) ProtoReflect() protorefl
 
 // Deprecated: Use SubscribeMessageResponse_SubscribeCtrlMessage.ProtoReflect.Descriptor instead.
 func (*SubscribeMessageResponse_SubscribeCtrlMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{26, 0}
+	return file_mq_broker_proto_rawDescGZIP(), []int{35, 0}
 }
 
 func (x *SubscribeMessageResponse_SubscribeCtrlMessage) GetError() string {
@@ -2712,7 +3316,7 @@ type SubscribeFollowMeRequest_InitMessage struct {
 
 func (x *SubscribeFollowMeRequest_InitMessage) Reset() {
 	*x = SubscribeFollowMeRequest_InitMessage{}
-	mi := &file_mq_broker_proto_msgTypes[47]
+	mi := &file_mq_broker_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2724,7 +3328,7 @@ func (x *SubscribeFollowMeRequest_InitMessage) String() string {
 func (*SubscribeFollowMeRequest_InitMessage) ProtoMessage() {}
 
 func (x *SubscribeFollowMeRequest_InitMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[47]
+	mi := &file_mq_broker_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2737,7 +3341,7 @@ func (x *SubscribeFollowMeRequest_InitMessage) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use SubscribeFollowMeRequest_InitMessage.ProtoReflect.Descriptor instead.
 func (*SubscribeFollowMeRequest_InitMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{27, 0}
+	return file_mq_broker_proto_rawDescGZIP(), []int{36, 0}
 }
 
 func (x *SubscribeFollowMeRequest_InitMessage) GetTopic() *schema_pb.Topic {
@@ -2770,7 +3374,7 @@ type SubscribeFollowMeRequest_AckMessage struct {
 
 func (x *SubscribeFollowMeRequest_AckMessage) Reset() {
 	*x = SubscribeFollowMeRequest_AckMessage{}
-	mi := &file_mq_broker_proto_msgTypes[48]
+	mi := &file_mq_broker_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2782,7 +3386,7 @@ func (x *SubscribeFollowMeRequest_AckMessage) String() string {
 func (*SubscribeFollowMeRequest_AckMessage) ProtoMessage() {}
 
 func (x *SubscribeFollowMeRequest_AckMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[48]
+	mi := &file_mq_broker_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2795,7 +3399,7 @@ func (x *SubscribeFollowMeRequest_AckMessage) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use SubscribeFollowMeRequest_AckMessage.ProtoReflect.Descriptor instead.
 func (*SubscribeFollowMeRequest_AckMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{27, 1}
+	return file_mq_broker_proto_rawDescGZIP(), []int{36, 1}
 }
 
 func (x *SubscribeFollowMeRequest_AckMessage) GetTsNs() int64 {
@@ -2813,7 +3417,7 @@ type SubscribeFollowMeRequest_CloseMessage struct {
 
 func (x *SubscribeFollowMeRequest_CloseMessage) Reset() {
 	*x = SubscribeFollowMeRequest_CloseMessage{}
-	mi := &file_mq_broker_proto_msgTypes[49]
+	mi := &file_mq_broker_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2825,7 +3429,7 @@ func (x *SubscribeFollowMeRequest_CloseMessage) String() string {
 func (*SubscribeFollowMeRequest_CloseMessage) ProtoMessage() {}
 
 func (x *SubscribeFollowMeRequest_CloseMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[49]
+	mi := &file_mq_broker_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2838,7 +3442,7 @@ func (x *SubscribeFollowMeRequest_CloseMessage) ProtoReflect() protoreflect.Mess
 
 // Deprecated: Use SubscribeFollowMeRequest_CloseMessage.ProtoReflect.Descriptor instead.
 func (*SubscribeFollowMeRequest_CloseMessage) Descriptor() ([]byte, []int) {
-	return file_mq_broker_proto_rawDescGZIP(), []int{27, 2}
+	return file_mq_broker_proto_rawDescGZIP(), []int{36, 2}
 }
 
 var File_mq_broker_proto protoreflect.FileDescriptor
@@ -2872,16 +3476,21 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\amessage\" \n" +
 	"\x1ePublisherToPubBalancerResponse\"\x16\n" +
 	"\x14BalanceTopicsRequest\"\x17\n" +
-	"\x15BalanceTopicsResponse\"\xa0\x01\n" +
+	"\x15BalanceTopicsResponse\"W\n" +
+	"\x0eTopicRetention\x12+\n" +
+	"\x11retention_seconds\x18\x01 \x01(\x03R\x10retentionSeconds\x12\x18\n" +
+	"\aenabled\x18\x02 \x01(\bR\aenabled\"\xdc\x01\n" +
 	"\x15ConfigureTopicRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12'\n" +
 	"\x0fpartition_count\x18\x02 \x01(\x05R\x0epartitionCount\x126\n" +
 	"\vrecord_type\x18\x03 \x01(\v2\x15.schema_pb.RecordTypeR\n" +
-	"recordType\"\xbb\x01\n" +
+	"recordType\x12:\n" +
+	"\tretention\x18\x04 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\"\xf7\x01\n" +
 	"\x16ConfigureTopicResponse\x12i\n" +
 	"\x1cbroker_partition_assignments\x18\x02 \x03(\v2'.messaging_pb.BrokerPartitionAssignmentR\x1abrokerPartitionAssignments\x126\n" +
 	"\vrecord_type\x18\x03 \x01(\v2\x15.schema_pb.RecordTypeR\n" +
-	"recordType\"\x13\n" +
+	"recordType\x12:\n" +
+	"\tretention\x18\x04 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\"\x13\n" +
 	"\x11ListTopicsRequest\">\n" +
 	"\x12ListTopicsResponse\x12(\n" +
 	"\x06topics\x18\x01 \x03(\v2\x10.schema_pb.TopicR\x06topics\"C\n" +
@@ -2893,7 +3502,51 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x19BrokerPartitionAssignment\x122\n" +
 	"\tpartition\x18\x01 \x01(\v2\x14.schema_pb.PartitionR\tpartition\x12#\n" +
 	"\rleader_broker\x18\x02 \x01(\tR\fleaderBroker\x12'\n" +
-	"\x0ffollower_broker\x18\x03 \x01(\tR\x0efollowerBroker\"\xef\x01\n" +
+	"\x0ffollower_broker\x18\x03 \x01(\tR\x0efollowerBroker\"F\n" +
+	"\x1cGetTopicConfigurationRequest\x12&\n" +
+	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"\x9b\x03\n" +
+	"\x1dGetTopicConfigurationResponse\x12&\n" +
+	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12'\n" +
+	"\x0fpartition_count\x18\x02 \x01(\x05R\x0epartitionCount\x126\n" +
+	"\vrecord_type\x18\x03 \x01(\v2\x15.schema_pb.RecordTypeR\n" +
+	"recordType\x12i\n" +
+	"\x1cbroker_partition_assignments\x18\x04 \x03(\v2'.messaging_pb.BrokerPartitionAssignmentR\x1abrokerPartitionAssignments\x12\"\n" +
+	"\rcreated_at_ns\x18\x05 \x01(\x03R\vcreatedAtNs\x12&\n" +
+	"\x0flast_updated_ns\x18\x06 \x01(\x03R\rlastUpdatedNs\x12:\n" +
+	"\tretention\x18\a \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\"C\n" +
+	"\x19GetTopicPublishersRequest\x12&\n" +
+	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"Z\n" +
+	"\x1aGetTopicPublishersResponse\x12<\n" +
+	"\n" +
+	"publishers\x18\x01 \x03(\v2\x1c.messaging_pb.TopicPublisherR\n" +
+	"publishers\"D\n" +
+	"\x1aGetTopicSubscribersRequest\x12&\n" +
+	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"^\n" +
+	"\x1bGetTopicSubscribersResponse\x12?\n" +
+	"\vsubscribers\x18\x01 \x03(\v2\x1d.messaging_pb.TopicSubscriberR\vsubscribers\"\xf0\x02\n" +
+	"\x0eTopicPublisher\x12%\n" +
+	"\x0epublisher_name\x18\x01 \x01(\tR\rpublisherName\x12\x1b\n" +
+	"\tclient_id\x18\x02 \x01(\tR\bclientId\x122\n" +
+	"\tpartition\x18\x03 \x01(\v2\x14.schema_pb.PartitionR\tpartition\x12&\n" +
+	"\x0fconnect_time_ns\x18\x04 \x01(\x03R\rconnectTimeNs\x12)\n" +
+	"\x11last_seen_time_ns\x18\x05 \x01(\x03R\x0elastSeenTimeNs\x12\x16\n" +
+	"\x06broker\x18\x06 \x01(\tR\x06broker\x12\x1b\n" +
+	"\tis_active\x18\a \x01(\bR\bisActive\x122\n" +
+	"\x15last_published_offset\x18\b \x01(\x03R\x13lastPublishedOffset\x12*\n" +
+	"\x11last_acked_offset\x18\t \x01(\x03R\x0flastAckedOffset\"\x8b\x03\n" +
+	"\x0fTopicSubscriber\x12%\n" +
+	"\x0econsumer_group\x18\x01 \x01(\tR\rconsumerGroup\x12\x1f\n" +
+	"\vconsumer_id\x18\x02 \x01(\tR\n" +
+	"consumerId\x12\x1b\n" +
+	"\tclient_id\x18\x03 \x01(\tR\bclientId\x122\n" +
+	"\tpartition\x18\x04 \x01(\v2\x14.schema_pb.PartitionR\tpartition\x12&\n" +
+	"\x0fconnect_time_ns\x18\x05 \x01(\x03R\rconnectTimeNs\x12)\n" +
+	"\x11last_seen_time_ns\x18\x06 \x01(\x03R\x0elastSeenTimeNs\x12\x16\n" +
+	"\x06broker\x18\a \x01(\tR\x06broker\x12\x1b\n" +
+	"\tis_active\x18\b \x01(\bR\bisActive\x12%\n" +
+	"\x0ecurrent_offset\x18\t \x01(\x03R\rcurrentOffset\x120\n" +
+	"\x14last_received_offset\x18\n" +
+	" \x01(\x03R\x12lastReceivedOffset\"\xef\x01\n" +
 	"\x1cAssignTopicPartitionsRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12i\n" +
 	"\x1cbroker_partition_assignments\x18\x02 \x03(\v2'.messaging_pb.BrokerPartitionAssignmentR\x1abrokerPartitionAssignments\x12\x1b\n" +
@@ -3016,7 +3669,7 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12 \n" +
 	"\funix_time_ns\x18\x02 \x01(\x03R\n" +
 	"unixTimeNs\"\x1a\n" +
-	"\x18CloseSubscribersResponse2\xca\v\n" +
+	"\x18CloseSubscribersResponse2\x97\x0e\n" +
 	"\x10SeaweedMessaging\x12c\n" +
 	"\x10FindBrokerLeader\x12%.messaging_pb.FindBrokerLeaderRequest\x1a&.messaging_pb.FindBrokerLeaderResponse\"\x00\x12y\n" +
 	"\x16PublisherToPubBalancer\x12+.messaging_pb.PublisherToPubBalancerRequest\x1a,.messaging_pb.PublisherToPubBalancerResponse\"\x00(\x010\x01\x12Z\n" +
@@ -3025,6 +3678,9 @@ const file_mq_broker_proto_rawDesc = "" +
 	"ListTopics\x12\x1f.messaging_pb.ListTopicsRequest\x1a .messaging_pb.ListTopicsResponse\"\x00\x12]\n" +
 	"\x0eConfigureTopic\x12#.messaging_pb.ConfigureTopicRequest\x1a$.messaging_pb.ConfigureTopicResponse\"\x00\x12i\n" +
 	"\x12LookupTopicBrokers\x12'.messaging_pb.LookupTopicBrokersRequest\x1a(.messaging_pb.LookupTopicBrokersResponse\"\x00\x12r\n" +
+	"\x15GetTopicConfiguration\x12*.messaging_pb.GetTopicConfigurationRequest\x1a+.messaging_pb.GetTopicConfigurationResponse\"\x00\x12i\n" +
+	"\x12GetTopicPublishers\x12'.messaging_pb.GetTopicPublishersRequest\x1a(.messaging_pb.GetTopicPublishersResponse\"\x00\x12l\n" +
+	"\x13GetTopicSubscribers\x12(.messaging_pb.GetTopicSubscribersRequest\x1a).messaging_pb.GetTopicSubscribersResponse\"\x00\x12r\n" +
 	"\x15AssignTopicPartitions\x12*.messaging_pb.AssignTopicPartitionsRequest\x1a+.messaging_pb.AssignTopicPartitionsResponse\"\x00\x12`\n" +
 	"\x0fClosePublishers\x12$.messaging_pb.ClosePublishersRequest\x1a%.messaging_pb.ClosePublishersResponse\"\x00\x12c\n" +
 	"\x10CloseSubscribers\x12%.messaging_pb.CloseSubscribersRequest\x1a&.messaging_pb.CloseSubscribersResponse\"\x00\x12\x85\x01\n" +
@@ -3047,7 +3703,7 @@ func file_mq_broker_proto_rawDescGZIP() []byte {
 	return file_mq_broker_proto_rawDescData
 }
 
-var file_mq_broker_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
+var file_mq_broker_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
 var file_mq_broker_proto_goTypes = []any{
 	(*FindBrokerLeaderRequest)(nil),                                  // 0: messaging_pb.FindBrokerLeaderRequest
 	(*FindBrokerLeaderResponse)(nil),                                 // 1: messaging_pb.FindBrokerLeaderResponse
@@ -3057,140 +3713,168 @@ var file_mq_broker_proto_goTypes = []any{
 	(*PublisherToPubBalancerResponse)(nil),                           // 5: messaging_pb.PublisherToPubBalancerResponse
 	(*BalanceTopicsRequest)(nil),                                     // 6: messaging_pb.BalanceTopicsRequest
 	(*BalanceTopicsResponse)(nil),                                    // 7: messaging_pb.BalanceTopicsResponse
-	(*ConfigureTopicRequest)(nil),                                    // 8: messaging_pb.ConfigureTopicRequest
-	(*ConfigureTopicResponse)(nil),                                   // 9: messaging_pb.ConfigureTopicResponse
-	(*ListTopicsRequest)(nil),                                        // 10: messaging_pb.ListTopicsRequest
-	(*ListTopicsResponse)(nil),                                       // 11: messaging_pb.ListTopicsResponse
-	(*LookupTopicBrokersRequest)(nil),                                // 12: messaging_pb.LookupTopicBrokersRequest
-	(*LookupTopicBrokersResponse)(nil),                               // 13: messaging_pb.LookupTopicBrokersResponse
-	(*BrokerPartitionAssignment)(nil),                                // 14: messaging_pb.BrokerPartitionAssignment
-	(*AssignTopicPartitionsRequest)(nil),                             // 15: messaging_pb.AssignTopicPartitionsRequest
-	(*AssignTopicPartitionsResponse)(nil),                            // 16: messaging_pb.AssignTopicPartitionsResponse
-	(*SubscriberToSubCoordinatorRequest)(nil),                        // 17: messaging_pb.SubscriberToSubCoordinatorRequest
-	(*SubscriberToSubCoordinatorResponse)(nil),                       // 18: messaging_pb.SubscriberToSubCoordinatorResponse
-	(*ControlMessage)(nil),                                           // 19: messaging_pb.ControlMessage
-	(*DataMessage)(nil),                                              // 20: messaging_pb.DataMessage
-	(*PublishMessageRequest)(nil),                                    // 21: messaging_pb.PublishMessageRequest
-	(*PublishMessageResponse)(nil),                                   // 22: messaging_pb.PublishMessageResponse
-	(*PublishFollowMeRequest)(nil),                                   // 23: messaging_pb.PublishFollowMeRequest
-	(*PublishFollowMeResponse)(nil),                                  // 24: messaging_pb.PublishFollowMeResponse
-	(*SubscribeMessageRequest)(nil),                                  // 25: messaging_pb.SubscribeMessageRequest
-	(*SubscribeMessageResponse)(nil),                                 // 26: messaging_pb.SubscribeMessageResponse
-	(*SubscribeFollowMeRequest)(nil),                                 // 27: messaging_pb.SubscribeFollowMeRequest
-	(*SubscribeFollowMeResponse)(nil),                                // 28: messaging_pb.SubscribeFollowMeResponse
-	(*ClosePublishersRequest)(nil),                                   // 29: messaging_pb.ClosePublishersRequest
-	(*ClosePublishersResponse)(nil),                                  // 30: messaging_pb.ClosePublishersResponse
-	(*CloseSubscribersRequest)(nil),                                  // 31: messaging_pb.CloseSubscribersRequest
-	(*CloseSubscribersResponse)(nil),                                 // 32: messaging_pb.CloseSubscribersResponse
-	nil,                                                              // 33: messaging_pb.BrokerStats.StatsEntry
-	(*PublisherToPubBalancerRequest_InitMessage)(nil),                // 34: messaging_pb.PublisherToPubBalancerRequest.InitMessage
-	(*SubscriberToSubCoordinatorRequest_InitMessage)(nil),            // 35: messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage
-	(*SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage)(nil), // 36: messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage
-	(*SubscriberToSubCoordinatorRequest_AckAssignmentMessage)(nil),   // 37: messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage
-	(*SubscriberToSubCoordinatorResponse_Assignment)(nil),            // 38: messaging_pb.SubscriberToSubCoordinatorResponse.Assignment
-	(*SubscriberToSubCoordinatorResponse_UnAssignment)(nil),          // 39: messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment
-	(*PublishMessageRequest_InitMessage)(nil),                        // 40: messaging_pb.PublishMessageRequest.InitMessage
-	(*PublishFollowMeRequest_InitMessage)(nil),                       // 41: messaging_pb.PublishFollowMeRequest.InitMessage
-	(*PublishFollowMeRequest_FlushMessage)(nil),                      // 42: messaging_pb.PublishFollowMeRequest.FlushMessage
-	(*PublishFollowMeRequest_CloseMessage)(nil),                      // 43: messaging_pb.PublishFollowMeRequest.CloseMessage
-	(*SubscribeMessageRequest_InitMessage)(nil),                      // 44: messaging_pb.SubscribeMessageRequest.InitMessage
-	(*SubscribeMessageRequest_AckMessage)(nil),                       // 45: messaging_pb.SubscribeMessageRequest.AckMessage
-	(*SubscribeMessageResponse_SubscribeCtrlMessage)(nil),            // 46: messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessage
-	(*SubscribeFollowMeRequest_InitMessage)(nil),                     // 47: messaging_pb.SubscribeFollowMeRequest.InitMessage
-	(*SubscribeFollowMeRequest_AckMessage)(nil),                      // 48: messaging_pb.SubscribeFollowMeRequest.AckMessage
-	(*SubscribeFollowMeRequest_CloseMessage)(nil),                    // 49: messaging_pb.SubscribeFollowMeRequest.CloseMessage
-	(*schema_pb.Topic)(nil),                                          // 50: schema_pb.Topic
-	(*schema_pb.Partition)(nil),                                      // 51: schema_pb.Partition
-	(*schema_pb.RecordType)(nil),                                     // 52: schema_pb.RecordType
-	(*schema_pb.PartitionOffset)(nil),                                // 53: schema_pb.PartitionOffset
-	(schema_pb.OffsetType)(0),                                        // 54: schema_pb.OffsetType
+	(*TopicRetention)(nil),                                           // 8: messaging_pb.TopicRetention
+	(*ConfigureTopicRequest)(nil),                                    // 9: messaging_pb.ConfigureTopicRequest
+	(*ConfigureTopicResponse)(nil),                                   // 10: messaging_pb.ConfigureTopicResponse
+	(*ListTopicsRequest)(nil),                                        // 11: messaging_pb.ListTopicsRequest
+	(*ListTopicsResponse)(nil),                                       // 12: messaging_pb.ListTopicsResponse
+	(*LookupTopicBrokersRequest)(nil),                                // 13: messaging_pb.LookupTopicBrokersRequest
+	(*LookupTopicBrokersResponse)(nil),                               // 14: messaging_pb.LookupTopicBrokersResponse
+	(*BrokerPartitionAssignment)(nil),                                // 15: messaging_pb.BrokerPartitionAssignment
+	(*GetTopicConfigurationRequest)(nil),                             // 16: messaging_pb.GetTopicConfigurationRequest
+	(*GetTopicConfigurationResponse)(nil),                            // 17: messaging_pb.GetTopicConfigurationResponse
+	(*GetTopicPublishersRequest)(nil),                                // 18: messaging_pb.GetTopicPublishersRequest
+	(*GetTopicPublishersResponse)(nil),                               // 19: messaging_pb.GetTopicPublishersResponse
+	(*GetTopicSubscribersRequest)(nil),                               // 20: messaging_pb.GetTopicSubscribersRequest
+	(*GetTopicSubscribersResponse)(nil),                              // 21: messaging_pb.GetTopicSubscribersResponse
+	(*TopicPublisher)(nil),                                           // 22: messaging_pb.TopicPublisher
+	(*TopicSubscriber)(nil),                                          // 23: messaging_pb.TopicSubscriber
+	(*AssignTopicPartitionsRequest)(nil),                             // 24: messaging_pb.AssignTopicPartitionsRequest
+	(*AssignTopicPartitionsResponse)(nil),                            // 25: messaging_pb.AssignTopicPartitionsResponse
+	(*SubscriberToSubCoordinatorRequest)(nil),                        // 26: messaging_pb.SubscriberToSubCoordinatorRequest
+	(*SubscriberToSubCoordinatorResponse)(nil),                       // 27: messaging_pb.SubscriberToSubCoordinatorResponse
+	(*ControlMessage)(nil),                                           // 28: messaging_pb.ControlMessage
+	(*DataMessage)(nil),                                              // 29: messaging_pb.DataMessage
+	(*PublishMessageRequest)(nil),                                    // 30: messaging_pb.PublishMessageRequest
+	(*PublishMessageResponse)(nil),                                   // 31: messaging_pb.PublishMessageResponse
+	(*PublishFollowMeRequest)(nil),                                   // 32: messaging_pb.PublishFollowMeRequest
+	(*PublishFollowMeResponse)(nil),                                  // 33: messaging_pb.PublishFollowMeResponse
+	(*SubscribeMessageRequest)(nil),                                  // 34: messaging_pb.SubscribeMessageRequest
+	(*SubscribeMessageResponse)(nil),                                 // 35: messaging_pb.SubscribeMessageResponse
+	(*SubscribeFollowMeRequest)(nil),                                 // 36: messaging_pb.SubscribeFollowMeRequest
+	(*SubscribeFollowMeResponse)(nil),                                // 37: messaging_pb.SubscribeFollowMeResponse
+	(*ClosePublishersRequest)(nil),                                   // 38: messaging_pb.ClosePublishersRequest
+	(*ClosePublishersResponse)(nil),                                  // 39: messaging_pb.ClosePublishersResponse
+	(*CloseSubscribersRequest)(nil),                                  // 40: messaging_pb.CloseSubscribersRequest
+	(*CloseSubscribersResponse)(nil),                                 // 41: messaging_pb.CloseSubscribersResponse
+	nil,                                                              // 42: messaging_pb.BrokerStats.StatsEntry
+	(*PublisherToPubBalancerRequest_InitMessage)(nil),                // 43: messaging_pb.PublisherToPubBalancerRequest.InitMessage
+	(*SubscriberToSubCoordinatorRequest_InitMessage)(nil),            // 44: messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage
+	(*SubscriberToSubCoordinatorRequest_AckUnAssignmentMessage)(nil), // 45: messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage
+	(*SubscriberToSubCoordinatorRequest_AckAssignmentMessage)(nil),   // 46: messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage
+	(*SubscriberToSubCoordinatorResponse_Assignment)(nil),            // 47: messaging_pb.SubscriberToSubCoordinatorResponse.Assignment
+	(*SubscriberToSubCoordinatorResponse_UnAssignment)(nil),          // 48: messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment
+	(*PublishMessageRequest_InitMessage)(nil),                        // 49: messaging_pb.PublishMessageRequest.InitMessage
+	(*PublishFollowMeRequest_InitMessage)(nil),                       // 50: messaging_pb.PublishFollowMeRequest.InitMessage
+	(*PublishFollowMeRequest_FlushMessage)(nil),                      // 51: messaging_pb.PublishFollowMeRequest.FlushMessage
+	(*PublishFollowMeRequest_CloseMessage)(nil),                      // 52: messaging_pb.PublishFollowMeRequest.CloseMessage
+	(*SubscribeMessageRequest_InitMessage)(nil),                      // 53: messaging_pb.SubscribeMessageRequest.InitMessage
+	(*SubscribeMessageRequest_AckMessage)(nil),                       // 54: messaging_pb.SubscribeMessageRequest.AckMessage
+	(*SubscribeMessageResponse_SubscribeCtrlMessage)(nil),            // 55: messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessage
+	(*SubscribeFollowMeRequest_InitMessage)(nil),                     // 56: messaging_pb.SubscribeFollowMeRequest.InitMessage
+	(*SubscribeFollowMeRequest_AckMessage)(nil),                      // 57: messaging_pb.SubscribeFollowMeRequest.AckMessage
+	(*SubscribeFollowMeRequest_CloseMessage)(nil),                    // 58: messaging_pb.SubscribeFollowMeRequest.CloseMessage
+	(*schema_pb.Topic)(nil),                                          // 59: schema_pb.Topic
+	(*schema_pb.Partition)(nil),                                      // 60: schema_pb.Partition
+	(*schema_pb.RecordType)(nil),                                     // 61: schema_pb.RecordType
+	(*schema_pb.PartitionOffset)(nil),                                // 62: schema_pb.PartitionOffset
+	(schema_pb.OffsetType)(0),                                        // 63: schema_pb.OffsetType
 }
 var file_mq_broker_proto_depIdxs = []int32{
-	33, // 0: messaging_pb.BrokerStats.stats:type_name -> messaging_pb.BrokerStats.StatsEntry
-	50, // 1: messaging_pb.TopicPartitionStats.topic:type_name -> schema_pb.Topic
-	51, // 2: messaging_pb.TopicPartitionStats.partition:type_name -> schema_pb.Partition
-	34, // 3: messaging_pb.PublisherToPubBalancerRequest.init:type_name -> messaging_pb.PublisherToPubBalancerRequest.InitMessage
+	42, // 0: messaging_pb.BrokerStats.stats:type_name -> messaging_pb.BrokerStats.StatsEntry
+	59, // 1: messaging_pb.TopicPartitionStats.topic:type_name -> schema_pb.Topic
+	60, // 2: messaging_pb.TopicPartitionStats.partition:type_name -> schema_pb.Partition
+	43, // 3: messaging_pb.PublisherToPubBalancerRequest.init:type_name -> messaging_pb.PublisherToPubBalancerRequest.InitMessage
 	2,  // 4: messaging_pb.PublisherToPubBalancerRequest.stats:type_name -> messaging_pb.BrokerStats
-	50, // 5: messaging_pb.ConfigureTopicRequest.topic:type_name -> schema_pb.Topic
-	52, // 6: messaging_pb.ConfigureTopicRequest.record_type:type_name -> schema_pb.RecordType
-	14, // 7: messaging_pb.ConfigureTopicResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
-	52, // 8: messaging_pb.ConfigureTopicResponse.record_type:type_name -> schema_pb.RecordType
-	50, // 9: messaging_pb.ListTopicsResponse.topics:type_name -> schema_pb.Topic
-	50, // 10: messaging_pb.LookupTopicBrokersRequest.topic:type_name -> schema_pb.Topic
-	50, // 11: messaging_pb.LookupTopicBrokersResponse.topic:type_name -> schema_pb.Topic
-	14, // 12: messaging_pb.LookupTopicBrokersResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
-	51, // 13: messaging_pb.BrokerPartitionAssignment.partition:type_name -> schema_pb.Partition
-	50, // 14: messaging_pb.AssignTopicPartitionsRequest.topic:type_name -> schema_pb.Topic
-	14, // 15: messaging_pb.AssignTopicPartitionsRequest.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
-	35, // 16: messaging_pb.SubscriberToSubCoordinatorRequest.init:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage
-	37, // 17: messaging_pb.SubscriberToSubCoordinatorRequest.ack_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage
-	36, // 18: messaging_pb.SubscriberToSubCoordinatorRequest.ack_un_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage
-	38, // 19: messaging_pb.SubscriberToSubCoordinatorResponse.assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorResponse.Assignment
-	39, // 20: messaging_pb.SubscriberToSubCoordinatorResponse.un_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment
-	19, // 21: messaging_pb.DataMessage.ctrl:type_name -> messaging_pb.ControlMessage
-	40, // 22: messaging_pb.PublishMessageRequest.init:type_name -> messaging_pb.PublishMessageRequest.InitMessage
-	20, // 23: messaging_pb.PublishMessageRequest.data:type_name -> messaging_pb.DataMessage
-	41, // 24: messaging_pb.PublishFollowMeRequest.init:type_name -> messaging_pb.PublishFollowMeRequest.InitMessage
-	20, // 25: messaging_pb.PublishFollowMeRequest.data:type_name -> messaging_pb.DataMessage
-	42, // 26: messaging_pb.PublishFollowMeRequest.flush:type_name -> messaging_pb.PublishFollowMeRequest.FlushMessage
-	43, // 27: messaging_pb.PublishFollowMeRequest.close:type_name -> messaging_pb.PublishFollowMeRequest.CloseMessage
-	44, // 28: messaging_pb.SubscribeMessageRequest.init:type_name -> messaging_pb.SubscribeMessageRequest.InitMessage
-	45, // 29: messaging_pb.SubscribeMessageRequest.ack:type_name -> messaging_pb.SubscribeMessageRequest.AckMessage
-	46, // 30: messaging_pb.SubscribeMessageResponse.ctrl:type_name -> messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessage
-	20, // 31: messaging_pb.SubscribeMessageResponse.data:type_name -> messaging_pb.DataMessage
-	47, // 32: messaging_pb.SubscribeFollowMeRequest.init:type_name -> messaging_pb.SubscribeFollowMeRequest.InitMessage
-	48, // 33: messaging_pb.SubscribeFollowMeRequest.ack:type_name -> messaging_pb.SubscribeFollowMeRequest.AckMessage
-	49, // 34: messaging_pb.SubscribeFollowMeRequest.close:type_name -> messaging_pb.SubscribeFollowMeRequest.CloseMessage
-	50, // 35: messaging_pb.ClosePublishersRequest.topic:type_name -> schema_pb.Topic
-	50, // 36: messaging_pb.CloseSubscribersRequest.topic:type_name -> schema_pb.Topic
-	3,  // 37: messaging_pb.BrokerStats.StatsEntry.value:type_name -> messaging_pb.TopicPartitionStats
-	50, // 38: messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	51, // 39: messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage.partition:type_name -> schema_pb.Partition
-	51, // 40: messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage.partition:type_name -> schema_pb.Partition
-	14, // 41: messaging_pb.SubscriberToSubCoordinatorResponse.Assignment.partition_assignment:type_name -> messaging_pb.BrokerPartitionAssignment
-	51, // 42: messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment.partition:type_name -> schema_pb.Partition
-	50, // 43: messaging_pb.PublishMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	51, // 44: messaging_pb.PublishMessageRequest.InitMessage.partition:type_name -> schema_pb.Partition
-	50, // 45: messaging_pb.PublishFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	51, // 46: messaging_pb.PublishFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
-	50, // 47: messaging_pb.SubscribeMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	53, // 48: messaging_pb.SubscribeMessageRequest.InitMessage.partition_offset:type_name -> schema_pb.PartitionOffset
-	54, // 49: messaging_pb.SubscribeMessageRequest.InitMessage.offset_type:type_name -> schema_pb.OffsetType
-	50, // 50: messaging_pb.SubscribeFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	51, // 51: messaging_pb.SubscribeFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
-	0,  // 52: messaging_pb.SeaweedMessaging.FindBrokerLeader:input_type -> messaging_pb.FindBrokerLeaderRequest
-	4,  // 53: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:input_type -> messaging_pb.PublisherToPubBalancerRequest
-	6,  // 54: messaging_pb.SeaweedMessaging.BalanceTopics:input_type -> messaging_pb.BalanceTopicsRequest
-	10, // 55: messaging_pb.SeaweedMessaging.ListTopics:input_type -> messaging_pb.ListTopicsRequest
-	8,  // 56: messaging_pb.SeaweedMessaging.ConfigureTopic:input_type -> messaging_pb.ConfigureTopicRequest
-	12, // 57: messaging_pb.SeaweedMessaging.LookupTopicBrokers:input_type -> messaging_pb.LookupTopicBrokersRequest
-	15, // 58: messaging_pb.SeaweedMessaging.AssignTopicPartitions:input_type -> messaging_pb.AssignTopicPartitionsRequest
-	29, // 59: messaging_pb.SeaweedMessaging.ClosePublishers:input_type -> messaging_pb.ClosePublishersRequest
-	31, // 60: messaging_pb.SeaweedMessaging.CloseSubscribers:input_type -> messaging_pb.CloseSubscribersRequest
-	17, // 61: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:input_type -> messaging_pb.SubscriberToSubCoordinatorRequest
-	21, // 62: messaging_pb.SeaweedMessaging.PublishMessage:input_type -> messaging_pb.PublishMessageRequest
-	25, // 63: messaging_pb.SeaweedMessaging.SubscribeMessage:input_type -> messaging_pb.SubscribeMessageRequest
-	23, // 64: messaging_pb.SeaweedMessaging.PublishFollowMe:input_type -> messaging_pb.PublishFollowMeRequest
-	27, // 65: messaging_pb.SeaweedMessaging.SubscribeFollowMe:input_type -> messaging_pb.SubscribeFollowMeRequest
-	1,  // 66: messaging_pb.SeaweedMessaging.FindBrokerLeader:output_type -> messaging_pb.FindBrokerLeaderResponse
-	5,  // 67: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:output_type -> messaging_pb.PublisherToPubBalancerResponse
-	7,  // 68: messaging_pb.SeaweedMessaging.BalanceTopics:output_type -> messaging_pb.BalanceTopicsResponse
-	11, // 69: messaging_pb.SeaweedMessaging.ListTopics:output_type -> messaging_pb.ListTopicsResponse
-	9,  // 70: messaging_pb.SeaweedMessaging.ConfigureTopic:output_type -> messaging_pb.ConfigureTopicResponse
-	13, // 71: messaging_pb.SeaweedMessaging.LookupTopicBrokers:output_type -> messaging_pb.LookupTopicBrokersResponse
-	16, // 72: messaging_pb.SeaweedMessaging.AssignTopicPartitions:output_type -> messaging_pb.AssignTopicPartitionsResponse
-	30, // 73: messaging_pb.SeaweedMessaging.ClosePublishers:output_type -> messaging_pb.ClosePublishersResponse
-	32, // 74: messaging_pb.SeaweedMessaging.CloseSubscribers:output_type -> messaging_pb.CloseSubscribersResponse
-	18, // 75: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:output_type -> messaging_pb.SubscriberToSubCoordinatorResponse
-	22, // 76: messaging_pb.SeaweedMessaging.PublishMessage:output_type -> messaging_pb.PublishMessageResponse
-	26, // 77: messaging_pb.SeaweedMessaging.SubscribeMessage:output_type -> messaging_pb.SubscribeMessageResponse
-	24, // 78: messaging_pb.SeaweedMessaging.PublishFollowMe:output_type -> messaging_pb.PublishFollowMeResponse
-	28, // 79: messaging_pb.SeaweedMessaging.SubscribeFollowMe:output_type -> messaging_pb.SubscribeFollowMeResponse
-	66, // [66:80] is the sub-list for method output_type
-	52, // [52:66] is the sub-list for method input_type
-	52, // [52:52] is the sub-list for extension type_name
-	52, // [52:52] is the sub-list for extension extendee
-	0,  // [0:52] is the sub-list for field type_name
+	59, // 5: messaging_pb.ConfigureTopicRequest.topic:type_name -> schema_pb.Topic
+	61, // 6: messaging_pb.ConfigureTopicRequest.record_type:type_name -> schema_pb.RecordType
+	8,  // 7: messaging_pb.ConfigureTopicRequest.retention:type_name -> messaging_pb.TopicRetention
+	15, // 8: messaging_pb.ConfigureTopicResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
+	61, // 9: messaging_pb.ConfigureTopicResponse.record_type:type_name -> schema_pb.RecordType
+	8,  // 10: messaging_pb.ConfigureTopicResponse.retention:type_name -> messaging_pb.TopicRetention
+	59, // 11: messaging_pb.ListTopicsResponse.topics:type_name -> schema_pb.Topic
+	59, // 12: messaging_pb.LookupTopicBrokersRequest.topic:type_name -> schema_pb.Topic
+	59, // 13: messaging_pb.LookupTopicBrokersResponse.topic:type_name -> schema_pb.Topic
+	15, // 14: messaging_pb.LookupTopicBrokersResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
+	60, // 15: messaging_pb.BrokerPartitionAssignment.partition:type_name -> schema_pb.Partition
+	59, // 16: messaging_pb.GetTopicConfigurationRequest.topic:type_name -> schema_pb.Topic
+	59, // 17: messaging_pb.GetTopicConfigurationResponse.topic:type_name -> schema_pb.Topic
+	61, // 18: messaging_pb.GetTopicConfigurationResponse.record_type:type_name -> schema_pb.RecordType
+	15, // 19: messaging_pb.GetTopicConfigurationResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
+	8,  // 20: messaging_pb.GetTopicConfigurationResponse.retention:type_name -> messaging_pb.TopicRetention
+	59, // 21: messaging_pb.GetTopicPublishersRequest.topic:type_name -> schema_pb.Topic
+	22, // 22: messaging_pb.GetTopicPublishersResponse.publishers:type_name -> messaging_pb.TopicPublisher
+	59, // 23: messaging_pb.GetTopicSubscribersRequest.topic:type_name -> schema_pb.Topic
+	23, // 24: messaging_pb.GetTopicSubscribersResponse.subscribers:type_name -> messaging_pb.TopicSubscriber
+	60, // 25: messaging_pb.TopicPublisher.partition:type_name -> schema_pb.Partition
+	60, // 26: messaging_pb.TopicSubscriber.partition:type_name -> schema_pb.Partition
+	59, // 27: messaging_pb.AssignTopicPartitionsRequest.topic:type_name -> schema_pb.Topic
+	15, // 28: messaging_pb.AssignTopicPartitionsRequest.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
+	44, // 29: messaging_pb.SubscriberToSubCoordinatorRequest.init:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage
+	46, // 30: messaging_pb.SubscriberToSubCoordinatorRequest.ack_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage
+	45, // 31: messaging_pb.SubscriberToSubCoordinatorRequest.ack_un_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage
+	47, // 32: messaging_pb.SubscriberToSubCoordinatorResponse.assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorResponse.Assignment
+	48, // 33: messaging_pb.SubscriberToSubCoordinatorResponse.un_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment
+	28, // 34: messaging_pb.DataMessage.ctrl:type_name -> messaging_pb.ControlMessage
+	49, // 35: messaging_pb.PublishMessageRequest.init:type_name -> messaging_pb.PublishMessageRequest.InitMessage
+	29, // 36: messaging_pb.PublishMessageRequest.data:type_name -> messaging_pb.DataMessage
+	50, // 37: messaging_pb.PublishFollowMeRequest.init:type_name -> messaging_pb.PublishFollowMeRequest.InitMessage
+	29, // 38: messaging_pb.PublishFollowMeRequest.data:type_name -> messaging_pb.DataMessage
+	51, // 39: messaging_pb.PublishFollowMeRequest.flush:type_name -> messaging_pb.PublishFollowMeRequest.FlushMessage
+	52, // 40: messaging_pb.PublishFollowMeRequest.close:type_name -> messaging_pb.PublishFollowMeRequest.CloseMessage
+	53, // 41: messaging_pb.SubscribeMessageRequest.init:type_name -> messaging_pb.SubscribeMessageRequest.InitMessage
+	54, // 42: messaging_pb.SubscribeMessageRequest.ack:type_name -> messaging_pb.SubscribeMessageRequest.AckMessage
+	55, // 43: messaging_pb.SubscribeMessageResponse.ctrl:type_name -> messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessage
+	29, // 44: messaging_pb.SubscribeMessageResponse.data:type_name -> messaging_pb.DataMessage
+	56, // 45: messaging_pb.SubscribeFollowMeRequest.init:type_name -> messaging_pb.SubscribeFollowMeRequest.InitMessage
+	57, // 46: messaging_pb.SubscribeFollowMeRequest.ack:type_name -> messaging_pb.SubscribeFollowMeRequest.AckMessage
+	58, // 47: messaging_pb.SubscribeFollowMeRequest.close:type_name -> messaging_pb.SubscribeFollowMeRequest.CloseMessage
+	59, // 48: messaging_pb.ClosePublishersRequest.topic:type_name -> schema_pb.Topic
+	59, // 49: messaging_pb.CloseSubscribersRequest.topic:type_name -> schema_pb.Topic
+	3,  // 50: messaging_pb.BrokerStats.StatsEntry.value:type_name -> messaging_pb.TopicPartitionStats
+	59, // 51: messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	60, // 52: messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage.partition:type_name -> schema_pb.Partition
+	60, // 53: messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage.partition:type_name -> schema_pb.Partition
+	15, // 54: messaging_pb.SubscriberToSubCoordinatorResponse.Assignment.partition_assignment:type_name -> messaging_pb.BrokerPartitionAssignment
+	60, // 55: messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment.partition:type_name -> schema_pb.Partition
+	59, // 56: messaging_pb.PublishMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	60, // 57: messaging_pb.PublishMessageRequest.InitMessage.partition:type_name -> schema_pb.Partition
+	59, // 58: messaging_pb.PublishFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	60, // 59: messaging_pb.PublishFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
+	59, // 60: messaging_pb.SubscribeMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	62, // 61: messaging_pb.SubscribeMessageRequest.InitMessage.partition_offset:type_name -> schema_pb.PartitionOffset
+	63, // 62: messaging_pb.SubscribeMessageRequest.InitMessage.offset_type:type_name -> schema_pb.OffsetType
+	59, // 63: messaging_pb.SubscribeFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	60, // 64: messaging_pb.SubscribeFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
+	0,  // 65: messaging_pb.SeaweedMessaging.FindBrokerLeader:input_type -> messaging_pb.FindBrokerLeaderRequest
+	4,  // 66: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:input_type -> messaging_pb.PublisherToPubBalancerRequest
+	6,  // 67: messaging_pb.SeaweedMessaging.BalanceTopics:input_type -> messaging_pb.BalanceTopicsRequest
+	11, // 68: messaging_pb.SeaweedMessaging.ListTopics:input_type -> messaging_pb.ListTopicsRequest
+	9,  // 69: messaging_pb.SeaweedMessaging.ConfigureTopic:input_type -> messaging_pb.ConfigureTopicRequest
+	13, // 70: messaging_pb.SeaweedMessaging.LookupTopicBrokers:input_type -> messaging_pb.LookupTopicBrokersRequest
+	16, // 71: messaging_pb.SeaweedMessaging.GetTopicConfiguration:input_type -> messaging_pb.GetTopicConfigurationRequest
+	18, // 72: messaging_pb.SeaweedMessaging.GetTopicPublishers:input_type -> messaging_pb.GetTopicPublishersRequest
+	20, // 73: messaging_pb.SeaweedMessaging.GetTopicSubscribers:input_type -> messaging_pb.GetTopicSubscribersRequest
+	24, // 74: messaging_pb.SeaweedMessaging.AssignTopicPartitions:input_type -> messaging_pb.AssignTopicPartitionsRequest
+	38, // 75: messaging_pb.SeaweedMessaging.ClosePublishers:input_type -> messaging_pb.ClosePublishersRequest
+	40, // 76: messaging_pb.SeaweedMessaging.CloseSubscribers:input_type -> messaging_pb.CloseSubscribersRequest
+	26, // 77: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:input_type -> messaging_pb.SubscriberToSubCoordinatorRequest
+	30, // 78: messaging_pb.SeaweedMessaging.PublishMessage:input_type -> messaging_pb.PublishMessageRequest
+	34, // 79: messaging_pb.SeaweedMessaging.SubscribeMessage:input_type -> messaging_pb.SubscribeMessageRequest
+	32, // 80: messaging_pb.SeaweedMessaging.PublishFollowMe:input_type -> messaging_pb.PublishFollowMeRequest
+	36, // 81: messaging_pb.SeaweedMessaging.SubscribeFollowMe:input_type -> messaging_pb.SubscribeFollowMeRequest
+	1,  // 82: messaging_pb.SeaweedMessaging.FindBrokerLeader:output_type -> messaging_pb.FindBrokerLeaderResponse
+	5,  // 83: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:output_type -> messaging_pb.PublisherToPubBalancerResponse
+	7,  // 84: messaging_pb.SeaweedMessaging.BalanceTopics:output_type -> messaging_pb.BalanceTopicsResponse
+	12, // 85: messaging_pb.SeaweedMessaging.ListTopics:output_type -> messaging_pb.ListTopicsResponse
+	10, // 86: messaging_pb.SeaweedMessaging.ConfigureTopic:output_type -> messaging_pb.ConfigureTopicResponse
+	14, // 87: messaging_pb.SeaweedMessaging.LookupTopicBrokers:output_type -> messaging_pb.LookupTopicBrokersResponse
+	17, // 88: messaging_pb.SeaweedMessaging.GetTopicConfiguration:output_type -> messaging_pb.GetTopicConfigurationResponse
+	19, // 89: messaging_pb.SeaweedMessaging.GetTopicPublishers:output_type -> messaging_pb.GetTopicPublishersResponse
+	21, // 90: messaging_pb.SeaweedMessaging.GetTopicSubscribers:output_type -> messaging_pb.GetTopicSubscribersResponse
+	25, // 91: messaging_pb.SeaweedMessaging.AssignTopicPartitions:output_type -> messaging_pb.AssignTopicPartitionsResponse
+	39, // 92: messaging_pb.SeaweedMessaging.ClosePublishers:output_type -> messaging_pb.ClosePublishersResponse
+	41, // 93: messaging_pb.SeaweedMessaging.CloseSubscribers:output_type -> messaging_pb.CloseSubscribersResponse
+	27, // 94: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:output_type -> messaging_pb.SubscriberToSubCoordinatorResponse
+	31, // 95: messaging_pb.SeaweedMessaging.PublishMessage:output_type -> messaging_pb.PublishMessageResponse
+	35, // 96: messaging_pb.SeaweedMessaging.SubscribeMessage:output_type -> messaging_pb.SubscribeMessageResponse
+	33, // 97: messaging_pb.SeaweedMessaging.PublishFollowMe:output_type -> messaging_pb.PublishFollowMeResponse
+	37, // 98: messaging_pb.SeaweedMessaging.SubscribeFollowMe:output_type -> messaging_pb.SubscribeFollowMeResponse
+	82, // [82:99] is the sub-list for method output_type
+	65, // [65:82] is the sub-list for method input_type
+	65, // [65:65] is the sub-list for extension type_name
+	65, // [65:65] is the sub-list for extension extendee
+	0,  // [0:65] is the sub-list for field type_name
 }
 
 func init() { file_mq_broker_proto_init() }
@@ -3202,34 +3886,34 @@ func file_mq_broker_proto_init() {
 		(*PublisherToPubBalancerRequest_Init)(nil),
 		(*PublisherToPubBalancerRequest_Stats)(nil),
 	}
-	file_mq_broker_proto_msgTypes[17].OneofWrappers = []any{
+	file_mq_broker_proto_msgTypes[26].OneofWrappers = []any{
 		(*SubscriberToSubCoordinatorRequest_Init)(nil),
 		(*SubscriberToSubCoordinatorRequest_AckAssignment)(nil),
 		(*SubscriberToSubCoordinatorRequest_AckUnAssignment)(nil),
 	}
-	file_mq_broker_proto_msgTypes[18].OneofWrappers = []any{
+	file_mq_broker_proto_msgTypes[27].OneofWrappers = []any{
 		(*SubscriberToSubCoordinatorResponse_Assignment_)(nil),
 		(*SubscriberToSubCoordinatorResponse_UnAssignment_)(nil),
 	}
-	file_mq_broker_proto_msgTypes[21].OneofWrappers = []any{
+	file_mq_broker_proto_msgTypes[30].OneofWrappers = []any{
 		(*PublishMessageRequest_Init)(nil),
 		(*PublishMessageRequest_Data)(nil),
 	}
-	file_mq_broker_proto_msgTypes[23].OneofWrappers = []any{
+	file_mq_broker_proto_msgTypes[32].OneofWrappers = []any{
 		(*PublishFollowMeRequest_Init)(nil),
 		(*PublishFollowMeRequest_Data)(nil),
 		(*PublishFollowMeRequest_Flush)(nil),
 		(*PublishFollowMeRequest_Close)(nil),
 	}
-	file_mq_broker_proto_msgTypes[25].OneofWrappers = []any{
+	file_mq_broker_proto_msgTypes[34].OneofWrappers = []any{
 		(*SubscribeMessageRequest_Init)(nil),
 		(*SubscribeMessageRequest_Ack)(nil),
 	}
-	file_mq_broker_proto_msgTypes[26].OneofWrappers = []any{
+	file_mq_broker_proto_msgTypes[35].OneofWrappers = []any{
 		(*SubscribeMessageResponse_Ctrl)(nil),
 		(*SubscribeMessageResponse_Data)(nil),
 	}
-	file_mq_broker_proto_msgTypes[27].OneofWrappers = []any{
+	file_mq_broker_proto_msgTypes[36].OneofWrappers = []any{
 		(*SubscribeFollowMeRequest_Init)(nil),
 		(*SubscribeFollowMeRequest_Ack)(nil),
 		(*SubscribeFollowMeRequest_Close)(nil),
@@ -3240,7 +3924,7 @@ func file_mq_broker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mq_broker_proto_rawDesc), len(file_mq_broker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   50,
+			NumMessages:   59,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -1,0 +1,151 @@
+package app
+
+import "fmt"
+import "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+
+templ Subscribers(data dash.SubscribersData) {
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1 class="h3 mb-0">Message Queue Subscribers</h1>
+                    <small class="text-muted">Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}</small>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="row mb-4">
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Total Subscribers</h5>
+                                <h3 class="text-primary">{fmt.Sprintf("%d", data.TotalSubscribers)}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Active Subscribers</h5>
+                                <h3 class="text-success">{fmt.Sprintf("%d", data.ActiveSubscribers)}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Inactive Subscribers</h5>
+                                <h3 class="text-warning">{fmt.Sprintf("%d", data.TotalSubscribers - data.ActiveSubscribers)}</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Subscribers Table -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Subscribers</h5>
+                        <div>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="exportSubscribersCSV()">
+                                <i class="fas fa-download me-1"></i>Export CSV
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        if len(data.Subscribers) == 0 {
+                            <div class="text-center py-4">
+                                <i class="fas fa-user-friends fa-3x text-muted mb-3"></i>
+                                <h5>No Subscribers Found</h5>
+                                <p class="text-muted">No message queue subscribers are currently active.</p>
+                            </div>
+                        } else {
+                            <div class="table-responsive">
+                                <table class="table table-striped" id="subscribersTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Subscriber Name</th>
+                                            <th>Topic</th>
+                                            <th>Consumer Group</th>
+                                            <th>Status</th>
+                                            <th>Messages Processed</th>
+                                            <th>Last Seen</th>
+                                            <th>Created</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, subscriber := range data.Subscribers {
+                                            <tr>
+                                                <td>
+                                                    <strong>{subscriber.Name}</strong>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-info">{subscriber.Topic}</span>
+                                                </td>
+                                                <td>{subscriber.ConsumerGroup}</td>
+                                                <td>
+                                                    if subscriber.Status == "active" {
+                                                        <span class="badge bg-success">Active</span>
+                                                    } else if subscriber.Status == "inactive" {
+                                                        <span class="badge bg-warning">Inactive</span>
+                                                    } else {
+                                                        <span class="badge bg-secondary">{subscriber.Status}</span>
+                                                    }
+                                                </td>
+                                                <td>{fmt.Sprintf("%d", subscriber.MessageCount)}</td>
+                                                <td>
+                                                    if !subscriber.LastSeen.IsZero() {
+                                                        <span class="text-muted">{subscriber.LastSeen.Format("2006-01-02 15:04:05")}</span>
+                                                    } else {
+                                                        <span class="text-muted">Never</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    <span class="text-muted">{subscriber.CreatedAt.Format("2006-01-02 15:04:05")}</span>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function exportSubscribersCSV() {
+            const table = document.getElementById('subscribersTable');
+            if (!table) return;
+            
+            let csv = 'Subscriber Name,Topic,Consumer Group,Status,Messages Processed,Last Seen,Created\n';
+            
+            const rows = table.querySelectorAll('tbody tr');
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 7) {
+                    const rowData = [
+                        cells[0].querySelector('strong')?.textContent || '',
+                        cells[1].querySelector('.badge')?.textContent || '',
+                        cells[2].textContent || '',
+                        cells[3].querySelector('.badge')?.textContent || '',
+                        cells[4].textContent || '',
+                        cells[5].querySelector('span')?.textContent || '',
+                        cells[6].querySelector('span')?.textContent || ''
+                    ];
+                    csv += rowData.map(field => `"${field.replace(/"/g, '""')}"`).join(',') + '\n';
+                }
+            });
+            
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'subscribers.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+} 
