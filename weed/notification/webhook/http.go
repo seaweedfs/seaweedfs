@@ -2,9 +2,11 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -12,12 +14,14 @@ import (
 type httpClient struct {
 	endpoint string
 	token    string
+	timeout  time.Duration
 }
 
 func newHTTPClient(cfg *config) (*httpClient, error) {
 	return &httpClient{
 		endpoint: cfg.endpoint,
 		token:    cfg.authBearerToken,
+		timeout:  time.Duration(cfg.timeoutSeconds) * time.Second,
 	}, nil
 }
 
@@ -35,6 +39,12 @@ func (h *httpClient) sendMessage(message *webhookMessage) error {
 	req.Header.Set("Content-Type", "application/json")
 	if h.token != "" {
 		req.Header.Set("Authorization", "Bearer "+h.token)
+	}
+
+	if h.timeout > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), h.timeout)
+		defer cancel()
+		req = req.WithContext(ctx)
 	}
 
 	resp, err := util_http.Do(req)

@@ -6,7 +6,9 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/notification"
@@ -31,6 +33,7 @@ type WebhookQueue struct {
 	bufferChan chan *webhookMessage
 	worker     errgroup.Group
 	ctx        context.Context
+	shutdown   atomic.Bool
 }
 
 type webhookMessage struct {
@@ -40,6 +43,7 @@ type webhookMessage struct {
 type config struct {
 	endpoint        string
 	authBearerToken string
+	timeoutSeconds  int
 
 	maxRetries     int
 	backoffSeconds int
@@ -51,6 +55,7 @@ func newConfigWithDefaults(configuration util.Configuration, prefix string) *con
 	c := &config{
 		endpoint:        configuration.GetString(prefix + "endpoint"),
 		authBearerToken: configuration.GetString(prefix + "bearer_token"),
+		timeoutSeconds:  configuration.GetInt(prefix + "timeout_seconds"),
 		maxRetries:      configuration.GetInt(prefix + "max_retries"),
 		backoffSeconds:  configuration.GetInt(prefix + "backoff_seconds"),
 		nWorkers:        configuration.GetInt(prefix + "workers"),
@@ -64,6 +69,9 @@ func newConfigWithDefaults(configuration util.Configuration, prefix string) *con
 	}
 	if c.backoffSeconds <= 0 {
 		c.backoffSeconds = 5
+	}
+	if c.timeoutSeconds <= 0 {
+		c.timeoutSeconds = 30
 	}
 
 	return c
@@ -94,6 +102,8 @@ func (w *WebhookQueue) Initialize(configuration util.Configuration, prefix strin
 
 func (w *WebhookQueue) initialize(cfg *config) error {
 	w.config = cfg
+	w.bufferChan = make(chan *webhookMessage, cfg.bufferSize)
+	w.shutdown.Store(false)
 
 	client, err := newHTTPClient(cfg)
 	if err != nil {
@@ -114,13 +124,23 @@ func (w *WebhookQueue) setupGracefulShutdown() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	<-sigChan
-	cancel()
+	go func() {
+		<-sigChan
+		w.shutdown.Store(true)
+		glog.Infof("webhook queue received shutdown signal")
+		w.drain()
+
+		cancel()
+	}()
 }
 
 func (w *WebhookQueue) SendMessage(key string, message proto.Message) error {
 	if w.client == nil {
 		return fmt.Errorf("webhook client not initialized")
+	}
+
+	if w.shutdown.Load() {
+		return nil
 	}
 
 	w.bufferChan <- &webhookMessage{
@@ -149,5 +169,28 @@ func (w *WebhookQueue) startWorker() {
 
 	if err := w.worker.Wait(); err != nil {
 		glog.Errorf("webhook worker exited with error: %v", err)
+	}
+}
+
+func (w *WebhookQueue) drain() {
+	if len(w.bufferChan) == 0 {
+		return
+	}
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	for {
+		select {
+		case <-ticker.C:
+			if len(w.bufferChan) == 0 {
+				return
+			}
+		case <-timeoutCtx.Done():
+			return
+		}
 	}
 }
