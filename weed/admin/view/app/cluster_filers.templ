@@ -90,11 +90,8 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 											}
 										</td>
 										<td>
-											<div class="btn-group btn-group-sm">
-												<button type="button" class="btn btn-outline-primary btn-sm" title="View Details">
-													<i class="fas fa-eye"></i>
-												</button>
-												<button type="button" class="btn btn-outline-secondary btn-sm" title="File Browser" onclick={ templ.ComponentScript{Call: fmt.Sprintf("window.open('http://%s', '_blank')", filer.Address)} }>
+											<div class="btn-group btn-group-sm" role="group">
+												<button type="button" class="btn btn-outline-secondary btn-sm" title="File Browser" data-action="open-filer" data-address={ filer.Address }>
 													<i class="fas fa-folder-open"></i>
 												</button>
 											</div>

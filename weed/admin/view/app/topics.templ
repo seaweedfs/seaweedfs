@@ -102,8 +102,8 @@ templ Topics(data dash.TopicsData) {
                                                     }
                                                 </td>
                                                 <td>
-                                                    <button class="btn btn-sm btn-outline-primary" onclick={ templ.ComponentScript{Call: fmt.Sprintf("viewTopicDetails('%s')", topic.Name)} }>
-                                                        <i class="fas fa-info-circle me-1"></i>Details
+                                                    <button class="btn btn-sm btn-outline-primary" data-action="view-topic-details" data-topic-name={ topic.Name }>
+                                                        <i class="fas fa-eye"></i>
                                                     </button>
                                                 </td>
                                             </tr>
@@ -126,297 +126,6 @@ templ Topics(data dash.TopicsData) {
             </div>
         </div>
     </div>
-
-    <script>
-        function viewTopicDetails(topicName) {
-            const parts = topicName.split('.');
-            if (parts.length >= 2) {
-                const namespace = parts[0];
-                const topic = parts.slice(1).join('.');
-                window.location.href = `/mq/topics/${namespace}/${topic}`;
-            }
-        }
-
-        function toggleTopicDetails(topicName) {
-            const safeName = topicName.replace(/\./g, '_');
-            const detailsRow = document.getElementById(`details-${safeName}`);
-            if (!detailsRow) return;
-
-            if (detailsRow.style.display === 'none') {
-                // Show details row and load data
-                detailsRow.style.display = 'table-row';
-                loadTopicDetails(topicName);
-            } else {
-                // Hide details row
-                detailsRow.style.display = 'none';
-            }
-        }
-
-        function loadTopicDetails(topicName) {
-            const parts = topicName.split('.');
-            if (parts.length < 2) return;
-            
-            const namespace = parts[0];
-            const topic = parts.slice(1).join('.');
-            const safeName = topicName.replace(/\./g, '_');
-            const contentDiv = document.querySelector(`#details-${safeName} .topic-details-content`);
-            
-            if (!contentDiv) return;
-
-            // Show loading spinner
-            contentDiv.innerHTML = `
-                <div class="text-center py-3">
-                    <i class="fas fa-spinner fa-spin"></i> Loading topic details...
-                </div>
-            `;
-
-            // Make AJAX call to get topic details
-            fetch(`/api/mq/topics/${namespace}/${topic}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        contentDiv.innerHTML = `
-                            <div class="alert alert-danger" role="alert">
-                                <i class="fas fa-exclamation-triangle"></i> Error: ${data.error}
-                            </div>
-                        `;
-                        return;
-                    }
-
-                    // Render topic details
-                    contentDiv.innerHTML = renderTopicDetails(data);
-                })
-                .catch(error => {
-                    contentDiv.innerHTML = `
-                        <div class="alert alert-danger" role="alert">
-                            <i class="fas fa-exclamation-triangle"></i> Failed to load topic details: ${error.message}
-                        </div>
-                    `;
-                });
-        }
-
-        function renderTopicDetails(data) {
-            const createdAt = new Date(data.created_at).toLocaleString();
-            const lastUpdated = new Date(data.last_updated).toLocaleString();
-
-            let schemaHtml = '';
-            if (data.schema && data.schema.length > 0) {
-                schemaHtml = `
-                    <div class="col-md-6">
-                        <h6>Schema Fields</h6>
-                        <div class="table-responsive">
-                            <table class="table table-sm">
-                                <thead>
-                                    <tr>
-                                        <th>Field</th>
-                                        <th>Type</th>
-                                        <th>Required</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${data.schema.map(field => `
-                                        <tr>
-                                            <td>${field.name}</td>
-                                            <td><span class="badge bg-secondary">${field.type}</span></td>
-                                            <td>${field.required ? '<span class="badge bg-success">Yes</span>' : '<span class="badge bg-light text-dark">No</span>'}</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                `;
-            }
-
-            let partitionsHtml = '';
-            if (data.partitions && data.partitions.length > 0) {
-                partitionsHtml = `
-                    <div class="col-md-6">
-                        <h6>Partitions</h6>
-                        <div class="table-responsive">
-                            <table class="table table-sm">
-                                <thead>
-                                    <tr>
-                                        <th>ID</th>
-                                        <th>Leader</th>
-                                        <th>Follower</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${data.partitions.map(partition => `
-                                        <tr>
-                                            <td>${partition.id}</td>
-                                            <td>${partition.leader_broker || 'N/A'}</td>
-                                            <td>${partition.follower_broker || 'N/A'}</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                `;
-            }
-
-
-
-
-
-            return `
-                <div class="card">
-                    <div class="card-header">
-                        <h5>Topic Details: ${data.namespace}.${data.name}</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row mb-3">
-                            <div class="col-md-3">
-                                <strong>Namespace:</strong> ${data.namespace}
-                            </div>
-                            <div class="col-md-3">
-                                <strong>Topic Name:</strong> ${data.name}
-                            </div>
-                            <div class="col-md-3">
-                                <strong>Created:</strong> ${createdAt}
-                            </div>
-                            <div class="col-md-3">
-                                <strong>Last Updated:</strong> ${lastUpdated}
-                            </div>
-                        </div>
-                        <div class="row mb-3">
-                            ${schemaHtml}
-                            ${partitionsHtml}
-                        </div>
-
-                    </div>
-                </div>
-            `;
-        }
-
-        function exportTopicsCSV() {
-            const table = document.getElementById('topicsTable');
-            if (!table) return;
-            
-            let csv = 'Namespace,Topic Name,Partitions,Retention\n';
-            
-            const rows = table.querySelectorAll('tbody tr.topic-row');
-            rows.forEach(row => {
-                const cells = row.querySelectorAll('td');
-                if (cells.length >= 4) {
-                    const rowData = [
-                        cells[0].querySelector('.badge')?.textContent || '',  // Namespace
-                        cells[1].querySelector('strong')?.textContent || '',  // Topic Name
-                        cells[2].querySelector('.badge')?.textContent || '', // Partitions
-                        cells[3].querySelector('.badge')?.textContent || ''   // Retention
-                    ];
-                    csv += rowData.map(field => `"${field.replace(/"/g, '""')}"`).join(',') + '\n';
-                }
-            });
-            
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement('a');
-            const url = URL.createObjectURL(blob);
-            link.setAttribute('href', url);
-            link.setAttribute('download', 'topics.csv');
-            link.style.visibility = 'hidden';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        }
-
-        // Topic creation functions
-        function showCreateTopicModal() {
-            const modal = new bootstrap.Modal(document.getElementById('createTopicModal'));
-            modal.show();
-        }
-
-        function toggleRetentionFields() {
-            const enableRetention = document.getElementById('enableRetention');
-            const retentionFields = document.getElementById('retentionFields');
-            
-            if (enableRetention.checked) {
-                retentionFields.style.display = 'block';
-            } else {
-                retentionFields.style.display = 'none';
-            }
-        }
-
-        function createTopic() {
-            const form = document.getElementById('createTopicForm');
-            const formData = new FormData(form);
-            
-            // Convert form data to JSON
-            const data = {
-                namespace: formData.get('namespace'),
-                name: formData.get('name'),
-                partition_count: parseInt(formData.get('partitionCount')),
-                retention: {
-                    enabled: formData.get('enableRetention') === 'on',
-                    retention_seconds: 0
-                }
-            };
-
-            // Calculate retention seconds if enabled
-            if (data.retention.enabled) {
-                const retentionValue = parseInt(formData.get('retentionValue'));
-                const retentionUnit = formData.get('retentionUnit');
-                
-                if (retentionUnit === 'hours') {
-                    data.retention.retention_seconds = retentionValue * 3600;
-                } else if (retentionUnit === 'days') {
-                    data.retention.retention_seconds = retentionValue * 86400;
-                }
-            }
-
-            // Validate required fields
-            if (!data.namespace || !data.name || !data.partition_count) {
-                alert('Please fill in all required fields');
-                return;
-            }
-
-            // Show loading state
-            const createButton = document.querySelector('#createTopicModal .btn-primary');
-            createButton.disabled = true;
-            createButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Creating...';
-
-            // Send API request
-            fetch('/api/mq/topics/create', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(data)
-            })
-            .then(response => response.json())
-            .then(result => {
-                if (result.error) {
-                    alert('Failed to create topic: ' + result.error);
-                } else {
-                    alert('Topic created successfully!');
-                    // Close modal and refresh page
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('createTopicModal'));
-                    modal.hide();
-                    window.location.reload();
-                }
-            })
-            .catch(error => {
-                alert('Failed to create topic: ' + error.message);
-            })
-            .finally(() => {
-                // Reset button state
-                createButton.disabled = false;
-                createButton.innerHTML = '<i class="fas fa-plus me-1"></i>Create Topic';
-            });
-        }
-
-        // Add click event listeners to topic rows
-        document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('.topic-row').forEach(row => {
-                row.addEventListener('click', function() {
-                    const topicName = this.getAttribute('data-topic-name');
-                    toggleTopicDetails(topicName);
-                });
-            });
-        });
-    </script>
 
     <!-- Create Topic Modal -->
     <div class="modal fade" id="createTopicModal" tabindex="-1" role="dialog">
@@ -508,4 +217,172 @@ templ Topics(data dash.TopicsData) {
             </div>
         </div>
     </div>
+
+    <script type="text/javascript">
+        // Topic management functions
+        function showCreateTopicModal() {
+            var modal = new bootstrap.Modal(document.getElementById('createTopicModal'));
+            modal.show();
+        }
+
+        function toggleRetentionFields() {
+            var enableRetention = document.getElementById('enableRetention').checked;
+            var retentionFields = document.getElementById('retentionFields');
+            
+            if (enableRetention) {
+                retentionFields.style.display = 'block';
+            } else {
+                retentionFields.style.display = 'none';
+            }
+        }
+
+        function createTopic() {
+            var form = document.getElementById('createTopicForm');
+            var formData = new FormData(form);
+            
+            if (!form.checkValidity()) {
+                form.classList.add('was-validated');
+                return;
+            }
+            
+            var namespace = formData.get('namespace');
+            var name = formData.get('name');
+            var partitionCount = formData.get('partitionCount');
+            var enableRetention = formData.get('enableRetention');
+            var retentionValue = enableRetention === 'on' ? parseInt(formData.get('retentionValue')) : 0;
+            var retentionUnit = enableRetention === 'on' ? formData.get('retentionUnit') : 'hours';
+            
+            // Convert retention to seconds
+            var retentionSeconds = 0;
+            if (enableRetention === 'on' && retentionValue > 0) {
+                if (retentionUnit === 'hours') {
+                    retentionSeconds = retentionValue * 3600;
+                } else if (retentionUnit === 'days') {
+                    retentionSeconds = retentionValue * 86400;
+                }
+            }
+            
+            var topicData = {
+                namespace: namespace,
+                name: name,
+                partition_count: parseInt(partitionCount),
+                retention: {
+                    enabled: enableRetention === 'on',
+                    retention_seconds: retentionSeconds
+                }
+            };
+            
+            // Create the topic
+            fetch('/api/mq/topics/create', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(topicData)
+            })
+            .then(response => {
+                if (response.ok) {
+                    return response.json();
+                }
+                throw new Error('Failed to create topic');
+            })
+            .then(data => {
+                // Hide modal and refresh page
+                var modal = bootstrap.Modal.getInstance(document.getElementById('createTopicModal'));
+                modal.hide();
+                location.reload();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error creating topic: ' + error.message);
+            });
+        }
+
+        function exportTopicsCSV() {
+            var csvContent = 'Namespace,Topic Name,Partitions,Retention Enabled,Retention Value,Retention Unit\n';
+            
+            var rows = document.querySelectorAll('#topicsTable tbody tr.topic-row');
+            rows.forEach(function(row) {
+                var cells = row.querySelectorAll('td');
+                var namespace = cells[0].textContent.trim();
+                var topicName = cells[1].textContent.trim();
+                var partitions = cells[2].textContent.trim();
+                var retention = cells[3].textContent.trim();
+                
+                var retentionEnabled = retention !== 'Disabled';
+                var retentionValue = retentionEnabled ? retention.split(' ')[0] : '';
+                var retentionUnit = retentionEnabled ? retention.split(' ')[1] : '';
+                
+                csvContent += namespace + ',' + topicName + ',' + partitions + ',' + retentionEnabled + ',' + retentionValue + ',' + retentionUnit + '\n';
+            });
+            
+            var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            var link = document.createElement('a');
+            var url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'topics_export.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Topic details functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            // Handle view topic details buttons
+            document.querySelectorAll('[data-action="view-topic-details"]').forEach(function(button) {
+                button.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    var topicName = this.getAttribute('data-topic-name');
+                    var detailsRow = document.getElementById('details-' + topicName.replace(/\./g, '_'));
+                    
+                    if (detailsRow.style.display === 'none') {
+                        detailsRow.style.display = 'table-row';
+                        this.innerHTML = '<i class="fas fa-eye-slash"></i>';
+                        
+                        // Load topic details
+                        loadTopicDetails(topicName);
+                    } else {
+                        detailsRow.style.display = 'none';
+                        this.innerHTML = '<i class="fas fa-eye"></i>';
+                    }
+                });
+            });
+        });
+
+        function loadTopicDetails(topicName) {
+            var detailsRow = document.getElementById('details-' + topicName.replace(/\./g, '_'));
+            var contentDiv = detailsRow.querySelector('.topic-details-content');
+            
+            fetch('/admin/topics/' + encodeURIComponent(topicName) + '/details')
+                .then(response => response.json())
+                .then(data => {
+                    var html = '<div class="row">';
+                    html += '<div class="col-md-6">';
+                    html += '<h6>Topic Configuration</h6>';
+                    html += '<ul class="list-unstyled">';
+                    html += '<li><strong>Full Name:</strong> ' + data.name + '</li>';
+                    html += '<li><strong>Partitions:</strong> ' + data.partitions + '</li>';
+                    html += '<li><strong>Created:</strong> ' + (data.created || 'N/A') + '</li>';
+                    html += '</ul>';
+                    html += '</div>';
+                    html += '<div class="col-md-6">';
+                    html += '<h6>Retention Policy</h6>';
+                    if (data.retention && data.retention.enabled) {
+                        html += '<p><i class="fas fa-check-circle text-success"></i> Enabled</p>';
+                        html += '<p><strong>Duration:</strong> ' + data.retention.value + ' ' + data.retention.unit + '</p>';
+                    } else {
+                        html += '<p><i class="fas fa-times-circle text-danger"></i> Disabled</p>';
+                    }
+                    html += '</div>';
+                    html += '</div>';
+                    
+                    contentDiv.innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error loading topic details:', error);
+                    contentDiv.innerHTML = '<div class="alert alert-danger">Failed to load topic details</div>';
+                });
+        }
+    </script>
 } 
