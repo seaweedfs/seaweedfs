@@ -1,0 +1,388 @@
+package app
+
+import "fmt"
+import "strings"
+import "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+
+templ Topics(data dash.TopicsData) {
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1 class="h3 mb-0">Message Queue Topics</h1>
+                    <small class="text-muted">Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}</small>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Total Topics</h5>
+                                <h3 class="text-primary">{fmt.Sprintf("%d", data.TotalTopics)}</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h5 class="card-title">Available Topics</h5>
+                                <h3 class="text-info">{fmt.Sprintf("%d", len(data.Topics))}</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Topics Table -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Topics</h5>
+                        <div>
+                            <button class="btn btn-sm btn-primary me-2" onclick="showCreateTopicModal()">
+                                <i class="fas fa-plus me-1"></i>Create Topic
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="exportTopicsCSV()">
+                                <i class="fas fa-download me-1"></i>Export CSV
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        if len(data.Topics) == 0 {
+                            <div class="text-center py-4">
+                                <i class="fas fa-list-alt fa-3x text-muted mb-3"></i>
+                                <h5>No Topics Found</h5>
+                                <p class="text-muted">No message queue topics are currently configured.</p>
+                            </div>
+                        } else {
+                            <div class="table-responsive">
+                                <table class="table table-striped" id="topicsTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Namespace</th>
+                                            <th>Topic Name</th>
+                                            <th>Partitions</th>
+                                            <th>Retention</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, topic := range data.Topics {
+                                            <tr class="topic-row" data-topic-name={topic.Name} style="cursor: pointer;">
+                                                <td>
+                                                    <span class="badge bg-secondary">{func() string {
+                                                        idx := strings.LastIndex(topic.Name, ".")
+                                                        if idx == -1 {
+                                                            return "default"
+                                                        }
+                                                        return topic.Name[:idx]
+                                                    }()}</span>
+                                                </td>
+                                                <td>
+                                                    <strong>{func() string {
+                                                        idx := strings.LastIndex(topic.Name, ".")
+                                                        if idx == -1 {
+                                                            return topic.Name
+                                                        }
+                                                        return topic.Name[idx+1:]
+                                                    }()}</strong>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-info">{fmt.Sprintf("%d", topic.Partitions)}</span>
+                                                </td>
+                                                <td>
+                                                    if topic.Retention.Enabled {
+                                                        <span class="badge bg-success">
+                                                            <i class="fas fa-clock me-1"></i>
+                                                            {fmt.Sprintf("%d %s", topic.Retention.DisplayValue, topic.Retention.DisplayUnit)}
+                                                        </span>
+                                                    } else {
+                                                        <span class="badge bg-secondary">
+                                                            <i class="fas fa-times me-1"></i>Disabled
+                                                        </span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-outline-primary" data-action="view-topic-details" data-topic-name={ topic.Name }>
+                                                        <i class="fas fa-eye"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            <tr class="topic-details-row" id={ fmt.Sprintf("details-%s", strings.ReplaceAll(topic.Name, ".", "_")) } style="display: none;">
+                                                <td colspan="5">
+                                                    <div class="topic-details-content">
+                                                        <div class="text-center py-3">
+                                                            <i class="fas fa-spinner fa-spin"></i> Loading topic details...
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Topic Modal -->
+    <div class="modal fade" id="createTopicModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-plus me-2"></i>Create New Topic
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="createTopicForm">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="topicNamespace" class="form-label">Namespace *</label>
+                                    <input type="text" class="form-control" id="topicNamespace" name="namespace" required 
+                                           placeholder="e.g., default">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="topicName" class="form-label">Topic Name *</label>
+                                    <input type="text" class="form-control" id="topicName" name="name" required 
+                                           placeholder="e.g., user-events">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="partitionCount" class="form-label">Partition Count *</label>
+                                    <input type="number" class="form-control" id="partitionCount" name="partitionCount" 
+                                           required min="1" max="100" value="6">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Retention Configuration -->
+                        <div class="card mt-3">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-clock me-2"></i>Retention Policy
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-check mb-3">
+                                    <input class="form-check-input" type="checkbox" id="enableRetention" 
+                                           name="enableRetention" onchange="toggleRetentionFields()">
+                                    <label class="form-check-label" for="enableRetention">
+                                        Enable data retention
+                                    </label>
+                                </div>
+                                <div id="retentionFields" style="display: none;">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="retentionValue" class="form-label">Retention Duration</label>
+                                                <input type="number" class="form-control" id="retentionValue" 
+                                                       name="retentionValue" min="1" value="7">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="retentionUnit" class="form-label">Unit</label>
+                                                <select class="form-control" id="retentionUnit" name="retentionUnit">
+                                                    <option value="hours">Hours</option>
+                                                    <option value="days" selected>Days</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-info-circle me-2"></i>
+                                        Data older than this duration will be automatically purged to save storage space.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="createTopic()">
+                        <i class="fas fa-plus me-1"></i>Create Topic
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        // Topic management functions
+        function showCreateTopicModal() {
+            var modal = new bootstrap.Modal(document.getElementById('createTopicModal'));
+            modal.show();
+        }
+
+        function toggleRetentionFields() {
+            var enableRetention = document.getElementById('enableRetention').checked;
+            var retentionFields = document.getElementById('retentionFields');
+            
+            if (enableRetention) {
+                retentionFields.style.display = 'block';
+            } else {
+                retentionFields.style.display = 'none';
+            }
+        }
+
+        function createTopic() {
+            var form = document.getElementById('createTopicForm');
+            var formData = new FormData(form);
+            
+            if (!form.checkValidity()) {
+                form.classList.add('was-validated');
+                return;
+            }
+            
+            var namespace = formData.get('namespace');
+            var name = formData.get('name');
+            var partitionCount = formData.get('partitionCount');
+            var enableRetention = formData.get('enableRetention');
+            var retentionValue = enableRetention === 'on' ? parseInt(formData.get('retentionValue')) : 0;
+            var retentionUnit = enableRetention === 'on' ? formData.get('retentionUnit') : 'hours';
+            
+            // Convert retention to seconds
+            var retentionSeconds = 0;
+            if (enableRetention === 'on' && retentionValue > 0) {
+                if (retentionUnit === 'hours') {
+                    retentionSeconds = retentionValue * 3600;
+                } else if (retentionUnit === 'days') {
+                    retentionSeconds = retentionValue * 86400;
+                }
+            }
+            
+            var topicData = {
+                namespace: namespace,
+                name: name,
+                partition_count: parseInt(partitionCount),
+                retention: {
+                    enabled: enableRetention === 'on',
+                    retention_seconds: retentionSeconds
+                }
+            };
+            
+            // Create the topic
+            fetch('/api/mq/topics/create', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(topicData)
+            })
+            .then(response => {
+                if (response.ok) {
+                    return response.json();
+                }
+                throw new Error('Failed to create topic');
+            })
+            .then(data => {
+                // Hide modal and refresh page
+                var modal = bootstrap.Modal.getInstance(document.getElementById('createTopicModal'));
+                modal.hide();
+                location.reload();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error creating topic: ' + error.message);
+            });
+        }
+
+        function exportTopicsCSV() {
+            var csvContent = 'Namespace,Topic Name,Partitions,Retention Enabled,Retention Value,Retention Unit\n';
+            
+            var rows = document.querySelectorAll('#topicsTable tbody tr.topic-row');
+            rows.forEach(function(row) {
+                var cells = row.querySelectorAll('td');
+                var namespace = cells[0].textContent.trim();
+                var topicName = cells[1].textContent.trim();
+                var partitions = cells[2].textContent.trim();
+                var retention = cells[3].textContent.trim();
+                
+                var retentionEnabled = retention !== 'Disabled';
+                var retentionValue = retentionEnabled ? retention.split(' ')[0] : '';
+                var retentionUnit = retentionEnabled ? retention.split(' ')[1] : '';
+                
+                csvContent += namespace + ',' + topicName + ',' + partitions + ',' + retentionEnabled + ',' + retentionValue + ',' + retentionUnit + '\n';
+            });
+            
+            var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            var link = document.createElement('a');
+            var url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'topics_export.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Topic details functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            // Handle view topic details buttons
+            document.querySelectorAll('[data-action="view-topic-details"]').forEach(function(button) {
+                button.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    var topicName = this.getAttribute('data-topic-name');
+                    var detailsRow = document.getElementById('details-' + topicName.replace(/\./g, '_'));
+                    
+                    if (detailsRow.style.display === 'none') {
+                        detailsRow.style.display = 'table-row';
+                        this.innerHTML = '<i class="fas fa-eye-slash"></i>';
+                        
+                        // Load topic details
+                        loadTopicDetails(topicName);
+                    } else {
+                        detailsRow.style.display = 'none';
+                        this.innerHTML = '<i class="fas fa-eye"></i>';
+                    }
+                });
+            });
+        });
+
+        function loadTopicDetails(topicName) {
+            var detailsRow = document.getElementById('details-' + topicName.replace(/\./g, '_'));
+            var contentDiv = detailsRow.querySelector('.topic-details-content');
+            
+            fetch('/admin/topics/' + encodeURIComponent(topicName) + '/details')
+                .then(response => response.json())
+                .then(data => {
+                    var html = '<div class="row">';
+                    html += '<div class="col-md-6">';
+                    html += '<h6>Topic Configuration</h6>';
+                    html += '<ul class="list-unstyled">';
+                    html += '<li><strong>Full Name:</strong> ' + data.name + '</li>';
+                    html += '<li><strong>Partitions:</strong> ' + data.partitions + '</li>';
+                    html += '<li><strong>Created:</strong> ' + (data.created || 'N/A') + '</li>';
+                    html += '</ul>';
+                    html += '</div>';
+                    html += '<div class="col-md-6">';
+                    html += '<h6>Retention Policy</h6>';
+                    if (data.retention && data.retention.enabled) {
+                        html += '<p><i class="fas fa-check-circle text-success"></i> Enabled</p>';
+                        html += '<p><strong>Duration:</strong> ' + data.retention.value + ' ' + data.retention.unit + '</p>';
+                    } else {
+                        html += '<p><i class="fas fa-times-circle text-danger"></i> Disabled</p>';
+                    }
+                    html += '</div>';
+                    html += '</div>';
+                    
+                    contentDiv.innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error loading topic details:', error);
+                    contentDiv.innerHTML = '<div class="alert alert-danger">Failed to load topic details</div>';
+                });
+        }
+    </script>
+} 

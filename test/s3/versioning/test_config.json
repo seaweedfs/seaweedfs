@@ -1,0 +1,9 @@
+{
+  "endpoint": "http://localhost:8333",
+  "access_key": "some_access_key1",
+  "secret_key": "some_secret_key1",
+  "region": "us-east-1",
+  "bucket_prefix": "test-versioning-",
+  "use_ssl": false,
+  "skip_verify_ssl": true
+} 

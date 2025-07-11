@@ -2,8 +2,10 @@ package topic
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -58,6 +60,38 @@ func (t Topic) ReadConfFile(client filer_pb.SeaweedFilerClient) (*mq_pb.Configur
 		return nil, fmt.Errorf("unmarshal topic %v conf: %v", t, err)
 	}
 	return conf, nil
+}
+
+// ReadConfFileWithMetadata reads the topic configuration and returns it along with file metadata
+func (t Topic) ReadConfFileWithMetadata(client filer_pb.SeaweedFilerClient) (*mq_pb.ConfigureTopicResponse, int64, int64, error) {
+	// Use LookupDirectoryEntry to get both content and metadata
+	request := &filer_pb.LookupDirectoryEntryRequest{
+		Directory: t.Dir(),
+		Name:      filer.TopicConfFile,
+	}
+
+	resp, err := filer_pb.LookupEntry(context.Background(), client, request)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil, 0, 0, err
+		}
+		return nil, 0, 0, fmt.Errorf("lookup topic.conf of %v: %v", t, err)
+	}
+
+	// Get file metadata
+	var createdAtNs, modifiedAtNs int64
+	if resp.Entry.Attributes != nil {
+		createdAtNs = resp.Entry.Attributes.Crtime * 1e9 // convert seconds to nanoseconds
+		modifiedAtNs = resp.Entry.Attributes.Mtime * 1e9 // convert seconds to nanoseconds
+	}
+
+	// Parse the configuration
+	conf := &mq_pb.ConfigureTopicResponse{}
+	if err = jsonpb.Unmarshal(resp.Entry.Content, conf); err != nil {
+		return nil, 0, 0, fmt.Errorf("unmarshal topic %v conf: %v", t, err)
+	}
+
+	return conf, createdAtNs, modifiedAtNs, nil
 }
 
 func (t Topic) WriteConfFile(client filer_pb.SeaweedFilerClient, conf *mq_pb.ConfigureTopicResponse) error {

@@ -3,15 +3,16 @@ package broker
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"google.golang.org/grpc/peer"
 	"io"
 	"math/rand"
 	"net"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"google.golang.org/grpc/peer"
 )
 
 // PUB
@@ -69,6 +70,11 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	var receivedSequence, acknowledgedSequence int64
 	var isClosed bool
 
+	// process each published messages
+	clientName := fmt.Sprintf("%v-%4d", findClientAddress(stream.Context()), rand.Intn(10000))
+	publisher := topic.NewLocalPublisher()
+	localTopicPartition.Publishers.AddPublisher(clientName, publisher)
+
 	// start sending ack to publisher
 	ackInterval := int64(1)
 	if initMessage.AckInterval > 0 {
@@ -90,6 +96,8 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 				if err := stream.Send(response); err != nil {
 					glog.Errorf("Error sending response %v: %v", response, err)
 				}
+				// Update acknowledged offset for this publisher
+				publisher.UpdateAckedOffset(acknowledgedSequence)
 				// println("sent ack", acknowledgedSequence, "=>", initMessage.PublisherName)
 				lastAckTime = time.Now()
 			} else {
@@ -97,10 +105,6 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			}
 		}
 	}()
-
-	// process each published messages
-	clientName := fmt.Sprintf("%v-%4d/%s/%v", findClientAddress(stream.Context()), rand.Intn(10000), initMessage.Topic, initMessage.Partition)
-	localTopicPartition.Publishers.AddPublisher(clientName, topic.NewLocalPublisher())
 
 	defer func() {
 		// remove the publisher
@@ -143,6 +147,9 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		if err = localTopicPartition.Publish(dataMessage); err != nil {
 			return fmt.Errorf("topic %v partition %v publish error: %v", initMessage.Topic, initMessage.Partition, err)
 		}
+
+		// Update published offset and last seen time for this publisher
+		publisher.UpdatePublishedOffset(dataMessage.TsNs)
 	}
 
 	glog.V(0).Infof("topic %v partition %v publish stream from %s closed.", initMessage.Topic, initMessage.Partition, initMessage.PublisherName)

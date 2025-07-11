@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -44,6 +47,9 @@ type AdminServer struct {
 	// Maintenance system
 	maintenanceManager *maintenance.MaintenanceManager
 
+	// Topic retention purger
+	topicRetentionPurger *TopicRetentionPurger
+
 	// Worker gRPC server
 	workerGrpcServer *WorkerGrpcServer
 }
@@ -60,6 +66,9 @@ func NewAdminServer(masterAddress string, templateFS http.FileSystem, dataDir st
 		filerCacheExpiration: 30 * time.Second, // Cache filers for 30 seconds
 		configPersistence:    NewConfigPersistence(dataDir),
 	}
+
+	// Initialize topic retention purger
+	server.topicRetentionPurger = NewTopicRetentionPurger(server)
 
 	// Initialize credential manager with defaults
 	credentialManager, err := credential.NewCredentialManagerWithDefaults("")
@@ -257,14 +266,41 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					quotaEnabled = false
 				}
 
+				// Get versioning and object lock information from extended attributes
+				versioningEnabled := false
+				objectLockEnabled := false
+				objectLockMode := ""
+				var objectLockDuration int32 = 0
+
+				if resp.Entry.Extended != nil {
+					if versioningBytes, exists := resp.Entry.Extended["s3.versioning"]; exists {
+						versioningEnabled = string(versioningBytes) == "Enabled"
+					}
+					if objectLockBytes, exists := resp.Entry.Extended["s3.objectlock"]; exists {
+						objectLockEnabled = string(objectLockBytes) == "Enabled"
+					}
+					if objectLockModeBytes, exists := resp.Entry.Extended["s3.objectlock.mode"]; exists {
+						objectLockMode = string(objectLockModeBytes)
+					}
+					if objectLockDurationBytes, exists := resp.Entry.Extended["s3.objectlock.duration"]; exists {
+						if duration, err := strconv.ParseInt(string(objectLockDurationBytes), 10, 32); err == nil {
+							objectLockDuration = int32(duration)
+						}
+					}
+				}
+
 				bucket := S3Bucket{
-					Name:         bucketName,
-					CreatedAt:    time.Unix(resp.Entry.Attributes.Crtime, 0),
-					Size:         size,
-					ObjectCount:  objectCount,
-					LastModified: time.Unix(resp.Entry.Attributes.Mtime, 0),
-					Quota:        quota,
-					QuotaEnabled: quotaEnabled,
+					Name:               bucketName,
+					CreatedAt:          time.Unix(resp.Entry.Attributes.Crtime, 0),
+					Size:               size,
+					ObjectCount:        objectCount,
+					LastModified:       time.Unix(resp.Entry.Attributes.Mtime, 0),
+					Quota:              quota,
+					QuotaEnabled:       quotaEnabled,
+					VersioningEnabled:  versioningEnabled,
+					ObjectLockEnabled:  objectLockEnabled,
+					ObjectLockMode:     objectLockMode,
+					ObjectLockDuration: objectLockDuration,
 				}
 				buckets = append(buckets, bucket)
 			}
@@ -304,6 +340,45 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 
 		details.Bucket.CreatedAt = time.Unix(bucketResp.Entry.Attributes.Crtime, 0)
 		details.Bucket.LastModified = time.Unix(bucketResp.Entry.Attributes.Mtime, 0)
+
+		// Get quota information from entry
+		quota := bucketResp.Entry.Quota
+		quotaEnabled := quota > 0
+		if quota < 0 {
+			// Negative quota means disabled
+			quota = -quota
+			quotaEnabled = false
+		}
+		details.Bucket.Quota = quota
+		details.Bucket.QuotaEnabled = quotaEnabled
+
+		// Get versioning and object lock information from extended attributes
+		versioningEnabled := false
+		objectLockEnabled := false
+		objectLockMode := ""
+		var objectLockDuration int32 = 0
+
+		if bucketResp.Entry.Extended != nil {
+			if versioningBytes, exists := bucketResp.Entry.Extended["s3.versioning"]; exists {
+				versioningEnabled = string(versioningBytes) == "Enabled"
+			}
+			if objectLockBytes, exists := bucketResp.Entry.Extended["s3.objectlock"]; exists {
+				objectLockEnabled = string(objectLockBytes) == "Enabled"
+			}
+			if objectLockModeBytes, exists := bucketResp.Entry.Extended["s3.objectlock.mode"]; exists {
+				objectLockMode = string(objectLockModeBytes)
+			}
+			if objectLockDurationBytes, exists := bucketResp.Entry.Extended["s3.objectlock.duration"]; exists {
+				if duration, err := strconv.ParseInt(string(objectLockDurationBytes), 10, 32); err == nil {
+					objectLockDuration = int32(duration)
+				}
+			}
+		}
+
+		details.Bucket.VersioningEnabled = versioningEnabled
+		details.Bucket.ObjectLockEnabled = objectLockEnabled
+		details.Bucket.ObjectLockMode = objectLockMode
+		details.Bucket.ObjectLockDuration = objectLockDuration
 
 		// List objects in bucket (recursively)
 		return s.listBucketObjects(client, bucketPath, "", details)
@@ -595,6 +670,48 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 		Filers:      filers,
 		TotalFilers: len(filers),
 		LastUpdated: time.Now(),
+	}, nil
+}
+
+// GetClusterBrokers retrieves cluster message brokers data
+func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
+	var brokers []MessageBrokerInfo
+
+	// Get broker information from master using ListClusterNodes
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.BrokerType,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Process each broker node
+		for _, node := range resp.ClusterNodes {
+			createdAt := time.Unix(0, node.CreatedAtNs)
+
+			brokerInfo := MessageBrokerInfo{
+				Address:    node.Address,
+				DataCenter: node.DataCenter,
+				Rack:       node.Rack,
+				Version:    node.Version,
+				CreatedAt:  createdAt,
+			}
+
+			brokers = append(brokers, brokerInfo)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get broker nodes from master: %v", err)
+	}
+
+	return &ClusterBrokersData{
+		Brokers:      brokers,
+		TotalBrokers: len(brokers),
+		LastUpdated:  time.Now(),
 	}, nil
 }
 
@@ -1054,6 +1171,17 @@ func (as *AdminServer) triggerMaintenanceScan() error {
 	return as.maintenanceManager.TriggerScan()
 }
 
+// TriggerTopicRetentionPurgeAPI triggers topic retention purge via HTTP API
+func (as *AdminServer) TriggerTopicRetentionPurgeAPI(c *gin.Context) {
+	err := as.TriggerTopicRetentionPurge()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Topic retention purge triggered successfully"})
+}
+
 // GetConfigInfo returns information about the admin configuration
 func (as *AdminServer) GetConfigInfo(c *gin.Context) {
 	configInfo := as.configPersistence.GetConfigInfo()
@@ -1182,6 +1310,157 @@ func (s *AdminServer) StopMaintenanceManager() {
 	if s.maintenanceManager != nil {
 		s.maintenanceManager.Stop()
 	}
+}
+
+// TriggerTopicRetentionPurge triggers topic data purging based on retention policies
+func (s *AdminServer) TriggerTopicRetentionPurge() error {
+	if s.topicRetentionPurger == nil {
+		return fmt.Errorf("topic retention purger not initialized")
+	}
+
+	glog.V(0).Infof("Triggering topic retention purge")
+	return s.topicRetentionPurger.PurgeExpiredTopicData()
+}
+
+// GetTopicRetentionPurger returns the topic retention purger
+func (s *AdminServer) GetTopicRetentionPurger() *TopicRetentionPurger {
+	return s.topicRetentionPurger
+}
+
+// CreateTopicWithRetention creates a new topic with optional retention configuration
+func (s *AdminServer) CreateTopicWithRetention(namespace, name string, partitionCount int32, retentionEnabled bool, retentionSeconds int64) error {
+	// Find broker leader to create the topic
+	brokerLeader, err := s.findBrokerLeader()
+	if err != nil {
+		return fmt.Errorf("failed to find broker leader: %v", err)
+	}
+
+	// Create retention configuration
+	var retention *mq_pb.TopicRetention
+	if retentionEnabled {
+		retention = &mq_pb.TopicRetention{
+			Enabled:          true,
+			RetentionSeconds: retentionSeconds,
+		}
+	} else {
+		retention = &mq_pb.TopicRetention{
+			Enabled:          false,
+			RetentionSeconds: 0,
+		}
+	}
+
+	// Create the topic via broker
+	err = s.withBrokerClient(brokerLeader, func(client mq_pb.SeaweedMessagingClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := client.ConfigureTopic(ctx, &mq_pb.ConfigureTopicRequest{
+			Topic: &schema_pb.Topic{
+				Namespace: namespace,
+				Name:      name,
+			},
+			PartitionCount: partitionCount,
+			Retention:      retention,
+		})
+		return err
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create topic: %v", err)
+	}
+
+	glog.V(0).Infof("Created topic %s.%s with %d partitions (retention: enabled=%v, seconds=%d)",
+		namespace, name, partitionCount, retentionEnabled, retentionSeconds)
+	return nil
+}
+
+// UpdateTopicRetention updates the retention configuration for an existing topic
+func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool, retentionSeconds int64) error {
+	// Get broker information from master
+	var brokerAddress string
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.BrokerType,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Find the first available broker
+		for _, node := range resp.ClusterNodes {
+			brokerAddress = node.Address
+			break
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to get broker nodes from master: %v", err)
+	}
+
+	if brokerAddress == "" {
+		return fmt.Errorf("no active brokers found")
+	}
+
+	// Create gRPC connection
+	conn, err := grpc.Dial(brokerAddress, s.grpcDialOption)
+	if err != nil {
+		return fmt.Errorf("failed to connect to broker: %v", err)
+	}
+	defer conn.Close()
+
+	client := mq_pb.NewSeaweedMessagingClient(conn)
+
+	// First, get the current topic configuration to preserve existing settings
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	currentConfig, err := client.GetTopicConfiguration(ctx, &mq_pb.GetTopicConfigurationRequest{
+		Topic: &schema_pb.Topic{
+			Namespace: namespace,
+			Name:      name,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get current topic configuration: %v", err)
+	}
+
+	// Create the topic configuration request, preserving all existing settings
+	configRequest := &mq_pb.ConfigureTopicRequest{
+		Topic: &schema_pb.Topic{
+			Namespace: namespace,
+			Name:      name,
+		},
+		// Preserve existing partition count - this is critical!
+		PartitionCount: currentConfig.PartitionCount,
+		// Preserve existing record type if it exists
+		RecordType: currentConfig.RecordType,
+	}
+
+	// Update only the retention configuration
+	if enabled {
+		configRequest.Retention = &mq_pb.TopicRetention{
+			RetentionSeconds: retentionSeconds,
+			Enabled:          true,
+		}
+	} else {
+		// Set retention to disabled
+		configRequest.Retention = &mq_pb.TopicRetention{
+			RetentionSeconds: 0,
+			Enabled:          false,
+		}
+	}
+
+	// Send the configuration request with preserved settings
+	_, err = client.ConfigureTopic(ctx, configRequest)
+	if err != nil {
+		return fmt.Errorf("failed to update topic retention: %v", err)
+	}
+
+	glog.V(0).Infof("Updated topic %s.%s retention (enabled: %v, seconds: %d) while preserving %d partitions",
+		namespace, name, enabled, retentionSeconds, currentConfig.PartitionCount)
+	return nil
 }
 
 // Shutdown gracefully shuts down the admin server

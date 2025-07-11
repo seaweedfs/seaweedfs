@@ -1,0 +1,181 @@
+name: "S3 Versioning Tests (Go)"
+
+on:
+  pull_request:
+  
+concurrency:
+  group: ${{ github.head_ref }}/s3-versioning
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: weed
+
+jobs:
+  s3-versioning-tests:
+    name: S3 Versioning Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        test-type: ["quick", "comprehensive"]
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Versioning Tests - ${{ matrix.test-type }}
+        timeout-minutes: 25
+        working-directory: test/s3/versioning
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting Tests ==="
+          
+          # Run tests with automatic server management
+          # The test-with-server target handles server startup/shutdown automatically
+          if [ "${{ matrix.test-type }}" = "quick" ]; then
+            # Override TEST_PATTERN for quick tests only
+            make test-with-server TEST_PATTERN="TestBucketListReturnDataVersioning|TestVersioningBasicWorkflow|TestVersioningDeleteMarkers"
+          else
+            # Run all versioning tests
+            make test-with-server
+          fi
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/versioning
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            echo "Last 100 lines of server logs:"
+            tail -100 weed-test.log
+          else
+            echo "No server log file found"
+          fi
+          
+          echo "=== Test Environment ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|9333|8080)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-versioning-test-logs-${{ matrix.test-type }}
+          path: test/s3/versioning/weed-test*.log
+          retention-days: 3
+
+  s3-versioning-compatibility:
+    name: S3 Versioning Compatibility Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run Core Versioning Test (Python s3tests equivalent)
+        timeout-minutes: 15
+        working-directory: test/s3/versioning
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run the specific test that is equivalent to the Python s3tests
+          make test-with-server || {
+            echo "❌ Test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-versioning-compatibility-logs
+          path: test/s3/versioning/weed-test*.log
+          retention-days: 3
+
+  s3-versioning-stress:
+    name: S3 Versioning Stress Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    # Only run stress tests on master branch pushes to avoid overloading PR testing
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Versioning Stress Tests
+        timeout-minutes: 30
+        working-directory: test/s3/versioning
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run stress tests (concurrent operations)
+          make test-versioning-stress || {
+            echo "❌ Stress test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -200 weed-test.log
+            fi
+            make clean
+            exit 1
+          }
+          make clean
+
+      - name: Upload stress test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-versioning-stress-logs
+          path: test/s3/versioning/weed-test*.log
+          retention-days: 7 

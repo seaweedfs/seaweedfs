@@ -2,7 +2,6 @@ package command
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	httppprof "net/http/pprof"
 	"os"
@@ -11,26 +10,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
-
-	"github.com/seaweedfs/seaweedfs/weed/util/grace"
-
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/server/constants"
-	"github.com/seaweedfs/seaweedfs/weed/util/httpdown"
-
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/httpdown"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 var (
@@ -398,6 +394,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	if viper.GetString("https.volume.ca") != "" {
 		clientCertFile := viper.GetString("https.volume.ca")
 		httpS.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
+		security.FixTlsConfig(util.GetViper(), httpS.TLSConfig)
 	}
 
 	clusterHttpServer := httpDown.Serve(httpS, listener)

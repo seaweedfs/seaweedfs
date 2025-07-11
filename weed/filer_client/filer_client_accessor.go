@@ -41,3 +41,18 @@ func (fca *FilerClientAccessor) ReadTopicConfFromFiler(t topic.Topic) (conf *mq_
 
 	return conf, nil
 }
+
+// ReadTopicConfFromFilerWithMetadata reads topic configuration along with file creation and modification times
+func (fca *FilerClientAccessor) ReadTopicConfFromFilerWithMetadata(t topic.Topic) (conf *mq_pb.ConfigureTopicResponse, createdAtNs, modifiedAtNs int64, err error) {
+
+	glog.V(1).Infof("load conf with metadata for topic %v from filer", t)
+
+	if err = fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		conf, createdAtNs, modifiedAtNs, err = t.ReadConfFileWithMetadata(client)
+		return err
+	}); err != nil {
+		return nil, 0, 0, err
+	}
+
+	return conf, createdAtNs, modifiedAtNs, nil
+}

@@ -133,28 +133,20 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                             </td>
                                             <td>
                                                 <div class="btn-group btn-group-sm" role="group">
-                                                    <button type="button" 
-                                                            class="btn btn-outline-info btn-sm"
-                                                            title="View Details"
-                                                            onclick={ templ.ComponentScript{Call: fmt.Sprintf("showUserDetails('%s')", user.Username)} }>
-                                                        <i class="fas fa-eye"></i>
+                                                    <button type="button" class="btn btn-outline-info" 
+                                                            data-action="show-user-details" data-username={ user.Username }>
+                                                        <i class="fas fa-info-circle"></i>
                                                     </button>
-                                                    <button type="button" 
-                                                            class="btn btn-outline-primary btn-sm"
-                                                            title="Edit User"
-                                                            onclick={ templ.ComponentScript{Call: fmt.Sprintf("editUser('%s')", user.Username)} }>
+                                                    <button type="button" class="btn btn-outline-primary" 
+                                                            data-action="edit-user" data-username={ user.Username }>
                                                         <i class="fas fa-edit"></i>
                                                     </button>
-                                                    <button type="button" 
-                                                            class="btn btn-outline-warning btn-sm"
-                                                            title="Manage Keys"
-                                                            onclick={ templ.ComponentScript{Call: fmt.Sprintf("manageAccessKeys('%s')", user.Username)} }>
+                                                    <button type="button" class="btn btn-outline-secondary" 
+                                                            data-action="manage-access-keys" data-username={ user.Username }>
                                                         <i class="fas fa-key"></i>
                                                     </button>
-                                                    <button type="button" 
-                                                            class="btn btn-outline-danger btn-sm"
-                                                            title="Delete User"
-                                                            onclick={ templ.ComponentScript{Call: fmt.Sprintf("deleteUser('%s')", user.Username)} }>
+                                                    <button type="button" class="btn btn-outline-danger" 
+                                                            data-action="delete-user" data-username={ user.Username }>
                                                         <i class="fas fa-trash"></i>
                                                     </button>
                                                 </div>

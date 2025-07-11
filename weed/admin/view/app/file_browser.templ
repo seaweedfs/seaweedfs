@@ -231,19 +231,19 @@ templ FileBrowser(data dash.FileBrowserData) {
 										<code class="small">{ entry.Mode }</code>
 									</td>
 									<td>
-										<div class="btn-group btn-group-sm">
+										<div class="btn-group btn-group-sm" role="group">
 											if !entry.IsDirectory {
-												<button type="button" class="btn btn-outline-primary btn-sm" title="Download" onclick={ templ.ComponentScript{Call: fmt.Sprintf("downloadFile('%s')", entry.FullPath)} }>
+												<button type="button" class="btn btn-outline-primary btn-sm" title="Download" data-action="download" data-path={ entry.FullPath }>
 													<i class="fas fa-download"></i>
 												</button>
-												<button type="button" class="btn btn-outline-info btn-sm" title="View" onclick={ templ.ComponentScript{Call: fmt.Sprintf("viewFile('%s')", entry.FullPath)} }>
+												<button type="button" class="btn btn-outline-info btn-sm" title="View" data-action="view" data-path={ entry.FullPath }>
 													<i class="fas fa-eye"></i>
 												</button>
 											}
-											<button type="button" class="btn btn-outline-secondary btn-sm" title="Properties" onclick={ templ.ComponentScript{Call: fmt.Sprintf("showProperties('%s')", entry.FullPath)} }>
-												<i class="fas fa-info"></i>
+											<button type="button" class="btn btn-outline-secondary btn-sm" title="Properties" data-action="properties" data-path={ entry.FullPath }>
+												<i class="fas fa-info-circle"></i>
 											</button>
-											<button type="button" class="btn btn-outline-danger btn-sm" title="Delete" onclick={ templ.ComponentScript{Call: fmt.Sprintf("confirmDelete('%s')", entry.FullPath)} }>
+											<button type="button" class="btn btn-outline-danger btn-sm" title="Delete" data-action="delete" data-path={ entry.FullPath }>
 												<i class="fas fa-trash"></i>
 											</button>
 										</div>

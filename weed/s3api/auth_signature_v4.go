@@ -763,9 +763,14 @@ func isDefaultPort(scheme, port string) bool {
 		return true
 	}
 
-	lowerCaseScheme := strings.ToLower(scheme)
-	return (lowerCaseScheme == "http" && port == "80") ||
-		(lowerCaseScheme == "https" && port == "443")
+	switch port {
+	case "80":
+		return strings.EqualFold(scheme, "http")
+	case "443":
+		return strings.EqualFold(scheme, "https")
+	default:
+		return false
+	}
 }
 
 // getSignedHeaders generate a string i.e alphabetically sorted, semicolon-separated list of lowercase request header names

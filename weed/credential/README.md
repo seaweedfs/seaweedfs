@@ -20,7 +20,6 @@ This document shows how the credential store has been integrated into SeaweedFS'
 
 The credential store provides a pluggable backend for storing S3 identities and credentials, supporting:
 - **Filer-based storage** (filer_etc) - Uses existing filer storage (default)
-- **SQLite** - Local database storage
 - **PostgreSQL** - Shared database for multiple servers
 - **Memory** - In-memory storage for testing
 
@@ -40,10 +39,6 @@ This creates a `credential.toml` file with all available options. The filer_etc 
 [credential.filer_etc]
 enabled = true
 
-# SQLite credential store (recommended for single-node deployments)
-[credential.sqlite]
-enabled = false
-file = "/var/lib/seaweedfs/credentials.db"
 
 # PostgreSQL credential store (recommended for multi-node deployments)
 [credential.postgres]
@@ -79,14 +74,7 @@ enabled = true
 
 This uses the existing filer storage and is compatible with current deployments.
 
-### SQLite Store
 
-```toml
-[credential.sqlite]
-enabled = true
-file = "/var/lib/seaweedfs/credentials.db"
-table_prefix = "sw_"
-```
 
 ### PostgreSQL Store
 
@@ -121,15 +109,12 @@ All credential configuration can be overridden with environment variables:
 # Override PostgreSQL password
 export WEED_CREDENTIAL_POSTGRES_PASSWORD=secret
 
-# Override SQLite file path
-export WEED_CREDENTIAL_SQLITE_FILE=/custom/path/credentials.db
 
 # Override PostgreSQL hostname
 export WEED_CREDENTIAL_POSTGRES_HOSTNAME=db.example.com
 
 # Enable/disable stores
 export WEED_CREDENTIAL_FILER_ETC_ENABLED=true
-export WEED_CREDENTIAL_SQLITE_ENABLED=false
 ```
 
 Rules:
@@ -159,7 +144,7 @@ if credConfig, err := credential.LoadCredentialConfiguration(); err == nil && cr
 ## Benefits
 
 1. **Easy Configuration** - Generate template with `weed scaffold -config=credential`
-2. **Pluggable Storage** - Switch between filer_etc, SQLite, PostgreSQL without code changes
+2. **Pluggable Storage** - Switch between filer_etc, PostgreSQL without code changes
 3. **Backward Compatibility** - Filer-based storage works with existing deployments
 4. **Scalability** - Database stores support multiple concurrent servers
 5. **Performance** - Database access can be faster than file-based storage

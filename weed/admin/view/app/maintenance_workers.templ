@@ -202,11 +202,11 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
                                                 </td>
                                                 <td>
                                                     <div class="btn-group btn-group-sm" role="group">
-                                                        <button type="button" class="btn btn-outline-info" onclick={ templ.ComponentScript{Call: "showWorkerDetails"} } data-worker-id={ worker.Worker.ID }>
+                                                        <button type="button" class="btn btn-outline-info" onclick="showWorkerDetails(event)" data-worker-id={ worker.Worker.ID }>
                                                             <i class="fas fa-info-circle"></i>
                                                         </button>
                                                         if worker.Worker.Status == "active" {
-                                                            <button type="button" class="btn btn-outline-warning" onclick={ templ.ComponentScript{Call: "pauseWorker"} } data-worker-id={ worker.Worker.ID }>
+                                                            <button type="button" class="btn btn-outline-warning" onclick="pauseWorker(event)" data-worker-id={ worker.Worker.ID }>
                                                                 <i class="fas fa-pause"></i>
                                                             </button>
                                                         }
@@ -247,50 +247,48 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
         var modal = new bootstrap.Modal(document.getElementById('workerDetailsModal'));
         
         // Load worker details
-        fetch(`/api/maintenance/workers/${workerID}`)
+        fetch('/api/maintenance/workers/' + workerID)
             .then(response => response.json())
             .then(data => {
                 const content = document.getElementById('workerDetailsContent');
-                content.innerHTML = `
-                    <div class="row">
-                        <div class="col-md-6">
-                            <h6>Worker Information</h6>
-                            <ul class="list-unstyled">
-                                <li><strong>ID:</strong> ${data.worker.id}</li>
-                                <li><strong>Address:</strong> ${data.worker.address}</li>
-                                <li><strong>Status:</strong> ${data.worker.status}</li>
-                                <li><strong>Max Concurrent:</strong> ${data.worker.max_concurrent}</li>
-                                <li><strong>Current Load:</strong> ${data.worker.current_load}</li>
-                            </ul>
-                        </div>
-                        <div class="col-md-6">
-                            <h6>Performance Metrics</h6>
-                            <ul class="list-unstyled">
-                                <li><strong>Tasks Completed:</strong> ${data.performance.tasks_completed}</li>
-                                <li><strong>Tasks Failed:</strong> ${data.performance.tasks_failed}</li>
-                                <li><strong>Success Rate:</strong> ${data.performance.success_rate.toFixed(1)}%</li>
-                                <li><strong>Average Task Time:</strong> ${formatDuration(data.performance.average_task_time)}</li>
-                                <li><strong>Uptime:</strong> ${formatDuration(data.performance.uptime)}</li>
-                            </ul>
-                        </div>
-                    </div>
-                    <hr>
-                    <h6>Current Tasks</h6>
-                    ${data.current_tasks.length === 0 ? 
-                        '<p class="text-muted">No current tasks</p>' :
-                        data.current_tasks.map(task => `
-                            <div class="card mb-2">
-                                <div class="card-body py-2">
-                                    <div class="d-flex justify-content-between">
-                                        <span><strong>${task.type}</strong> - Volume ${task.volume_id}</span>
-                                        <span class="badge bg-info">${task.status}</span>
-                                    </div>
-                                    <small class="text-muted">${task.reason}</small>
-                                </div>
-                            </div>
-                        `).join('')
-                    }
-                `;
+                content.innerHTML = '<div class="row">' +
+                    '<div class="col-md-6">' +
+                        '<h6>Worker Information</h6>' +
+                        '<ul class="list-unstyled">' +
+                            '<li><strong>ID:</strong> ' + data.worker.id + '</li>' +
+                            '<li><strong>Address:</strong> ' + data.worker.address + '</li>' +
+                            '<li><strong>Status:</strong> ' + data.worker.status + '</li>' +
+                            '<li><strong>Max Concurrent:</strong> ' + data.worker.max_concurrent + '</li>' +
+                            '<li><strong>Current Load:</strong> ' + data.worker.current_load + '</li>' +
+                        '</ul>' +
+                    '</div>' +
+                    '<div class="col-md-6">' +
+                        '<h6>Performance Metrics</h6>' +
+                        '<ul class="list-unstyled">' +
+                            '<li><strong>Tasks Completed:</strong> ' + data.performance.tasks_completed + '</li>' +
+                            '<li><strong>Tasks Failed:</strong> ' + data.performance.tasks_failed + '</li>' +
+                            '<li><strong>Success Rate:</strong> ' + data.performance.success_rate.toFixed(1) + '%</li>' +
+                            '<li><strong>Average Task Time:</strong> ' + formatDuration(data.performance.average_task_time) + '</li>' +
+                            '<li><strong>Uptime:</strong> ' + formatDuration(data.performance.uptime) + '</li>' +
+                        '</ul>' +
+                    '</div>' +
+                '</div>' +
+                '<hr>' +
+                '<h6>Current Tasks</h6>' +
+                (data.current_tasks.length === 0 ? 
+                    '<p class="text-muted">No current tasks</p>' :
+                    data.current_tasks.map(task => 
+                        '<div class="card mb-2">' +
+                            '<div class="card-body py-2">' +
+                                '<div class="d-flex justify-content-between">' +
+                                    '<span><strong>' + task.type + '</strong> - Volume ' + task.volume_id + '</span>' +
+                                    '<span class="badge bg-info">' + task.status + '</span>' +
+                                '</div>' +
+                                '<small class="text-muted">' + task.reason + '</small>' +
+                            '</div>' +
+                        '</div>'
+                    ).join('')
+                );
                 modal.show();
             })
             .catch(error => {
@@ -305,7 +303,7 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
         const workerID = event.target.closest('button').getAttribute('data-worker-id');
         
         if (confirm('Are you sure you want to pause this worker?')) {
-            fetch(`/api/maintenance/workers/${workerID}/pause`, {
+            fetch('/api/maintenance/workers/' + workerID + '/pause', {
                 method: 'POST'
             })
             .then(response => response.json())
@@ -329,11 +327,11 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
         const hours = Math.floor(minutes / 60);
         
         if (hours > 0) {
-            return `${hours}h ${minutes % 60}m`;
+            return hours + 'h ' + (minutes % 60) + 'm';
         } else if (minutes > 0) {
-            return `${minutes}m ${seconds % 60}s`;
+            return minutes + 'm ' + (seconds % 60) + 's';
         } else {
-            return `${seconds}s`;
+            return seconds + 's';
         }
     }
     </script>

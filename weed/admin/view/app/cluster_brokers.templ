@@ -1,0 +1,144 @@
+package app
+
+import (
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ ClusterBrokers(data dash.ClusterBrokersData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<i class="fas fa-comments me-2"></i>Message Brokers
+		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<button type="button" class="btn btn-sm btn-outline-primary" onclick="exportBrokers()">
+					<i class="fas fa-download me-1"></i>Export
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="brokers-content">
+		<!-- Summary Cards -->
+		<div class="row mb-4">
+			<div class="col-xl-12 col-md-12 mb-4">
+				<div class="card border-left-primary shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+									Total Message Brokers
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ fmt.Sprintf("%d", data.TotalBrokers) }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-comments fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Brokers Table -->
+		<div class="card shadow mb-4">
+			<div class="card-header py-3">
+				<h6 class="m-0 font-weight-bold text-primary">
+					<i class="fas fa-comments me-2"></i>Message Brokers
+				</h6>
+			</div>
+			<div class="card-body">
+				if len(data.Brokers) > 0 {
+					<div class="table-responsive">
+						<table class="table table-hover" id="brokersTable">
+							<thead>
+								<tr>
+									<th>Address</th>
+									<th>Version</th>
+									<th>Data Center</th>
+									<th>Rack</th>
+									<th>Created At</th>
+								</tr>
+							</thead>
+							<tbody>
+								for _, broker := range data.Brokers {
+									<tr>
+										<td>
+											{ broker.Address }
+										</td>
+										<td>
+											<span class="badge bg-light text-dark">{ broker.Version }</span>
+										</td>
+										<td>
+											<span class="badge bg-light text-dark">{ broker.DataCenter }</span>
+										</td>
+										<td>
+											<span class="badge bg-light text-dark">{ broker.Rack }</span>
+										</td>
+										<td>
+											if !broker.CreatedAt.IsZero() {
+												{ broker.CreatedAt.Format("2006-01-02 15:04:05") }
+											} else {
+												<span class="text-muted">N/A</span>
+											}
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="text-center py-5">
+						<i class="fas fa-comments fa-3x text-muted mb-3"></i>
+						<h5 class="text-muted">No Message Brokers Found</h5>
+						<p class="text-muted">No message broker servers are currently available in the cluster.</p>
+					</div>
+				}
+			</div>
+		</div>
+
+		<!-- Last Updated -->
+		<div class="row">
+			<div class="col-12">
+				<small class="text-muted">
+					<i class="fas fa-clock me-1"></i>
+					Last updated: { data.LastUpdated.Format("2006-01-02 15:04:05") }
+				</small>
+			</div>
+		</div>
+	</div>
+
+	<script>
+	function exportBrokers() {
+		const table = document.getElementById('brokersTable');
+		if (!table) return;
+		
+		let csv = 'Address,Version,Data Center,Rack,Created At\n';
+		
+		const rows = table.querySelectorAll('tbody tr');
+		rows.forEach(row => {
+			const cells = row.querySelectorAll('td');
+			if (cells.length >= 5) {
+				const address = cells[0].textContent.trim();
+				const version = cells[1].textContent.trim();
+				const dataCenter = cells[2].textContent.trim();
+				const rack = cells[3].textContent.trim();
+				const createdAt = cells[4].textContent.trim();
+				
+				csv += `"${address}","${version}","${dataCenter}","${rack}","${createdAt}"\n`;
+			}
+		});
+		
+		const blob = new Blob([csv], { type: 'text/csv' });
+		const url = window.URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = 'message-brokers.csv';
+		a.click();
+		window.URL.revokeObjectURL(url);
+	}
+	</script>
+} 

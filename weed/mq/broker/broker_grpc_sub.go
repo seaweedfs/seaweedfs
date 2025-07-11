@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -12,8 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
-	"io"
-	"time"
 )
 
 func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_SubscribeMessageServer) error {
@@ -40,7 +41,8 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		return getOrGenErr
 	}
 
-	localTopicPartition.Subscribers.AddSubscriber(clientName, topic.NewLocalSubscriber())
+	subscriber := topic.NewLocalSubscriber()
+	localTopicPartition.Subscribers.AddSubscriber(clientName, subscriber)
 	glog.V(0).Infof("Subscriber %s connected on %v %v", clientName, t, partition)
 	isConnected := true
 	sleepIntervalCount := 0
@@ -115,7 +117,10 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 				continue
 			}
 			imt.AcknowledgeMessage(ack.GetAck().Key, ack.GetAck().Sequence)
+
 			currentLastOffset := imt.GetOldestAckedTimestamp()
+			// Update acknowledged offset and last seen time for this subscriber when it sends an ack
+			subscriber.UpdateAckedOffset(currentLastOffset)
 			// fmt.Printf("%+v recv (%s,%d), oldest %d\n", partition, string(ack.GetAck().Key), ack.GetAck().Sequence, currentLastOffset)
 			if subscribeFollowMeStream != nil && currentLastOffset > lastOffset {
 				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
@@ -210,6 +215,9 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 			glog.Errorf("Error sending data: %v", err)
 			return false, err
 		}
+
+		// Update received offset and last seen time for this subscriber
+		subscriber.UpdateReceivedOffset(logEntry.TsNs)
 
 		counter++
 		return false, nil
