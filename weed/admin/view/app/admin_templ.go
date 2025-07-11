@@ -73,7 +73,7 @@ func Admin(data dash.AdminData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div></div><div class=\"col-auto\"><i class=\"fas fa-hdd fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Master Nodes Status --><div class=\"row mb-4\"><div class=\"col-lg-6\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-server me-2\"></i>Master Nodes</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-bordered\" width=\"100%\" cellspacing=\"0\"><thead><tr><th>Address</th><th>Role</th></tr></thead> <tbody>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div></div><div class=\"col-auto\"><i class=\"fas fa-hdd fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Master Nodes Status --><div class=\"row mb-4\"><div class=\"col-lg-4\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-server me-2\"></i>Master Nodes</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-bordered\" width=\"100%\" cellspacing=\"0\"><thead><tr><th>Address</th><th>Role</th></tr></thead> <tbody>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -111,7 +111,7 @@ func Admin(data dash.AdminData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</tbody></table></div></div></div></div><!-- System Health --><div class=\"col-lg-6\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-chart-pie me-2\"></i>System Health</h6></div><div class=\"card-body text-center\"><div class=\"row\"><div class=\"col-4\"><div class=\"card bg-light\"><div class=\"card-body\"><h5>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</tbody></table></div></div></div></div><!-- System Health --><div class=\"col-lg-8\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-chart-pie me-2\"></i>Cluster</h6></div><div class=\"card-body text-center\"><div class=\"row\"><div class=\"col-3\"><div class=\"card bg-light\"><div class=\"card-body\"><h5>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
