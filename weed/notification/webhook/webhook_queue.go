@@ -101,7 +101,8 @@ func (w *WebhookQueue) initialize(cfg *config) error {
 	}
 	w.client = client
 
-	w.setupGracefulShutdown()
+	go w.setupGracefulShutdown()
+	go w.startWorker()
 
 	return nil
 }
@@ -113,10 +114,8 @@ func (w *WebhookQueue) setupGracefulShutdown() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	go func() {
-		<-sigChan
-		cancel()
-	}()
+	<-sigChan
+	cancel()
 }
 
 func (w *WebhookQueue) SendMessage(key string, message proto.Message) error {
