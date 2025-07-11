@@ -73,7 +73,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div></div><div class=\"col-auto\"><i class=\"fas fa-clock fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Buckets Table --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-cube me-2\"></i>Object Store Buckets</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"fas fa-ellipsis-v fa-sm fa-fw text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"#\" onclick=\"exportBucketList()\"><i class=\"fas fa-download me-2\"></i>Export List</a></div></div></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\" id=\"bucketsTable\"><thead><tr><th>Name</th><th>Created</th><th>Objects</th><th>Size</th><th>Quota</th><th>Actions</th></tr></thead> <tbody>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div></div><div class=\"col-auto\"><i class=\"fas fa-clock fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Buckets Table --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-cube me-2\"></i>Object Store Buckets</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"fas fa-ellipsis-v fa-sm fa-fw text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"#\" onclick=\"exportBucketList()\"><i class=\"fas fa-download me-2\"></i>Export List</a></div></div></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\" id=\"bucketsTable\"><thead><tr><th>Name</th><th>Created</th><th>Objects</th><th>Size</th><th>Quota</th><th>Versioning</th><th>Object Lock</th><th>Actions</th></tr></thead> <tbody>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -94,7 +94,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 			var templ_7745c5c3_Var6 string
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 130, Col: 64}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 132, Col: 64}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
@@ -107,7 +107,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.CreatedAt.Format("2006-01-02 15:04"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 133, Col: 92}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 135, Col: 92}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -120,7 +120,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", bucket.ObjectCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 134, Col: 86}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 136, Col: 86}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -133,7 +133,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(bucket.Size))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 135, Col: 73}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 137, Col: 73}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -173,7 +173,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 				var templ_7745c5c3_Var12 string
 				templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(bucket.Quota))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 140, Col: 86}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 142, Col: 86}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 				if templ_7745c5c3_Err != nil {
@@ -191,7 +191,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 					var templ_7745c5c3_Var13 string
 					templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1f%% used", float64(bucket.Size)/float64(bucket.Quota)*100))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 144, Col: 139}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 146, Col: 139}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 					if templ_7745c5c3_Err != nil {
@@ -217,101 +217,157 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><a href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var14 templ.SafeURL = templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var14)))
+			if bucket.VersioningEnabled {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<span class=\"badge bg-success\"><i class=\"fas fa-check me-1\"></i>Enabled</span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<span class=\"badge bg-secondary\"><i class=\"fas fa-times me-1\"></i>Disabled</span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\" class=\"btn btn-outline-success btn-sm\" title=\"Browse Files\"><i class=\"fas fa-folder-open\"></i></a> <a href=\"")
+			if bucket.ObjectLockEnabled {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "<div><span class=\"badge bg-warning\"><i class=\"fas fa-lock me-1\"></i>Enabled</span><div class=\"small text-muted\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var14 string
+				templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.ObjectLockMode)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 174, Col: 82}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, " • ")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var15 string
+				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d days", bucket.ObjectLockDuration))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 174, Col: 138}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</div></div>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<span class=\"badge bg-secondary\"><i class=\"fas fa-unlock me-1\"></i>Disabled</span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><a href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var15 templ.SafeURL = templ.SafeURL(fmt.Sprintf("/s3/buckets/%s", bucket.Name))
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var15)))
+			var templ_7745c5c3_Var16 templ.SafeURL = templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var16)))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\"><i class=\"fas fa-eye\"></i></a> <button type=\"button\" class=\"btn btn-outline-warning btn-sm quota-btn\" data-bucket-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "\" class=\"btn btn-outline-success btn-sm\" title=\"Browse Files\"><i class=\"fas fa-folder-open\"></i></a> <a href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var16 string
-			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 168, Col: 89}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
+			var templ_7745c5c3_Var17 templ.SafeURL = templ.SafeURL(fmt.Sprintf("/s3/buckets/%s", bucket.Name))
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var17)))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\" data-current-quota=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var17 string
-			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", getQuotaInMB(bucket.Quota)))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 169, Col: 125}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "\" data-quota-enabled=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\"><i class=\"fas fa-eye\"></i></a> <button type=\"button\" class=\"btn btn-outline-warning btn-sm quota-btn\" data-bucket-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var18 string
-			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%t", bucket.QuotaEnabled))
+			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 170, Col: 118}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 197, Col: 89}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\" title=\"Manage Quota\"><i class=\"fas fa-tachometer-alt\"></i></button> <button type=\"button\" class=\"btn btn-outline-danger btn-sm delete-bucket-btn\" data-bucket-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "\" data-current-quota=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var19 string
-			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
+			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", getQuotaInMB(bucket.Quota)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 176, Col: 89}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 198, Col: 125}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "\" title=\"Delete Bucket\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "\" data-quota-enabled=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var20 string
+			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%t", bucket.QuotaEnabled))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 199, Col: 118}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "\" title=\"Manage Quota\"><i class=\"fas fa-tachometer-alt\"></i></button> <button type=\"button\" class=\"btn btn-outline-danger btn-sm delete-bucket-btn\" data-bucket-name=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var21 string
+			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 205, Col: 89}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "\" title=\"Delete Bucket\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if len(data.Buckets) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<tr><td colspan=\"6\" class=\"text-center text-muted py-4\"><i class=\"fas fa-cube fa-3x mb-3 text-muted\"></i><div><h5>No Object Store buckets found</h5><p>Create your first bucket to get started with S3 storage.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createBucketModal\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "<tr><td colspan=\"8\" class=\"text-center text-muted py-4\"><i class=\"fas fa-cube fa-3x mb-3 text-muted\"></i><div><h5>No Object Store buckets found</h5><p>Create your first bucket to get started with S3 storage.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createBucketModal\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</tbody></table></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "</tbody></table></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var20 string
-		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
+		var templ_7745c5c3_Var22 string
+		templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 213, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3_buckets.templ`, Line: 242, Col: 81}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "</small></div></div></div><!-- Create Bucket Modal --><div class=\"modal fade\" id=\"createBucketModal\" tabindex=\"-1\" aria-labelledby=\"createBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createBucketModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create New S3 Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createBucketForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label for=\"bucketName\" class=\"form-label\">Bucket Name</label> <input type=\"text\" class=\"form-control\" id=\"bucketName\" name=\"name\" placeholder=\"my-bucket-name\" required pattern=\"[a-z0-9.-]+\" title=\"Bucket name must contain only lowercase letters, numbers, dots, and hyphens\"><div class=\"form-text\">Bucket names must be between 3 and 63 characters, contain only lowercase letters, numbers, dots, and hyphens.</div></div><div class=\"mb-3\"><div class=\"form-check\"><input class=\"form-check-input\" type=\"checkbox\" id=\"enableQuota\" name=\"quota_enabled\"> <label class=\"form-check-label\" for=\"enableQuota\">Enable Storage Quota</label></div></div><div class=\"mb-3\" id=\"quotaSettings\" style=\"display: none;\"><div class=\"row\"><div class=\"col-md-8\"><label for=\"quotaSize\" class=\"form-label\">Quota Size</label> <input type=\"number\" class=\"form-control\" id=\"quotaSize\" name=\"quota_size\" placeholder=\"1024\" min=\"1\" step=\"1\"></div><div class=\"col-md-4\"><label for=\"quotaUnit\" class=\"form-label\">Unit</label> <select class=\"form-select\" id=\"quotaUnit\" name=\"quota_unit\"><option value=\"MB\" selected>MB</option> <option value=\"GB\">GB</option> <option value=\"TB\">TB</option></select></div></div><div class=\"form-text\">Set the maximum storage size for this bucket.</div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></form></div></div></div><!-- Delete Confirmation Modal --><div class=\"modal fade\" id=\"deleteBucketModal\" tabindex=\"-1\" aria-labelledby=\"deleteBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteBucketModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Delete Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the bucket <strong id=\"deleteBucketName\"></strong>?</p><div class=\"alert alert-warning\"><i class=\"fas fa-exclamation-triangle me-2\"></i> <strong>Warning:</strong> This action cannot be undone. All objects in the bucket will be permanently deleted.</div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteBucket()\"><i class=\"fas fa-trash me-1\"></i>Delete Bucket</button></div></div></div></div><!-- Manage Quota Modal --><div class=\"modal fade\" id=\"manageQuotaModal\" tabindex=\"-1\" aria-labelledby=\"manageQuotaModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"manageQuotaModalLabel\"><i class=\"fas fa-tachometer-alt me-2\"></i>Manage Bucket Quota</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"quotaForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label class=\"form-label\">Bucket Name</label> <input type=\"text\" class=\"form-control\" id=\"quotaBucketName\" readonly></div><div class=\"mb-3\"><div class=\"form-check\"><input class=\"form-check-input\" type=\"checkbox\" id=\"quotaEnabled\" name=\"quota_enabled\"> <label class=\"form-check-label\" for=\"quotaEnabled\">Enable Storage Quota</label></div></div><div class=\"mb-3\" id=\"quotaSizeSettings\"><div class=\"row\"><div class=\"col-md-8\"><label for=\"quotaSizeMB\" class=\"form-label\">Quota Size</label> <input type=\"number\" class=\"form-control\" id=\"quotaSizeMB\" name=\"quota_size\" placeholder=\"1024\" min=\"0\" step=\"1\"></div><div class=\"col-md-4\"><label for=\"quotaUnitMB\" class=\"form-label\">Unit</label> <select class=\"form-select\" id=\"quotaUnitMB\" name=\"quota_unit\"><option value=\"MB\" selected>MB</option> <option value=\"GB\">GB</option> <option value=\"TB\">TB</option></select></div></div><div class=\"form-text\">Set the maximum storage size for this bucket. Set to 0 to remove quota.</div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-warning\"><i class=\"fas fa-save me-1\"></i>Update Quota</button></div></form></div></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "</small></div></div></div><!-- Create Bucket Modal --><div class=\"modal fade\" id=\"createBucketModal\" tabindex=\"-1\" aria-labelledby=\"createBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createBucketModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create New S3 Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createBucketForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label for=\"bucketName\" class=\"form-label\">Bucket Name</label> <input type=\"text\" class=\"form-control\" id=\"bucketName\" name=\"name\" placeholder=\"my-bucket-name\" required pattern=\"[a-z0-9.-]+\" title=\"Bucket name must contain only lowercase letters, numbers, dots, and hyphens\"><div class=\"form-text\">Bucket names must be between 3 and 63 characters, contain only lowercase letters, numbers, dots, and hyphens.</div></div><div class=\"mb-3\"><div class=\"form-check\"><input class=\"form-check-input\" type=\"checkbox\" id=\"enableQuota\" name=\"quota_enabled\"> <label class=\"form-check-label\" for=\"enableQuota\">Enable Storage Quota</label></div></div><div class=\"mb-3\" id=\"quotaSettings\" style=\"display: none;\"><div class=\"row\"><div class=\"col-md-8\"><label for=\"quotaSize\" class=\"form-label\">Quota Size</label> <input type=\"number\" class=\"form-control\" id=\"quotaSize\" name=\"quota_size\" placeholder=\"1024\" min=\"1\" step=\"1\"></div><div class=\"col-md-4\"><label for=\"quotaUnit\" class=\"form-label\">Unit</label> <select class=\"form-select\" id=\"quotaUnit\" name=\"quota_unit\"><option value=\"MB\" selected>MB</option> <option value=\"GB\">GB</option> <option value=\"TB\">TB</option></select></div></div><div class=\"form-text\">Set the maximum storage size for this bucket.</div></div><div class=\"mb-3\"><div class=\"form-check\"><input class=\"form-check-input\" type=\"checkbox\" id=\"enableVersioning\" name=\"versioning_enabled\"> <label class=\"form-check-label\" for=\"enableVersioning\">Enable Object Versioning</label></div><div class=\"form-text\">Keep multiple versions of objects in this bucket.</div></div><div class=\"mb-3\"><div class=\"form-check\"><input class=\"form-check-input\" type=\"checkbox\" id=\"enableObjectLock\" name=\"object_lock_enabled\"> <label class=\"form-check-label\" for=\"enableObjectLock\">Enable Object Lock</label></div><div class=\"form-text\">Prevent objects from being deleted or overwritten for a specified period. Automatically enables versioning.</div></div><div class=\"mb-3\" id=\"objectLockSettings\" style=\"display: none;\"><div class=\"row\"><div class=\"col-md-6\"><label for=\"objectLockMode\" class=\"form-label\">Object Lock Mode</label> <select class=\"form-select\" id=\"objectLockMode\" name=\"object_lock_mode\"><option value=\"GOVERNANCE\" selected>Governance</option> <option value=\"COMPLIANCE\">Compliance</option></select><div class=\"form-text\">Governance allows override with special permissions, Compliance is immutable.</div></div><div class=\"col-md-6\"><label for=\"objectLockDuration\" class=\"form-label\">Default Retention (days)</label> <input type=\"number\" class=\"form-control\" id=\"objectLockDuration\" name=\"object_lock_duration\" placeholder=\"30\" min=\"1\" max=\"36500\" step=\"1\"><div class=\"form-text\">Default retention period for new objects (1-36500 days).</div></div></div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></form></div></div></div><!-- Delete Confirmation Modal --><div class=\"modal fade\" id=\"deleteBucketModal\" tabindex=\"-1\" aria-labelledby=\"deleteBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteBucketModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Delete Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the bucket <strong id=\"deleteBucketName\"></strong>?</p><div class=\"alert alert-warning\"><i class=\"fas fa-exclamation-triangle me-2\"></i> <strong>Warning:</strong> This action cannot be undone. All objects in the bucket will be permanently deleted.</div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteBucket()\"><i class=\"fas fa-trash me-1\"></i>Delete Bucket</button></div></div></div></div><!-- Manage Quota Modal --><div class=\"modal fade\" id=\"manageQuotaModal\" tabindex=\"-1\" aria-labelledby=\"manageQuotaModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"manageQuotaModalLabel\"><i class=\"fas fa-tachometer-alt me-2\"></i>Manage Bucket Quota</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"quotaForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label class=\"form-label\">Bucket Name</label> <input type=\"text\" class=\"form-control\" id=\"quotaBucketName\" readonly></div><div class=\"mb-3\"><div class=\"form-check\"><input class=\"form-check-input\" type=\"checkbox\" id=\"quotaEnabled\" name=\"quota_enabled\"> <label class=\"form-check-label\" for=\"quotaEnabled\">Enable Storage Quota</label></div></div><div class=\"mb-3\" id=\"quotaSizeSettings\"><div class=\"row\"><div class=\"col-md-8\"><label for=\"quotaSizeMB\" class=\"form-label\">Quota Size</label> <input type=\"number\" class=\"form-control\" id=\"quotaSizeMB\" name=\"quota_size\" placeholder=\"1024\" min=\"0\" step=\"1\"></div><div class=\"col-md-4\"><label for=\"quotaUnitMB\" class=\"form-label\">Unit</label> <select class=\"form-select\" id=\"quotaUnitMB\" name=\"quota_unit\"><option value=\"MB\" selected>MB</option> <option value=\"GB\">GB</option> <option value=\"TB\">TB</option></select></div></div><div class=\"form-text\">Set the maximum storage size for this bucket. Set to 0 to remove quota.</div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-warning\"><i class=\"fas fa-save me-1\"></i>Update Quota</button></div></form></div></div></div><!-- JavaScript for bucket management --><script>\n    document.addEventListener('DOMContentLoaded', function() {\n        const quotaCheckbox = document.getElementById('enableQuota');\n        const quotaSettings = document.getElementById('quotaSettings');\n        const versioningCheckbox = document.getElementById('enableVersioning');\n        const objectLockCheckbox = document.getElementById('enableObjectLock');\n        const objectLockSettings = document.getElementById('objectLockSettings');\n        const createBucketForm = document.getElementById('createBucketForm');\n\n        // Toggle quota settings\n        quotaCheckbox.addEventListener('change', function() {\n            quotaSettings.style.display = this.checked ? 'block' : 'none';\n        });\n\n        // Toggle object lock settings and automatically enable versioning\n        objectLockCheckbox.addEventListener('change', function() {\n            objectLockSettings.style.display = this.checked ? 'block' : 'none';\n            if (this.checked) {\n                versioningCheckbox.checked = true;\n                versioningCheckbox.disabled = true;\n            } else {\n                versioningCheckbox.disabled = false;\n            }\n        });\n\n        // Handle form submission\n        createBucketForm.addEventListener('submit', function(e) {\n            e.preventDefault();\n            \n            const formData = new FormData(this);\n            const data = {\n                name: formData.get('name'),\n                region: formData.get('region') || '',\n                quota_size: quotaCheckbox.checked ? parseInt(formData.get('quota_size')) || 0 : 0,\n                quota_unit: formData.get('quota_unit') || 'MB',\n                quota_enabled: quotaCheckbox.checked,\n                versioning_enabled: versioningCheckbox.checked,\n                object_lock_enabled: objectLockCheckbox.checked,\n                object_lock_mode: formData.get('object_lock_mode') || 'GOVERNANCE',\n                object_lock_duration: objectLockCheckbox.checked ? parseInt(formData.get('object_lock_duration')) || 30 : 0\n            };\n\n            // Validate object lock settings\n            if (data.object_lock_enabled && data.object_lock_duration <= 0) {\n                alert('Please enter a valid retention duration for object lock.');\n                return;\n            }\n\n            fetch('/api/s3/buckets', {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n                body: JSON.stringify(data)\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.error) {\n                    alert('Error creating bucket: ' + data.error);\n                } else {\n                    alert('Bucket created successfully!');\n                    location.reload();\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                alert('Error creating bucket: ' + error.message);\n            });\n        });\n\n        // Handle delete bucket\n        document.querySelectorAll('.delete-bucket-btn').forEach(button => {\n            button.addEventListener('click', function() {\n                const bucketName = this.dataset.bucketName;\n                document.getElementById('deleteBucketName').textContent = bucketName;\n                window.currentBucketToDelete = bucketName;\n                new bootstrap.Modal(document.getElementById('deleteBucketModal')).show();\n            });\n        });\n\n        // Handle quota management\n        document.querySelectorAll('.quota-btn').forEach(button => {\n            button.addEventListener('click', function() {\n                const bucketName = this.dataset.bucketName;\n                const currentQuota = parseInt(this.dataset.currentQuota);\n                const quotaEnabled = this.dataset.quotaEnabled === 'true';\n                \n                document.getElementById('quotaBucketName').value = bucketName;\n                document.getElementById('quotaEnabled').checked = quotaEnabled;\n                document.getElementById('quotaSizeMB').value = currentQuota;\n                \n                // Toggle quota size settings\n                document.getElementById('quotaSizeSettings').style.display = quotaEnabled ? 'block' : 'none';\n                \n                window.currentBucketToUpdate = bucketName;\n                new bootstrap.Modal(document.getElementById('manageQuotaModal')).show();\n            });\n        });\n\n        // Handle quota form submission\n        document.getElementById('quotaForm').addEventListener('submit', function(e) {\n            e.preventDefault();\n            \n            const formData = new FormData(this);\n            const enabled = document.getElementById('quotaEnabled').checked;\n            const data = {\n                quota_size: enabled ? parseInt(formData.get('quota_size')) || 0 : 0,\n                quota_unit: formData.get('quota_unit') || 'MB',\n                quota_enabled: enabled\n            };\n\n            fetch(`/api/s3/buckets/${window.currentBucketToUpdate}/quota`, {\n                method: 'PUT',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n                body: JSON.stringify(data)\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.error) {\n                    alert('Error updating quota: ' + data.error);\n                } else {\n                    alert('Quota updated successfully!');\n                    location.reload();\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                alert('Error updating quota: ' + error.message);\n            });\n        });\n\n        // Handle quota enabled checkbox\n        document.getElementById('quotaEnabled').addEventListener('change', function() {\n            document.getElementById('quotaSizeSettings').style.display = this.checked ? 'block' : 'none';\n        });\n    });\n\n    function deleteBucket() {\n        const bucketName = window.currentBucketToDelete;\n        if (!bucketName) return;\n\n        fetch(`/api/s3/buckets/${bucketName}`, {\n            method: 'DELETE'\n        })\n        .then(response => response.json())\n        .then(data => {\n            if (data.error) {\n                alert('Error deleting bucket: ' + data.error);\n            } else {\n                alert('Bucket deleted successfully!');\n                location.reload();\n            }\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error deleting bucket: ' + error.message);\n        });\n    }\n\n    function exportBucketList() {\n        // Simple CSV export\n        const buckets = Array.from(document.querySelectorAll('#bucketsTable tbody tr')).map(row => {\n            const cells = row.querySelectorAll('td');\n            if (cells.length > 1) {\n                return {\n                    name: cells[0].textContent.trim(),\n                    created: cells[1].textContent.trim(),\n                    objects: cells[2].textContent.trim(),\n                    size: cells[3].textContent.trim(),\n                    quota: cells[4].textContent.trim(),\n                    versioning: cells[5].textContent.trim(),\n                    objectLock: cells[6].textContent.trim()\n                };\n            }\n            return null;\n        }).filter(bucket => bucket !== null);\n\n        const csvContent = \"data:text/csv;charset=utf-8,\" + \n            \"Name,Created,Objects,Size,Quota,Versioning,Object Lock\\n\" +\n            buckets.map(b => `\"${b.name}\",\"${b.created}\",\"${b.objects}\",\"${b.size}\",\"${b.quota}\",\"${b.versioning}\",\"${b.objectLock}\"`).join(\"\\n\");\n\n        const encodedUri = encodeURI(csvContent);\n        const link = document.createElement(\"a\");\n        link.setAttribute(\"href\", encodedUri);\n        link.setAttribute(\"download\", \"buckets.csv\");\n        document.body.appendChild(link);\n        link.click();\n        document.body.removeChild(link);\n    }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
