@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/handlers"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -181,12 +182,12 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	store := cookie.NewStore(sessionKeyBytes)
 	r.Use(sessions.Sessions("admin-session", store))
 
-	// Static files - serve from filesystem
-	staticPath := filepath.Join("weed", "admin", "static")
-	if _, err := os.Stat(staticPath); err == nil {
-		r.Static("/static", staticPath)
+	// Static files - serve from embedded filesystem
+	staticFS, err := admin.GetStaticFS()
+	if err != nil {
+		log.Printf("Warning: Failed to load embedded static files: %v", err)
 	} else {
-		log.Printf("Warning: Static files not found at %s", staticPath)
+		r.StaticFS("/static", http.FS(staticFS))
 	}
 
 	// Create data directory if specified
