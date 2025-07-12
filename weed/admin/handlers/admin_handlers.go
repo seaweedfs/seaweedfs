@@ -17,6 +17,7 @@ type AdminHandlers struct {
 	clusterHandlers     *ClusterHandlers
 	fileBrowserHandlers *FileBrowserHandlers
 	userHandlers        *UserHandlers
+	policyHandlers      *PolicyHandlers
 	maintenanceHandlers *MaintenanceHandlers
 	mqHandlers          *MessageQueueHandlers
 }
@@ -27,6 +28,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	clusterHandlers := NewClusterHandlers(adminServer)
 	fileBrowserHandlers := NewFileBrowserHandlers(adminServer)
 	userHandlers := NewUserHandlers(adminServer)
+	policyHandlers := NewPolicyHandlers(adminServer)
 	maintenanceHandlers := NewMaintenanceHandlers(adminServer)
 	mqHandlers := NewMessageQueueHandlers(adminServer)
 	return &AdminHandlers{
@@ -35,6 +37,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 		clusterHandlers:     clusterHandlers,
 		fileBrowserHandlers: fileBrowserHandlers,
 		userHandlers:        userHandlers,
+		policyHandlers:      policyHandlers,
 		maintenanceHandlers: maintenanceHandlers,
 		mqHandlers:          mqHandlers,
 	}
@@ -63,6 +66,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/object-store/buckets", h.ShowS3Buckets)
 		protected.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
 		protected.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
+		protected.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
 
 		// File browser routes
 		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -121,6 +125,17 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
 			}
 
+			// Object Store Policy management API routes
+			objectStorePoliciesApi := api.Group("/object-store/policies")
+			{
+				objectStorePoliciesApi.GET("", h.policyHandlers.GetPolicies)
+				objectStorePoliciesApi.POST("", h.policyHandlers.CreatePolicy)
+				objectStorePoliciesApi.GET("/:name", h.policyHandlers.GetPolicy)
+				objectStorePoliciesApi.PUT("/:name", h.policyHandlers.UpdatePolicy)
+				objectStorePoliciesApi.DELETE("/:name", h.policyHandlers.DeletePolicy)
+				objectStorePoliciesApi.POST("/validate", h.policyHandlers.ValidatePolicy)
+			}
+
 			// File management API routes
 			filesApi := api.Group("/files")
 			{
@@ -171,6 +186,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		r.GET("/object-store/buckets", h.ShowS3Buckets)
 		r.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
 		r.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
+		r.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
 
 		// File browser routes
 		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -227,6 +243,17 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				usersApi.DELETE("/:username/access-keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
 				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
 				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
+			}
+
+			// Object Store Policy management API routes
+			objectStorePoliciesApi := api.Group("/object-store/policies")
+			{
+				objectStorePoliciesApi.GET("", h.policyHandlers.GetPolicies)
+				objectStorePoliciesApi.POST("", h.policyHandlers.CreatePolicy)
+				objectStorePoliciesApi.GET("/:name", h.policyHandlers.GetPolicy)
+				objectStorePoliciesApi.PUT("/:name", h.policyHandlers.UpdatePolicy)
+				objectStorePoliciesApi.DELETE("/:name", h.policyHandlers.DeletePolicy)
+				objectStorePoliciesApi.POST("/validate", h.policyHandlers.ValidatePolicy)
 			}
 
 			// File management API routes

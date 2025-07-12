@@ -148,16 +148,22 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                             </div>
                                         </td>
                                         <td>
-                                            <div class="btn-group btn-group-sm">
-                                                <button type="button" class="btn btn-outline-primary btn-sm" 
-                                                        title="View Details">
-                                                    <i class="fas fa-eye"></i>
-                                                </button>
-                                                <button type="button" class="btn btn-outline-secondary btn-sm" 
-                                                        title="Manage">
-                                                    <i class="fas fa-cog"></i>
-                                                </button>
-                                            </div>
+                                            <button type="button" 
+                                                    class="btn btn-outline-primary btn-sm" 
+                                                    title="View Details"
+                                                    data-action="view-details"
+                                                    data-id={host.ID}
+                                                    data-address={host.Address}
+                                                    data-public-url={host.PublicURL}
+                                                    data-datacenter={host.DataCenter}
+                                                    data-rack={host.Rack}
+                                                    data-volumes={fmt.Sprintf("%d", host.Volumes)}
+                                                    data-max-volumes={fmt.Sprintf("%d", host.MaxVolumes)}
+                                                    data-disk-usage={fmt.Sprintf("%d", host.DiskUsage)}
+                                                    data-disk-capacity={fmt.Sprintf("%d", host.DiskCapacity)}
+                                                    data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
+                                                <i class="fas fa-eye"></i>
+                                            </button>
                                         </td>
                                     </tr>
                                 }
@@ -184,6 +190,161 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             </div>
         </div>
     </div>
+
+    <!-- JavaScript for cluster volume servers functionality -->
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Handle volume server action buttons
+        document.addEventListener('click', function(e) {
+            const button = e.target.closest('[data-action]');
+            if (!button) return;
+            
+            const action = button.getAttribute('data-action');
+            
+            switch(action) {
+                case 'view-details':
+                    const serverData = {
+                        id: button.getAttribute('data-id'),
+                        address: button.getAttribute('data-address'),
+                        publicUrl: button.getAttribute('data-public-url'),
+                        datacenter: button.getAttribute('data-datacenter'),
+                        rack: button.getAttribute('data-rack'),
+                        volumes: parseInt(button.getAttribute('data-volumes')),
+                        maxVolumes: parseInt(button.getAttribute('data-max-volumes')),
+                        diskUsage: parseInt(button.getAttribute('data-disk-usage')),
+                        diskCapacity: parseInt(button.getAttribute('data-disk-capacity')),
+                        lastHeartbeat: button.getAttribute('data-last-heartbeat')
+                    };
+                    showVolumeServerDetails(serverData);
+                    break;
+            }
+        });
+    });
+    
+    function showVolumeServerDetails(server) {
+        const volumePercent = server.maxVolumes > 0 ? Math.round((server.volumes / server.maxVolumes) * 100) : 0;
+        const diskPercent = server.diskCapacity > 0 ? Math.round((server.diskUsage / server.diskCapacity) * 100) : 0;
+        
+        const modalHtml = '<div class="modal fade" id="volumeServerDetailsModal" tabindex="-1">' +
+            '<div class="modal-dialog modal-lg">' +
+            '<div class="modal-content">' +
+            '<div class="modal-header">' +
+            '<h5 class="modal-title"><i class="fas fa-server me-2"></i>Volume Server Details: ' + server.address + '</h5>' +
+            '<button type="button" class="btn-close" data-bs-dismiss="modal"></button>' +
+            '</div>' +
+            '<div class="modal-body">' +
+            '<div class="row">' +
+            '<div class="col-md-6">' +
+            '<h6 class="text-primary"><i class="fas fa-info-circle me-1"></i>Basic Information</h6>' +
+            '<table class="table table-sm">' +
+            '<tr><td><strong>Server ID:</strong></td><td><code>' + server.id + '</code></td></tr>' +
+            '<tr><td><strong>Address:</strong></td><td>' + server.address + '</td></tr>' +
+            '<tr><td><strong>Public URL:</strong></td><td>' + server.publicUrl + '</td></tr>' +
+            '<tr><td><strong>Data Center:</strong></td><td><span class="badge bg-light text-dark">' + server.datacenter + '</span></td></tr>' +
+            '<tr><td><strong>Rack:</strong></td><td><span class="badge bg-light text-dark">' + server.rack + '</span></td></tr>' +
+            '<tr><td><strong>Last Heartbeat:</strong></td><td>' + server.lastHeartbeat + '</td></tr>' +
+            '</table>' +
+            '</div>' +
+            '<div class="col-md-6">' +
+            '<h6 class="text-primary"><i class="fas fa-chart-bar me-1"></i>Usage Statistics</h6>' +
+            '<table class="table table-sm">' +
+            '<tr><td><strong>Volumes:</strong></td><td>' +
+            '<div class="d-flex align-items-center">' +
+            '<div class="progress me-2" style="width: 100px; height: 20px;">' +
+            '<div class="progress-bar" role="progressbar" style="width: ' + volumePercent + '%"></div>' +
+            '</div>' +
+            '<span>' + server.volumes + '/' + server.maxVolumes + ' (' + volumePercent + '%)</span>' +
+            '</div>' +
+            '</td></tr>' +
+            '<tr><td><strong>Disk Usage:</strong></td><td>' +
+            '<div class="d-flex align-items-center">' +
+            '<div class="progress me-2" style="width: 100px; height: 20px;">' +
+            '<div class="progress-bar" role="progressbar" style="width: ' + diskPercent + '%"></div>' +
+            '</div>' +
+            '<span>' + formatBytes(server.diskUsage) + '/' + formatBytes(server.diskCapacity) + ' (' + diskPercent + '%)</span>' +
+            '</div>' +
+            '</td></tr>' +
+            '<tr><td><strong>Available Space:</strong></td><td>' + formatBytes(server.diskCapacity - server.diskUsage) + '</td></tr>' +
+            '</table>' +
+            '</div>' +
+            '</div>' +
+            '<div class="row mt-3">' +
+            '<div class="col-12">' +
+            '<h6 class="text-primary"><i class="fas fa-link me-1"></i>Quick Actions</h6>' +
+            '<div class="d-grid gap-2 d-md-flex">' +
+            '<a href="http://' + server.publicUrl + '/ui/index.html" target="_blank" class="btn btn-outline-primary">' +
+            '<i class="fas fa-external-link-alt me-1"></i>Open Volume Server UI' +
+            '</a>' +
+            '<a href="/cluster/volumes?server=' + encodeURIComponent(server.address) + '" class="btn btn-outline-info">' +
+            '<i class="fas fa-database me-1"></i>View Volumes' +
+            '</a>' +
+            '</div>' +
+            '</div>' +
+            '</div>' +
+            '</div>' +
+            '<div class="modal-footer">' +
+            '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>' +
+            '</div>' +
+            '</div>' +
+            '</div>' +
+            '</div>';
+        
+        // Remove existing modal if present
+        const existingModal = document.getElementById('volumeServerDetailsModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Add modal to body and show
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        const modal = new bootstrap.Modal(document.getElementById('volumeServerDetailsModal'));
+        modal.show();
+        
+        // Remove modal when hidden
+        document.getElementById('volumeServerDetailsModal').addEventListener('hidden.bs.modal', function() {
+            this.remove();
+        });
+    }
+    
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+    
+    function exportVolumeServers() {
+        // Simple CSV export of volume servers list
+        const rows = Array.from(document.querySelectorAll('#hostsTable tbody tr')).map(row => {
+            const cells = row.querySelectorAll('td');
+            if (cells.length > 1) {
+                return {
+                    id: cells[0].textContent.trim(),
+                    address: cells[1].textContent.trim(),
+                    datacenter: cells[2].textContent.trim(),
+                    rack: cells[3].textContent.trim(),
+                    volumes: cells[4].textContent.trim(),
+                    capacity: cells[5].textContent.trim(),
+                    usage: cells[6].textContent.trim()
+                };
+            }
+            return null;
+        }).filter(row => row !== null);
+        
+        const csvContent = "data:text/csv;charset=utf-8," + 
+            "Server ID,Address,Data Center,Rack,Volumes,Capacity,Usage\n" +
+            rows.map(r => '"' + r.id + '","' + r.address + '","' + r.datacenter + '","' + r.rack + '","' + r.volumes + '","' + r.capacity + '","' + r.usage + '"').join("\n");
+        
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "volume_servers.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+    </script>
 }
 
  
