@@ -93,7 +93,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			completedPartNumbers = append(completedPartNumbers, part.PartNumber)
 		}
 		completedPartMap[part.PartNumber] = append(completedPartMap[part.PartNumber], part.ETag)
-		maxPartNo = max(maxPartNo, part.PartNumber)
+		maxPartNo = maxInt(maxPartNo, part.PartNumber)
 	}
 	sort.Ints(completedPartNumbers)
 
@@ -443,4 +443,12 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 	}
 
 	return
+}
+
+// maxInt returns the maximum of two int values
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
