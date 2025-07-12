@@ -234,7 +234,7 @@ func (s3a *S3ApiServer) GetObjectLegalHoldHandler(w http.ResponseWriter, r *http
 		}
 
 		if strings.Contains(err.Error(), "no legal hold configuration found") {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchObjectLockConfiguration)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchObjectLegalHold)
 			return
 		}
 

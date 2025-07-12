@@ -205,8 +205,8 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 	return nil
 }
 
-// getObjectRetention retrieves retention configuration from object metadata
-func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*ObjectRetention, error) {
+// getObjectEntry retrieves the appropriate object entry based on versioning and versionId
+func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer_pb.Entry, error) {
 	var entry *filer_pb.Entry
 	var err error
 
@@ -229,6 +229,16 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 
 	if err != nil {
 		return nil, fmt.Errorf("object not found: %v", err)
+	}
+
+	return entry, nil
+}
+
+// getObjectRetention retrieves retention configuration from object metadata
+func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*ObjectRetention, error) {
+	entry, err := s3a.getObjectEntry(bucket, object, versionId)
+	if err != nil {
+		return nil, err
 	}
 
 	if entry.Extended == nil {
@@ -341,28 +351,9 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 
 // getObjectLegalHold retrieves legal hold configuration from object metadata
 func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*ObjectLegalHold, error) {
-	var entry *filer_pb.Entry
-	var err error
-
-	if versionId != "" {
-		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
-	} else {
-		// Check if versioning is enabled
-		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
-		if vErr != nil {
-			return nil, fmt.Errorf("error checking versioning: %v", vErr)
-		}
-
-		if versioningEnabled {
-			entry, err = s3a.getLatestObjectVersion(bucket, object)
-		} else {
-			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			entry, err = s3a.getEntry(bucketDir, object)
-		}
-	}
-
+	entry, err := s3a.getObjectEntry(bucket, object, versionId)
 	if err != nil {
-		return nil, fmt.Errorf("object not found: %v", err)
+		return nil, err
 	}
 
 	if entry.Extended == nil {
