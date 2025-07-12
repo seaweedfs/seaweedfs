@@ -228,7 +228,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 										}
 									</td>
 									<td>
-										<code class="small">{ entry.Mode }</code>
+										<code class="small permissions-display" data-mode={ entry.Mode } data-is-directory={ fmt.Sprintf("%t", entry.IsDirectory) }>{ entry.Mode }</code>
 									</td>
 									<td>
 										<div class="btn-group btn-group-sm" role="group">
@@ -360,6 +360,15 @@ templ FileBrowser(data dash.FileBrowserData) {
 	<!-- JavaScript for file browser functionality -->
 	<script>
 	document.addEventListener('DOMContentLoaded', function() {
+		// Format permissions in the main table
+		document.querySelectorAll('.permissions-display').forEach(element => {
+			const mode = element.getAttribute('data-mode');
+			const isDirectory = element.getAttribute('data-is-directory') === 'true';
+			if (mode) {
+				element.textContent = formatPermissions(mode, isDirectory);
+			}
+		});
+		
 		// Handle file browser action buttons (download, view, properties, delete)
 		document.addEventListener('click', function(e) {
 			const button = e.target.closest('[data-action]');
@@ -428,7 +437,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			'<div class="modal-dialog modal-lg">' +
 			'<div class="modal-content">' +
 			'<div class="modal-header">' +
-			'<h5 class="modal-title"><i class="fas fa-info-circle me-2"></i>File Properties: ' + (data.name || 'Unknown') + '</h5>' +
+			'<h5 class="modal-title"><i class="fas fa-info-circle me-2"></i>Properties: ' + (data.name || 'Unknown') + '</h5>' +
 			'<button type="button" class="btn-close" data-bs-dismiss="modal"></button>' +
 			'</div>' +
 			'<div class="modal-body">' +
@@ -460,11 +469,11 @@ templ FileBrowser(data dash.FileBrowserData) {
 	
 	function createFilePropertiesContent(data) {
 		let html = '<div class="row">' +
-			'<div class="col-md-6">' +
+			'<div class="col-12">' +
 			'<h6 class="text-primary"><i class="fas fa-file me-1"></i>Basic Information</h6>' +
 			'<table class="table table-sm">' +
-			'<tr><td><strong>Name:</strong></td><td>' + (data.name || 'N/A') + '</td></tr>' +
-			'<tr><td><strong>Full Path:</strong></td><td><code>' + (data.full_path || 'N/A') + '</code></td></tr>' +
+			'<tr><td style="width: 120px;"><strong>Name:</strong></td><td>' + (data.name || 'N/A') + '</td></tr>' +
+			'<tr><td><strong>Full Path:</strong></td><td><code class="text-break">' + (data.full_path || 'N/A') + '</code></td></tr>' +
 			'<tr><td><strong>Type:</strong></td><td>' + (data.is_directory ? 'Directory' : 'File') + '</td></tr>';
 		
 		if (!data.is_directory) {
@@ -474,6 +483,8 @@ templ FileBrowser(data dash.FileBrowserData) {
 		
 		html += '</table>' +
 			'</div>' +
+			'</div>' +
+			'<div class="row">' +
 			'<div class="col-md-6">' +
 			'<h6 class="text-primary"><i class="fas fa-clock me-1"></i>Timestamps</h6>' +
 			'<table class="table table-sm">';
@@ -487,19 +498,13 @@ templ FileBrowser(data dash.FileBrowserData) {
 		
 		html += '</table>' +
 			'</div>' +
-			'</div>';
-		
-		// Add permissions and extended info
-		html += '<div class="row">' +
 			'<div class="col-md-6">' +
 			'<h6 class="text-primary"><i class="fas fa-shield-alt me-1"></i>Permissions</h6>' +
 			'<table class="table table-sm">';
 		
 		if (data.file_mode) {
-			html += '<tr><td><strong>Mode:</strong></td><td>' + data.file_mode + '</td></tr>';
-		}
-		if (data.file_mode_formatted) {
-			html += '<tr><td><strong>Permissions:</strong></td><td>' + data.file_mode_formatted + '</td></tr>';
+			const rwxPermissions = formatPermissions(data.file_mode, data.is_directory);
+			html += '<tr><td><strong>Permissions:</strong></td><td><code>' + rwxPermissions + '</code></td></tr>';
 		}
 		if (data.uid !== undefined) {
 			html += '<tr><td><strong>User ID:</strong></td><td>' + data.uid + '</td></tr>';
@@ -510,12 +515,16 @@ templ FileBrowser(data dash.FileBrowserData) {
 		
 		html += '</table>' +
 			'</div>' +
-			'<div class="col-md-6">' +
+			'</div>';
+		
+		// Add advanced info
+		html += '<div class="row">' +
+			'<div class="col-12">' +
 			'<h6 class="text-primary"><i class="fas fa-cog me-1"></i>Advanced</h6>' +
 			'<table class="table table-sm">';
 		
 		if (data.chunk_count) {
-			html += '<tr><td><strong>Chunks:</strong></td><td>' + data.chunk_count + '</td></tr>';
+			html += '<tr><td style="width: 120px;"><strong>Chunks:</strong></td><td>' + data.chunk_count + '</td></tr>';
 		}
 		if (data.ttl_formatted) {
 			html += '<tr><td><strong>TTL:</strong></td><td>' + data.ttl_formatted + '</td></tr>';
@@ -524,6 +533,42 @@ templ FileBrowser(data dash.FileBrowserData) {
 		html += '</table>' +
 			'</div>' +
 			'</div>';
+		
+		// Add chunk details if available (show top 5)
+		if (data.chunks && data.chunks.length > 0) {
+			const chunksToShow = data.chunks.slice(0, 5);
+			html += '<div class="row mt-3">' +
+				'<div class="col-12">' +
+				'<h6 class="text-primary"><i class="fas fa-puzzle-piece me-1"></i>Chunk Details' +
+				(data.chunk_count > 5 ? ' (Top 5 of ' + data.chunk_count + ')' : ' (' + data.chunk_count + ')') +
+				'</h6>' +
+				'<div class="table-responsive" style="max-height: 200px; overflow-y: auto;">' +
+				'<table class="table table-sm table-striped">' +
+				'<thead>' +
+				'<tr>' +
+				'<th>File ID</th>' +
+				'<th>Offset</th>' +
+				'<th>Size</th>' +
+				'<th>ETag</th>' +
+				'</tr>' +
+				'</thead>' +
+				'<tbody>';
+			
+			chunksToShow.forEach(chunk => {
+				html += '<tr>' +
+					'<td><code class="small">' + (chunk.file_id || 'N/A') + '</code></td>' +
+					'<td>' + formatBytes(chunk.offset || 0) + '</td>' +
+					'<td>' + formatBytes(chunk.size || 0) + '</td>' +
+					'<td><code class="small">' + (chunk.e_tag || 'N/A') + '</code></td>' +
+					'</tr>';
+			});
+			
+			html += '</tbody>' +
+				'</table>' +
+				'</div>' +
+				'</div>' +
+				'</div>';
+		}
 		
 		// Add extended attributes if present
 		if (data.extended && Object.keys(data.extended).length > 0) {
@@ -571,12 +616,48 @@ templ FileBrowser(data dash.FileBrowserData) {
 		}
 	}
 	
+	// Helper function to format bytes
 	function formatBytes(bytes) {
 		if (bytes === 0) return '0 Bytes';
 		const k = 1024;
 		const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
 		const i = Math.floor(Math.log(bytes) / Math.log(k));
 		return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+	}
+	
+	// Helper function to format permissions in rwxrwxrwx format
+	function formatPermissions(mode, isDirectory) {
+		// Check if mode is already in rwxrwxrwx format (e.g., "drwxr-xr-x" or "-rw-r--r--")
+		if (mode && (mode.startsWith('d') || mode.startsWith('-') || mode.startsWith('l')) && mode.length === 10) {
+			return mode; // Already formatted
+		}
+		
+		// If it's a raw octal mode, convert it
+		const permissions = parseInt(mode, 8);
+		if (isNaN(permissions)) {
+			return isDirectory ? 'drwxr-xr-x' : '-rw-r--r--'; // Default fallback
+		}
+		
+		// File type character
+		let fileType = '-';
+		if (isDirectory) {
+			fileType = 'd';
+		}
+		
+		// Permission bits
+		const owner = (permissions >> 6) & 7;
+		const group = (permissions >> 3) & 7;
+		const others = permissions & 7;
+		
+		// Convert number to rwx format
+		function numToRwx(num) {
+			const r = (num & 4) ? 'r' : '-';
+			const w = (num & 2) ? 'w' : '-';
+			const x = (num & 1) ? 'x' : '-';
+			return r + w + x;
+		}
+		
+		return fileType + numToRwx(owner) + numToRwx(group) + numToRwx(others);
 	}
 	
 	function exportFileList() {
@@ -608,14 +689,12 @@ templ FileBrowser(data dash.FileBrowserData) {
 		document.body.removeChild(link);
 	}
 	
-	// Helper function to format bytes
-	function formatBytes(bytes) {
-		if (bytes === 0) return '0 Bytes';
-		const k = 1024;
-		const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-	}
+	// Handle file checkbox changes
+	document.addEventListener('change', function(e) {
+		if (e.target.classList.contains('file-checkbox')) {
+			updateDeleteSelectedButton();
+		}
+	});
 	</script>
 }
 
