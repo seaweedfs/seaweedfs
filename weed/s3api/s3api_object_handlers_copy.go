@@ -14,7 +14,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -492,10 +491,29 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	}
 	dstChunk.Fid = fid
 
-	// Get source URL using LookupFileId
-	srcUrl, _, err := operation.LookupFileId(func(_ context.Context) pb.ServerAddress {
-		return pb.ServerAddress(s3a.option.Filer.ToGrpcAddress())
-	}, s3a.option.GrpcDialOption, chunk.GetFileIdString())
+	// Get source URL using filer's LookupVolume
+	var srcUrl string
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		vid, _, err := operation.ParseFileId(chunk.GetFileIdString())
+		if err != nil {
+			return fmt.Errorf("parse file ID: %v", err)
+		}
+
+		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
+			VolumeIds: []string{vid},
+		})
+		if err != nil {
+			return fmt.Errorf("lookup volume: %v", err)
+		}
+
+		if locations, found := resp.LocationsMap[vid]; found && len(locations.Locations) > 0 {
+			srcUrl = "http://" + locations.Locations[0].Url + "/" + chunk.GetFileIdString()
+		} else {
+			return fmt.Errorf("no location found for volume %s", vid)
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("lookup source file ID: %v", err)
 	}
@@ -533,10 +551,29 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	}
 	dstChunk.Fid = fid
 
-	// Get source URL using LookupFileId
-	srcUrl, _, err := operation.LookupFileId(func(_ context.Context) pb.ServerAddress {
-		return pb.ServerAddress(s3a.option.Filer.ToGrpcAddress())
-	}, s3a.option.GrpcDialOption, originalChunk.GetFileIdString())
+	// Get source URL using filer's LookupVolume
+	var srcUrl string
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		vid, _, err := operation.ParseFileId(originalChunk.GetFileIdString())
+		if err != nil {
+			return fmt.Errorf("parse file ID: %v", err)
+		}
+
+		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
+			VolumeIds: []string{vid},
+		})
+		if err != nil {
+			return fmt.Errorf("lookup volume: %v", err)
+		}
+
+		if locations, found := resp.LocationsMap[vid]; found && len(locations.Locations) > 0 {
+			srcUrl = "http://" + locations.Locations[0].Url + "/" + originalChunk.GetFileIdString()
+		} else {
+			return fmt.Errorf("no location found for volume %s", vid)
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("lookup source file ID: %v", err)
 	}
