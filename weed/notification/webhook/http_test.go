@@ -48,7 +48,7 @@ func TestHttpClientSendMessage(t *testing.T) {
 		},
 	}
 
-	err = client.sendMessage("/test/path", message)
+	err = client.sendMessage(newWebhookMessage("/test/path", message))
 	if err != nil {
 		t.Fatalf("Failed to send message: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestHttpClientSendMessageWithoutToken(t *testing.T) {
 
 	message := &filer_pb.EventNotification{}
 
-	err = client.sendMessage("/test/path", message)
+	err = client.sendMessage(newWebhookMessage("/test/path", message))
 	if err != nil {
 		t.Fatalf("Failed to send message: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestHttpClientSendMessageServerError(t *testing.T) {
 
 	message := &filer_pb.EventNotification{}
 
-	err = client.sendMessage("/test/path", message)
+	err = client.sendMessage(newWebhookMessage("/test/path", message))
 	if err == nil {
 		t.Error("Expected error for server error response")
 	}
@@ -139,7 +139,7 @@ func TestHttpClientSendMessageNetworkError(t *testing.T) {
 
 	message := &filer_pb.EventNotification{}
 
-	err = client.sendMessage("/test/path", message)
+	err = client.sendMessage(newWebhookMessage("/test/path", message))
 	if err == nil {
 		t.Error("Expected error for network failure")
 	}

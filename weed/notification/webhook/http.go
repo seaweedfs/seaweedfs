@@ -2,30 +2,33 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-	"google.golang.org/protobuf/proto"
 )
 
 type httpClient struct {
 	endpoint string
 	token    string
+	timeout  time.Duration
 }
 
 func newHTTPClient(cfg *config) (*httpClient, error) {
 	return &httpClient{
 		endpoint: cfg.endpoint,
 		token:    cfg.authBearerToken,
+		timeout:  time.Duration(cfg.timeoutSeconds) * time.Second,
 	}, nil
 }
 
-func (h *httpClient) sendMessage(key string, message proto.Message) error {
+func (h *httpClient) sendMessage(message *webhookMessage) error {
 	payload := map[string]interface{}{
-		"key":     key,
-		"message": message,
+		"key":     message.Key,
+		"message": message.MessageData,
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -41,6 +44,12 @@ func (h *httpClient) sendMessage(key string, message proto.Message) error {
 	req.Header.Set("Content-Type", "application/json")
 	if h.token != "" {
 		req.Header.Set("Authorization", "Bearer "+h.token)
+	}
+
+	if h.timeout > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), h.timeout)
+		defer cancel()
+		req = req.WithContext(ctx)
 	}
 
 	resp, err := util_http.Do(req)
