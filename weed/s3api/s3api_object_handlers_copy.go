@@ -683,9 +683,6 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 
 // validateConditionalCopyHeaders validates the conditional copy headers against the source entry
 func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *filer_pb.Entry) s3err.ErrorCode {
-	// Print statement to verify function is called
-	fmt.Printf("DEBUG: validateConditionalCopyHeaders called\n")
-
 	// Calculate ETag for the source entry
 	srcPath := util.FullPath(fmt.Sprintf("%s/%s", r.URL.Path, entry.Name))
 	filerEntry := &filer.Entry{
@@ -699,14 +696,6 @@ func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *f
 		Chunks: entry.Chunks,
 	}
 	sourceETag := filer.ETagEntry(filerEntry)
-
-	// Debug logging
-	fmt.Printf("DEBUG: sourceETag=%s\n", sourceETag)
-	for header, values := range r.Header {
-		if strings.Contains(strings.ToLower(header), "copy-source-if") {
-			fmt.Printf("DEBUG: header %s = %v\n", header, values)
-		}
-	}
 
 	// Check X-Amz-Copy-Source-If-Match
 	if ifMatch := r.Header.Get(s3_constants.AmzCopySourceIfMatch); ifMatch != "" {
