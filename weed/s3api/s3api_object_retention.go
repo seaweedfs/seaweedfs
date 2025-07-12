@@ -74,20 +74,16 @@ func (or *ObjectRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 }
 
 // parseXML is a generic helper function to parse XML from request body
-// Note: This reads the entire request body into memory, which is acceptable for object retention/legal hold
-// XML requests as they are typically very small (< 1KB). For larger XML payloads, streaming with xml.Decoder
-// would be more memory-efficient.
+// This implementation uses xml.Decoder for streaming XML parsing, which is more memory-efficient
+// and avoids loading the entire request body into memory.
 func parseXML[T any](r *http.Request, result *T) error {
 	if r.Body == nil {
 		return fmt.Errorf("empty request body")
 	}
+	defer r.Body.Close()
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return fmt.Errorf("error reading request body: %v", err)
-	}
-
-	if err := xml.Unmarshal(body, result); err != nil {
+	decoder := xml.NewDecoder(r.Body)
+	if err := decoder.Decode(result); err != nil {
 		return fmt.Errorf("error parsing XML: %v", err)
 	}
 
