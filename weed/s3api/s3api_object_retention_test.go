@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -592,7 +593,7 @@ func TestValidateObjectLockConfiguration(t *testing.T) {
 				},
 			},
 			expectError: true,
-			errorMsg:    "default retention days must be between 0 and 36500",
+			errorMsg:    fmt.Sprintf("default retention days must be between 0 and %d", MaxRetentionDays),
 		},
 		{
 			name: "Invalid rule - years out of range",
@@ -606,7 +607,7 @@ func TestValidateObjectLockConfiguration(t *testing.T) {
 				},
 			},
 			expectError: true,
-			errorMsg:    "default retention years must be between 0 and 100",
+			errorMsg:    fmt.Sprintf("default retention years must be between 0 and %d", MaxRetentionYears),
 		},
 		{
 			name: "Invalid rule - missing DefaultRetention",

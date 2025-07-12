@@ -3,7 +3,6 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +11,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+)
+
+const (
+	// Maximum retention period limits according to AWS S3 specifications
+	MaxRetentionDays  = 36500 // Maximum number of days for object retention (100 years)
+	MaxRetentionYears = 100   // Maximum number of years for object retention
 )
 
 // ObjectRetention represents S3 Object Retention configuration
@@ -193,12 +198,12 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 	}
 
 	// Validate ranges
-	if retention.Days < 0 || retention.Days > 36500 {
-		return fmt.Errorf("default retention days must be between 0 and 36500")
+	if retention.Days < 0 || retention.Days > MaxRetentionDays {
+		return fmt.Errorf("default retention days must be between 0 and %d", MaxRetentionDays)
 	}
 
-	if retention.Years < 0 || retention.Years > 100 {
-		return fmt.Errorf("default retention years must be between 0 and 100")
+	if retention.Years < 0 || retention.Years > MaxRetentionYears {
+		return fmt.Errorf("default retention years must be between 0 and %d", MaxRetentionYears)
 	}
 
 	return nil
