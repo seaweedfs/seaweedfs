@@ -187,11 +187,12 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                        title="Browse Files">
                                                         <i class="fas fa-folder-open"></i>
                                                     </a>
-                                                    <a href={templ.SafeURL(fmt.Sprintf("/s3/buckets/%s", bucket.Name))} 
-                                                       class="btn btn-outline-primary btn-sm"
-                                                       title="View Details">
+                                                    <button type="button" 
+                                                            class="btn btn-outline-primary btn-sm view-details-btn"
+                                                            data-bucket-name={bucket.Name}
+                                                            title="View Details">
                                                         <i class="fas fa-eye"></i>
-                                                    </a>
+                                                    </button>
                                                     <button type="button" 
                                                             class="btn btn-outline-warning btn-sm quota-btn"
                                                             data-bucket-name={bucket.Name}
@@ -442,6 +443,33 @@ templ S3Buckets(data dash.S3BucketsData) {
         </div>
     </div>
 
+    <!-- Bucket Details Modal -->
+    <div class="modal fade" id="bucketDetailsModal" tabindex="-1" aria-labelledby="bucketDetailsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="bucketDetailsModalLabel">
+                        <i class="fas fa-cube me-2"></i>Bucket Details
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="bucketDetailsContent">
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <div class="mt-2">Loading bucket details...</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- JavaScript for bucket management -->
     <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -637,6 +665,74 @@ templ S3Buckets(data dash.S3BucketsData) {
         document.getElementById('quotaEnabled').addEventListener('change', function() {
             document.getElementById('quotaSizeSettings').style.display = this.checked ? 'block' : 'none';
         });
+
+        // Handle view details button
+        let detailsModalInstance = null;
+        document.querySelectorAll('.view-details-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const bucketName = this.dataset.bucketName;
+                
+                // Update modal title
+                document.getElementById('bucketDetailsModalLabel').innerHTML = 
+                    '<i class="fas fa-cube me-2"></i>Bucket Details - ' + bucketName;
+                
+                // Show loading spinner
+                document.getElementById('bucketDetailsContent').innerHTML = 
+                    '<div class="text-center py-4">' +
+                    '<div class="spinner-border text-primary" role="status">' +
+                    '<span class="visually-hidden">Loading...</span>' +
+                    '</div>' +
+                    '<div class="mt-2">Loading bucket details...</div>' +
+                    '</div>';
+                
+                // Dispose of existing modal instance if it exists
+                if (detailsModalInstance) {
+                    detailsModalInstance.dispose();
+                }
+                
+                // Create new modal instance
+                detailsModalInstance = new bootstrap.Modal(document.getElementById('bucketDetailsModal'));
+                detailsModalInstance.show();
+                
+                // Fetch bucket details
+                fetch('/api/s3/buckets/' + bucketName)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            document.getElementById('bucketDetailsContent').innerHTML = 
+                                '<div class="alert alert-danger">' +
+                                '<i class="fas fa-exclamation-triangle me-2"></i>' +
+                                'Error loading bucket details: ' + data.error +
+                                '</div>';
+                        } else {
+                            displayBucketDetails(data);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching bucket details:', error);
+                        document.getElementById('bucketDetailsContent').innerHTML = 
+                            '<div class="alert alert-danger">' +
+                            '<i class="fas fa-exclamation-triangle me-2"></i>' +
+                            'Error loading bucket details: ' + error.message +
+                            '</div>';
+                    });
+            });
+        });
+
+        // Add event listener to properly dispose of details modal when hidden
+        document.getElementById('bucketDetailsModal').addEventListener('hidden.bs.modal', function() {
+            if (detailsModalInstance) {
+                detailsModalInstance.dispose();
+                detailsModalInstance = null;
+            }
+            // Force remove any remaining backdrops
+            document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+                backdrop.remove();
+            });
+            // Ensure body classes are removed
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
+        });
     });
 
     function deleteBucket() {
@@ -665,6 +761,128 @@ templ S3Buckets(data dash.S3BucketsData) {
         });
     }
 
+    function displayBucketDetails(data) {
+        const bucket = data.bucket;
+        const objects = data.objects || [];
+        
+        // Helper function to format bytes
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        // Helper function to format date
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleString();
+        }
+        
+        // Generate objects table
+        let objectsTable = '';
+        if (objects.length > 0) {
+            objectsTable = '<div class="table-responsive">' +
+                '<table class="table table-sm table-striped">' +
+                '<thead>' +
+                '<tr>' +
+                '<th>Object Key</th>' +
+                '<th>Size</th>' +
+                '<th>Last Modified</th>' +
+                '<th>Storage Class</th>' +
+                '</tr>' +
+                '</thead>' +
+                '<tbody>' +
+                objects.map(obj => 
+                    '<tr>' +
+                    '<td><i class="fas fa-file me-1"></i>' + obj.key + '</td>' +
+                    '<td>' + formatBytes(obj.size) + '</td>' +
+                    '<td>' + formatDate(obj.last_modified) + '</td>' +
+                    '<td><span class="badge bg-primary">' + obj.storage_class + '</span></td>' +
+                    '</tr>'
+                ).join('') +
+                '</tbody>' +
+                '</table>' +
+                '</div>';
+        } else {
+            objectsTable = '<div class="text-center py-4 text-muted">' +
+                '<i class="fas fa-file fa-3x mb-3"></i>' +
+                '<div>No objects found in this bucket</div>' +
+                '</div>';
+        }
+        
+        const content = '<div class="row">' +
+            '<div class="col-md-6">' +
+            '<h6><i class="fas fa-info-circle me-2"></i>Bucket Information</h6>' +
+            '<table class="table table-sm">' +
+            '<tr>' +
+            '<td><strong>Name:</strong></td>' +
+            '<td>' + bucket.name + '</td>' +
+            '</tr>' +
+            '<tr>' +
+            '<td><strong>Created:</strong></td>' +
+            '<td>' + formatDate(bucket.created_at) + '</td>' +
+            '</tr>' +
+            '<tr>' +
+            '<td><strong>Last Modified:</strong></td>' +
+            '<td>' + formatDate(bucket.last_modified) + '</td>' +
+            '</tr>' +
+            '<tr>' +
+            '<td><strong>Total Size:</strong></td>' +
+            '<td>' + formatBytes(bucket.size) + '</td>' +
+            '</tr>' +
+            '<tr>' +
+            '<td><strong>Object Count:</strong></td>' +
+            '<td>' + bucket.object_count + '</td>' +
+            '</tr>' +
+            '</table>' +
+            '</div>' +
+            '<div class="col-md-6">' +
+            '<h6><i class="fas fa-cogs me-2"></i>Configuration</h6>' +
+            '<table class="table table-sm">' +
+            '<tr>' +
+            '<td><strong>Quota:</strong></td>' +
+            '<td>' +
+            (bucket.quota_enabled ? 
+                '<span class="badge bg-success">' + formatBytes(bucket.quota) + '</span>' : 
+                '<span class="badge bg-secondary">Disabled</span>'
+            ) +
+            '</td>' +
+            '</tr>' +
+            '<tr>' +
+            '<td><strong>Versioning:</strong></td>' +
+            '<td>' +
+            (bucket.versioning_enabled ? 
+                '<span class="badge bg-success"><i class="fas fa-check me-1"></i>Enabled</span>' : 
+                '<span class="badge bg-secondary"><i class="fas fa-times me-1"></i>Disabled</span>'
+            ) +
+            '</td>' +
+            '</tr>' +
+            '<tr>' +
+            '<td><strong>Object Lock:</strong></td>' +
+            '<td>' +
+            (bucket.object_lock_enabled ? 
+                '<span class="badge bg-warning"><i class="fas fa-lock me-1"></i>Enabled</span>' +
+                '<br><small class="text-muted">' + bucket.object_lock_mode + ' • ' + bucket.object_lock_duration + ' days</small>' : 
+                '<span class="badge bg-secondary"><i class="fas fa-unlock me-1"></i>Disabled</span>'
+            ) +
+            '</td>' +
+            '</tr>' +
+            '</table>' +
+            '</div>' +
+            '</div>' +
+            '<hr>' +
+            '<div class="row">' +
+            '<div class="col-12">' +
+            '<h6><i class="fas fa-list me-2"></i>Objects (' + objects.length + ')</h6>' +
+            objectsTable +
+            '</div>' +
+            '</div>';
+        
+        document.getElementById('bucketDetailsContent').innerHTML = content;
+    }
+
     function exportBucketList() {
         // Simple CSV export
         const buckets = Array.from(document.querySelectorAll('#bucketsTable tbody tr')).map(row => {
@@ -685,7 +903,7 @@ templ S3Buckets(data dash.S3BucketsData) {
 
         const csvContent = "data:text/csv;charset=utf-8," + 
             "Name,Created,Objects,Size,Quota,Versioning,Object Lock\n" +
-            buckets.map(b => `"${b.name}","${b.created}","${b.objects}","${b.size}","${b.quota}","${b.versioning}","${b.objectLock}"`).join("\n");
+            buckets.map(b => '"' + b.name + '","' + b.created + '","' + b.objects + '","' + b.size + '","' + b.quota + '","' + b.versioning + '","' + b.objectLock + '"').join("\n");
 
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
