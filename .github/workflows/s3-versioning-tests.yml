@@ -1,10 +1,10 @@
-name: "S3 Versioning Tests (Go)"
+name: "S3 Versioning and Retention Tests (Go)"
 
 on:
   pull_request:
   
 concurrency:
-  group: ${{ github.head_ref }}/s3-versioning
+  group: ${{ github.head_ref }}/s3-versioning-retention
   cancel-in-progress: true
 
 permissions:
@@ -128,6 +128,121 @@ jobs:
         with:
           name: s3-versioning-compatibility-logs
           path: test/s3/versioning/weed-test*.log
+          retention-days: 3
+
+  s3-retention-tests:
+    name: S3 Retention Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        test-type: ["quick", "comprehensive"]
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Retention Tests - ${{ matrix.test-type }}
+        timeout-minutes: 25
+        working-directory: test/s3/retention
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting Tests ==="
+          
+          # Run tests with automatic server management
+          # The test-with-server target handles server startup/shutdown automatically
+          if [ "${{ matrix.test-type }}" = "quick" ]; then
+            # Override TEST_PATTERN for quick tests only
+            make test-with-server TEST_PATTERN="TestBasicRetentionWorkflow|TestRetentionModeCompliance|TestLegalHoldWorkflow"
+          else
+            # Run all retention tests
+            make test-with-server
+          fi
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/retention
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            echo "Last 100 lines of server logs:"
+            tail -100 weed-test.log
+          else
+            echo "No server log file found"
+          fi
+          
+          echo "=== Test Environment ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|9333|8080)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-retention-test-logs-${{ matrix.test-type }}
+          path: test/s3/retention/weed-test*.log
+          retention-days: 3
+
+  s3-retention-worm:
+    name: S3 Retention WORM Integration Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run WORM Integration Tests
+        timeout-minutes: 15
+        working-directory: test/s3/retention
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run the WORM integration tests specifically
+          make test-worm-integration || {
+            echo "❌ WORM integration test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-retention-worm-logs
+          path: test/s3/retention/weed-test*.log
           retention-days: 3
 
   s3-versioning-stress:
