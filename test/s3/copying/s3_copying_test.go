@@ -32,7 +32,7 @@ type S3TestConfig struct {
 
 // Default test configuration - should match test_config.json
 var defaultConfig = &S3TestConfig{
-	Endpoint:      "http://localhost:8333", // Default SeaweedFS S3 port
+	Endpoint:      "http://127.0.0.1:8333", // Use explicit IPv4 address
 	AccessKey:     "some_access_key1",
 	SecretKey:     "some_secret_key1",
 	Region:        "us-east-1",
@@ -64,6 +64,20 @@ func getS3Client(t *testing.T) *s3.Client {
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true // Important for SeaweedFS
 	})
+}
+
+// waitForS3Service waits for the S3 service to be ready
+func waitForS3Service(t *testing.T, client *s3.Client, timeout time.Duration) {
+	start := time.Now()
+	for time.Since(start) < timeout {
+		_, err := client.ListBuckets(context.TODO(), &s3.ListBucketsInput{})
+		if err == nil {
+			return
+		}
+		t.Logf("Waiting for S3 service to be ready... (error: %v)", err)
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("S3 service not ready after %v", timeout)
 }
 
 // getNewBucketName generates a unique bucket name
@@ -373,6 +387,10 @@ func TestBasicLargeObject(t *testing.T) {
 // TestObjectCopySameBucket tests copying an object within the same bucket
 func TestObjectCopySameBucket(t *testing.T) {
 	client := getS3Client(t)
+
+	// Wait for S3 service to be ready
+	waitForS3Service(t, client, 30*time.Second)
+
 	bucketName := getNewBucketName()
 
 	// Create bucket
@@ -392,7 +410,7 @@ func TestObjectCopySameBucket(t *testing.T) {
 		Key:        aws.String(destKey),
 		CopySource: aws.String(copySource),
 	})
-	require.NoError(t, err)
+	require.NoError(t, err, "Failed to copy object within same bucket")
 
 	// Verify the copied object
 	resp := getObject(t, client, bucketName, destKey)

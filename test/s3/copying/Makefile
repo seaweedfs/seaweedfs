@@ -70,23 +70,38 @@ start-seaweedfs: check-binary
 	@mkdir -p /tmp/seaweedfs-test-copying-volume
 	
 	# Start master server with volume size limit
-	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -mdir=/tmp/seaweedfs-test-copying-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) > /tmp/seaweedfs-master.log 2>&1 &
-	@sleep 2
+	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -mdir=/tmp/seaweedfs-test-copying-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 > /tmp/seaweedfs-master.log 2>&1 &
+	@sleep 3
 	
 	# Start volume server
-	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=localhost:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-copying-volume > /tmp/seaweedfs-volume.log 2>&1 &
-	@sleep 2
+	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-copying-volume -ip=127.0.0.1 > /tmp/seaweedfs-volume.log 2>&1 &
+	@sleep 3
 	
-	# Start filer server
-	@nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=localhost:$(MASTER_PORT) > /tmp/seaweedfs-filer.log 2>&1 &
-	@sleep 2
+	# Start filer server (using standard SeaweedFS gRPC port convention: HTTP port + 10000)
+	@nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -ip=127.0.0.1 > /tmp/seaweedfs-filer.log 2>&1 &
+	@sleep 3
 	
 	# Create S3 configuration
 	@echo '{"identities":[{"name":"$(ACCESS_KEY)","credentials":[{"accessKey":"$(ACCESS_KEY)","secretKey":"$(SECRET_KEY)"}],"actions":["Admin","Read","Write"]}]}' > /tmp/seaweedfs-s3.json
 	
 	# Start S3 server
-	@nohup $(SEAWEEDFS_BINARY) s3 -port=$(S3_PORT) -filer=localhost:$(FILER_PORT) -config=/tmp/seaweedfs-s3.json > /tmp/seaweedfs-s3.log 2>&1 &
-	@sleep 3
+	@nohup $(SEAWEEDFS_BINARY) s3 -port=$(S3_PORT) -filer=127.0.0.1:$(FILER_PORT) -config=/tmp/seaweedfs-s3.json -ip.bind=127.0.0.1 > /tmp/seaweedfs-s3.log 2>&1 &
+	@sleep 5
+	
+	# Wait for S3 service to be ready
+	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
+	@for i in $$(seq 1 30); do \
+		if curl -s -f http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
+			echo "$(GREEN)S3 service is ready$(NC)"; \
+			break; \
+		fi; \
+		echo "Waiting for S3 service... ($$i/30)"; \
+		sleep 1; \
+	done
+	
+	# Additional wait for filer gRPC to be ready
+	@echo "$(YELLOW)Waiting for filer gRPC to be ready...$(NC)"
+	@sleep 2
 	@echo "$(GREEN)SeaweedFS server started successfully$(NC)"
 	@echo "Master: http://localhost:$(MASTER_PORT)"
 	@echo "Volume: http://localhost:$(VOLUME_PORT)"
