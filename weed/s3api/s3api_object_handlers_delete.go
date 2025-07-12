@@ -130,6 +130,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 // / ObjectIdentifier carries key name for the object to delete.
 type ObjectIdentifier struct {
 	ObjectName string `xml:"Key"`
+	VersionId  string `xml:"VersionId,omitempty"`
 }
 
 // DeleteObjectsRequest - xml carrying the object key names which needs to be deleted.
@@ -216,8 +217,8 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 			// Check object lock permissions before deletion (only for versioned buckets)
 			if versioningEnabled {
-				if err := s3a.checkObjectLockPermissions(bucket, object.ObjectName, "", bypassGovernance); err != nil {
-					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s: %v", bucket, object.ObjectName, err)
+				if err := s3a.checkObjectLockPermissions(bucket, object.ObjectName, object.VersionId, bypassGovernance); err != nil {
+					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.ObjectName, object.VersionId, err)
 					deleteErrors = append(deleteErrors, DeleteError{
 						Code:    "AccessDenied",
 						Message: err.Error(),

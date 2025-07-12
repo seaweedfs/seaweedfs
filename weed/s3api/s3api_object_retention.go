@@ -151,8 +151,13 @@ func validateLegalHold(legalHold *ObjectLegalHold) error {
 
 // validateObjectLockConfiguration validates object lock configuration
 func validateObjectLockConfiguration(config *ObjectLockConfiguration) error {
-	// Validate ObjectLockEnabled if present
-	if config.ObjectLockEnabled != "" && config.ObjectLockEnabled != s3_constants.ObjectLockEnabled {
+	// ObjectLockEnabled is required for bucket-level configuration
+	if config.ObjectLockEnabled == "" {
+		return fmt.Errorf("object lock configuration must specify ObjectLockEnabled")
+	}
+
+	// Validate ObjectLockEnabled value
+	if config.ObjectLockEnabled != s3_constants.ObjectLockEnabled {
 		return fmt.Errorf("invalid object lock enabled value: %s", config.ObjectLockEnabled)
 	}
 

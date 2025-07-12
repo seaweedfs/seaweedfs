@@ -199,6 +199,14 @@ func TestValidateObjectLockConfiguration(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "Missing ObjectLockEnabled",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "",
+			},
+			expectError: true,
+			errorMsg:    "object lock configuration must specify ObjectLockEnabled",
+		},
+		{
 			name: "Valid config with rule and days",
 			config: &ObjectLockConfiguration{
 				ObjectLockEnabled: "Enabled",
