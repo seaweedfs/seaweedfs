@@ -1,0 +1,286 @@
+package app
+
+import (
+    "fmt"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ Policies(data dash.PoliciesData) {
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">
+            <i class="fas fa-shield-alt me-2"></i>IAM Policies
+        </h1>
+        <div class="btn-toolbar mb-2 mb-md-0">
+            <div class="btn-group me-2">
+                <button type="button" class="btn btn-sm btn-primary" 
+                        data-bs-toggle="modal" 
+                        data-bs-target="#createPolicyModal">
+                    <i class="fas fa-plus me-1"></i>Create Policy
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="policies-content">
+        <!-- Summary Cards -->
+        <div class="row mb-4">
+            <div class="col-xl-4 col-md-6 mb-4">
+                <div class="card border-left-primary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                    Total Policies
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {fmt.Sprintf("%d", data.TotalPolicies)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-shield-alt fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-4 col-md-6 mb-4">
+                <div class="card border-left-success shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                    Active Policies
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {fmt.Sprintf("%d", data.TotalPolicies)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-check-circle fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-4 col-md-6 mb-4">
+                <div class="card border-left-info shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                    Last Updated
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {data.LastUpdated.Format("15:04")}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-clock fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Policies Table -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-shield-alt me-2"></i>IAM Policies
+                        </h6>
+                        <div class="dropdown no-arrow">
+                            <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                            </a>
+                            <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
+                                <div class="dropdown-header">Actions:</div>
+                                <a class="dropdown-item" href="#" id="exportPolicyListBtn">
+                                    <i class="fas fa-download me-2"></i>Export List
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" width="100%" cellspacing="0">
+                                <thead>
+                                    <tr>
+                                        <th>Policy Name</th>
+                                        <th>Version</th>
+                                        <th>Statements</th>
+                                        <th>Created</th>
+                                        <th>Updated</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for _, policy := range data.Policies {
+                                        <tr>
+                                            <td>
+                                                <strong>{policy.Name}</strong>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-info">{policy.Document.Version}</span>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-secondary">{fmt.Sprintf("%d statements", len(policy.Document.Statement))}</span>
+                                            </td>
+                                            <td>
+                                                <small class="text-muted">{policy.CreatedAt.Format("2006-01-02 15:04")}</small>
+                                            </td>
+                                            <td>
+                                                <small class="text-muted">{policy.UpdatedAt.Format("2006-01-02 15:04")}</small>
+                                            </td>
+                                            <td>
+                                                <div class="btn-group btn-group-sm" role="group">
+                                                    <button type="button" 
+                                                            class="btn btn-outline-info view-policy-btn"
+                                                            data-policy-name={policy.Name}
+                                                            data-policy-document={policy.DocumentJSON}
+                                                            title="View Policy">
+                                                        <i class="fas fa-eye"></i>
+                                                    </button>
+                                                    <button type="button" 
+                                                            class="btn btn-outline-primary edit-policy-btn"
+                                                            data-policy-name={policy.Name}
+                                                            data-policy-document={policy.DocumentJSON}
+                                                            title="Edit Policy">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <button type="button" 
+                                                            class="btn btn-outline-danger delete-policy-btn"
+                                                            data-policy-name={policy.Name}
+                                                            title="Delete Policy">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                    if len(data.Policies) == 0 {
+                                        <tr>
+                                            <td colspan="6" class="text-center text-muted py-4">
+                                                <i class="fas fa-shield-alt fa-3x mb-3 text-muted"></i>
+                                                <div>
+                                                    <h5>No IAM policies found</h5>
+                                                    <p>Create your first policy to manage access permissions.</p>
+                                                    <button type="button" class="btn btn-primary" 
+                                                            data-bs-toggle="modal" 
+                                                            data-bs-target="#createPolicyModal">
+                                                        <i class="fas fa-plus me-1"></i>Create Policy
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Policy Modal -->
+    <div class="modal fade" id="createPolicyModal" tabindex="-1" aria-labelledby="createPolicyModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="createPolicyModalLabel">
+                        <i class="fas fa-plus me-2"></i>Create New Policy
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="createPolicyForm">
+                        <div class="mb-3">
+                            <label for="policyName" class="form-label">Policy Name</label>
+                            <input type="text" class="form-control" id="policyName" name="name" required/>
+                            <div class="form-text">Enter a unique name for this policy.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="policyDocument" class="form-label">Policy Document</label>
+                            <textarea class="form-control font-monospace" id="policyDocument" name="document" rows="15" required></textarea>
+                            <div class="form-text">Enter a valid JSON policy document. See <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements.html" target="_blank">AWS Policy Reference</a> for syntax.</div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="createPolicyBtn">
+                        <i class="fas fa-plus me-1"></i>Create Policy
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- View Policy Modal -->
+    <div class="modal fade" id="viewPolicyModal" tabindex="-1" aria-labelledby="viewPolicyModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="viewPolicyModalLabel">
+                        <i class="fas fa-eye me-2"></i>View Policy
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Policy Name</label>
+                        <div class="form-control-plaintext" id="viewPolicyName"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Policy Document</label>
+                        <pre class="bg-light p-3 rounded"><code id="viewPolicyDocument"></code></pre>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="copyPolicyBtn">
+                        <i class="fas fa-copy me-1"></i>Copy Policy
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Policy Modal -->
+    <div class="modal fade" id="editPolicyModal" tabindex="-1" aria-labelledby="editPolicyModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editPolicyModalLabel">
+                        <i class="fas fa-edit me-2"></i>Edit Policy
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editPolicyForm">
+                        <div class="mb-3">
+                            <label class="form-label">Policy Name</label>
+                            <div class="form-control-plaintext" id="editPolicyName"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editPolicyDocument" class="form-label">Policy Document</label>
+                            <textarea class="form-control font-monospace" id="editPolicyDocument" name="document" rows="15" required></textarea>
+                            <div class="form-text">Modify the JSON policy document. See <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements.html" target="_blank">AWS Policy Reference</a> for syntax.</div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="updatePolicyBtn">
+                        <i class="fas fa-save me-1"></i>Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+} 
