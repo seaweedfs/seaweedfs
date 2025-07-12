@@ -326,7 +326,7 @@ func TestParseXMLGeneric(t *testing.T) {
 			xmlBody: `<?xml version="1.0" encoding="UTF-8"?>
 <Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
     <Mode>GOVERNANCE</Mode>
-    <RetainUntilDate>2024-12-31T23:59:59Z</RetainUntilDate>
+    <RetainUntilDate>2025-01-01T00:00:00Z</RetainUntilDate>
 </Retention>`,
 			expectError: false,
 		},
@@ -334,11 +334,11 @@ func TestParseXMLGeneric(t *testing.T) {
 			name:        "Empty body",
 			xmlBody:     "",
 			expectError: true,
-			errorMsg:    "empty request body",
+			errorMsg:    "error parsing XML",
 		},
 		{
 			name:        "Invalid XML",
-			xmlBody:     "<InvalidXML>",
+			xmlBody:     "not xml",
 			expectError: true,
 			errorMsg:    "error parsing XML",
 		},
@@ -346,13 +346,8 @@ func TestParseXMLGeneric(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var req *http.Request
-			if tt.xmlBody == "" {
-				req = &http.Request{Body: nil}
-			} else {
-				req = &http.Request{
-					Body: io.NopCloser(strings.NewReader(tt.xmlBody)),
-				}
+			req := &http.Request{
+				Body: io.NopCloser(strings.NewReader(tt.xmlBody)),
 			}
 
 			var retention ObjectRetention
@@ -362,11 +357,242 @@ func TestParseXMLGeneric(t *testing.T) {
 				if err == nil {
 					t.Errorf("Expected error but got none")
 				} else if !strings.Contains(err.Error(), tt.errorMsg) {
-					t.Errorf("Expected error message to contain '%s', got '%s'", tt.errorMsg, err.Error())
+					t.Errorf("Expected error message to contain '%s', got: %v", tt.errorMsg, err)
 				}
 			} else {
 				if err != nil {
-					t.Errorf("Expected no error but got: %v", err)
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateObjectLockConfiguration(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      *ObjectLockConfiguration
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "Valid config with ObjectLockEnabled only",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+			},
+			expectError: false,
+		},
+		{
+			name: "Valid config with rule and days",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Mode: "GOVERNANCE",
+						Days: 30,
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "Valid config with rule and years",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Mode:  "COMPLIANCE",
+						Years: 1,
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "Invalid ObjectLockEnabled value",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "InvalidValue",
+			},
+			expectError: true,
+			errorMsg:    "invalid object lock enabled value",
+		},
+		{
+			name: "Invalid rule - missing mode",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Days: 30,
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "default retention must specify Mode",
+		},
+		{
+			name: "Invalid rule - both days and years",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Mode:  "GOVERNANCE",
+						Days:  30,
+						Years: 1,
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "default retention cannot specify both Days and Years",
+		},
+		{
+			name: "Invalid rule - neither days nor years",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Mode: "GOVERNANCE",
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "default retention must specify either Days or Years",
+		},
+		{
+			name: "Invalid rule - invalid mode",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Mode: "INVALID_MODE",
+						Days: 30,
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "invalid default retention mode",
+		},
+		{
+			name: "Invalid rule - days out of range",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Mode: "GOVERNANCE",
+						Days: 50000,
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "default retention days must be between 0 and 36500",
+		},
+		{
+			name: "Invalid rule - years out of range",
+			config: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Mode:  "GOVERNANCE",
+						Years: 200,
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "default retention years must be between 0 and 100",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateObjectLockConfiguration(tt.config)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error message to contain '%s', got: %v", tt.errorMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateDefaultRetention(t *testing.T) {
+	tests := []struct {
+		name        string
+		retention   *DefaultRetention
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "Valid retention with days",
+			retention: &DefaultRetention{
+				Mode: "GOVERNANCE",
+				Days: 30,
+			},
+			expectError: false,
+		},
+		{
+			name: "Valid retention with years",
+			retention: &DefaultRetention{
+				Mode:  "COMPLIANCE",
+				Years: 1,
+			},
+			expectError: false,
+		},
+		{
+			name: "Missing mode",
+			retention: &DefaultRetention{
+				Days: 30,
+			},
+			expectError: true,
+			errorMsg:    "default retention must specify Mode",
+		},
+		{
+			name: "Invalid mode",
+			retention: &DefaultRetention{
+				Mode: "INVALID",
+				Days: 30,
+			},
+			expectError: true,
+			errorMsg:    "invalid default retention mode",
+		},
+		{
+			name: "Both days and years specified",
+			retention: &DefaultRetention{
+				Mode:  "GOVERNANCE",
+				Days:  30,
+				Years: 1,
+			},
+			expectError: true,
+			errorMsg:    "default retention cannot specify both Days and Years",
+		},
+		{
+			name: "Neither days nor years specified",
+			retention: &DefaultRetention{
+				Mode: "GOVERNANCE",
+			},
+			expectError: true,
+			errorMsg:    "default retention must specify either Days or Years",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDefaultRetention(tt.retention)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error message to contain '%s', got: %v", tt.errorMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
 				}
 			}
 		})

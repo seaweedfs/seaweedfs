@@ -85,16 +85,15 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		glog.V(1).Infof("PutObjectHandler: bucket %s, object %s, versioningEnabled=%v", bucket, object, versioningEnabled)
 
+		// Check object lock permissions before PUT operation (only for versioned buckets)
+		bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
+		if err := s3a.checkObjectLockPermissionsForPut(bucket, object, bypassGovernance, versioningEnabled); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+
 		if versioningEnabled {
 			// Handle versioned PUT
-			// Check object lock permissions before creating new version (objects under retention should not be overwritten even in versioned buckets)
-			bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
-			if err := s3a.checkObjectLockPermissions(bucket, object, "", bypassGovernance); err != nil {
-				glog.V(2).Infof("PutObjectHandler: object lock check failed for versioned PUT %s/%s: %v", bucket, object, err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-				return
-			}
-
 			glog.V(1).Infof("PutObjectHandler: using versioned PUT for %s/%s", bucket, object)
 			versionId, etag, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
@@ -111,14 +110,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			setEtag(w, etag)
 		} else {
 			// Handle regular PUT (non-versioned)
-			// Check object lock permissions before overwriting (only for non-versioned buckets)
-			bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
-			if err := s3a.checkObjectLockPermissions(bucket, object, "", bypassGovernance); err != nil {
-				glog.V(2).Infof("PutObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-				return
-			}
-
 			glog.V(1).Infof("PutObjectHandler: using regular PUT for %s/%s", bucket, object)
 			uploadUrl := s3a.toFilerUrl(bucket, object)
 			if objectContentType == "" {

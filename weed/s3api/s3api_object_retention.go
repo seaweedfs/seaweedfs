@@ -149,6 +149,56 @@ func validateLegalHold(legalHold *ObjectLegalHold) error {
 	return nil
 }
 
+// validateObjectLockConfiguration validates object lock configuration
+func validateObjectLockConfiguration(config *ObjectLockConfiguration) error {
+	// Validate ObjectLockEnabled if present
+	if config.ObjectLockEnabled != "" && config.ObjectLockEnabled != s3_constants.ObjectLockEnabled {
+		return fmt.Errorf("invalid object lock enabled value: %s", config.ObjectLockEnabled)
+	}
+
+	// Validate Rule if present
+	if config.Rule != nil {
+		if config.Rule.DefaultRetention != nil {
+			return validateDefaultRetention(config.Rule.DefaultRetention)
+		}
+	}
+
+	return nil
+}
+
+// validateDefaultRetention validates default retention configuration
+func validateDefaultRetention(retention *DefaultRetention) error {
+	// Mode is required
+	if retention.Mode == "" {
+		return fmt.Errorf("default retention must specify Mode")
+	}
+
+	// Mode must be valid
+	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
+		return fmt.Errorf("invalid default retention mode: %s", retention.Mode)
+	}
+
+	// Exactly one of Days or Years must be specified
+	if retention.Days == 0 && retention.Years == 0 {
+		return fmt.Errorf("default retention must specify either Days or Years")
+	}
+
+	if retention.Days > 0 && retention.Years > 0 {
+		return fmt.Errorf("default retention cannot specify both Days and Years")
+	}
+
+	// Validate ranges
+	if retention.Days < 0 || retention.Days > 36500 {
+		return fmt.Errorf("default retention days must be between 0 and 36500")
+	}
+
+	if retention.Years < 0 || retention.Years > 100 {
+		return fmt.Errorf("default retention years must be between 0 and 100")
+	}
+
+	return nil
+}
+
 // getObjectRetention retrieves retention configuration from object metadata
 func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*ObjectRetention, error) {
 	var entry *filer_pb.Entry
@@ -446,5 +496,39 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId str
 		}
 	}
 
+	return nil
+}
+
+// isObjectLockAvailable checks if Object Lock features are available for the bucket
+// Object Lock requires versioning to be enabled (AWS S3 requirement)
+func (s3a *S3ApiServer) isObjectLockAvailable(bucket string) error {
+	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			return fmt.Errorf("bucket not found")
+		}
+		return fmt.Errorf("error checking versioning status: %v", err)
+	}
+
+	if !versioningEnabled {
+		return fmt.Errorf("object lock requires versioning to be enabled")
+	}
+
+	return nil
+}
+
+// checkObjectLockPermissionsForPut checks object lock permissions for PUT operations
+// This is a shared helper to avoid code duplication in PUT handlers
+func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(bucket, object string, bypassGovernance bool, versioningEnabled bool) error {
+	// Object Lock only applies to versioned buckets (AWS S3 requirement)
+	if !versioningEnabled {
+		return nil
+	}
+
+	// For PUT operations, we check permissions on the current object (empty versionId)
+	if err := s3a.checkObjectLockPermissions(bucket, object, "", bypassGovernance); err != nil {
+		glog.V(2).Infof("checkObjectLockPermissionsForPut: object lock check failed for %s/%s: %v", bucket, object, err)
+		return err
+	}
 	return nil
 }
