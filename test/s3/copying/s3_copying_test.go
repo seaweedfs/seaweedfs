@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	mathrand "math/rand"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,11 @@ var defaultConfig = &S3TestConfig{
 	BucketPrefix:  "test-copying-",
 	UseSSL:        false,
 	SkipVerifySSL: true,
+}
+
+// Initialize math/rand with current time to ensure randomness
+func init() {
+	mathrand.Seed(time.Now().UnixNano())
 }
 
 // getS3Client creates an AWS S3 client for testing
@@ -83,11 +89,35 @@ func waitForS3Service(t *testing.T, client *s3.Client, timeout time.Duration) {
 // getNewBucketName generates a unique bucket name
 func getNewBucketName() string {
 	timestamp := time.Now().UnixNano()
-	return fmt.Sprintf("%s%d", defaultConfig.BucketPrefix, timestamp)
+	// Add random suffix to prevent collisions when tests run quickly
+	randomSuffix := mathrand.Intn(100000)
+	return fmt.Sprintf("%s%d-%d", defaultConfig.BucketPrefix, timestamp, randomSuffix)
+}
+
+// cleanupTestBuckets removes any leftover test buckets from previous runs
+func cleanupTestBuckets(t *testing.T, client *s3.Client) {
+	resp, err := client.ListBuckets(context.TODO(), &s3.ListBucketsInput{})
+	if err != nil {
+		t.Logf("Warning: failed to list buckets for cleanup: %v", err)
+		return
+	}
+
+	for _, bucket := range resp.Buckets {
+		bucketName := *bucket.Name
+		// Only delete buckets that match our test prefix
+		if strings.HasPrefix(bucketName, defaultConfig.BucketPrefix) {
+			t.Logf("Cleaning up leftover test bucket: %s", bucketName)
+			deleteBucket(t, client, bucketName)
+		}
+	}
 }
 
 // createBucket creates a new bucket for testing
 func createBucket(t *testing.T, client *s3.Client, bucketName string) {
+	// First, try to delete the bucket if it exists (cleanup from previous failed tests)
+	deleteBucket(t, client, bucketName)
+
+	// Create the bucket
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
 	})
@@ -104,7 +134,10 @@ func deleteBucket(t *testing.T, client *s3.Client, bucketName string) {
 		Bucket: aws.String(bucketName),
 	})
 	if err != nil {
-		t.Logf("Warning: failed to delete bucket %s: %v", bucketName, err)
+		// Only log warnings for actual errors, not "bucket doesn't exist"
+		if !strings.Contains(err.Error(), "NoSuchBucket") {
+			t.Logf("Warning: failed to delete bucket %s: %v", bucketName, err)
+		}
 	}
 }
 
@@ -118,7 +151,10 @@ func deleteAllObjects(t *testing.T, client *s3.Client, bucketName string) {
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(context.TODO())
 		if err != nil {
-			t.Logf("Warning: failed to list objects in bucket %s: %v", bucketName, err)
+			// Only log warnings for actual errors, not "bucket doesn't exist"
+			if !strings.Contains(err.Error(), "NoSuchBucket") {
+				t.Logf("Warning: failed to list objects in bucket %s: %v", bucketName, err)
+			}
 			return
 		}
 
@@ -548,6 +584,10 @@ func TestObjectCopyRetainingMetadata(t *testing.T) {
 // TestMultipartCopySmall tests multipart copying of small files
 func TestMultipartCopySmall(t *testing.T) {
 	client := getS3Client(t)
+
+	// Clean up any leftover buckets from previous test runs
+	cleanupTestBuckets(t, client)
+
 	sourceBucketName := getNewBucketName()
 	destBucketName := getNewBucketName()
 
@@ -610,6 +650,10 @@ func TestMultipartCopySmall(t *testing.T) {
 // TestMultipartCopyWithoutRange tests multipart copying without range specification
 func TestMultipartCopyWithoutRange(t *testing.T) {
 	client := getS3Client(t)
+
+	// Clean up any leftover buckets from previous test runs
+	cleanupTestBuckets(t, client)
+
 	sourceBucketName := getNewBucketName()
 	destBucketName := getNewBucketName()
 
@@ -671,6 +715,10 @@ func TestMultipartCopyWithoutRange(t *testing.T) {
 // TestMultipartCopySpecialNames tests multipart copying with special character names
 func TestMultipartCopySpecialNames(t *testing.T) {
 	client := getS3Client(t)
+
+	// Clean up any leftover buckets from previous test runs
+	cleanupTestBuckets(t, client)
+
 	sourceBucketName := getNewBucketName()
 	destBucketName := getNewBucketName()
 
@@ -739,6 +787,10 @@ func TestMultipartCopySpecialNames(t *testing.T) {
 // TestMultipartCopyMultipleSizes tests multipart copying with various file sizes
 func TestMultipartCopyMultipleSizes(t *testing.T) {
 	client := getS3Client(t)
+
+	// Clean up any leftover buckets from previous test runs
+	cleanupTestBuckets(t, client)
+
 	sourceBucketName := getNewBucketName()
 	destBucketName := getNewBucketName()
 
