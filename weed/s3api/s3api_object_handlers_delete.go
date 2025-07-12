@@ -127,7 +127,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ObjectIdentifier carries key name and optional version ID for the object to delete.
+// ObjectIdentifier represents an object to be deleted with its key name and optional version ID.
 type ObjectIdentifier struct {
 	ObjectName string `xml:"Key"`
 	VersionId  string `xml:"VersionId,omitempty"`
