@@ -143,9 +143,10 @@ type DeleteObjectsRequest struct {
 
 // DeleteError structure.
 type DeleteError struct {
-	Code    string
-	Message string
-	Key     string
+	Code      string `xml:"Code"`
+	Message   string `xml:"Message"`
+	Key       string `xml:"Key"`
+	VersionId string `xml:"VersionId,omitempty"`
 }
 
 // DeleteObjectsResponse container for multiple object deletes.
@@ -220,9 +221,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				if err := s3a.checkObjectLockPermissions(bucket, object.ObjectName, object.VersionId, bypassGovernance); err != nil {
 					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.ObjectName, object.VersionId, err)
 					deleteErrors = append(deleteErrors, DeleteError{
-						Code:    s3err.GetAPIError(s3err.ErrAccessDenied).Code,
-						Message: err.Error(),
-						Key:     object.ObjectName,
+						Code:      s3err.GetAPIError(s3err.ErrAccessDenied).Code,
+						Message:   err.Error(),
+						Key:       object.ObjectName,
+						VersionId: object.VersionId,
 					})
 					continue
 				}
@@ -244,9 +246,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			} else {
 				delete(directoriesWithDeletion, parentDirectoryPath)
 				deleteErrors = append(deleteErrors, DeleteError{
-					Code:    "",
-					Message: err.Error(),
-					Key:     object.ObjectName,
+					Code:      "",
+					Message:   err.Error(),
+					Key:       object.ObjectName,
+					VersionId: object.VersionId,
 				})
 			}
 			if auditLog != nil {
