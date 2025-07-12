@@ -277,6 +277,17 @@ func (s3a *S3ApiServer) PutObjectLockConfigurationHandler(w http.ResponseWriter,
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("PutObjectLockConfigurationHandler %s", bucket)
 
+	// Check if Object Lock is available for this bucket (requires versioning)
+	if err := s3a.isObjectLockAvailable(bucket); err != nil {
+		glog.Errorf("PutObjectLockConfigurationHandler: object lock not available for bucket %s: %v", bucket, err)
+		if strings.Contains(err.Error(), "bucket not found") {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		}
+		return
+	}
+
 	// Parse object lock configuration from request body
 	config, err := parseObjectLockConfiguration(r)
 	if err != nil {
