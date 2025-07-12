@@ -317,7 +317,355 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
     <!-- JavaScript for user management -->
     <script>
-        // User management functions will be included in admin.js
+        document.addEventListener('DOMContentLoaded', function() {
+            // Event delegation for user action buttons
+            document.addEventListener('click', function(e) {
+                const button = e.target.closest('[data-action]');
+                if (!button) return;
+                
+                const action = button.getAttribute('data-action');
+                const username = button.getAttribute('data-username');
+                
+                switch (action) {
+                    case 'show-user-details':
+                        showUserDetails(username);
+                        break;
+                    case 'edit-user':
+                        editUser(username);
+                        break;
+                    case 'manage-access-keys':
+                        manageAccessKeys(username);
+                        break;
+                    case 'delete-user':
+                        deleteUser(username);
+                        break;
+                }
+            });
+        });
+
+        // Show user details modal
+        async function showUserDetails(username) {
+            try {
+                const response = await fetch(`/api/users/${username}`);
+                if (response.ok) {
+                    const user = await response.json();
+                    document.getElementById('userDetailsContent').innerHTML = createUserDetailsContent(user);
+                    const modal = new bootstrap.Modal(document.getElementById('userDetailsModal'));
+                    modal.show();
+                } else {
+                    showErrorMessage('Failed to load user details');
+                }
+            } catch (error) {
+                console.error('Error loading user details:', error);
+                showErrorMessage('Failed to load user details');
+            }
+        }
+
+        // Edit user function
+        async function editUser(username) {
+            try {
+                const response = await fetch(`/api/users/${username}`);
+                if (response.ok) {
+                    const user = await response.json();
+                    
+                    // Populate edit form
+                    document.getElementById('editUsername').value = username;
+                    document.getElementById('editEmail').value = user.email || '';
+                    
+                    // Set selected actions
+                    const actionsSelect = document.getElementById('editActions');
+                    Array.from(actionsSelect.options).forEach(option => {
+                        option.selected = user.actions && user.actions.includes(option.value);
+                    });
+                    
+                    // Show modal
+                    const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
+                    modal.show();
+                } else {
+                    showErrorMessage('Failed to load user details');
+                }
+            } catch (error) {
+                console.error('Error loading user:', error);
+                showErrorMessage('Failed to load user details');
+            }
+        }
+
+        // Manage access keys function
+        async function manageAccessKeys(username) {
+            try {
+                const response = await fetch(`/api/users/${username}`);
+                if (response.ok) {
+                    const user = await response.json();
+                    document.getElementById('accessKeysUsername').textContent = username;
+                    document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
+                    const modal = new bootstrap.Modal(document.getElementById('accessKeysModal'));
+                    modal.show();
+                } else {
+                    showErrorMessage('Failed to load access keys');
+                }
+            } catch (error) {
+                console.error('Error loading access keys:', error);
+                showErrorMessage('Failed to load access keys');
+            }
+        }
+
+        // Delete user function
+        async function deleteUser(username) {
+            if (confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
+                try {
+                    const response = await fetch(`/api/users/${username}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        showSuccessMessage('User deleted successfully');
+                        setTimeout(() => window.location.reload(), 1000);
+                    } else {
+                        const error = await response.json();
+                        showErrorMessage('Failed to delete user: ' + (error.error || 'Unknown error'));
+                    }
+                } catch (error) {
+                    console.error('Error deleting user:', error);
+                    showErrorMessage('Failed to delete user: ' + error.message);
+                }
+            }
+        }
+
+        // Handle create user form submission
+        async function handleCreateUser() {
+            const form = document.getElementById('createUserForm');
+            const formData = new FormData(form);
+            
+            const userData = {
+                username: formData.get('username'),
+                email: formData.get('email'),
+                actions: Array.from(document.getElementById('actions').selectedOptions).map(option => option.value),
+                generate_key: document.getElementById('generateKey').checked
+            };
+            
+            try {
+                const response = await fetch('/api/users', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(userData)
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    showSuccessMessage('User created successfully');
+                    
+                    // Show the created access key if generated
+                    if (result.user && result.user.access_key) {
+                        showNewAccessKeyModal(result.user);
+                    }
+                    
+                    // Close modal and refresh page
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('createUserModal'));
+                    modal.hide();
+                    form.reset();
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    const error = await response.json();
+                    showErrorMessage('Failed to create user: ' + (error.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error creating user:', error);
+                showErrorMessage('Failed to create user: ' + error.message);
+            }
+        }
+
+        // Handle update user form submission
+        async function handleUpdateUser() {
+            const username = document.getElementById('editUsername').value;
+            const formData = new FormData(document.getElementById('editUserForm'));
+            
+            const userData = {
+                email: formData.get('email'),
+                actions: Array.from(document.getElementById('editActions').selectedOptions).map(option => option.value)
+            };
+            
+            try {
+                const response = await fetch(`/api/users/${username}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(userData)
+                });
+                
+                if (response.ok) {
+                    showSuccessMessage('User updated successfully');
+                    
+                    // Close modal and refresh page
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
+                    modal.hide();
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    const error = await response.json();
+                    showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error updating user:', error);
+                showErrorMessage('Failed to update user: ' + error.message);
+            }
+        }
+
+        // Create user details content
+        function createUserDetailsContent(user) {
+            var detailsHtml = '<div class="row">';
+            detailsHtml += '<div class="col-md-6">';
+            detailsHtml += '<h6 class="text-muted">Basic Information</h6>';
+            detailsHtml += '<table class="table table-sm">';
+            detailsHtml += '<tr><td><strong>Username:</strong></td><td>' + escapeHtml(user.username) + '</td></tr>';
+            detailsHtml += '<tr><td><strong>Email:</strong></td><td>' + escapeHtml(user.email || 'Not set') + '</td></tr>';
+            detailsHtml += '</table>';
+            detailsHtml += '</div>';
+            detailsHtml += '<div class="col-md-6">';
+                         detailsHtml += '<h6 class="text-muted">Permissions</h6>';
+             detailsHtml += '<div class="mb-3">';
+             if (user.actions && user.actions.length > 0) {
+                 detailsHtml += user.actions.map(function(action) {
+                     return '<span class="badge bg-info me-1">' + action + '</span>';
+                 }).join('');
+             } else {
+                 detailsHtml += '<span class="text-muted">No permissions assigned</span>';
+             }
+             detailsHtml += '</div>';
+             detailsHtml += '<h6 class="text-muted">Access Keys</h6>';
+             if (user.access_keys && user.access_keys.length > 0) {
+                 detailsHtml += '<div class="mb-2">';
+                 user.access_keys.forEach(function(key) {
+                     detailsHtml += '<div><code class="text-muted">' + key.access_key + '</code></div>';
+                 });
+                 detailsHtml += '</div>';
+             } else {
+                 detailsHtml += '<p class="text-muted">No access keys</p>';
+             }
+            detailsHtml += '</div>';
+            detailsHtml += '</div>';
+            return detailsHtml;
+        }
+
+        // Create access keys content
+        function createAccessKeysContent(user) {
+            if (!user.access_keys || user.access_keys.length === 0) {
+                return '<p class="text-muted">No access keys available</p>';
+            }
+            
+            var keysHtml = '<div class="table-responsive">';
+            keysHtml += '<table class="table table-sm">';
+            keysHtml += '<thead><tr><th>Access Key</th><th>Status</th><th>Actions</th></tr></thead>';
+            keysHtml += '<tbody>';
+            
+            user.access_keys.forEach(function(key) {
+                keysHtml += '<tr>';
+                keysHtml += '<td><code>' + key.access_key + '</code></td>';
+                keysHtml += '<td><span class="badge bg-success">Active</span></td>';
+                keysHtml += '<td>';
+                keysHtml += '<button class="btn btn-outline-danger btn-sm" onclick="deleteAccessKey(\'' + user.username + '\', \'' + key.access_key + '\')">';
+                keysHtml += '<i class="fas fa-trash"></i> Delete';
+                keysHtml += '</button>';
+                keysHtml += '</td>';
+                keysHtml += '</tr>';
+            });
+            
+            keysHtml += '</tbody>';
+            keysHtml += '</table>';
+            keysHtml += '</div>';
+            return keysHtml;
+        }
+
+        // Create new access key
+        async function createAccessKey() {
+            const username = document.getElementById('accessKeysUsername').textContent;
+            
+            try {
+                const response = await fetch(`/api/users/${username}/access-keys`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({})
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    showSuccessMessage('Access key created successfully');
+                    
+                    // Refresh access keys display
+                    const userResponse = await fetch(`/api/users/${username}`);
+                    if (userResponse.ok) {
+                        const user = await userResponse.json();
+                        document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
+                    }
+                } else {
+                    const error = await response.json();
+                    showErrorMessage('Failed to create access key: ' + (error.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error creating access key:', error);
+                showErrorMessage('Failed to create access key: ' + error.message);
+            }
+        }
+
+        // Delete access key
+        async function deleteAccessKey(username, accessKey) {
+            if (confirm('Are you sure you want to delete this access key?')) {
+                try {
+                    const response = await fetch(`/api/users/${username}/access-keys/${accessKey}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        showSuccessMessage('Access key deleted successfully');
+                        
+                        // Refresh access keys display
+                        const userResponse = await fetch(`/api/users/${username}`);
+                        if (userResponse.ok) {
+                            const user = await userResponse.json();
+                            document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
+                        }
+                    } else {
+                        const error = await response.json();
+                        showErrorMessage('Failed to delete access key: ' + (error.error || 'Unknown error'));
+                    }
+                } catch (error) {
+                    console.error('Error deleting access key:', error);
+                    showErrorMessage('Failed to delete access key: ' + error.message);
+                }
+            }
+        }
+
+        // Show new access key modal (when user is created with generated key)
+        function showNewAccessKeyModal(user) {
+            // Create a simple alert for now - could be enhanced with a dedicated modal
+            var message = 'New user created!\n\n';
+            message += 'Username: ' + user.username + '\n';
+            message += 'Access Key: ' + user.access_key + '\n';
+            message += 'Secret Key: ' + user.secret_key + '\n\n';
+            message += 'Please save these credentials securely.';
+            alert(message);
+        }
+
+        // Utility functions
+        function showSuccessMessage(message) {
+            // Simple implementation - could be enhanced with toast notifications
+            alert('Success: ' + message);
+        }
+
+        function showErrorMessage(message) {
+            // Simple implementation - could be enhanced with toast notifications
+            alert('Error: ' + message);
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
     </script>
 }
 
