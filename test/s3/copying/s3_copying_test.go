@@ -539,7 +539,8 @@ func TestObjectCopyRetainingMetadata(t *testing.T) {
 			assert.Equal(t, sourceContent, body)
 			assert.Equal(t, contentType, *resp.ContentType)
 			assert.Equal(t, metadata, resp.Metadata)
-			assert.Equal(t, int64(size), resp.ContentLength)
+			require.NotNil(t, resp.ContentLength)
+			assert.Equal(t, int64(size), *resp.ContentLength)
 		})
 	}
 }
@@ -602,7 +603,8 @@ func TestMultipartCopySmall(t *testing.T) {
 	resp := getObject(t, client, destBucketName, destKey)
 	body := getObjectBody(t, resp)
 	assert.Equal(t, sourceContent, body)
-	assert.Equal(t, int64(1), resp.ContentLength)
+	require.NotNil(t, resp.ContentLength)
+	assert.Equal(t, int64(1), *resp.ContentLength)
 }
 
 // TestMultipartCopyWithoutRange tests multipart copying without range specification
@@ -662,7 +664,8 @@ func TestMultipartCopyWithoutRange(t *testing.T) {
 	resp := getObject(t, client, destBucketName, destKey)
 	body := getObjectBody(t, resp)
 	assert.Equal(t, sourceContent, body)
-	assert.Equal(t, int64(10), resp.ContentLength)
+	require.NotNil(t, resp.ContentLength)
+	assert.Equal(t, int64(10), *resp.ContentLength)
 }
 
 // TestMultipartCopySpecialNames tests multipart copying with special character names
@@ -727,7 +730,8 @@ func TestMultipartCopySpecialNames(t *testing.T) {
 			resp := getObject(t, client, destBucketName, destKey)
 			body := getObjectBody(t, resp)
 			assert.Equal(t, sourceContent, body)
-			assert.Equal(t, int64(1), resp.ContentLength)
+			require.NotNil(t, resp.ContentLength)
+			assert.Equal(t, int64(1), *resp.ContentLength)
 		})
 	}
 }
@@ -823,7 +827,8 @@ func TestMultipartCopyMultipleSizes(t *testing.T) {
 			require.NoError(t, err)
 			resp.Body.Close()
 
-			assert.Equal(t, int64(size), resp.ContentLength)
+			require.NotNil(t, resp.ContentLength)
+			assert.Equal(t, int64(size), *resp.ContentLength)
 			assert.Equal(t, sourceContent[:size], body)
 		})
 	}
