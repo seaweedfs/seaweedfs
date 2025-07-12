@@ -4,7 +4,7 @@ import (
 	"net/http"
 )
 
-// GetObjectAclHandler Put object ACL
+// GetObjectAclHandler Get object ACL
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAcl.html
 func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Request) {
 
