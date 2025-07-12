@@ -336,13 +336,13 @@ func replaceDirective(reqHeader http.Header) (replaceMeta, replaceTagging bool) 
 
 func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTagging bool, getTags func(parentDirectoryPath string, entryName string) (tags map[string]string, err error), dir, name string) (err error) {
 	if sc := reqHeader.Get(s3_constants.AmzStorageClass); len(sc) == 0 {
-		if sc := existing[s3_constants.AmzStorageClass]; len(sc) > 0 {
-			reqHeader[s3_constants.AmzStorageClass] = sc
+		if sc := existing.Get(s3_constants.AmzStorageClass); len(sc) > 0 {
+			reqHeader.Set(s3_constants.AmzStorageClass, sc)
 		}
 	}
 
 	if !replaceMeta {
-		for header, _ := range reqHeader {
+		for header := range reqHeader {
 			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
 				delete(reqHeader, header)
 			}
@@ -468,59 +468,28 @@ func (s3a *S3ApiServer) copyChunks(entry *filer_pb.Entry, dstPath string) ([]*fi
 
 // copySingleChunk copies a single chunk from source to destination
 func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath string) (*filer_pb.FileChunk, error) {
-	// Create a new chunk with same properties but new file ID
-	dstChunk := &filer_pb.FileChunk{
-		Offset:       chunk.Offset,
-		Size:         chunk.Size,
-		ModifiedTsNs: time.Now().UnixNano(),
-		ETag:         chunk.ETag,
-		IsCompressed: chunk.IsCompressed,
-		CipherKey:    chunk.CipherKey,
+	// Create destination chunk
+	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
+
+	// Prepare chunk copy (assign new volume and get source URL)
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(chunk.GetFileIdString(), dstPath)
+	if err != nil {
+		return nil, err
 	}
 
-	// Get new file ID using filer's AssignVolume
-	assignResult, err := s3a.assignNewVolume(dstPath)
-	if err != nil {
-		return nil, fmt.Errorf("assign volume: %v", err)
-	}
-
-	dstChunk.FileId = assignResult.FileId
-	fid, err := filer_pb.ToFileIdObject(assignResult.FileId)
-	if err != nil {
-		return nil, fmt.Errorf("parse file ID: %v", err)
-	}
-	dstChunk.Fid = fid
-
-	// Get source URL using filer's LookupVolume
-	var srcUrl string
-	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		vid, _, err := operation.ParseFileId(chunk.GetFileIdString())
-		if err != nil {
-			return fmt.Errorf("parse file ID: %v", err)
-		}
-
-		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
-			VolumeIds: []string{vid},
-		})
-		if err != nil {
-			return fmt.Errorf("lookup volume: %v", err)
-		}
-
-		if locations, found := resp.LocationsMap[vid]; found && len(locations.Locations) > 0 {
-			srcUrl = "http://" + locations.Locations[0].Url + "/" + chunk.GetFileIdString()
-		} else {
-			return fmt.Errorf("no location found for volume %s", vid)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("lookup source file ID: %v", err)
+	// Set file ID on destination chunk
+	if err := s3a.setChunkFileId(dstChunk, assignResult); err != nil {
+		return nil, err
 	}
 
 	// Download and upload the chunk
-	if err := s3a.transferChunkData(srcUrl, assignResult, chunk.Offset, int64(chunk.Size)); err != nil {
-		return nil, fmt.Errorf("transfer chunk data: %v", err)
+	chunkData, err := s3a.downloadChunkData(srcUrl, 0, int64(chunk.Size))
+	if err != nil {
+		return nil, fmt.Errorf("download chunk data: %v", err)
+	}
+
+	if err := s3a.uploadChunkData(chunkData, assignResult); err != nil {
+		return nil, fmt.Errorf("upload chunk data: %v", err)
 	}
 
 	return dstChunk, nil
@@ -528,54 +497,18 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 
 // copySingleChunkForRange copies a portion of a chunk for range operations
 func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer_pb.FileChunk, rangeStart, rangeEnd int64, dstPath string) (*filer_pb.FileChunk, error) {
-	// Create a new chunk with same properties but new file ID
-	dstChunk := &filer_pb.FileChunk{
-		Offset:       rangeChunk.Offset,
-		Size:         rangeChunk.Size,
-		ModifiedTsNs: time.Now().UnixNano(),
-		ETag:         rangeChunk.ETag,
-		IsCompressed: rangeChunk.IsCompressed,
-		CipherKey:    rangeChunk.CipherKey,
+	// Create destination chunk
+	dstChunk := s3a.createDestinationChunk(rangeChunk, rangeChunk.Offset, rangeChunk.Size)
+
+	// Prepare chunk copy (assign new volume and get source URL)
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(originalChunk.GetFileIdString(), dstPath)
+	if err != nil {
+		return nil, err
 	}
 
-	// Get new file ID using filer's AssignVolume
-	assignResult, err := s3a.assignNewVolume(dstPath)
-	if err != nil {
-		return nil, fmt.Errorf("assign volume: %v", err)
-	}
-
-	dstChunk.FileId = assignResult.FileId
-	fid, err := filer_pb.ToFileIdObject(assignResult.FileId)
-	if err != nil {
-		return nil, fmt.Errorf("parse file ID: %v", err)
-	}
-	dstChunk.Fid = fid
-
-	// Get source URL using filer's LookupVolume
-	var srcUrl string
-	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		vid, _, err := operation.ParseFileId(originalChunk.GetFileIdString())
-		if err != nil {
-			return fmt.Errorf("parse file ID: %v", err)
-		}
-
-		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
-			VolumeIds: []string{vid},
-		})
-		if err != nil {
-			return fmt.Errorf("lookup volume: %v", err)
-		}
-
-		if locations, found := resp.LocationsMap[vid]; found && len(locations.Locations) > 0 {
-			srcUrl = "http://" + locations.Locations[0].Url + "/" + originalChunk.GetFileIdString()
-		} else {
-			return fmt.Errorf("no location found for volume %s", vid)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("lookup source file ID: %v", err)
+	// Set file ID on destination chunk
+	if err := s3a.setChunkFileId(dstChunk, assignResult); err != nil {
+		return nil, err
 	}
 
 	// Calculate the portion of the original chunk that we need to copy
@@ -584,8 +517,13 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	offsetInChunk := overlapStart - chunkStart
 
 	// Download and upload the chunk portion
-	if err := s3a.transferChunkRangeData(srcUrl, assignResult, offsetInChunk, int64(rangeChunk.Size)); err != nil {
-		return nil, fmt.Errorf("transfer chunk range data: %v", err)
+	chunkData, err := s3a.downloadChunkData(srcUrl, offsetInChunk, int64(rangeChunk.Size))
+	if err != nil {
+		return nil, fmt.Errorf("download chunk range data: %v", err)
+	}
+
+	if err := s3a.uploadChunkData(chunkData, assignResult); err != nil {
+		return nil, fmt.Errorf("upload chunk range data: %v", err)
 	}
 
 	return dstChunk, nil
@@ -616,80 +554,6 @@ func (s3a *S3ApiServer) assignNewVolume(dstPath string) (*filer_pb.AssignVolumeR
 		return nil, err
 	}
 	return assignResult, nil
-}
-
-// transferChunkData downloads a portion of the chunk from source and uploads it to destination
-func (s3a *S3ApiServer) transferChunkData(srcUrl string, assignResult *filer_pb.AssignVolumeResponse, offset, size int64) error {
-	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
-
-	// Read the chunk data using ReadUrlAsStream
-	var chunkData []byte
-	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, nil, false, false, 0, int(size), func(data []byte) {
-		chunkData = append(chunkData, data...)
-	})
-	if err != nil {
-		return fmt.Errorf("download chunk: %v", err)
-	}
-	if shouldRetry {
-		return fmt.Errorf("download chunk: retry needed")
-	}
-
-	// Upload chunk to new location
-	uploadOption := &operation.UploadOption{
-		UploadUrl:         dstUrl,
-		Cipher:            false,
-		IsInputCompressed: false,
-		MimeType:          "",
-		PairMap:           nil,
-		Jwt:               security.EncodedJwt(assignResult.Auth),
-	}
-	uploader, err := operation.NewUploader()
-	if err != nil {
-		return fmt.Errorf("create uploader: %v", err)
-	}
-	_, err = uploader.UploadData(context.Background(), chunkData, uploadOption)
-	if err != nil {
-		return fmt.Errorf("upload chunk: %v", err)
-	}
-
-	return nil
-}
-
-// transferChunkRangeData downloads a specific range of data from the source chunk and uploads it to destination
-func (s3a *S3ApiServer) transferChunkRangeData(srcUrl string, assignResult *filer_pb.AssignVolumeResponse, offsetInChunk, size int64) error {
-	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
-
-	// Read the specific range of chunk data using ReadUrlAsStream
-	var chunkData []byte
-	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, nil, false, false, offsetInChunk, int(size), func(data []byte) {
-		chunkData = append(chunkData, data...)
-	})
-	if err != nil {
-		return fmt.Errorf("download chunk range: %v", err)
-	}
-	if shouldRetry {
-		return fmt.Errorf("download chunk range: retry needed")
-	}
-
-	// Upload chunk to new location
-	uploadOption := &operation.UploadOption{
-		UploadUrl:         dstUrl,
-		Cipher:            false,
-		IsInputCompressed: false,
-		MimeType:          "",
-		PairMap:           nil,
-		Jwt:               security.EncodedJwt(assignResult.Auth),
-	}
-	uploader, err := operation.NewUploader()
-	if err != nil {
-		return fmt.Errorf("create uploader: %v", err)
-	}
-	_, err = uploader.UploadData(context.Background(), chunkData, uploadOption)
-	if err != nil {
-		return fmt.Errorf("upload chunk range: %v", err)
-	}
-
-	return nil
 }
 
 // min returns the minimum of two int64 values
@@ -801,4 +665,115 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 	}
 
 	return dstChunks, nil
+}
+
+// Helper methods for copy operations to avoid code duplication
+
+// createDestinationChunk creates a new chunk based on the source chunk with modified properties
+func (s3a *S3ApiServer) createDestinationChunk(sourceChunk *filer_pb.FileChunk, offset int64, size uint64) *filer_pb.FileChunk {
+	return &filer_pb.FileChunk{
+		Offset:       offset,
+		Size:         size,
+		ModifiedTsNs: time.Now().UnixNano(),
+		ETag:         sourceChunk.ETag,
+		IsCompressed: sourceChunk.IsCompressed,
+		CipherKey:    sourceChunk.CipherKey,
+	}
+}
+
+// lookupVolumeUrl looks up the volume URL for a given file ID using the filer's LookupVolume method
+func (s3a *S3ApiServer) lookupVolumeUrl(fileId string) (string, error) {
+	var srcUrl string
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		vid, _, err := operation.ParseFileId(fileId)
+		if err != nil {
+			return fmt.Errorf("parse file ID: %v", err)
+		}
+
+		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
+			VolumeIds: []string{vid},
+		})
+		if err != nil {
+			return fmt.Errorf("lookup volume: %v", err)
+		}
+
+		if locations, found := resp.LocationsMap[vid]; found && len(locations.Locations) > 0 {
+			srcUrl = "http://" + locations.Locations[0].Url + "/" + fileId
+		} else {
+			return fmt.Errorf("no location found for volume %s", vid)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("lookup volume URL: %v", err)
+	}
+	return srcUrl, nil
+}
+
+// setChunkFileId sets the file ID on the destination chunk
+func (s3a *S3ApiServer) setChunkFileId(chunk *filer_pb.FileChunk, assignResult *filer_pb.AssignVolumeResponse) error {
+	chunk.FileId = assignResult.FileId
+	fid, err := filer_pb.ToFileIdObject(assignResult.FileId)
+	if err != nil {
+		return fmt.Errorf("parse file ID: %v", err)
+	}
+	chunk.Fid = fid
+	return nil
+}
+
+// prepareChunkCopy prepares a chunk for copying by assigning a new volume and looking up the source URL
+func (s3a *S3ApiServer) prepareChunkCopy(sourceFileId, dstPath string) (*filer_pb.AssignVolumeResponse, string, error) {
+	// Assign new volume
+	assignResult, err := s3a.assignNewVolume(dstPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("assign volume: %v", err)
+	}
+
+	// Look up source URL
+	srcUrl, err := s3a.lookupVolumeUrl(sourceFileId)
+	if err != nil {
+		return nil, "", fmt.Errorf("lookup source URL: %v", err)
+	}
+
+	return assignResult, srcUrl, nil
+}
+
+// uploadChunkData uploads chunk data to the destination using common upload logic
+func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb.AssignVolumeResponse) error {
+	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
+
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         dstUrl,
+		Cipher:            false,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               security.EncodedJwt(assignResult.Auth),
+	}
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return fmt.Errorf("create uploader: %v", err)
+	}
+	_, err = uploader.UploadData(context.Background(), chunkData, uploadOption)
+	if err != nil {
+		return fmt.Errorf("upload chunk: %v", err)
+	}
+
+	return nil
+}
+
+// downloadChunkData downloads chunk data from the source URL
+func (s3a *S3ApiServer) downloadChunkData(srcUrl string, offset, size int64) ([]byte, error) {
+	var chunkData []byte
+	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, nil, false, false, offset, int(size), func(data []byte) {
+		chunkData = append(chunkData, data...)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("download chunk: %v", err)
+	}
+	if shouldRetry {
+		return nil, fmt.Errorf("download chunk: retry needed")
+	}
+	return chunkData, nil
 }
