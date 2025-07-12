@@ -91,60 +91,48 @@ func (or *ObjectRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	return nil
 }
 
-// parseObjectRetention parses XML retention configuration from request body
-func parseObjectRetention(r *http.Request) (*ObjectRetention, error) {
+// parseXML is a generic helper function to parse XML from request body
+func parseXML[T any](r *http.Request, result *T) error {
 	if r.Body == nil {
-		return nil, fmt.Errorf("empty request body")
+		return fmt.Errorf("empty request body")
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		return nil, fmt.Errorf("error reading request body: %v", err)
+		return fmt.Errorf("error reading request body: %v", err)
 	}
 
+	if err := xml.Unmarshal(body, result); err != nil {
+		return fmt.Errorf("error parsing XML: %v", err)
+	}
+
+	return nil
+}
+
+// parseObjectRetention parses XML retention configuration from request body
+func parseObjectRetention(r *http.Request) (*ObjectRetention, error) {
 	var retention ObjectRetention
-	if err := xml.Unmarshal(body, &retention); err != nil {
-		return nil, fmt.Errorf("error parsing XML: %v", err)
+	if err := parseXML(r, &retention); err != nil {
+		return nil, err
 	}
-
 	return &retention, nil
 }
 
 // parseObjectLegalHold parses XML legal hold configuration from request body
 func parseObjectLegalHold(r *http.Request) (*ObjectLegalHold, error) {
-	if r.Body == nil {
-		return nil, fmt.Errorf("empty request body")
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading request body: %v", err)
-	}
-
 	var legalHold ObjectLegalHold
-	if err := xml.Unmarshal(body, &legalHold); err != nil {
-		return nil, fmt.Errorf("error parsing XML: %v", err)
+	if err := parseXML(r, &legalHold); err != nil {
+		return nil, err
 	}
-
 	return &legalHold, nil
 }
 
 // parseObjectLockConfiguration parses XML object lock configuration from request body
 func parseObjectLockConfiguration(r *http.Request) (*ObjectLockConfiguration, error) {
-	if r.Body == nil {
-		return nil, fmt.Errorf("empty request body")
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading request body: %v", err)
-	}
-
 	var config ObjectLockConfiguration
-	if err := xml.Unmarshal(body, &config); err != nil {
-		return nil, fmt.Errorf("error parsing XML: %v", err)
+	if err := parseXML(r, &config); err != nil {
+		return nil, err
 	}
-
 	return &config, nil
 }
 
@@ -525,31 +513,6 @@ func (s3a *S3ApiServer) checkLegacyWormEnforcement(bucket, object, versionId str
 	}
 
 	return nil
-}
-
-// integrateWithWormSystem ensures compatibility between S3 retention and legacy WORM
-func (s3a *S3ApiServer) integrateWithWormSystem(entry *filer_pb.Entry, retention *ObjectRetention) {
-	if retention == nil || retention.RetainUntilDate == nil {
-		return
-	}
-
-	// Set the legacy WORM timestamp for backward compatibility
-	if entry.WormEnforcedAtTsNs == 0 {
-		entry.WormEnforcedAtTsNs = time.Now().UnixNano()
-	}
-
-	// Store additional S3 retention metadata in extended attributes
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
-
-	if retention.Mode != "" {
-		entry.Extended[s3_constants.ExtRetentionModeKey] = []byte(retention.Mode)
-	}
-
-	if retention.RetainUntilDate != nil {
-		entry.Extended[s3_constants.ExtRetentionUntilDateKey] = []byte(strconv.FormatInt(retention.RetainUntilDate.Unix(), 10))
-	}
 }
 
 // isObjectWormProtected checks both S3 retention and legacy WORM for complete protection status

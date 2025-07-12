@@ -1,6 +1,9 @@
 package s3api
 
 import (
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,6 +161,208 @@ func TestValidateLegalHold(t *testing.T) {
 					t.Errorf("Expected error but got none")
 				} else if err.Error() != tt.errorMsg {
 					t.Errorf("Expected error message '%s', got '%s'", tt.errorMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error but got: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestParseObjectLockConfiguration(t *testing.T) {
+	tests := []struct {
+		name           string
+		xmlBody        string
+		expectError    bool
+		errorMsg       string
+		expectedConfig *ObjectLockConfiguration
+	}{
+		{
+			name: "Valid configuration with days",
+			xmlBody: `<?xml version="1.0" encoding="UTF-8"?>
+<ObjectLockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <ObjectLockEnabled>Enabled</ObjectLockEnabled>
+    <Rule>
+        <DefaultRetention>
+            <Mode>GOVERNANCE</Mode>
+            <Days>30</Days>
+        </DefaultRetention>
+    </Rule>
+</ObjectLockConfiguration>`,
+			expectError: false,
+			expectedConfig: &ObjectLockConfiguration{
+				ObjectLockEnabled: s3_constants.ObjectLockEnabled,
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Mode: s3_constants.RetentionModeGovernance,
+						Days: 30,
+					},
+				},
+			},
+		},
+		{
+			name: "Valid configuration with years",
+			xmlBody: `<?xml version="1.0" encoding="UTF-8"?>
+<ObjectLockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <ObjectLockEnabled>Enabled</ObjectLockEnabled>
+    <Rule>
+        <DefaultRetention>
+            <Mode>COMPLIANCE</Mode>
+            <Years>1</Years>
+        </DefaultRetention>
+    </Rule>
+</ObjectLockConfiguration>`,
+			expectError: false,
+			expectedConfig: &ObjectLockConfiguration{
+				ObjectLockEnabled: s3_constants.ObjectLockEnabled,
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Mode:  s3_constants.RetentionModeCompliance,
+						Years: 1,
+					},
+				},
+			},
+		},
+		{
+			name: "Configuration with ObjectLockEnabled only",
+			xmlBody: `<?xml version="1.0" encoding="UTF-8"?>
+<ObjectLockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <ObjectLockEnabled>Enabled</ObjectLockEnabled>
+</ObjectLockConfiguration>`,
+			expectError: false,
+			expectedConfig: &ObjectLockConfiguration{
+				ObjectLockEnabled: s3_constants.ObjectLockEnabled,
+			},
+		},
+		{
+			name:        "Empty body",
+			xmlBody:     "",
+			expectError: true,
+			errorMsg:    "empty request body",
+		},
+		{
+			name:        "Invalid XML",
+			xmlBody:     "<InvalidXML>",
+			expectError: true,
+			errorMsg:    "error parsing XML",
+		},
+		{
+			name: "Malformed XML structure",
+			xmlBody: `<?xml version="1.0" encoding="UTF-8"?>
+<WrongRootElement>
+    <SomeData>Invalid</SomeData>
+</WrongRootElement>`,
+			expectError: true,
+			errorMsg:    "error parsing XML",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req *http.Request
+			if tt.xmlBody == "" {
+				req = &http.Request{Body: nil}
+			} else {
+				req = &http.Request{
+					Body: io.NopCloser(strings.NewReader(tt.xmlBody)),
+				}
+			}
+
+			config, err := parseObjectLockConfiguration(req)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error message to contain '%s', got '%s'", tt.errorMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error but got: %v", err)
+				}
+				if config == nil {
+					t.Errorf("Expected config but got nil")
+				}
+				if tt.expectedConfig != nil && config != nil {
+					if config.ObjectLockEnabled != tt.expectedConfig.ObjectLockEnabled {
+						t.Errorf("Expected ObjectLockEnabled '%s', got '%s'", tt.expectedConfig.ObjectLockEnabled, config.ObjectLockEnabled)
+					}
+					if (config.Rule == nil) != (tt.expectedConfig.Rule == nil) {
+						t.Errorf("Rule presence mismatch")
+					}
+					if config.Rule != nil && tt.expectedConfig.Rule != nil {
+						if (config.Rule.DefaultRetention == nil) != (tt.expectedConfig.Rule.DefaultRetention == nil) {
+							t.Errorf("DefaultRetention presence mismatch")
+						}
+						if config.Rule.DefaultRetention != nil && tt.expectedConfig.Rule.DefaultRetention != nil {
+							if config.Rule.DefaultRetention.Mode != tt.expectedConfig.Rule.DefaultRetention.Mode {
+								t.Errorf("Expected Mode '%s', got '%s'", tt.expectedConfig.Rule.DefaultRetention.Mode, config.Rule.DefaultRetention.Mode)
+							}
+							if config.Rule.DefaultRetention.Days != tt.expectedConfig.Rule.DefaultRetention.Days {
+								t.Errorf("Expected Days %d, got %d", tt.expectedConfig.Rule.DefaultRetention.Days, config.Rule.DefaultRetention.Days)
+							}
+							if config.Rule.DefaultRetention.Years != tt.expectedConfig.Rule.DefaultRetention.Years {
+								t.Errorf("Expected Years %d, got %d", tt.expectedConfig.Rule.DefaultRetention.Years, config.Rule.DefaultRetention.Years)
+							}
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestParseXMLGeneric(t *testing.T) {
+	tests := []struct {
+		name        string
+		xmlBody     string
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "Valid retention XML",
+			xmlBody: `<?xml version="1.0" encoding="UTF-8"?>
+<Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+    <Mode>GOVERNANCE</Mode>
+    <RetainUntilDate>2024-12-31T23:59:59Z</RetainUntilDate>
+</Retention>`,
+			expectError: false,
+		},
+		{
+			name:        "Empty body",
+			xmlBody:     "",
+			expectError: true,
+			errorMsg:    "empty request body",
+		},
+		{
+			name:        "Invalid XML",
+			xmlBody:     "<InvalidXML>",
+			expectError: true,
+			errorMsg:    "error parsing XML",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req *http.Request
+			if tt.xmlBody == "" {
+				req = &http.Request{Body: nil}
+			} else {
+				req = &http.Request{
+					Body: io.NopCloser(strings.NewReader(tt.xmlBody)),
+				}
+			}
+
+			var retention ObjectRetention
+			err := parseXML(req, &retention)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error message to contain '%s', got '%s'", tt.errorMsg, err.Error())
 				}
 			} else {
 				if err != nil {
