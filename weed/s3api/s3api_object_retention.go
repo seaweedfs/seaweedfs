@@ -259,7 +259,7 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 			t := time.Unix(timestamp, 0)
 			retention.RetainUntilDate = &t
 		} else {
-			glog.Warningf("Failed to parse retention timestamp for %s/%s: %v (stored value: %s)", bucket, object, err, string(dateBytes))
+			return nil, fmt.Errorf("failed to parse retention timestamp for %s/%s: %v (stored value: %s)", bucket, object, err, string(dateBytes))
 		}
 	}
 

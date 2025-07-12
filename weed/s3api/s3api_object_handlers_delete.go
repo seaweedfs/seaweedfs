@@ -220,7 +220,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				if err := s3a.checkObjectLockPermissions(bucket, object.ObjectName, object.VersionId, bypassGovernance); err != nil {
 					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.ObjectName, object.VersionId, err)
 					deleteErrors = append(deleteErrors, DeleteError{
-						Code:    "AccessDenied",
+						Code:    s3err.GetAPIError(s3err.ErrAccessDenied).Code,
 						Message: err.Error(),
 						Key:     object.ObjectName,
 					})
