@@ -10,10 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
-// TestPutObjectRetention test was removed because it was calling PutObjectRetentionHandler
-// without proper setup (no bucket directory, no object entry, no versioning configuration).
-// Proper integration tests that set up buckets, objects, and versioning are handled in
-// the dedicated integration test suites under test/s3/retention/
+// TODO: If needed, re-implement TestPutObjectRetention with proper setup for buckets, objects, and versioning.
 
 func TestValidateRetention(t *testing.T) {
 	tests := []struct {
