@@ -150,20 +150,21 @@ func parseObjectLockConfiguration(r *http.Request) (*ObjectLockConfiguration, er
 
 // validateRetention validates retention configuration
 func validateRetention(retention *ObjectRetention) error {
-	if retention.Mode == "" && retention.RetainUntilDate == nil {
-		return fmt.Errorf("retention configuration must specify either Mode or RetainUntilDate")
+	// AWS requires both Mode and RetainUntilDate for PutObjectRetention
+	if retention.Mode == "" {
+		return fmt.Errorf("retention configuration must specify Mode")
 	}
 
-	if retention.Mode != "" {
-		if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
-			return fmt.Errorf("invalid retention mode: %s", retention.Mode)
-		}
+	if retention.RetainUntilDate == nil {
+		return fmt.Errorf("retention configuration must specify RetainUntilDate")
 	}
 
-	if retention.RetainUntilDate != nil {
-		if retention.RetainUntilDate.Before(time.Now()) {
-			return fmt.Errorf("retain until date must be in the future")
-		}
+	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
+		return fmt.Errorf("invalid retention mode: %s", retention.Mode)
+	}
+
+	if retention.RetainUntilDate.Before(time.Now()) {
+		return fmt.Errorf("retain until date must be in the future")
 	}
 
 	return nil

@@ -199,7 +199,7 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchObjectLockConfiguration: {
-		Code:           "ObjectLockConfigurationNotFoundError",
+		Code:           "NoSuchObjectLockConfiguration",
 		Description:    "The specified object does not have an ObjectLock configuration",
 		HTTPStatusCode: http.StatusNotFound,
 	},

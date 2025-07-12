@@ -87,6 +87,14 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versioningEnabled {
 			// Handle versioned PUT
+			// Check object lock permissions before creating new version (objects under retention should not be overwritten even in versioned buckets)
+			bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
+			if err := s3a.checkObjectLockPermissions(bucket, object, "", bypassGovernance); err != nil {
+				glog.V(2).Infof("PutObjectHandler: object lock check failed for versioned PUT %s/%s: %v", bucket, object, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return
+			}
+
 			glog.V(1).Infof("PutObjectHandler: using versioned PUT for %s/%s", bucket, object)
 			versionId, etag, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
