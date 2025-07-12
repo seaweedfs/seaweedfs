@@ -102,3 +102,4 @@ bin/weed
 weed_binary
 /test/s3/copying/filerldb2
 /filerldb2
+/test/s3/retention/test-volume-data
