@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -127,7 +128,7 @@ func TestConfigValidation(t *testing.T) {
 				t.Errorf("validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if err != nil && tt.errMsg != "" {
-				if err.Error() == "" || !contains(err.Error(), tt.errMsg) {
+				if err.Error() == "" || !strings.Contains(err.Error(), tt.errMsg) {
 					t.Errorf("validate() error message = %v, want to contain %v", err.Error(), tt.errMsg)
 				}
 			}
@@ -193,8 +194,8 @@ func TestQueueInitialize(t *testing.T) {
 	if q.router == nil {
 		t.Error("Expected router to be initialized")
 	}
-	if q.publisher == nil {
-		t.Error("Expected publisher to be initialized")
+	if q.queueChannel == nil {
+		t.Error("Expected queueChannel to be initialized")
 	}
 	if q.client == nil {
 		t.Error("Expected client to be initialized")
@@ -334,7 +335,7 @@ func TestQueueEndToEnd(t *testing.T) {
 	}
 
 	for i, key := range receivedMessages {
-		if !contains(key, "/test/path/") {
+		if !strings.Contains(key, "/test/path/") {
 			t.Errorf("Message %d: expected key to contain '/test/path/', got %v", i, key)
 		}
 	}
@@ -385,11 +386,157 @@ func TestQueueRetryMechanism(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+func TestQueueSendMessageWithFilter(t *testing.T) {
+	tests := []struct {
+		name          string
+		cfg           *config
+		key           string
+		notification  *filer_pb.EventNotification
+		shouldPublish bool
+	}{
+		{
+			name: "allowed event type",
+			cfg: &config{
+				endpoint:          "https://example.com/webhook",
+				timeoutSeconds:    10,
+				maxRetries:        1,
+				backoffSeconds:    1,
+				maxBackoffSeconds: 1,
+				nWorkers:          1,
+				bufferSize:        10,
+				eventTypes:        []string{"create"},
+			},
+			key: "/data/file.txt",
+			notification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file.txt"},
+			},
+			shouldPublish: true,
+		},
+		{
+			name: "filtered event type",
+			cfg: &config{
+				endpoint:          "https://example.com/webhook",
+				timeoutSeconds:    10,
+				maxRetries:        1,
+				backoffSeconds:    1,
+				maxBackoffSeconds: 1,
+				nWorkers:          1,
+				bufferSize:        10,
+				eventTypes:        []string{"update", "rename"},
+			},
+			key: "/data/file.txt",
+			notification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file.txt"},
+			},
+			shouldPublish: false,
+		},
+		{
+			name: "allowed path prefix",
+			cfg: &config{
+				endpoint:          "https://example.com/webhook",
+				timeoutSeconds:    10,
+				maxRetries:        1,
+				backoffSeconds:    1,
+				maxBackoffSeconds: 1,
+				nWorkers:          1,
+				bufferSize:        10,
+				pathPrefixes:      []string{"/data/"},
+			},
+			key: "/data/file.txt",
+			notification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file.txt"},
+			},
+			shouldPublish: true,
+		},
+		{
+			name: "filtered path prefix",
+			cfg: &config{
+				endpoint:          "https://example.com/webhook",
+				timeoutSeconds:    10,
+				maxRetries:        1,
+				backoffSeconds:    1,
+				maxBackoffSeconds: 1,
+				nWorkers:          1,
+				bufferSize:        10,
+				pathPrefixes:      []string{"/logs/"},
+			},
+			key: "/data/file.txt",
+			notification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file.txt"},
+			},
+			shouldPublish: false,
+		},
+		{
+			name: "combined filters - both pass",
+			cfg: &config{
+				endpoint:          "https://example.com/webhook",
+				timeoutSeconds:    10,
+				maxRetries:        1,
+				backoffSeconds:    1,
+				maxBackoffSeconds: 1,
+				nWorkers:          1,
+				bufferSize:        10,
+				eventTypes:        []string{"create", "delete"},
+				pathPrefixes:      []string{"/data/", "/logs/"},
+			},
+			key: "/data/file.txt",
+			notification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file.txt"},
+			},
+			shouldPublish: true,
+		},
+		{
+			name: "combined filters - event fails",
+			cfg: &config{
+				endpoint:          "https://example.com/webhook",
+				timeoutSeconds:    10,
+				maxRetries:        1,
+				backoffSeconds:    1,
+				maxBackoffSeconds: 1,
+				nWorkers:          1,
+				bufferSize:        10,
+				eventTypes:        []string{"update", "delete"},
+				pathPrefixes:      []string{"/data/", "/logs/"},
+			},
+			key: "/data/file.txt",
+			notification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file.txt"},
+			},
+			shouldPublish: false,
+		},
+		{
+			name: "combined filters - path fails",
+			cfg: &config{
+				endpoint:          "https://example.com/webhook",
+				timeoutSeconds:    10,
+				maxRetries:        1,
+				backoffSeconds:    1,
+				maxBackoffSeconds: 1,
+				nWorkers:          1,
+				bufferSize:        10,
+				eventTypes:        []string{"create", "delete"},
+				pathPrefixes:      []string{"/logs/"},
+			},
+			key: "/data/file.txt",
+			notification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file.txt"},
+			},
+			shouldPublish: false,
+		},
 	}
-	return false
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := &Queue{}
+			err := q.initialize(tt.cfg)
+			if err != nil {
+				t.Fatalf("Failed to initialize queue: %v", err)
+			}
+
+			err = q.SendMessage(tt.key, tt.notification)
+			if err != nil {
+				t.Errorf("SendMessage() error = %v", err)
+			}
+		})
+	}
 }
