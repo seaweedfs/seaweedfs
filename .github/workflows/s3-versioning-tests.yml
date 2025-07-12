@@ -225,8 +225,9 @@ jobs:
           uname -a
           free -h
           
-          # Run the WORM integration tests specifically
-          make test-worm-integration || {
+          # Run the WORM integration tests with automatic server management
+          # The test-with-server target handles server startup/shutdown automatically
+          make test-with-server TEST_PATTERN="TestWORM|TestRetentionExtendedAttributes|TestRetentionConcurrentOperations" || {
             echo "❌ WORM integration test failed, checking logs..."
             if [ -f weed-test.log ]; then
               echo "=== Server logs ==="
