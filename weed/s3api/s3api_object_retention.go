@@ -48,24 +48,6 @@ type DefaultRetention struct {
 	Years   int      `xml:"Years,omitempty"`
 }
 
-// Custom time marshalling for AWS S3 ISO8601 format
-func (or *ObjectRetention) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	type Alias ObjectRetention
-	aux := &struct {
-		*Alias
-		RetainUntilDate *string `xml:"RetainUntilDate,omitempty"`
-	}{
-		Alias: (*Alias)(or),
-	}
-
-	if or.RetainUntilDate != nil {
-		dateStr := or.RetainUntilDate.UTC().Format(time.RFC3339)
-		aux.RetainUntilDate = &dateStr
-	}
-
-	return e.EncodeElement(aux, start)
-}
-
 // Custom time unmarshalling for AWS S3 ISO8601 format
 func (or *ObjectRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias ObjectRetention
@@ -199,7 +181,7 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 
 	retention := &ObjectRetention{}
 
-	if modeBytes, exists := entry.Extended[s3_constants.ExtRetentionModeKey]; exists {
+	if modeBytes, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
 		retention.Mode = string(modeBytes)
 	}
 
@@ -261,7 +243,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 
 	// Check if object is already under retention
 	if entry.Extended != nil {
-		if existingMode, exists := entry.Extended[s3_constants.ExtRetentionModeKey]; exists {
+		if existingMode, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
 			if string(existingMode) == s3_constants.RetentionModeCompliance && !bypassGovernance {
 				return fmt.Errorf("cannot modify retention on object under COMPLIANCE mode")
 			}
@@ -283,7 +265,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	}
 
 	if retention.Mode != "" {
-		entry.Extended[s3_constants.ExtRetentionModeKey] = []byte(retention.Mode)
+		entry.Extended[s3_constants.ExtObjectLockModeKey] = []byte(retention.Mode)
 	}
 
 	if retention.RetainUntilDate != nil {
@@ -464,112 +446,5 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId str
 		}
 	}
 
-	// Check existing WORM enforcement for compatibility
-	if err := s3a.checkLegacyWormEnforcement(bucket, object, versionId, bypassGovernance); err != nil {
-		return err
-	}
-
 	return nil
-}
-
-// checkLegacyWormEnforcement checks the existing WORM infrastructure for compatibility
-func (s3a *S3ApiServer) checkLegacyWormEnforcement(bucket, object, versionId string, bypassGovernance bool) error {
-	var entry *filer_pb.Entry
-	var err error
-
-	if versionId != "" {
-		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
-	} else {
-		// Check if versioning is enabled
-		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
-		if vErr != nil {
-			// If we can't check versioning, skip WORM check to avoid false positives
-			return nil
-		}
-
-		if versioningEnabled {
-			entry, err = s3a.getLatestObjectVersion(bucket, object)
-		} else {
-			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			entry, err = s3a.getEntry(bucketDir, object)
-		}
-	}
-
-	if err != nil {
-		// If object doesn't exist, no WORM enforcement applies
-		return nil
-	}
-
-	// Check if legacy WORM is enforced
-	if entry.WormEnforcedAtTsNs == 0 {
-		return nil
-	}
-
-	// Check if this is under legacy WORM enforcement
-	// For compatibility, we treat legacy WORM similar to GOVERNANCE mode
-	// (can be bypassed with appropriate permissions)
-	if !bypassGovernance {
-		return fmt.Errorf("object is under legacy WORM enforcement and cannot be deleted or modified without bypass")
-	}
-
-	return nil
-}
-
-// isObjectWormProtected checks both S3 retention and legacy WORM for complete protection status
-func (s3a *S3ApiServer) isObjectWormProtected(bucket, object, versionId string) (bool, error) {
-	// Check S3 object retention
-	retentionActive, err := s3a.isObjectRetentionActive(bucket, object, versionId)
-	if err != nil {
-		glog.V(4).Infof("Error checking S3 retention for %s/%s: %v", bucket, object, err)
-	}
-
-	// Check S3 legal hold
-	legalHoldActive, err := s3a.isObjectLegalHoldActive(bucket, object, versionId)
-	if err != nil {
-		glog.V(4).Infof("Error checking S3 legal hold for %s/%s: %v", bucket, object, err)
-	}
-
-	// Check legacy WORM enforcement
-	legacyWormActive, err := s3a.isLegacyWormActive(bucket, object, versionId)
-	if err != nil {
-		glog.V(4).Infof("Error checking legacy WORM for %s/%s: %v", bucket, object, err)
-	}
-
-	return retentionActive || legalHoldActive || legacyWormActive, nil
-}
-
-// isLegacyWormActive checks if an object is under legacy WORM enforcement
-func (s3a *S3ApiServer) isLegacyWormActive(bucket, object, versionId string) (bool, error) {
-	var entry *filer_pb.Entry
-	var err error
-
-	if versionId != "" {
-		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
-	} else {
-		// Check if versioning is enabled
-		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
-		if vErr != nil {
-			return false, nil
-		}
-
-		if versioningEnabled {
-			entry, err = s3a.getLatestObjectVersion(bucket, object)
-		} else {
-			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			entry, err = s3a.getEntry(bucketDir, object)
-		}
-	}
-
-	if err != nil {
-		return false, nil
-	}
-
-	// Check if legacy WORM is enforced and still active
-	if entry.WormEnforcedAtTsNs == 0 {
-		return false, nil
-	}
-
-	// For now, we consider legacy WORM as always active when set
-	// The original WORM system should handle time-based expiration
-	return true, nil
 }

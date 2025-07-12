@@ -13,7 +13,7 @@ const (
 	ExtLatestVersionFileNameKey = "Seaweed-X-Amz-Latest-Version-File-Name"
 
 	// Object Retention and Legal Hold
-	ExtRetentionModeKey      = "Seaweed-X-Amz-Retention-Mode"
+	ExtObjectLockModeKey     = "Seaweed-X-Amz-Object-Lock-Mode"
 	ExtRetentionUntilDateKey = "Seaweed-X-Amz-Retention-Until-Date"
 	ExtLegalHoldKey          = "Seaweed-X-Amz-Legal-Hold"
 	ExtObjectLockEnabledKey  = "Seaweed-X-Amz-Object-Lock-Enabled"
