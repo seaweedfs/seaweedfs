@@ -204,9 +204,34 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_ranged_request_return_trailing_bytes_response_code \
           s3tests_boto3/functional/test_s3.py::test_copy_object_ifmatch_good \
           s3tests_boto3/functional/test_s3.py::test_copy_object_ifnonematch_failed \
+          s3tests_boto3/functional/test_s3.py::test_copy_object_ifmatch_failed \
+          s3tests_boto3/functional/test_s3.py::test_copy_object_ifnonematch_good \
           s3tests_boto3/functional/test_s3.py::test_lifecycle_set \
           s3tests_boto3/functional/test_s3.py::test_lifecycle_get \
           s3tests_boto3/functional/test_s3.py::test_lifecycle_set_filter
+          kill -9 $pid || true
+          # Clean up data directory
+          rm -rf "$WEED_DATA_DIR" || true
+
+      - name: Run SeaweedFS Custom S3 Copy tests
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          cd /__w/seaweedfs/seaweedfs/weed
+          go install -buildvcs=false
+          # Create clean data directory for this test run
+          export WEED_DATA_DIR="/tmp/seaweedfs-copy-test-$(date +%s)"
+          mkdir -p "$WEED_DATA_DIR"
+          set -x
+          weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
+            -dir="$WEED_DATA_DIR" \
+            -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
+            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+          pid=$!
+          sleep 10
+          cd ../test/s3/copying
+          go test -v
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
@@ -292,7 +317,20 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_list_objects_anonymous_fail \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_objects_anonymous_fail \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_long_name \
-          s3tests_boto3/functional/test_s3.py::test_bucket_list_special_prefix
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_special_prefix \
+          s3tests_boto3/functional/test_s3.py::test_object_copy_zero_size \
+          s3tests_boto3/functional/test_s3.py::test_object_copy_same_bucket \
+          s3tests_boto3/functional/test_s3.py::test_object_copy_to_itself \
+          s3tests_boto3/functional/test_s3.py::test_object_copy_diff_bucket \
+          s3tests_boto3/functional/test_s3.py::test_object_copy_canned_acl \
+          s3tests_boto3/functional/test_s3.py::test_multipart_copy_small \
+          s3tests_boto3/functional/test_s3.py::test_multipart_copy_without_range \
+          s3tests_boto3/functional/test_s3.py::test_multipart_copy_special_names \
+          s3tests_boto3/functional/test_s3.py::test_multipart_copy_multiple_sizes \
+          s3tests_boto3/functional/test_s3.py::test_copy_object_ifmatch_good \
+          s3tests_boto3/functional/test_s3.py::test_copy_object_ifnonematch_failed \
+          s3tests_boto3/functional/test_s3.py::test_copy_object_ifmatch_failed \
+          s3tests_boto3/functional/test_s3.py::test_copy_object_ifnonematch_good
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
