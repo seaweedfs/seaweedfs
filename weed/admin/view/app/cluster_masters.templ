@@ -136,14 +136,15 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 											}
 										</td>
 										<td>
-											<div class="btn-group btn-group-sm">
-												<button type="button" class="btn btn-outline-primary btn-sm" title="View Details">
-													<i class="fas fa-eye"></i>
-												</button>
-												<button type="button" class="btn btn-outline-secondary btn-sm" title="Manage">
-													<i class="fas fa-cog"></i>
-												</button>
-											</div>
+											<button type="button" 
+													class="btn btn-outline-primary btn-sm" 
+													title="View Details"
+													data-action="view-details"
+													data-address={master.Address}
+													data-leader={fmt.Sprintf("%t", master.IsLeader)}
+													data-suffrage={master.Suffrage}>
+												<i class="fas fa-eye"></i>
+											</button>
 										</td>
 									</tr>
 								}
@@ -170,6 +171,112 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 			</div>
 		</div>
 	</div>
+
+	<!-- JavaScript for cluster masters functionality -->
+	<script>
+	document.addEventListener('DOMContentLoaded', function() {
+		// Handle master action buttons
+		document.addEventListener('click', function(e) {
+			const button = e.target.closest('[data-action]');
+			if (!button) return;
+			
+			const action = button.getAttribute('data-action');
+			const address = button.getAttribute('data-address');
+			
+			if (!address) return;
+			
+			switch(action) {
+				case 'view-details':
+					const isLeader = button.getAttribute('data-leader') === 'true';
+					const suffrage = button.getAttribute('data-suffrage');
+					showMasterDetails(address, isLeader, suffrage);
+					break;
+			}
+		});
+	});
+	
+	function showMasterDetails(address, isLeader, suffrage) {
+		const modalHtml = '<div class="modal fade" id="masterDetailsModal" tabindex="-1">' +
+			'<div class="modal-dialog modal-lg">' +
+			'<div class="modal-content">' +
+			'<div class="modal-header">' +
+			'<h5 class="modal-title"><i class="fas fa-crown me-2"></i>Master Details: ' + address + '</h5>' +
+			'<button type="button" class="btn-close" data-bs-dismiss="modal"></button>' +
+			'</div>' +
+			'<div class="modal-body">' +
+			'<div class="row">' +
+			'<div class="col-md-6">' +
+			'<h6 class="text-primary"><i class="fas fa-info-circle me-1"></i>Basic Information</h6>' +
+			'<table class="table table-sm">' +
+			'<tr><td><strong>Address:</strong></td><td>' + address + '</td></tr>' +
+			'<tr><td><strong>Role:</strong></td><td>' + 
+			(isLeader ? '<span class="badge bg-warning text-dark"><i class="fas fa-star me-1"></i>Leader</span>' : 
+			'<span class="badge bg-secondary">Follower</span>') + '</td></tr>' +
+			'<tr><td><strong>Suffrage:</strong></td><td>' + (suffrage || 'N/A') + '</td></tr>' +
+			'<tr><td><strong>Status:</strong></td><td><span class="badge bg-success">Active</span></td></tr>' +
+			'</table>' +
+			'</div>' +
+			'<div class="col-md-6">' +
+			'<h6 class="text-primary"><i class="fas fa-link me-1"></i>Quick Actions</h6>' +
+			'<div class="d-grid gap-2">' +
+			'<a href="http://' + address + '" target="_blank" class="btn btn-outline-primary">' +
+			'<i class="fas fa-external-link-alt me-1"></i>Open Master UI' +
+			'</a>' +
+			'</div>' +
+			'</div>' +
+			'</div>' +
+			'</div>' +
+			'<div class="modal-footer">' +
+			'<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>' +
+			'</div>' +
+			'</div>' +
+			'</div>' +
+			'</div>';
+		
+		// Remove existing modal if present
+		const existingModal = document.getElementById('masterDetailsModal');
+		if (existingModal) {
+			existingModal.remove();
+		}
+		
+		// Add modal to body and show
+		document.body.insertAdjacentHTML('beforeend', modalHtml);
+		const modal = new bootstrap.Modal(document.getElementById('masterDetailsModal'));
+		modal.show();
+		
+		// Remove modal when hidden
+		document.getElementById('masterDetailsModal').addEventListener('hidden.bs.modal', function() {
+			this.remove();
+		});
+	}
+	
+	function exportMasters() {
+		// Simple CSV export of masters list
+		const rows = Array.from(document.querySelectorAll('#mastersTable tbody tr')).map(row => {
+			const cells = row.querySelectorAll('td');
+			if (cells.length > 1) {
+				return {
+					address: cells[0].textContent.trim(),
+					role: cells[1].textContent.trim(),
+					suffrage: cells[2].textContent.trim()
+				};
+			}
+			return null;
+		}).filter(row => row !== null);
+		
+		const csvContent = "data:text/csv;charset=utf-8," + 
+			"Address,Role,Suffrage\n" +
+			rows.map(r => '"' + r.address + '","' + r.role + '","' + r.suffrage + '"').join("\n");
+		
+		const encodedUri = encodeURI(csvContent);
+		const link = document.createElement("a");
+		link.setAttribute("href", encodedUri);
+		link.setAttribute("download", "masters.csv");
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+	}
+	</script>
 }
 
  
