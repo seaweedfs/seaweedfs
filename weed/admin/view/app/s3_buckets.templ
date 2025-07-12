@@ -504,7 +504,12 @@ templ S3Buckets(data dash.S3BucketsData) {
                     alert('Error creating bucket: ' + data.error);
                 } else {
                     alert('Bucket created successfully!');
-                    location.reload();
+                    // Properly close the modal before reloading
+                    const createModal = bootstrap.Modal.getInstance(document.getElementById('createBucketModal'));
+                    if (createModal) {
+                        createModal.hide();
+                    }
+                    setTimeout(() => location.reload(), 500);
                 }
             })
             .catch(error => {
@@ -514,16 +519,41 @@ templ S3Buckets(data dash.S3BucketsData) {
         });
 
         // Handle delete bucket
+        let deleteModalInstance = null;
         document.querySelectorAll('.delete-bucket-btn').forEach(button => {
             button.addEventListener('click', function() {
                 const bucketName = this.dataset.bucketName;
                 document.getElementById('deleteBucketName').textContent = bucketName;
                 window.currentBucketToDelete = bucketName;
-                new bootstrap.Modal(document.getElementById('deleteBucketModal')).show();
+                
+                // Dispose of existing modal instance if it exists
+                if (deleteModalInstance) {
+                    deleteModalInstance.dispose();
+                }
+                
+                // Create new modal instance
+                deleteModalInstance = new bootstrap.Modal(document.getElementById('deleteBucketModal'));
+                deleteModalInstance.show();
             });
         });
 
+        // Add event listener to properly dispose of delete modal when hidden
+        document.getElementById('deleteBucketModal').addEventListener('hidden.bs.modal', function() {
+            if (deleteModalInstance) {
+                deleteModalInstance.dispose();
+                deleteModalInstance = null;
+            }
+            // Force remove any remaining backdrops
+            document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+                backdrop.remove();
+            });
+            // Ensure body classes are removed
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
+        });
+
         // Handle quota management
+        let quotaModalInstance = null;
         document.querySelectorAll('.quota-btn').forEach(button => {
             button.addEventListener('click', function() {
                 const bucketName = this.dataset.bucketName;
@@ -538,8 +568,31 @@ templ S3Buckets(data dash.S3BucketsData) {
                 document.getElementById('quotaSizeSettings').style.display = quotaEnabled ? 'block' : 'none';
                 
                 window.currentBucketToUpdate = bucketName;
-                new bootstrap.Modal(document.getElementById('manageQuotaModal')).show();
+                
+                // Dispose of existing modal instance if it exists
+                if (quotaModalInstance) {
+                    quotaModalInstance.dispose();
+                }
+                
+                // Create new modal instance
+                quotaModalInstance = new bootstrap.Modal(document.getElementById('manageQuotaModal'));
+                quotaModalInstance.show();
             });
+        });
+
+        // Add event listener to properly dispose of quota modal when hidden
+        document.getElementById('manageQuotaModal').addEventListener('hidden.bs.modal', function() {
+            if (quotaModalInstance) {
+                quotaModalInstance.dispose();
+                quotaModalInstance = null;
+            }
+            // Force remove any remaining backdrops
+            document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+                backdrop.remove();
+            });
+            // Ensure body classes are removed
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
         });
 
         // Handle quota form submission
@@ -567,7 +620,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                     alert('Error updating quota: ' + data.error);
                 } else {
                     alert('Quota updated successfully!');
-                    location.reload();
+                    // Properly close the modal before reloading
+                    if (quotaModalInstance) {
+                        quotaModalInstance.hide();
+                    }
+                    setTimeout(() => location.reload(), 500);
                 }
             })
             .catch(error => {
@@ -595,7 +652,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                 alert('Error deleting bucket: ' + data.error);
             } else {
                 alert('Bucket deleted successfully!');
-                location.reload();
+                // Properly close the modal before reloading
+                if (deleteModalInstance) {
+                    deleteModalInstance.hide();
+                }
+                setTimeout(() => location.reload(), 500);
             }
         })
         .catch(error => {
