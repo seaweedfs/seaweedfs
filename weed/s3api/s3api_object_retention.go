@@ -74,6 +74,9 @@ func (or *ObjectRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 }
 
 // parseXML is a generic helper function to parse XML from request body
+// Note: This reads the entire request body into memory, which is acceptable for object retention/legal hold
+// XML requests as they are typically very small (< 1KB). For larger XML payloads, streaming with xml.Decoder
+// would be more memory-efficient.
 func parseXML[T any](r *http.Request, result *T) error {
 	if r.Body == nil {
 		return fmt.Errorf("empty request body")
@@ -255,6 +258,8 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 		if timestamp, err := strconv.ParseInt(string(dateBytes), 10, 64); err == nil {
 			t := time.Unix(timestamp, 0)
 			retention.RetainUntilDate = &t
+		} else {
+			glog.Warningf("Failed to parse retention timestamp for %s/%s: %v (stored value: %s)", bucket, object, err, string(dateBytes))
 		}
 	}
 
