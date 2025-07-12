@@ -11,9 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/components"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -114,59 +111,60 @@ func (h *MaintenanceHandlers) ShowTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Try to get templ UI provider first
-	templUIProvider := getTemplUIProvider(taskType)
+	// Try to get templ UI provider first - temporarily disabled
+	// templUIProvider := getTemplUIProvider(taskType)
 	var configSections []components.ConfigSectionData
 
-	if templUIProvider != nil {
-		// Use the new templ-based UI provider
-		currentConfig := templUIProvider.GetCurrentConfig()
-		sections, err := templUIProvider.RenderConfigSections(currentConfig)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render configuration sections: " + err.Error()})
-			return
-		}
-		configSections = sections
-	} else {
-		// Fallback to basic configuration for providers that haven't been migrated yet
-		configSections = []components.ConfigSectionData{
-			{
-				Title:       "Configuration Settings",
-				Icon:        "fas fa-cogs",
-				Description: "Configure task detection and scheduling parameters",
-				Fields: []interface{}{
-					components.CheckboxFieldData{
-						FormFieldData: components.FormFieldData{
-							Name:        "enabled",
-							Label:       "Enable Task",
-							Description: "Whether this task type should be enabled",
-						},
-						Checked: true,
+	// Temporarily disabled templ UI provider
+	// if templUIProvider != nil {
+	//	// Use the new templ-based UI provider
+	//	currentConfig := templUIProvider.GetCurrentConfig()
+	//	sections, err := templUIProvider.RenderConfigSections(currentConfig)
+	//	if err != nil {
+	//		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render configuration sections: " + err.Error()})
+	//		return
+	//	}
+	//	configSections = sections
+	// } else {
+	// Fallback to basic configuration for providers that haven't been migrated yet
+	configSections = []components.ConfigSectionData{
+		{
+			Title:       "Configuration Settings",
+			Icon:        "fas fa-cogs",
+			Description: "Configure task detection and scheduling parameters",
+			Fields: []interface{}{
+				components.CheckboxFieldData{
+					FormFieldData: components.FormFieldData{
+						Name:        "enabled",
+						Label:       "Enable Task",
+						Description: "Whether this task type should be enabled",
 					},
-					components.NumberFieldData{
-						FormFieldData: components.FormFieldData{
-							Name:        "max_concurrent",
-							Label:       "Max Concurrent Tasks",
-							Description: "Maximum number of concurrent tasks",
-							Required:    true,
-						},
-						Value: 2,
-						Step:  "1",
-						Min:   floatPtr(1),
+					Checked: true,
+				},
+				components.NumberFieldData{
+					FormFieldData: components.FormFieldData{
+						Name:        "max_concurrent",
+						Label:       "Max Concurrent Tasks",
+						Description: "Maximum number of concurrent tasks",
+						Required:    true,
 					},
-					components.DurationFieldData{
-						FormFieldData: components.FormFieldData{
-							Name:        "scan_interval",
-							Label:       "Scan Interval",
-							Description: "How often to scan for tasks",
-							Required:    true,
-						},
-						Value: "30m",
+					Value: 2,
+					Step:  "1",
+					Min:   floatPtr(1),
+				},
+				components.DurationFieldData{
+					FormFieldData: components.FormFieldData{
+						Name:        "scan_interval",
+						Label:       "Scan Interval",
+						Description: "How often to scan for tasks",
+						Required:    true,
 					},
+					Value: "30m",
 				},
 			},
-		}
+		},
 	}
+	// } // End of disabled templ UI provider else block
 
 	// Create task configuration data using templ components
 	configData := &app.TaskConfigTemplData{
@@ -199,8 +197,8 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Try to get templ UI provider first
-	templUIProvider := getTemplUIProvider(taskType)
+	// Try to get templ UI provider first - temporarily disabled
+	// templUIProvider := getTemplUIProvider(taskType)
 
 	// Parse form data
 	err := c.Request.ParseForm()
@@ -217,52 +215,53 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 
 	var config interface{}
 
-	if templUIProvider != nil {
-		// Use the new templ-based UI provider
-		config, err = templUIProvider.ParseConfigForm(formData)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
-			return
-		}
+	// Temporarily disabled templ UI provider
+	// if templUIProvider != nil {
+	//	// Use the new templ-based UI provider
+	//	config, err = templUIProvider.ParseConfigForm(formData)
+	//	if err != nil {
+	//		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
+	//		return
+	//	}
+	//	// Apply configuration using templ provider
+	//	err = templUIProvider.ApplyConfig(config)
+	//	if err != nil {
+	//		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply configuration: " + err.Error()})
+	//		return
+	//	}
+	// } else {
+	// Fallback to old UI provider for tasks that haven't been migrated yet
+	// Fallback to old UI provider for tasks that haven't been migrated yet
+	uiRegistry := tasks.GetGlobalUIRegistry()
+	typesRegistry := tasks.GetGlobalTypesRegistry()
 
-		// Apply configuration using templ provider
-		err = templUIProvider.ApplyConfig(config)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply configuration: " + err.Error()})
-			return
-		}
-	} else {
-		// Fallback to old UI provider for tasks that haven't been migrated yet
-		uiRegistry := tasks.GetGlobalUIRegistry()
-		typesRegistry := tasks.GetGlobalTypesRegistry()
-
-		var provider types.TaskUIProvider
-		for workerTaskType := range typesRegistry.GetAllDetectors() {
-			if string(workerTaskType) == string(taskType) {
-				provider = uiRegistry.GetProvider(workerTaskType)
-				break
-			}
-		}
-
-		if provider == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "UI provider not found for task type"})
-			return
-		}
-
-		// Parse configuration from form using old provider
-		config, err = provider.ParseConfigForm(formData)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
-			return
-		}
-
-		// Apply configuration using old provider
-		err = provider.ApplyConfig(config)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply configuration: " + err.Error()})
-			return
+	var provider types.TaskUIProvider
+	for workerTaskType := range typesRegistry.GetAllDetectors() {
+		if string(workerTaskType) == string(taskType) {
+			provider = uiRegistry.GetProvider(workerTaskType)
+			break
 		}
 	}
+
+	if provider == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "UI provider not found for task type"})
+		return
+	}
+
+	// Parse configuration from form using old provider
+	config, err = provider.ParseConfigForm(formData)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
+		return
+	}
+
+	// Apply configuration using old provider
+	err = provider.ApplyConfig(config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply configuration: " + err.Error()})
+		return
+	}
+	// } // End of disabled templ UI provider else block
 
 	// Redirect back to task configuration page
 	c.Redirect(http.StatusSeeOther, "/maintenance/config/"+taskTypeName)
@@ -350,39 +349,35 @@ func floatPtr(f float64) *float64 {
 	return &f
 }
 
-// Global templ UI registry
-var globalTemplUIRegistry *types.UITemplRegistry
+// Global templ UI registry - temporarily disabled
+// var globalTemplUIRegistry *types.UITemplRegistry
 
-// initTemplUIRegistry initializes the global templ UI registry
+// initTemplUIRegistry initializes the global templ UI registry - temporarily disabled
 func initTemplUIRegistry() {
-	if globalTemplUIRegistry == nil {
-		globalTemplUIRegistry = types.NewUITemplRegistry()
-
-		// Register vacuum templ UI provider using shared instances
-		vacuumDetector, vacuumScheduler := vacuum.GetSharedInstances()
-		vacuum.RegisterUITempl(globalTemplUIRegistry, vacuumDetector, vacuumScheduler)
-
-		// Register erasure coding templ UI provider using shared instances
-		erasureCodingDetector, erasureCodingScheduler := erasure_coding.GetSharedInstances()
-		erasure_coding.RegisterUITempl(globalTemplUIRegistry, erasureCodingDetector, erasureCodingScheduler)
-
-		// Register balance templ UI provider using shared instances
-		balanceDetector, balanceScheduler := balance.GetSharedInstances()
-		balance.RegisterUITempl(globalTemplUIRegistry, balanceDetector, balanceScheduler)
-	}
+	// Temporarily disabled due to missing types
+	// if globalTemplUIRegistry == nil {
+	//	globalTemplUIRegistry = types.NewUITemplRegistry()
+	//	// Register vacuum templ UI provider using shared instances
+	//	vacuumDetector, vacuumScheduler := vacuum.GetSharedInstances()
+	//	vacuum.RegisterUITempl(globalTemplUIRegistry, vacuumDetector, vacuumScheduler)
+	//	// Register erasure coding templ UI provider using shared instances
+	//	erasureCodingDetector, erasureCodingScheduler := erasure_coding.GetSharedInstances()
+	//	erasure_coding.RegisterUITempl(globalTemplUIRegistry, erasureCodingDetector, erasureCodingScheduler)
+	//	// Register balance templ UI provider using shared instances
+	//	balanceDetector, balanceScheduler := balance.GetSharedInstances()
+	//	balance.RegisterUITempl(globalTemplUIRegistry, balanceDetector, balanceScheduler)
+	// }
 }
 
-// getTemplUIProvider gets the templ UI provider for a task type
-func getTemplUIProvider(taskType maintenance.MaintenanceTaskType) types.TaskUITemplProvider {
-	initTemplUIRegistry()
-
+// getTemplUIProvider gets the templ UI provider for a task type - temporarily disabled
+func getTemplUIProvider(taskType maintenance.MaintenanceTaskType) interface{} {
+	// initTemplUIRegistry()
 	// Convert maintenance task type to worker task type
-	typesRegistry := tasks.GetGlobalTypesRegistry()
-	for workerTaskType := range typesRegistry.GetAllDetectors() {
-		if string(workerTaskType) == string(taskType) {
-			return globalTemplUIRegistry.GetProvider(workerTaskType)
-		}
-	}
-
+	// typesRegistry := tasks.GetGlobalTypesRegistry()
+	// for workerTaskType := range typesRegistry.GetAllDetectors() {
+	//	if string(workerTaskType) == string(taskType) {
+	//		return globalTemplUIRegistry.GetProvider(workerTaskType)
+	//	}
+	// }
 	return nil
 }

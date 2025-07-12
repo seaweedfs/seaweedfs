@@ -1,37 +1,24 @@
 package dash
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
+	"fmt"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-// Policy management data structures
-type PolicyStatement struct {
-	Effect   string   `json:"Effect"`
-	Action   []string `json:"Action"`
-	Resource []string `json:"Resource"`
-}
-
-type PolicyDocument struct {
-	Version   string             `json:"Version"`
-	Statement []*PolicyStatement `json:"Statement"`
-}
-
 type IAMPolicy struct {
-	Name         string         `json:"name"`
-	Document     PolicyDocument `json:"document"`
-	DocumentJSON string         `json:"document_json"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	Name         string                    `json:"name"`
+	Document     credential.PolicyDocument `json:"document"`
+	DocumentJSON string                    `json:"document_json"`
+	CreatedAt    time.Time                 `json:"created_at"`
+	UpdatedAt    time.Time                 `json:"updated_at"`
 }
 
 type PoliciesCollection struct {
-	Policies map[string]PolicyDocument `json:"policies"`
+	Policies map[string]credential.PolicyDocument `json:"policies"`
 }
 
 type PoliciesData struct {
@@ -43,57 +30,131 @@ type PoliciesData struct {
 
 // Policy management request structures
 type CreatePolicyRequest struct {
-	Name         string         `json:"name" binding:"required"`
-	Document     PolicyDocument `json:"document" binding:"required"`
-	DocumentJSON string         `json:"document_json"`
+	Name         string                    `json:"name" binding:"required"`
+	Document     credential.PolicyDocument `json:"document" binding:"required"`
+	DocumentJSON string                    `json:"document_json"`
 }
 
 type UpdatePolicyRequest struct {
-	Document     PolicyDocument `json:"document" binding:"required"`
-	DocumentJSON string         `json:"document_json"`
+	Document     credential.PolicyDocument `json:"document" binding:"required"`
+	DocumentJSON string                    `json:"document_json"`
+}
+
+// PolicyManager interface is now in the credential package
+
+// CredentialStorePolicyManager implements credential.PolicyManager by delegating to the credential store
+type CredentialStorePolicyManager struct {
+	credentialManager *credential.CredentialManager
+}
+
+// NewCredentialStorePolicyManager creates a new CredentialStorePolicyManager
+func NewCredentialStorePolicyManager(credentialManager *credential.CredentialManager) *CredentialStorePolicyManager {
+	return &CredentialStorePolicyManager{
+		credentialManager: credentialManager,
+	}
+}
+
+// GetPolicies retrieves all IAM policies via credential store
+func (cspm *CredentialStorePolicyManager) GetPolicies(ctx context.Context) (map[string]credential.PolicyDocument, error) {
+	// Get policies from credential store
+	// We'll use the credential store to access the filer indirectly
+	// Since policies are stored separately, we need to access the underlying store
+	store := cspm.credentialManager.GetStore()
+	glog.V(1).Infof("Getting policies from credential store: %T", store)
+
+	// Check if the store supports policy management
+	if policyStore, ok := store.(credential.PolicyManager); ok {
+		glog.V(1).Infof("Store supports policy management, calling GetPolicies")
+		policies, err := policyStore.GetPolicies(ctx)
+		if err != nil {
+			glog.Errorf("Error getting policies from store: %v", err)
+			return nil, err
+		}
+		glog.V(1).Infof("Got %d policies from store", len(policies))
+		return policies, nil
+	} else {
+		// Fallback: use empty policies for stores that don't support policies
+		glog.V(1).Infof("Credential store doesn't support policy management, returning empty policies")
+		return make(map[string]credential.PolicyDocument), nil
+	}
+}
+
+// CreatePolicy creates a new IAM policy via credential store
+func (cspm *CredentialStorePolicyManager) CreatePolicy(ctx context.Context, name string, document credential.PolicyDocument) error {
+	store := cspm.credentialManager.GetStore()
+
+	if policyStore, ok := store.(credential.PolicyManager); ok {
+		return policyStore.CreatePolicy(ctx, name, document)
+	}
+
+	return fmt.Errorf("credential store doesn't support policy creation")
+}
+
+// UpdatePolicy updates an existing IAM policy via credential store
+func (cspm *CredentialStorePolicyManager) UpdatePolicy(ctx context.Context, name string, document credential.PolicyDocument) error {
+	store := cspm.credentialManager.GetStore()
+
+	if policyStore, ok := store.(credential.PolicyManager); ok {
+		return policyStore.UpdatePolicy(ctx, name, document)
+	}
+
+	return fmt.Errorf("credential store doesn't support policy updates")
+}
+
+// DeletePolicy deletes an IAM policy via credential store
+func (cspm *CredentialStorePolicyManager) DeletePolicy(ctx context.Context, name string) error {
+	store := cspm.credentialManager.GetStore()
+
+	if policyStore, ok := store.(credential.PolicyManager); ok {
+		return policyStore.DeletePolicy(ctx, name)
+	}
+
+	return fmt.Errorf("credential store doesn't support policy deletion")
+}
+
+// GetPolicy retrieves a specific IAM policy via credential store
+func (cspm *CredentialStorePolicyManager) GetPolicy(ctx context.Context, name string) (*credential.PolicyDocument, error) {
+	store := cspm.credentialManager.GetStore()
+
+	if policyStore, ok := store.(credential.PolicyManager); ok {
+		return policyStore.GetPolicy(ctx, name)
+	}
+
+	return nil, fmt.Errorf("credential store doesn't support policy retrieval")
+}
+
+// AdminServer policy management methods using credential.PolicyManager
+func (s *AdminServer) GetPolicyManager() credential.PolicyManager {
+	if s.credentialManager == nil {
+		glog.V(1).Infof("Credential manager is nil, policy management not available")
+		return nil
+	}
+	glog.V(1).Infof("Credential manager available, creating CredentialStorePolicyManager")
+	return NewCredentialStorePolicyManager(s.credentialManager)
 }
 
 // GetPolicies retrieves all IAM policies
 func (s *AdminServer) GetPolicies() ([]IAMPolicy, error) {
-	var policies []IAMPolicy
-
-	policiesCollection := &PoliciesCollection{
-		Policies: make(map[string]PolicyDocument),
+	policyManager := s.GetPolicyManager()
+	if policyManager == nil {
+		return nil, fmt.Errorf("policy manager not available")
 	}
 
-	// Load policies from filer
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		var buf bytes.Buffer
-		if err := filer.ReadEntry(nil, client, filer.IamConfigDirectory, filer.IamPoliciesFile, &buf); err != nil {
-			if err == filer_pb.ErrNotFound {
-				// If file doesn't exist, return empty collection
-				return nil
-			}
-			return err
-		}
-
-		if buf.Len() > 0 {
-			return json.Unmarshal(buf.Bytes(), policiesCollection)
-		}
-		return nil
-	})
-
+	ctx := context.Background()
+	policyMap, err := policyManager.GetPolicies(ctx)
 	if err != nil {
-		glog.Errorf("Failed to load policies: %v", err)
-		return policies, err
+		return nil, err
 	}
 
-	// Convert to IAMPolicy format
-	now := time.Now()
-	for name, document := range policiesCollection.Policies {
-		documentJSON, _ := json.MarshalIndent(document, "", "  ")
-
+	// Convert map[string]PolicyDocument to []IAMPolicy
+	var policies []IAMPolicy
+	for name, doc := range policyMap {
 		policy := IAMPolicy{
 			Name:         name,
-			Document:     document,
-			DocumentJSON: string(documentJSON),
-			CreatedAt:    now, // We don't have actual creation time stored
-			UpdatedAt:    now,
+			Document:     doc,
+			DocumentJSON: "", // Will be populated if needed
+			CreatedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
 		}
 		policies = append(policies, policy)
 	}
@@ -102,123 +163,63 @@ func (s *AdminServer) GetPolicies() ([]IAMPolicy, error) {
 }
 
 // CreatePolicy creates a new IAM policy
-func (s *AdminServer) CreatePolicy(name string, document PolicyDocument) error {
-	policiesCollection := &PoliciesCollection{
-		Policies: make(map[string]PolicyDocument),
+func (s *AdminServer) CreatePolicy(name string, document credential.PolicyDocument) error {
+	policyManager := s.GetPolicyManager()
+	if policyManager == nil {
+		return fmt.Errorf("policy manager not available")
 	}
 
-	// Load existing policies
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		var buf bytes.Buffer
-		if err := filer.ReadEntry(nil, client, filer.IamConfigDirectory, filer.IamPoliciesFile, &buf); err != nil {
-			if err == filer_pb.ErrNotFound {
-				// If file doesn't exist, start with empty collection
-				return nil
-			}
-			return err
-		}
-
-		if buf.Len() > 0 {
-			return json.Unmarshal(buf.Bytes(), policiesCollection)
-		}
-		return nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	// Add new policy
-	policiesCollection.Policies[name] = document
-
-	// Save back to filer
-	return s.savePolicies(policiesCollection)
+	ctx := context.Background()
+	return policyManager.CreatePolicy(ctx, name, document)
 }
 
 // UpdatePolicy updates an existing IAM policy
-func (s *AdminServer) UpdatePolicy(name string, document PolicyDocument) error {
-	policiesCollection := &PoliciesCollection{
-		Policies: make(map[string]PolicyDocument),
+func (s *AdminServer) UpdatePolicy(name string, document credential.PolicyDocument) error {
+	policyManager := s.GetPolicyManager()
+	if policyManager == nil {
+		return fmt.Errorf("policy manager not available")
 	}
 
-	// Load existing policies
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		var buf bytes.Buffer
-		if err := filer.ReadEntry(nil, client, filer.IamConfigDirectory, filer.IamPoliciesFile, &buf); err != nil {
-			return err
-		}
-
-		if buf.Len() > 0 {
-			return json.Unmarshal(buf.Bytes(), policiesCollection)
-		}
-		return nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	// Update policy
-	policiesCollection.Policies[name] = document
-
-	// Save back to filer
-	return s.savePolicies(policiesCollection)
+	ctx := context.Background()
+	return policyManager.UpdatePolicy(ctx, name, document)
 }
 
 // DeletePolicy deletes an IAM policy
 func (s *AdminServer) DeletePolicy(name string) error {
-	policiesCollection := &PoliciesCollection{
-		Policies: make(map[string]PolicyDocument),
+	policyManager := s.GetPolicyManager()
+	if policyManager == nil {
+		return fmt.Errorf("policy manager not available")
 	}
 
-	// Load existing policies
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		var buf bytes.Buffer
-		if err := filer.ReadEntry(nil, client, filer.IamConfigDirectory, filer.IamPoliciesFile, &buf); err != nil {
-			return err
-		}
-
-		if buf.Len() > 0 {
-			return json.Unmarshal(buf.Bytes(), policiesCollection)
-		}
-		return nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	// Delete policy
-	delete(policiesCollection.Policies, name)
-
-	// Save back to filer
-	return s.savePolicies(policiesCollection)
-}
-
-// savePolicies saves policies collection to filer
-func (s *AdminServer) savePolicies(policiesCollection *PoliciesCollection) error {
-	data, err := json.Marshal(policiesCollection)
-	if err != nil {
-		return err
-	}
-
-	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamPoliciesFile, data)
-	})
+	ctx := context.Background()
+	return policyManager.DeletePolicy(ctx, name)
 }
 
 // GetPolicy retrieves a specific IAM policy
 func (s *AdminServer) GetPolicy(name string) (*IAMPolicy, error) {
-	policies, err := s.GetPolicies()
+	policyManager := s.GetPolicyManager()
+	if policyManager == nil {
+		return nil, fmt.Errorf("policy manager not available")
+	}
+
+	ctx := context.Background()
+	policyDoc, err := policyManager.GetPolicy(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, policy := range policies {
-		if policy.Name == name {
-			return &policy, nil
-		}
+	if policyDoc == nil {
+		return nil, nil
 	}
 
-	return nil, nil // Policy not found
+	// Convert PolicyDocument to IAMPolicy
+	policy := &IAMPolicy{
+		Name:         name,
+		Document:     *policyDoc,
+		DocumentJSON: "", // Will be populated if needed
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+
+	return policy, nil
 }

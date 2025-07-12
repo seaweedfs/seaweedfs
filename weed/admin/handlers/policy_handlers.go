@@ -7,6 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
+	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
@@ -29,17 +32,13 @@ func (h *PolicyHandlers) ShowPolicies(c *gin.Context) {
 
 	// Render HTML template
 	c.Header("Content-Type", "text/html")
-	// TODO: Fix policies template generation issue
-	// policiesComponent := app.Policies(policiesData)
-	// layoutComponent := layout.Layout(c, policiesComponent)
-	// err := layoutComponent.Render(c.Request.Context(), c.Writer)
-	// if err != nil {
-	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
-	// 	return
-	// }
-
-	// Temporary JSON response until template is fixed
-	c.JSON(http.StatusOK, policiesData)
+	policiesComponent := app.Policies(policiesData)
+	layoutComponent := layout.Layout(c, policiesComponent)
+	err := layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
 }
 
 // GetPolicies returns the list of policies as JSON
@@ -191,7 +190,7 @@ func (h *PolicyHandlers) DeletePolicy(c *gin.Context) {
 // ValidatePolicy validates a policy document without saving it
 func (h *PolicyHandlers) ValidatePolicy(c *gin.Context) {
 	var req struct {
-		Document dash.PolicyDocument `json:"document" binding:"required"`
+		Document credential.PolicyDocument `json:"document" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -258,6 +257,11 @@ func (h *PolicyHandlers) getPoliciesData(c *gin.Context) dash.PoliciesData {
 			TotalPolicies: 0,
 			LastUpdated:   time.Now(),
 		}
+	}
+
+	// Ensure policies is never nil
+	if policies == nil {
+		policies = []dash.IAMPolicy{}
 	}
 
 	return dash.PoliciesData{

@@ -94,6 +94,7 @@ func NewAdminServer(masterAddress string, templateFS http.FileSystem, dataDir st
 							glog.V(1).Infof("Set filer client for credential manager: %s", filerAddr)
 							break
 						}
+						glog.V(1).Infof("Waiting for filer discovery for credential manager...")
 						time.Sleep(5 * time.Second) // Retry every 5 seconds
 					}
 				}()
