@@ -12,16 +12,17 @@ import (
 )
 
 type AdminData struct {
-	Username       string              `json:"username"`
-	TotalVolumes   int                 `json:"total_volumes"`
-	TotalFiles     int64               `json:"total_files"`
-	TotalSize      int64               `json:"total_size"`
-	MasterNodes    []MasterNode        `json:"master_nodes"`
-	VolumeServers  []VolumeServer      `json:"volume_servers"`
-	FilerNodes     []FilerNode         `json:"filer_nodes"`
-	MessageBrokers []MessageBrokerNode `json:"message_brokers"`
-	DataCenters    []DataCenter        `json:"datacenters"`
-	LastUpdated    time.Time           `json:"last_updated"`
+	Username          string              `json:"username"`
+	TotalVolumes      int                 `json:"total_volumes"`
+	TotalFiles        int64               `json:"total_files"`
+	TotalSize         int64               `json:"total_size"`
+	VolumeSizeLimitMB uint64              `json:"volume_size_limit_mb"`
+	MasterNodes       []MasterNode        `json:"master_nodes"`
+	VolumeServers     []VolumeServer      `json:"volume_servers"`
+	FilerNodes        []FilerNode         `json:"filer_nodes"`
+	MessageBrokers    []MessageBrokerNode `json:"message_brokers"`
+	DataCenters       []DataCenter        `json:"datacenters"`
+	LastUpdated       time.Time           `json:"last_updated"`
 }
 
 // Object Store Users management structures
@@ -106,18 +107,34 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	// Get message broker nodes status
 	messageBrokers := s.getMessageBrokerNodesStatus()
 
+	// Get volume size limit from master configuration
+	var volumeSizeLimitMB uint64 = 30000 // Default to 30GB
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		volumeSizeLimitMB = uint64(resp.VolumeSizeLimitMB)
+		return nil
+	})
+	if err != nil {
+		glog.Warningf("Failed to get volume size limit from master: %v", err)
+		// Keep default value on error
+	}
+
 	// Prepare admin data
 	adminData := AdminData{
-		Username:       username,
-		TotalVolumes:   topology.TotalVolumes,
-		TotalFiles:     topology.TotalFiles,
-		TotalSize:      topology.TotalSize,
-		MasterNodes:    masterNodes,
-		VolumeServers:  topology.VolumeServers,
-		FilerNodes:     filerNodes,
-		MessageBrokers: messageBrokers,
-		DataCenters:    topology.DataCenters,
-		LastUpdated:    topology.UpdatedAt,
+		Username:          username,
+		TotalVolumes:      topology.TotalVolumes,
+		TotalFiles:        topology.TotalFiles,
+		TotalSize:         topology.TotalSize,
+		VolumeSizeLimitMB: volumeSizeLimitMB,
+		MasterNodes:       masterNodes,
+		VolumeServers:     topology.VolumeServers,
+		FilerNodes:        filerNodes,
+		MessageBrokers:    messageBrokers,
+		DataCenters:       topology.DataCenters,
+		LastUpdated:       topology.UpdatedAt,
 	}
 
 	return adminData, nil
