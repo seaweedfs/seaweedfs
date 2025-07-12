@@ -356,6 +356,267 @@ templ FileBrowser(data dash.FileBrowserData) {
 			</div>
 		</div>
 	</div>
+
+	<!-- JavaScript for file browser functionality -->
+	<script>
+	document.addEventListener('DOMContentLoaded', function() {
+		// Handle file browser action buttons (download, view, properties, delete)
+		document.addEventListener('click', function(e) {
+			const button = e.target.closest('[data-action]');
+			if (!button) return;
+			
+			const action = button.getAttribute('data-action');
+			const path = button.getAttribute('data-path');
+			
+			if (!path) return;
+			
+			switch(action) {
+				case 'download':
+					downloadFile(path);
+					break;
+				case 'view':
+					viewFile(path);
+					break;
+				case 'properties':
+					showFileProperties(path);
+					break;
+				case 'delete':
+					if (confirm('Are you sure you want to delete "' + path + '"?')) {
+						deleteFile(path);
+					}
+					break;
+			}
+		});
+		
+		// Initialize file manager event handlers from admin.js
+		if (typeof setupFileManagerEventHandlers === 'function') {
+			setupFileManagerEventHandlers();
+		}
+	});
+	
+	// File browser specific functions
+	function downloadFile(path) {
+		// Open download URL in new tab
+		window.open('/api/files/download?path=' + encodeURIComponent(path), '_blank');
+	}
+	
+	function viewFile(path) {
+		// Open file viewer in new tab
+		window.open('/api/files/view?path=' + encodeURIComponent(path), '_blank');
+	}
+	
+	function showFileProperties(path) {
+		// Fetch file properties and show in modal
+		fetch('/api/files/properties?path=' + encodeURIComponent(path))
+			.then(response => response.json())
+			.then(data => {
+				if (data.error) {
+					alert('Error loading file properties: ' + data.error);
+				} else {
+					displayFileProperties(data);
+				}
+			})
+			.catch(error => {
+				console.error('Error fetching file properties:', error);
+				alert('Error loading file properties: ' + error.message);
+			});
+	}
+	
+	function displayFileProperties(data) {
+		// Create a comprehensive modal for file properties
+		const modalHtml = '<div class="modal fade" id="filePropertiesModal" tabindex="-1">' +
+			'<div class="modal-dialog modal-lg">' +
+			'<div class="modal-content">' +
+			'<div class="modal-header">' +
+			'<h5 class="modal-title"><i class="fas fa-info-circle me-2"></i>File Properties: ' + (data.name || 'Unknown') + '</h5>' +
+			'<button type="button" class="btn-close" data-bs-dismiss="modal"></button>' +
+			'</div>' +
+			'<div class="modal-body">' +
+			createFilePropertiesContent(data) +
+			'</div>' +
+			'<div class="modal-footer">' +
+			'<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>' +
+			'</div>' +
+			'</div>' +
+			'</div>' +
+			'</div>';
+		
+		// Remove existing modal if present
+		const existingModal = document.getElementById('filePropertiesModal');
+		if (existingModal) {
+			existingModal.remove();
+		}
+		
+		// Add modal to body and show
+		document.body.insertAdjacentHTML('beforeend', modalHtml);
+		const modal = new bootstrap.Modal(document.getElementById('filePropertiesModal'));
+		modal.show();
+		
+		// Remove modal when hidden
+		document.getElementById('filePropertiesModal').addEventListener('hidden.bs.modal', function() {
+			this.remove();
+		});
+	}
+	
+	function createFilePropertiesContent(data) {
+		let html = '<div class="row">' +
+			'<div class="col-md-6">' +
+			'<h6 class="text-primary"><i class="fas fa-file me-1"></i>Basic Information</h6>' +
+			'<table class="table table-sm">' +
+			'<tr><td><strong>Name:</strong></td><td>' + (data.name || 'N/A') + '</td></tr>' +
+			'<tr><td><strong>Full Path:</strong></td><td><code>' + (data.full_path || 'N/A') + '</code></td></tr>' +
+			'<tr><td><strong>Type:</strong></td><td>' + (data.is_directory ? 'Directory' : 'File') + '</td></tr>';
+		
+		if (!data.is_directory) {
+			html += '<tr><td><strong>Size:</strong></td><td>' + (data.size_formatted || (data.size ? formatBytes(data.size) : 'N/A')) + '</td></tr>' +
+				'<tr><td><strong>MIME Type:</strong></td><td>' + (data.mime_type || 'N/A') + '</td></tr>';
+		}
+		
+		html += '</table>' +
+			'</div>' +
+			'<div class="col-md-6">' +
+			'<h6 class="text-primary"><i class="fas fa-clock me-1"></i>Timestamps</h6>' +
+			'<table class="table table-sm">';
+		
+		if (data.modified_time) {
+			html += '<tr><td><strong>Modified:</strong></td><td>' + data.modified_time + '</td></tr>';
+		}
+		if (data.created_time) {
+			html += '<tr><td><strong>Created:</strong></td><td>' + data.created_time + '</td></tr>';
+		}
+		
+		html += '</table>' +
+			'</div>' +
+			'</div>';
+		
+		// Add permissions and extended info
+		html += '<div class="row">' +
+			'<div class="col-md-6">' +
+			'<h6 class="text-primary"><i class="fas fa-shield-alt me-1"></i>Permissions</h6>' +
+			'<table class="table table-sm">';
+		
+		if (data.file_mode) {
+			html += '<tr><td><strong>Mode:</strong></td><td>' + data.file_mode + '</td></tr>';
+		}
+		if (data.file_mode_formatted) {
+			html += '<tr><td><strong>Permissions:</strong></td><td>' + data.file_mode_formatted + '</td></tr>';
+		}
+		if (data.uid !== undefined) {
+			html += '<tr><td><strong>User ID:</strong></td><td>' + data.uid + '</td></tr>';
+		}
+		if (data.gid !== undefined) {
+			html += '<tr><td><strong>Group ID:</strong></td><td>' + data.gid + '</td></tr>';
+		}
+		
+		html += '</table>' +
+			'</div>' +
+			'<div class="col-md-6">' +
+			'<h6 class="text-primary"><i class="fas fa-cog me-1"></i>Advanced</h6>' +
+			'<table class="table table-sm">';
+		
+		if (data.chunk_count) {
+			html += '<tr><td><strong>Chunks:</strong></td><td>' + data.chunk_count + '</td></tr>';
+		}
+		if (data.ttl_formatted) {
+			html += '<tr><td><strong>TTL:</strong></td><td>' + data.ttl_formatted + '</td></tr>';
+		}
+		
+		html += '</table>' +
+			'</div>' +
+			'</div>';
+		
+		// Add extended attributes if present
+		if (data.extended && Object.keys(data.extended).length > 0) {
+			html += '<div class="row">' +
+				'<div class="col-12">' +
+				'<h6 class="text-primary"><i class="fas fa-tags me-1"></i>Extended Attributes</h6>' +
+				'<table class="table table-sm">';
+			
+			for (const [key, value] of Object.entries(data.extended)) {
+				html += '<tr><td><strong>' + key + ':</strong></td><td>' + value + '</td></tr>';
+			}
+			
+			html += '</table>' +
+				'</div>' +
+				'</div>';
+		}
+		
+		return html;
+	}
+	
+	function uploadFile() {
+		const modal = new bootstrap.Modal(document.getElementById('uploadFileModal'));
+		modal.show();
+	}
+	
+	function toggleSelectAll() {
+		const selectAllCheckbox = document.getElementById('selectAll');
+		const checkboxes = document.querySelectorAll('.file-checkbox');
+		
+		checkboxes.forEach(checkbox => {
+			checkbox.checked = selectAllCheckbox.checked;
+		});
+		
+		updateDeleteSelectedButton();
+	}
+	
+	function updateDeleteSelectedButton() {
+		const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+		const deleteBtn = document.getElementById('deleteSelectedBtn');
+		
+		if (checkboxes.length > 0) {
+			deleteBtn.style.display = 'inline-block';
+		} else {
+			deleteBtn.style.display = 'none';
+		}
+	}
+	
+	function formatBytes(bytes) {
+		if (bytes === 0) return '0 Bytes';
+		const k = 1024;
+		const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+		const i = Math.floor(Math.log(bytes) / Math.log(k));
+		return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+	}
+	
+	function exportFileList() {
+		// Simple CSV export of file list
+		const rows = Array.from(document.querySelectorAll('#fileTable tbody tr')).map(row => {
+			const cells = row.querySelectorAll('td');
+			if (cells.length > 1) {
+				return {
+					name: cells[1].textContent.trim(),
+					size: cells[2].textContent.trim(),
+					type: cells[3].textContent.trim(),
+					modified: cells[4].textContent.trim(),
+					permissions: cells[5].textContent.trim()
+				};
+			}
+			return null;
+		}).filter(row => row !== null);
+		
+		const csvContent = "data:text/csv;charset=utf-8," + 
+			"Name,Size,Type,Modified,Permissions\n" +
+			rows.map(r => '"' + r.name + '","' + r.size + '","' + r.type + '","' + r.modified + '","' + r.permissions + '"').join("\n");
+		
+		const encodedUri = encodeURI(csvContent);
+		const link = document.createElement("a");
+		link.setAttribute("href", encodedUri);
+		link.setAttribute("download", "files.csv");
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+	}
+	
+	// Helper function to format bytes
+	function formatBytes(bytes) {
+		if (bytes === 0) return '0 Bytes';
+		const k = 1024;
+		const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+		const i = Math.floor(Math.log(bytes) / Math.log(k));
+		return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+	}
+	</script>
 }
 
 func countDirectories(entries []dash.FileEntry) int {
