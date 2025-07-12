@@ -8,7 +8,6 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -191,7 +190,7 @@ func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
 				Name:        filepath.Base(fullPath),
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
-					FileMode: uint32(0755 | os.ModeDir), // Directory mode
+					FileMode: uint32(0040755), // Directory mode: 0o40000 (S_IFDIR) | 0o755
 					Uid:      filer_pb.OS_UID,
 					Gid:      filer_pb.OS_GID,
 					Crtime:   time.Now().Unix(),
