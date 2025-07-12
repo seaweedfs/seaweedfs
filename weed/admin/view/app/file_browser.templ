@@ -632,19 +632,53 @@ templ FileBrowser(data dash.FileBrowserData) {
 			return mode; // Already formatted
 		}
 		
-		// If it's a raw octal mode, convert it
-		const permissions = parseInt(mode, 8);
+		// Convert to number - could be octal string or decimal
+		let permissions;
+		if (typeof mode === 'string') {
+			// Try parsing as octal first, then decimal
+			if (mode.startsWith('0') && mode.length <= 4) {
+				permissions = parseInt(mode, 8);
+			} else {
+				permissions = parseInt(mode, 10);
+			}
+		} else {
+			permissions = parseInt(mode, 10);
+		}
+		
 		if (isNaN(permissions)) {
 			return isDirectory ? 'drwxr-xr-x' : '-rw-r--r--'; // Default fallback
 		}
 		
-		// File type character
+		// Handle Go's os.ModeDir conversion
+		// Go's os.ModeDir is 0x80000000 (2147483648), but Unix S_IFDIR is 0o40000 (16384)
 		let fileType = '-';
-		if (isDirectory) {
+		
+		// Check for Go's os.ModeDir flag
+		if (permissions & 0x80000000) {
+			fileType = 'd';
+		}
+		// Check for standard Unix file type bits
+		else if ((permissions & 0xF000) === 0x4000) { // S_IFDIR (0o40000)
+			fileType = 'd';
+		} else if ((permissions & 0xF000) === 0x8000) { // S_IFREG (0o100000)
+			fileType = '-';
+		} else if ((permissions & 0xF000) === 0xA000) { // S_IFLNK (0o120000)
+			fileType = 'l';
+		} else if ((permissions & 0xF000) === 0x2000) { // S_IFCHR (0o020000)
+			fileType = 'c';
+		} else if ((permissions & 0xF000) === 0x6000) { // S_IFBLK (0o060000)
+			fileType = 'b';
+		} else if ((permissions & 0xF000) === 0x1000) { // S_IFIFO (0o010000)
+			fileType = 'p';
+		} else if ((permissions & 0xF000) === 0xC000) { // S_IFSOCK (0o140000)
+			fileType = 's';
+		}
+		// Fallback to isDirectory parameter if file type detection fails
+		else if (isDirectory) {
 			fileType = 'd';
 		}
 		
-		// Permission bits
+		// Permission bits (always use the lower 12 bits for permissions)
 		const owner = (permissions >> 6) & 7;
 		const group = (permissions >> 3) & 7;
 		const others = permissions & 7;
