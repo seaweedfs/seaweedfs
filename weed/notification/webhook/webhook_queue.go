@@ -2,54 +2,88 @@ package webhook
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"math"
-	"math/rand"
 	"net/url"
-	"os"
-	"os/signal"
-	"sync/atomic"
-	"syscall"
+	"strconv"
 	"time"
 
+	"github.com/ThreeDotsLabs/watermill"
+	"github.com/ThreeDotsLabs/watermill/message"
+	"github.com/ThreeDotsLabs/watermill/message/router/middleware"
+	"github.com/ThreeDotsLabs/watermill/message/router/plugin"
+	"github.com/ThreeDotsLabs/watermill/pubsub/gochannel"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 )
 
-// client defines the interface for transport client
-// could be extended to support gRPC
+const (
+	QueueName       = "webhook"
+	pubSubTopicName = "webhook_topic"
+	DeadLetterTopic = "webhook_dead_letter"
+)
+
+var (
+	pubSubHandlerNameTemplate = func(n int) string {
+		return "webhook_handler_" + strconv.Itoa(n)
+	}
+)
+
 type client interface {
 	sendMessage(message *webhookMessage) error
 }
 
 func init() {
-	notification.MessageQueues = append(notification.MessageQueues, &WebhookQueue{})
-}
-
-type WebhookQueue struct {
-	client      client
-	config      *config
-	bufferChan  chan *webhookMessage
-	retryChan   chan *retryMessage
-	worker      errgroup.Group
-	retryWorker errgroup.Group
-	ctx         context.Context
-	shutdown    atomic.Bool
+	notification.MessageQueues = append(notification.MessageQueues, &Queue{})
 }
 
 type webhookMessage struct {
-	Key     string        `json:"key"`
-	Message proto.Message `json:"message"`
+	Key         string          `json:"key"`
+	MessageData json.RawMessage `json:"message_data"`
+	Message     proto.Message   `json:"-"`
+}
+type Queue struct {
+	router    *message.Router
+	publisher message.Publisher
+	config    *config
+	client    client
 }
 
-type retryMessage struct {
-	*webhookMessage
-	attempts      int
-	nextRetryTime time.Time
+func (w *Queue) GetName() string {
+	return QueueName
 }
+
+func (w *Queue) SendMessage(key string, msg proto.Message) error {
+	wMsg, err := newWebhookMessage(key, msg).toWaterMillMessage()
+	if err != nil {
+		return err
+	}
+
+	return w.publisher.Publish(pubSubTopicName, wMsg)
+}
+
+func newWebhookMessage(key string, message proto.Message) *webhookMessage {
+	messageData, _ := json.Marshal(message)
+
+	return &webhookMessage{
+		Key:         key,
+		MessageData: messageData,
+		Message:     message,
+	}
+}
+
+func (w *webhookMessage) toWaterMillMessage() (*message.Message, error) {
+	payload, err := json.Marshal(w)
+	if err != nil {
+		return nil, err
+	}
+
+	return message.NewMessage(watermill.NewUUID(), payload), nil
+}
+
 type config struct {
 	endpoint        string
 	authBearerToken string
@@ -59,7 +93,6 @@ type config struct {
 	backoffSeconds    int
 	maxBackoffSeconds int
 	nWorkers          int
-	nRetryWorkers     int
 	bufferSize        int
 }
 
@@ -67,54 +100,71 @@ func newConfigWithDefaults(configuration util.Configuration, prefix string) *con
 	c := &config{
 		endpoint:          configuration.GetString(prefix + "endpoint"),
 		authBearerToken:   configuration.GetString(prefix + "bearer_token"),
-		timeoutSeconds:    configuration.GetInt(prefix + "timeout_seconds"),
-		maxRetries:        configuration.GetInt(prefix + "max_retries"),
-		backoffSeconds:    configuration.GetInt(prefix + "backoff_seconds"),
-		maxBackoffSeconds: configuration.GetInt(prefix + "max_backoff_seconds"),
-		nWorkers:          configuration.GetInt(prefix + "workers"),
-		nRetryWorkers:     configuration.GetInt(prefix + "retry_workers"),
-		bufferSize:        configuration.GetInt(prefix + "buffer_size"),
+		timeoutSeconds:    10,
+		maxRetries:        3,
+		backoffSeconds:    3,
+		maxBackoffSeconds: 30,
+		nWorkers:          5,
+		bufferSize:        10_000,
 	}
-	if c.nWorkers <= 0 {
-		c.nWorkers = 20
+
+	if bufferSize := configuration.GetInt(prefix + "buffer_size"); bufferSize > 0 {
+		c.bufferSize = bufferSize
 	}
-	if c.nRetryWorkers <= 0 {
-		c.nRetryWorkers = 5
+	if workers := configuration.GetInt(prefix + "workers"); workers > 0 {
+		c.nWorkers = workers
 	}
-	if c.bufferSize <= 0 {
-		c.bufferSize = 1000
+	if maxRetries := configuration.GetInt(prefix + "max_retries"); maxRetries > 0 {
+		c.maxRetries = maxRetries
 	}
-	if c.backoffSeconds <= 0 {
-		c.backoffSeconds = 5
+	if backoffSeconds := configuration.GetInt(prefix + "backoff_seconds"); backoffSeconds > 0 {
+		c.backoffSeconds = backoffSeconds
 	}
-	if c.maxBackoffSeconds <= 0 {
-		c.maxBackoffSeconds = 300
-	}
-	if c.timeoutSeconds <= 0 {
-		c.timeoutSeconds = 30
+	if timeout := configuration.GetInt(prefix + "timeout_seconds"); timeout > 0 {
+		c.timeoutSeconds = timeout
 	}
 
 	return c
 }
 
 func (c *config) validate() error {
-	_, err := url.Parse(c.endpoint)
-	if err != nil {
-		return fmt.Errorf("invalid webhook endpoint %w", err)
+	if c.endpoint == "" {
+		return fmt.Errorf("webhook endpoint is required")
 	}
 
-	if c.timeoutSeconds > 60 {
-		return fmt.Errorf("invalid webhook timeout %w", fmt.Errorf("timeout too large"))
+	_, err := url.Parse(c.endpoint)
+	if err != nil {
+		return fmt.Errorf("invalid webhook endpoint: %w", err)
+	}
+
+	if c.timeoutSeconds < 1 || c.timeoutSeconds > 300 {
+		return fmt.Errorf("timeout must be between 1 and 300 seconds, got %d", c.timeoutSeconds)
+	}
+
+	if c.maxRetries < 0 || c.maxRetries > 10 {
+		return fmt.Errorf("max retries must be between 0 and 10, got %d", c.maxRetries)
+	}
+
+	if c.backoffSeconds < 1 || c.backoffSeconds > 60 {
+		return fmt.Errorf("backoff seconds must be between 1 and 60, got %d", c.backoffSeconds)
+	}
+
+	if c.maxBackoffSeconds < c.backoffSeconds || c.maxBackoffSeconds > 300 {
+		return fmt.Errorf("max backoff seconds must be between %d and 300, got %d", c.backoffSeconds, c.maxBackoffSeconds)
+	}
+
+	if c.nWorkers < 1 || c.nWorkers > 100 {
+		return fmt.Errorf("workers must be between 1 and 100, got %d", c.nWorkers)
+	}
+
+	if c.bufferSize < 100 || c.bufferSize > 1_000_000 {
+		return fmt.Errorf("buffer size must be between 100 and 1,000,000, got %d", c.bufferSize)
 	}
 
 	return nil
 }
 
-func (w *WebhookQueue) GetName() string {
-	return "webhook"
-}
-
-func (w *WebhookQueue) Initialize(configuration util.Configuration, prefix string) error {
+func (w *Queue) Initialize(configuration util.Configuration, prefix string) error {
 	c := newConfigWithDefaults(configuration, prefix)
 
 	if err := c.validate(); err != nil {
@@ -124,173 +174,105 @@ func (w *WebhookQueue) Initialize(configuration util.Configuration, prefix strin
 	return w.initialize(c)
 }
 
-func (w *WebhookQueue) initialize(cfg *config) error {
+func (w *Queue) initialize(cfg *config) error {
 	w.config = cfg
-	w.bufferChan = make(chan *webhookMessage, cfg.bufferSize)
-	w.retryChan = make(chan *retryMessage, 100)
-	w.shutdown.Store(false)
 
 	client, err := newHTTPClient(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to create webhook client: %v", err)
+		return fmt.Errorf("failed to create webhook client: %w", err)
 	}
 	w.client = client
 
-	go w.setupGracefulShutdown()
-	go w.startWorker()
-	go w.startRetryWorker()
+	err = w.setupWatermillQueue(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to setup watermill queue: %w", err)
+	}
 
 	return nil
 }
 
-func (w *WebhookQueue) setupGracefulShutdown() {
-	ctx, cancel := context.WithCancel(context.Background())
-	w.ctx = ctx
+func (w *Queue) setupWatermillQueue(cfg *config) error {
+	logger := watermill.NewStdLogger(false, false)
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	pubSubConfig := gochannel.Config{
+		OutputChannelBuffer: int64(cfg.bufferSize),
+		Persistent:          false,
+	}
+	pubSubChannel := gochannel.NewGoChannel(pubSubConfig, logger)
+	w.publisher = pubSubChannel
+
+	router, err := message.NewRouter(
+		message.RouterConfig{
+			CloseTimeout: 60 * time.Second,
+		},
+		logger,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create router: %v", err)
+	}
+	w.router = router
+
+	retryMiddleware := middleware.Retry{
+		MaxRetries:          cfg.maxRetries,
+		InitialInterval:     time.Duration(cfg.backoffSeconds) * time.Second,
+		MaxInterval:         time.Duration(cfg.maxBackoffSeconds) * time.Second,
+		Multiplier:          2.0,
+		RandomizationFactor: 0.3,
+		Logger:              logger,
+	}.Middleware
+
+	poisonQueue, err := middleware.PoisonQueue(pubSubChannel, DeadLetterTopic)
+	if err != nil {
+		return fmt.Errorf("failed to create poison queue: %v", err)
+	}
+
+	router.AddPlugin(plugin.SignalsHandler)
+	router.AddMiddleware(retryMiddleware, poisonQueue)
+
+	for i := 0; i < cfg.nWorkers; i++ {
+		router.AddNoPublisherHandler(
+			pubSubHandlerNameTemplate(i),
+			pubSubTopicName,
+			pubSubChannel,
+			w.handleWebhook,
+		)
+	}
 
 	go func() {
-		<-sigChan
-		w.shutdown.Store(true)
-		glog.Infof("webhook queue received shutdown signal")
-		w.drain()
+		if err := router.Run(context.Background()); err != nil && !errors.Is(err, context.Canceled) {
+			glog.Errorf("webhook pubsub worker stopped with error: %v", err)
+		}
 
-		cancel()
+		glog.Info("webhook pubsub worker stopped")
 	}()
+
+	return nil
 }
 
-func (w *WebhookQueue) SendMessage(key string, message proto.Message) error {
-	if w.client == nil {
-		return fmt.Errorf("webhook client not initialized")
+func (w *Queue) handleWebhook(msg *message.Message) error {
+	var webhookMsg webhookMessage
+	if err := json.Unmarshal(msg.Payload, &webhookMsg); err != nil {
+		glog.Errorf("failed to unmarshal message: %v", err)
+		return err
 	}
 
-	if w.shutdown.Load() {
-		return nil
-	}
-
-	w.bufferChan <- &webhookMessage{
-		Key:     key,
-		Message: message,
+	if err := w.client.sendMessage(&webhookMsg); err != nil {
+		glog.Errorf("failed to send message to webhook %s: %v", webhookMsg.Key, err)
+		return err
 	}
 
 	return nil
 }
 
-func (w *WebhookQueue) startWorker() {
-	for i := 0; i < w.config.nWorkers; i++ {
-		w.worker.Go(func() error {
-			for {
-				select {
-				case <-w.ctx.Done():
-					return w.ctx.Err()
-				case message := <-w.bufferChan:
-					if err := w.client.sendMessage(message); err != nil {
-						if w.config.maxRetries > 0 {
-							retryMsg := &retryMessage{
-								webhookMessage: message,
-								attempts:       1,
-								nextRetryTime:  time.Now().Add(w.calculateBackoff(1)),
-							}
-							select {
-							case w.retryChan <- retryMsg:
-							default:
-								glog.Warningf("retry queue full, dropping message %s", message.Key)
-							}
-						} else {
-							glog.Errorf("failed to send message to webhook %s: %v", message.Key, err)
-						}
-					}
-				}
-			}
-		})
+func (w *Queue) GetDeadLetterMessages() (<-chan *message.Message, error) {
+	if w.publisher == nil {
+		return nil, fmt.Errorf("queue not initialized")
 	}
 
-	if err := w.worker.Wait(); err != nil {
-		glog.Errorf("webhook worker exited with error: %v", err)
-	}
-}
-
-func (w *WebhookQueue) startRetryWorker() {
-	for i := 0; i < w.config.nRetryWorkers; i++ {
-		w.retryWorker.Go(func() error {
-			for {
-				select {
-				case <-w.ctx.Done():
-					return w.ctx.Err()
-				case msg := <-w.retryChan:
-					waitTime := time.Until(msg.nextRetryTime)
-					if waitTime > 0 {
-						select {
-						case <-time.After(waitTime):
-						case <-w.ctx.Done():
-							return w.ctx.Err()
-						}
-					}
-
-					if err := w.client.sendMessage(msg.webhookMessage); err != nil {
-						msg.attempts++
-						if msg.attempts < w.config.maxRetries {
-							backoffDuration := w.calculateBackoff(msg.attempts)
-							msg.nextRetryTime = time.Now().Add(backoffDuration)
-							select {
-							case w.retryChan <- msg:
-							default:
-								glog.Warningf("retry queue full, dropping message %s after %d attempts", msg.Key, msg.attempts)
-							}
-						} else {
-							glog.Errorf("webhook message %s failed after %d attempts: %v", msg.Key, msg.attempts, err)
-						}
-					}
-				}
-			}
-		})
+	subscriber, ok := w.publisher.(message.Subscriber)
+	if !ok {
+		return nil, fmt.Errorf("publisher does not support subscribing")
 	}
 
-	if err := w.retryWorker.Wait(); err != nil {
-		glog.Errorf("webhook retry worker exited with error: %v", err)
-	}
-}
-
-func (w *WebhookQueue) calculateBackoff(attempt int) time.Duration {
-	base := float64(w.config.backoffSeconds)
-	expBackoff := base * math.Pow(2, float64(attempt-1))
-	jitter := rand.Float64() * 0.3 * expBackoff
-	totalSeconds := expBackoff + jitter
-
-	if totalSeconds > float64(w.config.maxBackoffSeconds) {
-		totalSeconds = float64(w.config.maxBackoffSeconds)
-	}
-
-	return time.Duration(totalSeconds) * time.Second
-}
-
-func (w *WebhookQueue) drain() {
-	if len(w.bufferChan) == 0 && len(w.retryChan) == 0 {
-		return
-	}
-
-	glog.Infof("draining %d messages and %d retries", len(w.bufferChan), len(w.retryChan))
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	for {
-		select {
-		case <-ticker.C:
-			if len(w.bufferChan) == 0 && len(w.retryChan) == 0 {
-				glog.Infof("webhook queue drained successfully")
-				return
-			}
-		case <-timeoutCtx.Done():
-			remaining := len(w.bufferChan) + len(w.retryChan)
-			if remaining > 0 {
-				glog.Warningf("webhook drain timeout, %d messages may be lost", remaining)
-			}
-			return
-		}
-	}
+	return subscriber.Subscribe(context.Background(), DeadLetterTopic)
 }

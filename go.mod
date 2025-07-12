@@ -123,6 +123,7 @@ require (
 
 require (
 	github.com/Jille/raft-grpc-transport v1.6.1
+	github.com/ThreeDotsLabs/watermill v1.4.7
 	github.com/a-h/templ v0.3.906
 	github.com/arangodb/go-driver v1.6.6
 	github.com/armon/go-metrics v0.4.1
@@ -158,6 +159,12 @@ require (
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.15.0
 	google.golang.org/grpc/security/advancedtls v1.0.0
+)
+
+require (
+	github.com/cenkalti/backoff/v3 v3.2.2 // indirect
+	github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
+	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 )
 
 require (
