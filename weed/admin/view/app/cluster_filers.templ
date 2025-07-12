@@ -121,6 +121,62 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 			</div>
 		</div>
 	</div>
+
+	<!-- JavaScript for cluster filers functionality -->
+	<script>
+	document.addEventListener('DOMContentLoaded', function() {
+		// Handle filer action buttons
+		document.addEventListener('click', function(e) {
+			const button = e.target.closest('[data-action]');
+			if (!button) return;
+			
+			const action = button.getAttribute('data-action');
+			const address = button.getAttribute('data-address');
+			
+			if (!address) return;
+			
+			switch(action) {
+				case 'open-filer':
+					openFilerBrowser(address);
+					break;
+			}
+		});
+	});
+	
+	function openFilerBrowser(address) {
+		// Open file browser for specific filer
+		window.open('/files?filer=' + encodeURIComponent(address), '_blank');
+	}
+	
+	function exportFilers() {
+		// Simple CSV export of filers list
+		const rows = Array.from(document.querySelectorAll('#filersTable tbody tr')).map(row => {
+			const cells = row.querySelectorAll('td');
+			if (cells.length > 1) {
+				return {
+					address: cells[0].textContent.trim(),
+					version: cells[1].textContent.trim(),
+					datacenter: cells[2].textContent.trim(),
+					rack: cells[3].textContent.trim(),
+					created: cells[4].textContent.trim()
+				};
+			}
+			return null;
+		}).filter(row => row !== null);
+		
+		const csvContent = "data:text/csv;charset=utf-8," + 
+			"Address,Version,Data Center,Rack,Created At\n" +
+			rows.map(r => '"' + r.address + '","' + r.version + '","' + r.datacenter + '","' + r.rack + '","' + r.created + '"').join("\n");
+		
+		const encodedUri = encodeURI(csvContent);
+		const link = document.createElement("a");
+		link.setAttribute("href", encodedUri);
+		link.setAttribute("download", "filers.csv");
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+	}
+	</script>
 }
 
  
