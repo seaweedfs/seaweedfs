@@ -158,9 +158,10 @@ func validateObjectLockConfiguration(config *ObjectLockConfiguration) error {
 
 	// Validate Rule if present
 	if config.Rule != nil {
-		if config.Rule.DefaultRetention != nil {
-			return validateDefaultRetention(config.Rule.DefaultRetention)
+		if config.Rule.DefaultRetention == nil {
+			return fmt.Errorf("rule configuration must specify DefaultRetention")
 		}
+		return validateDefaultRetention(config.Rule.DefaultRetention)
 	}
 
 	return nil
@@ -242,7 +243,7 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 		}
 	}
 
-	if retention.Mode == "" && retention.RetainUntilDate == nil {
+	if retention.Mode == "" || retention.RetainUntilDate == nil {
 		return nil, fmt.Errorf("no retention configuration found")
 	}
 
