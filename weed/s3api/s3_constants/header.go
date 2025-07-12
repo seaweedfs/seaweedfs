@@ -51,6 +51,12 @@ const (
 	AmzAclReadAcp     = "X-Amz-Grant-Read-Acp"
 	AmzAclWriteAcp    = "X-Amz-Grant-Write-Acp"
 
+	// S3 conditional copy headers
+	AmzCopySourceIfMatch           = "X-Amz-Copy-Source-If-Match"
+	AmzCopySourceIfNoneMatch       = "X-Amz-Copy-Source-If-None-Match"
+	AmzCopySourceIfModifiedSince   = "X-Amz-Copy-Source-If-Modified-Since"
+	AmzCopySourceIfUnmodifiedSince = "X-Amz-Copy-Source-If-Unmodified-Since"
+
 	AmzMpPartsCount = "X-Amz-Mp-Parts-Count"
 )
 

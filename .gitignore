@@ -101,3 +101,4 @@ test/producer
 bin/weed
 weed_binary
 /test/s3/copying/filerldb2
+/filerldb2

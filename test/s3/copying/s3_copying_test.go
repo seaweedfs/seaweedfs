@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	mathrand "math/rand"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ type S3TestConfig struct {
 
 // Default test configuration - should match test_config.json
 var defaultConfig = &S3TestConfig{
-	Endpoint:      "http://127.0.0.1:8333", // Use explicit IPv4 address
+	Endpoint:      "http://127.0.0.1:8000", // Use explicit IPv4 address
 	AccessKey:     "some_access_key1",
 	SecretKey:     "some_secret_key1",
 	Region:        "us-east-1",
@@ -245,6 +246,13 @@ func generateRandomData(size int) []byte {
 	return data
 }
 
+// createCopySource creates a properly URL-encoded copy source string
+func createCopySource(bucketName, key string) string {
+	// URL encode the key to handle special characters like spaces
+	encodedKey := url.PathEscape(key)
+	return fmt.Sprintf("%s/%s", bucketName, encodedKey)
+}
+
 // TestBasicPutGet tests basic S3 put and get operations
 func TestBasicPutGet(t *testing.T) {
 	client := getS3Client(t)
@@ -440,7 +448,7 @@ func TestObjectCopySameBucket(t *testing.T) {
 
 	// Copy object within the same bucket
 	destKey := "bar321foo"
-	copySource := fmt.Sprintf("%s/%s", bucketName, sourceKey)
+	copySource := createCopySource(bucketName, sourceKey)
 	_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
 		Bucket:     aws.String(bucketName),
 		Key:        aws.String(destKey),
@@ -473,7 +481,7 @@ func TestObjectCopyDiffBucket(t *testing.T) {
 
 	// Copy object to different bucket
 	destKey := "bar321foo"
-	copySource := fmt.Sprintf("%s/%s", sourceBucketName, sourceKey)
+	copySource := createCopySource(sourceBucketName, sourceKey)
 	_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
 		Bucket:     aws.String(destBucketName),
 		Key:        aws.String(destKey),
@@ -503,7 +511,7 @@ func TestObjectCopyCannedAcl(t *testing.T) {
 
 	// Copy object with public-read ACL
 	destKey := "bar321foo"
-	copySource := fmt.Sprintf("%s/%s", bucketName, sourceKey)
+	copySource := createCopySource(bucketName, sourceKey)
 	_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
 		Bucket:     aws.String(bucketName),
 		Key:        aws.String(destKey),
@@ -520,7 +528,7 @@ func TestObjectCopyCannedAcl(t *testing.T) {
 	// Test metadata replacement with ACL
 	metadata := map[string]string{"abc": "def"}
 	destKey2 := "foo123bar2"
-	copySource2 := fmt.Sprintf("%s/%s", bucketName, destKey)
+	copySource2 := createCopySource(bucketName, destKey)
 	_, err = client.CopyObject(context.TODO(), &s3.CopyObjectInput{
 		Bucket:            aws.String(bucketName),
 		Key:               aws.String(destKey2),
@@ -561,7 +569,7 @@ func TestObjectCopyRetainingMetadata(t *testing.T) {
 
 			// Copy object (should retain metadata)
 			destKey := fmt.Sprintf("bar321foo_%d", size)
-			copySource := fmt.Sprintf("%s/%s", bucketName, sourceKey)
+			copySource := createCopySource(bucketName, sourceKey)
 			_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
 				Bucket:     aws.String(bucketName),
 				Key:        aws.String(destKey),
@@ -612,7 +620,7 @@ func TestMultipartCopySmall(t *testing.T) {
 	uploadID := *createResp.UploadId
 
 	// Upload part copy
-	copySource := fmt.Sprintf("%s/%s", sourceBucketName, sourceKey)
+	copySource := createCopySource(sourceBucketName, sourceKey)
 	copyResp, err := client.UploadPartCopy(context.TODO(), &s3.UploadPartCopyInput{
 		Bucket:          aws.String(destBucketName),
 		Key:             aws.String(destKey),
@@ -678,7 +686,7 @@ func TestMultipartCopyWithoutRange(t *testing.T) {
 	uploadID := *createResp.UploadId
 
 	// Upload part copy without range (should copy entire object)
-	copySource := fmt.Sprintf("%s/%s", sourceBucketName, sourceKey)
+	copySource := createCopySource(sourceBucketName, sourceKey)
 	copyResp, err := client.UploadPartCopy(context.TODO(), &s3.UploadPartCopyInput{
 		Bucket:     aws.String(destBucketName),
 		Key:        aws.String(destKey),
@@ -747,7 +755,7 @@ func TestMultipartCopySpecialNames(t *testing.T) {
 			uploadID := *createResp.UploadId
 
 			// Upload part copy
-			copySource := fmt.Sprintf("%s/%s", sourceBucketName, sourceKey)
+			copySource := createCopySource(sourceBucketName, sourceKey)
 			copyResp, err := client.UploadPartCopy(context.TODO(), &s3.UploadPartCopyInput{
 				Bucket:          aws.String(destBucketName),
 				Key:             aws.String(destKey),
@@ -836,7 +844,7 @@ func TestMultipartCopyMultipleSizes(t *testing.T) {
 
 			// Upload parts
 			var parts []types.CompletedPart
-			copySource := fmt.Sprintf("%s/%s", sourceBucketName, sourceKey)
+			copySource := createCopySource(sourceBucketName, sourceKey)
 
 			for i := 0; i < size; i += partSize {
 				partNum := int32(len(parts) + 1)
@@ -902,7 +910,7 @@ func TestCopyObjectIfMatchGood(t *testing.T) {
 
 	// Copy object with matching ETag
 	destKey := "bar"
-	copySource := fmt.Sprintf("%s/%s", bucketName, sourceKey)
+	copySource := createCopySource(bucketName, sourceKey)
 	_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
 		Bucket:            aws.String(bucketName),
 		Key:               aws.String(destKey),
@@ -933,7 +941,7 @@ func TestCopyObjectIfNoneMatchFailed(t *testing.T) {
 
 	// Copy object with non-matching ETag (should succeed)
 	destKey := "bar"
-	copySource := fmt.Sprintf("%s/%s", bucketName, sourceKey)
+	copySource := createCopySource(bucketName, sourceKey)
 	_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
 		Bucket:                aws.String(bucketName),
 		Key:                   aws.String(destKey),
@@ -964,7 +972,7 @@ func TestCopyObjectIfMatchFailed(t *testing.T) {
 
 	// Copy object with non-matching ETag (should fail)
 	destKey := "bar"
-	copySource := fmt.Sprintf("%s/%s", bucketName, sourceKey)
+	copySource := createCopySource(bucketName, sourceKey)
 	_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
 		Bucket:            aws.String(bucketName),
 		Key:               aws.String(destKey),
@@ -993,7 +1001,7 @@ func TestCopyObjectIfNoneMatchGood(t *testing.T) {
 
 	// Copy object with matching ETag for IfNoneMatch (should fail)
 	destKey := "bar"
-	copySource := fmt.Sprintf("%s/%s", bucketName, sourceKey)
+	copySource := createCopySource(bucketName, sourceKey)
 	_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
 		Bucket:                aws.String(bucketName),
 		Key:                   aws.String(destKey),

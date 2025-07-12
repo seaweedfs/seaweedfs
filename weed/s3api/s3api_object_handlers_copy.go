@@ -89,6 +89,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Validate conditional copy headers
+	if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+
 	// Create new entry for destination
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
@@ -239,6 +245,12 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	entry, err := s3a.getEntry(dir, name)
 	if err != nil || entry.IsDirectory {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+		return
+	}
+
+	// Validate conditional copy headers
+	if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
 
@@ -668,6 +680,86 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 }
 
 // Helper methods for copy operations to avoid code duplication
+
+// validateConditionalCopyHeaders validates the conditional copy headers against the source entry
+func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *filer_pb.Entry) s3err.ErrorCode {
+	// Print statement to verify function is called
+	fmt.Printf("DEBUG: validateConditionalCopyHeaders called\n")
+
+	// Calculate ETag for the source entry
+	srcPath := util.FullPath(fmt.Sprintf("%s/%s", r.URL.Path, entry.Name))
+	filerEntry := &filer.Entry{
+		FullPath: srcPath,
+		Attr: filer.Attr{
+			FileSize: entry.Attributes.FileSize,
+			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
+			Crtime:   time.Unix(entry.Attributes.Crtime, 0),
+			Mime:     entry.Attributes.Mime,
+		},
+		Chunks: entry.Chunks,
+	}
+	sourceETag := filer.ETagEntry(filerEntry)
+
+	// Debug logging
+	fmt.Printf("DEBUG: sourceETag=%s\n", sourceETag)
+	for header, values := range r.Header {
+		if strings.Contains(strings.ToLower(header), "copy-source-if") {
+			fmt.Printf("DEBUG: header %s = %v\n", header, values)
+		}
+	}
+
+	// Check X-Amz-Copy-Source-If-Match
+	if ifMatch := r.Header.Get(s3_constants.AmzCopySourceIfMatch); ifMatch != "" {
+		// Remove quotes if present
+		ifMatch = strings.Trim(ifMatch, `"`)
+		sourceETag = strings.Trim(sourceETag, `"`)
+		glog.V(3).Infof("CopyObjectHandler: If-Match check - expected %s, got %s", ifMatch, sourceETag)
+		if ifMatch != sourceETag {
+			glog.V(3).Infof("CopyObjectHandler: If-Match failed - expected %s, got %s", ifMatch, sourceETag)
+			return s3err.ErrPreconditionFailed
+		}
+	}
+
+	// Check X-Amz-Copy-Source-If-None-Match
+	if ifNoneMatch := r.Header.Get(s3_constants.AmzCopySourceIfNoneMatch); ifNoneMatch != "" {
+		// Remove quotes if present
+		ifNoneMatch = strings.Trim(ifNoneMatch, `"`)
+		sourceETag = strings.Trim(sourceETag, `"`)
+		glog.V(3).Infof("CopyObjectHandler: If-None-Match check - comparing %s with %s", ifNoneMatch, sourceETag)
+		if ifNoneMatch == sourceETag {
+			glog.V(3).Infof("CopyObjectHandler: If-None-Match failed - matched %s", sourceETag)
+			return s3err.ErrPreconditionFailed
+		}
+	}
+
+	// Check X-Amz-Copy-Source-If-Modified-Since
+	if ifModifiedSince := r.Header.Get(s3_constants.AmzCopySourceIfModifiedSince); ifModifiedSince != "" {
+		t, err := time.Parse(time.RFC1123, ifModifiedSince)
+		if err != nil {
+			glog.V(3).Infof("CopyObjectHandler: Invalid If-Modified-Since header: %v", err)
+			return s3err.ErrInvalidRequest
+		}
+		if !time.Unix(entry.Attributes.Mtime, 0).After(t) {
+			glog.V(3).Infof("CopyObjectHandler: If-Modified-Since failed")
+			return s3err.ErrPreconditionFailed
+		}
+	}
+
+	// Check X-Amz-Copy-Source-If-Unmodified-Since
+	if ifUnmodifiedSince := r.Header.Get(s3_constants.AmzCopySourceIfUnmodifiedSince); ifUnmodifiedSince != "" {
+		t, err := time.Parse(time.RFC1123, ifUnmodifiedSince)
+		if err != nil {
+			glog.V(3).Infof("CopyObjectHandler: Invalid If-Unmodified-Since header: %v", err)
+			return s3err.ErrInvalidRequest
+		}
+		if time.Unix(entry.Attributes.Mtime, 0).After(t) {
+			glog.V(3).Infof("CopyObjectHandler: If-Unmodified-Since failed")
+			return s3err.ErrPreconditionFailed
+		}
+	}
+
+	return s3err.ErrNone
+}
 
 // createDestinationChunk creates a new chunk based on the source chunk with modified properties
 func (s3a *S3ApiServer) createDestinationChunk(sourceChunk *filer_pb.FileChunk, offset int64, size uint64) *filer_pb.FileChunk {
