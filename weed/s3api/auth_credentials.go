@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -521,12 +522,7 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 }
 
 func (identity *Identity) isAdmin() bool {
-	for _, a := range identity.Actions {
-		if a == "Admin" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(identity.Actions, s3_constants.ACTION_ADMIN)
 }
 
 // GetCredentialManager returns the credential manager instance

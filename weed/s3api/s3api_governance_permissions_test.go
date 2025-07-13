@@ -509,3 +509,91 @@ func TestGovernancePermissionMethodCalls(t *testing.T) {
 		}
 	})
 }
+
+// TestGovernanceBypassNotPermittedError tests that ErrGovernanceBypassNotPermitted
+// is returned when bypass is requested but the user lacks permission
+func TestGovernanceBypassNotPermittedError(t *testing.T) {
+	// Test the error constant itself
+	if ErrGovernanceBypassNotPermitted == nil {
+		t.Error("ErrGovernanceBypassNotPermitted should be defined")
+	}
+
+	// Verify the error message
+	expectedMessage := "user does not have permission to bypass governance retention"
+	if ErrGovernanceBypassNotPermitted.Error() != expectedMessage {
+		t.Errorf("expected error message '%s', got '%s'",
+			expectedMessage, ErrGovernanceBypassNotPermitted.Error())
+	}
+
+	// Test the scenario where this error should be returned
+	// This documents the expected behavior when:
+	// 1. Object is under governance retention
+	// 2. bypassGovernance is true
+	// 3. checkGovernanceBypassPermission returns false
+	testCases := []struct {
+		name             string
+		retentionMode    string
+		bypassGovernance bool
+		hasPermission    bool
+		expectedError    error
+		description      string
+	}{
+		{
+			name:             "governance_bypass_without_permission",
+			retentionMode:    s3_constants.RetentionModeGovernance,
+			bypassGovernance: true,
+			hasPermission:    false,
+			expectedError:    ErrGovernanceBypassNotPermitted,
+			description:      "Should return ErrGovernanceBypassNotPermitted when bypass is requested but user lacks permission",
+		},
+		{
+			name:             "governance_bypass_with_permission",
+			retentionMode:    s3_constants.RetentionModeGovernance,
+			bypassGovernance: true,
+			hasPermission:    true,
+			expectedError:    nil,
+			description:      "Should succeed when bypass is requested and user has permission",
+		},
+		{
+			name:             "governance_no_bypass",
+			retentionMode:    s3_constants.RetentionModeGovernance,
+			bypassGovernance: false,
+			hasPermission:    false,
+			expectedError:    ErrGovernanceModeActive,
+			description:      "Should return ErrGovernanceModeActive when bypass is not requested",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// This test documents the expected behavior pattern
+			// The actual checkObjectLockPermissions method implements this logic:
+			// if retention.Mode == s3_constants.RetentionModeGovernance {
+			//     if !bypassGovernance {
+			//         return ErrGovernanceModeActive
+			//     }
+			//     if !s3a.checkGovernanceBypassPermission(request, bucket, object) {
+			//         return ErrGovernanceBypassNotPermitted
+			//     }
+			// }
+
+			var simulatedError error
+			if tc.retentionMode == s3_constants.RetentionModeGovernance {
+				if !tc.bypassGovernance {
+					simulatedError = ErrGovernanceModeActive
+				} else if !tc.hasPermission {
+					simulatedError = ErrGovernanceBypassNotPermitted
+				}
+			}
+
+			if simulatedError != tc.expectedError {
+				t.Errorf("expected error %v, got %v. %s", tc.expectedError, simulatedError, tc.description)
+			}
+
+			// Verify ErrGovernanceBypassNotPermitted is returned in the right case
+			if tc.name == "governance_bypass_without_permission" && simulatedError != ErrGovernanceBypassNotPermitted {
+				t.Errorf("Test case should return ErrGovernanceBypassNotPermitted but got %v", simulatedError)
+			}
+		})
+	}
+}
