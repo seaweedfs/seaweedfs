@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
 	"time"
 
@@ -28,9 +29,8 @@ var (
 
 // Error definitions for Object Lock
 var (
-	ErrObjectLockConfigurationNotFound = errors.New("bucket object lock configuration not found")
-	ErrObjectUnderLegalHold            = errors.New("object is under legal hold and cannot be deleted or modified")
-	ErrGovernanceBypassNotPermitted    = errors.New("user does not have permission to bypass governance retention")
+	ErrObjectUnderLegalHold         = errors.New("object is under legal hold and cannot be deleted or modified")
+	ErrGovernanceBypassNotPermitted = errors.New("user does not have permission to bypass governance retention")
 )
 
 const (
@@ -110,13 +110,13 @@ func (or *ObjectRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 // This approach is optimized for small XML payloads typical in S3 API requests
 // (retention configurations, legal hold settings, etc.) where the overhead of
 // streaming parsing is acceptable for the memory efficiency benefits.
-func parseXML[T any](r *http.Request, result *T) error {
-	if r.Body == nil {
+func parseXML[T any](request *http.Request, result *T) error {
+	if request.Body == nil {
 		return fmt.Errorf("error parsing XML: empty request body")
 	}
-	defer r.Body.Close()
+	defer request.Body.Close()
 
-	decoder := xml.NewDecoder(r.Body)
+	decoder := xml.NewDecoder(request.Body)
 	if err := decoder.Decode(result); err != nil {
 		return fmt.Errorf("error parsing XML: %v", err)
 	}
@@ -125,27 +125,27 @@ func parseXML[T any](r *http.Request, result *T) error {
 }
 
 // parseObjectRetention parses XML retention configuration from request body
-func parseObjectRetention(r *http.Request) (*ObjectRetention, error) {
+func parseObjectRetention(request *http.Request) (*ObjectRetention, error) {
 	var retention ObjectRetention
-	if err := parseXML(r, &retention); err != nil {
+	if err := parseXML(request, &retention); err != nil {
 		return nil, err
 	}
 	return &retention, nil
 }
 
 // parseObjectLegalHold parses XML legal hold configuration from request body
-func parseObjectLegalHold(r *http.Request) (*ObjectLegalHold, error) {
+func parseObjectLegalHold(request *http.Request) (*ObjectLegalHold, error) {
 	var legalHold ObjectLegalHold
-	if err := parseXML(r, &legalHold); err != nil {
+	if err := parseXML(request, &legalHold); err != nil {
 		return nil, err
 	}
 	return &legalHold, nil
 }
 
 // parseObjectLockConfiguration parses XML object lock configuration from request body
-func parseObjectLockConfiguration(r *http.Request) (*ObjectLockConfiguration, error) {
+func parseObjectLockConfiguration(request *http.Request) (*ObjectLockConfiguration, error) {
 	var config ObjectLockConfiguration
-	if err := parseXML(r, &config); err != nil {
+	if err := parseXML(request, &config); err != nil {
 		return nil, err
 	}
 	return &config, nil
@@ -529,8 +529,8 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 	}
 
 	// Use the existing IAM auth system to check the specific permission
-	// Create the governance bypass action (object already has "/" prefix from GetBucketAndObject)
-	action := Action(s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION + ":" + bucket + object)
+	// Create the governance bypass action using path.Join to avoid missing or double slashes
+	action := Action(s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION + ":" + path.Join(bucket, object))
 
 	// Use the IAM system to authenticate and authorize this specific action
 	identity, errCode := s3a.iam.authRequest(request, action)
