@@ -237,17 +237,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 
 // compilePattern compiles a wildcard pattern to regex
 func compilePattern(pattern string) (*regexp.Regexp, error) {
-	// Escape special regex characters except * and ?
-	escaped := regexp.QuoteMeta(pattern)
-
-	// Replace escaped wildcards with regex equivalents
-	escaped = strings.ReplaceAll(escaped, `\*`, `.*`)
-	escaped = strings.ReplaceAll(escaped, `\?`, `.`)
-
-	// Anchor the pattern
-	escaped = "^" + escaped + "$"
-
-	return regexp.Compile(escaped)
+	return CompileWildcardPattern(pattern)
 }
 
 // normalizeToStringSlice converts various types to string slice - kept for backward compatibility
@@ -288,23 +278,7 @@ func IsObjectResource(resource string) bool {
 
 // MatchesResource checks if a resource matches a pattern
 func MatchesResource(pattern, resource string) bool {
-	// Simple wildcard matching
-	if pattern == "*" {
-		return true
-	}
-
-	// Convert wildcards to regex
-	regexPattern := strings.ReplaceAll(regexp.QuoteMeta(pattern), `\*`, `.*`)
-	regexPattern = strings.ReplaceAll(regexPattern, `\?`, `.`)
-	regexPattern = "^" + regexPattern + "$"
-
-	match, err := regexp.MatchString(regexPattern, resource)
-	if err != nil {
-		glog.Errorf("Error matching resource pattern %s against %s: %v", pattern, resource, err)
-		return false
-	}
-
-	return match
+	return MatchesWildcard(pattern, resource)
 }
 
 // S3Actions contains common S3 actions

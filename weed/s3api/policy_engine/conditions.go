@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -49,10 +48,10 @@ func (e *StringNotEqualsEvaluator) Evaluate(conditionValue interface{}, contextV
 type StringLikeEvaluator struct{}
 
 func (e *StringLikeEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedPatterns := normalizeToStringSlice(conditionValue)
-	for _, pattern := range expectedPatterns {
+	patterns := normalizeToStringSlice(conditionValue)
+	for _, pattern := range patterns {
 		for _, contextValue := range contextValues {
-			if matchesWildcard(pattern, contextValue) {
+			if MatchesWildcard(pattern, contextValue) {
 				return true
 			}
 		}
@@ -64,10 +63,10 @@ func (e *StringLikeEvaluator) Evaluate(conditionValue interface{}, contextValues
 type StringNotLikeEvaluator struct{}
 
 func (e *StringNotLikeEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedPatterns := normalizeToStringSlice(conditionValue)
-	for _, pattern := range expectedPatterns {
+	patterns := normalizeToStringSlice(conditionValue)
+	for _, pattern := range patterns {
 		for _, contextValue := range contextValues {
-			if matchesWildcard(pattern, contextValue) {
+			if MatchesWildcard(pattern, contextValue) {
 				return false
 			}
 		}
@@ -457,10 +456,10 @@ func (e *ArnEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues 
 type ArnLikeEvaluator struct{}
 
 func (e *ArnLikeEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedPatterns := normalizeToStringSlice(conditionValue)
-	for _, pattern := range expectedPatterns {
+	patterns := normalizeToStringSlice(conditionValue)
+	for _, pattern := range patterns {
 		for _, contextValue := range contextValues {
-			if matchesWildcard(pattern, contextValue) {
+			if MatchesWildcard(pattern, contextValue) {
 				return true
 			}
 		}
@@ -538,59 +537,6 @@ func GetConditionEvaluator(operator string) (ConditionEvaluator, error) {
 	default:
 		return nil, fmt.Errorf("unsupported condition operator: %s", operator)
 	}
-}
-
-// matchesWildcard checks if a string matches a wildcard pattern
-func matchesWildcard(pattern, str string) bool {
-	// Convert pattern to a simple regex-like matching
-	// This is a simplified implementation
-
-	// Handle simple cases
-	if pattern == "*" {
-		return true
-	}
-
-	if pattern == str {
-		return true
-	}
-
-	// Split pattern by wildcards
-	parts := strings.Split(pattern, "*")
-	if len(parts) == 1 {
-		// No wildcards, exact match
-		return pattern == str
-	}
-
-	// Check if string starts with first part
-	if len(parts[0]) > 0 && !strings.HasPrefix(str, parts[0]) {
-		return false
-	}
-
-	// Check if string ends with last part
-	if len(parts[len(parts)-1]) > 0 && !strings.HasSuffix(str, parts[len(parts)-1]) {
-		return false
-	}
-
-	// Check middle parts
-	searchStr := str
-	if len(parts[0]) > 0 {
-		searchStr = searchStr[len(parts[0]):]
-	}
-	if len(parts[len(parts)-1]) > 0 {
-		searchStr = searchStr[:len(searchStr)-len(parts[len(parts)-1])]
-	}
-
-	for i := 1; i < len(parts)-1; i++ {
-		if len(parts[i]) > 0 {
-			index := strings.Index(searchStr, parts[i])
-			if index == -1 {
-				return false
-			}
-			searchStr = searchStr[index+len(parts[i]):]
-		}
-	}
-
-	return true
 }
 
 // EvaluateConditions evaluates all conditions in a policy statement

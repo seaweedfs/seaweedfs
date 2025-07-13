@@ -634,7 +634,7 @@ func TestWildcardMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := matchesWildcard(tt.pattern, tt.str)
+			result := MatchesWildcard(tt.pattern, tt.str)
 			if result != tt.expected {
 				t.Errorf("Pattern %s against %s: expected %v, got %v", tt.pattern, tt.str, tt.expected, result)
 			}
