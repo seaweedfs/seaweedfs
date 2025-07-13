@@ -384,11 +384,16 @@ func (e *IpAddressEvaluator) Evaluate(conditionValue interface{}, contextValues 
 			// Try parsing as single IP
 			expectedIP := net.ParseIP(expected)
 			if expectedIP == nil {
+				glog.V(3).Infof("Failed to parse expected IP address: %s", expected)
 				continue
 			}
 			for _, contextValue := range contextValues {
 				contextIP := net.ParseIP(contextValue)
-				if contextIP != nil && contextIP.Equal(expectedIP) {
+				if contextIP == nil {
+					glog.V(3).Infof("Failed to parse IP address: %s", contextValue)
+					continue
+				}
+				if contextIP.Equal(expectedIP) {
 					return true
 				}
 			}
@@ -396,7 +401,11 @@ func (e *IpAddressEvaluator) Evaluate(conditionValue interface{}, contextValues 
 			// CIDR network
 			for _, contextValue := range contextValues {
 				contextIP := net.ParseIP(contextValue)
-				if contextIP != nil && expectedNet.Contains(contextIP) {
+				if contextIP == nil {
+					glog.V(3).Infof("Failed to parse IP address: %s", contextValue)
+					continue
+				}
+				if expectedNet.Contains(contextIP) {
 					return true
 				}
 			}
@@ -416,11 +425,16 @@ func (e *NotIpAddressEvaluator) Evaluate(conditionValue interface{}, contextValu
 			// Try parsing as single IP
 			expectedIP := net.ParseIP(expected)
 			if expectedIP == nil {
+				glog.V(3).Infof("Failed to parse expected IP address: %s", expected)
 				continue
 			}
 			for _, contextValue := range contextValues {
 				contextIP := net.ParseIP(contextValue)
-				if contextIP != nil && contextIP.Equal(expectedIP) {
+				if contextIP == nil {
+					glog.V(3).Infof("Failed to parse IP address: %s", contextValue)
+					continue
+				}
+				if contextIP.Equal(expectedIP) {
 					return false
 				}
 			}
@@ -428,7 +442,11 @@ func (e *NotIpAddressEvaluator) Evaluate(conditionValue interface{}, contextValu
 			// CIDR network
 			for _, contextValue := range contextValues {
 				contextIP := net.ParseIP(contextValue)
-				if contextIP != nil && expectedNet.Contains(contextIP) {
+				if contextIP == nil {
+					glog.V(3).Infof("Failed to parse IP address: %s", contextValue)
+					continue
+				}
+				if expectedNet.Contains(contextIP) {
 					return false
 				}
 			}
