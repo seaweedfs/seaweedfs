@@ -85,6 +85,13 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		glog.V(1).Infof("PutObjectHandler: bucket %s, object %s, versioningEnabled=%v", bucket, object, versioningEnabled)
 
+		// Check object lock permissions before PUT operation (only for versioned buckets)
+		bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
+		if err := s3a.checkObjectLockPermissionsForPut(bucket, object, bypassGovernance, versioningEnabled); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+
 		if versioningEnabled {
 			// Handle versioned PUT
 			glog.V(1).Infof("PutObjectHandler: using versioned PUT for %s/%s", bucket, object)

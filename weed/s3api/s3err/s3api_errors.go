@@ -110,6 +110,8 @@ const (
 
 	OwnershipControlsNotFoundError
 	ErrNoSuchTagSet
+	ErrNoSuchObjectLockConfiguration
+	ErrNoSuchObjectLegalHold
 )
 
 // Error message constants for checksum validation
@@ -195,6 +197,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchTagSet: {
 		Code:           "NoSuchTagSet",
 		Description:    "The TagSet does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchObjectLockConfiguration: {
+		Code:           "NoSuchObjectLockConfiguration",
+		Description:    "The specified object does not have an ObjectLock configuration",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchObjectLegalHold: {
+		Code:           "NoSuchObjectLegalHold",
+		Description:    "The specified object does not have a legal hold configuration",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchCORSConfiguration: {
