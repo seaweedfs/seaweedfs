@@ -6,18 +6,39 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// PolicyBackedIAM wraps the existing IAM system with policy evaluation
+// Action represents an S3 action - this should match the type in auth_credentials.go
+type Action string
+
+// Identity represents a user identity - this should match the type in auth_credentials.go
+type Identity interface {
+	canDo(action Action, bucket string, objectKey string) bool
+}
+
+// PolicyBackedIAM provides policy-based access control with fallback to legacy IAM
 type PolicyBackedIAM struct {
 	policyEngine *PolicyEngine
+	legacyIAM    LegacyIAM // Interface to delegate to existing IAM system
+}
+
+// LegacyIAM interface for delegating to existing IAM implementation
+type LegacyIAM interface {
+	authRequest(r *http.Request, action Action) (Identity, s3err.ErrorCode)
 }
 
 // NewPolicyBackedIAM creates a new policy-backed IAM system
 func NewPolicyBackedIAM() *PolicyBackedIAM {
 	return &PolicyBackedIAM{
 		policyEngine: NewPolicyEngine(),
+		legacyIAM:    nil, // Will be set when integrated with existing IAM
 	}
+}
+
+// SetLegacyIAM sets the legacy IAM system for fallback
+func (p *PolicyBackedIAM) SetLegacyIAM(legacyIAM LegacyIAM) {
+	p.legacyIAM = legacyIAM
 }
 
 // SetBucketPolicy sets the policy for a bucket
@@ -56,13 +77,41 @@ func (p *PolicyBackedIAM) CanDo(action, bucketName, objectName, principal string
 
 // evaluateLegacyAction evaluates actions using legacy identity-based rules
 func (p *PolicyBackedIAM) evaluateLegacyAction(action, bucketName, objectName, principal string) bool {
-	// Convert legacy action to policy and evaluate
-	// This is a simplified implementation that would need to be integrated
-	// with the existing identity system
+	// If we have a legacy IAM system to delegate to, use it
+	if p.legacyIAM != nil {
+		// Create a dummy request for legacy evaluation
+		// In real implementation, this would use the actual request
+		r := &http.Request{
+			Header: make(http.Header),
+		}
 
-	// For now, return false to maintain security
-	// In a real implementation, this would check against identities.json
+		// Convert the action string to Action type
+		legacyAction := Action(action)
+
+		// Use legacy IAM to check permission
+		identity, errCode := p.legacyIAM.authRequest(r, legacyAction)
+		if errCode != s3err.ErrNone {
+			return false
+		}
+
+		// If we have an identity, check if it can perform the action
+		if identity != nil {
+			return identity.canDo(legacyAction, bucketName, objectName)
+		}
+	}
+
+	// No legacy IAM available, convert to policy and evaluate
+	return p.evaluateUsingPolicyConversion(action, bucketName, objectName, principal)
+}
+
+// evaluateUsingPolicyConversion converts legacy action to policy and evaluates
+func (p *PolicyBackedIAM) evaluateUsingPolicyConversion(action, bucketName, objectName, principal string) bool {
+	// For now, use a conservative approach for legacy actions
+	// In a real implementation, this would integrate with the existing identity system
 	glog.V(2).Infof("Legacy action evaluation for %s on %s/%s by %s", action, bucketName, objectName, principal)
+
+	// Return false to maintain security until proper legacy integration is implemented
+	// This ensures no unintended access is granted
 	return false
 }
 
