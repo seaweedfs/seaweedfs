@@ -14,18 +14,16 @@ import (
 //
 // This package provides enhanced AWS S3-compatible policy types with improved type safety.
 //
-// DEDUPLICATION NOTE:
-// There is a simpler PolicyDocument type in weed/iamapi/iamapi_management_handlers.go.
-// Rather than creating breaking changes, we maintain both types and provide conversion
-// functions in compatibility.go. The iamapi version supports basic statements, while
-// this version supports advanced features like:
+// MIGRATION COMPLETE:
+// This is now the unified PolicyDocument type used throughout the SeaweedFS codebase.
+// The previous duplicate PolicyDocument types in iamapi and credential packages have
+// been migrated to use these enhanced types, providing:
 // - Principal specifications
 // - Complex conditions (IP, time, string patterns, etc.)
 // - Flexible string/array types with proper JSON marshaling
 // - Policy compilation for performance
 //
-// For backward compatibility, legacy systems continue to use the iamapi types,
-// while new S3 bucket policies use these enhanced types.
+// All policy operations now use this single, consistent type definition.
 
 // StringOrStringSlice represents a value that can be either a string or []string
 type StringOrStringSlice struct {
