@@ -25,11 +25,19 @@ type WildcardMatcherCache struct {
 	accessOrder []string // For LRU eviction
 }
 
-// Global cache instance
-var wildcardMatcherCache = &WildcardMatcherCache{
-	matchers: make(map[string]*WildcardMatcher),
-	maxSize:  1000, // Maximum number of cached patterns
+// NewWildcardMatcherCache creates a new WildcardMatcherCache with a configurable maxSize
+func NewWildcardMatcherCache(maxSize int) *WildcardMatcherCache {
+	if maxSize <= 0 {
+		maxSize = 1000 // Default value
+	}
+	return &WildcardMatcherCache{
+		matchers: make(map[string]*WildcardMatcher),
+		maxSize:  maxSize,
+	}
 }
+
+// Global cache instance
+var wildcardMatcherCache = NewWildcardMatcherCache(1000) // Default maxSize
 
 // GetCachedWildcardMatcher gets or creates a cached WildcardMatcher for the given pattern
 func GetCachedWildcardMatcher(pattern string) (*WildcardMatcher, error) {

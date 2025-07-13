@@ -3,6 +3,7 @@ package policy_engine
 import (
 	"fmt"
 	"net"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,8 +22,9 @@ var normalizedValueCache = struct {
 
 // getCachedNormalizedValues returns cached normalized values or caches new ones
 func getCachedNormalizedValues(value interface{}) []string {
-	// Create a string key for caching
-	cacheKey := fmt.Sprintf("%T:%v", value, value)
+	// Create a string key for caching - more efficient than fmt.Sprintf
+	typeStr := reflect.TypeOf(value).String()
+	cacheKey := typeStr + ":" + fmt.Sprint(value)
 
 	normalizedValueCache.RLock()
 	cached, exists := normalizedValueCache.cache[cacheKey]

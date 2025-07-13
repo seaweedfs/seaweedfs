@@ -178,6 +178,8 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	// Extract IP address without port for proper IP matching
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
+		// Log a warning if splitting fails
+		glog.Warningf("Failed to parse IP address from RemoteAddr %q: %v", r.RemoteAddr, err)
 		// If splitting fails, use the original RemoteAddr (might be just IP without port)
 		host = r.RemoteAddr
 	}
