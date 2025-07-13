@@ -523,11 +523,6 @@ func (s3a *S3ApiServer) isObjectLegalHoldActive(bucket, object, versionId string
 
 // checkGovernanceBypassPermission checks if the user has permission to bypass governance retention
 func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, bucket, object string) bool {
-	// Check if user is admin (admins can bypass governance)
-	if request.Header.Get(s3_constants.AmzIsAdmin) == "true" {
-		return true
-	}
-
 	// Use the existing IAM auth system to check the specific permission
 	// Create the governance bypass action using path.Join to avoid missing or double slashes
 	action := Action(s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION + ":" + path.Join(bucket, object))
@@ -539,8 +534,19 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 		return false
 	}
 
-	// Double-check that the identity can perform this action
-	return identity != nil && identity.canDo(action, bucket, object)
+	// Verify that the authenticated identity can perform this action
+	if identity != nil && identity.canDo(action, bucket, object) {
+		return true
+	}
+
+	// Additional check: allow users with "Admin" action to bypass governance retention
+	// This is done through proper IAM validation, not header checking
+	if identity != nil && identity.isAdmin() {
+		glog.V(2).Infof("Admin user %s granted governance bypass permission for %s/%s", identity.Name, bucket, object)
+		return true
+	}
+
+	return false
 }
 
 // checkObjectLockPermissions checks if an object can be deleted or modified

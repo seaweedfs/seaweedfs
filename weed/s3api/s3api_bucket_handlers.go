@@ -225,10 +225,12 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 }
 
 func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
-	isAdmin := r.Header.Get(s3_constants.AmzIsAdmin) != ""
-	if isAdmin {
+	// Check if user is properly authenticated as admin through IAM system
+	// Do not trust AmzIsAdmin header directly as it can be spoofed by clients
+	if s3a.isUserAdmin(r) {
 		return true
 	}
+
 	if entry.Extended == nil {
 		return true
 	}
@@ -241,6 +243,20 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 		}
 	}
 	return true
+}
+
+// isUserAdmin securely checks if the authenticated user is an admin
+// This validates admin status through proper IAM authentication, not spoofable headers
+func (s3a *S3ApiServer) isUserAdmin(r *http.Request) bool {
+	// Use a minimal admin action to authenticate and check admin status
+	adminAction := Action("Admin")
+	identity, errCode := s3a.iam.authRequest(r, adminAction)
+	if errCode != s3err.ErrNone {
+		return false
+	}
+
+	// Check if the authenticated identity has admin privileges
+	return identity != nil && identity.isAdmin()
 }
 
 // GetBucketAclHandler Get Bucket ACL
