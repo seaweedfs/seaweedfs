@@ -145,6 +145,17 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 		s3Actions = []string{"s3:GetObjectTagging", "s3:PutObjectTagging", "s3:DeleteObjectTagging"}
 		resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
 
+	case "BypassGovernanceRetention":
+		s3Actions = []string{"s3:BypassGovernanceRetention"}
+		if strings.HasSuffix(resourcePattern, "/*") {
+			// Object-level bypass governance access
+			bucket := strings.TrimSuffix(resourcePattern, "/*")
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		} else {
+			// Bucket-level bypass governance access
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+		}
+
 	default:
 		return nil, fmt.Errorf("unknown action type: %s", actionType)
 	}
@@ -208,6 +219,9 @@ func GetActionMappings() map[string][]string {
 			"s3:GetBucketTagging",
 			"s3:PutBucketTagging",
 			"s3:DeleteBucketTagging",
+		},
+		"BypassGovernanceRetention": {
+			"s3:BypassGovernanceRetention",
 		},
 	}
 }

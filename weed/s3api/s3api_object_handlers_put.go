@@ -87,7 +87,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// Check object lock permissions before PUT operation (only for versioned buckets)
 		bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
-		if err := s3a.checkObjectLockPermissionsForPut(bucket, object, bypassGovernance, versioningEnabled); err != nil {
+		if err := s3a.checkObjectLockPermissionsForPut(r, bucket, object, bypassGovernance, versioningEnabled); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}
