@@ -86,7 +86,7 @@ func ConvertIdentityToPolicy(identityActions []string, bucketName string) (*Poli
 	}
 
 	return &PolicyDocument{
-		Version:   "2012-10-17",
+		Version:   PolicyVersion2012_10_17,
 		Statement: statements,
 	}, nil
 }
@@ -365,7 +365,7 @@ func CreatePolicyFromLegacyIdentity(identityName string, actions []string) (*Pol
 	}
 
 	return &PolicyDocument{
-		Version:   "2012-10-17",
+		Version:   PolicyVersion2012_10_17,
 		Statement: statements,
 	}, nil
 }

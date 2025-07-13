@@ -100,17 +100,15 @@ Grant governance bypass permission via bucket policies:
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AllowGovernanceBypass",
       "Effect": "Allow",
-      "Principal": {
-        "AWS": "arn:aws:iam::123456789012:user/governance-admin"
-      },
       "Action": "s3:BypassGovernanceRetention",
-      "Resource": "arn:aws:s3:::my-bucket/*"
+      "Resource": "arn:aws:s3:::bucket/*"
     }
   ]
 }
 ```
+
+**Note**: The policy version should use the standard AWS policy version `PolicyVersion2012_10_17` constant (which equals `"2012-10-17"`).
 
 ## Usage Examples
 

@@ -25,6 +25,12 @@ import (
 //
 // All policy operations now use this single, consistent type definition.
 
+// Constants for policy validation
+const (
+	// PolicyVersion2012_10_17 is the standard AWS policy version
+	PolicyVersion2012_10_17 = "2012-10-17"
+)
+
 // StringOrStringSlice represents a value that can be either a string or []string
 type StringOrStringSlice struct {
 	values []string
@@ -131,7 +137,7 @@ func NewPolicyCache() *PolicyCache {
 
 // ValidatePolicy validates a policy document
 func ValidatePolicy(policyDoc *PolicyDocument) error {
-	if policyDoc.Version != "2012-10-17" {
+	if policyDoc.Version != PolicyVersion2012_10_17 {
 		return fmt.Errorf("unsupported policy version: %s", policyDoc.Version)
 	}
 
