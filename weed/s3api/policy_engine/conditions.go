@@ -12,12 +12,21 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
-// NormalizedValueCache provides size-limited caching for normalized values with LRU eviction
+// LRUNode represents a node in the doubly-linked list for efficient LRU operations
+type LRUNode struct {
+	key   string
+	value []string
+	prev  *LRUNode
+	next  *LRUNode
+}
+
+// NormalizedValueCache provides size-limited caching for normalized values with efficient LRU eviction
 type NormalizedValueCache struct {
-	mu          sync.RWMutex
-	cache       map[string][]string
-	maxSize     int
-	accessOrder []string // For LRU eviction
+	mu      sync.RWMutex
+	cache   map[string]*LRUNode
+	maxSize int
+	head    *LRUNode // Most recently used
+	tail    *LRUNode // Least recently used
 }
 
 // NewNormalizedValueCache creates a new normalized value cache with configurable size
@@ -25,34 +34,50 @@ func NewNormalizedValueCache(maxSize int) *NormalizedValueCache {
 	if maxSize <= 0 {
 		maxSize = 1000 // Default size
 	}
+
+	// Create dummy head and tail nodes for easier list manipulation
+	head := &LRUNode{}
+	tail := &LRUNode{}
+	head.next = tail
+	tail.prev = head
+
 	return &NormalizedValueCache{
-		cache:   make(map[string][]string),
+		cache:   make(map[string]*LRUNode),
 		maxSize: maxSize,
+		head:    head,
+		tail:    tail,
 	}
 }
 
-// Get retrieves a cached value and updates access order
+// Get retrieves a cached value and updates access order in O(1) time
 func (c *NormalizedValueCache) Get(key string) ([]string, bool) {
-	c.mu.RLock()
-	value, exists := c.cache[key]
-	c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	if exists {
-		c.updateAccessOrder(key)
+	if node, exists := c.cache[key]; exists {
+		// Move to head (most recently used) - O(1) operation
+		c.moveToHead(node)
+		return node.value, true
 	}
-	return value, exists
+	return nil, false
 }
 
-// Set stores a value in the cache with size limit enforcement
+// Set stores a value in the cache with size limit enforcement in O(1) time
 func (c *NormalizedValueCache) Set(key string, value []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Check if key already exists
-	if _, exists := c.cache[key]; exists {
-		c.cache[key] = value
-		c.updateAccessOrderLocked(key)
+	if node, exists := c.cache[key]; exists {
+		// Update existing node and move to head
+		node.value = value
+		c.moveToHead(node)
 		return
+	}
+
+	// Create new node
+	newNode := &LRUNode{
+		key:   key,
+		value: value,
 	}
 
 	// If at max size, evict least recently used
@@ -60,45 +85,51 @@ func (c *NormalizedValueCache) Set(key string, value []string) {
 		c.evictLeastRecentlyUsed()
 	}
 
-	c.cache[key] = value
-	c.updateAccessOrderLocked(key)
+	// Add to cache and move to head
+	c.cache[key] = newNode
+	c.addToHead(newNode)
 }
 
-// updateAccessOrder updates the access order for LRU (thread-safe)
-func (c *NormalizedValueCache) updateAccessOrder(key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.updateAccessOrderLocked(key)
+// moveToHead moves a node to the head of the list (most recently used) - O(1)
+func (c *NormalizedValueCache) moveToHead(node *LRUNode) {
+	c.removeNode(node)
+	c.addToHead(node)
 }
 
-// updateAccessOrderLocked updates the access order for LRU (requires lock)
-func (c *NormalizedValueCache) updateAccessOrderLocked(key string) {
-	// Remove from current position
-	for i, k := range c.accessOrder {
-		if k == key {
-			c.accessOrder = append(c.accessOrder[:i], c.accessOrder[i+1:]...)
-			break
-		}
-	}
-	// Add to end (most recently used)
-	c.accessOrder = append(c.accessOrder, key)
+// addToHead adds a node right after the head - O(1)
+func (c *NormalizedValueCache) addToHead(node *LRUNode) {
+	node.prev = c.head
+	node.next = c.head.next
+	c.head.next.prev = node
+	c.head.next = node
 }
 
-// evictLeastRecentlyUsed removes the least recently used item
+// removeNode removes a node from the list - O(1)
+func (c *NormalizedValueCache) removeNode(node *LRUNode) {
+	node.prev.next = node.next
+	node.next.prev = node.prev
+}
+
+// removeTail removes the last node before tail (least recently used) - O(1)
+func (c *NormalizedValueCache) removeTail() *LRUNode {
+	lastNode := c.tail.prev
+	c.removeNode(lastNode)
+	return lastNode
+}
+
+// evictLeastRecentlyUsed removes the least recently used item in O(1) time
 func (c *NormalizedValueCache) evictLeastRecentlyUsed() {
-	if len(c.accessOrder) > 0 {
-		oldestKey := c.accessOrder[0]
-		delete(c.cache, oldestKey)
-		c.accessOrder = c.accessOrder[1:]
-	}
+	tail := c.removeTail()
+	delete(c.cache, tail.key)
 }
 
 // Clear clears all cached values
 func (c *NormalizedValueCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.cache = make(map[string][]string)
-	c.accessOrder = nil
+	c.cache = make(map[string]*LRUNode)
+	c.head.next = c.tail
+	c.tail.prev = c.head
 }
 
 // GetStats returns cache statistics
