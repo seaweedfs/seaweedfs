@@ -9,8 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
-	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 // PolicyHandlers contains all the HTTP handlers for policy management
@@ -190,7 +190,7 @@ func (h *PolicyHandlers) DeletePolicy(c *gin.Context) {
 // ValidatePolicy validates a policy document without saving it
 func (h *PolicyHandlers) ValidatePolicy(c *gin.Context) {
 	var req struct {
-		Document credential.PolicyDocument `json:"document" binding:"required"`
+		Document policy_engine.PolicyDocument `json:"document" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -218,14 +218,14 @@ func (h *PolicyHandlers) ValidatePolicy(c *gin.Context) {
 			return
 		}
 
-		if len(statement.Action) == 0 {
+		if len(statement.Action.Strings()) == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Statement %d: Action is required", i+1),
 			})
 			return
 		}
 
-		if len(statement.Resource) == 0 {
+		if len(statement.Resource.Strings()) == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Statement %d: Resource is required", i+1),
 			})
