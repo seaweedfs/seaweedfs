@@ -16,12 +16,14 @@ The policy engine provides:
 
 ### Files Created
 
-1. **`s3api_policy_types.go`** - Core policy data structures and validation
-2. **`s3api_policy_conditions.go`** - Condition evaluators (StringEquals, IpAddress, etc.)
-3. **`s3api_policy_engine.go`** - Main policy evaluation engine
-4. **`s3api_policy_integration.go`** - Integration with existing IAM system
-5. **`s3api_policy_engine_test.go`** - Comprehensive tests
-6. **`s3api_policy_examples.go`** - Usage examples and documentation
+1. **`policy_engine/types.go`** - Core policy data structures and validation
+2. **`policy_engine/conditions.go`** - Condition evaluators (StringEquals, IpAddress, etc.)
+3. **`policy_engine/engine.go`** - Main policy evaluation engine
+4. **`policy_engine/integration.go`** - Integration with existing IAM system
+5. **`policy_engine/engine_test.go`** - Comprehensive tests
+6. **`policy_engine/examples.go`** - Usage examples and documentation (excluded from builds)
+7. **`policy_engine/wildcard_matcher.go`** - Optimized wildcard pattern matching
+8. **`policy_engine/wildcard_matcher_test.go`** - Wildcard matching tests
 
 ### Key Components
 

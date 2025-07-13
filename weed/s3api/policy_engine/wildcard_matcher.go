@@ -19,13 +19,16 @@ type WildcardMatcher struct {
 
 // WildcardMatcherCache provides caching for WildcardMatcher instances
 type WildcardMatcherCache struct {
-	mu       sync.RWMutex
-	matchers map[string]*WildcardMatcher
+	mu          sync.RWMutex
+	matchers    map[string]*WildcardMatcher
+	maxSize     int
+	accessOrder []string // For LRU eviction
 }
 
 // Global cache instance
 var wildcardMatcherCache = &WildcardMatcherCache{
 	matchers: make(map[string]*WildcardMatcher),
+	maxSize:  1000, // Maximum number of cached patterns
 }
 
 // GetCachedWildcardMatcher gets or creates a cached WildcardMatcher for the given pattern
@@ -34,6 +37,7 @@ func GetCachedWildcardMatcher(pattern string) (*WildcardMatcher, error) {
 	wildcardMatcherCache.mu.RLock()
 	if matcher, exists := wildcardMatcherCache.matchers[pattern]; exists {
 		wildcardMatcherCache.mu.RUnlock()
+		wildcardMatcherCache.updateAccessOrder(pattern)
 		return matcher, nil
 	}
 	wildcardMatcherCache.mu.RUnlock()
@@ -44,6 +48,7 @@ func GetCachedWildcardMatcher(pattern string) (*WildcardMatcher, error) {
 
 	// Double-check after acquiring write lock
 	if matcher, exists := wildcardMatcherCache.matchers[pattern]; exists {
+		wildcardMatcherCache.updateAccessOrderLocked(pattern)
 		return matcher, nil
 	}
 
@@ -53,9 +58,62 @@ func GetCachedWildcardMatcher(pattern string) (*WildcardMatcher, error) {
 		return nil, err
 	}
 
+	// Evict old entries if cache is full
+	if len(wildcardMatcherCache.matchers) >= wildcardMatcherCache.maxSize {
+		wildcardMatcherCache.evictLeastRecentlyUsed()
+	}
+
 	// Cache it
 	wildcardMatcherCache.matchers[pattern] = matcher
+	wildcardMatcherCache.accessOrder = append(wildcardMatcherCache.accessOrder, pattern)
 	return matcher, nil
+}
+
+// updateAccessOrder updates the access order for LRU eviction (with read lock)
+func (c *WildcardMatcherCache) updateAccessOrder(pattern string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.updateAccessOrderLocked(pattern)
+}
+
+// updateAccessOrderLocked updates the access order for LRU eviction (without locking)
+func (c *WildcardMatcherCache) updateAccessOrderLocked(pattern string) {
+	// Remove pattern from its current position
+	for i, p := range c.accessOrder {
+		if p == pattern {
+			c.accessOrder = append(c.accessOrder[:i], c.accessOrder[i+1:]...)
+			break
+		}
+	}
+	// Add pattern to the end (most recently used)
+	c.accessOrder = append(c.accessOrder, pattern)
+}
+
+// evictLeastRecentlyUsed removes the least recently used pattern from the cache
+func (c *WildcardMatcherCache) evictLeastRecentlyUsed() {
+	if len(c.accessOrder) == 0 {
+		return
+	}
+
+	// Remove the least recently used pattern (first in the list)
+	lruPattern := c.accessOrder[0]
+	c.accessOrder = c.accessOrder[1:]
+	delete(c.matchers, lruPattern)
+}
+
+// ClearCache clears all cached patterns (useful for testing)
+func (c *WildcardMatcherCache) ClearCache() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.matchers = make(map[string]*WildcardMatcher)
+	c.accessOrder = c.accessOrder[:0]
+}
+
+// GetCacheStats returns cache statistics
+func (c *WildcardMatcherCache) GetCacheStats() (size int, maxSize int) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.matchers), c.maxSize
 }
 
 // NewWildcardMatcher creates a new wildcard matcher for the given pattern

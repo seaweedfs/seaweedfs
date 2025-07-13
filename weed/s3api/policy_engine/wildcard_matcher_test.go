@@ -330,3 +330,140 @@ func TestFastMatchesWildcard(t *testing.T) {
 		})
 	}
 }
+
+// TestWildcardMatcherCacheBounding tests the bounded cache functionality
+func TestWildcardMatcherCacheBounding(t *testing.T) {
+	// Clear cache before test
+	wildcardMatcherCache.ClearCache()
+
+	// Get original max size
+	originalMaxSize := wildcardMatcherCache.maxSize
+
+	// Set a small max size for testing
+	wildcardMatcherCache.maxSize = 3
+	defer func() {
+		wildcardMatcherCache.maxSize = originalMaxSize
+		wildcardMatcherCache.ClearCache()
+	}()
+
+	// Add patterns up to max size
+	patterns := []string{"pattern1", "pattern2", "pattern3"}
+	for _, pattern := range patterns {
+		_, err := GetCachedWildcardMatcher(pattern)
+		if err != nil {
+			t.Fatalf("Failed to get cached matcher for %s: %v", pattern, err)
+		}
+	}
+
+	// Verify cache size
+	size, maxSize := wildcardMatcherCache.GetCacheStats()
+	if size != 3 {
+		t.Errorf("Expected cache size 3, got %d", size)
+	}
+	if maxSize != 3 {
+		t.Errorf("Expected max size 3, got %d", maxSize)
+	}
+
+	// Add another pattern, should evict the least recently used
+	_, err := GetCachedWildcardMatcher("pattern4")
+	if err != nil {
+		t.Fatalf("Failed to get cached matcher for pattern4: %v", err)
+	}
+
+	// Cache should still be at max size
+	size, _ = wildcardMatcherCache.GetCacheStats()
+	if size != 3 {
+		t.Errorf("Expected cache size 3 after eviction, got %d", size)
+	}
+
+	// The first pattern should have been evicted
+	wildcardMatcherCache.mu.RLock()
+	if _, exists := wildcardMatcherCache.matchers["pattern1"]; exists {
+		t.Errorf("Expected pattern1 to be evicted, but it still exists")
+	}
+	if _, exists := wildcardMatcherCache.matchers["pattern4"]; !exists {
+		t.Errorf("Expected pattern4 to be in cache, but it doesn't exist")
+	}
+	wildcardMatcherCache.mu.RUnlock()
+}
+
+// TestWildcardMatcherCacheLRU tests the LRU eviction policy
+func TestWildcardMatcherCacheLRU(t *testing.T) {
+	// Clear cache before test
+	wildcardMatcherCache.ClearCache()
+
+	// Get original max size
+	originalMaxSize := wildcardMatcherCache.maxSize
+
+	// Set a small max size for testing
+	wildcardMatcherCache.maxSize = 3
+	defer func() {
+		wildcardMatcherCache.maxSize = originalMaxSize
+		wildcardMatcherCache.ClearCache()
+	}()
+
+	// Add patterns to fill cache
+	patterns := []string{"pattern1", "pattern2", "pattern3"}
+	for _, pattern := range patterns {
+		_, err := GetCachedWildcardMatcher(pattern)
+		if err != nil {
+			t.Fatalf("Failed to get cached matcher for %s: %v", pattern, err)
+		}
+	}
+
+	// Access pattern1 to make it most recently used
+	_, err := GetCachedWildcardMatcher("pattern1")
+	if err != nil {
+		t.Fatalf("Failed to access pattern1: %v", err)
+	}
+
+	// Add another pattern, should evict pattern2 (now least recently used)
+	_, err = GetCachedWildcardMatcher("pattern4")
+	if err != nil {
+		t.Fatalf("Failed to get cached matcher for pattern4: %v", err)
+	}
+
+	// pattern1 should still be in cache (was accessed recently)
+	// pattern2 should be evicted (was least recently used)
+	wildcardMatcherCache.mu.RLock()
+	if _, exists := wildcardMatcherCache.matchers["pattern1"]; !exists {
+		t.Errorf("Expected pattern1 to remain in cache (most recently used)")
+	}
+	if _, exists := wildcardMatcherCache.matchers["pattern2"]; exists {
+		t.Errorf("Expected pattern2 to be evicted (least recently used)")
+	}
+	if _, exists := wildcardMatcherCache.matchers["pattern3"]; !exists {
+		t.Errorf("Expected pattern3 to remain in cache")
+	}
+	if _, exists := wildcardMatcherCache.matchers["pattern4"]; !exists {
+		t.Errorf("Expected pattern4 to be in cache")
+	}
+	wildcardMatcherCache.mu.RUnlock()
+}
+
+// TestWildcardMatcherCacheClear tests the cache clearing functionality
+func TestWildcardMatcherCacheClear(t *testing.T) {
+	// Add some patterns to cache
+	patterns := []string{"pattern1", "pattern2", "pattern3"}
+	for _, pattern := range patterns {
+		_, err := GetCachedWildcardMatcher(pattern)
+		if err != nil {
+			t.Fatalf("Failed to get cached matcher for %s: %v", pattern, err)
+		}
+	}
+
+	// Verify cache has patterns
+	size, _ := wildcardMatcherCache.GetCacheStats()
+	if size == 0 {
+		t.Errorf("Expected cache to have patterns before clearing")
+	}
+
+	// Clear cache
+	wildcardMatcherCache.ClearCache()
+
+	// Verify cache is empty
+	size, _ = wildcardMatcherCache.GetCacheStats()
+	if size != 0 {
+		t.Errorf("Expected cache to be empty after clearing, got size %d", size)
+	}
+}
