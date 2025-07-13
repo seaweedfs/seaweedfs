@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -107,7 +108,7 @@ func (s3a *S3ApiServer) GetObjectRetentionHandler(w http.ResponseWriter, r *http
 			return
 		}
 
-		if strings.Contains(err.Error(), "no retention configuration found") {
+		if errors.Is(err, ErrNoRetentionConfiguration) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchObjectLockConfiguration)
 			return
 		}
@@ -233,7 +234,7 @@ func (s3a *S3ApiServer) GetObjectLegalHoldHandler(w http.ResponseWriter, r *http
 			return
 		}
 
-		if strings.Contains(err.Error(), "no legal hold configuration found") {
+		if errors.Is(err, ErrNoLegalHoldConfiguration) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchObjectLegalHold)
 			return
 		}

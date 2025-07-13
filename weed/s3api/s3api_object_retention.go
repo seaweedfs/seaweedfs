@@ -2,15 +2,21 @@ package s3api
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+)
+
+// Sentinel errors for proper error handling instead of string matching
+var (
+	ErrNoRetentionConfiguration = errors.New("no retention configuration found")
+	ErrNoLegalHoldConfiguration = errors.New("no legal hold configuration found")
 )
 
 const (
@@ -78,9 +84,18 @@ func (or *ObjectRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	return nil
 }
 
-// parseXML is a generic helper function to parse XML from request body
-// This implementation uses xml.Decoder for streaming XML parsing, which is more memory-efficient
+// parseXML is a generic helper function to parse XML from an HTTP request body.
+// It uses xml.Decoder for streaming XML parsing, which is more memory-efficient
 // and avoids loading the entire request body into memory.
+//
+// The function assumes:
+// - The request body is not nil (returns error if it is)
+// - The request body will be closed after parsing (deferred close)
+// - The XML content matches the structure of the provided result type T
+//
+// This approach is optimized for small XML payloads typical in S3 API requests
+// (retention configurations, legal hold settings, etc.) where the overhead of
+// streaming parsing is acceptable for the memory efficiency benefits.
 func parseXML[T any](r *http.Request, result *T) error {
 	if r.Body == nil {
 		return fmt.Errorf("empty request body")
@@ -246,7 +261,7 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 	}
 
 	if entry.Extended == nil {
-		return nil, fmt.Errorf("no retention configuration found")
+		return nil, ErrNoRetentionConfiguration
 	}
 
 	retention := &ObjectRetention{}
@@ -265,7 +280,7 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 	}
 
 	if retention.Mode == "" || retention.RetainUntilDate == nil {
-		return nil, fmt.Errorf("no retention configuration found")
+		return nil, ErrNoRetentionConfiguration
 	}
 
 	return retention, nil
@@ -348,6 +363,12 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	}
 
 	// Update the entry
+	// NOTE: Potential race condition exists if concurrent calls to PutObjectRetention
+	// and PutObjectLegalHold update the same object simultaneously, as they might
+	// overwrite each other's Extended map changes. This is mitigated by the fact
+	// that mkFile operations are typically serialized at the filer level, but
+	// future implementations might consider using atomic update operations or
+	// entry-level locking for complete safety.
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
@@ -363,7 +384,7 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 	}
 
 	if entry.Extended == nil {
-		return nil, fmt.Errorf("no legal hold configuration found")
+		return nil, ErrNoLegalHoldConfiguration
 	}
 
 	legalHold := &ObjectLegalHold{}
@@ -371,7 +392,7 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 	if statusBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists {
 		legalHold.Status = string(statusBytes)
 	} else {
-		return nil, fmt.Errorf("no legal hold configuration found")
+		return nil, ErrNoLegalHoldConfiguration
 	}
 
 	return legalHold, nil
@@ -426,6 +447,12 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 	entry.Extended[s3_constants.ExtLegalHoldKey] = []byte(legalHold.Status)
 
 	// Update the entry
+	// NOTE: Potential race condition exists if concurrent calls to PutObjectRetention
+	// and PutObjectLegalHold update the same object simultaneously, as they might
+	// overwrite each other's Extended map changes. This is mitigated by the fact
+	// that mkFile operations are typically serialized at the filer level, but
+	// future implementations might consider using atomic update operations or
+	// entry-level locking for complete safety.
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
@@ -437,7 +464,7 @@ func (s3a *S3ApiServer) isObjectRetentionActive(bucket, object, versionId string
 	retention, err := s3a.getObjectRetention(bucket, object, versionId)
 	if err != nil {
 		// If no retention found, object is not under retention
-		if strings.Contains(err.Error(), "no retention configuration found") {
+		if err == ErrNoRetentionConfiguration {
 			return false, nil
 		}
 		return false, err
@@ -450,12 +477,29 @@ func (s3a *S3ApiServer) isObjectRetentionActive(bucket, object, versionId string
 	return false, nil
 }
 
+// getObjectRetentionWithStatus retrieves retention configuration and returns both the data and active status
+// This is an optimization to avoid duplicate fetches when both retention data and status are needed
+func (s3a *S3ApiServer) getObjectRetentionWithStatus(bucket, object, versionId string) (*ObjectRetention, bool, error) {
+	retention, err := s3a.getObjectRetention(bucket, object, versionId)
+	if err != nil {
+		// If no retention found, object is not under retention
+		if err == ErrNoRetentionConfiguration {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	// Check if retention is currently active
+	isActive := retention.RetainUntilDate != nil && retention.RetainUntilDate.After(time.Now())
+	return retention, isActive, nil
+}
+
 // isObjectLegalHoldActive checks if an object is currently under legal hold
 func (s3a *S3ApiServer) isObjectLegalHoldActive(bucket, object, versionId string) (bool, error) {
 	legalHold, err := s3a.getObjectLegalHold(bucket, object, versionId)
 	if err != nil {
 		// If no legal hold found, object is not under legal hold
-		if strings.Contains(err.Error(), "no legal hold configuration found") {
+		if err == ErrNoLegalHoldConfiguration {
 			return false, nil
 		}
 		return false, err
@@ -466,8 +510,8 @@ func (s3a *S3ApiServer) isObjectLegalHoldActive(bucket, object, versionId string
 
 // checkObjectLockPermissions checks if an object can be deleted or modified
 func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId string, bypassGovernance bool) error {
-	// Check if object is under retention
-	retentionActive, err := s3a.isObjectRetentionActive(bucket, object, versionId)
+	// Get retention configuration and status in a single call to avoid duplicate fetches
+	retention, retentionActive, err := s3a.getObjectRetentionWithStatus(bucket, object, versionId)
 	if err != nil {
 		glog.Warningf("Error checking retention for %s/%s: %v", bucket, object, err)
 	}
@@ -484,12 +528,7 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId str
 	}
 
 	// If object is under retention, check the mode
-	if retentionActive {
-		retention, err := s3a.getObjectRetention(bucket, object, versionId)
-		if err != nil {
-			return fmt.Errorf("error getting retention configuration: %v", err)
-		}
-
+	if retentionActive && retention != nil {
 		if retention.Mode == s3_constants.RetentionModeCompliance {
 			return fmt.Errorf("object is under COMPLIANCE mode retention and cannot be deleted or modified")
 		}
