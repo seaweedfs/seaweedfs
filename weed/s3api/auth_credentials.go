@@ -345,11 +345,6 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		if errCode == s3err.ErrNone {
 			if identity != nil && identity.Name != "" {
 				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
-				if identity.isAdmin() {
-					r.Header.Set(s3_constants.AmzIsAdmin, "true")
-				} else if _, ok := r.Header[s3_constants.AmzIsAdmin]; ok {
-					r.Header.Del(s3_constants.AmzIsAdmin)
-				}
 			}
 			f(w, r)
 			return

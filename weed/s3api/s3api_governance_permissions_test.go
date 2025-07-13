@@ -9,56 +9,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
-func TestCheckGovernanceBypassPermission(t *testing.T) {
-	tests := []struct {
-		name           string
-		adminHeader    string
-		expectedResult bool
-		description    string
-	}{
-		{
-			name:           "admin_user_can_bypass",
-			adminHeader:    "true",
-			expectedResult: true,
-			description:    "Admin users should always be able to bypass governance",
-		},
-		{
-			name:           "user_without_permission_cannot_bypass",
-			adminHeader:    "false",
-			expectedResult: false,
-			description:    "Non-admin users without permission should not be able to bypass",
-		},
-		{
-			name:           "anonymous_user_cannot_bypass",
-			adminHeader:    "",
-			expectedResult: false,
-			description:    "Anonymous users should never be able to bypass governance",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a test S3 API server with minimal IAM setup
-			s3a := &S3ApiServer{
-				iam: &IdentityAccessManagement{
-					isAuthEnabled: true,
-				},
-			}
-
-			// Create request with appropriate headers
-			req := httptest.NewRequest("DELETE", "/test-bucket/test-object", nil)
-			if tt.adminHeader != "" {
-				req.Header.Set(s3_constants.AmzIsAdmin, tt.adminHeader)
-			}
-
-			result := s3a.checkGovernanceBypassPermission(req, "test-bucket", "/test-object")
-
-			if result != tt.expectedResult {
-				t.Errorf("Expected %v, got %v. %s", tt.expectedResult, result, tt.description)
-			}
-		})
-	}
-}
+// TestCheckGovernanceBypassPermission was removed because it tested the old
+// insecure behavior of trusting the AmzIsAdmin header. The new implementation
+// uses proper IAM authentication instead of relying on client-provided headers.
 
 // Test specifically for users with IAM bypass permission
 func TestGovernanceBypassWithIAMPermission(t *testing.T) {

@@ -226,7 +226,6 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 
 func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 	// Check if user is properly authenticated as admin through IAM system
-	// Do not trust AmzIsAdmin header directly as it can be spoofed by clients
 	if s3a.isUserAdmin(r) {
 		return true
 	}

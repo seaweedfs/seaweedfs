@@ -65,7 +65,6 @@ const (
 	AmzIdentityId = "s3-identity-id"
 	AmzAccountId  = "s3-account-id"
 	AmzAuthType   = "s3-auth-type"
-	AmzIsAdmin    = "s3-is-admin" // only set to http request header as a context
 )
 
 func GetBucketAndObject(r *http.Request) (bucket, object string) {
