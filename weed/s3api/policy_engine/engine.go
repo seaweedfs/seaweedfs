@@ -2,6 +2,7 @@ package policy_engine
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -174,8 +175,17 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	values := make(map[string][]string)
 
 	// AWS condition keys
-	values["aws:SourceIp"] = []string{r.RemoteAddr}
+	// Extract IP address without port for proper IP matching
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		// If splitting fails, use the original RemoteAddr (might be just IP without port)
+		host = r.RemoteAddr
+	}
+	values["aws:SourceIp"] = []string{host}
 	values["aws:SecureTransport"] = []string{fmt.Sprintf("%t", r.TLS != nil)}
+	// Use AWS standard condition key for current time
+	values["aws:CurrentTime"] = []string{time.Now().Format(time.RFC3339)}
+	// Keep RequestTime for backward compatibility
 	values["aws:RequestTime"] = []string{time.Now().Format(time.RFC3339)}
 
 	// S3 specific condition keys

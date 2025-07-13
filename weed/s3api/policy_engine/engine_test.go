@@ -391,8 +391,8 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 	values := ExtractConditionValuesFromRequest(req)
 
 	// Check extracted values
-	if len(values["aws:SourceIp"]) != 1 || values["aws:SourceIp"][0] != "192.168.1.100:12345" {
-		t.Errorf("Expected SourceIp to be 192.168.1.100:12345, got %v", values["aws:SourceIp"])
+	if len(values["aws:SourceIp"]) != 1 || values["aws:SourceIp"][0] != "192.168.1.100" {
+		t.Errorf("Expected SourceIp to be 192.168.1.100, got %v", values["aws:SourceIp"])
 	}
 
 	if len(values["aws:UserAgent"]) != 1 || values["aws:UserAgent"][0] != "test-agent" {
@@ -413,6 +413,16 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 
 	if len(values["x-amz-copy-source"]) != 1 || values["x-amz-copy-source"][0] != "source-bucket/source-object" {
 		t.Errorf("Expected X-Amz-Copy-Source header to be extracted, got %v", values["x-amz-copy-source"])
+	}
+
+	// Check that aws:CurrentTime is properly set
+	if len(values["aws:CurrentTime"]) != 1 {
+		t.Errorf("Expected aws:CurrentTime to be set, got %v", values["aws:CurrentTime"])
+	}
+
+	// Check that aws:RequestTime is still available for backward compatibility
+	if len(values["aws:RequestTime"]) != 1 {
+		t.Errorf("Expected aws:RequestTime to be set for backward compatibility, got %v", values["aws:RequestTime"])
 	}
 }
 
