@@ -19,6 +19,11 @@ var (
 	ErrNoRetentionConfiguration = errors.New("no retention configuration found")
 	ErrNoLegalHoldConfiguration = errors.New("no legal hold configuration found")
 	ErrBucketNotFound           = errors.New("bucket not found")
+	ErrObjectNotFound           = errors.New("object not found")
+	ErrVersionNotFound          = errors.New("version not found")
+	ErrLatestVersionNotFound    = errors.New("latest version not found")
+	ErrComplianceModeActive     = errors.New("object is under COMPLIANCE mode retention and cannot be deleted or modified")
+	ErrGovernanceModeActive     = errors.New("object is under GOVERNANCE mode retention and cannot be deleted or modified without bypass")
 )
 
 const (
@@ -249,7 +254,7 @@ func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("object not found: %v", err)
+		return nil, fmt.Errorf("failed to retrieve object %s/%s: %w", bucket, object, ErrObjectNotFound)
 	}
 
 	return entry, nil
@@ -297,9 +302,8 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	if versionId != "" {
 		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		if err != nil {
-			return fmt.Errorf("version not found: %v", err)
+			return fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
 		}
-		// For versioned objects, we need to update the version file
 		entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 	} else {
 		// Check if versioning is enabled
@@ -311,7 +315,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 		if versioningEnabled {
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
-				return fmt.Errorf("latest version not found: %v", err)
+				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
 			}
 			// Extract version ID from entry metadata
 			if entry.Extended != nil {
@@ -324,7 +328,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			entry, err = s3a.getEntry(bucketDir, object)
 			if err != nil {
-				return fmt.Errorf("object not found: %v", err)
+				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
 			}
 			entryPath = object
 		}
@@ -409,7 +413,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 	if versionId != "" {
 		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		if err != nil {
-			return fmt.Errorf("version not found: %v", err)
+			return fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
 		}
 		entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 	} else {
@@ -422,7 +426,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 		if versioningEnabled {
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
-				return fmt.Errorf("latest version not found: %v", err)
+				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
 			}
 			// Extract version ID from entry metadata
 			if entry.Extended != nil {
@@ -435,7 +439,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			entry, err = s3a.getEntry(bucketDir, object)
 			if err != nil {
-				return fmt.Errorf("object not found: %v", err)
+				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
 			}
 			entryPath = object
 		}
@@ -466,7 +470,7 @@ func (s3a *S3ApiServer) isObjectRetentionActive(bucket, object, versionId string
 	retention, err := s3a.getObjectRetention(bucket, object, versionId)
 	if err != nil {
 		// If no retention found, object is not under retention
-		if err == ErrNoRetentionConfiguration {
+		if errors.Is(err, ErrNoRetentionConfiguration) {
 			return false, nil
 		}
 		return false, err
@@ -485,7 +489,7 @@ func (s3a *S3ApiServer) getObjectRetentionWithStatus(bucket, object, versionId s
 	retention, err := s3a.getObjectRetention(bucket, object, versionId)
 	if err != nil {
 		// If no retention found, object is not under retention
-		if err == ErrNoRetentionConfiguration {
+		if errors.Is(err, ErrNoRetentionConfiguration) {
 			return nil, false, nil
 		}
 		return nil, false, err
@@ -501,7 +505,7 @@ func (s3a *S3ApiServer) isObjectLegalHoldActive(bucket, object, versionId string
 	legalHold, err := s3a.getObjectLegalHold(bucket, object, versionId)
 	if err != nil {
 		// If no legal hold found, object is not under legal hold
-		if err == ErrNoLegalHoldConfiguration {
+		if errors.Is(err, ErrNoLegalHoldConfiguration) {
 			return false, nil
 		}
 		return false, err
@@ -532,11 +536,11 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId str
 	// If object is under retention, check the mode
 	if retentionActive && retention != nil {
 		if retention.Mode == s3_constants.RetentionModeCompliance {
-			return fmt.Errorf("object is under COMPLIANCE mode retention and cannot be deleted or modified")
+			return ErrComplianceModeActive
 		}
 
 		if retention.Mode == s3_constants.RetentionModeGovernance && !bypassGovernance {
-			return fmt.Errorf("object is under GOVERNANCE mode retention and cannot be deleted or modified without bypass")
+			return ErrGovernanceModeActive
 		}
 	}
 

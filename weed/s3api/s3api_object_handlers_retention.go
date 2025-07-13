@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -49,12 +48,12 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 		glog.Errorf("PutObjectRetentionHandler: failed to set retention: %v", err)
 
 		// Handle specific error cases
-		if strings.Contains(err.Error(), "object not found") || strings.Contains(err.Error(), "version not found") {
+		if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrLatestVersionNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
 
-		if strings.Contains(err.Error(), "COMPLIANCE mode") || strings.Contains(err.Error(), "GOVERNANCE mode") {
+		if errors.Is(err, ErrComplianceModeActive) || errors.Is(err, ErrGovernanceModeActive) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}
@@ -91,7 +90,7 @@ func (s3a *S3ApiServer) GetObjectRetentionHandler(w http.ResponseWriter, r *http
 		glog.Errorf("GetObjectRetentionHandler: failed to get retention: %v", err)
 
 		// Handle specific error cases
-		if strings.Contains(err.Error(), "object not found") || strings.Contains(err.Error(), "version not found") {
+		if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
@@ -168,7 +167,7 @@ func (s3a *S3ApiServer) PutObjectLegalHoldHandler(w http.ResponseWriter, r *http
 		glog.Errorf("PutObjectLegalHoldHandler: failed to set legal hold: %v", err)
 
 		// Handle specific error cases
-		if strings.Contains(err.Error(), "object not found") || strings.Contains(err.Error(), "version not found") {
+		if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
@@ -205,7 +204,7 @@ func (s3a *S3ApiServer) GetObjectLegalHoldHandler(w http.ResponseWriter, r *http
 		glog.Errorf("GetObjectLegalHoldHandler: failed to get legal hold: %v", err)
 
 		// Handle specific error cases
-		if strings.Contains(err.Error(), "object not found") || strings.Contains(err.Error(), "version not found") {
+		if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
