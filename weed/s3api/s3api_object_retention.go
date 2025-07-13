@@ -28,7 +28,7 @@ var (
 
 // Error definitions for Object Lock
 var (
-	ErrObjectLockConfigurationNotFound = errors.New("the bucket object lock configuration not found")
+	ErrObjectLockConfigurationNotFound = errors.New("bucket object lock configuration not found")
 	ErrObjectUnderLegalHold            = errors.New("object is under legal hold and cannot be deleted or modified")
 	ErrGovernanceBypassNotPermitted    = errors.New("user does not have permission to bypass governance retention")
 )

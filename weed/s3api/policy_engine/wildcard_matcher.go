@@ -222,8 +222,9 @@ func matchWildcardString(pattern, str string) bool {
 func matchWildcardRegex(pattern, str string) bool {
 	matcher, err := GetCachedWildcardMatcher(pattern)
 	if err != nil {
-		glog.Errorf("Error getting WildcardMatcher for pattern %s: %v", pattern, err)
-		return false
+		glog.Errorf("Error getting WildcardMatcher for pattern %s: %v. Falling back to matchWildcardString.", pattern, err)
+		// Fallback to matchWildcardString
+		return matchWildcardString(pattern, str)
 	}
 	return matcher.Match(str)
 }
