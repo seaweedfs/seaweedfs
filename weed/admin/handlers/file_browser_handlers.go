@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -190,7 +191,7 @@ func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
 				Name:        filepath.Base(fullPath),
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
-					FileMode: uint32(0755 | (1 << 31)), // Directory mode
+					FileMode: uint32(0755 | os.ModeDir), // Directory mode
 					Uid:      filer_pb.OS_UID,
 					Gid:      filer_pb.OS_GID,
 					Crtime:   time.Now().Unix(),
@@ -656,8 +657,9 @@ func (h *FileBrowserHandlers) GetFileProperties(c *gin.Context) {
 				properties["created_timestamp"] = entry.Attributes.Crtime
 			}
 
-			properties["file_mode"] = fmt.Sprintf("%o", entry.Attributes.FileMode)
-			properties["file_mode_formatted"] = h.formatFileMode(entry.Attributes.FileMode)
+			properties["file_mode"] = dash.FormatFileMode(entry.Attributes.FileMode)
+			properties["file_mode_formatted"] = dash.FormatFileMode(entry.Attributes.FileMode)
+			properties["file_mode_octal"] = fmt.Sprintf("%o", entry.Attributes.FileMode)
 			properties["uid"] = entry.Attributes.Uid
 			properties["gid"] = entry.Attributes.Gid
 			properties["ttl_seconds"] = entry.Attributes.TtlSec
@@ -723,13 +725,6 @@ func (h *FileBrowserHandlers) formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-// Helper function to format file mode
-func (h *FileBrowserHandlers) formatFileMode(mode uint32) string {
-	// Convert to octal and format as rwx permissions
-	perm := mode & 0777
-	return fmt.Sprintf("%03o", perm)
 }
 
 // Helper function to determine MIME type from filename

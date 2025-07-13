@@ -154,35 +154,74 @@ func ClusterMasters(data dash.ClusterMastersData) templ.Component {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</td><td><div class=\"btn-group btn-group-sm\"><button type=\"button\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\"><i class=\"fas fa-eye\"></i></button> <button type=\"button\" class=\"btn btn-outline-secondary btn-sm\" title=\"Manage\"><i class=\"fas fa-cog\"></i></button></div></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</td><td><button type=\"button\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\" data-action=\"view-details\" data-address=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var7 string
+				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(master.Address)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 143, Col: 41}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\" data-leader=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var8 string
+				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%t", master.IsLeader))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 144, Col: 60}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "\" data-suffrage=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var9 string
+				templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(master.Suffrage)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 145, Col: 43}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "\"><i class=\"fas fa-eye\"></i></button></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</tbody></table></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "</tbody></table></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<div class=\"text-center py-5\"><i class=\"fas fa-crown fa-3x text-muted mb-3\"></i><h5 class=\"text-muted\">No Masters Found</h5><p class=\"text-muted\">No master servers are currently available in the cluster.</p></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<div class=\"text-center py-5\"><i class=\"fas fa-crown fa-3x text-muted mb-3\"></i><h5 class=\"text-muted\">No Masters Found</h5><p class=\"text-muted\">No master servers are currently available in the cluster.</p></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var7 string
-		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
+		var templ_7745c5c3_Var10 string
+		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 168, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 169, Col: 67}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "</small></div></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</small></div></div></div><!-- JavaScript for cluster masters functionality --><script>\n\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t// Handle master action buttons\n\t\tdocument.addEventListener('click', function(e) {\n\t\t\tconst button = e.target.closest('[data-action]');\n\t\t\tif (!button) return;\n\t\t\t\n\t\t\tconst action = button.getAttribute('data-action');\n\t\t\tconst address = button.getAttribute('data-address');\n\t\t\t\n\t\t\tif (!address) return;\n\t\t\t\n\t\t\tswitch(action) {\n\t\t\t\tcase 'view-details':\n\t\t\t\t\tconst isLeader = button.getAttribute('data-leader') === 'true';\n\t\t\t\t\tconst suffrage = button.getAttribute('data-suffrage');\n\t\t\t\t\tshowMasterDetails(address, isLeader, suffrage);\n\t\t\t\t\tbreak;\n\t\t\t}\n\t\t});\n\t});\n\t\n\tfunction showMasterDetails(address, isLeader, suffrage) {\n\t\tconst modalHtml = '<div class=\"modal fade\" id=\"masterDetailsModal\" tabindex=\"-1\">' +\n\t\t\t'<div class=\"modal-dialog modal-lg\">' +\n\t\t\t'<div class=\"modal-content\">' +\n\t\t\t'<div class=\"modal-header\">' +\n\t\t\t'<h5 class=\"modal-title\"><i class=\"fas fa-crown me-2\"></i>Master Details: ' + address + '</h5>' +\n\t\t\t'<button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button>' +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"modal-body\">' +\n\t\t\t'<div class=\"row\">' +\n\t\t\t'<div class=\"col-md-6\">' +\n\t\t\t'<h6 class=\"text-primary\"><i class=\"fas fa-info-circle me-1\"></i>Basic Information</h6>' +\n\t\t\t'<table class=\"table table-sm\">' +\n\t\t\t'<tr><td><strong>Address:</strong></td><td>' + address + '</td></tr>' +\n\t\t\t'<tr><td><strong>Role:</strong></td><td>' + \n\t\t\t(isLeader ? '<span class=\"badge bg-warning text-dark\"><i class=\"fas fa-star me-1\"></i>Leader</span>' : \n\t\t\t'<span class=\"badge bg-secondary\">Follower</span>') + '</td></tr>' +\n\t\t\t'<tr><td><strong>Suffrage:</strong></td><td>' + (suffrage || 'N/A') + '</td></tr>' +\n\t\t\t'<tr><td><strong>Status:</strong></td><td><span class=\"badge bg-success\">Active</span></td></tr>' +\n\t\t\t'</table>' +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"col-md-6\">' +\n\t\t\t'<h6 class=\"text-primary\"><i class=\"fas fa-link me-1\"></i>Quick Actions</h6>' +\n\t\t\t'<div class=\"d-grid gap-2\">' +\n\t\t\t'<a href=\"http://' + address + '\" target=\"_blank\" class=\"btn btn-outline-primary\">' +\n\t\t\t'<i class=\"fas fa-external-link-alt me-1\"></i>Open Master UI' +\n\t\t\t'</a>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"modal-footer\">' +\n\t\t\t'<button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'</div>';\n\t\t\n\t\t// Remove existing modal if present\n\t\tconst existingModal = document.getElementById('masterDetailsModal');\n\t\tif (existingModal) {\n\t\t\texistingModal.remove();\n\t\t}\n\t\t\n\t\t// Add modal to body and show\n\t\tdocument.body.insertAdjacentHTML('beforeend', modalHtml);\n\t\tconst modal = new bootstrap.Modal(document.getElementById('masterDetailsModal'));\n\t\tmodal.show();\n\t\t\n\t\t// Remove modal when hidden\n\t\tdocument.getElementById('masterDetailsModal').addEventListener('hidden.bs.modal', function() {\n\t\t\tthis.remove();\n\t\t});\n\t}\n\t\n\tfunction exportMasters() {\n\t\t// Simple CSV export of masters list\n\t\tconst rows = Array.from(document.querySelectorAll('#mastersTable tbody tr')).map(row => {\n\t\t\tconst cells = row.querySelectorAll('td');\n\t\t\tif (cells.length > 1) {\n\t\t\t\treturn {\n\t\t\t\t\taddress: cells[0].textContent.trim(),\n\t\t\t\t\trole: cells[1].textContent.trim(),\n\t\t\t\t\tsuffrage: cells[2].textContent.trim()\n\t\t\t\t};\n\t\t\t}\n\t\t\treturn null;\n\t\t}).filter(row => row !== null);\n\t\t\n\t\tconst csvContent = \"data:text/csv;charset=utf-8,\" + \n\t\t\t\"Address,Role,Suffrage\\n\" +\n\t\t\trows.map(r => '\"' + r.address + '\",\"' + r.role + '\",\"' + r.suffrage + '\"').join(\"\\n\");\n\t\t\n\t\tconst encodedUri = encodeURI(csvContent);\n\t\tconst link = document.createElement(\"a\");\n\t\tlink.setAttribute(\"href\", encodedUri);\n\t\tlink.setAttribute(\"download\", \"masters.csv\");\n\t\tdocument.body.appendChild(link);\n\t\tlink.click();\n\t\tdocument.body.removeChild(link);\n\t}\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

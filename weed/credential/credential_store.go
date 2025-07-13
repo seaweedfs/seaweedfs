@@ -86,5 +86,27 @@ type UserCredentials struct {
 	UpdatedAt   time.Time            `json:"updatedAt"`
 }
 
+// PolicyStatement represents a single policy statement in an IAM policy
+type PolicyStatement struct {
+	Effect   string   `json:"Effect"`
+	Action   []string `json:"Action"`
+	Resource []string `json:"Resource"`
+}
+
+// PolicyDocument represents an IAM policy document
+type PolicyDocument struct {
+	Version   string             `json:"Version"`
+	Statement []*PolicyStatement `json:"Statement"`
+}
+
+// PolicyManager interface for managing IAM policies
+type PolicyManager interface {
+	GetPolicies(ctx context.Context) (map[string]PolicyDocument, error)
+	CreatePolicy(ctx context.Context, name string, document PolicyDocument) error
+	UpdatePolicy(ctx context.Context, name string, document PolicyDocument) error
+	DeletePolicy(ctx context.Context, name string) error
+	GetPolicy(ctx context.Context, name string) (*PolicyDocument, error)
+}
+
 // Stores holds all available credential store implementations
 var Stores []CredentialStore

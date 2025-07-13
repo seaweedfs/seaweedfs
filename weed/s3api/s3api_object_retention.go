@@ -2,16 +2,34 @@ package s3api
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+)
+
+// Sentinel errors for proper error handling instead of string matching
+var (
+	ErrNoRetentionConfiguration = errors.New("no retention configuration found")
+	ErrNoLegalHoldConfiguration = errors.New("no legal hold configuration found")
+	ErrBucketNotFound           = errors.New("bucket not found")
+	ErrObjectNotFound           = errors.New("object not found")
+	ErrVersionNotFound          = errors.New("version not found")
+	ErrLatestVersionNotFound    = errors.New("latest version not found")
+	ErrComplianceModeActive     = errors.New("object is under COMPLIANCE mode retention and cannot be deleted or modified")
+	ErrGovernanceModeActive     = errors.New("object is under GOVERNANCE mode retention and cannot be deleted or modified without bypass")
+)
+
+const (
+	// Maximum retention period limits according to AWS S3 specifications
+	MaxRetentionDays  = 36500 // Maximum number of days for object retention (100 years)
+	MaxRetentionYears = 100   // Maximum number of years for object retention
 )
 
 // ObjectRetention represents S3 Object Retention configuration
@@ -73,18 +91,26 @@ func (or *ObjectRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	return nil
 }
 
-// parseXML is a generic helper function to parse XML from request body
+// parseXML is a generic helper function to parse XML from an HTTP request body.
+// It uses xml.Decoder for streaming XML parsing, which is more memory-efficient
+// and avoids loading the entire request body into memory.
+//
+// The function assumes:
+// - The request body is not nil (returns error if it is)
+// - The request body will be closed after parsing (deferred close)
+// - The XML content matches the structure of the provided result type T
+//
+// This approach is optimized for small XML payloads typical in S3 API requests
+// (retention configurations, legal hold settings, etc.) where the overhead of
+// streaming parsing is acceptable for the memory efficiency benefits.
 func parseXML[T any](r *http.Request, result *T) error {
 	if r.Body == nil {
-		return fmt.Errorf("empty request body")
+		return fmt.Errorf("error parsing XML: empty request body")
 	}
+	defer r.Body.Close()
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return fmt.Errorf("error reading request body: %v", err)
-	}
-
-	if err := xml.Unmarshal(body, result); err != nil {
+	decoder := xml.NewDecoder(r.Body)
+	if err := decoder.Decode(result); err != nil {
 		return fmt.Errorf("error parsing XML: %v", err)
 	}
 
@@ -194,19 +220,19 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 	}
 
 	// Validate ranges
-	if retention.Days < 0 || retention.Days > 36500 {
-		return fmt.Errorf("default retention days must be between 0 and 36500")
+	if retention.Days < 0 || retention.Days > MaxRetentionDays {
+		return fmt.Errorf("default retention days must be between 0 and %d", MaxRetentionDays)
 	}
 
-	if retention.Years < 0 || retention.Years > 100 {
-		return fmt.Errorf("default retention years must be between 0 and 100")
+	if retention.Years < 0 || retention.Years > MaxRetentionYears {
+		return fmt.Errorf("default retention years must be between 0 and %d", MaxRetentionYears)
 	}
 
 	return nil
 }
 
-// getObjectRetention retrieves retention configuration from object metadata
-func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*ObjectRetention, error) {
+// getObjectEntry retrieves the appropriate object entry based on versioning and versionId
+func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer_pb.Entry, error) {
 	var entry *filer_pb.Entry
 	var err error
 
@@ -228,11 +254,21 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("object not found: %v", err)
+		return nil, fmt.Errorf("failed to retrieve object %s/%s: %w", bucket, object, ErrObjectNotFound)
+	}
+
+	return entry, nil
+}
+
+// getObjectRetention retrieves retention configuration from object metadata
+func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*ObjectRetention, error) {
+	entry, err := s3a.getObjectEntry(bucket, object, versionId)
+	if err != nil {
+		return nil, err
 	}
 
 	if entry.Extended == nil {
-		return nil, fmt.Errorf("no retention configuration found")
+		return nil, ErrNoRetentionConfiguration
 	}
 
 	retention := &ObjectRetention{}
@@ -245,11 +281,13 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 		if timestamp, err := strconv.ParseInt(string(dateBytes), 10, 64); err == nil {
 			t := time.Unix(timestamp, 0)
 			retention.RetainUntilDate = &t
+		} else {
+			return nil, fmt.Errorf("failed to parse retention timestamp for %s/%s: corrupted timestamp data", bucket, object)
 		}
 	}
 
 	if retention.Mode == "" || retention.RetainUntilDate == nil {
-		return nil, fmt.Errorf("no retention configuration found")
+		return nil, ErrNoRetentionConfiguration
 	}
 
 	return retention, nil
@@ -264,9 +302,8 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	if versionId != "" {
 		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		if err != nil {
-			return fmt.Errorf("version not found: %v", err)
+			return fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
 		}
-		// For versioned objects, we need to update the version file
 		entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 	} else {
 		// Check if versioning is enabled
@@ -278,7 +315,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 		if versioningEnabled {
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
-				return fmt.Errorf("latest version not found: %v", err)
+				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
 			}
 			// Extract version ID from entry metadata
 			if entry.Extended != nil {
@@ -291,7 +328,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			entry, err = s3a.getEntry(bucketDir, object)
 			if err != nil {
-				return fmt.Errorf("object not found: %v", err)
+				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
 			}
 			entryPath = object
 		}
@@ -332,6 +369,12 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	}
 
 	// Update the entry
+	// NOTE: Potential race condition exists if concurrent calls to PutObjectRetention
+	// and PutObjectLegalHold update the same object simultaneously, as they might
+	// overwrite each other's Extended map changes. This is mitigated by the fact
+	// that mkFile operations are typically serialized at the filer level, but
+	// future implementations might consider using atomic update operations or
+	// entry-level locking for complete safety.
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
@@ -341,32 +384,13 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 
 // getObjectLegalHold retrieves legal hold configuration from object metadata
 func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*ObjectLegalHold, error) {
-	var entry *filer_pb.Entry
-	var err error
-
-	if versionId != "" {
-		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
-	} else {
-		// Check if versioning is enabled
-		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
-		if vErr != nil {
-			return nil, fmt.Errorf("error checking versioning: %v", vErr)
-		}
-
-		if versioningEnabled {
-			entry, err = s3a.getLatestObjectVersion(bucket, object)
-		} else {
-			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			entry, err = s3a.getEntry(bucketDir, object)
-		}
-	}
-
+	entry, err := s3a.getObjectEntry(bucket, object, versionId)
 	if err != nil {
-		return nil, fmt.Errorf("object not found: %v", err)
+		return nil, err
 	}
 
 	if entry.Extended == nil {
-		return nil, fmt.Errorf("no legal hold configuration found")
+		return nil, ErrNoLegalHoldConfiguration
 	}
 
 	legalHold := &ObjectLegalHold{}
@@ -374,7 +398,7 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 	if statusBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists {
 		legalHold.Status = string(statusBytes)
 	} else {
-		return nil, fmt.Errorf("no legal hold configuration found")
+		return nil, ErrNoLegalHoldConfiguration
 	}
 
 	return legalHold, nil
@@ -389,7 +413,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 	if versionId != "" {
 		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		if err != nil {
-			return fmt.Errorf("version not found: %v", err)
+			return fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
 		}
 		entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 	} else {
@@ -402,7 +426,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 		if versioningEnabled {
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
-				return fmt.Errorf("latest version not found: %v", err)
+				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
 			}
 			// Extract version ID from entry metadata
 			if entry.Extended != nil {
@@ -415,7 +439,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			entry, err = s3a.getEntry(bucketDir, object)
 			if err != nil {
-				return fmt.Errorf("object not found: %v", err)
+				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
 			}
 			entryPath = object
 		}
@@ -429,6 +453,12 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 	entry.Extended[s3_constants.ExtLegalHoldKey] = []byte(legalHold.Status)
 
 	// Update the entry
+	// NOTE: Potential race condition exists if concurrent calls to PutObjectRetention
+	// and PutObjectLegalHold update the same object simultaneously, as they might
+	// overwrite each other's Extended map changes. This is mitigated by the fact
+	// that mkFile operations are typically serialized at the filer level, but
+	// future implementations might consider using atomic update operations or
+	// entry-level locking for complete safety.
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
@@ -440,7 +470,7 @@ func (s3a *S3ApiServer) isObjectRetentionActive(bucket, object, versionId string
 	retention, err := s3a.getObjectRetention(bucket, object, versionId)
 	if err != nil {
 		// If no retention found, object is not under retention
-		if strings.Contains(err.Error(), "no retention configuration found") {
+		if errors.Is(err, ErrNoRetentionConfiguration) {
 			return false, nil
 		}
 		return false, err
@@ -453,12 +483,29 @@ func (s3a *S3ApiServer) isObjectRetentionActive(bucket, object, versionId string
 	return false, nil
 }
 
+// getObjectRetentionWithStatus retrieves retention configuration and returns both the data and active status
+// This is an optimization to avoid duplicate fetches when both retention data and status are needed
+func (s3a *S3ApiServer) getObjectRetentionWithStatus(bucket, object, versionId string) (*ObjectRetention, bool, error) {
+	retention, err := s3a.getObjectRetention(bucket, object, versionId)
+	if err != nil {
+		// If no retention found, object is not under retention
+		if errors.Is(err, ErrNoRetentionConfiguration) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	// Check if retention is currently active
+	isActive := retention.RetainUntilDate != nil && retention.RetainUntilDate.After(time.Now())
+	return retention, isActive, nil
+}
+
 // isObjectLegalHoldActive checks if an object is currently under legal hold
 func (s3a *S3ApiServer) isObjectLegalHoldActive(bucket, object, versionId string) (bool, error) {
 	legalHold, err := s3a.getObjectLegalHold(bucket, object, versionId)
 	if err != nil {
 		// If no legal hold found, object is not under legal hold
-		if strings.Contains(err.Error(), "no legal hold configuration found") {
+		if errors.Is(err, ErrNoLegalHoldConfiguration) {
 			return false, nil
 		}
 		return false, err
@@ -469,8 +516,8 @@ func (s3a *S3ApiServer) isObjectLegalHoldActive(bucket, object, versionId string
 
 // checkObjectLockPermissions checks if an object can be deleted or modified
 func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId string, bypassGovernance bool) error {
-	// Check if object is under retention
-	retentionActive, err := s3a.isObjectRetentionActive(bucket, object, versionId)
+	// Get retention configuration and status in a single call to avoid duplicate fetches
+	retention, retentionActive, err := s3a.getObjectRetentionWithStatus(bucket, object, versionId)
 	if err != nil {
 		glog.Warningf("Error checking retention for %s/%s: %v", bucket, object, err)
 	}
@@ -487,18 +534,13 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId str
 	}
 
 	// If object is under retention, check the mode
-	if retentionActive {
-		retention, err := s3a.getObjectRetention(bucket, object, versionId)
-		if err != nil {
-			return fmt.Errorf("error getting retention configuration: %v", err)
-		}
-
+	if retentionActive && retention != nil {
 		if retention.Mode == s3_constants.RetentionModeCompliance {
-			return fmt.Errorf("object is under COMPLIANCE mode retention and cannot be deleted or modified")
+			return ErrComplianceModeActive
 		}
 
 		if retention.Mode == s3_constants.RetentionModeGovernance && !bypassGovernance {
-			return fmt.Errorf("object is under GOVERNANCE mode retention and cannot be deleted or modified without bypass")
+			return ErrGovernanceModeActive
 		}
 	}
 
@@ -510,8 +552,8 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId str
 func (s3a *S3ApiServer) isObjectLockAvailable(bucket string) error {
 	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
-			return fmt.Errorf("bucket not found")
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return ErrBucketNotFound
 		}
 		return fmt.Errorf("error checking versioning status: %v", err)
 	}
@@ -537,4 +579,20 @@ func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(bucket, object string, 
 		return err
 	}
 	return nil
+}
+
+// handleObjectLockAvailabilityCheck is a helper function to check object lock availability
+// and write the appropriate error response if not available. This reduces code duplication
+// across all retention handlers.
+func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter, r *http.Request, bucket, handlerName string) bool {
+	if err := s3a.isObjectLockAvailable(bucket); err != nil {
+		glog.Errorf("%s: object lock not available for bucket %s: %v", handlerName, bucket, err)
+		if errors.Is(err, ErrBucketNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		}
+		return false
+	}
+	return true
 }
