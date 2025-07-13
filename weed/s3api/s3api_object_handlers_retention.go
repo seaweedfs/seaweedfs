@@ -19,13 +19,7 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 	glog.V(3).Infof("PutObjectRetentionHandler %s %s", bucket, object)
 
 	// Check if Object Lock is available for this bucket (requires versioning)
-	if err := s3a.isObjectLockAvailable(bucket); err != nil {
-		glog.Errorf("PutObjectRetentionHandler: object lock not available for bucket %s: %v", bucket, err)
-		if strings.Contains(err.Error(), "bucket not found") {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-		} else {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-		}
+	if !s3a.handleObjectLockAvailabilityCheck(w, r, bucket, "PutObjectRetentionHandler") {
 		return
 	}
 
@@ -84,13 +78,7 @@ func (s3a *S3ApiServer) GetObjectRetentionHandler(w http.ResponseWriter, r *http
 	glog.V(3).Infof("GetObjectRetentionHandler %s %s", bucket, object)
 
 	// Check if Object Lock is available for this bucket (requires versioning)
-	if err := s3a.isObjectLockAvailable(bucket); err != nil {
-		glog.Errorf("GetObjectRetentionHandler: object lock not available for bucket %s: %v", bucket, err)
-		if strings.Contains(err.Error(), "bucket not found") {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-		} else {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-		}
+	if !s3a.handleObjectLockAvailabilityCheck(w, r, bucket, "GetObjectRetentionHandler") {
 		return
 	}
 
@@ -153,13 +141,7 @@ func (s3a *S3ApiServer) PutObjectLegalHoldHandler(w http.ResponseWriter, r *http
 	glog.V(3).Infof("PutObjectLegalHoldHandler %s %s", bucket, object)
 
 	// Check if Object Lock is available for this bucket (requires versioning)
-	if err := s3a.isObjectLockAvailable(bucket); err != nil {
-		glog.Errorf("PutObjectLegalHoldHandler: object lock not available for bucket %s: %v", bucket, err)
-		if strings.Contains(err.Error(), "bucket not found") {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-		} else {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-		}
+	if !s3a.handleObjectLockAvailabilityCheck(w, r, bucket, "PutObjectLegalHoldHandler") {
 		return
 	}
 
@@ -210,13 +192,7 @@ func (s3a *S3ApiServer) GetObjectLegalHoldHandler(w http.ResponseWriter, r *http
 	glog.V(3).Infof("GetObjectLegalHoldHandler %s %s", bucket, object)
 
 	// Check if Object Lock is available for this bucket (requires versioning)
-	if err := s3a.isObjectLockAvailable(bucket); err != nil {
-		glog.Errorf("GetObjectLegalHoldHandler: object lock not available for bucket %s: %v", bucket, err)
-		if strings.Contains(err.Error(), "bucket not found") {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-		} else {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-		}
+	if !s3a.handleObjectLockAvailabilityCheck(w, r, bucket, "GetObjectLegalHoldHandler") {
 		return
 	}
 
@@ -279,13 +255,7 @@ func (s3a *S3ApiServer) PutObjectLockConfigurationHandler(w http.ResponseWriter,
 	glog.V(3).Infof("PutObjectLockConfigurationHandler %s", bucket)
 
 	// Check if Object Lock is available for this bucket (requires versioning)
-	if err := s3a.isObjectLockAvailable(bucket); err != nil {
-		glog.Errorf("PutObjectLockConfigurationHandler: object lock not available for bucket %s: %v", bucket, err)
-		if strings.Contains(err.Error(), "bucket not found") {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-		} else {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-		}
+	if !s3a.handleObjectLockAvailabilityCheck(w, r, bucket, "PutObjectLockConfigurationHandler") {
 		return
 	}
 

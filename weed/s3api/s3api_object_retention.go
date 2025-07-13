@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 // Sentinel errors for proper error handling instead of string matching
@@ -573,4 +575,20 @@ func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(bucket, object string, 
 		return err
 	}
 	return nil
+}
+
+// handleObjectLockAvailabilityCheck is a helper function to check object lock availability
+// and write the appropriate error response if not available. This reduces code duplication
+// across all retention handlers.
+func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter, r *http.Request, bucket, handlerName string) bool {
+	if err := s3a.isObjectLockAvailable(bucket); err != nil {
+		glog.Errorf("%s: object lock not available for bucket %s: %v", handlerName, bucket, err)
+		if strings.Contains(err.Error(), "bucket not found") {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		}
+		return false
+	}
+	return true
 }
