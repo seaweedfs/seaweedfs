@@ -12,6 +12,9 @@ const (
 	ExtLatestVersionIdKey       = "Seaweed-X-Amz-Latest-Version-Id"
 	ExtLatestVersionFileNameKey = "Seaweed-X-Amz-Latest-Version-File-Name"
 
+	// Bucket Policy
+	ExtBucketPolicyKey = "Seaweed-X-Amz-Bucket-Policy"
+
 	// Object Retention and Legal Hold
 	ExtObjectLockModeKey     = "Seaweed-X-Amz-Object-Lock-Mode"
 	ExtRetentionUntilDateKey = "Seaweed-X-Amz-Retention-Until-Date"

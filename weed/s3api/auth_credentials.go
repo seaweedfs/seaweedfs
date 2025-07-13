@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -345,11 +346,6 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		if errCode == s3err.ErrNone {
 			if identity != nil && identity.Name != "" {
 				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
-				if identity.isAdmin() {
-					r.Header.Set(s3_constants.AmzIsAdmin, "true")
-				} else if _, ok := r.Header[s3_constants.AmzIsAdmin]; ok {
-					r.Header.Del(s3_constants.AmzIsAdmin)
-				}
 			}
 			f(w, r)
 			return
@@ -526,12 +522,7 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 }
 
 func (identity *Identity) isAdmin() bool {
-	for _, a := range identity.Actions {
-		if a == "Admin" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(identity.Actions, s3_constants.ACTION_ADMIN)
 }
 
 // GetCredentialManager returns the credential manager instance

@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/copier"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -23,7 +24,7 @@ var GetPolicies func(policies *Policies) (err error)
 var PutPolicies func(policies *Policies) (err error)
 
 var s3config = iam_pb.S3ApiConfiguration{}
-var policiesFile = Policies{Policies: make(map[string]PolicyDocument)}
+var policiesFile = Policies{Policies: make(map[string]policy_engine.PolicyDocument)}
 var ias = IamApiServer{s3ApiConfig: iamS3ApiConfigureMock{}}
 
 type iamS3ApiConfigureMock struct{}

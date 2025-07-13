@@ -5,16 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 // GetPolicies retrieves all IAM policies from PostgreSQL
-func (store *PostgresStore) GetPolicies(ctx context.Context) (map[string]credential.PolicyDocument, error) {
+func (store *PostgresStore) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
 	if !store.configured {
 		return nil, fmt.Errorf("store not configured")
 	}
 
-	policies := make(map[string]credential.PolicyDocument)
+	policies := make(map[string]policy_engine.PolicyDocument)
 
 	rows, err := store.db.QueryContext(ctx, "SELECT name, document FROM policies")
 	if err != nil {
@@ -30,7 +30,7 @@ func (store *PostgresStore) GetPolicies(ctx context.Context) (map[string]credent
 			return nil, fmt.Errorf("failed to scan policy row: %v", err)
 		}
 
-		var document credential.PolicyDocument
+		var document policy_engine.PolicyDocument
 		if err := json.Unmarshal(documentJSON, &document); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal policy document for %s: %v", name, err)
 		}
@@ -42,7 +42,7 @@ func (store *PostgresStore) GetPolicies(ctx context.Context) (map[string]credent
 }
 
 // CreatePolicy creates a new IAM policy in PostgreSQL
-func (store *PostgresStore) CreatePolicy(ctx context.Context, name string, document credential.PolicyDocument) error {
+func (store *PostgresStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	if !store.configured {
 		return fmt.Errorf("store not configured")
 	}
@@ -63,7 +63,7 @@ func (store *PostgresStore) CreatePolicy(ctx context.Context, name string, docum
 }
 
 // UpdatePolicy updates an existing IAM policy in PostgreSQL
-func (store *PostgresStore) UpdatePolicy(ctx context.Context, name string, document credential.PolicyDocument) error {
+func (store *PostgresStore) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	if !store.configured {
 		return fmt.Errorf("store not configured")
 	}
@@ -116,7 +116,7 @@ func (store *PostgresStore) DeletePolicy(ctx context.Context, name string) error
 }
 
 // GetPolicy retrieves a specific IAM policy by name from PostgreSQL
-func (store *PostgresStore) GetPolicy(ctx context.Context, name string) (*credential.PolicyDocument, error) {
+func (store *PostgresStore) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
 	policies, err := store.GetPolicies(ctx)
 	if err != nil {
 		return nil, err

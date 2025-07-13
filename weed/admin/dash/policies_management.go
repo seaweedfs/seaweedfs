@@ -7,18 +7,19 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 type IAMPolicy struct {
-	Name         string                    `json:"name"`
-	Document     credential.PolicyDocument `json:"document"`
-	DocumentJSON string                    `json:"document_json"`
-	CreatedAt    time.Time                 `json:"created_at"`
-	UpdatedAt    time.Time                 `json:"updated_at"`
+	Name         string                       `json:"name"`
+	Document     policy_engine.PolicyDocument `json:"document"`
+	DocumentJSON string                       `json:"document_json"`
+	CreatedAt    time.Time                    `json:"created_at"`
+	UpdatedAt    time.Time                    `json:"updated_at"`
 }
 
 type PoliciesCollection struct {
-	Policies map[string]credential.PolicyDocument `json:"policies"`
+	Policies map[string]policy_engine.PolicyDocument `json:"policies"`
 }
 
 type PoliciesData struct {
@@ -30,14 +31,14 @@ type PoliciesData struct {
 
 // Policy management request structures
 type CreatePolicyRequest struct {
-	Name         string                    `json:"name" binding:"required"`
-	Document     credential.PolicyDocument `json:"document" binding:"required"`
-	DocumentJSON string                    `json:"document_json"`
+	Name         string                       `json:"name" binding:"required"`
+	Document     policy_engine.PolicyDocument `json:"document" binding:"required"`
+	DocumentJSON string                       `json:"document_json"`
 }
 
 type UpdatePolicyRequest struct {
-	Document     credential.PolicyDocument `json:"document" binding:"required"`
-	DocumentJSON string                    `json:"document_json"`
+	Document     policy_engine.PolicyDocument `json:"document" binding:"required"`
+	DocumentJSON string                       `json:"document_json"`
 }
 
 // PolicyManager interface is now in the credential package
@@ -55,7 +56,7 @@ func NewCredentialStorePolicyManager(credentialManager *credential.CredentialMan
 }
 
 // GetPolicies retrieves all IAM policies via credential store
-func (cspm *CredentialStorePolicyManager) GetPolicies(ctx context.Context) (map[string]credential.PolicyDocument, error) {
+func (cspm *CredentialStorePolicyManager) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
 	// Get policies from credential store
 	// We'll use the credential store to access the filer indirectly
 	// Since policies are stored separately, we need to access the underlying store
@@ -75,12 +76,12 @@ func (cspm *CredentialStorePolicyManager) GetPolicies(ctx context.Context) (map[
 	} else {
 		// Fallback: use empty policies for stores that don't support policies
 		glog.V(1).Infof("Credential store doesn't support policy management, returning empty policies")
-		return make(map[string]credential.PolicyDocument), nil
+		return make(map[string]policy_engine.PolicyDocument), nil
 	}
 }
 
 // CreatePolicy creates a new IAM policy via credential store
-func (cspm *CredentialStorePolicyManager) CreatePolicy(ctx context.Context, name string, document credential.PolicyDocument) error {
+func (cspm *CredentialStorePolicyManager) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	store := cspm.credentialManager.GetStore()
 
 	if policyStore, ok := store.(credential.PolicyManager); ok {
@@ -91,7 +92,7 @@ func (cspm *CredentialStorePolicyManager) CreatePolicy(ctx context.Context, name
 }
 
 // UpdatePolicy updates an existing IAM policy via credential store
-func (cspm *CredentialStorePolicyManager) UpdatePolicy(ctx context.Context, name string, document credential.PolicyDocument) error {
+func (cspm *CredentialStorePolicyManager) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	store := cspm.credentialManager.GetStore()
 
 	if policyStore, ok := store.(credential.PolicyManager); ok {
@@ -113,7 +114,7 @@ func (cspm *CredentialStorePolicyManager) DeletePolicy(ctx context.Context, name
 }
 
 // GetPolicy retrieves a specific IAM policy via credential store
-func (cspm *CredentialStorePolicyManager) GetPolicy(ctx context.Context, name string) (*credential.PolicyDocument, error) {
+func (cspm *CredentialStorePolicyManager) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
 	store := cspm.credentialManager.GetStore()
 
 	if policyStore, ok := store.(credential.PolicyManager); ok {
@@ -163,7 +164,7 @@ func (s *AdminServer) GetPolicies() ([]IAMPolicy, error) {
 }
 
 // CreatePolicy creates a new IAM policy
-func (s *AdminServer) CreatePolicy(name string, document credential.PolicyDocument) error {
+func (s *AdminServer) CreatePolicy(name string, document policy_engine.PolicyDocument) error {
 	policyManager := s.GetPolicyManager()
 	if policyManager == nil {
 		return fmt.Errorf("policy manager not available")
@@ -174,7 +175,7 @@ func (s *AdminServer) CreatePolicy(name string, document credential.PolicyDocume
 }
 
 // UpdatePolicy updates an existing IAM policy
-func (s *AdminServer) UpdatePolicy(name string, document credential.PolicyDocument) error {
+func (s *AdminServer) UpdatePolicy(name string, document policy_engine.PolicyDocument) error {
 	policyManager := s.GetPolicyManager()
 	if policyManager == nil {
 		return fmt.Errorf("policy manager not available")

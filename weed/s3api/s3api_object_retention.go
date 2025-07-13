@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -24,6 +25,12 @@ var (
 	ErrLatestVersionNotFound    = errors.New("latest version not found")
 	ErrComplianceModeActive     = errors.New("object is under COMPLIANCE mode retention and cannot be deleted or modified")
 	ErrGovernanceModeActive     = errors.New("object is under GOVERNANCE mode retention and cannot be deleted or modified without bypass")
+)
+
+// Error definitions for Object Lock
+var (
+	ErrObjectUnderLegalHold         = errors.New("object is under legal hold and cannot be deleted or modified")
+	ErrGovernanceBypassNotPermitted = errors.New("user does not have permission to bypass governance retention")
 )
 
 const (
@@ -103,13 +110,13 @@ func (or *ObjectRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 // This approach is optimized for small XML payloads typical in S3 API requests
 // (retention configurations, legal hold settings, etc.) where the overhead of
 // streaming parsing is acceptable for the memory efficiency benefits.
-func parseXML[T any](r *http.Request, result *T) error {
-	if r.Body == nil {
+func parseXML[T any](request *http.Request, result *T) error {
+	if request.Body == nil {
 		return fmt.Errorf("error parsing XML: empty request body")
 	}
-	defer r.Body.Close()
+	defer request.Body.Close()
 
-	decoder := xml.NewDecoder(r.Body)
+	decoder := xml.NewDecoder(request.Body)
 	if err := decoder.Decode(result); err != nil {
 		return fmt.Errorf("error parsing XML: %v", err)
 	}
@@ -118,27 +125,27 @@ func parseXML[T any](r *http.Request, result *T) error {
 }
 
 // parseObjectRetention parses XML retention configuration from request body
-func parseObjectRetention(r *http.Request) (*ObjectRetention, error) {
+func parseObjectRetention(request *http.Request) (*ObjectRetention, error) {
 	var retention ObjectRetention
-	if err := parseXML(r, &retention); err != nil {
+	if err := parseXML(request, &retention); err != nil {
 		return nil, err
 	}
 	return &retention, nil
 }
 
 // parseObjectLegalHold parses XML legal hold configuration from request body
-func parseObjectLegalHold(r *http.Request) (*ObjectLegalHold, error) {
+func parseObjectLegalHold(request *http.Request) (*ObjectLegalHold, error) {
 	var legalHold ObjectLegalHold
-	if err := parseXML(r, &legalHold); err != nil {
+	if err := parseXML(request, &legalHold); err != nil {
 		return nil, err
 	}
 	return &legalHold, nil
 }
 
 // parseObjectLockConfiguration parses XML object lock configuration from request body
-func parseObjectLockConfiguration(r *http.Request) (*ObjectLockConfiguration, error) {
+func parseObjectLockConfiguration(request *http.Request) (*ObjectLockConfiguration, error) {
 	var config ObjectLockConfiguration
-	if err := parseXML(r, &config); err != nil {
+	if err := parseXML(request, &config); err != nil {
 		return nil, err
 	}
 	return &config, nil
@@ -514,8 +521,39 @@ func (s3a *S3ApiServer) isObjectLegalHoldActive(bucket, object, versionId string
 	return legalHold.Status == s3_constants.LegalHoldOn, nil
 }
 
+// checkGovernanceBypassPermission checks if the user has permission to bypass governance retention
+func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, bucket, object string) bool {
+	// Use the existing IAM auth system to check the specific permission
+	// Create the governance bypass action with proper bucket/object concatenation
+	// Note: path.Join would drop bucket if object has leading slash, so use explicit formatting
+	resource := fmt.Sprintf("%s/%s", bucket, strings.TrimPrefix(object, "/"))
+	action := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION, resource))
+
+	// Use the IAM system to authenticate and authorize this specific action
+	identity, errCode := s3a.iam.authRequest(request, action)
+	if errCode != s3err.ErrNone {
+		glog.V(3).Infof("IAM auth failed for governance bypass: %v", errCode)
+		return false
+	}
+
+	// Verify that the authenticated identity can perform this action
+	if identity != nil && identity.canDo(action, bucket, object) {
+		return true
+	}
+
+	// Additional check: allow users with Admin action to bypass governance retention
+	// Use the proper S3 Admin action constant instead of generic isAdmin() method
+	adminAction := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_ADMIN, resource))
+	if identity != nil && identity.canDo(adminAction, bucket, object) {
+		glog.V(2).Infof("Admin user %s granted governance bypass permission for %s/%s", identity.Name, bucket, object)
+		return true
+	}
+
+	return false
+}
+
 // checkObjectLockPermissions checks if an object can be deleted or modified
-func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId string, bypassGovernance bool) error {
+func (s3a *S3ApiServer) checkObjectLockPermissions(request *http.Request, bucket, object, versionId string, bypassGovernance bool) error {
 	// Get retention configuration and status in a single call to avoid duplicate fetches
 	retention, retentionActive, err := s3a.getObjectRetentionWithStatus(bucket, object, versionId)
 	if err != nil {
@@ -530,7 +568,7 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId str
 
 	// If object is under legal hold, it cannot be deleted or modified
 	if legalHoldActive {
-		return fmt.Errorf("object is under legal hold and cannot be deleted or modified")
+		return ErrObjectUnderLegalHold
 	}
 
 	// If object is under retention, check the mode
@@ -539,8 +577,16 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId str
 			return ErrComplianceModeActive
 		}
 
-		if retention.Mode == s3_constants.RetentionModeGovernance && !bypassGovernance {
-			return ErrGovernanceModeActive
+		if retention.Mode == s3_constants.RetentionModeGovernance {
+			if !bypassGovernance {
+				return ErrGovernanceModeActive
+			}
+
+			// If bypass is requested, check if user has permission
+			if !s3a.checkGovernanceBypassPermission(request, bucket, object) {
+				glog.V(2).Infof("User does not have s3:BypassGovernanceRetention permission for %s/%s", bucket, object)
+				return ErrGovernanceBypassNotPermitted
+			}
 		}
 	}
 
@@ -567,14 +613,14 @@ func (s3a *S3ApiServer) isObjectLockAvailable(bucket string) error {
 
 // checkObjectLockPermissionsForPut checks object lock permissions for PUT operations
 // This is a shared helper to avoid code duplication in PUT handlers
-func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(bucket, object string, bypassGovernance bool, versioningEnabled bool) error {
+func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(request *http.Request, bucket, object string, bypassGovernance bool, versioningEnabled bool) error {
 	// Object Lock only applies to versioned buckets (AWS S3 requirement)
 	if !versioningEnabled {
 		return nil
 	}
 
 	// For PUT operations, we check permissions on the current object (empty versionId)
-	if err := s3a.checkObjectLockPermissions(bucket, object, "", bypassGovernance); err != nil {
+	if err := s3a.checkObjectLockPermissions(request, bucket, object, "", bypassGovernance); err != nil {
 		glog.V(2).Infof("checkObjectLockPermissionsForPut: object lock check failed for %s/%s: %v", bucket, object, err)
 		return err
 	}
@@ -584,13 +630,13 @@ func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(bucket, object string, 
 // handleObjectLockAvailabilityCheck is a helper function to check object lock availability
 // and write the appropriate error response if not available. This reduces code duplication
 // across all retention handlers.
-func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter, r *http.Request, bucket, handlerName string) bool {
+func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter, request *http.Request, bucket, handlerName string) bool {
 	if err := s3a.isObjectLockAvailable(bucket); err != nil {
 		glog.Errorf("%s: object lock not available for bucket %s: %v", handlerName, bucket, err)
 		if errors.Is(err, ErrBucketNotFound) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			s3err.WriteErrorResponse(w, request, s3err.ErrNoSuchBucket)
 		} else {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			s3err.WriteErrorResponse(w, request, s3err.ErrInvalidRequest)
 		}
 		return false
 	}
