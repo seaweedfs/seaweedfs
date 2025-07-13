@@ -105,7 +105,7 @@ func (or *ObjectRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 // streaming parsing is acceptable for the memory efficiency benefits.
 func parseXML[T any](r *http.Request, result *T) error {
 	if r.Body == nil {
-		return fmt.Errorf("empty request body")
+		return fmt.Errorf("error parsing XML: empty request body")
 	}
 	defer r.Body.Close()
 

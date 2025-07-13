@@ -129,8 +129,8 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 // ObjectIdentifier represents an object to be deleted with its key name and optional version ID.
 type ObjectIdentifier struct {
-	ObjectName string `xml:"Key"`
-	VersionId  string `xml:"VersionId,omitempty"`
+	Key       string `xml:"Key"`
+	VersionId string `xml:"VersionId,omitempty"`
 }
 
 // DeleteObjectsRequest - xml carrying the object key names which needs to be deleted.
@@ -212,28 +212,28 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
-			if object.ObjectName == "" {
+			if object.Key == "" {
 				continue
 			}
 
 			// Check object lock permissions before deletion (only for versioned buckets)
 			if versioningEnabled {
-				if err := s3a.checkObjectLockPermissions(bucket, object.ObjectName, object.VersionId, bypassGovernance); err != nil {
-					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.ObjectName, object.VersionId, err)
+				if err := s3a.checkObjectLockPermissions(bucket, object.Key, object.VersionId, bypassGovernance); err != nil {
+					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.Key, object.VersionId, err)
 					deleteErrors = append(deleteErrors, DeleteError{
 						Code:      s3err.GetAPIError(s3err.ErrAccessDenied).Code,
-						Message:   err.Error(),
-						Key:       object.ObjectName,
+						Message:   s3err.GetAPIError(s3err.ErrAccessDenied).Description,
+						Key:       object.Key,
 						VersionId: object.VersionId,
 					})
 					continue
 				}
 			}
-			lastSeparator := strings.LastIndex(object.ObjectName, "/")
-			parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.ObjectName, true, false
-			if lastSeparator > 0 && lastSeparator+1 < len(object.ObjectName) {
-				entryName = object.ObjectName[lastSeparator+1:]
-				parentDirectoryPath = "/" + object.ObjectName[:lastSeparator]
+			lastSeparator := strings.LastIndex(object.Key, "/")
+			parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.Key, true, false
+			if lastSeparator > 0 && lastSeparator+1 < len(object.Key) {
+				entryName = object.Key[lastSeparator+1:]
+				parentDirectoryPath = "/" + object.Key[:lastSeparator]
 			}
 			parentDirectoryPath = fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
 
@@ -248,7 +248,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				deleteErrors = append(deleteErrors, DeleteError{
 					Code:      "",
 					Message:   err.Error(),
-					Key:       object.ObjectName,
+					Key:       object.Key,
 					VersionId: object.VersionId,
 				})
 			}
