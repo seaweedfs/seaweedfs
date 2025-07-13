@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 // GetPolicies retrieves all IAM policies from memory
-func (store *MemoryStore) GetPolicies(ctx context.Context) (map[string]credential.PolicyDocument, error) {
+func (store *MemoryStore) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 
@@ -17,7 +17,7 @@ func (store *MemoryStore) GetPolicies(ctx context.Context) (map[string]credentia
 	}
 
 	// Create a copy of the policies map to avoid mutation issues
-	policies := make(map[string]credential.PolicyDocument)
+	policies := make(map[string]policy_engine.PolicyDocument)
 	for name, doc := range store.policies {
 		policies[name] = doc
 	}
@@ -26,7 +26,7 @@ func (store *MemoryStore) GetPolicies(ctx context.Context) (map[string]credentia
 }
 
 // GetPolicy retrieves a specific IAM policy by name from memory
-func (store *MemoryStore) GetPolicy(ctx context.Context, name string) (*credential.PolicyDocument, error) {
+func (store *MemoryStore) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 
@@ -38,7 +38,7 @@ func (store *MemoryStore) GetPolicy(ctx context.Context, name string) (*credenti
 }
 
 // CreatePolicy creates a new IAM policy in memory
-func (store *MemoryStore) CreatePolicy(ctx context.Context, name string, document credential.PolicyDocument) error {
+func (store *MemoryStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
@@ -51,7 +51,7 @@ func (store *MemoryStore) CreatePolicy(ctx context.Context, name string, documen
 }
 
 // UpdatePolicy updates an existing IAM policy in memory
-func (store *MemoryStore) UpdatePolicy(ctx context.Context, name string, document credential.PolicyDocument) error {
+func (store *MemoryStore) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 

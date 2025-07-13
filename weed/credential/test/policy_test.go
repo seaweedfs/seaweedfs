@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 
 	// Import all store implementations to register them
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
@@ -46,13 +47,13 @@ func testPolicyOperations(t *testing.T, ctx context.Context, credentialManager *
 	}
 
 	// Test CreatePolicy
-	testPolicy := credential.PolicyDocument{
+	testPolicy := policy_engine.PolicyDocument{
 		Version: "2012-10-17",
-		Statement: []*credential.PolicyStatement{
+		Statement: []policy_engine.PolicyStatement{
 			{
-				Effect:   "Allow",
-				Action:   []string{"s3:GetObject"},
-				Resource: []string{"arn:aws:s3:::test-bucket/*"},
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::test-bucket/*"),
 			},
 		},
 	}
@@ -84,13 +85,13 @@ func testPolicyOperations(t *testing.T, ctx context.Context, credentialManager *
 	}
 
 	// Test UpdatePolicy
-	updatedPolicy := credential.PolicyDocument{
+	updatedPolicy := policy_engine.PolicyDocument{
 		Version: "2012-10-17",
-		Statement: []*credential.PolicyStatement{
+		Statement: []policy_engine.PolicyStatement{
 			{
-				Effect:   "Allow",
-				Action:   []string{"s3:GetObject", "s3:PutObject"},
-				Resource: []string{"arn:aws:s3:::test-bucket/*"},
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject", "s3:PutObject"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::test-bucket/*"),
 			},
 		},
 	}
@@ -113,8 +114,8 @@ func testPolicyOperations(t *testing.T, ctx context.Context, credentialManager *
 	if len(updatedPolicyResult.Statement) != 1 {
 		t.Errorf("Expected 1 statement after update, got %d", len(updatedPolicyResult.Statement))
 	}
-	if len(updatedPolicyResult.Statement[0].Action) != 2 {
-		t.Errorf("Expected 2 actions after update, got %d", len(updatedPolicyResult.Statement[0].Action))
+	if len(updatedPolicyResult.Statement[0].Action.Strings()) != 2 {
+		t.Errorf("Expected 2 actions after update, got %d", len(updatedPolicyResult.Statement[0].Action.Strings()))
 	}
 
 	// Test DeletePolicy

@@ -3,28 +3,19 @@ package iamapi
 import (
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestGetActionsUserPath(t *testing.T) {
 
-	policyDocument := PolicyDocument{
+	policyDocument := policy_engine.PolicyDocument{
 		Version: "2012-10-17",
-		Statement: []*Statement{
+		Statement: []policy_engine.PolicyStatement{
 			{
-				Effect: "Allow",
-				Action: []string{
-					"s3:Put*",
-					"s3:PutBucketAcl",
-					"s3:Get*",
-					"s3:GetBucketAcl",
-					"s3:List*",
-					"s3:Tagging*",
-					"s3:DeleteBucket*",
-				},
-				Resource: []string{
-					"arn:aws:s3:::shared/user-Alice/*",
-				},
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:Put*", "s3:PutBucketAcl", "s3:Get*", "s3:GetBucketAcl", "s3:List*", "s3:Tagging*", "s3:DeleteBucket*"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::shared/user-Alice/*"),
 			},
 		},
 	}
@@ -45,18 +36,13 @@ func TestGetActionsUserPath(t *testing.T) {
 
 func TestGetActionsWildcardPath(t *testing.T) {
 
-	policyDocument := PolicyDocument{
+	policyDocument := policy_engine.PolicyDocument{
 		Version: "2012-10-17",
-		Statement: []*Statement{
+		Statement: []policy_engine.PolicyStatement{
 			{
-				Effect: "Allow",
-				Action: []string{
-					"s3:Get*",
-					"s3:PutBucketAcl",
-				},
-				Resource: []string{
-					"arn:aws:s3:::*",
-				},
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:Get*", "s3:PutBucketAcl"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
 			},
 		},
 	}
@@ -71,17 +57,13 @@ func TestGetActionsWildcardPath(t *testing.T) {
 }
 
 func TestGetActionsInvalidAction(t *testing.T) {
-	policyDocument := PolicyDocument{
+	policyDocument := policy_engine.PolicyDocument{
 		Version: "2012-10-17",
-		Statement: []*Statement{
+		Statement: []policy_engine.PolicyStatement{
 			{
-				Effect: "Allow",
-				Action: []string{
-					"s3:InvalidAction",
-				},
-				Resource: []string{
-					"arn:aws:s3:::shared/user-Alice/*",
-				},
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:InvalidAction"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::shared/user-Alice/*"),
 			},
 		},
 	}

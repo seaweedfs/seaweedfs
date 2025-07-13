@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -16,9 +17,9 @@ func init() {
 // This is primarily intended for testing purposes
 type MemoryStore struct {
 	mu          sync.RWMutex
-	users       map[string]*iam_pb.Identity          // username -> identity
-	accessKeys  map[string]string                    // access_key -> username
-	policies    map[string]credential.PolicyDocument // policy_name -> policy_document
+	users       map[string]*iam_pb.Identity             // username -> identity
+	accessKeys  map[string]string                       // access_key -> username
+	policies    map[string]policy_engine.PolicyDocument // policy_name -> policy_document
 	initialized bool
 }
 
@@ -36,7 +37,7 @@ func (store *MemoryStore) Initialize(configuration util.Configuration, prefix st
 
 	store.users = make(map[string]*iam_pb.Identity)
 	store.accessKeys = make(map[string]string)
-	store.policies = make(map[string]credential.PolicyDocument)
+	store.policies = make(map[string]policy_engine.PolicyDocument)
 	store.initialized = true
 
 	return nil

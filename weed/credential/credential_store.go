@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -86,26 +87,13 @@ type UserCredentials struct {
 	UpdatedAt   time.Time            `json:"updatedAt"`
 }
 
-// PolicyStatement represents a single policy statement in an IAM policy
-type PolicyStatement struct {
-	Effect   string   `json:"Effect"`
-	Action   []string `json:"Action"`
-	Resource []string `json:"Resource"`
-}
-
-// PolicyDocument represents an IAM policy document
-type PolicyDocument struct {
-	Version   string             `json:"Version"`
-	Statement []*PolicyStatement `json:"Statement"`
-}
-
 // PolicyManager interface for managing IAM policies
 type PolicyManager interface {
-	GetPolicies(ctx context.Context) (map[string]PolicyDocument, error)
-	CreatePolicy(ctx context.Context, name string, document PolicyDocument) error
-	UpdatePolicy(ctx context.Context, name string, document PolicyDocument) error
+	GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error)
+	CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error
+	UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error
 	DeletePolicy(ctx context.Context, name string) error
-	GetPolicy(ctx context.Context, name string) (*PolicyDocument, error)
+	GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error)
 }
 
 // Stores holds all available credential store implementations

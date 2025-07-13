@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
@@ -39,7 +40,7 @@ const (
 var (
 	seededRand *rand.Rand = rand.New(
 		rand.NewSource(time.Now().UnixNano()))
-	policyDocuments = map[string]*PolicyDocument{}
+	policyDocuments = map[string]*policy_engine.PolicyDocument{}
 	policyLock      = sync.RWMutex{}
 )
 
@@ -93,24 +94,8 @@ const (
 	USER_DOES_NOT_EXIST = "the user with name %s cannot be found."
 )
 
-type Statement struct {
-	Effect   string   `json:"Effect"`
-	Action   []string `json:"Action"`
-	Resource []string `json:"Resource"`
-}
-
 type Policies struct {
-	Policies map[string]PolicyDocument `json:"policies"`
-}
-
-type PolicyDocument struct {
-	Version   string       `json:"Version"`
-	Statement []*Statement `json:"Statement"`
-}
-
-func (p PolicyDocument) String() string {
-	b, _ := json.Marshal(p)
-	return string(b)
+	Policies map[string]policy_engine.PolicyDocument `json:"policies"`
 }
 
 func Hash(s *string) string {
@@ -193,11 +178,12 @@ func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
 }
 
-func GetPolicyDocument(policy *string) (policyDocument PolicyDocument, err error) {
-	if err = json.Unmarshal([]byte(*policy), &policyDocument); err != nil {
-		return PolicyDocument{}, err
+func GetPolicyDocument(policy *string) (policy_engine.PolicyDocument, error) {
+	var policyDocument policy_engine.PolicyDocument
+	if err := json.Unmarshal([]byte(*policy), &policyDocument); err != nil {
+		return policy_engine.PolicyDocument{}, err
 	}
-	return policyDocument, err
+	return policyDocument, nil
 }
 
 func (iama *IamApiServer) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp CreatePolicyResponse, iamError *IamError) {
@@ -270,7 +256,7 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 			return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: errors.New("no actions found")}
 		}
 
-		policyDocument := PolicyDocument{Version: policyDocumentVersion}
+		policyDocument := policy_engine.PolicyDocument{Version: policyDocumentVersion}
 		statements := make(map[string][]string)
 		for _, action := range ident.Actions {
 			// parse "Read:EXAMPLE-BUCKET"
@@ -287,9 +273,9 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		for resource, actions := range statements {
 			isEqAction := false
 			for i, statement := range policyDocument.Statement {
-				if reflect.DeepEqual(statement.Action, actions) {
-					policyDocument.Statement[i].Resource = append(
-						policyDocument.Statement[i].Resource, resource)
+				if reflect.DeepEqual(statement.Action.Strings(), actions) {
+					policyDocument.Statement[i].Resource = policy_engine.NewStringOrStringSlice(append(
+						policyDocument.Statement[i].Resource.Strings(), resource)...)
 					isEqAction = true
 					break
 				}
@@ -297,14 +283,18 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 			if isEqAction {
 				continue
 			}
-			policyDocumentStatement := Statement{
-				Effect: "Allow",
-				Action: actions,
+			policyDocumentStatement := policy_engine.PolicyStatement{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice(actions...),
+				Resource: policy_engine.NewStringOrStringSlice(resource),
 			}
-			policyDocumentStatement.Resource = append(policyDocumentStatement.Resource, resource)
-			policyDocument.Statement = append(policyDocument.Statement, &policyDocumentStatement)
+			policyDocument.Statement = append(policyDocument.Statement, policyDocumentStatement)
 		}
-		resp.GetUserPolicyResult.PolicyDocument = policyDocument.String()
+		policyDocumentJSON, err := json.Marshal(policyDocument)
+		if err != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		}
+		resp.GetUserPolicyResult.PolicyDocument = string(policyDocumentJSON)
 		return resp, nil
 	}
 	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
@@ -321,21 +311,21 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
 }
 
-func GetActions(policy *PolicyDocument) ([]string, error) {
+func GetActions(policy *policy_engine.PolicyDocument) ([]string, error) {
 	var actions []string
 
 	for _, statement := range policy.Statement {
-		if statement.Effect != "Allow" {
+		if statement.Effect != policy_engine.PolicyEffectAllow {
 			return nil, fmt.Errorf("not a valid effect: '%s'. Only 'Allow' is possible", statement.Effect)
 		}
-		for _, resource := range statement.Resource {
+		for _, resource := range statement.Resource.Strings() {
 			// Parse "arn:aws:s3:::my-bucket/shared/*"
 			res := strings.Split(resource, ":")
 			if len(res) != 6 || res[0] != "arn" || res[1] != "aws" || res[2] != "s3" {
 				glog.Infof("not a valid resource: %s", res)
 				continue
 			}
-			for _, action := range statement.Action {
+			for _, action := range statement.Action.Strings() {
 				// Parse "s3:Get*"
 				act := strings.Split(action, ":")
 				if len(act) != 2 || act[0] != "s3" {

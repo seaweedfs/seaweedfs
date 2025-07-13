@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -160,7 +161,7 @@ func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 		return err
 	}
 	if err == filer_pb.ErrNotFound || buf.Len() == 0 {
-		policies.Policies = make(map[string]PolicyDocument)
+		policies.Policies = make(map[string]policy_engine.PolicyDocument)
 		return nil
 	}
 	if err := json.Unmarshal(buf.Bytes(), policies); err != nil {

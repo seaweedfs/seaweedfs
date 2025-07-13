@@ -5,20 +5,20 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 type PoliciesCollection struct {
-	Policies map[string]credential.PolicyDocument `json:"policies"`
+	Policies map[string]policy_engine.PolicyDocument `json:"policies"`
 }
 
 // GetPolicies retrieves all IAM policies from the filer
-func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]credential.PolicyDocument, error) {
+func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
 	policiesCollection := &PoliciesCollection{
-		Policies: make(map[string]credential.PolicyDocument),
+		Policies: make(map[string]policy_engine.PolicyDocument),
 	}
 
 	// Check if filer client is configured
@@ -53,28 +53,28 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]credent
 }
 
 // CreatePolicy creates a new IAM policy in the filer
-func (store *FilerEtcStore) CreatePolicy(ctx context.Context, name string, document credential.PolicyDocument) error {
-	return store.updatePolicies(ctx, func(policies map[string]credential.PolicyDocument) {
+func (store *FilerEtcStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return store.updatePolicies(ctx, func(policies map[string]policy_engine.PolicyDocument) {
 		policies[name] = document
 	})
 }
 
 // UpdatePolicy updates an existing IAM policy in the filer
-func (store *FilerEtcStore) UpdatePolicy(ctx context.Context, name string, document credential.PolicyDocument) error {
-	return store.updatePolicies(ctx, func(policies map[string]credential.PolicyDocument) {
+func (store *FilerEtcStore) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return store.updatePolicies(ctx, func(policies map[string]policy_engine.PolicyDocument) {
 		policies[name] = document
 	})
 }
 
 // DeletePolicy deletes an IAM policy from the filer
 func (store *FilerEtcStore) DeletePolicy(ctx context.Context, name string) error {
-	return store.updatePolicies(ctx, func(policies map[string]credential.PolicyDocument) {
+	return store.updatePolicies(ctx, func(policies map[string]policy_engine.PolicyDocument) {
 		delete(policies, name)
 	})
 }
 
 // updatePolicies is a helper method to update policies atomically
-func (store *FilerEtcStore) updatePolicies(ctx context.Context, updateFunc func(map[string]credential.PolicyDocument)) error {
+func (store *FilerEtcStore) updatePolicies(ctx context.Context, updateFunc func(map[string]policy_engine.PolicyDocument)) error {
 	// Load existing policies
 	policies, err := store.GetPolicies(ctx)
 	if err != nil {
@@ -100,7 +100,7 @@ func (store *FilerEtcStore) updatePolicies(ctx context.Context, updateFunc func(
 }
 
 // GetPolicy retrieves a specific IAM policy by name from the filer
-func (store *FilerEtcStore) GetPolicy(ctx context.Context, name string) (*credential.PolicyDocument, error) {
+func (store *FilerEtcStore) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
 	policies, err := store.GetPolicies(ctx)
 	if err != nil {
 		return nil, err
