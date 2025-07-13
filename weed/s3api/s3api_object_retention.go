@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -19,6 +18,7 @@ import (
 var (
 	ErrNoRetentionConfiguration = errors.New("no retention configuration found")
 	ErrNoLegalHoldConfiguration = errors.New("no legal hold configuration found")
+	ErrBucketNotFound           = errors.New("bucket not found")
 )
 
 const (
@@ -548,8 +548,8 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(bucket, object, versionId str
 func (s3a *S3ApiServer) isObjectLockAvailable(bucket string) error {
 	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
-			return fmt.Errorf("bucket not found")
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return ErrBucketNotFound
 		}
 		return fmt.Errorf("error checking versioning status: %v", err)
 	}
@@ -583,7 +583,7 @@ func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(bucket, object string, 
 func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter, r *http.Request, bucket, handlerName string) bool {
 	if err := s3a.isObjectLockAvailable(bucket); err != nil {
 		glog.Errorf("%s: object lock not available for bucket %s: %v", handlerName, bucket, err)
-		if strings.Contains(err.Error(), "bucket not found") {
+		if errors.Is(err, ErrBucketNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		} else {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
