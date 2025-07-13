@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -524,8 +524,10 @@ func (s3a *S3ApiServer) isObjectLegalHoldActive(bucket, object, versionId string
 // checkGovernanceBypassPermission checks if the user has permission to bypass governance retention
 func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, bucket, object string) bool {
 	// Use the existing IAM auth system to check the specific permission
-	// Create the governance bypass action using path.Join to avoid missing or double slashes
-	action := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION, path.Join(bucket, object)))
+	// Create the governance bypass action with proper bucket/object concatenation
+	// Note: path.Join would drop bucket if object has leading slash, so use explicit formatting
+	resource := fmt.Sprintf("%s/%s", bucket, strings.TrimPrefix(object, "/"))
+	action := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION, resource))
 
 	// Use the IAM system to authenticate and authorize this specific action
 	identity, errCode := s3a.iam.authRequest(request, action)
@@ -539,9 +541,10 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 		return true
 	}
 
-	// Additional check: allow users with "Admin" action to bypass governance retention
-	// This is done through proper IAM validation, not header checking
-	if identity != nil && identity.isAdmin() {
+	// Additional check: allow users with Admin action to bypass governance retention
+	// Use the proper S3 Admin action constant instead of generic isAdmin() method
+	adminAction := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_ADMIN, resource))
+	if identity != nil && identity.canDo(adminAction, bucket, object) {
 		glog.V(2).Infof("Admin user %s granted governance bypass permission for %s/%s", identity.Name, bucket, object)
 		return true
 	}
