@@ -25,7 +25,12 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
     // Optional: Wrap with policy-backed IAM for enhanced features
     if option.EnablePolicyEngine {  // Add this config option
-        policyBackedIAM := NewPolicyBackedIAM(iam, s3ApiServer)
+        // Option 1: Create and set legacy IAM separately
+        policyBackedIAM := NewPolicyBackedIAM()
+        policyBackedIAM.SetLegacyIAM(iam)
+        
+        // Option 2: Create with legacy IAM in one call (convenience method)
+        // policyBackedIAM := NewPolicyBackedIAMWithLegacy(iam)
         
         // Load existing identities as policies
         if err := policyBackedIAM.LoadIdentityPolicies(); err != nil {

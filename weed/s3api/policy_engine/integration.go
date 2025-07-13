@@ -36,6 +36,14 @@ func NewPolicyBackedIAM() *PolicyBackedIAM {
 	}
 }
 
+// NewPolicyBackedIAMWithLegacy creates a new policy-backed IAM system with legacy IAM set
+func NewPolicyBackedIAMWithLegacy(legacyIAM LegacyIAM) *PolicyBackedIAM {
+	return &PolicyBackedIAM{
+		policyEngine: NewPolicyEngine(),
+		legacyIAM:    legacyIAM,
+	}
+}
+
 // SetLegacyIAM sets the legacy IAM system for fallback
 func (p *PolicyBackedIAM) SetLegacyIAM(legacyIAM LegacyIAM) {
 	p.legacyIAM = legacyIAM

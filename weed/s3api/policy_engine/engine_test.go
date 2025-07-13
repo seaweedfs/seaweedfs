@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 func TestPolicyEngine(t *testing.T) {
@@ -676,4 +678,39 @@ func TestCompilePolicy(t *testing.T) {
 	if len(stmt.ResourcePatterns) != 1 {
 		t.Errorf("Expected 1 resource pattern, got %d", len(stmt.ResourcePatterns))
 	}
+}
+
+// TestNewPolicyBackedIAMWithLegacy tests the constructor overload
+func TestNewPolicyBackedIAMWithLegacy(t *testing.T) {
+	// Mock legacy IAM
+	mockLegacyIAM := &MockLegacyIAM{}
+
+	// Test the new constructor
+	policyBackedIAM := NewPolicyBackedIAMWithLegacy(mockLegacyIAM)
+
+	// Verify that the legacy IAM is set
+	if policyBackedIAM.legacyIAM != mockLegacyIAM {
+		t.Errorf("Expected legacy IAM to be set, but it wasn't")
+	}
+
+	// Verify that the policy engine is initialized
+	if policyBackedIAM.policyEngine == nil {
+		t.Errorf("Expected policy engine to be initialized, but it wasn't")
+	}
+
+	// Compare with the traditional approach
+	traditionalIAM := NewPolicyBackedIAM()
+	traditionalIAM.SetLegacyIAM(mockLegacyIAM)
+
+	// Both should behave the same
+	if policyBackedIAM.legacyIAM != traditionalIAM.legacyIAM {
+		t.Errorf("Expected both approaches to result in the same legacy IAM")
+	}
+}
+
+// MockLegacyIAM implements the LegacyIAM interface for testing
+type MockLegacyIAM struct{}
+
+func (m *MockLegacyIAM) authRequest(r *http.Request, action Action) (Identity, s3err.ErrorCode) {
+	return nil, s3err.ErrNone
 }
