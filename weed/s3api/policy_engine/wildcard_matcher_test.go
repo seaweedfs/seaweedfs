@@ -186,72 +186,147 @@ func TestWildcardMatcher(t *testing.T) {
 
 func TestCompileWildcardPattern(t *testing.T) {
 	tests := []struct {
-		name     string
-		pattern  string
-		testStr  string
-		expected bool
+		name    string
+		pattern string
+		input   string
+		want    bool
 	}{
-		{
-			name:     "Star wildcard",
-			pattern:  "test*",
-			testStr:  "test123",
-			expected: true,
-		},
-		{
-			name:     "Question mark wildcard",
-			pattern:  "test?",
-			testStr:  "test1",
-			expected: true,
-		},
-		{
-			name:     "Mixed wildcards",
-			pattern:  "test*abc?",
-			testStr:  "testXYZabc1",
-			expected: true,
-		},
+		{"Star wildcard", "s3:Get*", "s3:GetObject", true},
+		{"Question mark wildcard", "s3:Get?bject", "s3:GetObject", true},
+		{"Mixed wildcards", "s3:*Object*", "s3:GetObjectAcl", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			regex, err := CompileWildcardPattern(tt.pattern)
 			if err != nil {
-				t.Fatalf("Failed to compile pattern: %v", err)
+				t.Errorf("CompileWildcardPattern() error = %v", err)
+				return
 			}
-
-			result := regex.MatchString(tt.testStr)
-			if result != tt.expected {
-				t.Errorf("Pattern %s against %s: expected %v, got %v", tt.pattern, tt.testStr, tt.expected, result)
+			got := regex.MatchString(tt.input)
+			if got != tt.want {
+				t.Errorf("CompileWildcardPattern() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func BenchmarkMatchesWildcard(b *testing.B) {
-	patterns := []string{"test*", "test?", "*.txt", "test*abc*123"}
-	strings := []string{"test123", "test1", "file.txt", "testXYZabc456123"}
+// BenchmarkWildcardMatchingPerformance demonstrates the performance benefits of caching
+func BenchmarkWildcardMatchingPerformance(b *testing.B) {
+	patterns := []string{
+		"s3:Get*",
+		"s3:Put*",
+		"s3:Delete*",
+		"s3:List*",
+		"arn:aws:s3:::bucket/*",
+		"arn:aws:s3:::bucket/prefix*",
+		"user:*",
+		"user:admin-*",
+	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for j, pattern := range patterns {
-			MatchesWildcard(pattern, strings[j])
+	inputs := []string{
+		"s3:GetObject",
+		"s3:PutObject",
+		"s3:DeleteObject",
+		"s3:ListBucket",
+		"arn:aws:s3:::bucket/file.txt",
+		"arn:aws:s3:::bucket/prefix/file.txt",
+		"user:admin",
+		"user:admin-john",
+	}
+
+	b.Run("WithoutCache", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			for _, pattern := range patterns {
+				for _, input := range inputs {
+					MatchesWildcard(pattern, input)
+				}
+			}
 		}
+	})
+
+	b.Run("WithCache", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			for _, pattern := range patterns {
+				for _, input := range inputs {
+					FastMatchesWildcard(pattern, input)
+				}
+			}
+		}
+	})
+}
+
+// BenchmarkWildcardMatcherReuse demonstrates the performance benefits of reusing WildcardMatcher instances
+func BenchmarkWildcardMatcherReuse(b *testing.B) {
+	pattern := "s3:Get*"
+	input := "s3:GetObject"
+
+	b.Run("NewMatcherEveryTime", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			matcher, _ := NewWildcardMatcher(pattern)
+			matcher.Match(input)
+		}
+	})
+
+	b.Run("CachedMatcher", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			matcher, _ := GetCachedWildcardMatcher(pattern)
+			matcher.Match(input)
+		}
+	})
+}
+
+// TestWildcardMatcherCaching verifies that caching works correctly
+func TestWildcardMatcherCaching(t *testing.T) {
+	pattern := "s3:Get*"
+
+	// Get the first matcher
+	matcher1, err := GetCachedWildcardMatcher(pattern)
+	if err != nil {
+		t.Fatalf("Failed to get cached matcher: %v", err)
+	}
+
+	// Get the second matcher - should be the same instance
+	matcher2, err := GetCachedWildcardMatcher(pattern)
+	if err != nil {
+		t.Fatalf("Failed to get cached matcher: %v", err)
+	}
+
+	// Check that they're the same instance (same pointer)
+	if matcher1 != matcher2 {
+		t.Errorf("Expected same matcher instance, got different instances")
+	}
+
+	// Test that both matchers work correctly
+	testInput := "s3:GetObject"
+	if !matcher1.Match(testInput) {
+		t.Errorf("First matcher failed to match %s", testInput)
+	}
+	if !matcher2.Match(testInput) {
+		t.Errorf("Second matcher failed to match %s", testInput)
 	}
 }
 
-func BenchmarkWildcardMatcher(b *testing.B) {
-	patterns := []string{"test*", "test?", "*.txt", "test*abc*123"}
-	strings := []string{"test123", "test1", "file.txt", "testXYZabc456123"}
-
-	matchers := make([]*WildcardMatcher, len(patterns))
-	for i, pattern := range patterns {
-		matcher, _ := NewWildcardMatcher(pattern)
-		matchers[i] = matcher
+// TestFastMatchesWildcard verifies that the fast matching function works correctly
+func TestFastMatchesWildcard(t *testing.T) {
+	tests := []struct {
+		pattern string
+		input   string
+		want    bool
+	}{
+		{"s3:Get*", "s3:GetObject", true},
+		{"s3:Put*", "s3:GetObject", false},
+		{"arn:aws:s3:::bucket/*", "arn:aws:s3:::bucket/file.txt", true},
+		{"user:admin-*", "user:admin-john", true},
+		{"user:admin-*", "user:guest-john", false},
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for j, matcher := range matchers {
-			matcher.Match(strings[j])
-		}
+	for _, tt := range tests {
+		t.Run(tt.pattern+"_"+tt.input, func(t *testing.T) {
+			got := FastMatchesWildcard(tt.pattern, tt.input)
+			if got != tt.want {
+				t.Errorf("FastMatchesWildcard(%q, %q) = %v, want %v", tt.pattern, tt.input, got, tt.want)
+			}
+		})
 	}
 }

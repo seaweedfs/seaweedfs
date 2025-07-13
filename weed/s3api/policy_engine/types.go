@@ -123,6 +123,10 @@ type CompiledPolicy struct {
 // CompiledStatement represents a compiled policy statement
 type CompiledStatement struct {
 	Statement         *PolicyStatement
+	ActionMatchers    []*WildcardMatcher
+	ResourceMatchers  []*WildcardMatcher
+	PrincipalMatchers []*WildcardMatcher
+	// Keep regex patterns for backward compatibility
 	ActionPatterns    []*regexp.Regexp
 	ResourcePatterns  []*regexp.Regexp
 	PrincipalPatterns []*regexp.Regexp
@@ -209,25 +213,37 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 		Statement: stmt,
 	}
 
-	// Compile action patterns
+	// Compile action patterns and matchers
 	for _, action := range stmt.Action.Strings() {
 		pattern, err := compilePattern(action)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile action pattern %s: %v", action, err)
 		}
 		compiled.ActionPatterns = append(compiled.ActionPatterns, pattern)
+
+		matcher, err := NewWildcardMatcher(action)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create action matcher %s: %v", action, err)
+		}
+		compiled.ActionMatchers = append(compiled.ActionMatchers, matcher)
 	}
 
-	// Compile resource patterns
+	// Compile resource patterns and matchers
 	for _, resource := range stmt.Resource.Strings() {
 		pattern, err := compilePattern(resource)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile resource pattern %s: %v", resource, err)
 		}
 		compiled.ResourcePatterns = append(compiled.ResourcePatterns, pattern)
+
+		matcher, err := NewWildcardMatcher(resource)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create resource matcher %s: %v", resource, err)
+		}
+		compiled.ResourceMatchers = append(compiled.ResourceMatchers, matcher)
 	}
 
-	// Compile principal patterns if present
+	// Compile principal patterns and matchers if present
 	if stmt.Principal != nil && len(stmt.Principal.Strings()) > 0 {
 		for _, principal := range stmt.Principal.Strings() {
 			pattern, err := compilePattern(principal)
@@ -235,6 +251,12 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 				return nil, fmt.Errorf("failed to compile principal pattern %s: %v", principal, err)
 			}
 			compiled.PrincipalPatterns = append(compiled.PrincipalPatterns, pattern)
+
+			matcher, err := NewWildcardMatcher(principal)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create principal matcher %s: %v", principal, err)
+			}
+			compiled.PrincipalMatchers = append(compiled.PrincipalMatchers, matcher)
 		}
 	}
 
@@ -327,4 +349,102 @@ var S3Actions = map[string]string{
 	"GetBucketObjectLockConfiguration": "s3:GetBucketObjectLockConfiguration",
 	"PutBucketObjectLockConfiguration": "s3:PutBucketObjectLockConfiguration",
 	"BypassGovernanceRetention":        "s3:BypassGovernanceRetention",
+}
+
+// MatchesAction checks if an action matches any of the compiled action matchers
+func (cs *CompiledStatement) MatchesAction(action string) bool {
+	for _, matcher := range cs.ActionMatchers {
+		if matcher.Match(action) {
+			return true
+		}
+	}
+	return false
+}
+
+// MatchesResource checks if a resource matches any of the compiled resource matchers
+func (cs *CompiledStatement) MatchesResource(resource string) bool {
+	for _, matcher := range cs.ResourceMatchers {
+		if matcher.Match(resource) {
+			return true
+		}
+	}
+	return false
+}
+
+// MatchesPrincipal checks if a principal matches any of the compiled principal matchers
+func (cs *CompiledStatement) MatchesPrincipal(principal string) bool {
+	// If no principals specified, match all
+	if len(cs.PrincipalMatchers) == 0 {
+		return true
+	}
+
+	for _, matcher := range cs.PrincipalMatchers {
+		if matcher.Match(principal) {
+			return true
+		}
+	}
+	return false
+}
+
+// EvaluateStatement evaluates a compiled statement against the given arguments
+func (cs *CompiledStatement) EvaluateStatement(args *PolicyEvaluationArgs) bool {
+	// Check if action matches
+	if !cs.MatchesAction(args.Action) {
+		return false
+	}
+
+	// Check if resource matches
+	if !cs.MatchesResource(args.Resource) {
+		return false
+	}
+
+	// Check if principal matches
+	if !cs.MatchesPrincipal(args.Principal) {
+		return false
+	}
+
+	// TODO: Add condition evaluation if needed
+	// if !cs.evaluateConditions(args.Conditions) {
+	//     return false
+	// }
+
+	return true
+}
+
+// EvaluatePolicy evaluates a compiled policy against the given arguments
+func (cp *CompiledPolicy) EvaluatePolicy(args *PolicyEvaluationArgs) (bool, PolicyEffect) {
+	var explicitAllow, explicitDeny bool
+
+	// Evaluate each statement
+	for _, stmt := range cp.Statements {
+		if stmt.EvaluateStatement(args) {
+			if stmt.Statement.Effect == PolicyEffectAllow {
+				explicitAllow = true
+			} else if stmt.Statement.Effect == PolicyEffectDeny {
+				explicitDeny = true
+			}
+		}
+	}
+
+	// AWS policy evaluation logic: explicit deny overrides allow
+	if explicitDeny {
+		return false, PolicyEffectDeny
+	}
+	if explicitAllow {
+		return true, PolicyEffectAllow
+	}
+
+	// No matching statements - implicit deny
+	return false, PolicyEffectDeny
+}
+
+// FastMatchesWildcard uses cached WildcardMatcher for performance
+func FastMatchesWildcard(pattern, str string) bool {
+	matcher, err := GetCachedWildcardMatcher(pattern)
+	if err != nil {
+		glog.Errorf("Error getting cached WildcardMatcher for pattern %s: %v", pattern, err)
+		// Fall back to the original implementation
+		return MatchesWildcard(pattern, str)
+	}
+	return matcher.Match(str)
 }

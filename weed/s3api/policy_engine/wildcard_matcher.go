@@ -3,6 +3,7 @@ package policy_engine
 import (
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -14,6 +15,47 @@ type WildcardMatcher struct {
 	useRegex bool
 	regex    *regexp.Regexp
 	pattern  string
+}
+
+// WildcardMatcherCache provides caching for WildcardMatcher instances
+type WildcardMatcherCache struct {
+	mu       sync.RWMutex
+	matchers map[string]*WildcardMatcher
+}
+
+// Global cache instance
+var wildcardMatcherCache = &WildcardMatcherCache{
+	matchers: make(map[string]*WildcardMatcher),
+}
+
+// GetCachedWildcardMatcher gets or creates a cached WildcardMatcher for the given pattern
+func GetCachedWildcardMatcher(pattern string) (*WildcardMatcher, error) {
+	// Fast path: check if already in cache
+	wildcardMatcherCache.mu.RLock()
+	if matcher, exists := wildcardMatcherCache.matchers[pattern]; exists {
+		wildcardMatcherCache.mu.RUnlock()
+		return matcher, nil
+	}
+	wildcardMatcherCache.mu.RUnlock()
+
+	// Slow path: create new matcher and cache it
+	wildcardMatcherCache.mu.Lock()
+	defer wildcardMatcherCache.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if matcher, exists := wildcardMatcherCache.matchers[pattern]; exists {
+		return matcher, nil
+	}
+
+	// Create new matcher
+	matcher, err := NewWildcardMatcher(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache it
+	wildcardMatcherCache.matchers[pattern] = matcher
+	return matcher, nil
 }
 
 // NewWildcardMatcher creates a new wildcard matcher for the given pattern
@@ -118,14 +160,14 @@ func matchWildcardString(pattern, str string) bool {
 	return true
 }
 
-// matchWildcardRegex uses regex for patterns with ? wildcards
+// matchWildcardRegex uses WildcardMatcher for patterns with ? wildcards
 func matchWildcardRegex(pattern, str string) bool {
-	regex, err := compileWildcardPattern(pattern)
+	matcher, err := GetCachedWildcardMatcher(pattern)
 	if err != nil {
-		glog.Errorf("Error compiling wildcard pattern %s: %v", pattern, err)
+		glog.Errorf("Error getting WildcardMatcher for pattern %s: %v", pattern, err)
 		return false
 	}
-	return regex.MatchString(str)
+	return matcher.Match(str)
 }
 
 // compileWildcardPattern converts a wildcard pattern to regex
