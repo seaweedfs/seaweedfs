@@ -522,9 +522,9 @@ func (s3a *S3ApiServer) isObjectLegalHoldActive(bucket, object, versionId string
 }
 
 // checkGovernanceBypassPermission checks if the user has permission to bypass governance retention
-func (s3a *S3ApiServer) checkGovernanceBypassPermission(r *http.Request, bucket, object string) bool {
+func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, bucket, object string) bool {
 	// Check if user is admin (admins can bypass governance)
-	if r.Header.Get(s3_constants.AmzIsAdmin) == "true" {
+	if request.Header.Get(s3_constants.AmzIsAdmin) == "true" {
 		return true
 	}
 
@@ -533,8 +533,9 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(r *http.Request, bucket,
 	action := Action(s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION + ":" + bucket + object)
 
 	// Use the IAM system to authenticate and authorize this specific action
-	identity, errCode := s3a.iam.authRequest(r, action)
+	identity, errCode := s3a.iam.authRequest(request, action)
 	if errCode != s3err.ErrNone {
+		glog.V(3).Infof("IAM auth failed for governance bypass: %v", errCode)
 		return false
 	}
 
@@ -543,7 +544,7 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(r *http.Request, bucket,
 }
 
 // checkObjectLockPermissions checks if an object can be deleted or modified
-func (s3a *S3ApiServer) checkObjectLockPermissions(r *http.Request, bucket, object, versionId string, bypassGovernance bool) error {
+func (s3a *S3ApiServer) checkObjectLockPermissions(request *http.Request, bucket, object, versionId string, bypassGovernance bool) error {
 	// Get retention configuration and status in a single call to avoid duplicate fetches
 	retention, retentionActive, err := s3a.getObjectRetentionWithStatus(bucket, object, versionId)
 	if err != nil {
@@ -573,7 +574,7 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(r *http.Request, bucket, obje
 			}
 
 			// If bypass is requested, check if user has permission
-			if !s3a.checkGovernanceBypassPermission(r, bucket, object) {
+			if !s3a.checkGovernanceBypassPermission(request, bucket, object) {
 				glog.V(2).Infof("User does not have s3:BypassGovernanceRetention permission for %s/%s", bucket, object)
 				return ErrGovernanceBypassNotPermitted
 			}
@@ -603,14 +604,14 @@ func (s3a *S3ApiServer) isObjectLockAvailable(bucket string) error {
 
 // checkObjectLockPermissionsForPut checks object lock permissions for PUT operations
 // This is a shared helper to avoid code duplication in PUT handlers
-func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(r *http.Request, bucket, object string, bypassGovernance bool, versioningEnabled bool) error {
+func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(request *http.Request, bucket, object string, bypassGovernance bool, versioningEnabled bool) error {
 	// Object Lock only applies to versioned buckets (AWS S3 requirement)
 	if !versioningEnabled {
 		return nil
 	}
 
 	// For PUT operations, we check permissions on the current object (empty versionId)
-	if err := s3a.checkObjectLockPermissions(r, bucket, object, "", bypassGovernance); err != nil {
+	if err := s3a.checkObjectLockPermissions(request, bucket, object, "", bypassGovernance); err != nil {
 		glog.V(2).Infof("checkObjectLockPermissionsForPut: object lock check failed for %s/%s: %v", bucket, object, err)
 		return err
 	}
@@ -620,13 +621,13 @@ func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(r *http.Request, bucket
 // handleObjectLockAvailabilityCheck is a helper function to check object lock availability
 // and write the appropriate error response if not available. This reduces code duplication
 // across all retention handlers.
-func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter, r *http.Request, bucket, handlerName string) bool {
+func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter, request *http.Request, bucket, handlerName string) bool {
 	if err := s3a.isObjectLockAvailable(bucket); err != nil {
 		glog.Errorf("%s: object lock not available for bucket %s: %v", handlerName, bucket, err)
 		if errors.Is(err, ErrBucketNotFound) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			s3err.WriteErrorResponse(w, request, s3err.ErrNoSuchBucket)
 		} else {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			s3err.WriteErrorResponse(w, request, s3err.ErrInvalidRequest)
 		}
 		return false
 	}
