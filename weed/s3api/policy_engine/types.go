@@ -313,11 +313,6 @@ func IsObjectResource(resource string) bool {
 	return strings.Contains(resource, "/")
 }
 
-// MatchesResource checks if a resource matches a pattern
-func MatchesResource(pattern, resource string) bool {
-	return MatchesWildcard(pattern, resource)
-}
-
 // S3Actions contains common S3 actions
 var S3Actions = map[string]string{
 	"GetObject":                        "s3:GetObject",
