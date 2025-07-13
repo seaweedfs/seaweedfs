@@ -270,22 +270,31 @@ func compilePattern(pattern string) (*regexp.Regexp, error) {
 
 // normalizeToStringSlice converts various types to string slice - kept for backward compatibility
 func normalizeToStringSlice(value interface{}) []string {
+	result, err := normalizeToStringSliceWithError(value)
+	if err != nil {
+		glog.Warningf("unexpected type for policy value: %T, error: %v", value, err)
+		return []string{fmt.Sprintf("%v", value)}
+	}
+	return result
+}
+
+// normalizeToStringSliceWithError converts various types to string slice with proper error handling
+func normalizeToStringSliceWithError(value interface{}) ([]string, error) {
 	switch v := value.(type) {
 	case string:
-		return []string{v}
+		return []string{v}, nil
 	case []string:
-		return v
+		return v, nil
 	case []interface{}:
 		result := make([]string, len(v))
 		for i, item := range v {
 			result[i] = fmt.Sprintf("%v", item)
 		}
-		return result
+		return result, nil
 	case StringOrStringSlice:
-		return v.Strings()
+		return v.Strings(), nil
 	default:
-		glog.Warningf("unexpected type for policy value: %T", v)
-		return []string{fmt.Sprintf("%v", v)}
+		return nil, fmt.Errorf("unexpected type for policy value: %T", v)
 	}
 }
 

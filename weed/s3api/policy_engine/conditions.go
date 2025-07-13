@@ -12,13 +12,104 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
-// Cache for normalized string slices to avoid repeated type conversions
-var normalizedValueCache = struct {
-	sync.RWMutex
-	cache map[string][]string
-}{
-	cache: make(map[string][]string),
+// NormalizedValueCache provides size-limited caching for normalized values with LRU eviction
+type NormalizedValueCache struct {
+	mu          sync.RWMutex
+	cache       map[string][]string
+	maxSize     int
+	accessOrder []string // For LRU eviction
 }
+
+// NewNormalizedValueCache creates a new normalized value cache with configurable size
+func NewNormalizedValueCache(maxSize int) *NormalizedValueCache {
+	if maxSize <= 0 {
+		maxSize = 1000 // Default size
+	}
+	return &NormalizedValueCache{
+		cache:   make(map[string][]string),
+		maxSize: maxSize,
+	}
+}
+
+// Get retrieves a cached value and updates access order
+func (c *NormalizedValueCache) Get(key string) ([]string, bool) {
+	c.mu.RLock()
+	value, exists := c.cache[key]
+	c.mu.RUnlock()
+
+	if exists {
+		c.updateAccessOrder(key)
+	}
+	return value, exists
+}
+
+// Set stores a value in the cache with size limit enforcement
+func (c *NormalizedValueCache) Set(key string, value []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Check if key already exists
+	if _, exists := c.cache[key]; exists {
+		c.cache[key] = value
+		c.updateAccessOrderLocked(key)
+		return
+	}
+
+	// If at max size, evict least recently used
+	if len(c.cache) >= c.maxSize {
+		c.evictLeastRecentlyUsed()
+	}
+
+	c.cache[key] = value
+	c.updateAccessOrderLocked(key)
+}
+
+// updateAccessOrder updates the access order for LRU (thread-safe)
+func (c *NormalizedValueCache) updateAccessOrder(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.updateAccessOrderLocked(key)
+}
+
+// updateAccessOrderLocked updates the access order for LRU (requires lock)
+func (c *NormalizedValueCache) updateAccessOrderLocked(key string) {
+	// Remove from current position
+	for i, k := range c.accessOrder {
+		if k == key {
+			c.accessOrder = append(c.accessOrder[:i], c.accessOrder[i+1:]...)
+			break
+		}
+	}
+	// Add to end (most recently used)
+	c.accessOrder = append(c.accessOrder, key)
+}
+
+// evictLeastRecentlyUsed removes the least recently used item
+func (c *NormalizedValueCache) evictLeastRecentlyUsed() {
+	if len(c.accessOrder) > 0 {
+		oldestKey := c.accessOrder[0]
+		delete(c.cache, oldestKey)
+		c.accessOrder = c.accessOrder[1:]
+	}
+}
+
+// Clear clears all cached values
+func (c *NormalizedValueCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cache = make(map[string][]string)
+	c.accessOrder = nil
+}
+
+// GetStats returns cache statistics
+func (c *NormalizedValueCache) GetStats() (size int, maxSize int) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.cache), c.maxSize
+}
+
+// Global cache instance with size limit
+var normalizedValueCache = NewNormalizedValueCache(1000)
 
 // getCachedNormalizedValues returns cached normalized values or caches new ones
 func getCachedNormalizedValues(value interface{}) []string {
@@ -26,24 +117,21 @@ func getCachedNormalizedValues(value interface{}) []string {
 	typeStr := reflect.TypeOf(value).String()
 	cacheKey := typeStr + ":" + fmt.Sprint(value)
 
-	normalizedValueCache.RLock()
-	cached, exists := normalizedValueCache.cache[cacheKey]
-	normalizedValueCache.RUnlock()
-
-	if exists {
+	// Try to get from cache
+	if cached, exists := normalizedValueCache.Get(cacheKey); exists {
 		return cached
 	}
 
-	normalized := normalizeToStringSlice(value)
-
-	normalizedValueCache.Lock()
-	// Check again in case another goroutine added it
-	if cached, exists := normalizedValueCache.cache[cacheKey]; exists {
-		normalizedValueCache.Unlock()
-		return cached
+	// Not in cache, normalize and store
+	// Use the error-handling version for better error reporting
+	normalized, err := normalizeToStringSliceWithError(value)
+	if err != nil {
+		glog.Warningf("Failed to normalize policy value %v: %v", value, err)
+		// Fallback to string conversion for backward compatibility
+		normalized = []string{fmt.Sprintf("%v", value)}
 	}
-	normalizedValueCache.cache[cacheKey] = normalized
-	normalizedValueCache.Unlock()
+
+	normalizedValueCache.Set(cacheKey, normalized)
 
 	return normalized
 }
