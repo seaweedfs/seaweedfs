@@ -346,4 +346,5 @@ var S3Actions = map[string]string{
 	"PutObjectLegalHold":               "s3:PutObjectLegalHold",
 	"GetBucketObjectLockConfiguration": "s3:GetBucketObjectLockConfiguration",
 	"PutBucketObjectLockConfiguration": "s3:PutBucketObjectLockConfiguration",
+	"BypassGovernanceRetention":        "s3:BypassGovernanceRetention",
 }

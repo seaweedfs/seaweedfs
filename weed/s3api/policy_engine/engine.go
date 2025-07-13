@@ -307,6 +307,7 @@ func IsWriteAction(action string) bool {
 		"s3:PutBucketObjectLockConfiguration",
 		"s3:PutObjectRetention",
 		"s3:PutObjectLegalHold",
+		"s3:BypassGovernanceRetention",
 	}
 
 	for _, writeAction := range writeActions {
