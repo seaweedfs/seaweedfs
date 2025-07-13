@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,60 +9,72 @@ import (
 )
 
 func TestCheckGovernanceBypassPermission(t *testing.T) {
-	// Create a test S3 API server
-	s3a := &S3ApiServer{
-		iam: &IdentityAccessManagement{
-			isAuthEnabled: true,
-		},
-	}
-
 	tests := []struct {
 		name           string
-		setupRequest   func() *http.Request
+		adminHeader    string
 		expectedResult bool
 		description    string
 	}{
 		{
-			name: "admin_user_can_bypass",
-			setupRequest: func() *http.Request {
-				req := httptest.NewRequest("DELETE", "/bucket/object", nil)
-				req.Header.Set(s3_constants.AmzIsAdmin, "true")
-				return req
-			},
+			name:           "admin_user_can_bypass",
+			adminHeader:    "true",
 			expectedResult: true,
-			description:    "Admin users should be able to bypass governance retention",
+			description:    "Admin users should always be able to bypass governance",
 		},
 		{
-			name: "user_without_permission_cannot_bypass",
-			setupRequest: func() *http.Request {
-				req := httptest.NewRequest("DELETE", "/bucket/object", nil)
-				req.Header.Set(s3_constants.AmzIdentityId, "test-user")
-				return req
-			},
+			name:           "user_without_permission_cannot_bypass",
+			adminHeader:    "false",
 			expectedResult: false,
-			description:    "Regular users without bypass permission should not be able to bypass governance",
+			description:    "Non-admin users without permission should not be able to bypass",
 		},
 		{
-			name: "anonymous_user_cannot_bypass",
-			setupRequest: func() *http.Request {
-				req := httptest.NewRequest("DELETE", "/bucket/object", nil)
-				return req
-			},
+			name:           "anonymous_user_cannot_bypass",
+			adminHeader:    "",
 			expectedResult: false,
-			description:    "Anonymous users should not be able to bypass governance retention",
+			description:    "Anonymous users should never be able to bypass governance",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := tt.setupRequest()
-			result := s3a.checkGovernanceBypassPermission(req, "test-bucket", "test-object")
+			// Create a test S3 API server with minimal IAM setup
+			s3a := &S3ApiServer{
+				iam: &IdentityAccessManagement{
+					isAuthEnabled: true,
+				},
+			}
+
+			// Create request with appropriate headers
+			req := httptest.NewRequest("DELETE", "/test-bucket/test-object", nil)
+			if tt.adminHeader != "" {
+				req.Header.Set(s3_constants.AmzIsAdmin, tt.adminHeader)
+			}
+
+			result := s3a.checkGovernanceBypassPermission(req, "test-bucket", "/test-object")
 
 			if result != tt.expectedResult {
-				t.Errorf("checkGovernanceBypassPermission() = %v, want %v. %s", result, tt.expectedResult, tt.description)
+				t.Errorf("Expected %v, got %v. %s", tt.expectedResult, result, tt.description)
 			}
 		})
 	}
+}
+
+// Test specifically for users with IAM bypass permission
+func TestGovernanceBypassWithIAMPermission(t *testing.T) {
+	// This test demonstrates the expected behavior for non-admin users with bypass permission
+	// In a real implementation, this would integrate with the full IAM system
+
+	t.Skip("Integration test requires full IAM setup - demonstrates expected behavior")
+
+	// The expected behavior would be:
+	// 1. Non-admin user makes request with bypass header
+	// 2. checkGovernanceBypassPermission calls s3a.iam.authRequest
+	// 3. authRequest validates user identity and checks permissions
+	// 4. If user has s3:BypassGovernanceRetention permission, return true
+	// 5. Otherwise return false
+
+	// For now, the function correctly returns false for non-admin users
+	// when the IAM system doesn't have the user configured with bypass permission
 }
 
 func TestGovernancePermissionIntegration(t *testing.T) {

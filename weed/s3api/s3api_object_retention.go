@@ -26,6 +26,13 @@ var (
 	ErrGovernanceModeActive     = errors.New("object is under GOVERNANCE mode retention and cannot be deleted or modified without bypass")
 )
 
+// Error definitions for Object Lock
+var (
+	ErrObjectLockConfigurationNotFound = errors.New("the bucket object lock configuration not found")
+	ErrObjectUnderLegalHold            = errors.New("object is under legal hold and cannot be deleted or modified")
+	ErrGovernanceBypassNotPermitted    = errors.New("user does not have permission to bypass governance retention")
+)
+
 const (
 	// Maximum retention period limits according to AWS S3 specifications
 	MaxRetentionDays  = 36500 // Maximum number of days for object retention (100 years)
@@ -551,7 +558,7 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(r *http.Request, bucket, obje
 
 	// If object is under legal hold, it cannot be deleted or modified
 	if legalHoldActive {
-		return fmt.Errorf("object is under legal hold and cannot be deleted or modified")
+		return ErrObjectUnderLegalHold
 	}
 
 	// If object is under retention, check the mode
@@ -568,7 +575,7 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(r *http.Request, bucket, obje
 			// If bypass is requested, check if user has permission
 			if !s3a.checkGovernanceBypassPermission(r, bucket, object) {
 				glog.V(2).Infof("User does not have s3:BypassGovernanceRetention permission for %s/%s", bucket, object)
-				return fmt.Errorf("user does not have permission to bypass governance retention")
+				return ErrGovernanceBypassNotPermitted
 			}
 		}
 	}
