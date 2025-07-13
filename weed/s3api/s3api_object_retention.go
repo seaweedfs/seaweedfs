@@ -522,7 +522,7 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(r *http.Request, bucket,
 	}
 
 	// Use the existing IAM auth system to check the specific permission
-	// Create the governance bypass action
+	// Create the governance bypass action (object already has "/" prefix from GetBucketAndObject)
 	action := Action(s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION + ":" + bucket + object)
 
 	// Use the IAM system to authenticate and authorize this specific action

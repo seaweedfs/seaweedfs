@@ -220,8 +220,8 @@ func TestGovernancePermissionActionGeneration(t *testing.T) {
 		{
 			name:           "bucket_and_object_action",
 			bucket:         "test-bucket",
-			object:         "test-object",
-			expectedAction: "BypassGovernanceRetention:test-buckettest-object",
+			object:         "/test-object", // Object has "/" prefix from GetBucketAndObject
+			expectedAction: "BypassGovernanceRetention:test-bucket/test-object",
 			description:    "Action should be generated correctly for bucket and object",
 		},
 		{
@@ -234,8 +234,8 @@ func TestGovernancePermissionActionGeneration(t *testing.T) {
 		{
 			name:           "nested_object_action",
 			bucket:         "test-bucket",
-			object:         "folder/subfolder/object",
-			expectedAction: "BypassGovernanceRetention:test-bucketfolder/subfolder/object",
+			object:         "/folder/subfolder/object", // Object has "/" prefix from GetBucketAndObject
+			expectedAction: "BypassGovernanceRetention:test-bucket/folder/subfolder/object",
 			description:    "Action should be generated correctly for nested objects",
 		},
 	}
