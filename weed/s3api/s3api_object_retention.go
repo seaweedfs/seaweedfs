@@ -525,7 +525,7 @@ func (s3a *S3ApiServer) isObjectLegalHoldActive(bucket, object, versionId string
 func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, bucket, object string) bool {
 	// Use the existing IAM auth system to check the specific permission
 	// Create the governance bypass action using path.Join to avoid missing or double slashes
-	action := Action(s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION + ":" + path.Join(bucket, object))
+	action := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION, path.Join(bucket, object)))
 
 	// Use the IAM system to authenticate and authorize this specific action
 	identity, errCode := s3a.iam.authRequest(request, action)
