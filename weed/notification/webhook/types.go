@@ -1,7 +1,6 @@
 package webhook
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"slices"
@@ -49,23 +48,23 @@ type client interface {
 }
 
 type webhookMessage struct {
-	Key         string          `json:"key"`
-	EventType   string          `json:"event_type"`
-	MessageData json.RawMessage `json:"message_data"`
+	Key          string                      `json:"key"`
+	EventType    string                      `json:"event_type"`
+	Notification *filer_pb.EventNotification `json:"message_data"`
 }
 
 func newWebhookMessage(key string, message proto.Message) *webhookMessage {
-	messageData, _ := json.Marshal(message)
-
-	eventType := ""
-	if notification, ok := message.(*filer_pb.EventNotification); ok {
-		eventType = string(detectEventType(notification))
+	notification, ok := message.(*filer_pb.EventNotification)
+	if !ok {
+		return nil
 	}
 
+	eventType := string(detectEventType(notification))
+
 	return &webhookMessage{
-		Key:         key,
-		EventType:   eventType,
-		MessageData: messageData,
+		Key:          key,
+		EventType:    eventType,
+		Notification: notification,
 	}
 }
 

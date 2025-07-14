@@ -26,10 +26,16 @@ func newHTTPClient(cfg *config) (*httpClient, error) {
 }
 
 func (h *httpClient) sendMessage(message *webhookMessage) error {
+	// Serialize the protobuf message to JSON for HTTP payload
+	notificationData, err := json.Marshal(message.Notification)
+	if err != nil {
+		return fmt.Errorf("failed to marshal notification: %v", err)
+	}
+
 	payload := map[string]interface{}{
 		"key":        message.Key,
 		"event_type": message.EventType,
-		"message":    message.MessageData,
+		"message":    json.RawMessage(notificationData),
 	}
 
 	jsonData, err := json.Marshal(payload)

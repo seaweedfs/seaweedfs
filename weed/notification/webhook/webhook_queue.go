@@ -2,7 +2,6 @@ package webhook
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -49,6 +48,10 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 	}
 
 	m := newWebhookMessage(key, msg)
+	if m == nil {
+		return nil
+	}
+
 	wMsg, err := m.toWaterMillMessage()
 	if err != nil {
 		return err
@@ -58,12 +61,17 @@ func (w *Queue) SendMessage(key string, msg proto.Message) error {
 }
 
 func (w *webhookMessage) toWaterMillMessage() (*message.Message, error) {
-	payload, err := json.Marshal(w)
+	payload, err := proto.Marshal(w.Notification)
 	if err != nil {
 		return nil, err
 	}
 
-	return message.NewMessage(watermill.NewUUID(), payload), nil
+	msg := message.NewMessage(watermill.NewUUID(), payload)
+	// Set event type and key as metadata
+	msg.Metadata.Set("event_type", w.EventType)
+	msg.Metadata.Set("key", w.Key)
+
+	return msg, nil
 }
 
 func (w *Queue) Initialize(configuration util.Configuration, prefix string) error {
@@ -157,13 +165,20 @@ func (w *Queue) setupWatermillQueue(cfg *config) error {
 }
 
 func (w *Queue) handleWebhook(msg *message.Message) error {
-	var webhookMsg webhookMessage
-	if err := json.Unmarshal(msg.Payload, &webhookMsg); err != nil {
-		glog.Errorf("failed to unmarshal message: %v", err)
+	var n filer_pb.EventNotification
+	if err := proto.Unmarshal(msg.Payload, &n); err != nil {
+		glog.Errorf("failed to unmarshal protobuf message: %v", err)
 		return err
 	}
 
-	if err := w.client.sendMessage(&webhookMsg); err != nil {
+	// Reconstruct webhook message from metadata and payload
+	webhookMsg := &webhookMessage{
+		Key:          msg.Metadata.Get("key"),
+		EventType:    msg.Metadata.Get("event_type"),
+		Notification: &n,
+	}
+
+	if err := w.client.sendMessage(webhookMsg); err != nil {
 		glog.Errorf("failed to send message to webhook %s: %v", webhookMsg.Key, err)
 		return err
 	}

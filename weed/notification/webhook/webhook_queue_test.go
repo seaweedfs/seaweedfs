@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestConfigValidation(t *testing.T) {
@@ -152,24 +153,20 @@ func TestWebhookMessageSerialization(t *testing.T) {
 		t.Fatalf("Failed to convert to windmill message: %v", err)
 	}
 
-	var deserializedMsg webhookMessage
-	err = json.Unmarshal(wmMsg.Payload, &deserializedMsg)
-	if err != nil {
-		t.Fatalf("Failed to unmarshal message: %v", err)
-	}
-
-	if deserializedMsg.Key != "/test/path" {
-		t.Errorf("Expected key '/test/path', got %v", deserializedMsg.Key)
-	}
-
-	if deserializedMsg.EventType != "create" {
-		t.Errorf("Expected event type 'create', got %v", deserializedMsg.EventType)
-	}
-
+	// Unmarshal the protobuf payload directly
 	var eventNotification filer_pb.EventNotification
-	err = json.Unmarshal(deserializedMsg.MessageData, &eventNotification)
+	err = proto.Unmarshal(wmMsg.Payload, &eventNotification)
 	if err != nil {
-		t.Fatalf("Failed to unmarshal event notification from message data: %v", err)
+		t.Fatalf("Failed to unmarshal protobuf message: %v", err)
+	}
+
+	// Check metadata
+	if wmMsg.Metadata.Get("key") != "/test/path" {
+		t.Errorf("Expected key '/test/path', got %v", wmMsg.Metadata.Get("key"))
+	}
+
+	if wmMsg.Metadata.Get("event_type") != "create" {
+		t.Errorf("Expected event type 'create', got %v", wmMsg.Metadata.Get("event_type"))
 	}
 
 	if eventNotification.NewEntry.Name != "test.txt" {
