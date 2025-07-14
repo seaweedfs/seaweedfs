@@ -150,7 +150,7 @@ require (
 	github.com/redis/go-redis/v9 v9.10.0
 	github.com/schollz/progressbar/v3 v3.18.0
 	github.com/shirou/gopsutil/v3 v3.24.5
-	github.com/tarantool/go-tarantool/v2 v2.3.2
+	github.com/tarantool/go-tarantool/v2 v2.4.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.112.0
@@ -159,6 +159,8 @@ require (
 	golang.org/x/sync v0.15.0
 	google.golang.org/grpc/security/advancedtls v1.0.0
 )
+
+require github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
 
 require (
 	cel.dev/expr v0.23.0 // indirect
