@@ -1,25 +1,11 @@
 package webhook
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
-
-type EventType string
-
-const (
-	EventTypeCreate EventType = "create"
-	EventTypeDelete EventType = "delete"
-	EventTypeUpdate EventType = "update"
-	EventTypeRename EventType = "rename"
-)
-
-func (e EventType) valid() bool {
-	return slices.Contains([]EventType{EventTypeCreate, EventTypeDelete, EventTypeUpdate, EventTypeRename}, e)
-}
 
 type filter struct {
 	eventTypes   map[EventType]bool
@@ -78,25 +64,5 @@ func (f *filter) matchesPath(key string) bool {
 }
 
 func (f *filter) detectEventType(notification *filer_pb.EventNotification) EventType {
-	hasOldEntry := notification.OldEntry != nil
-	hasNewEntry := notification.NewEntry != nil
-	hasNewParentPath := notification.NewParentPath != ""
-
-	if !hasOldEntry && hasNewEntry {
-		return EventTypeCreate
-	}
-
-	if hasOldEntry && !hasNewEntry {
-		return EventTypeDelete
-	}
-
-	if hasOldEntry && hasNewEntry {
-		if hasNewParentPath {
-			return EventTypeRename
-		}
-
-		return EventTypeUpdate
-	}
-
-	return EventTypeUpdate
+	return detectEventType(notification)
 }

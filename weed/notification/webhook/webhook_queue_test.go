@@ -162,6 +162,10 @@ func TestWebhookMessageSerialization(t *testing.T) {
 		t.Errorf("Expected key '/test/path', got %v", deserializedMsg.Key)
 	}
 
+	if deserializedMsg.EventType != "create" {
+		t.Errorf("Expected event type 'create', got %v", deserializedMsg.EventType)
+	}
+
 	var eventNotification filer_pb.EventNotification
 	err = json.Unmarshal(deserializedMsg.MessageData, &eventNotification)
 	if err != nil {

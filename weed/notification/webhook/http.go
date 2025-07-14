@@ -27,8 +27,9 @@ func newHTTPClient(cfg *config) (*httpClient, error) {
 
 func (h *httpClient) sendMessage(message *webhookMessage) error {
 	payload := map[string]interface{}{
-		"key":     message.Key,
-		"message": message.MessageData,
+		"key":        message.Key,
+		"event_type": message.EventType,
+		"message":    message.MessageData,
 	}
 
 	jsonData, err := json.Marshal(payload)

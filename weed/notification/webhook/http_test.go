@@ -57,6 +57,10 @@ func TestHttpClientSendMessage(t *testing.T) {
 		t.Errorf("Expected key '/test/path', got %v", receivedPayload["key"])
 	}
 
+	if receivedPayload["event_type"] != "create" {
+		t.Errorf("Expected event_type 'create', got %v", receivedPayload["event_type"])
+	}
+
 	if receivedPayload["message"] == nil {
 		t.Error("Expected message to be present")
 	}

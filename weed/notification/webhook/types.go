@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
 )
@@ -15,6 +17,26 @@ const (
 	pubSubTopicName = "webhook_topic"
 	deadLetterTopic = "webhook_dead_letter"
 )
+
+type EventType string
+
+const (
+	EventTypeCreate EventType = "create"
+	EventTypeDelete EventType = "delete"
+	EventTypeUpdate EventType = "update"
+	EventTypeRename EventType = "rename"
+)
+
+func (e EventType) valid() bool {
+	return slices.Contains([]EventType{
+		EventTypeCreate,
+		EventTypeDelete,
+		EventTypeUpdate,
+		EventTypeRename,
+	},
+		e,
+	)
+}
 
 var (
 	pubSubHandlerNameTemplate = func(n int) string {
@@ -28,14 +50,21 @@ type client interface {
 
 type webhookMessage struct {
 	Key         string          `json:"key"`
+	EventType   string          `json:"event_type"`
 	MessageData json.RawMessage `json:"message_data"`
 }
 
 func newWebhookMessage(key string, message proto.Message) *webhookMessage {
 	messageData, _ := json.Marshal(message)
 
+	eventType := ""
+	if notification, ok := message.(*filer_pb.EventNotification); ok {
+		eventType = string(detectEventType(notification))
+	}
+
 	return &webhookMessage{
 		Key:         key,
+		EventType:   eventType,
 		MessageData: messageData,
 	}
 }
@@ -124,4 +153,28 @@ func (c *config) validate() error {
 	}
 
 	return nil
+}
+
+func detectEventType(notification *filer_pb.EventNotification) EventType {
+	hasOldEntry := notification.OldEntry != nil
+	hasNewEntry := notification.NewEntry != nil
+	hasNewParentPath := notification.NewParentPath != ""
+
+	if !hasOldEntry && hasNewEntry {
+		return EventTypeCreate
+	}
+
+	if hasOldEntry && !hasNewEntry {
+		return EventTypeDelete
+	}
+
+	if hasOldEntry && hasNewEntry {
+		if hasNewParentPath {
+			return EventTypeRename
+		}
+
+		return EventTypeUpdate
+	}
+
+	return EventTypeUpdate
 }
