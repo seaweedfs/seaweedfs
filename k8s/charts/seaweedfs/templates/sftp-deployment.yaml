@@ -48,7 +48,8 @@ spec:
         {{ tpl .Values.sftp.affinity . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.sftp.topologySpreadConstraints }}
-      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "sftp") | nindent 6 }}
+      topologySpreadConstraints:
+        {{ tpl .Values.sftp.topologySpreadConstraint . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.sftp.tolerations }}
       tolerations:

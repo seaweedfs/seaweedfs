@@ -59,6 +59,9 @@ metadata:
     helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
 spec:
   template:
+    metadata:
+      labels:
+        policy.cozystack.io/allow-to-apiserver: "true"
     spec:
       serviceAccountName: {{ $seaweedfsName }}-volume-resize-hook
       restartPolicy: Never

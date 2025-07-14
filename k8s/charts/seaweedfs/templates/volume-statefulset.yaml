@@ -21,6 +21,9 @@ metadata:
     {{- toYaml $volume.annotations | nindent 4 }}
 {{- end }}
 spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Delete
   serviceName: {{ template "seaweedfs.name" $ }}-{{ $volumeName }}
   replicas: {{ $volume.replicas }}
   podManagementPolicy: {{ $volume.podManagementPolicy }}
@@ -52,15 +55,16 @@ spec:
     spec:
       {{- if $volume.affinity }}
       affinity:
-        {{ tpl $volume.affinity $ | nindent 8 | trim }}
+        {{ tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.affinity) $ | indent 8 | trim }}
       {{- end }}
       {{- if $volume.topologySpreadConstraints }}
-      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" $.Values "component" "volume") | nindent 6 }}
+      topologySpreadConstraints:
+        {{ tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.topologySpreadConstraints) $ | nindent 8 | trim }}
       {{- end }}
       restartPolicy: {{ default $.Values.global.restartPolicy $volume.restartPolicy }}
       {{- if $volume.tolerations }}
       tolerations:
-        {{ tpl $volume.tolerations $ | nindent 8 | trim }}
+        {{ tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.tolerations) $ | indent 8 | trim }}
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" $ | nindent 6 }}
       terminationGracePeriodSeconds: 150
@@ -89,7 +93,7 @@ spec:
           {{- end }}
         {{- end }}
         {{- if $volume.initContainers }}
-        {{ tpl $volume.initContainers $ | nindent 8 | trim }}
+        {{ tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.initContainers) $ | indent 8 | trim }}
         {{- end }}
       {{- end }}
       {{- if $volume.podSecurityContext.enabled }}
@@ -232,7 +236,7 @@ spec:
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client/
             {{- end }}
-            {{ tpl $volume.extraVolumeMounts $ | nindent 12 | trim }}
+            {{ tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.extraVolumeMounts) $ | indent 12 | trim }}
           ports:
             - containerPort: {{ $volume.port }}
               name: swfs-vol
@@ -274,7 +278,7 @@ spec:
           securityContext: {{- omit $volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if $volume.sidecars }}
-      {{- include "common.tplvalues.render" (dict "value" $volume.sidecars "context" $) | nindent 8 }}
+      {{- include "common.tplvalues.render" (dict "value" (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.sidecars) "context" $) | nindent 8 }}
       {{- end }}
       volumes:
 
@@ -358,7 +362,7 @@ spec:
       {{- end }}
       {{- if $volume.nodeSelector }}
       nodeSelector:
-        {{ tpl $volume.nodeSelector $ | indent 8 | trim }}
+        {{ tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.nodeSelector) $ | indent 8 | trim }}
       {{- end }}
   volumeClaimTemplates:
     {{- range $dir := $volume.dataDirs }}

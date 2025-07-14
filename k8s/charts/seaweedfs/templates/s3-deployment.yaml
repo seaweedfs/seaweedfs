@@ -48,7 +48,8 @@ spec:
         {{ tpl .Values.s3.affinity . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.s3.topologySpreadConstraints }}
-      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "s3") | nindent 6 }}
+      topologySpreadConstraints:
+        {{ tpl .Values.s3.topologySpreadConstraints . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.s3.tolerations }}
       tolerations:

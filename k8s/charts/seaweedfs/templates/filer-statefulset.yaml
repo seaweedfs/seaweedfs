@@ -63,7 +63,7 @@ spec:
       {{- end }}
       {{- if .Values.filer.topologySpreadConstraints }}
       topologySpreadConstraints:
-      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "filer") | nindent 6 }}
+        {{ tpl .Values.filer.topologySpreadConstraints . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.filer.tolerations }}
       tolerations:
