@@ -1173,13 +1173,7 @@ async function submitUploadFile() {
         return;
     }
     
-    // Validate individual file sizes
-    const maxIndividualSize = 100 * 1024 * 1024; // 100MB per file
-    const oversizedFiles = files.filter(file => file.size > maxIndividualSize);
-    if (oversizedFiles.length > 0) {
-        showErrorMessage(`Some files exceed 100MB limit: ${oversizedFiles.map(f => f.name).join(', ')}`);
-        return;
-    }
+    // Individual file size validation removed - no limit per file
     
     const formData = new FormData();
     files.forEach(file => {
