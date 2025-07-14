@@ -102,11 +102,11 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.42.0
 	golang.org/x/crypto v0.39.0
 	golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476
-	golang.org/x/image v0.28.0
+	golang.org/x/image v0.29.0
 	golang.org/x/net v0.41.0
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sys v0.33.0
-	golang.org/x/text v0.26.0 // indirect
+	golang.org/x/text v0.27.0 // indirect
 	golang.org/x/tools v0.34.0
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.240.0
@@ -156,9 +156,11 @@ require (
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.112.0
 	go.etcd.io/etcd/client/pkg/v3 v3.6.1
 	go.uber.org/atomic v1.11.0
-	golang.org/x/sync v0.15.0
+	golang.org/x/sync v0.16.0
 	google.golang.org/grpc/security/advancedtls v1.0.0
 )
+
+require github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
 
 require (
 	cel.dev/expr v0.23.0 // indirect
