@@ -89,7 +89,7 @@ func TestFilterEventTypes(t *testing.T) {
 			cfg := &config{eventTypes: tt.eventTypes}
 			f := newFilter(cfg)
 
-			eventType := f.detectEventType(tt.notification)
+			eventType := detectEventType(tt.notification)
 			if eventType != tt.expectedType {
 				t.Errorf("detectEventType() = %v, want %v", eventType, tt.expectedType)
 			}

@@ -191,6 +191,7 @@ func TestQueueInitialize(t *testing.T) {
 	if err != nil {
 		t.Errorf("Initialize() error = %v", err)
 	}
+	defer q.cancel()
 
 	if q.router == nil {
 		t.Error("Expected router to be initialized")
@@ -223,6 +224,7 @@ func TestQueueSendMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize queue: %v", err)
 	}
+	defer q.cancel()
 
 	msg := &filer_pb.EventNotification{
 		NewEntry: &filer_pb.Entry{
@@ -278,6 +280,7 @@ func TestQueueHandleWebhook(t *testing.T) {
 func TestQueueEndToEnd(t *testing.T) {
 	var receivedMessages []string
 	var mu sync.Mutex
+	var wg sync.WaitGroup
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload map[string]interface{}
@@ -289,6 +292,8 @@ func TestQueueEndToEnd(t *testing.T) {
 		mu.Lock()
 		receivedMessages = append(receivedMessages, payload["key"].(string))
 		mu.Unlock()
+
+		wg.Done()
 
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -310,8 +315,9 @@ func TestQueueEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize queue: %v", err)
 	}
+	defer q.cancel()
 
-	time.Sleep(10 * time.Millisecond)
+	wg.Add(2)
 
 	for i := 0; i < 2; i++ {
 		msg := &filer_pb.EventNotification{
@@ -326,13 +332,13 @@ func TestQueueEndToEnd(t *testing.T) {
 		}
 	}
 
-	time.Sleep(20 * time.Millisecond)
+	wg.Wait()
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	if len(receivedMessages) == 0 {
-		t.Error("Expected to receive some messages, got none")
+	if len(receivedMessages) != 2 {
+		t.Errorf("Expected to receive 2 messages, got %d", len(receivedMessages))
 	}
 
 	for i, key := range receivedMessages {
@@ -344,9 +350,17 @@ func TestQueueEndToEnd(t *testing.T) {
 
 func TestQueueRetryMechanism(t *testing.T) {
 	attemptCount := int32(0)
+	retryDone := make(chan struct{})
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&attemptCount, 1)
+		count := atomic.AddInt32(&attemptCount, 1)
+		if count >= 2 {
+			select {
+			case <-retryDone:
+			default:
+				close(retryDone)
+			}
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
@@ -367,8 +381,7 @@ func TestQueueRetryMechanism(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize queue: %v", err)
 	}
-
-	time.Sleep(10 * time.Millisecond)
+	defer q.cancel() // Ensure proper cleanup
 
 	msg := &filer_pb.EventNotification{
 		NewEntry: &filer_pb.Entry{Name: "test.txt"},
@@ -379,7 +392,11 @@ func TestQueueRetryMechanism(t *testing.T) {
 		t.Fatalf("Failed to send message: %v", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-retryDone:
+	case <-time.After(5 * time.Second):
+		// checked by test
+	}
 
 	finalCount := atomic.LoadInt32(&attemptCount)
 	if finalCount < 1 {
@@ -533,6 +550,7 @@ func TestQueueSendMessageWithFilter(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to initialize queue: %v", err)
 			}
+			defer q.cancel() // Ensure proper cleanup
 
 			err = q.SendMessage(tt.key, tt.notification)
 			if err != nil {

@@ -44,7 +44,7 @@ func (f *filter) shouldPublish(key string, notification *filer_pb.EventNotificat
 		return false
 	}
 
-	eventType := f.detectEventType(notification)
+	eventType := detectEventType(notification)
 
 	return f.eventTypes[eventType]
 }
@@ -61,8 +61,4 @@ func (f *filter) matchesPath(key string) bool {
 	}
 
 	return false
-}
-
-func (f *filter) detectEventType(notification *filer_pb.EventNotification) EventType {
-	return detectEventType(notification)
 }
