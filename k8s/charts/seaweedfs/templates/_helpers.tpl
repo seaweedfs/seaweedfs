@@ -179,6 +179,27 @@ Usage:
 {{- end }}
 {{- end -}}
 
+{{/*
+Converts a Kubernetes quantity like "256Mi" or "2G" to a float64 in base units,
+handling both binary (Ki, Mi, Gi) and decimal (m, k, M) suffixes; numeric inputs
+Usage:
+{{ include "common.resource-quantity" "10Gi" }}
+*/}}
+{{- define "common.resource-quantity" -}}
+    {{- $value := . -}}
+    {{- $unit := 1.0 -}}
+    {{- if typeIs "string" . -}}
+        {{- $base2 := dict "Ki" 0x1p10 "Mi" 0x1p20 "Gi" 0x1p30 "Ti" 0x1p40 "Pi" 0x1p50 "Ei" 0x1p60 -}}
+        {{- $base10 := dict "m" 1e-3 "k" 1e3 "M" 1e6 "G" 1e9 "T" 1e12 "P" 1e15 "E" 1e18 -}}
+        {{- range $k, $v := merge $base2 $base10 -}}
+            {{- if hasSuffix $k $ -}}
+                {{- $value = trimSuffix $k $ -}}
+                {{- $unit = $v -}}
+            {{- end -}}
+        {{- end -}}
+    {{- end -}}
+    {{- mulf (float64 $value) $unit -}}
+{{- end -}}
 
 {{/*
 getOrGeneratePassword will check if a password exists in a secret and return it,

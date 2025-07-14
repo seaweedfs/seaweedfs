@@ -538,6 +538,31 @@ volume:
     failureThreshold: 100
     timeoutSeconds: 30
 
+# Map of named volume groups for topology-aware deployments.
+# Each key inherits all fields from the `volume` section but can override
+# them locally—for example, replicas, nodeSelector, dataCenter, etc.
+# To switch entirely to this scheme, set `volume.enabled: false`
+# and define one entry per zone/data-center under `volumes`.
+#
+# volumes:
+#   dc1:
+#     replicas: 2
+#     dataCenter: "dc1"
+#     nodeSelector: |
+#      topology.kubernetes.io/zone: dc1
+#   dc2:
+#     replicas: 2
+#     dataCenter: "dc2"
+#     nodeSelector: |
+#      topology.kubernetes.io/zone: dc2
+#   dc3:
+#     replicas: 2
+#     dataCenter: "dc3"
+#     nodeSelector: |
+#      topology.kubernetes.io/zone: dc3
+#
+volumes: {}
+
 filer:
   enabled: true
   imageOverride: null
