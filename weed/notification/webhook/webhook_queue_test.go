@@ -207,6 +207,7 @@ func TestQueueInitialize(t *testing.T) {
 	}
 }
 
+// TestQueueSendMessage test sending messages to the queue
 func TestQueueSendMessage(t *testing.T) {
 	cfg := &config{
 		endpoint:          "https://example.com/webhook",
