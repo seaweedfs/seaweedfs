@@ -145,7 +145,7 @@ require (
 	github.com/parquet-go/parquet-go v0.25.1
 	github.com/pkg/sftp v1.13.9
 	github.com/rabbitmq/amqp091-go v1.10.0
-	github.com/rclone/rclone v1.70.2
+	github.com/rclone/rclone v1.70.3
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.10.0
 	github.com/schollz/progressbar/v3 v3.18.0
@@ -159,6 +159,8 @@ require (
 	golang.org/x/sync v0.15.0
 	google.golang.org/grpc/security/advancedtls v1.0.0
 )
+
+require github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
 
 require (
 	cel.dev/expr v0.23.0 // indirect
