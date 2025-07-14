@@ -109,7 +109,7 @@ require (
 	golang.org/x/text v0.26.0 // indirect
 	golang.org/x/tools v0.34.0
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
-	google.golang.org/api v0.240.0
+	google.golang.org/api v0.241.0
 	google.golang.org/genproto v0.0.0-20250603155806-513f23925822 // indirect
 	google.golang.org/grpc v1.73.0
 	google.golang.org/protobuf v1.36.6
@@ -159,6 +159,8 @@ require (
 	golang.org/x/sync v0.15.0
 	google.golang.org/grpc/security/advancedtls v1.0.0
 )
+
+require github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
 
 require (
 	cel.dev/expr v0.23.0 // indirect
