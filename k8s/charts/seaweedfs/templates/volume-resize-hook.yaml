@@ -1,40 +1,54 @@
-{{- if and .Values.volume.enabled .Values.volume.resizeHook.enabled }}
 {{- $seaweedfsName := include "seaweedfs.name" $ }}
-{{- $replicas := int .Values.volume.replicas -}}
-{{- $statefulsetName := printf "%s-volume" $seaweedfsName -}}
-{{- $statefulset := (lookup "apps/v1" "StatefulSet" .Release.Namespace $statefulsetName) -}}
+{{- $volumes := deepCopy .Values.volumes | mergeOverwrite (dict "" .Values.volume)  }}
 
-{{/* Check for changes in volumeClaimTemplates */}}
-{{- $templateChangesRequired := false -}}
-{{- if $statefulset -}}
-  {{- range $dir := .Values.volume.dataDirs -}}
-    {{- if eq .type "persistentVolumeClaim" -}}
-      {{- $desiredSize := .size -}}
-      {{- range $statefulset.spec.volumeClaimTemplates -}}
-        {{- if and (eq .metadata.name $dir.name) (ne .spec.resources.requests.storage $desiredSize) -}}
-          {{- $templateChangesRequired = true -}}
-        {{- end -}}
-      {{- end -}}
-    {{- end -}}
-  {{- end -}}
-{{- end -}}
 
-{{/* Check for the need for patching existing PVCs */}}
-{{- $pvcChangesRequired := false -}}
-{{- range $dir := .Values.volume.dataDirs -}}
-  {{- if eq .type "persistentVolumeClaim" -}}
-    {{- $desiredSize := .size -}}
-    {{- range $i, $e := until $replicas }}
-      {{- $pvcName := printf "%s-%s-volume-%d" $dir.name $seaweedfsName $e -}}
-      {{- $currentPVC := (lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $pvcName) -}}
-      {{- if and $currentPVC (ne ($currentPVC.spec.resources.requests.storage | toString) $desiredSize) -}}
-        {{- $pvcChangesRequired = true -}}
-      {{- end -}}
-    {{- end -}}
-  {{- end -}}
-{{- end -}}
+{{- if .Values.volume.resizeHook.enabled }}
+{{-   $commands := list }}
+{{-   range $vname, $volume := $volumes }}
+{{-     $volumeName := trimSuffix "-" (printf "volume-%s" $vname) }}
+{{-     $volume := mergeOverwrite (deepCopy $.Values.volume) (dict "enabled" true) $volume }}
 
-{{- if or $templateChangesRequired $pvcChangesRequired }}
+{{-     if $volume.enabled }}
+{{-       $replicas := int $volume.replicas -}}
+{{-       $statefulsetName := printf "%s-%s" $seaweedfsName $volumeName -}}
+{{-       $statefulset := (lookup "apps/v1" "StatefulSet" $.Release.Namespace $statefulsetName) -}}
+
+{{/*      Check for changes in volumeClaimTemplates */}}
+{{-       if $statefulset }}
+{{-         range $dir := $volume.dataDirs }}
+{{-           if eq .type "persistentVolumeClaim" }}
+{{-             $desiredSize := .size }}
+{{-             range $statefulset.spec.volumeClaimTemplates }}
+{{-               if and (eq .metadata.name $dir.name) (ne .spec.resources.requests.storage $desiredSize) }}
+{{-                 $commands = append $commands (printf "kubectl delete statefulset %s --cascade=orphan" $statefulsetName) }}
+{{-               end }}
+{{-             end }}
+{{-           end }}
+{{-         end }}
+{{-       end }}
+
+{{/*      Check for the need for patching existing PVCs */}}
+{{-       range $dir := $volume.dataDirs }}
+{{-         if eq .type "persistentVolumeClaim" }}
+{{-           $desiredSize := .size }}
+{{-           range $i, $e := until $replicas }}
+{{-             $pvcName := printf "%s-%s-%s-%d" $dir.name $seaweedfsName $volumeName $e }}
+{{-             $currentPVC := (lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $pvcName) }}
+{{-             if and $currentPVC }}
+{{-             $oldSize := include "common.resource-quantity" $currentPVC.spec.resources.requests.storage }}
+{{-             $newSize := include "common.resource-quantity" $desiredSize }}
+{{-               if gt $newSize $oldSize }}
+{{-               $commands = append $commands (printf "kubectl patch pvc %s-%s-%s-%d -p '{\"spec\":{\"resources\":{\"requests\":{\"storage\":\"%s\"}}}}'" $dir.name $seaweedfsName $volumeName $e $desiredSize) }}
+{{-               end }}
+{{-             end }}
+{{-           end }}
+{{-         end }}
+{{-       end }}
+
+{{-     end }}
+{{-   end }}
+
+{{-   if $commands }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -45,6 +59,9 @@ metadata:
     helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
 spec:
   template:
+    metadata:
+      labels:
+        policy.cozystack.io/allow-to-apiserver: "true"
     spec:
       serviceAccountName: {{ $seaweedfsName }}-volume-resize-hook
       restartPolicy: Never
@@ -55,21 +72,9 @@ spec:
           command: ["sh", "-xec"]
           args:
             - |
-              {{- if $pvcChangesRequired -}}
-              {{- range $dir := .Values.volume.dataDirs -}}
-              {{- if eq .type "persistentVolumeClaim" -}}
-              {{- $desiredSize := .size -}}
-              {{- range $i, $e := until $replicas }}
-              kubectl patch pvc {{ printf "%s-%s-volume-%d" $dir.name $seaweedfsName $e }} -p '{"spec":{"resources":{"requests":{"storage":"{{ $desiredSize }}"}}}}'
+              {{- range $commands }}
+              {{ . }}
               {{- end }}
-              {{- end }}
-              {{- end }}
-              {{- end -}}
-
-              {{- if $templateChangesRequired }}
-              kubectl delete statefulset {{ $statefulsetName }} --cascade=orphan
-              {{- end }}
-{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -111,4 +116,5 @@ roleRef:
   kind: Role
   name: {{ $seaweedfsName }}-volume-resize-hook
   apiGroup: rbac.authorization.k8s.io
+{{-   end }}
 {{- end }}

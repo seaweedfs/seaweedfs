@@ -56,7 +56,8 @@ spec:
         {{ tpl .Values.master.affinity . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.master.topologySpreadConstraints }}
-      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "master") | nindent 6 }}
+      topologySpreadConstraints:
+        {{ tpl .Values.master.topologySpreadConstraints . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.master.tolerations }}
       tolerations:

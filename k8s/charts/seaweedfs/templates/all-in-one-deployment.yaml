@@ -50,7 +50,8 @@ spec:
         {{ tpl .Values.allInOne.affinity . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.allInOne.topologySpreadConstraints }}
-      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "all-in-one") | nindent 6 }}
+      topologySpreadConstraints:
+        {{ tpl .Values.allInOne.topologySpreadConstraint . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.allInOne.tolerations }}
       tolerations:
