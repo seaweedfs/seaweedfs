@@ -213,6 +213,50 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
 		}
 
+	case "GetObjectRetention":
+		s3Actions = []string{"s3:GetObjectRetention"}
+		if strings.HasSuffix(resourcePattern, "/*") {
+			bucket := strings.TrimSuffix(resourcePattern, "/*")
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		} else {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+		}
+
+	case "PutObjectRetention":
+		s3Actions = []string{"s3:PutObjectRetention"}
+		if strings.HasSuffix(resourcePattern, "/*") {
+			bucket := strings.TrimSuffix(resourcePattern, "/*")
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		} else {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+		}
+
+	case "GetObjectLegalHold":
+		s3Actions = []string{"s3:GetObjectLegalHold"}
+		if strings.HasSuffix(resourcePattern, "/*") {
+			bucket := strings.TrimSuffix(resourcePattern, "/*")
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		} else {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+		}
+
+	case "PutObjectLegalHold":
+		s3Actions = []string{"s3:PutObjectLegalHold"}
+		if strings.HasSuffix(resourcePattern, "/*") {
+			bucket := strings.TrimSuffix(resourcePattern, "/*")
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		} else {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+		}
+
+	case "GetBucketObjectLockConfiguration":
+		s3Actions = []string{"s3:GetBucketObjectLockConfiguration"}
+		resources = []string{fmt.Sprintf("arn:aws:s3:::%s", resourcePattern)}
+
+	case "PutBucketObjectLockConfiguration":
+		s3Actions = []string{"s3:PutBucketObjectLockConfiguration"}
+		resources = []string{fmt.Sprintf("arn:aws:s3:::%s", resourcePattern)}
+
 	default:
 		return nil, fmt.Errorf("unknown action type: %s", actionType)
 	}
@@ -279,6 +323,24 @@ func GetActionMappings() map[string][]string {
 		},
 		"BypassGovernanceRetention": {
 			"s3:BypassGovernanceRetention",
+		},
+		"GetObjectRetention": {
+			"s3:GetObjectRetention",
+		},
+		"PutObjectRetention": {
+			"s3:PutObjectRetention",
+		},
+		"GetObjectLegalHold": {
+			"s3:GetObjectLegalHold",
+		},
+		"PutObjectLegalHold": {
+			"s3:PutObjectLegalHold",
+		},
+		"GetBucketObjectLockConfiguration": {
+			"s3:GetBucketObjectLockConfiguration",
+		},
+		"PutBucketObjectLockConfiguration": {
+			"s3:PutBucketObjectLockConfiguration",
 		},
 	}
 }

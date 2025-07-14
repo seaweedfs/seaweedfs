@@ -205,12 +205,21 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         </div>
                         <div class="mb-3">
                             <label for="actions" class="form-label">Permissions</label>
-                            <select multiple class="form-control" id="actions" name="actions">
+                            <select multiple class="form-control" id="actions" name="actions" size="10">
                                 <option value="Admin">Admin (Full Access)</option>
                                 <option value="Read">Read</option>
                                 <option value="Write">Write</option>
                                 <option value="List">List</option>
                                 <option value="Tagging">Tagging</option>
+                                <optgroup label="Object Lock Permissions">
+                                    <option value="BypassGovernanceRetention">Bypass Governance Retention</option>
+                                    <option value="GetObjectRetention">Get Object Retention</option>
+                                    <option value="PutObjectRetention">Put Object Retention</option>
+                                    <option value="GetObjectLegalHold">Get Object Legal Hold</option>
+                                    <option value="PutObjectLegalHold">Put Object Legal Hold</option>
+                                    <option value="GetBucketObjectLockConfiguration">Get Bucket Object Lock Configuration</option>
+                                    <option value="PutBucketObjectLockConfiguration">Put Bucket Object Lock Configuration</option>
+                                </optgroup>
                             </select>
                             <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple permissions</small>
                         </div>
@@ -249,12 +258,21 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         </div>
                         <div class="mb-3">
                             <label for="editActions" class="form-label">Permissions</label>
-                            <select multiple class="form-control" id="editActions" name="actions">
+                            <select multiple class="form-control" id="editActions" name="actions" size="10">
                                 <option value="Admin">Admin (Full Access)</option>
                                 <option value="Read">Read</option>
                                 <option value="Write">Write</option>
                                 <option value="List">List</option>
                                 <option value="Tagging">Tagging</option>
+                                <optgroup label="Object Lock Permissions">
+                                    <option value="BypassGovernanceRetention">Bypass Governance Retention</option>
+                                    <option value="GetObjectRetention">Get Object Retention</option>
+                                    <option value="PutObjectRetention">Put Object Retention</option>
+                                    <option value="GetObjectLegalHold">Get Object Legal Hold</option>
+                                    <option value="PutObjectLegalHold">Put Object Legal Hold</option>
+                                    <option value="GetBucketObjectLockConfiguration">Get Bucket Object Lock Configuration</option>
+                                    <option value="PutBucketObjectLockConfiguration">Put Bucket Object Lock Configuration</option>
+                                </optgroup>
                             </select>
                         </div>
                     </form>
