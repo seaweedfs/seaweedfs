@@ -107,6 +107,9 @@ func newConfigWithDefaults(configuration util.Configuration, prefix string) *con
 	if backoffSeconds := configuration.GetInt(prefix + "backoff_seconds"); backoffSeconds > 0 {
 		c.backoffSeconds = backoffSeconds
 	}
+	if maxBackoffSeconds := configuration.GetInt(prefix + "max_backoff_seconds"); maxBackoffSeconds > 0 {
+		c.maxBackoffSeconds = maxBackoffSeconds
+	}
 	if timeout := configuration.GetInt(prefix + "timeout_seconds"); timeout > 0 {
 		c.timeoutSeconds = timeout
 	}
