@@ -403,8 +403,8 @@ func captureCORSHeaders(w http.ResponseWriter, corsHeaders []string) map[string]
 }
 
 func restoreCORSHeaders(w http.ResponseWriter, capturedCORSHeaders map[string]string) {
-	for corsHeader, values := range capturedCORSHeaders {
-		w.Header()[corsHeader] = values
+	for corsHeader, value := range capturedCORSHeaders {
+		w.Header().Set(corsHeader, value)
 	}
 }
 
