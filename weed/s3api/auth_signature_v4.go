@@ -271,8 +271,10 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	extractedSignedHeaders := make(http.Header)
 	for _, header := range signedHeaders {
 		if header == "host" {
-			extractedSignedHeaders.Set("host", r.Host)
-		} else if values := r.Header[http.CanonicalHeaderKey(header)]; len(values) > 0 {
+			extractedSignedHeaders[header] = []string{r.Host}
+			continue
+		}
+		if values := r.Header[http.CanonicalHeaderKey(header)]; len(values) > 0 {
 			extractedSignedHeaders[http.CanonicalHeaderKey(header)] = values
 		}
 	}
@@ -433,10 +435,9 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 		}
 		// For all other headers we need to find them in the HTTP headers and copy them over.
 		// We skip non-existent headers to be compatible with AWS signatures.
-		if _, ok := reqHeaders[http.CanonicalHeaderKey(header)]; !ok {
-			continue
+		if values, ok := reqHeaders[http.CanonicalHeaderKey(header)]; ok {
+			extractedSignedHeaders[header] = values
 		}
-		extractedSignedHeaders[header] = reqHeaders[http.CanonicalHeaderKey(header)]
 	}
 	return extractedSignedHeaders, s3err.ErrNone
 }
@@ -588,11 +589,11 @@ func encodePath(pathName string) string {
 			case '-', '_', '.', '~', '/': // §2.3 Unreserved characters (mark)
 				encodedPathname = encodedPathname + string(s)
 			default:
-				len := utf8.RuneLen(s)
-				if len < 0 {
+				runeLen := utf8.RuneLen(s)
+				if runeLen < 0 {
 					return pathName
 				}
-				u := make([]byte, len)
+				u := make([]byte, runeLen)
 				utf8.EncodeRune(u, s)
 				for _, r := range u {
 					hex := hex.EncodeToString([]byte{r})
