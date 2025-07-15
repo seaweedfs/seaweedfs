@@ -129,43 +129,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter.Methods(http.MethodGet).Path("/status").HandlerFunc(s3a.StatusHandler)
 	apiRouter.Methods(http.MethodGet).Path("/healthz").HandlerFunc(s3a.StatusHandler)
 
-	// Global OPTIONS handler for service-level requests (non-bucket requests)
-	// This handles requests like OPTIONS /, OPTIONS /status, OPTIONS /healthz
-	apiRouter.Methods(http.MethodOptions).PathPrefix("/").HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			// Only handle if this is not a bucket-specific request
-			vars := mux.Vars(r)
-			bucket := vars["bucket"]
-			if bucket != "" {
-				// This is a bucket-specific request, skip
-				return
-			}
-
-			origin := r.Header.Get("Origin")
-			if origin != "" {
-				if len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
-					origin = "*"
-				} else {
-					originFound := false
-					for _, allowedOrigin := range s3a.option.AllowedOrigins {
-						if origin == allowedOrigin {
-							originFound = true
-						}
-					}
-					if !originFound {
-						writeFailureResponse(w, r, http.StatusForbidden)
-						return
-					}
-				}
-			}
-
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Expose-Headers", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "*")
-			w.Header().Set("Access-Control-Allow-Headers", "*")
-			writeSuccessResponseEmpty(w, r)
-		})
-
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
 		domainNames := strings.Split(s3a.option.DomainName, ",")
@@ -348,6 +311,45 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// raw buckets
 
 	}
+
+	// Global OPTIONS handler for service-level requests (non-bucket requests)
+	// This handles requests like OPTIONS /, OPTIONS /status, OPTIONS /healthz
+	// Place this after bucket handlers to avoid interfering with bucket CORS middleware
+	apiRouter.Methods(http.MethodOptions).PathPrefix("/").HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			// Only handle if this is not a bucket-specific request
+			vars := mux.Vars(r)
+			bucket := vars["bucket"]
+			if bucket != "" {
+				// This is a bucket-specific request, let bucket CORS middleware handle it
+				http.NotFound(w, r)
+				return
+			}
+
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				if len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
+					origin = "*"
+				} else {
+					originFound := false
+					for _, allowedOrigin := range s3a.option.AllowedOrigins {
+						if origin == allowedOrigin {
+							originFound = true
+						}
+					}
+					if !originFound {
+						writeFailureResponse(w, r, http.StatusForbidden)
+						return
+					}
+				}
+			}
+
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Expose-Headers", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "*")
+			w.Header().Set("Access-Control-Allow-Headers", "*")
+			writeSuccessResponseEmpty(w, r)
+		})
 
 	// ListBuckets
 	apiRouter.Methods(http.MethodGet).Path("/").HandlerFunc(track(s3a.ListBucketsHandler, "LIST"))

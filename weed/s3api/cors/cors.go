@@ -14,6 +14,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
+// S3 metadata file name constant to avoid typos and reduce duplication
+const S3MetadataFileName = ".s3metadata"
+
 // CORSRule represents a single CORS rule
 type CORSRule struct {
 	ID             string   `xml:"ID,omitempty" json:"ID,omitempty"`
@@ -429,7 +432,7 @@ func NewStorage(filerClient FilerClient, entryGetter EntryGetter, bucketsPath st
 // Store stores CORS configuration in the filer
 func (s *Storage) Store(bucket string, config *CORSConfiguration) error {
 	// Store in bucket metadata
-	bucketMetadataPath := fmt.Sprintf("%s/%s/.s3metadata", s.bucketsPath, bucket)
+	bucketMetadataPath := fmt.Sprintf("%s/%s/%s", s.bucketsPath, bucket, S3MetadataFileName)
 
 	// Get existing metadata
 	existingEntry, err := s.entryGetter.GetEntry("", bucketMetadataPath)
@@ -456,7 +459,7 @@ func (s *Storage) Store(bucket string, config *CORSConfiguration) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: s.bucketsPath + "/" + bucket,
 			Entry: &filer_pb.Entry{
-				Name:        ".s3metadata",
+				Name:        S3MetadataFileName,
 				IsDirectory: false,
 				Attributes: &filer_pb.FuseAttributes{
 					Crtime:   time.Now().Unix(),
@@ -474,7 +477,7 @@ func (s *Storage) Store(bucket string, config *CORSConfiguration) error {
 
 // Load loads CORS configuration from the filer
 func (s *Storage) Load(bucket string) (*CORSConfiguration, error) {
-	bucketMetadataPath := fmt.Sprintf("%s/%s/.s3metadata", s.bucketsPath, bucket)
+	bucketMetadataPath := fmt.Sprintf("%s/%s/%s", s.bucketsPath, bucket, S3MetadataFileName)
 
 	entry, err := s.entryGetter.GetEntry("", bucketMetadataPath)
 	if err != nil || entry == nil {
@@ -511,7 +514,7 @@ func (s *Storage) Load(bucket string) (*CORSConfiguration, error) {
 
 // Delete deletes CORS configuration from the filer
 func (s *Storage) Delete(bucket string) error {
-	bucketMetadataPath := fmt.Sprintf("%s/%s/.s3metadata", s.bucketsPath, bucket)
+	bucketMetadataPath := fmt.Sprintf("%s/%s/%s", s.bucketsPath, bucket, S3MetadataFileName)
 
 	entry, err := s.entryGetter.GetEntry("", bucketMetadataPath)
 	if err != nil || entry == nil {
@@ -540,7 +543,7 @@ func (s *Storage) Delete(bucket string) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: s.bucketsPath + "/" + bucket,
 			Entry: &filer_pb.Entry{
-				Name:        ".s3metadata",
+				Name:        S3MetadataFileName,
 				IsDirectory: false,
 				Attributes: &filer_pb.FuseAttributes{
 					Crtime:   time.Now().Unix(),
