@@ -342,9 +342,28 @@ func buildResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse {
 		response.AllowMethods = strings.Join(rule.AllowedMethods, ", ")
 	}
 
-	// Set allowed headers - for preflight requests, return all allowed headers
+	// Set allowed headers
 	if corsReq.IsPreflightRequest && len(rule.AllowedHeaders) > 0 {
-		response.AllowHeaders = strings.Join(rule.AllowedHeaders, ", ")
+		// For preflight requests, check if wildcard is allowed
+		hasWildcard := false
+		for _, header := range rule.AllowedHeaders {
+			if header == "*" {
+				hasWildcard = true
+				break
+			}
+		}
+
+		if hasWildcard && len(corsReq.AccessControlRequestHeaders) > 0 {
+			// Return the specific headers that were requested when wildcard is allowed
+			response.AllowHeaders = strings.Join(corsReq.AccessControlRequestHeaders, ", ")
+		} else if len(corsReq.AccessControlRequestHeaders) > 0 {
+			// For non-wildcard cases, return the requested headers (preserving case)
+			// since we already validated they are allowed in matchesRule
+			response.AllowHeaders = strings.Join(corsReq.AccessControlRequestHeaders, ", ")
+		} else {
+			// Fallback to configured headers if no specific headers were requested
+			response.AllowHeaders = strings.Join(rule.AllowedHeaders, ", ")
+		}
 	} else if len(rule.AllowedHeaders) > 0 {
 		// For non-preflight requests, return the allowed headers from the rule
 		response.AllowHeaders = strings.Join(rule.AllowedHeaders, ", ")
