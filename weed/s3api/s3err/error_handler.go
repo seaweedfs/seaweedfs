@@ -90,6 +90,8 @@ func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
 		if !isBucketRequest && w.Header().Get("Access-Control-Allow-Origin") == "" {
 			// This is a service-level request (like OPTIONS /), apply static CORS
 			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "*")
+			w.Header().Set("Access-Control-Allow-Headers", "*")
 			w.Header().Set("Access-Control-Expose-Headers", "*")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
