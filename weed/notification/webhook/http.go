@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -61,8 +64,8 @@ func (h *httpClient) sendMessage(message *webhookMessage) error {
 
 	resp, err := util_http.Do(req)
 	if err != nil {
-		if resp != nil {
-			_ = resp.Body.Close()
+		if err = drainResponse(resp); err != nil {
+			glog.Errorf("failed to drain response: %v", err)
 		}
 
 		return fmt.Errorf("failed to send request: %v", err)
@@ -74,4 +77,17 @@ func (h *httpClient) sendMessage(message *webhookMessage) error {
 	}
 
 	return nil
+}
+
+func drainResponse(resp *http.Response) error {
+	if resp == nil || resp.Body == nil {
+		return nil
+	}
+
+	_, err := io.ReadAll(resp.Body)
+
+	return errors.Join(
+		err,
+		resp.Body.Close(),
+	)
 }
