@@ -196,7 +196,7 @@ func (w *Queue) logDeadLetterMessages() error {
 		for {
 			select {
 			case msg := <-ch:
-				glog.Errorf("received dead letter message: %v", msg)
+				glog.Errorf("received dead letter message: %s, key: %s", string(msg.Payload), msg.Metadata["key"])
 			case <-w.ctx.Done():
 				return
 			}
