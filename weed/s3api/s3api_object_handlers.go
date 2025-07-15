@@ -20,6 +20,17 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
+// corsHeaders defines the CORS headers that need to be preserved
+// Package-level constant to avoid repeated allocations
+var corsHeaders = []string{
+	"Access-Control-Allow-Origin",
+	"Access-Control-Allow-Methods",
+	"Access-Control-Allow-Headers",
+	"Access-Control-Expose-Headers",
+	"Access-Control-Max-Age",
+	"Access-Control-Allow-Credentials",
+}
+
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 	mimeBuffer := make([]byte, 512)
 	size, _ := dataReader.Read(mimeBuffer)
@@ -384,14 +395,7 @@ func setUserMetadataKeyToLowercase(resp *http.Response) {
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
 	// Preserve existing CORS headers that may have been set by middleware
 	existingCORSHeaders := make(map[string]string)
-	for _, corsHeader := range []string{
-		"Access-Control-Allow-Origin",
-		"Access-Control-Allow-Methods",
-		"Access-Control-Allow-Headers",
-		"Access-Control-Expose-Headers",
-		"Access-Control-Max-Age",
-		"Access-Control-Allow-Credentials",
-	} {
+	for _, corsHeader := range corsHeaders {
 		if value := w.Header().Get(corsHeader); value != "" {
 			existingCORSHeaders[corsHeader] = value
 		}

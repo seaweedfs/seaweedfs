@@ -44,7 +44,7 @@ func TestCORSPreflightRequest(t *testing.T) {
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
 	// Create OPTIONS request
-	req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", defaultConfig.Endpoint, bucketName), nil)
+	req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", getDefaultConfig().Endpoint, bucketName), nil)
 	require.NoError(t, err, "Should be able to create OPTIONS request")
 
 	// Add CORS preflight headers
@@ -104,7 +104,7 @@ func TestCORSActualRequest(t *testing.T) {
 	// Test GET request with CORS headers using raw HTTP
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/%s/%s", defaultConfig.Endpoint, bucketName, objectKey), nil)
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/%s/%s", getDefaultConfig().Endpoint, bucketName, objectKey), nil)
 	require.NoError(t, err, "Should be able to create GET request")
 
 	// Add Origin header to simulate CORS request
@@ -189,7 +189,7 @@ func TestCORSOriginMatching(t *testing.T) {
 			// Test preflight request
 			httpClient := &http.Client{Timeout: 10 * time.Second}
 
-			req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", defaultConfig.Endpoint, bucketName), nil)
+			req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", getDefaultConfig().Endpoint, bucketName), nil)
 			require.NoError(t, err, "Should be able to create OPTIONS request")
 
 			req.Header.Set("Origin", tc.requestOrigin)
@@ -282,7 +282,7 @@ func TestCORSHeaderMatching(t *testing.T) {
 			// Test preflight request
 			httpClient := &http.Client{Timeout: 10 * time.Second}
 
-			req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", defaultConfig.Endpoint, bucketName), nil)
+			req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", getDefaultConfig().Endpoint, bucketName), nil)
 			require.NoError(t, err, "Should be able to create OPTIONS request")
 
 			req.Header.Set("Origin", "https://example.com")
@@ -319,7 +319,7 @@ func TestCORSWithoutConfiguration(t *testing.T) {
 	// Test preflight request without CORS configuration
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
-	req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", defaultConfig.Endpoint, bucketName), nil)
+	req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", getDefaultConfig().Endpoint, bucketName), nil)
 	require.NoError(t, err, "Should be able to create OPTIONS request")
 
 	req.Header.Set("Origin", "https://example.com")
@@ -375,7 +375,7 @@ func TestCORSMethodMatching(t *testing.T) {
 		t.Run(fmt.Sprintf("method_%s", tc.method), func(t *testing.T) {
 			httpClient := &http.Client{Timeout: 10 * time.Second}
 
-			req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", defaultConfig.Endpoint, bucketName), nil)
+			req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", getDefaultConfig().Endpoint, bucketName), nil)
 			require.NoError(t, err, "Should be able to create OPTIONS request")
 
 			req.Header.Set("Origin", "https://example.com")
@@ -434,7 +434,7 @@ func TestCORSMultipleRulesMatching(t *testing.T) {
 	// Test first rule
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
-	req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", defaultConfig.Endpoint, bucketName), nil)
+	req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", getDefaultConfig().Endpoint, bucketName), nil)
 	require.NoError(t, err, "Should be able to create OPTIONS request")
 
 	req.Header.Set("Origin", "https://example.com")
@@ -451,7 +451,7 @@ func TestCORSMultipleRulesMatching(t *testing.T) {
 	assert.Equal(t, "3600", resp.Header.Get("Access-Control-Max-Age"), "Should have first rule's max age")
 
 	// Test second rule
-	req2, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", defaultConfig.Endpoint, bucketName), nil)
+	req2, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", getDefaultConfig().Endpoint, bucketName), nil)
 	require.NoError(t, err, "Should be able to create OPTIONS request")
 
 	req2.Header.Set("Origin", "https://api.example.com")

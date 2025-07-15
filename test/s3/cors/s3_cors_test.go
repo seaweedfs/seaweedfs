@@ -28,19 +28,23 @@ type S3TestConfig struct {
 	SkipVerifySSL bool
 }
 
-// Default test configuration - should match test_config.json
-var defaultConfig = &S3TestConfig{
-	Endpoint:      "http://localhost:8333", // Default SeaweedFS S3 port
-	AccessKey:     "some_access_key1",
-	SecretKey:     "some_secret_key1",
-	Region:        "us-east-1",
-	BucketPrefix:  "test-cors-",
-	UseSSL:        false,
-	SkipVerifySSL: true,
+// getDefaultConfig returns a fresh instance of the default test configuration
+// to avoid parallel test issues with global mutable state
+func getDefaultConfig() *S3TestConfig {
+	return &S3TestConfig{
+		Endpoint:      "http://localhost:8333", // Default SeaweedFS S3 port
+		AccessKey:     "some_access_key1",
+		SecretKey:     "some_secret_key1",
+		Region:        "us-east-1",
+		BucketPrefix:  "test-cors-",
+		UseSSL:        false,
+		SkipVerifySSL: true,
+	}
 }
 
 // getS3Client creates an AWS S3 client for testing
 func getS3Client(t *testing.T) *s3.Client {
+	defaultConfig := getDefaultConfig()
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(defaultConfig.Region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
@@ -66,6 +70,7 @@ func getS3Client(t *testing.T) *s3.Client {
 
 // createTestBucket creates a test bucket with a unique name
 func createTestBucket(t *testing.T, client *s3.Client) string {
+	defaultConfig := getDefaultConfig()
 	bucketName := fmt.Sprintf("%s%d", defaultConfig.BucketPrefix, time.Now().UnixNano())
 
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{

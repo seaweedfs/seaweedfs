@@ -2,7 +2,6 @@ package cors
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -148,24 +147,4 @@ func (m *Middleware) HandleOptionsRequest(w http.ResponseWriter, r *http.Request
 	// Apply CORS headers and return success
 	ApplyHeaders(w, corsResp)
 	w.WriteHeader(http.StatusOK)
-}
-
-// ShouldApplyCORS checks if CORS should be applied to the current request
-func ShouldApplyCORS(r *http.Request) bool {
-	// Apply CORS to all bucket and object operations
-	path := r.URL.Path
-
-	// Skip CORS for service-level operations
-	if path == "/" || path == "" {
-		return false
-	}
-
-	// Skip CORS for bucket listing
-	if strings.HasPrefix(path, "/") && !strings.Contains(path[1:], "/") {
-		// This is a bucket-level operation
-		return true
-	}
-
-	// This is an object-level operation
-	return true
 }

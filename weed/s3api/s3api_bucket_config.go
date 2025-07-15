@@ -3,6 +3,8 @@ package s3api
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -255,6 +257,18 @@ func (s3a *S3ApiServer) removeBucketConfigKey(bucket, key string) s3err.ErrorCod
 
 // loadCORSFromMetadata loads CORS configuration from bucket metadata
 func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfiguration, error) {
+	// Validate bucket name to prevent path traversal attacks
+	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
+		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
+		return nil, fmt.Errorf("invalid bucket name: %s", bucket)
+	}
+
+	// Clean the bucket name further to prevent any potential path traversal
+	bucket = filepath.Clean(bucket)
+	if bucket == "." || bucket == ".." {
+		return nil, fmt.Errorf("invalid bucket name: %s", bucket)
+	}
+
 	bucketMetadataPath := fmt.Sprintf("%s/%s/.s3metadata", s3a.option.BucketsPath, bucket)
 
 	entry, err := s3a.getEntry("", bucketMetadataPath)
