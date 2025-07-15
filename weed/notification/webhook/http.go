@@ -61,6 +61,10 @@ func (h *httpClient) sendMessage(message *webhookMessage) error {
 
 	resp, err := util_http.Do(req)
 	if err != nil {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+
 		return fmt.Errorf("failed to send request: %v", err)
 	}
 	defer resp.Body.Close()
