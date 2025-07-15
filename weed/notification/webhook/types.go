@@ -12,26 +12,26 @@ import (
 )
 
 const (
-	QueueName       = "webhook"
+	queueName       = "webhook"
 	pubSubTopicName = "webhook_topic"
 	deadLetterTopic = "webhook_dead_letter"
 )
 
-type EventType string
+type eventType string
 
 const (
-	EventTypeCreate EventType = "create"
-	EventTypeDelete EventType = "delete"
-	EventTypeUpdate EventType = "update"
-	EventTypeRename EventType = "rename"
+	eventTypeCreate eventType = "create"
+	eventTypeDelete eventType = "delete"
+	eventTypeUpdate eventType = "update"
+	eventTypeRename eventType = "rename"
 )
 
-func (e EventType) valid() bool {
-	return slices.Contains([]EventType{
-		EventTypeCreate,
-		EventTypeDelete,
-		EventTypeUpdate,
-		EventTypeRename,
+func (e eventType) valid() bool {
+	return slices.Contains([]eventType{
+		eventTypeCreate,
+		eventTypeDelete,
+		eventTypeUpdate,
+		eventTypeRename,
 	},
 		e,
 	)
@@ -157,26 +157,26 @@ func (c *config) validate() error {
 	return nil
 }
 
-func detectEventType(notification *filer_pb.EventNotification) EventType {
+func detectEventType(notification *filer_pb.EventNotification) eventType {
 	hasOldEntry := notification.OldEntry != nil
 	hasNewEntry := notification.NewEntry != nil
 	hasNewParentPath := notification.NewParentPath != ""
 
 	if !hasOldEntry && hasNewEntry {
-		return EventTypeCreate
+		return eventTypeCreate
 	}
 
 	if hasOldEntry && !hasNewEntry {
-		return EventTypeDelete
+		return eventTypeDelete
 	}
 
 	if hasOldEntry && hasNewEntry {
 		if hasNewParentPath {
-			return EventTypeRename
+			return eventTypeRename
 		}
 
-		return EventTypeUpdate
+		return eventTypeUpdate
 	}
 
-	return EventTypeUpdate
+	return eventTypeUpdate
 }

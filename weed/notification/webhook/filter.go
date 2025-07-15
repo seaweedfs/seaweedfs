@@ -8,24 +8,24 @@ import (
 )
 
 type filter struct {
-	eventTypes   map[EventType]bool
+	eventTypes   map[eventType]bool
 	pathPrefixes []string
 }
 
 func newFilter(cfg *config) *filter {
 	f := &filter{
-		eventTypes:   make(map[EventType]bool),
+		eventTypes:   make(map[eventType]bool),
 		pathPrefixes: cfg.pathPrefixes,
 	}
 
 	if len(cfg.eventTypes) == 0 {
-		f.eventTypes[EventTypeCreate] = true
-		f.eventTypes[EventTypeDelete] = true
-		f.eventTypes[EventTypeUpdate] = true
-		f.eventTypes[EventTypeRename] = true
+		f.eventTypes[eventTypeCreate] = true
+		f.eventTypes[eventTypeDelete] = true
+		f.eventTypes[eventTypeUpdate] = true
+		f.eventTypes[eventTypeRename] = true
 	} else {
 		for _, et := range cfg.eventTypes {
-			t := EventType(et)
+			t := eventType(et)
 			if !t.valid() {
 				glog.Warningf("invalid event type: %v", t)
 

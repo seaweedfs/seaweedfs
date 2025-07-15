@@ -34,7 +34,7 @@ type Queue struct {
 }
 
 func (w *Queue) GetName() string {
-	return QueueName
+	return queueName
 }
 
 func (w *Queue) SendMessage(key string, msg proto.Message) error {

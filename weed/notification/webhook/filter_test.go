@@ -11,7 +11,7 @@ func TestFilterEventTypes(t *testing.T) {
 		name          string
 		eventTypes    []string
 		notification  *filer_pb.EventNotification
-		expectedType  EventType
+		expectedType  eventType
 		shouldPublish bool
 	}{
 		{
@@ -20,7 +20,7 @@ func TestFilterEventTypes(t *testing.T) {
 			notification: &filer_pb.EventNotification{
 				NewEntry: &filer_pb.Entry{Name: "test.txt"},
 			},
-			expectedType:  EventTypeCreate,
+			expectedType:  eventTypeCreate,
 			shouldPublish: true,
 		},
 		{
@@ -29,7 +29,7 @@ func TestFilterEventTypes(t *testing.T) {
 			notification: &filer_pb.EventNotification{
 				NewEntry: &filer_pb.Entry{Name: "test.txt"},
 			},
-			expectedType:  EventTypeCreate,
+			expectedType:  eventTypeCreate,
 			shouldPublish: false,
 		},
 		{
@@ -38,7 +38,7 @@ func TestFilterEventTypes(t *testing.T) {
 			notification: &filer_pb.EventNotification{
 				OldEntry: &filer_pb.Entry{Name: "test.txt"},
 			},
-			expectedType:  EventTypeDelete,
+			expectedType:  eventTypeDelete,
 			shouldPublish: true,
 		},
 		{
@@ -48,7 +48,7 @@ func TestFilterEventTypes(t *testing.T) {
 				OldEntry: &filer_pb.Entry{Name: "test.txt"},
 				NewEntry: &filer_pb.Entry{Name: "test.txt"},
 			},
-			expectedType:  EventTypeUpdate,
+			expectedType:  eventTypeUpdate,
 			shouldPublish: true,
 		},
 		{
@@ -59,7 +59,7 @@ func TestFilterEventTypes(t *testing.T) {
 				NewEntry:      &filer_pb.Entry{Name: "new.txt"},
 				NewParentPath: "/new/path",
 			},
-			expectedType:  EventTypeRename,
+			expectedType:  eventTypeRename,
 			shouldPublish: true,
 		},
 		{
@@ -70,7 +70,7 @@ func TestFilterEventTypes(t *testing.T) {
 				NewEntry:      &filer_pb.Entry{Name: "new.txt"},
 				NewParentPath: "/new/path",
 			},
-			expectedType:  EventTypeRename,
+			expectedType:  eventTypeRename,
 			shouldPublish: false,
 		},
 		{
@@ -79,7 +79,7 @@ func TestFilterEventTypes(t *testing.T) {
 			notification: &filer_pb.EventNotification{
 				NewEntry: &filer_pb.Entry{Name: "test.txt"},
 			},
-			expectedType:  EventTypeCreate,
+			expectedType:  eventTypeCreate,
 			shouldPublish: true,
 		},
 	}
