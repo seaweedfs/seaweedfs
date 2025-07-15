@@ -146,7 +146,7 @@ func TestWebhookMessageSerialization(t *testing.T) {
 
 	wmMsg, err := webhookMsg.toWaterMillMessage()
 	if err != nil {
-		t.Fatalf("Failed to convert to windmill message: %v", err)
+		t.Fatalf("Failed to convert to watermill message: %v", err)
 	}
 
 	// Unmarshal the protobuf payload directly
@@ -283,7 +283,7 @@ func TestQueueHandleWebhook(t *testing.T) {
 
 	wmMsg, err := message.toWaterMillMessage()
 	if err != nil {
-		t.Fatalf("Failed to create windmill message: %v", err)
+		t.Fatalf("Failed to create watermill message: %v", err)
 	}
 
 	err = q.handleWebhook(wmMsg)
