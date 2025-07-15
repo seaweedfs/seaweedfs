@@ -1,12 +1,14 @@
 package s3api
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/cors"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -18,6 +20,7 @@ type BucketConfig struct {
 	Ownership    string
 	ACL          []byte
 	Owner        string
+	CORS         *cors.CORSConfiguration
 	LastModified time.Time
 	Entry        *filer_pb.Entry
 }
@@ -116,6 +119,11 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		if owner, exists := bucketEntry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
 		}
+	}
+
+	// Load CORS configuration from .s3metadata
+	if corsConfig, err := s3a.loadCORSFromMetadata(bucket); err == nil {
+		config.CORS = corsConfig
 	}
 
 	// Cache the result
@@ -241,6 +249,69 @@ func (s3a *S3ApiServer) removeBucketConfigKey(bucket, key string) s3err.ErrorCod
 			config.Owner = ""
 		}
 
+		return nil
+	})
+}
+
+// loadCORSFromMetadata loads CORS configuration from bucket metadata
+func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfiguration, error) {
+	bucketMetadataPath := fmt.Sprintf("%s/%s/.s3metadata", s3a.option.BucketsPath, bucket)
+
+	entry, err := s3a.getEntry("", bucketMetadataPath)
+	if err != nil || entry == nil {
+		return nil, fmt.Errorf("no metadata found")
+	}
+
+	if len(entry.Content) == 0 {
+		return nil, fmt.Errorf("no metadata content")
+	}
+
+	var metadata map[string]interface{}
+	if err := json.Unmarshal(entry.Content, &metadata); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal metadata: %v", err)
+	}
+
+	corsData, exists := metadata["cors"]
+	if !exists {
+		return nil, fmt.Errorf("no CORS configuration found")
+	}
+
+	// Convert back to CORSConfiguration
+	corsBytes, err := json.Marshal(corsData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal CORS data: %v", err)
+	}
+
+	var config cors.CORSConfiguration
+	if err := json.Unmarshal(corsBytes, &config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal CORS configuration: %v", err)
+	}
+
+	return &config, nil
+}
+
+// getCORSConfiguration retrieves CORS configuration with caching
+func (s3a *S3ApiServer) getCORSConfiguration(bucket string) (*cors.CORSConfiguration, s3err.ErrorCode) {
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+
+	return config.CORS, s3err.ErrNone
+}
+
+// updateCORSConfiguration updates CORS configuration and invalidates cache
+func (s3a *S3ApiServer) updateCORSConfiguration(bucket string, corsConfig *cors.CORSConfiguration) s3err.ErrorCode {
+	return s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
+		config.CORS = corsConfig
+		return nil
+	})
+}
+
+// removeCORSConfiguration removes CORS configuration and invalidates cache
+func (s3a *S3ApiServer) removeCORSConfiguration(bucket string) s3err.ErrorCode {
+	return s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
+		config.CORS = nil
 		return nil
 	})
 }

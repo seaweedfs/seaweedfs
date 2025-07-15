@@ -129,7 +129,9 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter.Methods(http.MethodGet).Path("/status").HandlerFunc(s3a.StatusHandler)
 	apiRouter.Methods(http.MethodGet).Path("/healthz").HandlerFunc(s3a.StatusHandler)
 
-	apiRouter.Methods(http.MethodOptions).HandlerFunc(
+	// Global OPTIONS handler for service-level requests (non-bucket requests)
+	// This handles requests like OPTIONS / but not OPTIONS /bucket/object
+	apiRouter.Methods(http.MethodOptions).Path("/").HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 			if origin != "" {
@@ -168,7 +170,15 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	}
 	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 
+	// Get CORS middleware instance with caching
+	corsMiddleware := s3a.getCORSMiddleware()
+
 	for _, bucket := range routers {
+		// Apply CORS middleware to bucket routers for automatic CORS header handling
+		bucket.Use(corsMiddleware.Handler)
+
+		// Bucket-specific OPTIONS handler for CORS preflight requests
+		bucket.Methods(http.MethodOptions).HandlerFunc(corsMiddleware.HandleOptionsRequest)
 
 		// each case should follow the next rule:
 		// - requesting object with query must precede any other methods

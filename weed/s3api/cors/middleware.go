@@ -1,0 +1,171 @@
+package cors
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+)
+
+// BucketChecker interface for checking bucket existence
+type BucketChecker interface {
+	CheckBucket(r *http.Request, bucket string) s3err.ErrorCode
+}
+
+// CORSConfigGetter interface for getting CORS configuration
+type CORSConfigGetter interface {
+	GetCORSConfiguration(bucket string) (*CORSConfiguration, s3err.ErrorCode)
+}
+
+// Middleware handles CORS evaluation for all S3 API requests
+type Middleware struct {
+	storage          *Storage
+	bucketChecker    BucketChecker
+	corsConfigGetter CORSConfigGetter
+}
+
+// NewMiddleware creates a new CORS middleware instance
+func NewMiddleware(storage *Storage, bucketChecker BucketChecker, corsConfigGetter CORSConfigGetter) *Middleware {
+	return &Middleware{
+		storage:          storage,
+		bucketChecker:    bucketChecker,
+		corsConfigGetter: corsConfigGetter,
+	}
+}
+
+// Handler returns the CORS middleware handler
+func (m *Middleware) Handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if this is a CORS request
+		corsReq := ParseRequest(r)
+		if corsReq.Origin == "" {
+			// Not a CORS request, continue normally
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Extract bucket from request
+		bucket, _ := s3_constants.GetBucketAndObject(r)
+		if bucket == "" {
+			// No bucket in request, continue normally
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Check if bucket exists
+		if err := m.bucketChecker.CheckBucket(r, bucket); err != s3err.ErrNone {
+			// Bucket doesn't exist, let the normal handler deal with it
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Load CORS configuration from cache
+		config, errCode := m.corsConfigGetter.GetCORSConfiguration(bucket)
+		if errCode != s3err.ErrNone || config == nil {
+			// No CORS configuration, handle based on request type
+			if corsReq.IsPreflightRequest {
+				// Preflight request without CORS config should fail
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return
+			}
+			// Non-preflight request, continue normally
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Evaluate CORS request
+		corsResp, err := EvaluateRequest(config, corsReq)
+		if err != nil {
+			glog.V(3).Infof("CORS evaluation failed for bucket %s: %v", bucket, err)
+			if corsReq.IsPreflightRequest {
+				// Preflight request that doesn't match CORS rules should fail
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return
+			}
+			// Non-preflight request, continue normally but without CORS headers
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Apply CORS headers to response
+		ApplyHeaders(w, corsResp)
+
+		// Handle preflight requests
+		if corsReq.IsPreflightRequest {
+			// Preflight request should return 200 OK with just CORS headers
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Continue with normal request processing
+		next.ServeHTTP(w, r)
+	})
+}
+
+// HandleOptionsRequest handles OPTIONS requests for CORS preflight
+func (m *Middleware) HandleOptionsRequest(w http.ResponseWriter, r *http.Request) {
+	// This is handled by the CORS middleware, but we need a specific OPTIONS handler
+	// for the router to recognize OPTIONS requests
+
+	// Parse CORS request
+	corsReq := ParseRequest(r)
+	if corsReq.Origin == "" {
+		// Not a CORS request
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Extract bucket from request
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if bucket == "" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Check if bucket exists
+	if err := m.bucketChecker.CheckBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+
+	// Load CORS configuration from cache
+	config, errCode := m.corsConfigGetter.GetCORSConfiguration(bucket)
+	if errCode != s3err.ErrNone || config == nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+
+	// Evaluate CORS request
+	corsResp, err := EvaluateRequest(config, corsReq)
+	if err != nil {
+		glog.V(3).Infof("CORS evaluation failed for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+
+	// Apply CORS headers and return success
+	ApplyHeaders(w, corsResp)
+	w.WriteHeader(http.StatusOK)
+}
+
+// ShouldApplyCORS checks if CORS should be applied to the current request
+func ShouldApplyCORS(r *http.Request) bool {
+	// Apply CORS to all bucket and object operations
+	path := r.URL.Path
+
+	// Skip CORS for service-level operations
+	if path == "/" || path == "" {
+		return false
+	}
+
+	// Skip CORS for bucket listing
+	if strings.HasPrefix(path, "/") && !strings.Contains(path[1:], "/") {
+		// This is a bucket-level operation
+		return true
+	}
+
+	// This is an object-level operation
+	return true
+}

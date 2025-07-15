@@ -382,9 +382,31 @@ func setUserMetadataKeyToLowercase(resp *http.Response) {
 }
 
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+	// Preserve existing CORS headers that may have been set by middleware
+	existingCORSHeaders := make(map[string]string)
+	for _, corsHeader := range []string{
+		"Access-Control-Allow-Origin",
+		"Access-Control-Allow-Methods",
+		"Access-Control-Allow-Headers",
+		"Access-Control-Expose-Headers",
+		"Access-Control-Max-Age",
+		"Access-Control-Allow-Credentials",
+	} {
+		if value := w.Header().Get(corsHeader); value != "" {
+			existingCORSHeaders[corsHeader] = value
+		}
+	}
+
+	// Copy headers from proxy response
 	for k, v := range proxyResponse.Header {
 		w.Header()[k] = v
 	}
+
+	// Restore CORS headers that were set by middleware
+	for corsHeader, value := range existingCORSHeaders {
+		w.Header().Set(corsHeader, value)
+	}
+
 	if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
 		w.WriteHeader(http.StatusPartialContent)
 		statusCode = http.StatusPartialContent

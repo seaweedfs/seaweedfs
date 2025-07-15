@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
-	"github.com/gorilla/mux"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 type mimeType string
@@ -76,10 +77,30 @@ func EncodeXMLResponse(response interface{}) []byte {
 func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", time.Now().UnixNano()))
 	w.Header().Set("Accept-Ranges", "bytes")
+
+	// Only set static CORS headers for service-level requests, not bucket-specific requests
 	if r.Header.Get("Origin") != "" {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "*")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		// Check if this is a bucket-specific request
+		path := r.URL.Path
+		isBucketRequest := false
+
+		// A bucket-specific request has a path like /bucket or /bucket/object
+		if path != "/" && path != "" {
+			pathParts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+			if len(pathParts) >= 1 && pathParts[0] != "" {
+				isBucketRequest = true
+			}
+		}
+
+		// Only apply static CORS headers if this is NOT a bucket-specific request
+		// and no bucket-specific CORS headers were already set
+		if !isBucketRequest && w.Header().Get("Access-Control-Allow-Origin") == "" {
+			// This is a service-level request (like OPTIONS /), apply static CORS
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Expose-Headers", "*")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+		// For bucket-specific requests, let the CORS middleware handle the headers
 	}
 }
 
