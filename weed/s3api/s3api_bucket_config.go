@@ -314,18 +314,50 @@ func (s3a *S3ApiServer) getCORSConfiguration(bucket string) (*cors.CORSConfigura
 	return config.CORS, s3err.ErrNone
 }
 
+// getCORSStorage returns a CORS storage instance for persistent operations
+func (s3a *S3ApiServer) getCORSStorage() *cors.Storage {
+	entryGetter := &S3EntryGetter{server: s3a}
+	return cors.NewStorage(s3a, entryGetter, s3a.option.BucketsPath)
+}
+
 // updateCORSConfiguration updates CORS configuration and invalidates cache
 func (s3a *S3ApiServer) updateCORSConfiguration(bucket string, corsConfig *cors.CORSConfiguration) s3err.ErrorCode {
-	return s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
+	// Update in-memory cache
+	errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
 		config.CORS = corsConfig
 		return nil
 	})
+	if errCode != s3err.ErrNone {
+		return errCode
+	}
+
+	// Persist to .s3metadata file
+	storage := s3a.getCORSStorage()
+	if err := storage.Store(bucket, corsConfig); err != nil {
+		glog.Errorf("updateCORSConfiguration: failed to persist CORS config to metadata for bucket %s: %v", bucket, err)
+		return s3err.ErrInternalError
+	}
+
+	return s3err.ErrNone
 }
 
 // removeCORSConfiguration removes CORS configuration and invalidates cache
 func (s3a *S3ApiServer) removeCORSConfiguration(bucket string) s3err.ErrorCode {
-	return s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
+	// Remove from in-memory cache
+	errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
 		config.CORS = nil
 		return nil
 	})
+	if errCode != s3err.ErrNone {
+		return errCode
+	}
+
+	// Remove from .s3metadata file
+	storage := s3a.getCORSStorage()
+	if err := storage.Delete(bucket); err != nil {
+		glog.Errorf("removeCORSConfiguration: failed to remove CORS config from metadata for bucket %s: %v", bucket, err)
+		return s3err.ErrInternalError
+	}
+
+	return s3err.ErrNone
 }
