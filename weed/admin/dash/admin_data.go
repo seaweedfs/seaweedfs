@@ -187,10 +187,13 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 		isLeader = false
 	}
 
-	masterNodes = append(masterNodes, MasterNode{
-		Address:  s.masterAddress,
-		IsLeader: isLeader,
-	})
+	currentMaster := s.masterClient.GetMaster(context.Background())
+	if currentMaster != "" {
+		masterNodes = append(masterNodes, MasterNode{
+			Address:  string(currentMaster),
+			IsLeader: isLeader,
+		})
+	}
 
 	return masterNodes
 }
@@ -222,7 +225,8 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 	})
 
 	if err != nil {
-		glog.Errorf("Failed to get filer nodes from master %s: %v", s.masterAddress, err)
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		glog.Errorf("Failed to get filer nodes from master %s: %v", currentMaster, err)
 		// Return empty list if we can't get filer info from master
 		return []FilerNode{}
 	}
@@ -257,7 +261,8 @@ func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
 	})
 
 	if err != nil {
-		glog.Errorf("Failed to get message broker nodes from master %s: %v", s.masterAddress, err)
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		glog.Errorf("Failed to get message broker nodes from master %s: %v", currentMaster, err)
 		// Return empty list if we can't get broker info from master
 		return []MessageBrokerNode{}
 	}

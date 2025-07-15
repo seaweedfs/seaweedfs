@@ -16,11 +16,7 @@ import (
 
 // WithMasterClient executes a function with a master client connection
 func (s *AdminServer) WithMasterClient(f func(client master_pb.SeaweedClient) error) error {
-	masterAddr := pb.ServerAddress(s.masterAddress)
-
-	return pb.WithMasterClient(false, masterAddr, s.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-		return f(client)
-	})
+	return s.masterClient.WithClient(false, f)
 }
 
 // WithFilerClient executes a function with a filer client connection
@@ -78,7 +74,8 @@ func (s *AdminServer) getDiscoveredFilers() []string {
 	})
 
 	if err != nil {
-		glog.Warningf("Failed to discover filers from master %s: %v", s.masterAddress, err)
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		glog.Warningf("Failed to discover filers from master %s: %v", currentMaster, err)
 		// Return cached filers even if expired, better than nothing
 		return s.cachedFilers
 	}

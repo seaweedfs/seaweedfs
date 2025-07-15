@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/handlers"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -119,6 +120,14 @@ func runAdmin(cmd *Command, args []string) bool {
 		return false
 	}
 
+	// Validate that masters string can be parsed
+	masterAddresses := pb.ServerAddresses(*a.masters).ToAddresses()
+	if len(masterAddresses) == 0 {
+		fmt.Println("Error: no valid master addresses found")
+		fmt.Println("Usage: weed admin -masters=master1:9333,master2:9333")
+		return false
+	}
+
 	// Security warnings
 	if *a.adminPassword == "" {
 		fmt.Println("WARNING: Admin interface is running without authentication!")
@@ -153,7 +162,7 @@ func runAdmin(cmd *Command, args []string) bool {
 		cancel()
 	}()
 
-	// Start the admin server
+	// Start the admin server with all masters
 	err := startAdminServer(ctx, a)
 	if err != nil {
 		fmt.Printf("Admin server error: %v\n", err)

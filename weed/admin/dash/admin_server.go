@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -21,11 +22,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 )
 
 type AdminServer struct {
-	masterAddress   string
+	masterClient    *wdclient.MasterClient
 	templateFS      http.FileSystem
 	dataDir         string
 	grpcDialOption  grpc.DialOption
@@ -56,12 +58,29 @@ type AdminServer struct {
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masterAddress string, templateFS http.FileSystem, dataDir string) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) *AdminServer {
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	// Create master client with multiple master support
+	masterClient := wdclient.NewMasterClient(
+		grpcDialOption,
+		"",      // filerGroup - not needed for admin
+		"admin", // clientType
+		"",      // clientHost - not needed for admin
+		"",      // dataCenter - not needed for admin
+		"",      // rack - not needed for admin
+		*pb.ServerAddresses(masters).ToServiceDiscovery(),
+	)
+
+	// Start master client connection process (like shell and filer do)
+	ctx := context.Background()
+	go masterClient.KeepConnectedToMaster(ctx)
+
 	server := &AdminServer{
-		masterAddress:        masterAddress,
+		masterClient:         masterClient,
 		templateFS:           templateFS,
 		dataDir:              dataDir,
-		grpcDialOption:       security.LoadClientTLS(util.GetViper(), "grpc.client"),
+		grpcDialOption:       grpcDialOption,
 		cacheExpiration:      10 * time.Second,
 		filerCacheExpiration: 30 * time.Second, // Cache filers for 30 seconds
 		configPersistence:    NewConfigPersistence(dataDir),
@@ -606,7 +625,8 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 
 	if err != nil {
 		// If gRPC call fails, log the error but continue with topology data
-		glog.Errorf("Failed to get raft cluster servers from master %s: %v", s.masterAddress, err)
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		glog.Errorf("Failed to get raft cluster servers from master %s: %v", currentMaster, err)
 	}
 
 	// Convert map to slice
@@ -614,14 +634,17 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		masters = append(masters, *masterInfo)
 	}
 
-	// If no masters found at all, add the configured master as fallback
+	// If no masters found at all, add the current master as fallback
 	if len(masters) == 0 {
-		masters = append(masters, MasterInfo{
-			Address:  s.masterAddress,
-			IsLeader: true,
-			Suffrage: "Voter",
-		})
-		leaderCount = 1
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		if currentMaster != "" {
+			masters = append(masters, MasterInfo{
+				Address:  string(currentMaster),
+				IsLeader: true,
+				Suffrage: "Voter",
+			})
+			leaderCount = 1
+		}
 	}
 
 	return &ClusterMastersData{
@@ -1188,7 +1211,8 @@ func (as *AdminServer) GetConfigInfo(c *gin.Context) {
 	configInfo := as.configPersistence.GetConfigInfo()
 
 	// Add additional admin server info
-	configInfo["master_address"] = as.masterAddress
+	currentMaster := as.masterClient.GetMaster(context.Background())
+	configInfo["master_address"] = string(currentMaster)
 	configInfo["cache_expiration"] = as.cacheExpiration.String()
 	configInfo["filer_cache_expiration"] = as.filerCacheExpiration.String()
 

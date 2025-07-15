@@ -23,7 +23,8 @@ func (s *AdminServer) GetClusterTopology() (*ClusterTopology, error) {
 	// Use gRPC only
 	err := s.getTopologyViaGRPC(topology)
 	if err != nil {
-		glog.Errorf("Failed to connect to master server %s: %v", s.masterAddress, err)
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		glog.Errorf("Failed to connect to master server %s: %v", currentMaster, err)
 		return nil, fmt.Errorf("gRPC topology request failed: %v", err)
 	}
 
@@ -40,7 +41,8 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		if err != nil {
-			glog.Errorf("Failed to get volume list from master %s: %v", s.masterAddress, err)
+			currentMaster := s.masterClient.GetMaster(context.Background())
+			glog.Errorf("Failed to get volume list from master %s: %v", currentMaster, err)
 			return err
 		}
 
