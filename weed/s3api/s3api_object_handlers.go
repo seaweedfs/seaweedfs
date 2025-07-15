@@ -393,11 +393,11 @@ func setUserMetadataKeyToLowercase(resp *http.Response) {
 }
 
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-	// Preserve existing CORS headers that may have been set by middleware
-	existingCORSHeaders := make(map[string][]string)
+	// Capture existing CORS headers that may have been set by middleware
+	capturedCORSHeaders := make(map[string]string)
 	for _, corsHeader := range corsHeaders {
-		if values, ok := w.Header()[corsHeader]; ok {
-			existingCORSHeaders[corsHeader] = append([]string{}, values...)
+		if value := w.Header().Get(corsHeader); value != "" {
+			capturedCORSHeaders[corsHeader] = value
 		}
 	}
 
