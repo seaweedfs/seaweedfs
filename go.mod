@@ -100,16 +100,16 @@ require (
 	gocloud.dev v0.42.0
 	gocloud.dev/pubsub/natspubsub v0.42.0
 	gocloud.dev/pubsub/rabbitpubsub v0.42.0
-	golang.org/x/crypto v0.39.0
+	golang.org/x/crypto v0.40.0
 	golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476
-	golang.org/x/image v0.28.0
-	golang.org/x/net v0.41.0
+	golang.org/x/image v0.29.0
+	golang.org/x/net v0.42.0
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sys v0.33.0
-	golang.org/x/text v0.26.0 // indirect
+	golang.org/x/sys v0.34.0
+	golang.org/x/text v0.27.0 // indirect
 	golang.org/x/tools v0.34.0
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
-	google.golang.org/api v0.240.0
+	google.golang.org/api v0.241.0
 	google.golang.org/genproto v0.0.0-20250603155806-513f23925822 // indirect
 	google.golang.org/grpc v1.73.0
 	google.golang.org/protobuf v1.36.6
@@ -132,7 +132,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.83.0
 	github.com/cognusion/imaging v1.0.2
 	github.com/fluent/fluent-logger-golang v1.10.0
-	github.com/getsentry/sentry-go v0.33.0
+	github.com/getsentry/sentry-go v0.34.1
 	github.com/gin-contrib/sessions v1.0.4
 	github.com/gin-gonic/gin v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.2.2
@@ -145,18 +145,18 @@ require (
 	github.com/parquet-go/parquet-go v0.25.1
 	github.com/pkg/sftp v1.13.9
 	github.com/rabbitmq/amqp091-go v1.10.0
-	github.com/rclone/rclone v1.70.2
+	github.com/rclone/rclone v1.70.3
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.11.0
 	github.com/schollz/progressbar/v3 v3.18.0
 	github.com/shirou/gopsutil/v3 v3.24.5
-	github.com/tarantool/go-tarantool/v2 v2.3.2
+	github.com/tarantool/go-tarantool/v2 v2.4.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.112.0
-	go.etcd.io/etcd/client/pkg/v3 v3.6.1
+	go.etcd.io/etcd/client/pkg/v3 v3.6.2
 	go.uber.org/atomic v1.11.0
-	golang.org/x/sync v0.15.0
+	golang.org/x/sync v0.16.0
 	google.golang.org/grpc/security/advancedtls v1.0.0
 )
 
@@ -384,7 +384,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/arch v0.16.0 // indirect
-	golang.org/x/term v0.32.0 // indirect
+	golang.org/x/term v0.33.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250603155806-513f23925822 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250603155806-513f23925822 // indirect

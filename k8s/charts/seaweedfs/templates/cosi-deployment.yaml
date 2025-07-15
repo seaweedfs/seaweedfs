@@ -45,7 +45,8 @@ spec:
         {{ tpl .Values.cosi.affinity . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.cosi.topologySpreadConstraints }}
-      {{- include "seaweedfs.topologySpreadConstraints" (dict "Values" .Values "component" "objectstorage-provisioner") | nindent 6 }}
+      topologySpreadConstraints:
+        {{ tpl .Values.cosi.topologySpreadConstraint . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.cosi.tolerations }}
       tolerations:

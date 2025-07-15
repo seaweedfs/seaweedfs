@@ -220,7 +220,7 @@ func (h *FileBrowserHandlers) UploadFile(c *gin.Context) {
 	}
 
 	// Parse multipart form
-	err := c.Request.ParseMultipartForm(100 << 20) // 100MB max memory
+	err := c.Request.ParseMultipartForm(1 << 30) // 1GB max memory for large file uploads
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse multipart form: " + err.Error()})
 		return
