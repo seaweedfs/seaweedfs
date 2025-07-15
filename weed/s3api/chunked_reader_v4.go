@@ -465,7 +465,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 // getChunkSignature - get chunk signature.
 func (cr *s3ChunkedReader) getChunkSignature(hashedChunk string) string {
 	// Calculate string to sign.
-	stringToSign := signV4ChunkedAlgorithm + "\n" +
+	stringToSign := signV4Algorithm + "-PAYLOAD" + "\n" +
 		cr.seedDate.Format(iso8601Format) + "\n" +
 		getScope(cr.seedDate, cr.region) + "\n" +
 		cr.seedSignature + "\n" +
