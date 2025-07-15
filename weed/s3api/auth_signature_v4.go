@@ -569,7 +569,7 @@ func getSignedHeaders(signedHeaders http.Header) string {
 // if object matches reserved string, no need to encode them
 var reservedObjectNames = regexp.MustCompile("^[a-zA-Z0-9-_.~/]+$")
 
-// encodePath encode the strings from UTF-8 byte representations to HTML hex escape sequences
+// encodePath encodes the strings from UTF-8 byte representations to HTML hex escape sequences
 //
 // This is necessary since regular url.Parse() and url.Encode() functions do not support UTF-8
 // non english characters cannot be parsed due to the nature in which url.Encode() is written
