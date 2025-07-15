@@ -20,6 +20,17 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
+// corsHeaders defines the CORS headers that need to be preserved
+// Package-level constant to avoid repeated allocations
+var corsHeaders = []string{
+	"Access-Control-Allow-Origin",
+	"Access-Control-Allow-Methods",
+	"Access-Control-Allow-Headers",
+	"Access-Control-Expose-Headers",
+	"Access-Control-Max-Age",
+	"Access-Control-Allow-Credentials",
+}
+
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 	mimeBuffer := make([]byte, 512)
 	size, _ := dataReader.Read(mimeBuffer)
@@ -381,10 +392,34 @@ func setUserMetadataKeyToLowercase(resp *http.Response) {
 	}
 }
 
+func captureCORSHeaders(w http.ResponseWriter, headersToCapture []string) map[string]string {
+	captured := make(map[string]string)
+	for _, corsHeader := range headersToCapture {
+		if value := w.Header().Get(corsHeader); value != "" {
+			captured[corsHeader] = value
+		}
+	}
+	return captured
+}
+
+func restoreCORSHeaders(w http.ResponseWriter, capturedCORSHeaders map[string]string) {
+	for corsHeader, value := range capturedCORSHeaders {
+		w.Header().Set(corsHeader, value)
+	}
+}
+
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+	// Capture existing CORS headers that may have been set by middleware
+	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+	// Copy headers from proxy response
 	for k, v := range proxyResponse.Header {
 		w.Header()[k] = v
 	}
+
+	// Restore CORS headers that were set by middleware
+	restoreCORSHeaders(w, capturedCORSHeaders)
+
 	if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
 		w.WriteHeader(http.StatusPartialContent)
 		statusCode = http.StatusPartialContent

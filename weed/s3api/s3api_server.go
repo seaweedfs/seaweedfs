@@ -121,6 +121,35 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	return s3ApiServer, nil
 }
 
+// handleCORSOriginValidation handles the common CORS origin validation logic
+func (s3a *S3ApiServer) handleCORSOriginValidation(w http.ResponseWriter, r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		if len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
+			origin = "*"
+		} else {
+			originFound := false
+			for _, allowedOrigin := range s3a.option.AllowedOrigins {
+				if origin == allowedOrigin {
+					originFound = true
+					break
+				}
+			}
+			if !originFound {
+				writeFailureResponse(w, r, http.StatusForbidden)
+				return false
+			}
+		}
+	}
+
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Access-Control-Expose-Headers", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "*")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	return true
+}
+
 func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
@@ -128,33 +157,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// Readiness Probe
 	apiRouter.Methods(http.MethodGet).Path("/status").HandlerFunc(s3a.StatusHandler)
 	apiRouter.Methods(http.MethodGet).Path("/healthz").HandlerFunc(s3a.StatusHandler)
-
-	apiRouter.Methods(http.MethodOptions).HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			origin := r.Header.Get("Origin")
-			if origin != "" {
-				if len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
-					origin = "*"
-				} else {
-					originFound := false
-					for _, allowedOrigin := range s3a.option.AllowedOrigins {
-						if origin == allowedOrigin {
-							originFound = true
-						}
-					}
-					if !originFound {
-						writeFailureResponse(w, r, http.StatusForbidden)
-						return
-					}
-				}
-			}
-
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Expose-Headers", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "*")
-			w.Header().Set("Access-Control-Allow-Headers", "*")
-			writeSuccessResponseEmpty(w, r)
-		})
 
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
@@ -168,7 +170,16 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	}
 	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
 
+	// Get CORS middleware instance with caching
+	corsMiddleware := s3a.getCORSMiddleware()
+
 	for _, bucket := range routers {
+		// Apply CORS middleware to bucket routers for automatic CORS header handling
+		bucket.Use(corsMiddleware.Handler)
+
+		// Bucket-specific OPTIONS handler for CORS preflight requests
+		// Use PathPrefix to catch all bucket-level preflight routes including /bucket/object
+		bucket.PathPrefix("/").Methods(http.MethodOptions).HandlerFunc(corsMiddleware.HandleOptionsRequest)
 
 		// each case should follow the next rule:
 		// - requesting object with query must precede any other methods
@@ -329,6 +340,25 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// raw buckets
 
 	}
+
+	// Global OPTIONS handler for service-level requests (non-bucket requests)
+	// This handles requests like OPTIONS /, OPTIONS /status, OPTIONS /healthz
+	// Place this after bucket handlers to avoid interfering with bucket CORS middleware
+	apiRouter.Methods(http.MethodOptions).PathPrefix("/").HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			// Only handle if this is not a bucket-specific request
+			vars := mux.Vars(r)
+			bucket := vars["bucket"]
+			if bucket != "" {
+				// This is a bucket-specific request, let bucket CORS middleware handle it
+				http.NotFound(w, r)
+				return
+			}
+
+			if s3a.handleCORSOriginValidation(w, r) {
+				writeSuccessResponseEmpty(w, r)
+			}
+		})
 
 	// ListBuckets
 	apiRouter.Methods(http.MethodGet).Path("/").HandlerFunc(track(s3a.ListBucketsHandler, "LIST"))

@@ -1,10 +1,10 @@
-name: "S3 Versioning and Retention Tests (Go)"
+name: "S3 Go Tests"
 
 on:
   pull_request:
   
 concurrency:
-  group: ${{ github.head_ref }}/s3-versioning-retention
+  group: ${{ github.head_ref }}/s3-go-tests
   cancel-in-progress: true
 
 permissions:
@@ -130,6 +130,54 @@ jobs:
           path: test/s3/versioning/weed-test*.log
           retention-days: 3
 
+  s3-cors-compatibility:
+    name: S3 CORS Compatibility Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run Core CORS Test (AWS S3 compatible)
+        timeout-minutes: 15
+        working-directory: test/s3/cors
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run the specific test that is equivalent to AWS S3 CORS behavior
+          make test-with-server || {
+            echo "❌ Test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-cors-compatibility-logs
+          path: test/s3/cors/weed-test*.log
+          retention-days: 3
+
   s3-retention-tests:
     name: S3 Retention Tests
     runs-on: ubuntu-22.04
@@ -195,6 +243,73 @@ jobs:
         with:
           name: s3-retention-test-logs-${{ matrix.test-type }}
           path: test/s3/retention/weed-test*.log
+          retention-days: 3
+
+  s3-cors-tests:
+    name: S3 CORS Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        test-type: ["quick", "comprehensive"]
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 CORS Tests - ${{ matrix.test-type }}
+        timeout-minutes: 25
+        working-directory: test/s3/cors
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting Tests ==="
+          
+          # Run tests with automatic server management
+          # The test-with-server target handles server startup/shutdown automatically
+          if [ "${{ matrix.test-type }}" = "quick" ]; then
+            # Override TEST_PATTERN for quick tests only
+            make test-with-server TEST_PATTERN="TestCORSConfigurationManagement|TestServiceLevelCORS|TestCORSBasicWorkflow"
+          else
+            # Run all CORS tests
+            make test-with-server
+          fi
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/cors
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            echo "Last 100 lines of server logs:"
+            tail -100 weed-test.log
+          else
+            echo "No server log file found"
+          fi
+          
+          echo "=== Test Environment ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|9333|8080)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-cors-test-logs-${{ matrix.test-type }}
+          path: test/s3/cors/weed-test*.log
           retention-days: 3
 
   s3-retention-worm:
