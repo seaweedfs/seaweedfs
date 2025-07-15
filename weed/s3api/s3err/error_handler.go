@@ -80,17 +80,10 @@ func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
 
 	// Only set static CORS headers for service-level requests, not bucket-specific requests
 	if r.Header.Get("Origin") != "" {
-		// Check if this is a bucket-specific request
-		path := r.URL.Path
-		isBucketRequest := false
-
-		// A bucket-specific request has a path like /bucket or /bucket/object
-		if path != "/" && path != "" {
-			pathParts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-			if len(pathParts) >= 1 && pathParts[0] != "" {
-				isBucketRequest = true
-			}
-		}
+		// Use mux.Vars to detect bucket-specific requests more reliably
+		vars := mux.Vars(r)
+		bucket := vars["bucket"]
+		isBucketRequest := bucket != ""
 
 		// Only apply static CORS headers if this is NOT a bucket-specific request
 		// and no bucket-specific CORS headers were already set

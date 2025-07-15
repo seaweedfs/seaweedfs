@@ -130,9 +130,17 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter.Methods(http.MethodGet).Path("/healthz").HandlerFunc(s3a.StatusHandler)
 
 	// Global OPTIONS handler for service-level requests (non-bucket requests)
-	// This handles requests like OPTIONS / but not OPTIONS /bucket/object
-	apiRouter.Methods(http.MethodOptions).Path("/").HandlerFunc(
+	// This handles requests like OPTIONS /, OPTIONS /status, OPTIONS /healthz
+	apiRouter.Methods(http.MethodOptions).PathPrefix("/").HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
+			// Only handle if this is not a bucket-specific request
+			vars := mux.Vars(r)
+			bucket := vars["bucket"]
+			if bucket != "" {
+				// This is a bucket-specific request, skip
+				return
+			}
+
 			origin := r.Header.Get("Origin")
 			if origin != "" {
 				if len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {

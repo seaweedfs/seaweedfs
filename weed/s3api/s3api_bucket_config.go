@@ -280,7 +280,7 @@ func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfigura
 		return nil, fmt.Errorf("no metadata content")
 	}
 
-	var metadata map[string]interface{}
+	var metadata map[string]json.RawMessage
 	if err := json.Unmarshal(entry.Content, &metadata); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal metadata: %v", err)
 	}
@@ -290,14 +290,9 @@ func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfigura
 		return nil, fmt.Errorf("no CORS configuration found")
 	}
 
-	// Convert back to CORSConfiguration
-	corsBytes, err := json.Marshal(corsData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal CORS data: %v", err)
-	}
-
+	// Directly unmarshal the raw JSON to CORSConfiguration to avoid round-trip allocations
 	var config cors.CORSConfiguration
-	if err := json.Unmarshal(corsBytes, &config); err != nil {
+	if err := json.Unmarshal(corsData, &config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal CORS configuration: %v", err)
 	}
 
