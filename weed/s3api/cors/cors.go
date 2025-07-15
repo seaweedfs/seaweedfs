@@ -194,10 +194,24 @@ func matchesRule(rule *CORSRule, corsReq *CORSRequest) bool {
 		return false
 	}
 
-	// For preflight requests, we only check origin matching
-	// The response building will handle filtering out disallowed methods and headers
-	// This allows partial CORS responses to be sent
+	// For preflight requests, we need to validate both the requested method and headers
 	if corsReq.IsPreflightRequest {
+		// Check if the requested method is allowed
+		if corsReq.AccessControlRequestMethod != "" {
+			if !contains(rule.AllowedMethods, corsReq.AccessControlRequestMethod) {
+				return false
+			}
+		}
+
+		// Check if all requested headers are allowed
+		if len(corsReq.AccessControlRequestHeaders) > 0 {
+			for _, requestedHeader := range corsReq.AccessControlRequestHeaders {
+				if !matchesHeader(rule.AllowedHeaders, requestedHeader) {
+					return false
+				}
+			}
+		}
+
 		return true
 	}
 
@@ -316,30 +330,17 @@ func buildResponse(rule *CORSRule, corsReq *CORSRequest) *CORSResponse {
 		AllowOrigin: corsReq.Origin,
 	}
 
-	// Set allowed methods - for preflight requests, check if the requested method is allowed
-	if corsReq.IsPreflightRequest && corsReq.AccessControlRequestMethod != "" {
-		if contains(rule.AllowedMethods, corsReq.AccessControlRequestMethod) {
-			response.AllowMethods = corsReq.AccessControlRequestMethod
-		} else {
-			// If the requested method is not allowed, return all allowed methods
-			response.AllowMethods = strings.Join(rule.AllowedMethods, ", ")
-		}
+	// Set allowed methods - for preflight requests, return all allowed methods
+	if corsReq.IsPreflightRequest {
+		response.AllowMethods = strings.Join(rule.AllowedMethods, ", ")
 	} else {
 		// For non-preflight requests, return all allowed methods
 		response.AllowMethods = strings.Join(rule.AllowedMethods, ", ")
 	}
 
-	// Set allowed headers - for preflight requests, return the specific headers that were requested and are allowed
-	if corsReq.IsPreflightRequest && len(corsReq.AccessControlRequestHeaders) > 0 {
-		allowedHeaders := make([]string, 0)
-		for _, requestedHeader := range corsReq.AccessControlRequestHeaders {
-			if matchesHeader(rule.AllowedHeaders, requestedHeader) {
-				allowedHeaders = append(allowedHeaders, requestedHeader)
-			}
-		}
-		if len(allowedHeaders) > 0 {
-			response.AllowHeaders = strings.Join(allowedHeaders, ", ")
-		}
+	// Set allowed headers - for preflight requests, return all allowed headers
+	if corsReq.IsPreflightRequest && len(rule.AllowedHeaders) > 0 {
+		response.AllowHeaders = strings.Join(rule.AllowedHeaders, ", ")
 	} else if len(rule.AllowedHeaders) > 0 {
 		// For non-preflight requests, return the allowed headers from the rule
 		response.AllowHeaders = strings.Join(rule.AllowedHeaders, ", ")
