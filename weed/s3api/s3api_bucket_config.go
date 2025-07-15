@@ -124,7 +124,15 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 	}
 
 	// Load CORS configuration from .s3metadata
-	if corsConfig, err := s3a.loadCORSFromMetadata(bucket); err == nil {
+	if corsConfig, err := s3a.loadCORSFromMetadata(bucket); err != nil {
+		if err == filer_pb.ErrNotFound {
+			// Missing metadata is not an error; fall back cleanly
+			glog.V(2).Infof("CORS metadata not found for bucket %s, falling back to default behavior", bucket)
+		} else {
+			// Log parsing or validation errors
+			glog.Errorf("Failed to load CORS configuration for bucket %s: %v", bucket, err)
+		}
+	} else {
 		config.CORS = corsConfig
 	}
 
