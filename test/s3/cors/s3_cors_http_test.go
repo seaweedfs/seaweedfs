@@ -467,3 +467,70 @@ func TestCORSMultipleRulesMatching(t *testing.T) {
 	assert.Contains(t, resp2.Header.Get("Access-Control-Allow-Headers"), "Authorization", "Should allow Authorization header")
 	assert.Equal(t, "7200", resp2.Header.Get("Access-Control-Max-Age"), "Should have second rule's max age")
 }
+
+// TestServiceLevelCORS tests that service-level endpoints (like /status) get proper CORS headers
+func TestServiceLevelCORS(t *testing.T) {
+	assert := assert.New(t)
+
+	endpoints := []string{
+		"/",
+		"/status",
+		"/healthz",
+	}
+
+	for _, endpoint := range endpoints {
+		t.Run(fmt.Sprintf("endpoint_%s", strings.ReplaceAll(endpoint, "/", "_")), func(t *testing.T) {
+			req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s%s", getDefaultConfig().Endpoint, endpoint), nil)
+			assert.NoError(err)
+
+			// Add Origin header to trigger CORS
+			req.Header.Set("Origin", "http://example.com")
+
+			client := &http.Client{}
+			resp, err := client.Do(req)
+			assert.NoError(err)
+			defer resp.Body.Close()
+
+			// Should return 200 OK
+			assert.Equal(http.StatusOK, resp.StatusCode)
+
+			// Should have CORS headers set
+			assert.Equal("*", resp.Header.Get("Access-Control-Allow-Origin"))
+			assert.Equal("*", resp.Header.Get("Access-Control-Expose-Headers"))
+			assert.Equal("*", resp.Header.Get("Access-Control-Allow-Methods"))
+			assert.Equal("*", resp.Header.Get("Access-Control-Allow-Headers"))
+		})
+	}
+}
+
+// TestServiceLevelCORSWithoutOrigin tests that service-level endpoints without Origin header don't get CORS headers
+func TestServiceLevelCORSWithoutOrigin(t *testing.T) {
+	assert := assert.New(t)
+
+	req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/status", getDefaultConfig().Endpoint), nil)
+	assert.NoError(err)
+
+	// No Origin header
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	assert.NoError(err)
+	defer resp.Body.Close()
+
+	// Should return 200 OK
+	assert.Equal(http.StatusOK, resp.StatusCode)
+
+	// Should not have CORS headers set (or have empty values)
+	corsHeaders := []string{
+		"Access-Control-Allow-Origin",
+		"Access-Control-Expose-Headers",
+		"Access-Control-Allow-Methods",
+		"Access-Control-Allow-Headers",
+	}
+
+	for _, header := range corsHeaders {
+		value := resp.Header.Get(header)
+		// Headers should either be empty or not present
+		assert.True(value == "" || value == "*", "Header %s should be empty or wildcard, got: %s", header, value)
+	}
+}

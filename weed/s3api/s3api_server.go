@@ -186,7 +186,8 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Use(corsMiddleware.Handler)
 
 		// Bucket-specific OPTIONS handler for CORS preflight requests
-		bucket.Methods(http.MethodOptions).HandlerFunc(corsMiddleware.HandleOptionsRequest)
+		// Use PathPrefix to catch all bucket-level preflight routes including /bucket/object
+		bucket.PathPrefix("/").Methods(http.MethodOptions).HandlerFunc(corsMiddleware.HandleOptionsRequest)
 
 		// each case should follow the next rule:
 		// - requesting object with query must precede any other methods
