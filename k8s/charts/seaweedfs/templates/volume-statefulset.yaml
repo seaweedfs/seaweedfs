@@ -21,9 +21,6 @@ metadata:
     {{- toYaml $volume.annotations | nindent 4 }}
 {{- end }}
 spec:
-  persistentVolumeClaimRetentionPolicy:
-    whenDeleted: Delete
-    whenScaled: Delete
   serviceName: {{ template "seaweedfs.name" $ }}-{{ $volumeName }}
   replicas: {{ $volume.replicas }}
   podManagementPolicy: {{ $volume.podManagementPolicy }}
