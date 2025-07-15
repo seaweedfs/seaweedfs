@@ -392,14 +392,25 @@ func setUserMetadataKeyToLowercase(resp *http.Response) {
 	}
 }
 
-func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-	// Capture existing CORS headers that may have been set by middleware
-	capturedCORSHeaders := make(map[string]string)
+func captureCORSHeaders(w http.ResponseWriter, corsHeaders []string) map[string]string {
+	captured := make(map[string]string)
 	for _, corsHeader := range corsHeaders {
 		if value := w.Header().Get(corsHeader); value != "" {
-			capturedCORSHeaders[corsHeader] = value
+			captured[corsHeader] = value
 		}
 	}
+	return captured
+}
+
+func restoreCORSHeaders(w http.ResponseWriter, capturedCORSHeaders map[string]string) {
+	for corsHeader, values := range capturedCORSHeaders {
+		w.Header()[corsHeader] = values
+	}
+}
+
+func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+	// Capture existing CORS headers that may have been set by middleware
+	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
 	// Copy headers from proxy response
 	for k, v := range proxyResponse.Header {
@@ -407,9 +418,7 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 	}
 
 	// Restore CORS headers that were set by middleware
-	for corsHeader, values := range existingCORSHeaders {
-		w.Header()[corsHeader] = values
-	}
+	restoreCORSHeaders(w, capturedCORSHeaders)
 
 	if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
 		w.WriteHeader(http.StatusPartialContent)
