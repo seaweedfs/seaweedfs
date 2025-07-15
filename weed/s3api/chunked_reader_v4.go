@@ -104,34 +104,32 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	}
 
 	// Parse date header.
-	if date, err := time.Parse(iso8601Format, dateStr); err != nil {
+	date, err := time.Parse(iso8601Format, dateStr)
+	if err != nil {
 		return nil, "", "", time.Time{}, s3err.ErrMalformedDate
-	} else {
-		// Query string.
-		queryStr := req.URL.Query().Encode()
+	}
+	// Query string.
+	queryStr := req.URL.Query().Encode()
 
-		// Get canonical request.
-		canonicalRequest := getCanonicalRequest(extractedSignedHeaders, payload, queryStr, req.URL.Path, req.Method)
+	// Get canonical request.
+	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, payload, queryStr, req.URL.Path, req.Method)
 
-		// Get string to sign from canonical request.
-		stringToSign := getStringToSign(canonicalRequest, date, signV4Values.Credential.getScope())
+	// Get string to sign from canonical request.
+	stringToSign := getStringToSign(canonicalRequest, date, signV4Values.Credential.getScope())
 
-		// Get hmac signing key.
-		signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), region, "s3")
+	// Get hmac signing key.
+	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), region, "s3")
 
-		// Calculate signature.
-		newSignature := getSignature(signingKey, stringToSign)
+	// Calculate signature.
+	newSignature := getSignature(signingKey, stringToSign)
 
-		// Verify if signature match.
-		if !compareSignatureV4(newSignature, signV4Values.Signature) {
-			return nil, "", "", time.Time{}, s3err.ErrSignatureDoesNotMatch
-		}
-
-		// Return calculated signature.
-		return cred, newSignature, region, date, s3err.ErrNone
+	// Verify if signature match.
+	if !compareSignatureV4(newSignature, signV4Values.Signature) {
+		return nil, "", "", time.Time{}, s3err.ErrSignatureDoesNotMatch
 	}
 
-	return cred, signature, region, date, s3err.ErrNone
+	// Return calculated signature.
+	return cred, newSignature, region, date, s3err.ErrNone
 }
 
 const maxLineLength = 4 * humanize.KiByte // assumed <= bufio.defaultBufSize 4KiB
