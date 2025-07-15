@@ -102,13 +102,12 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 			return nil, "", "", time.Time{}, s3err.ErrMissingDateHeader
 		}
 	}
+
 	// Parse date header.
-	var err error
-	date, err = time.Parse(iso8601Format, dateStr)
+	date, err := time.Parse(iso8601Format, dateStr)
 	if err != nil {
 		return nil, "", "", time.Time{}, s3err.ErrMalformedDate
 	}
-
 	// Query string.
 	queryStr := req.URL.Query().Encode()
 
@@ -118,14 +117,11 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	// Get string to sign from canonical request.
 	stringToSign := getStringToSign(canonicalRequest, date, signV4Values.Credential.getScope())
 
+	// Get hmac signing key.
+	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), region, "s3")
+
 	// Calculate signature.
-	newSignature := iam.getSignature(
-		cred.SecretKey,
-		signV4Values.Credential.scope.date,
-		region,
-		"s3",
-		stringToSign,
-	)
+	newSignature := getSignature(signingKey, stringToSign)
 
 	// Verify if signature match.
 	if !compareSignatureV4(newSignature, signV4Values.Signature) {
@@ -469,58 +465,47 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 // getChunkSignature - get chunk signature.
 func (cr *s3ChunkedReader) getChunkSignature(hashedChunk string) string {
 	// Calculate string to sign.
-	stringToSign := signV4ChunkedAlgorithm + "\n" +
+	stringToSign := signV4Algorithm + "-PAYLOAD" + "\n" +
 		cr.seedDate.Format(iso8601Format) + "\n" +
 		getScope(cr.seedDate, cr.region) + "\n" +
 		cr.seedSignature + "\n" +
 		emptySHA256 + "\n" +
 		hashedChunk
 
-	// Calculate signature.
-	return cr.iam.getSignature(
-		cr.cred.SecretKey,
-		cr.seedDate,
-		cr.region,
-		"s3",
-		stringToSign,
-	)
+	// Get hmac signing key.
+	signingKey := getSigningKey(cr.cred.SecretKey, cr.seedDate.Format(yyyymmdd), cr.region, "s3")
+
+	// Calculate and return signature.
+	return getSignature(signingKey, stringToSign)
 }
 
-// readCRLF - check if reader only has '\r\n' CRLF character.
-// returns malformed encoding if it doesn't.
 func readCRLF(reader *bufio.Reader) error {
 	buf := make([]byte, 2)
-	_, err := reader.Read(buf)
+	_, err := io.ReadFull(reader, buf)
 	if err != nil {
 		return err
 	}
 	return checkCRLF(buf)
 }
 
-// peekCRLF - peeks at the next two bytes to check for CRLF without consuming them.
 func peekCRLF(reader *bufio.Reader) error {
-	peeked, err := reader.Peek(2)
+	buf, err := reader.Peek(2)
 	if err != nil {
 		return err
 	}
-	if err := checkCRLF(peeked); err != nil {
+	if err := checkCRLF(buf); err != nil {
 		return err
 	}
 	return nil
 }
 
-// checkCRLF - checks if the buffer contains '\r\n' CRLF character.
 func checkCRLF(buf []byte) error {
-	if buf[0] != '\r' || buf[1] != '\n' {
+	if len(buf) != 2 || buf[0] != '\r' || buf[1] != '\n' {
 		return errMalformedEncoding
 	}
 	return nil
 }
 
-// Read a line of bytes (up to \n) from b.
-// Give up if the line exceeds maxLineLength.
-// The returned bytes are owned by the bufio.Reader
-// so they are only valid until the next bufio read.
 func readChunkLine(b *bufio.Reader) ([]byte, error) {
 	buf, err := b.ReadSlice('\n')
 	if err != nil {
@@ -536,8 +521,7 @@ func readChunkLine(b *bufio.Reader) ([]byte, error) {
 	if len(buf) >= maxLineLength {
 		return nil, errLineTooLong
 	}
-
-	return buf, nil
+	return trimTrailingWhitespace(buf), nil
 }
 
 // trimTrailingWhitespace - trim trailing white space.
@@ -608,13 +592,11 @@ func parseChunkChecksum(b *bufio.Reader) (ChecksumAlgorithm, []byte) {
 	return extractedAlgorithm, checksumValue
 }
 
-// parseChunkSignature - parse chunk signature.
 func parseChunkSignature(chunk []byte) []byte {
-	chunkSplits := bytes.SplitN(chunk, []byte(s3ChunkSignatureStr), 2)
-	return chunkSplits[1]
+	chunkSplits := bytes.SplitN(chunk, []byte("="), 2)
+	return chunkSplits[1] // Keep only the signature.
 }
 
-// parse hex to uint64.
 func parseHexUint(v []byte) (n uint64, err error) {
 	for i, b := range v {
 		switch {
@@ -636,6 +618,7 @@ func parseHexUint(v []byte) (n uint64, err error) {
 	return
 }
 
+// Checksum Algorithm represents the various checksum algorithms supported.
 type ChecksumAlgorithm int
 
 const (
@@ -649,18 +632,18 @@ const (
 
 func (ca ChecksumAlgorithm) String() string {
 	switch ca {
-	case ChecksumAlgorithmCRC32:
-		return "CRC32"
-	case ChecksumAlgorithmCRC32C:
-		return "CRC32C"
-	case ChecksumAlgorithmCRC64NVMe:
-		return "CRC64NVMe"
-	case ChecksumAlgorithmSHA1:
-		return "SHA1"
-	case ChecksumAlgorithmSHA256:
-		return "SHA256"
 	case ChecksumAlgorithmNone:
 		return ""
+	case ChecksumAlgorithmCRC32:
+		return "x-amz-checksum-crc32"
+	case ChecksumAlgorithmCRC32C:
+		return "x-amz-checksum-crc32c"
+	case ChecksumAlgorithmCRC64NVMe:
+		return "x-amz-checksum-crc64nvme"
+	case ChecksumAlgorithmSHA1:
+		return "x-amz-checksum-sha1"
+	case ChecksumAlgorithmSHA256:
+		return "x-amz-checksum-sha256"
 	}
 	return ""
 }
