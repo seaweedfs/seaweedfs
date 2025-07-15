@@ -392,9 +392,9 @@ func setUserMetadataKeyToLowercase(resp *http.Response) {
 	}
 }
 
-func captureCORSHeaders(w http.ResponseWriter, corsHeaders []string) map[string]string {
+func captureCORSHeaders(w http.ResponseWriter, headersToCapture []string) map[string]string {
 	captured := make(map[string]string)
-	for _, corsHeader := range corsHeaders {
+	for _, corsHeader := range headersToCapture {
 		if value := w.Header().Get(corsHeader); value != "" {
 			captured[corsHeader] = value
 		}
