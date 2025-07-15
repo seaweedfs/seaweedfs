@@ -76,7 +76,7 @@ func TestIsReqAuthenticated(t *testing.T) {
 						SecretKey: "secret_key_1",
 					},
 				},
-				Actions: []string{},
+				Actions: []string{"Read", "Write"},
 			},
 		},
 	})
@@ -149,7 +149,7 @@ func TestCheckAdminRequestAuthType(t *testing.T) {
 						SecretKey: "secret_key_1",
 					},
 				},
-				Actions: []string{},
+				Actions: []string{"Admin", "Read", "Write"},
 			},
 		},
 	})
@@ -170,15 +170,12 @@ func TestCheckAdminRequestAuthType(t *testing.T) {
 
 func BenchmarkGetSignature(b *testing.B) {
 	t := time.Now()
-	iam := IdentityAccessManagement{
-		hashes:       make(map[string]*sync.Pool),
-		hashCounters: make(map[string]*int32),
-	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		iam.getSignature("secret-key", t, "us-east-1", "s3", "random data")
+		signingKey := getSigningKey("secret-key", t.Format(yyyymmdd), "us-east-1", "s3")
+		getSignature(signingKey, "random data")
 	}
 }
 
@@ -252,11 +249,6 @@ func newTestRequest(method, urlStr string, contentLength int64, body io.ReadSeek
 	req.ContentLength = contentLength
 
 	return req, nil
-}
-
-// getSHA256Hash returns SHA-256 hash in hex encoding of given data.
-func getSHA256Hash(data []byte) string {
-	return hex.EncodeToString(getSHA256Sum(data))
 }
 
 // getMD5HashBase64 returns MD5 hash in base64 encoding of given data.
@@ -496,7 +488,8 @@ func preSignV4(iam *IdentityAccessManagement, req *http.Request, accessKeyID, se
 	queryStr := strings.Replace(query.Encode(), "+", "%20", -1)
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, unsignedPayload, queryStr, req.URL.Path, req.Method)
 	stringToSign := getStringToSign(canonicalRequest, date, scope)
-	signature := iam.getSignature(secretAccessKey, date, region, "s3", stringToSign)
+	signingKey := getSigningKey(secretAccessKey, date.Format(yyyymmdd), region, "s3")
+	signature := getSignature(signingKey, stringToSign)
 
 	req.URL.RawQuery = query.Encode()
 

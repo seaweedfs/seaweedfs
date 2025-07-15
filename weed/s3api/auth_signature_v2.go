@@ -22,16 +22,14 @@ import (
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/base64"
-	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"net"
 	"net/http"
-	"net/url"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 // Whitelist resource list that will be used in query string for signature-V2 calculation.
@@ -61,7 +59,7 @@ var resourceList = []string{
 	"website",
 }
 
-// Verify if request has valid AWS Signature Version '2'.
+// Verify if request has AWS Signature Version '2'.
 func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Identity, s3err.ErrorCode) {
 	if isRequestSignatureV2(r) {
 		return iam.doesSignV2Match(r)
@@ -70,277 +68,186 @@ func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Ide
 }
 
 func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.Header) s3err.ErrorCode {
+
 	accessKey := formValues.Get("AWSAccessKeyId")
-	_, cred, found := iam.lookupByAccessKey(accessKey)
+	if accessKey == "" {
+		return s3err.ErrMissingFields
+	}
+
+	identity, cred, found := iam.lookupByAccessKey(accessKey)
 	if !found {
 		return s3err.ErrInvalidAccessKeyID
 	}
+
+	bucket := formValues.Get("bucket")
+	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, "") {
+		return s3err.ErrAccessDenied
+	}
+
 	policy := formValues.Get("Policy")
+	if policy == "" {
+		return s3err.ErrMissingFields
+	}
+
 	signature := formValues.Get("Signature")
+	if signature == "" {
+		return s3err.ErrMissingFields
+	}
+
 	if !compareSignatureV2(signature, calculateSignatureV2(policy, cred.SecretKey)) {
 		return s3err.ErrSignatureDoesNotMatch
 	}
 	return s3err.ErrNone
 }
 
-// Authorization = "AWS" + " " + AWSAccessKeyId + ":" + Signature;
-// Signature = Base64( HMAC-SHA1( YourSecretKey, UTF-8-Encoding-Of( StringToSign ) ) );
-//
-// StringToSign = HTTP-Verb + "\n" +
-//  	Content-Md5 + "\n" +
-//  	Content-Type + "\n" +
-//  	Date + "\n" +
-//  	CanonicalizedProtocolHeaders +
-//  	CanonicalizedResource;
-//
-// CanonicalizedResource = [ "/" + Bucket ] +
-//  	<HTTP-Request-URI, from the protocol name up to the query string> +
-//  	[ subresource, if present. For example "?acl", "?location", "?logging", or "?torrent"];
-//
-// CanonicalizedProtocolHeaders = <described below>
-
 // doesSignV2Match - Verify authorization header with calculated header in accordance with
-//     - http://docs.aws.amazon.com/AmazonS3/latest/dev/auth-request-sig-v2.html
-// returns true if matches, false otherwise. if error is not nil then it is always false
-
-func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorCode) {
-	if v2Auth == "" {
-		return "", s3err.ErrAuthHeaderEmpty
-	}
-	// Verify if the header algorithm is supported or not.
-	if !strings.HasPrefix(v2Auth, signV2Algorithm) {
-		return "", s3err.ErrSignatureVersionNotSupported
-	}
-
-	// below is V2 Signed Auth header format, splitting on `space` (after the `AWS` string).
-	// Authorization = "AWS" + " " + AWSAccessKeyId + ":" + Signature
-	authFields := strings.Split(v2Auth, " ")
-	if len(authFields) != 2 {
-		return "", s3err.ErrMissingFields
-	}
-
-	// Then will be splitting on ":", this will separate `AWSAccessKeyId` and `Signature` string.
-	keySignFields := strings.Split(strings.TrimSpace(authFields[1]), ":")
-	if len(keySignFields) != 2 {
-		return "", s3err.ErrMissingFields
-	}
-
-	return keySignFields[0], s3err.ErrNone
-}
-
+//   - http://docs.aws.amazon.com/AmazonS3/latest/dev/auth-request-sig-v2.html
+//
+// returns ErrNone if the signature matches.
 func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity, s3err.ErrorCode) {
 	v2Auth := r.Header.Get("Authorization")
-
-	accessKey, apiError := validateV2AuthHeader(v2Auth)
-	if apiError != s3err.ErrNone {
-		return nil, apiError
+	accessKey, errCode := validateV2AuthHeader(v2Auth)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
 	}
 
-	// Access credentials.
-	// Validate if access key id same.
-	ident, cred, found := iam.lookupByAccessKey(accessKey)
+	identity, cred, found := iam.lookupByAccessKey(accessKey)
 	if !found {
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
-	// r.RequestURI will have raw encoded URI as sent by the client.
-	tokens := strings.SplitN(r.RequestURI, "?", 2)
-	encodedResource := tokens[0]
-	encodedQuery := ""
-	if len(tokens) == 2 {
-		encodedQuery = tokens[1]
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, object) {
+		return nil, s3err.ErrAccessDenied
 	}
 
-	unescapedQueries, err := unescapeQueries(encodedQuery)
-	if err != nil {
-		return nil, s3err.ErrInvalidQueryParams
-	}
-
-	encodedResource, err = getResource(encodedResource, r.Host, iam.domain)
-	if err != nil {
-		return nil, s3err.ErrInvalidRequest
-	}
-
-	prefix := fmt.Sprintf("%s %s:", signV2Algorithm, cred.AccessKey)
-	if !strings.HasPrefix(v2Auth, prefix) {
-		return nil, s3err.ErrSignatureDoesNotMatch
-	}
-	v2Auth = v2Auth[len(prefix):]
-	expectedAuth := signatureV2(cred, r.Method, encodedResource, strings.Join(unescapedQueries, "&"), r.Header)
+	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
 	if !compareSignatureV2(v2Auth, expectedAuth) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
-	return ident, s3err.ErrNone
+	return identity, s3err.ErrNone
 }
 
-// doesPresignV2SignatureMatch - Verify query headers with presigned signature
-//   - http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationQueryStringAuth
+// doesPresignV2SignatureMatch - Verify query headers with calculated header in accordance with
+//   - http://docs.aws.amazon.com/AmazonS3/latest/dev/auth-request-sig-v2.html
 //
-// returns ErrNone if matches. S3 errors otherwise.
+// returns ErrNone if the signature matches.
 func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request) (*Identity, s3err.ErrorCode) {
-
-	// r.RequestURI will have raw encoded URI as sent by the client.
-	tokens := strings.SplitN(r.RequestURI, "?", 2)
-	encodedResource := tokens[0]
-	encodedQuery := ""
-	if len(tokens) == 2 {
-		encodedQuery = tokens[1]
+	query := r.URL.Query()
+	expires := query.Get("Expires")
+	if expires == "" {
+		return nil, s3err.ErrMissingFields
 	}
 
-	var (
-		filteredQueries []string
-		gotSignature    string
-		expires         string
-		accessKey       string
-		err             error
-	)
-
-	var unescapedQueries []string
-	unescapedQueries, err = unescapeQueries(encodedQuery)
-	if err != nil {
-		return nil, s3err.ErrInvalidQueryParams
-	}
-
-	// Extract the necessary values from presigned query, construct a list of new filtered queries.
-	for _, query := range unescapedQueries {
-		keyval := strings.SplitN(query, "=", 2)
-		if len(keyval) != 2 {
-			return nil, s3err.ErrInvalidQueryParams
-		}
-		switch keyval[0] {
-		case "AWSAccessKeyId":
-			accessKey = keyval[1]
-		case "Signature":
-			gotSignature = keyval[1]
-		case "Expires":
-			expires = keyval[1]
-		default:
-			filteredQueries = append(filteredQueries, query)
-		}
-	}
-
-	// Invalid values returns error.
-	if accessKey == "" || gotSignature == "" || expires == "" {
-		return nil, s3err.ErrInvalidQueryParams
-	}
-
-	// Validate if access key id same.
-	ident, cred, found := iam.lookupByAccessKey(accessKey)
-	if !found {
-		return nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Make sure the request has not expired.
-	expiresInt, err := strconv.ParseInt(expires, 10, 64)
+	expireTimestamp, err := strconv.ParseInt(expires, 10, 64)
 	if err != nil {
 		return nil, s3err.ErrMalformedExpires
 	}
 
-	// Check if the presigned URL has expired.
-	if expiresInt < time.Now().UTC().Unix() {
+	if time.Unix(expireTimestamp, 0).Before(time.Now().UTC()) {
 		return nil, s3err.ErrExpiredPresignRequest
 	}
 
-	encodedResource, err = getResource(encodedResource, r.Host, iam.domain)
-	if err != nil {
-		return nil, s3err.ErrInvalidRequest
+	accessKey := query.Get("AWSAccessKeyId")
+	if accessKey == "" {
+		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
-	expectedSignature := preSignatureV2(cred, r.Method, encodedResource, strings.Join(filteredQueries, "&"), r.Header, expires)
-	if !compareSignatureV2(gotSignature, expectedSignature) {
+	signature := query.Get("Signature")
+	if signature == "" {
+		return nil, s3err.ErrMissingFields
+	}
+
+	identity, cred, found := iam.lookupByAccessKey(accessKey)
+	if !found {
+		return nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	if !identity.canDo(s3_constants.ACTION_READ, bucket, object) {
+		return nil, s3err.ErrAccessDenied
+	}
+
+	expectedSignature := preSignatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header, expires)
+	if !compareSignatureV2(signature, expectedSignature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
-
-	return ident, s3err.ErrNone
+	return identity, s3err.ErrNone
 }
 
-// Escape encodedQuery string into unescaped list of query params, returns error
-// if any while unescaping the values.
-func unescapeQueries(encodedQuery string) (unescapedQueries []string, err error) {
-	for _, query := range strings.Split(encodedQuery, "&") {
-		var unescapedQuery string
-		unescapedQuery, err = url.QueryUnescape(query)
-		if err != nil {
-			return nil, err
-		}
-		unescapedQueries = append(unescapedQueries, unescapedQuery)
+// validateV2AuthHeader validates AWS Signature Version '2' authentication header.
+func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorCode) {
+	if v2Auth == "" {
+		return "", s3err.ErrAuthHeaderEmpty
 	}
-	return unescapedQueries, nil
+
+	// Signature V2 authorization header format:
+	// Authorization: AWS AKIAIOSFODNN7EXAMPLE:frJIUN8DYpKDtOLCwo//yllqDzg=
+	if !strings.HasPrefix(v2Auth, signV2Algorithm) {
+		return "", s3err.ErrSignatureVersionNotSupported
+	}
+
+	// Strip off the Algorithm prefix.
+	v2Auth = v2Auth[len(signV2Algorithm):]
+	authFields := strings.Split(v2Auth, ":")
+	if len(authFields) != 2 {
+		return "", s3err.ErrMissingFields
+	}
+
+	// The first field is Access Key ID.
+	if authFields[0] == "" {
+		return "", s3err.ErrInvalidAccessKeyID
+	}
+
+	// The second field is signature.
+	if authFields[1] == "" {
+		return "", s3err.ErrMissingFields
+	}
+
+	return authFields[0], s3err.ErrNone
 }
 
-// Returns "/bucketName/objectName" for path-style or virtual-host-style requests.
-func getResource(path string, host string, domain string) (string, error) {
-	if domain == "" {
-		return path, nil
-	}
-	// If virtual-host-style is enabled construct the "resource" properly.
-	if strings.Contains(host, ":") {
-		// In bucket.mydomain.com:9000, strip out :9000
-		var err error
-		if host, _, err = net.SplitHostPort(host); err != nil {
-			return "", err
-		}
-	}
-	if !strings.HasSuffix(host, "."+domain) {
-		return path, nil
-	}
-	bucket := strings.TrimSuffix(host, "."+domain)
-	return "/" + pathJoin(bucket, path), nil
-}
-
-// pathJoin - like path.Join() but retains trailing "/" of the last element
-func pathJoin(elem ...string) string {
-	trailingSlash := ""
-	if len(elem) > 0 {
-		if strings.HasSuffix(elem[len(elem)-1], "/") {
-			trailingSlash = "/"
-		}
-	}
-	return path.Join(elem...) + trailingSlash
-}
-
-// Return the signature v2 of a given request.
+// signatureV2 - calculates signature version 2 for request.
 func signatureV2(cred *Credential, method string, encodedResource string, encodedQuery string, headers http.Header) string {
 	stringToSign := getStringToSignV2(method, encodedResource, encodedQuery, headers, "")
 	signature := calculateSignatureV2(stringToSign, cred.SecretKey)
-	return signature
+	return signV2Algorithm + cred.AccessKey + ":" + signature
 }
 
-// Return string to sign under two different conditions.
-// - if expires string is set then string to sign includes date instead of the Date header.
-// - if expires string is empty then string to sign includes date header instead.
+// getStringToSignV2 - string to sign in accordance with
+//   - http://docs.aws.amazon.com/AmazonS3/latest/dev/auth-request-sig-v2.html
 func getStringToSignV2(method string, encodedResource, encodedQuery string, headers http.Header, expires string) string {
 	canonicalHeaders := canonicalizedAmzHeadersV2(headers)
 	if len(canonicalHeaders) > 0 {
 		canonicalHeaders += "\n"
 	}
 
-	date := expires // Date is set to expires date for presign operations.
-	if date == "" {
-		// If expires date is empty then request header Date is used.
-		date = headers.Get("Date")
-	}
-
 	// From the Amazon docs:
 	//
 	// StringToSign = HTTP-Verb + "\n" +
-	// 	 Content-Md5 + "\n" +
+	// 	 Content-MD5 + "\n" +
 	//	 Content-Type + "\n" +
-	//	 Date/Expires + "\n" +
-	//	 CanonicalizedProtocolHeaders +
+	//	 Date + "\n" +
+	//	 CanonicalizedAmzHeaders +
 	//	 CanonicalizedResource;
-	stringToSign := strings.Join([]string{
-		method,
-		headers.Get("Content-MD5"),
-		headers.Get("Content-Type"),
-		date,
-		canonicalHeaders,
-	}, "\n")
+	stringToSign := method + "\n"
+	stringToSign += headers.Get("Content-Md5") + "\n"
+	stringToSign += headers.Get("Content-Type") + "\n"
 
-	return stringToSign + canonicalizedResourceV2(encodedResource, encodedQuery)
+	if expires != "" {
+		stringToSign += expires + "\n"
+	} else {
+		stringToSign += headers.Get("Date") + "\n"
+		if v := headers.Get("x-amz-date"); v != "" {
+			stringToSign = strings.Replace(stringToSign, headers.Get("Date")+"\n", "\n", -1)
+		}
+	}
+	stringToSign += canonicalHeaders
+	stringToSign += canonicalizedResourceV2(encodedResource, encodedQuery)
+	return stringToSign
 }
 
-// Return canonical resource string.
+// canonicalizedResourceV2 - canonicalize the resource string for signature V2.
 func canonicalizedResourceV2(encodedResource, encodedQuery string) string {
 	queries := strings.Split(encodedQuery, "&")
 	keyval := make(map[string]string)
@@ -356,28 +263,26 @@ func canonicalizedResourceV2(encodedResource, encodedQuery string) string {
 	}
 
 	var canonicalQueries []string
-	for _, key := range resourceList {
-		val, ok := keyval[key]
-		if !ok {
-			continue
+	for _, resource := range resourceList {
+		if val, ok := keyval[resource]; ok {
+			if val == "" {
+				canonicalQueries = append(canonicalQueries, resource)
+				continue
+			}
+			canonicalQueries = append(canonicalQueries, resource+"="+val)
 		}
-		if val == "" {
-			canonicalQueries = append(canonicalQueries, key)
-			continue
-		}
-		canonicalQueries = append(canonicalQueries, key+"="+val)
 	}
 
-	// The queries will be already sorted as resourceList is sorted, if canonicalQueries
-	// is empty strings.Join returns empty.
-	canonicalQuery := strings.Join(canonicalQueries, "&")
-	if canonicalQuery != "" {
-		return encodedResource + "?" + canonicalQuery
+	// The queries will be already sorted as resourceList is sorted.
+	if len(canonicalQueries) == 0 {
+		return encodedResource
 	}
-	return encodedResource
+
+	// If queries are present then the canonicalized resource is set to encodedResource + "?" + strings.Join(canonicalQueries, "&")
+	return encodedResource + "?" + strings.Join(canonicalQueries, "&")
 }
 
-// Return canonical headers.
+// canonicalizedAmzHeadersV2 - canonicalize the x-amz-* headers for signature V2.
 func canonicalizedAmzHeadersV2(headers http.Header) string {
 	var keys []string
 	keyval := make(map[string]string)
@@ -390,6 +295,7 @@ func canonicalizedAmzHeadersV2(headers http.Header) string {
 		keyval[lkey] = strings.Join(headers[key], ",")
 	}
 	sort.Strings(keys)
+
 	var canonicalHeaders []string
 	for _, key := range keys {
 		canonicalHeaders = append(canonicalHeaders, key+":"+keyval[key])
@@ -397,6 +303,7 @@ func canonicalizedAmzHeadersV2(headers http.Header) string {
 	return strings.Join(canonicalHeaders, "\n")
 }
 
+// calculateSignatureV2 - calculates signature version 2.
 func calculateSignatureV2(stringToSign string, secret string) string {
 	hm := hmac.New(sha1.New, []byte(secret))
 	hm.Write([]byte(stringToSign))
