@@ -422,8 +422,11 @@ func TestEvaluateRequest(t *testing.T) {
 				AccessControlRequestMethod:  "POST",
 				AccessControlRequestHeaders: []string{"Authorization"},
 			},
-			want:    nil,
-			wantErr: true,
+			want: &CORSResponse{
+				AllowOrigin: "http://example.com",
+				// No AllowMethods or AllowHeaders because the requested header is forbidden
+			},
+			wantErr: false,
 		},
 		{
 			name:   "request without origin",
