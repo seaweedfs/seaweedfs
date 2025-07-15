@@ -525,12 +525,12 @@ func EncodePath(pathName string) string {
 			encodedPathname = encodedPathname + string(s)
 			continue
 		default:
-			len := utf8.RuneLen(s)
-			if len < 0 {
+			runeLen := utf8.RuneLen(s)
+			if runeLen < 0 {
 				// if utf8 cannot convert return the same string as is
 				return pathName
 			}
-			u := make([]byte, len)
+			u := make([]byte, runeLen)
 			utf8.EncodeRune(u, s)
 			for _, r := range u {
 				hex := hex.EncodeToString([]byte{r})
