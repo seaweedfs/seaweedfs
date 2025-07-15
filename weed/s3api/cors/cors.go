@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -432,7 +433,7 @@ func NewStorage(filerClient FilerClient, entryGetter EntryGetter, bucketsPath st
 // Store stores CORS configuration in the filer
 func (s *Storage) Store(bucket string, config *CORSConfiguration) error {
 	// Store in bucket metadata
-	bucketMetadataPath := fmt.Sprintf("%s/%s/%s", s.bucketsPath, bucket, S3MetadataFileName)
+	bucketMetadataPath := filepath.Join(s.bucketsPath, bucket, S3MetadataFileName)
 
 	// Get existing metadata
 	existingEntry, err := s.entryGetter.GetEntry("", bucketMetadataPath)
@@ -477,7 +478,7 @@ func (s *Storage) Store(bucket string, config *CORSConfiguration) error {
 
 // Load loads CORS configuration from the filer
 func (s *Storage) Load(bucket string) (*CORSConfiguration, error) {
-	bucketMetadataPath := fmt.Sprintf("%s/%s/%s", s.bucketsPath, bucket, S3MetadataFileName)
+	bucketMetadataPath := filepath.Join(s.bucketsPath, bucket, S3MetadataFileName)
 
 	entry, err := s.entryGetter.GetEntry("", bucketMetadataPath)
 	if err != nil || entry == nil {
@@ -514,7 +515,7 @@ func (s *Storage) Load(bucket string) (*CORSConfiguration, error) {
 
 // Delete deletes CORS configuration from the filer
 func (s *Storage) Delete(bucket string) error {
-	bucketMetadataPath := fmt.Sprintf("%s/%s/%s", s.bucketsPath, bucket, S3MetadataFileName)
+	bucketMetadataPath := filepath.Join(s.bucketsPath, bucket, S3MetadataFileName)
 
 	entry, err := s.entryGetter.GetEntry("", bucketMetadataPath)
 	if err != nil || entry == nil {

@@ -269,7 +269,7 @@ func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfigura
 		return nil, fmt.Errorf("invalid bucket name: %s", bucket)
 	}
 
-	bucketMetadataPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, cors.S3MetadataFileName)
+	bucketMetadataPath := filepath.Join(s3a.option.BucketsPath, bucket, cors.S3MetadataFileName)
 
 	entry, err := s3a.getEntry("", bucketMetadataPath)
 	if err != nil || entry == nil {
