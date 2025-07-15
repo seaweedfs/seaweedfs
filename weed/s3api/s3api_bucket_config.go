@@ -291,7 +291,7 @@ func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfigura
 
 	if len(entry.Content) == 0 {
 		glog.V(3).Infof("loadCORSFromMetadata: empty metadata content for bucket %s", bucket)
-		return nil, fmt.Errorf("no metadata content")
+		return nil, fmt.Errorf("no metadata content for bucket %s", bucket)
 	}
 
 	var metadata map[string]json.RawMessage
