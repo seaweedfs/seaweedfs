@@ -56,29 +56,19 @@ const (
 
 // getContentSha256Cksum retrieves the "x-amz-content-sha256" header value.
 func getContentSha256Cksum(r *http.Request) string {
-	var (
-		defaultSha256Cksum string
-		v                  []string
-		ok                 bool
-	)
+	// If the client sends a SHA256 checksum of the object in this header, use it.
+	if v := r.Header.Get("X-Amz-Content-Sha256"); v != "" {
+		return v
+	}
 
 	// For a presigned request we look at the query param for sha256.
 	if isRequestPresignedSignatureV4(r) {
 		// X-Amz-Content-Sha256 header value is optional for presigned requests.
-		defaultSha256Cksum = unsignedPayload
-	} else {
-		// X-Amz-Content-Sha256 header value is required for all non-presigned requests.
-		defaultSha256Cksum = emptySHA256
+		return unsignedPayload
 	}
 
-	// If the client sends a SHA256 checksum of the object in this header, use it.
-	if v, ok = r.Header["X-Amz-Content-Sha256"]; ok {
-		return v[0]
-	}
-
-	// We couldn't find the header, so we return a default based on whether
-	// it's a presigned request or not.
-	return defaultSha256Cksum
+	// X-Amz-Content-Sha256 header value is required for all non-presigned requests.
+	return emptySHA256
 }
 
 // signValues data type represents structured form of AWS Signature V4 header.
@@ -280,11 +270,10 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	// Extract signed headers from request
 	extractedSignedHeaders := make(http.Header)
 	for _, header := range signedHeaders {
-		headerKey := http.CanonicalHeaderKey(header)
 		if header == "host" {
 			extractedSignedHeaders.Set("host", r.Host)
-		} else if values := r.Header[headerKey]; len(values) > 0 {
-			extractedSignedHeaders[headerKey] = values
+		} else if values := r.Header[http.CanonicalHeaderKey(header)]; len(values) > 0 {
+			extractedSignedHeaders[http.CanonicalHeaderKey(header)] = values
 		}
 	}
 
