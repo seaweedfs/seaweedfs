@@ -121,6 +121,34 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	return s3ApiServer, nil
 }
 
+// handleCORSOriginValidation handles the common CORS origin validation logic
+func (s3a *S3ApiServer) handleCORSOriginValidation(w http.ResponseWriter, r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		if len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
+			origin = "*"
+		} else {
+			originFound := false
+			for _, allowedOrigin := range s3a.option.AllowedOrigins {
+				if origin == allowedOrigin {
+					originFound = true
+					break
+				}
+			}
+			if !originFound {
+				writeFailureResponse(w, r, http.StatusForbidden)
+				return false
+			}
+		}
+	}
+
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Access-Control-Expose-Headers", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "*")
+	return true
+}
+
 func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
@@ -326,29 +354,9 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 				return
 			}
 
-			origin := r.Header.Get("Origin")
-			if origin != "" {
-				if len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
-					origin = "*"
-				} else {
-					originFound := false
-					for _, allowedOrigin := range s3a.option.AllowedOrigins {
-						if origin == allowedOrigin {
-							originFound = true
-						}
-					}
-					if !originFound {
-						writeFailureResponse(w, r, http.StatusForbidden)
-						return
-					}
-				}
+			if s3a.handleCORSOriginValidation(w, r) {
+				writeSuccessResponseEmpty(w, r)
 			}
-
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Expose-Headers", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "*")
-			w.Header().Set("Access-Control-Allow-Headers", "*")
-			writeSuccessResponseEmpty(w, r)
 		})
 
 	// ListBuckets

@@ -34,6 +34,45 @@ func NewMiddleware(storage *Storage, bucketChecker BucketChecker, corsConfigGett
 	}
 }
 
+// evaluateCORSRequest performs the common CORS request evaluation logic
+func (m *Middleware) evaluateCORSRequest(w http.ResponseWriter, r *http.Request) (*CORSResponse, bool) {
+	// Parse CORS request
+	corsReq := ParseRequest(r)
+	if corsReq.Origin == "" {
+		// Not a CORS request
+		return nil, false
+	}
+
+	// Extract bucket from request
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if bucket == "" {
+		return nil, false
+	}
+
+	// Check if bucket exists
+	if err := m.bucketChecker.CheckBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return nil, true // Return true to indicate response was written
+	}
+
+	// Load CORS configuration from cache
+	config, errCode := m.corsConfigGetter.GetCORSConfiguration(bucket)
+	if errCode != s3err.ErrNone || config == nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return nil, true // Return true to indicate response was written
+	}
+
+	// Evaluate CORS request
+	corsResp, err := EvaluateRequest(config, corsReq)
+	if err != nil {
+		glog.V(3).Infof("CORS evaluation failed for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return nil, true // Return true to indicate response was written
+	}
+
+	return corsResp, false
+}
+
 // Handler returns the CORS middleware handler
 func (m *Middleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -105,42 +144,16 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 
 // HandleOptionsRequest handles OPTIONS requests for CORS preflight
 func (m *Middleware) HandleOptionsRequest(w http.ResponseWriter, r *http.Request) {
-	// This is handled by the CORS middleware, but we need a specific OPTIONS handler
-	// for the router to recognize OPTIONS requests
+	// Use the common evaluation logic
+	corsResp, responseWritten := m.evaluateCORSRequest(w, r)
+	if responseWritten {
+		// Response was already written (error case)
+		return
+	}
 
-	// Parse CORS request
-	corsReq := ParseRequest(r)
-	if corsReq.Origin == "" {
+	if corsResp == nil {
 		// Not a CORS request
 		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// Extract bucket from request
-	bucket, _ := s3_constants.GetBucketAndObject(r)
-	if bucket == "" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// Check if bucket exists
-	if err := m.bucketChecker.CheckBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
-		return
-	}
-
-	// Load CORS configuration from cache
-	config, errCode := m.corsConfigGetter.GetCORSConfiguration(bucket)
-	if errCode != s3err.ErrNone || config == nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-		return
-	}
-
-	// Evaluate CORS request
-	corsResp, err := EvaluateRequest(config, corsReq)
-	if err != nil {
-		glog.V(3).Infof("CORS evaluation failed for bucket %s: %v", bucket, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
 
