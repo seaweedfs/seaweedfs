@@ -146,6 +146,9 @@ func (s3a *S3ApiServer) handleCORSOriginValidation(w http.ResponseWriter, r *htt
 	w.Header().Set("Access-Control-Expose-Headers", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
+	if s3a.option.AllowCredentials {
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
 	return true
 }
 
