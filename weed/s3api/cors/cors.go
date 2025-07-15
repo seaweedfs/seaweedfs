@@ -6,7 +6,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -233,15 +232,56 @@ func matchesOrigin(allowedOrigins []string, origin string) bool {
 }
 
 // matchesWildcard checks if an origin matches a wildcard pattern
+// Uses string manipulation instead of regex for better performance
 func matchesWildcard(pattern, origin string) bool {
-	// Convert wildcard pattern to regex
-	escapedPattern := regexp.QuoteMeta(pattern)
-	regexPattern := strings.Replace(escapedPattern, "\\*", ".*", -1)
-	regex, err := regexp.Compile("^" + regexPattern + "$")
-	if err != nil {
+	// Handle simple cases first
+	if pattern == "*" {
+		return true
+	}
+	if pattern == origin {
+		return true
+	}
+
+	// For CORS, we typically only deal with * wildcards (not ? wildcards)
+	// Use string manipulation for * wildcards only (more efficient than regex)
+
+	// Split pattern by wildcards
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		// No wildcards, exact match
+		return pattern == origin
+	}
+
+	// Check if string starts with first part
+	if len(parts[0]) > 0 && !strings.HasPrefix(origin, parts[0]) {
 		return false
 	}
-	return regex.MatchString(origin)
+
+	// Check if string ends with last part
+	if len(parts[len(parts)-1]) > 0 && !strings.HasSuffix(origin, parts[len(parts)-1]) {
+		return false
+	}
+
+	// Check middle parts
+	searchStr := origin
+	if len(parts[0]) > 0 {
+		searchStr = searchStr[len(parts[0]):]
+	}
+	if len(parts[len(parts)-1]) > 0 {
+		searchStr = searchStr[:len(searchStr)-len(parts[len(parts)-1])]
+	}
+
+	for i := 1; i < len(parts)-1; i++ {
+		if len(parts[i]) > 0 {
+			index := strings.Index(searchStr, parts[i])
+			if index == -1 {
+				return false
+			}
+			searchStr = searchStr[index+len(parts[i]):]
+		}
+	}
+
+	return true
 }
 
 // matchesHeader checks if a header matches allowed headers
