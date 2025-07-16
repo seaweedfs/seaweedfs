@@ -315,7 +315,7 @@ CMD ["go", "test", "-v", "./test/fuse/..."]
 
 2. **Run Tests**
    ```bash
-   cd test/fuse
+   cd test/fuse_integration
    go test -v
    ```
 
