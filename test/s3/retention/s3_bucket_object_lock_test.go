@@ -52,19 +52,9 @@ func TestBucketCreationWithObjectLockEnabled(t *testing.T) {
 			Bucket: aws.String(bucketName),
 		})
 
-		if err != nil {
-			// If Object Lock is not enabled, this call will fail
-			// This is the current behavior that causes S3 clients to think Object Lock is not supported
-			t.Logf("GetObjectLockConfiguration failed: %v", err)
-			t.Log("This indicates that the x-amz-bucket-object-lock-enabled header was not processed")
-			// For now, we expect this to fail until we implement the fix
-			// After the fix, this should succeed
-		} else {
-			// If we get here, Object Lock was automatically enabled
-			require.NotNil(t, configResp.ObjectLockConfiguration)
-			assert.Equal(t, types.ObjectLockEnabledEnabled, configResp.ObjectLockConfiguration.ObjectLockEnabled)
-			t.Log("Object Lock was automatically enabled - this is the desired behavior")
-		}
+		require.NoError(t, err, "GetObjectLockConfiguration should not fail if Object Lock is enabled")
+		require.NotNil(t, configResp.ObjectLockConfiguration, "ObjectLockConfiguration should not be nil")
+		assert.Equal(t, types.ObjectLockEnabledEnabled, configResp.ObjectLockConfiguration.ObjectLockEnabled, "Object Lock should be enabled")
 	})
 
 	// Test 3: Verify versioning is automatically enabled (required for Object Lock)
