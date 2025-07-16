@@ -1,7 +1,7 @@
 # SeaweedFS FUSE Integration Testing Makefile
 
 # Configuration
-WEED_BINARY := ../../weed
+WEED_BINARY := weed
 GO_VERSION := 1.21
 TEST_TIMEOUT := 30m
 COVERAGE_FILE := coverage.out
@@ -40,7 +40,7 @@ check-go:
 	@echo "✅ Go version check passed"
 
 # Verify all prerequisites
-check-prereqs: check-go check-fuse check-binary
+check-prereqs: check-go check-fuse
 	@echo "✅ All prerequisites satisfied"
 
 # Build the SeaweedFS binary (if needed)
@@ -163,61 +163,61 @@ test-docker:
 # Create Docker test image
 docker-build:
 	@echo "🐳 Building Docker test image..."
-	cat > Dockerfile.test << 'EOF'
-FROM golang:$(GO_VERSION)
-RUN apt-get update && apt-get install -y fuse
-WORKDIR /seaweedfs
-COPY . .
-RUN make
-WORKDIR /seaweedfs/test/fuse
-RUN go mod init seaweedfs-fuse-tests && go mod tidy
-CMD ["make", "test"]
+	@cat > Dockerfile.test << 'EOF' ;\
+FROM golang:$(GO_VERSION) ;\
+RUN apt-get update && apt-get install -y fuse ;\
+WORKDIR /seaweedfs ;\
+COPY . . ;\
+RUN make ;\
+WORKDIR /seaweedfs/test/fuse ;\
+RUN go mod init seaweedfs-fuse-tests && go mod tidy ;\
+CMD ["make", "test"] ;\
 EOF
 
 # GitHub Actions workflow
 generate-workflow:
 	@echo "📝 Generating GitHub Actions workflow..."
-	mkdir -p ../../.github/workflows
-	cat > ../../.github/workflows/fuse-integration.yml << 'EOF'
-name: FUSE Integration Tests
-
-on:
-  push:
-    branches: [ master, main ]
-  pull_request:
-    branches: [ master, main ]
-
-jobs:
-  fuse-integration:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '$(GO_VERSION)'
-        
-    - name: Install FUSE
-      run: sudo apt-get update && sudo apt-get install -y fuse
-      
-    - name: Build SeaweedFS
-      run: make
-      
-    - name: Run FUSE Integration Tests
-      run: |
-        cd test/fuse
-        make test
-        
-    - name: Upload test artifacts
-      if: failure()
-      uses: actions/upload-artifact@v3
-      with:
-        name: test-logs
-        path: /tmp/seaweedfs_fuse_test_*
+	@mkdir -p ../../.github/workflows
+	@cat > ../../.github/workflows/fuse-integration.yml << 'EOF' ;\
+name: FUSE Integration Tests ;\
+ ;\
+on: ;\
+  push: ;\
+    branches: [ master, main ] ;\
+  pull_request: ;\
+    branches: [ master, main ] ;\
+ ;\
+jobs: ;\
+  fuse-integration: ;\
+    runs-on: ubuntu-latest ;\
+    timeout-minutes: 45 ;\
+     ;\
+    steps: ;\
+    - name: Checkout code ;\
+      uses: actions/checkout@v4 ;\
+       ;\
+    - name: Set up Go ;\
+      uses: actions/setup-go@v4 ;\
+      with: ;\
+        go-version: '$(GO_VERSION)' ;\
+         ;\
+    - name: Install FUSE ;\
+      run: sudo apt-get update && sudo apt-get install -y fuse ;\
+       ;\
+    - name: Build SeaweedFS ;\
+      run: make ;\
+       ;\
+    - name: Run FUSE Integration Tests ;\
+      run: | ;\
+        cd test/fuse ;\
+        make test ;\
+         ;\
+    - name: Upload test artifacts ;\
+      if: failure() ;\
+      uses: actions/upload-artifact@v3 ;\
+      with: ;\
+        name: test-logs ;\
+        path: /tmp/seaweedfs_fuse_test_* ;\
 EOF
 	@echo "✅ GitHub Actions workflow generated"
 
@@ -309,4 +309,4 @@ help:
         test test-coverage test-basic test-directory test-concurrent test-stress \
         test-large-files test-debug test-no-cleanup test-smoke benchmark validate \
         clean fmt lint check install-deps setup test-docker docker-build \
-        generate-workflow profile test-memory list-tests test-stats watch 
+        generate-workflow profile test-memory list-tests test-stats watch

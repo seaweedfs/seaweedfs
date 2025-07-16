@@ -4,6 +4,23 @@
 
 This directory contains a comprehensive integration testing framework for SeaweedFS FUSE operations. The current SeaweedFS FUSE tests are primarily performance-focused (using FIO) but lack comprehensive functional testing. This framework addresses those gaps.
 
+## ⚠️ Current Status
+
+**Note**: Due to Go module conflicts between this test framework and the parent SeaweedFS module, the full test suite currently requires manual setup. The framework files are provided as a foundation for comprehensive FUSE testing once the module structure is resolved.
+
+### Working Components
+- ✅ Framework design and architecture (`framework.go`)
+- ✅ Individual test file structure and compilation
+- ✅ Test methodology and comprehensive coverage
+- ✅ Documentation and usage examples
+- ⚠️ Full test suite execution (requires Go module isolation)
+
+### Verified Working Test
+```bash
+cd test/fuse_integration
+go test -v simple_test.go
+```
+
 ## Current Testing Gaps Addressed
 
 ### 1. **Limited Functional Coverage**
