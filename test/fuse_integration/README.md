@@ -237,7 +237,7 @@ RUN apt-get update && apt-get install -y fuse
 COPY . /seaweedfs
 WORKDIR /seaweedfs
 RUN make
-CMD ["go", "test", "-v", "./test/fuse/..."]
+CMD ["go", "test", "-v", "./test/fuse_integration/..."]
 ```
 
 ## Comparison with Current Testing
