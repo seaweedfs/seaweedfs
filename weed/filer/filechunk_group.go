@@ -70,7 +70,7 @@ func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (
 		}
 		xn, xTsNs, xErr := section.readDataAt(group, fileSize, buff[rangeStart-offset:rangeStop-offset], rangeStart)
 		if xErr != nil {
-			err = xErr
+			return n + xn, max(tsNs, xTsNs), xErr
 		}
 		n += xn
 		tsNs = max(tsNs, xTsNs)
