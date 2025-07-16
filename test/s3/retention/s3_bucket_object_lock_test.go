@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"context"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -77,12 +76,8 @@ func TestBucketCreationWithObjectLockEnabled(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// After the fix is implemented, this should be Enabled
-		if versioningResp.Status == types.BucketVersioningStatusEnabled {
-			t.Log("Versioning was automatically enabled - this is correct behavior")
-		} else {
-			t.Logf("Versioning status: %v - should be Enabled for Object Lock", versioningResp.Status)
-		}
+		// Versioning should be automatically enabled for Object Lock
+		assert.Equal(t, types.BucketVersioningStatusEnabled, versioningResp.Status, "Versioning should be automatically enabled for Object Lock")
 	})
 }
 
@@ -148,16 +143,9 @@ func TestS3ObjectLockWorkflow(t *testing.T) {
 			Bucket: aws.String(bucketName),
 		})
 
-		if err != nil {
-			// This is what currently happens - S3 clients see this failure and conclude
-			// that Object Lock is not supported
-			t.Logf("Object Lock configuration check failed: %v", err)
-			t.Log("S3 clients would interpret this as 'Object Lock not supported'")
-			// Mark this as expected failure until we implement the fix
-			t.Skip("Skipping until x-amz-bucket-object-lock-enabled header support is implemented")
-		}
+		require.NoError(t, err, "Object Lock configuration check should succeed")
 
-		// After fix: S3 clients should see Object Lock is enabled
+		// S3 clients should see Object Lock is enabled
 		require.NotNil(t, configResp.ObjectLockConfiguration)
 		assert.Equal(t, types.ObjectLockEnabledEnabled, configResp.ObjectLockConfiguration.ObjectLockEnabled)
 		t.Log("Object Lock configuration retrieved successfully - S3 clients would see this as supported")
@@ -165,22 +153,12 @@ func TestS3ObjectLockWorkflow(t *testing.T) {
 
 	// Step 3: Client would then configure retention policies and use Object Lock
 	t.Run("ClientConfiguresRetention", func(t *testing.T) {
-		// First ensure versioning is enabled (should be automatic with Object Lock)
+		// Verify versioning is automatically enabled (required for Object Lock)
 		versioningResp, err := client.GetBucketVersioning(context.TODO(), &s3.GetBucketVersioningInput{
 			Bucket: aws.String(bucketName),
 		})
 		require.NoError(t, err)
-
-		if versioningResp.Status != types.BucketVersioningStatusEnabled {
-			// Enable versioning if not already enabled
-			_, err := client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
-				Bucket: aws.String(bucketName),
-				VersioningConfiguration: &types.VersioningConfiguration{
-					Status: types.BucketVersioningStatusEnabled,
-				},
-			})
-			require.NoError(t, err)
-		}
+		require.Equal(t, types.BucketVersioningStatusEnabled, versioningResp.Status, "Versioning should be automatically enabled")
 
 		// Create an object
 		key := "protected-backup-object"
@@ -214,26 +192,4 @@ func TestS3ObjectLockWorkflow(t *testing.T) {
 
 		t.Log("Object Lock retention successfully applied - data is immutable")
 	})
-}
-
-// Helper function to create a custom HTTP client for testing headers
-func createHTTPClientWithHeaders(headers map[string]string) *http.Client {
-	return &http.Client{
-		Transport: &customHeaderTransport{
-			Transport: http.DefaultTransport,
-			Headers:   headers,
-		},
-	}
-}
-
-type customHeaderTransport struct {
-	Transport http.RoundTripper
-	Headers   map[string]string
-}
-
-func (t *customHeaderTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	for key, value := range t.Headers {
-		req.Header.Set(key, value)
-	}
-	return t.Transport.RoundTrip(req)
 }
