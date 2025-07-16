@@ -136,6 +136,48 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
+
+	// Check for x-amz-bucket-object-lock-enabled header (S3 standard compliance)
+	if objectLockHeaderValue := r.Header.Get(s3_constants.AmzBucketObjectLockEnabled); strings.EqualFold(objectLockHeaderValue, "true") {
+		glog.V(3).Infof("PutBucketHandler: enabling Object Lock and Versioning for bucket %s due to x-amz-bucket-object-lock-enabled header", bucket)
+
+		// Atomically update the configuration of the specified bucket. See the updateBucketConfig
+		// function definition for detailed documentation on parameters and behavior.
+		errCode := s3a.updateBucketConfig(bucket, func(bucketConfig *BucketConfig) error {
+			// Enable versioning (required for Object Lock)
+			bucketConfig.Versioning = s3_constants.VersioningEnabled
+
+			// Enable Object Lock configuration
+			if bucketConfig.Entry.Extended == nil {
+				bucketConfig.Entry.Extended = make(map[string][]byte)
+			}
+
+			// Create basic Object Lock configuration (enabled without default retention)
+			// The ObjectLockConfiguration struct is defined below in this file.
+			objectLockConfig := &ObjectLockConfiguration{
+				ObjectLockEnabled: s3_constants.ObjectLockEnabled,
+			}
+
+			// Store the configuration as XML in extended attributes
+			configXML, err := xml.Marshal(objectLockConfig)
+			if err != nil {
+				return fmt.Errorf("failed to marshal Object Lock configuration to XML: %v", err)
+			}
+
+			bucketConfig.Entry.Extended[s3_constants.ExtObjectLockConfigKey] = configXML
+			bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(s3_constants.ObjectLockEnabled)
+
+			return nil
+		})
+
+		if errCode != s3err.ErrNone {
+			glog.Errorf("PutBucketHandler: failed to enable Object Lock for bucket %s: %v", bucket, errCode)
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+		glog.V(3).Infof("PutBucketHandler: enabled Object Lock and Versioning for bucket %s", bucket)
+	}
+
 	w.Header().Set("Location", "/"+bucket)
 	writeSuccessResponseEmpty(w, r)
 }

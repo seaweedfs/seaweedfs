@@ -107,3 +107,6 @@ test/s3/cors/weed-test.log
 test/s3/cors/weed-server.pid
 /test/s3/cors/test-volume-data
 test/s3/cors/cors.test
+/test/s3/retention/filerldb2
+test/s3/retention/weed-test.log
+test/s3/retention/weed-server.pid
