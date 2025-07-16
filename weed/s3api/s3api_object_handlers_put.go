@@ -14,6 +14,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 
+	"strconv"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
@@ -287,6 +289,9 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 	versionEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
+	// Extract and store object lock metadata from request headers
+	s3a.extractObjectLockMetadataFromRequest(r, versionEntry)
+
 	// Update the version entry with metadata
 	err = s3a.mkFile(bucketDir, versionObjectPath, versionEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = versionEntry.Extended
@@ -340,4 +345,35 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	}
 
 	return nil
+}
+
+// extractObjectLockMetadataFromRequest extracts object lock headers from PUT requests
+// and stores them in the entry's Extended attributes
+func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, entry *filer_pb.Entry) {
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+
+	// Extract object lock mode (GOVERNANCE or COMPLIANCE)
+	if mode := r.Header.Get(s3_constants.AmzObjectLockMode); mode != "" {
+		entry.Extended[s3_constants.ExtObjectLockModeKey] = []byte(mode)
+		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing object lock mode: %s", mode)
+	}
+
+	// Extract retention until date
+	if retainUntilDate := r.Header.Get(s3_constants.AmzObjectLockRetainUntilDate); retainUntilDate != "" {
+		// Parse the ISO8601 date and convert to Unix timestamp for storage
+		if parsedTime, err := time.Parse(time.RFC3339, retainUntilDate); err == nil {
+			entry.Extended[s3_constants.ExtRetentionUntilDateKey] = []byte(strconv.FormatInt(parsedTime.Unix(), 10))
+			glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing retention until date: %s (timestamp: %d)", retainUntilDate, parsedTime.Unix())
+		} else {
+			glog.Errorf("extractObjectLockMetadataFromRequest: failed to parse retention until date: %s, error: %v", retainUntilDate, err)
+		}
+	}
+
+	// Extract legal hold status
+	if legalHold := r.Header.Get(s3_constants.AmzObjectLockLegalHold); legalHold != "" {
+		entry.Extended[s3_constants.ExtLegalHoldKey] = []byte(legalHold)
+		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing legal hold: %s", legalHold)
+	}
 }
