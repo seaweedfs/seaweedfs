@@ -162,6 +162,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			}
 
 			// Create basic Object Lock configuration (enabled without default retention)
+			// The ObjectLockConfiguration struct is defined below in this file.
 			objectLockConfig := &ObjectLockConfiguration{
 				ObjectLockEnabled: s3_constants.ObjectLockEnabled,
 			}
