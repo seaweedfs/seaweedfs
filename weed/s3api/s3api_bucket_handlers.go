@@ -169,7 +169,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			// Store the configuration as XML in extended attributes
 			configXML, err := xml.Marshal(objectLockConfig)
 			if err != nil {
-				return fmt.Errorf("failed to marshal object lock config: %v", err)
+				return fmt.Errorf("failed to marshal Object Lock configuration to XML: %v", err)
 			}
 
 			bucketConfig.Entry.Extended[s3_constants.ExtObjectLockConfigKey] = configXML
