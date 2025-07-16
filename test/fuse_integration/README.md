@@ -138,7 +138,7 @@ framework.CreateTestFile("test.txt", []byte("content"))
 make
 
 # Run all FUSE tests
-cd test/fuse
+cd test/fuse_integration
 go test -v
 
 # Run specific test category
