@@ -139,18 +139,13 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 	// Check for x-amz-bucket-object-lock-enabled header (Veeam compatibility)
 	if objectLockHeader := r.Header.Get(s3_constants.AmzBucketObjectLockEnabled); objectLockHeader == "true" {
-		glog.V(3).Infof("PutBucketHandler: enabling Object Lock for bucket %s due to x-amz-bucket-object-lock-enabled header", bucket)
+		glog.V(3).Infof("PutBucketHandler: enabling Object Lock and Versioning for bucket %s due to x-amz-bucket-object-lock-enabled header", bucket)
 
-		// First, enable versioning (required for Object Lock)
-		if errCode := s3a.setBucketVersioningStatus(bucket, "Enabled"); errCode != s3err.ErrNone {
-			glog.Errorf("PutBucketHandler: failed to enable versioning for bucket %s: %v", bucket, errCode)
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
-		}
-		glog.V(3).Infof("PutBucketHandler: enabled versioning for bucket %s", bucket)
-
-		// Then, enable Object Lock configuration
 		errCode := s3a.updateBucketConfig(bucket, func(bucketConfig *BucketConfig) error {
+			// Enable versioning (required for Object Lock)
+			bucketConfig.Versioning = "Enabled"
+
+			// Enable Object Lock configuration
 			if bucketConfig.Entry.Extended == nil {
 				bucketConfig.Entry.Extended = make(map[string][]byte)
 			}
@@ -177,7 +172,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
-		glog.V(3).Infof("PutBucketHandler: enabled Object Lock configuration for bucket %s", bucket)
+		glog.V(3).Infof("PutBucketHandler: enabled Object Lock and Versioning for bucket %s", bucket)
 	}
 
 	w.Header().Set("Location", "/"+bucket)
