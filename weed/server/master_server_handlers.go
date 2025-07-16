@@ -140,7 +140,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	for time.Now().Sub(startTime) < maxTimeout {
+	for time.Since(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl)
 		if shouldGrow && !vl.HasGrowRequest() {
 			glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
