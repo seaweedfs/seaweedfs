@@ -240,29 +240,6 @@ func (s3a *S3ApiServer) setBucketOwnership(bucket, ownership string) s3err.Error
 	})
 }
 
-// removeBucketConfigKey removes a specific configuration key from bucket
-func (s3a *S3ApiServer) removeBucketConfigKey(bucket, key string) s3err.ErrorCode {
-	return s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
-		if config.Entry.Extended != nil {
-			delete(config.Entry.Extended, key)
-		}
-
-		// Update our local config too
-		switch key {
-		case s3_constants.ExtVersioningKey:
-			config.Versioning = ""
-		case s3_constants.ExtOwnershipKey:
-			config.Ownership = ""
-		case s3_constants.ExtAmzAclKey:
-			config.ACL = nil
-		case s3_constants.ExtAmzOwnerKey:
-			config.Owner = ""
-		}
-
-		return nil
-	})
-}
-
 // loadCORSFromMetadata loads CORS configuration from bucket metadata
 func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfiguration, error) {
 	// Validate bucket name to prevent path traversal attacks
