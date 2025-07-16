@@ -226,7 +226,7 @@ jobs:
     
     - name: Run FUSE Tests
       run: |
-        cd test/fuse
+        cd test/fuse_integration
         go test -v -timeout 30m
 ```
 
