@@ -35,4 +35,8 @@ const (
 
 	// Object lock enabled status
 	ObjectLockEnabled = "Enabled"
+
+	// Bucket versioning status
+	VersioningEnabled   = "Enabled"
+	VersioningSuspended = "Suspended"
 )

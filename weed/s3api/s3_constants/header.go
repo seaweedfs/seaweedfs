@@ -52,7 +52,7 @@ const (
 	AmzAclWriteAcp    = "X-Amz-Grant-Write-Acp"
 
 	// S3 Object Lock headers
-	AmzBucketObjectLockEnabled = "x-amz-bucket-object-lock-enabled"
+	AmzBucketObjectLockEnabled = "X-Amz-Bucket-Object-Lock-Enabled"
 
 	// S3 conditional copy headers
 	AmzCopySourceIfMatch           = "X-Amz-Copy-Source-If-Match"
