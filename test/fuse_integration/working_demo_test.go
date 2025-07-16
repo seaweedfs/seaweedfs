@@ -7,33 +7,54 @@ import (
 	"time"
 )
 
-// TestConfig represents test configuration
-type TestConfig struct {
+// ============================================================================
+// IMPORTANT: This file contains a STANDALONE demonstration of the FUSE testing
+// framework that works around Go module conflicts between the main framework
+// and the SeaweedFS parent module.
+//
+// PURPOSE:
+// - Provides a working demonstration of framework capabilities for CI/CD
+// - Simulates FUSE operations using local filesystem (not actual FUSE mounts)
+// - Validates the testing approach and framework design
+// - Enables CI integration while module conflicts are resolved
+//
+// DUPLICATION RATIONALE:
+// - The full framework (framework.go) has Go module conflicts with parent project
+// - This standalone version proves the concept works without those conflicts
+// - Once module issues are resolved, this can be removed or simplified
+//
+// TODO: Remove this file once framework.go module conflicts are resolved
+// ============================================================================
+
+// DemoTestConfig represents test configuration for the standalone demo
+// Note: This duplicates TestConfig from framework.go due to module conflicts
+type DemoTestConfig struct {
 	ChunkSizeMB int
 	Replication string
 	TestTimeout time.Duration
 }
 
-// DefaultTestConfig returns default test configuration
-func DefaultTestConfig() TestConfig {
-	return TestConfig{
+// DefaultDemoTestConfig returns default test configuration for demo
+func DefaultDemoTestConfig() DemoTestConfig {
+	return DemoTestConfig{
 		ChunkSizeMB: 8,
 		Replication: "000",
 		TestTimeout: 30 * time.Minute,
 	}
 }
 
-// FuseTestFramework represents the testing framework
-type FuseTestFramework struct {
+// DemoFuseTestFramework represents the standalone testing framework
+// Note: This simulates FUSE operations using local filesystem for demonstration
+type DemoFuseTestFramework struct {
 	t         *testing.T
-	config    TestConfig
+	config    DemoTestConfig
 	mountPath string
 	cleanup   []func()
 }
 
-// NewFuseTestFramework creates a new test framework instance
-func NewFuseTestFramework(t *testing.T, config TestConfig) *FuseTestFramework {
-	return &FuseTestFramework{
+// NewDemoFuseTestFramework creates a new demo test framework instance
+func NewDemoFuseTestFramework(t *testing.T, config DemoTestConfig) *DemoFuseTestFramework {
+	return &DemoFuseTestFramework{
 		t:       t,
 		config:  config,
 		cleanup: make([]func(), 0),
@@ -41,7 +62,7 @@ func NewFuseTestFramework(t *testing.T, config TestConfig) *FuseTestFramework {
 }
 
 // CreateTestFile creates a test file with given content
-func (f *FuseTestFramework) CreateTestFile(filename string, content []byte) {
+func (f *DemoFuseTestFramework) CreateTestFile(filename string, content []byte) {
 	if f.mountPath == "" {
 		f.mountPath = "/tmp/fuse_test_mount"
 	}
@@ -59,7 +80,7 @@ func (f *FuseTestFramework) CreateTestFile(filename string, content []byte) {
 }
 
 // AssertFileExists checks if file exists
-func (f *FuseTestFramework) AssertFileExists(filename string) {
+func (f *DemoFuseTestFramework) AssertFileExists(filename string) {
 	fullPath := filepath.Join(f.mountPath, filename)
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 		f.t.Fatalf("Expected file %s to exist, but it doesn't", filename)
@@ -67,7 +88,7 @@ func (f *FuseTestFramework) AssertFileExists(filename string) {
 }
 
 // AssertFileContent checks file content matches expected
-func (f *FuseTestFramework) AssertFileContent(filename string, expected []byte) {
+func (f *DemoFuseTestFramework) AssertFileContent(filename string, expected []byte) {
 	fullPath := filepath.Join(f.mountPath, filename)
 	actual, err := os.ReadFile(fullPath)
 	if err != nil {
@@ -81,7 +102,7 @@ func (f *FuseTestFramework) AssertFileContent(filename string, expected []byte) 
 }
 
 // Cleanup performs test cleanup
-func (f *FuseTestFramework) Cleanup() {
+func (f *DemoFuseTestFramework) Cleanup() {
 	for i := len(f.cleanup) - 1; i >= 0; i-- {
 		f.cleanup[i]()
 	}
@@ -93,15 +114,19 @@ func (f *FuseTestFramework) Cleanup() {
 }
 
 // TestFrameworkDemo demonstrates the FUSE testing framework capabilities
+// NOTE: This is a STANDALONE DEMONSTRATION that simulates FUSE operations
+// using local filesystem instead of actual FUSE mounts. It exists to prove
+// the framework concept works while Go module conflicts are resolved.
 func TestFrameworkDemo(t *testing.T) {
 	t.Log("🚀 SeaweedFS FUSE Integration Testing Framework Demo")
+	t.Log("ℹ️  This demo simulates FUSE operations using local filesystem")
 
-	// Initialize framework
-	framework := NewFuseTestFramework(t, DefaultTestConfig())
+	// Initialize demo framework
+	framework := NewDemoFuseTestFramework(t, DefaultDemoTestConfig())
 	defer framework.Cleanup()
 
 	t.Run("ConfigurationValidation", func(t *testing.T) {
-		config := DefaultTestConfig()
+		config := DefaultDemoTestConfig()
 		if config.ChunkSizeMB != 8 {
 			t.Errorf("Expected chunk size 8MB, got %d", config.ChunkSizeMB)
 		}
@@ -165,12 +190,13 @@ func TestFrameworkDemo(t *testing.T) {
 	})
 
 	t.Log("🎉 Framework demonstration completed successfully!")
-	t.Log("📊 This framework provides comprehensive FUSE testing capabilities:")
-	t.Log("   • Automated cluster setup/teardown")
-	t.Log("   • File operations testing (create, read, write, delete)")
-	t.Log("   • Directory operations testing")
-	t.Log("   • Large file handling")
-	t.Log("   • Concurrent operations testing")
-	t.Log("   • Error scenario validation")
-	t.Log("   • Performance validation")
+	t.Log("📊 This DEMO shows the planned FUSE testing capabilities:")
+	t.Log("   • Automated cluster setup/teardown (simulated)")
+	t.Log("   • File operations testing (local filesystem simulation)")
+	t.Log("   • Directory operations testing (planned)")
+	t.Log("   • Large file handling (demonstrated)")
+	t.Log("   • Concurrent operations testing (simulated)")
+	t.Log("   • Error scenario validation (planned)")
+	t.Log("   • Performance validation (planned)")
+	t.Log("ℹ️  Full framework available in framework.go (pending module resolution)")
 }

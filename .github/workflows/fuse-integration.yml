@@ -94,18 +94,33 @@ jobs:
         echo "🧪 Running FUSE integration tests..."
         echo "============================================"
         
-        # Check what test files are available
-        TEST_FILES=""
-        [ -f "simple_test.go" ] && TEST_FILES="$TEST_FILES simple_test.go"
-        [ -f "working_demo_test.go" ] && TEST_FILES="$TEST_FILES working_demo_test.go"
+        # Run available working test files
+        TESTS_RUN=0
         
-        if [ -n "$TEST_FILES" ]; then
-          echo "📋 Running tests on: $TEST_FILES"
-          go test -v -timeout=${{ env.TEST_TIMEOUT }} $TEST_FILES
-        else
+        if [ -f "simple_test.go" ]; then
+          echo "📋 Running simple_test.go..."
+          go test -v -timeout=${{ env.TEST_TIMEOUT }} simple_test.go
+          TESTS_RUN=$((TESTS_RUN + 1))
+        fi
+        
+        if [ -f "working_demo_test.go" ]; then
+          echo "📋 Running working_demo_test.go..."
+          go test -v -timeout=${{ env.TEST_TIMEOUT }} working_demo_test.go
+          TESTS_RUN=$((TESTS_RUN + 1))
+        fi
+        
+        # Run combined test if multiple files exist
+        if [ -f "simple_test.go" ] && [ -f "working_demo_test.go" ]; then
+          echo "📋 Running combined tests..."
+          go test -v -timeout=${{ env.TEST_TIMEOUT }} simple_test.go working_demo_test.go
+        fi
+        
+        if [ $TESTS_RUN -eq 0 ]; then
           echo "⚠️ No working test files found, running module verification only"
           go version
           go mod verify
+        else
+          echo "✅ Successfully ran $TESTS_RUN test file(s)"
         fi
         
         echo "============================================"
@@ -129,14 +144,14 @@ jobs:
           go test -v working_demo_test.go
         fi
         
-        # Test combined execution of available working tests
-        WORKING_TESTS=""
-        [ -f "simple_test.go" ] && WORKING_TESTS="$WORKING_TESTS simple_test.go"
-        [ -f "working_demo_test.go" ] && WORKING_TESTS="$WORKING_TESTS working_demo_test.go"
-        
-        if [ -n "$WORKING_TESTS" ]; then
+        # Test combined execution if both files exist
+        if [ -f "simple_test.go" ] && [ -f "working_demo_test.go" ]; then
           echo "Testing combined execution..."
-          go test -v $WORKING_TESTS
+          go test -v simple_test.go working_demo_test.go
+        elif [ -f "simple_test.go" ] || [ -f "working_demo_test.go" ]; then
+          echo "✅ Individual tests already validated above"
+        else
+          echo "⚠️ No working test files found for combined testing"
         fi
         
         echo "============================================"
