@@ -285,10 +285,16 @@ func (f *FuseTestFramework) unmountFuse() error {
 
 // waitForService waits for a service to be available
 func (f *FuseTestFramework) waitForService(addr string, timeout time.Duration) error {
-	// Implementation would check if service is responding
-	// For now, just wait a bit
-	time.Sleep(2 * time.Second)
-	return nil
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("service at %s not ready within timeout", addr)
 }
 
 // waitForMount waits for the FUSE mount to be ready
