@@ -141,8 +141,17 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	if objectLockHeaderValue := r.Header.Get(s3_constants.AmzBucketObjectLockEnabled); strings.EqualFold(objectLockHeaderValue, "true") {
 		glog.V(3).Infof("PutBucketHandler: enabling Object Lock and Versioning for bucket %s due to x-amz-bucket-object-lock-enabled header", bucket)
 
-		// updateBucketConfig atomically updates bucket configuration and returns s3err error codes
-		// Expected error codes: ErrNone (success), ErrInternalError, ErrNoSuchBucket
+		// updateBucketConfig atomically updates the configuration of the specified bucket.
+		// Parameters:
+		// - bucket: The name of the bucket whose configuration is being updated.
+		// - updateFn: A callback function that modifies the bucket's configuration. It receives a pointer
+		//   to a BucketConfig object, which can be updated as needed. The callback should return an error
+		//   if the update fails.
+		// Behavior:
+		// - The function applies the updates atomically to ensure consistency.
+		// - If the bucket does not exist, it returns the error code ErrNoSuchBucket.
+		// - If an internal error occurs, it returns the error code ErrInternalError.
+		// - On success, it returns the error code ErrNone.
 		errCode := s3a.updateBucketConfig(bucket, func(bucketConfig *BucketConfig) error {
 			// Enable versioning (required for Object Lock)
 			bucketConfig.Versioning = s3_constants.VersioningEnabled
