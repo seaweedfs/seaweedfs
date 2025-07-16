@@ -397,8 +397,7 @@ func testHighFrequencySmallWrites(t *testing.T, framework *FuseTestFramework) {
 	// Verify file size
 	info, err := os.Stat(mountPath)
 	require.NoError(t, err)
-	expectedSize := int64(numWrites * writeSize)
-	assert.Equal(t, expectedSize, info.Size())
+	assert.Equal(t, totalSize, info.Size())
 }
 
 // testManySmallFiles tests creating many small files
