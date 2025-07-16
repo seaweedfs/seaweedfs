@@ -137,10 +137,12 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Check for x-amz-bucket-object-lock-enabled header (Veeam compatibility)
-	if objectLockHeader := r.Header.Get(s3_constants.AmzBucketObjectLockEnabled); strings.EqualFold(objectLockHeader, "true") {
+	// Check for x-amz-bucket-object-lock-enabled header (S3 standard compliance)
+	if objectLockHeaderValue := r.Header.Get(s3_constants.AmzBucketObjectLockEnabled); strings.EqualFold(objectLockHeaderValue, "true") {
 		glog.V(3).Infof("PutBucketHandler: enabling Object Lock and Versioning for bucket %s due to x-amz-bucket-object-lock-enabled header", bucket)
 
+		// updateBucketConfig atomically updates bucket configuration and returns s3err error codes
+		// Expected error codes: ErrNone (success), ErrInternalError, ErrNoSuchBucket
 		errCode := s3a.updateBucketConfig(bucket, func(bucketConfig *BucketConfig) error {
 			// Enable versioning (required for Object Lock)
 			bucketConfig.Versioning = s3_constants.VersioningEnabled
@@ -162,7 +164,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			}
 
 			bucketConfig.Entry.Extended[s3_constants.ExtObjectLockConfigKey] = configXML
-			bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(objectLockConfig.ObjectLockEnabled)
+			bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(s3_constants.ObjectLockEnabled)
 
 			return nil
 		})
