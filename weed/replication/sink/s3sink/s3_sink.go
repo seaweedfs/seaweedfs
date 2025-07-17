@@ -118,7 +118,7 @@ func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey string) erro
 
 	sess, err := session.NewSession(config)
 	if err != nil {
-		return fmt.Errorf("create aws session: %v", err)
+		return fmt.Errorf("create aws session: %w", err)
 	}
 	s3sink.conn = s3.New(sess)
 

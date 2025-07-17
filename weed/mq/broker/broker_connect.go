@@ -25,7 +25,7 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string, stop
 	return pb.WithBrokerGrpcClient(true, brokerBalancer, b.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 		stream, err := client.PublisherToPubBalancer(context.Background())
 		if err != nil {
-			return fmt.Errorf("connect to balancer %v: %v", brokerBalancer, err)
+			return fmt.Errorf("connect to balancer %v: %w", brokerBalancer, err)
 		}
 		defer stream.CloseSend()
 		err = stream.Send(&mq_pb.PublisherToPubBalancerRequest{
@@ -36,7 +36,7 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string, stop
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("send init message: %v", err)
+			return fmt.Errorf("send init message: %w", err)
 		}
 
 		for {

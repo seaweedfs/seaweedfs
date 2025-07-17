@@ -84,7 +84,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 
 	err = r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, false, message.Signatures)
 	if err != nil {
-		return fmt.Errorf("delete old entry %v: %v", key, err)
+		return fmt.Errorf("delete old entry %v: %w", key, err)
 	}
 
 	glog.V(4).Infof("creating missing %v", key)

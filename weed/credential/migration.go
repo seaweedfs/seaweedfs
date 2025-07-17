@@ -31,7 +31,7 @@ func MigrateCredentials(fromStoreName, toStoreName CredentialStoreTypeName, conf
 	glog.Infof("Loading configuration from %s store...", fromStoreName)
 	config, err := fromCM.LoadConfiguration(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration from source store: %v", err)
+		return fmt.Errorf("failed to load configuration from source store: %w", err)
 	}
 
 	if config == nil || len(config.Identities) == 0 {
@@ -94,7 +94,7 @@ func ExportCredentials(storeName CredentialStoreTypeName, configuration util.Con
 	// Load configuration
 	config, err := cm.LoadConfiguration(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %v", err)
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	return config, nil
@@ -164,7 +164,7 @@ func ValidateCredentials(storeName CredentialStoreTypeName, configuration util.C
 	// Load configuration
 	config, err := cm.LoadConfiguration(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %v", err)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	if config == nil || len(config.Identities) == 0 {

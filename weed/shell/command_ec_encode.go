@@ -121,21 +121,21 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	fmt.Printf("Collecting volume locations for %d volumes before EC encoding...\n", len(volumeIds))
 	volumeLocationsMap, err := volumeLocations(commandEnv, volumeIds)
 	if err != nil {
-		return fmt.Errorf("failed to collect volume locations before EC encoding: %v", err)
+		return fmt.Errorf("failed to collect volume locations before EC encoding: %w", err)
 	}
 
 	// encode all requested volumes...
 	if err = doEcEncode(commandEnv, *collection, volumeIds, *maxParallelization); err != nil {
-		return fmt.Errorf("ec encode for volumes %v: %v", volumeIds, err)
+		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
 	}
 	// ...re-balance ec shards...
 	if err := EcBalance(commandEnv, balanceCollections, "", rp, *maxParallelization, *applyBalancing); err != nil {
-		return fmt.Errorf("re-balance ec shards for collection(s) %v: %v", balanceCollections, err)
+		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
 	// ...then delete original volumes using pre-collected locations.
 	fmt.Printf("Deleting original volumes after EC encoding...\n")
 	if err := doDeleteVolumesWithLocations(commandEnv, volumeIds, volumeLocationsMap, *maxParallelization); err != nil {
-		return fmt.Errorf("delete original volumes after EC encoding: %v", err)
+		return fmt.Errorf("delete original volumes after EC encoding: %w", err)
 	}
 	fmt.Printf("Successfully completed EC encoding for %d volumes\n", len(volumeIds))
 
@@ -161,7 +161,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, volumeIds []needle.Vo
 	}
 	locations, err := volumeLocations(commandEnv, volumeIds)
 	if err != nil {
-		return fmt.Errorf("failed to get volume locations for EC encoding: %v", err)
+		return fmt.Errorf("failed to get volume locations for EC encoding: %w", err)
 	}
 
 	// mark volumes as readonly

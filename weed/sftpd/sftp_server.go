@@ -98,7 +98,7 @@ func (fs *SftpServer) EnsureHomeDirectory() error {
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create home directory: %v", err)
+		return fmt.Errorf("failed to create home directory: %w", err)
 	}
 
 	glog.V(0).Infof("Successfully created home directory for user %s: %s", fs.user.Username, fs.user.HomeDir)

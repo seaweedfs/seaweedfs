@@ -48,7 +48,7 @@ func (store *HbaseStore) initialize(zkquorum, table string) (err error) {
 	headers := map[string][]string{store.cfMetaDir: nil}
 	get, err := hrpc.NewGet(context.Background(), store.table, []byte(key), hrpc.Families(headers))
 	if err != nil {
-		return fmt.Errorf("NewGet returned an error: %v", err)
+		return fmt.Errorf("NewGet returned an error: %w", err)
 	}
 	_, err = store.Client.Get(get)
 	if err != gohbase.TableNotFound {

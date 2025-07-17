@@ -69,12 +69,12 @@ func (c *Client) sendProtobuf(data *proto.TelemetryData) error {
 
 	body, err := protobuf.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("failed to marshal protobuf: %v", err)
+		return fmt.Errorf("failed to marshal protobuf: %w", err)
 	}
 
 	httpReq, err := http.NewRequest("POST", c.url, bytes.NewBuffer(body))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
+		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/x-protobuf")
@@ -82,7 +82,7 @@ func (c *Client) sendProtobuf(data *proto.TelemetryData) error {
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %v", err)
+		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 

@@ -200,7 +200,7 @@ func ParseServerAddress(server string, deltaPort int) (newServerAddress string, 
 
 	host, port, parseErr := hostAndPort(server)
 	if parseErr != nil {
-		return "", fmt.Errorf("server port parse error: %v", parseErr)
+		return "", fmt.Errorf("server port parse error: %w", parseErr)
 	}
 
 	newPort := int(port) + deltaPort
@@ -215,7 +215,7 @@ func hostAndPort(address string) (host string, port uint64, err error) {
 	}
 	port, err = strconv.ParseUint(address[colonIndex+1:], 10, 64)
 	if err != nil {
-		return "", 0, fmt.Errorf("server port parse error: %v", err)
+		return "", 0, fmt.Errorf("server port parse error: %w", err)
 	}
 
 	return address[:colonIndex], port, err

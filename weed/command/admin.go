@@ -186,7 +186,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	sessionKeyBytes := make([]byte, 32)
 	_, err := rand.Read(sessionKeyBytes)
 	if err != nil {
-		return fmt.Errorf("failed to generate session key: %v", err)
+		return fmt.Errorf("failed to generate session key: %w", err)
 	}
 	store := cookie.NewStore(sessionKeyBytes)
 	r.Use(sessions.Sessions("admin-session", store))
@@ -234,7 +234,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	// Start worker gRPC server for worker connections
 	err = adminServer.StartWorkerGrpcServer(*options.port)
 	if err != nil {
-		return fmt.Errorf("failed to start worker gRPC server: %v", err)
+		return fmt.Errorf("failed to start worker gRPC server: %w", err)
 	}
 
 	// Set up cleanup for gRPC server
@@ -304,7 +304,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("admin server forced to shutdown: %v", err)
+		return fmt.Errorf("admin server forced to shutdown: %w", err)
 	}
 
 	return nil
@@ -328,7 +328,7 @@ func expandHomeDir(path string) (string, error) {
 	// Get current user
 	currentUser, err := user.Current()
 	if err != nil {
-		return "", fmt.Errorf("failed to get current user: %v", err)
+		return "", fmt.Errorf("failed to get current user: %w", err)
 	}
 
 	// Handle different tilde patterns

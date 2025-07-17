@@ -48,7 +48,7 @@ func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix
 	timeoutStr := configuration.GetString(prefix + "timeout")
 	timeout, err := time.ParseDuration(timeoutStr)
 	if err != nil {
-		return fmt.Errorf("parse etcd store timeout: %v", err)
+		return fmt.Errorf("parse etcd store timeout: %w", err)
 	}
 	store.timeout = timeout
 
@@ -66,7 +66,7 @@ func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix
 		var err error
 		tlsConfig, err = tlsInfo.ClientConfig()
 		if err != nil {
-			return fmt.Errorf("TLS client configuration error: %v", err)
+			return fmt.Errorf("TLS client configuration error: %w", err)
 		}
 	}
 

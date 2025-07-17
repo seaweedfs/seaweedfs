@@ -12,7 +12,7 @@ func (store *LevelDBStore) KvPut(ctx context.Context, key []byte, value []byte) 
 	err = store.db.Put(key, value, nil)
 
 	if err != nil {
-		return fmt.Errorf("kv put: %v", err)
+		return fmt.Errorf("kv put: %w", err)
 	}
 
 	return nil
@@ -27,7 +27,7 @@ func (store *LevelDBStore) KvGet(ctx context.Context, key []byte) (value []byte,
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("kv get: %v", err)
+		return nil, fmt.Errorf("kv get: %w", err)
 	}
 
 	return
@@ -38,7 +38,7 @@ func (store *LevelDBStore) KvDelete(ctx context.Context, key []byte) (err error)
 	err = store.db.Delete(key, nil)
 
 	if err != nil {
-		return fmt.Errorf("kv delete: %v", err)
+		return fmt.Errorf("kv delete: %w", err)
 	}
 
 	return nil

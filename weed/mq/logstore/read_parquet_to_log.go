@@ -69,7 +69,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 				// convert parquet row to schema_pb.RecordValue
 				recordValue, err := schema.ToRecordValue(recordType, parquetLevels, row)
 				if err != nil {
-					return processedTsNs, fmt.Errorf("ToRecordValue failed: %v", err)
+					return processedTsNs, fmt.Errorf("ToRecordValue failed: %w", err)
 				}
 				processedTsNs = recordValue.Fields[SW_COLUMN_NAME_TS].GetInt64Value()
 				if processedTsNs <= starTsNs {
@@ -81,7 +81,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 
 				data, marshalErr := proto.Marshal(recordValue)
 				if marshalErr != nil {
-					return processedTsNs, fmt.Errorf("marshal record value: %v", marshalErr)
+					return processedTsNs, fmt.Errorf("marshal record value: %w", marshalErr)
 				}
 
 				logEntry := &filer_pb.LogEntry{
@@ -93,7 +93,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 				// fmt.Printf(" parquet entry %s ts %v\n", string(logEntry.Key), time.Unix(0, logEntry.TsNs).UTC())
 
 				if _, err = eachLogEntryFn(logEntry); err != nil {
-					return processedTsNs, fmt.Errorf("process log entry %v: %v", logEntry, err)
+					return processedTsNs, fmt.Errorf("process log entry %v: %w", logEntry, err)
 				}
 			}
 

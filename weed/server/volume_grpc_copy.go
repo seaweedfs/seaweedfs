@@ -56,7 +56,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				VolumeId: req.VolumeId,
 			})
 		if nil != err {
-			return fmt.Errorf("read volume file status failed, %v", err)
+			return fmt.Errorf("read volume file status failed, %w", err)
 		}
 
 		diskType := volFileInfoResp.DiskType
@@ -247,7 +247,7 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 
 	stat, err = os.Stat(datFileName)
 	if err != nil {
-		return fmt.Errorf("get dat file info failed, %v", err)
+		return fmt.Errorf("get dat file info failed, %w", err)
 	}
 	if originFileInf.DatFileSize != uint64(stat.Size()) {
 		return fmt.Errorf("the dat file size [%v] is not same as origin file size [%v]",

@@ -176,7 +176,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 				return fmt.Errorf("ReadNeedleData checksum %v expected %v for Needle: %v,%v", crc, n.Checksum, v.Id, n)
 			}
 			if _, err = writer.Write(buf[0:toWrite]); err != nil {
-				return fmt.Errorf("ReadNeedleData write: %v", err)
+				return fmt.Errorf("ReadNeedleData write: %w", err)
 			}
 		}
 		if err != nil {
@@ -184,7 +184,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 				err = nil
 				break
 			}
-			return fmt.Errorf("ReadNeedleData: %v", err)
+			return fmt.Errorf("ReadNeedleData: %w", err)
 		}
 		if count <= 0 {
 			break
@@ -265,7 +265,7 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 		}
 		if err != nil {
 			glog.V(0).Infof("visit needle error: %v", err)
-			return fmt.Errorf("visit needle error: %v", err)
+			return fmt.Errorf("visit needle error: %w", err)
 		}
 		offset += NeedleHeaderSize + rest
 		glog.V(4).Infof("==> new entry offset %d", offset)

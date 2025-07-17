@@ -497,11 +497,11 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	// Download and upload the chunk
 	chunkData, err := s3a.downloadChunkData(srcUrl, 0, int64(chunk.Size))
 	if err != nil {
-		return nil, fmt.Errorf("download chunk data: %v", err)
+		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
 
 	if err := s3a.uploadChunkData(chunkData, assignResult); err != nil {
-		return nil, fmt.Errorf("upload chunk data: %v", err)
+		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
 	return dstChunk, nil
@@ -531,11 +531,11 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	// Download and upload the chunk portion
 	chunkData, err := s3a.downloadChunkData(srcUrl, offsetInChunk, int64(rangeChunk.Size))
 	if err != nil {
-		return nil, fmt.Errorf("download chunk range data: %v", err)
+		return nil, fmt.Errorf("download chunk range data: %w", err)
 	}
 
 	if err := s3a.uploadChunkData(chunkData, assignResult); err != nil {
-		return nil, fmt.Errorf("upload chunk range data: %v", err)
+		return nil, fmt.Errorf("upload chunk range data: %w", err)
 	}
 
 	return dstChunk, nil
@@ -554,7 +554,7 @@ func (s3a *S3ApiServer) assignNewVolume(dstPath string) (*filer_pb.AssignVolumeR
 			Path:        dstPath,
 		})
 		if err != nil {
-			return fmt.Errorf("assign volume: %v", err)
+			return fmt.Errorf("assign volume: %w", err)
 		}
 		if resp.Error != "" {
 			return fmt.Errorf("assign volume: %v", resp.Error)
@@ -595,12 +595,12 @@ func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err err
 
 	startOffset, err = strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		return 0, 0, fmt.Errorf("invalid start offset: %v", err)
+		return 0, 0, fmt.Errorf("invalid start offset: %w", err)
 	}
 
 	endOffset, err = strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return 0, 0, fmt.Errorf("invalid end offset: %v", err)
+		return 0, 0, fmt.Errorf("invalid end offset: %w", err)
 	}
 
 	return startOffset, endOffset, nil
@@ -768,14 +768,14 @@ func (s3a *S3ApiServer) lookupVolumeUrl(fileId string) (string, error) {
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		vid, _, err := operation.ParseFileId(fileId)
 		if err != nil {
-			return fmt.Errorf("parse file ID: %v", err)
+			return fmt.Errorf("parse file ID: %w", err)
 		}
 
 		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 			VolumeIds: []string{vid},
 		})
 		if err != nil {
-			return fmt.Errorf("lookup volume: %v", err)
+			return fmt.Errorf("lookup volume: %w", err)
 		}
 
 		if locations, found := resp.LocationsMap[vid]; found && len(locations.Locations) > 0 {
@@ -787,7 +787,7 @@ func (s3a *S3ApiServer) lookupVolumeUrl(fileId string) (string, error) {
 		return nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("lookup volume URL: %v", err)
+		return "", fmt.Errorf("lookup volume URL: %w", err)
 	}
 	return srcUrl, nil
 }
@@ -797,7 +797,7 @@ func (s3a *S3ApiServer) setChunkFileId(chunk *filer_pb.FileChunk, assignResult *
 	chunk.FileId = assignResult.FileId
 	fid, err := filer_pb.ToFileIdObject(assignResult.FileId)
 	if err != nil {
-		return fmt.Errorf("parse file ID: %v", err)
+		return fmt.Errorf("parse file ID: %w", err)
 	}
 	chunk.Fid = fid
 	return nil
@@ -808,13 +808,13 @@ func (s3a *S3ApiServer) prepareChunkCopy(sourceFileId, dstPath string) (*filer_p
 	// Assign new volume
 	assignResult, err := s3a.assignNewVolume(dstPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("assign volume: %v", err)
+		return nil, "", fmt.Errorf("assign volume: %w", err)
 	}
 
 	// Look up source URL
 	srcUrl, err := s3a.lookupVolumeUrl(sourceFileId)
 	if err != nil {
-		return nil, "", fmt.Errorf("lookup source URL: %v", err)
+		return nil, "", fmt.Errorf("lookup source URL: %w", err)
 	}
 
 	return assignResult, srcUrl, nil
@@ -834,11 +834,11 @@ func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb
 	}
 	uploader, err := operation.NewUploader()
 	if err != nil {
-		return fmt.Errorf("create uploader: %v", err)
+		return fmt.Errorf("create uploader: %w", err)
 	}
 	_, err = uploader.UploadData(context.Background(), chunkData, uploadOption)
 	if err != nil {
-		return fmt.Errorf("upload chunk: %v", err)
+		return fmt.Errorf("upload chunk: %w", err)
 	}
 
 	return nil
@@ -851,7 +851,7 @@ func (s3a *S3ApiServer) downloadChunkData(srcUrl string, offset, size int64) ([]
 		chunkData = append(chunkData, data...)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("download chunk: %v", err)
+		return nil, fmt.Errorf("download chunk: %w", err)
 	}
 	if shouldRetry {
 		return nil, fmt.Errorf("download chunk: retry needed")

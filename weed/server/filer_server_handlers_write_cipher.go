@@ -56,12 +56,12 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 
 	uploader, uploaderErr := operation.NewUploader()
 	if uploaderErr != nil {
-		return nil, fmt.Errorf("uploader initialization error: %v", uploaderErr)
+		return nil, fmt.Errorf("uploader initialization error: %w", uploaderErr)
 	}
 
 	uploadResult, uploadError := uploader.UploadData(ctx, uncompressedData, uploadOption)
 	if uploadError != nil {
-		return nil, fmt.Errorf("upload to volume server: %v", uploadError)
+		return nil, fmt.Errorf("upload to volume server: %w", uploadError)
 	}
 
 	// Save to chunk manifest structure

@@ -56,7 +56,7 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 
 	c, err := storage.NewClient(context.Background(), option.WithCredentialsFile(googleApplicationCredentials))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create client: %v", err)
+		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
 	client.client = c

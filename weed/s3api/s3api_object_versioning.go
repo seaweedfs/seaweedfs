@@ -104,14 +104,14 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 		entry.Extended[s3_constants.ExtDeleteMarkerKey] = []byte("true")
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to create delete marker in .versions directory: %v", err)
+		return "", fmt.Errorf("failed to create delete marker in .versions directory: %w", err)
 	}
 
 	// Update the .versions directory metadata to indicate this delete marker is the latest version
 	err = s3a.updateLatestVersionInDirectory(bucket, cleanObject, versionId, versionFileName)
 	if err != nil {
 		glog.Errorf("createDeleteMarker: failed to update latest version in directory: %v", err)
-		return "", fmt.Errorf("failed to update latest version in directory: %v", err)
+		return "", fmt.Errorf("failed to update latest version in directory: %w", err)
 	}
 
 	glog.V(2).Infof("createDeleteMarker: successfully created delete marker %s for %s/%s", versionId, bucket, object)
@@ -455,7 +455,7 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	// Get the .versions directory entry to read latest version metadata
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get .versions directory: %v", err)
+		return nil, fmt.Errorf("failed to get .versions directory: %w", err)
 	}
 
 	// Check if directory has latest version metadata

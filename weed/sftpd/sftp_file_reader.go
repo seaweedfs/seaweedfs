@@ -63,13 +63,13 @@ func (ra *SeaweedFileReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 			}
 
 			if _, err := ra.reader.Seek(bufferKey, io.SeekStart); err != nil {
-				return 0, fmt.Errorf("seek error: %v", err)
+				return 0, fmt.Errorf("seek error: %w", err)
 			}
 
 			buffer = make([]byte, readSize)
 			readBytes, err := io.ReadFull(ra.reader, buffer)
 			if err != nil && err != io.ErrUnexpectedEOF {
-				return 0, fmt.Errorf("read error: %v", err)
+				return 0, fmt.Errorf("read error: %w", err)
 			}
 			buffer = buffer[:readBytes]
 			ra.cache.Put(bufferKey, buffer)

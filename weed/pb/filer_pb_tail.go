@@ -41,7 +41,7 @@ func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, 
 
 	err := WithFilerClient(true, option.SelfSignature, filerAddress, grpcDialOption, makeSubscribeMetadataFunc(option, processEventFn))
 	if err != nil {
-		return fmt.Errorf("subscribing filer meta change: %v", err)
+		return fmt.Errorf("subscribing filer meta change: %w", err)
 	}
 	return err
 }
@@ -50,7 +50,7 @@ func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient, option *Met
 
 	err := filerClient.WithFilerClient(true, makeSubscribeMetadataFunc(option, processEventFn))
 	if err != nil {
-		return fmt.Errorf("subscribing filer meta change: %v", err)
+		return fmt.Errorf("subscribing filer meta change: %w", err)
 	}
 
 	return nil
@@ -72,7 +72,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			UntilNs:      option.StopTsNs,
 		})
 		if err != nil {
-			return fmt.Errorf("subscribe: %v", err)
+			return fmt.Errorf("subscribe: %w", err)
 		}
 
 		for {

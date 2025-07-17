@@ -220,7 +220,7 @@ func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.
 	// find the needle from ecx file
 	offset, size, err = ev.FindNeedleFromEcx(needleId)
 	if err != nil {
-		return types.Offset{}, 0, nil, fmt.Errorf("FindNeedleFromEcx: %v", err)
+		return types.Offset{}, 0, nil, fmt.Errorf("FindNeedleFromEcx: %w", err)
 	}
 
 	intervals = ev.LocateEcShardNeedleInterval(version, offset.ToActualOffset(), types.Size(needle.GetActualSize(size, version)))

@@ -34,7 +34,7 @@ func (p *TopicRetentionPurger) PurgeExpiredTopicData() error {
 	// Get all topics with retention enabled
 	topics, err := p.getTopicsWithRetention()
 	if err != nil {
-		return fmt.Errorf("failed to get topics with retention: %v", err)
+		return fmt.Errorf("failed to get topics with retention: %w", err)
 	}
 
 	glog.V(1).Infof("Found %d topics with retention enabled", len(topics))
@@ -67,7 +67,7 @@ func (p *TopicRetentionPurger) getTopicsWithRetention() ([]TopicRetentionConfig,
 	// Find broker leader to get topics
 	brokerLeader, err := p.adminServer.findBrokerLeader()
 	if err != nil {
-		return nil, fmt.Errorf("failed to find broker leader: %v", err)
+		return nil, fmt.Errorf("failed to find broker leader: %w", err)
 	}
 
 	// Get all topics from the broker
@@ -147,7 +147,7 @@ func (p *TopicRetentionPurger) purgeTopicData(topicRetention TopicRetentionConfi
 				if err == io.EOF {
 					break
 				}
-				return fmt.Errorf("failed to receive version entries: %v", err)
+				return fmt.Errorf("failed to receive version entries: %w", err)
 			}
 
 			// Only process directories that are versions (start with "v")
@@ -257,7 +257,7 @@ func (p *TopicRetentionPurger) deleteDirectoryRecursively(client filer_pb.Seawee
 			if err == io.EOF {
 				break
 			}
-			return fmt.Errorf("failed to receive entries: %v", err)
+			return fmt.Errorf("failed to receive entries: %w", err)
 		}
 
 		entryPath := filepath.Join(dirPath, resp.Entry.Name)

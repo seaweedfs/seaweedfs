@@ -220,7 +220,7 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 		Chunks: dataChunks,
 	})
 	if serErr != nil {
-		return nil, fmt.Errorf("serializing manifest: %v", serErr)
+		return nil, fmt.Errorf("serializing manifest: %w", serErr)
 	}
 
 	minOffset, maxOffset := int64(math.MaxInt64), int64(math.MinInt64)

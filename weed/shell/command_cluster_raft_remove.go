@@ -49,7 +49,7 @@ func (c *commandRaftServerRemove) Do(args []string, commandEnv *CommandEnv, writ
 			Force: true,
 		})
 		if err != nil {
-			return fmt.Errorf("raft remove server: %v", err)
+			return fmt.Errorf("raft remove server: %w", err)
 		}
 		println("removed server", *serverId)
 		return nil

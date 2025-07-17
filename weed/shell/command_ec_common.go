@@ -1049,7 +1049,7 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 	}
 
 	if err := ecb.balanceEcRacks(); err != nil {
-		return fmt.Errorf("balance ec racks: %v", err)
+		return fmt.Errorf("balance ec racks: %w", err)
 	}
 
 	return nil

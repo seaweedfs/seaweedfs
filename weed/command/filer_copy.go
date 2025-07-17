@@ -268,7 +268,7 @@ func (worker *FileCopyWorker) doEachCopy(task FileCopyTask) error {
 	}
 
 	if shouldCopy, err := worker.checkExistingFileFirst(task, f); err != nil {
-		return fmt.Errorf("check existing file: %v", err)
+		return fmt.Errorf("check existing file: %w", err)
 	} else if !shouldCopy {
 		if *worker.options.verbose {
 			fmt.Printf("skipping copied file: %v\n", f.Name())
@@ -395,7 +395,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 		}
 
 		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
-			return fmt.Errorf("update fh: %v", err)
+			return fmt.Errorf("update fh: %w", err)
 		}
 		return nil
 	}); err != nil {
@@ -428,7 +428,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 
 			uploader, err := operation.NewUploader()
 			if err != nil {
-				uploadError = fmt.Errorf("upload data %v: %v\n", fileName, err)
+				uploadError = fmt.Errorf("upload data %v: %w\n", fileName, err)
 				return
 			}
 
@@ -456,7 +456,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 			)
 
 			if err != nil {
-				uploadError = fmt.Errorf("upload data %v: %v\n", fileName, err)
+				uploadError = fmt.Errorf("upload data %v: %w\n", fileName, err)
 				return
 			}
 			if uploadResult.Error != "" {
@@ -489,7 +489,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 
 	manifestedChunks, manifestErr := filer.MaybeManifestize(worker.saveDataAsChunk, chunks)
 	if manifestErr != nil {
-		return fmt.Errorf("create manifest: %v", manifestErr)
+		return fmt.Errorf("create manifest: %w", manifestErr)
 	}
 
 	if err := pb.WithGrpcFilerClient(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -512,7 +512,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 		}
 
 		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
-			return fmt.Errorf("update fh: %v", err)
+			return fmt.Errorf("update fh: %w", err)
 		}
 		return nil
 	}); err != nil {
@@ -546,7 +546,7 @@ func detectMimeType(f *os.File) string {
 func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
 	uploader, uploaderErr := operation.NewUploader()
 	if uploaderErr != nil {
-		return nil, fmt.Errorf("upload data: %v", uploaderErr)
+		return nil, fmt.Errorf("upload data: %w", uploaderErr)
 	}
 
 	finalFileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
@@ -573,7 +573,7 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 	)
 
 	if flushErr != nil {
-		return nil, fmt.Errorf("upload data: %v", flushErr)
+		return nil, fmt.Errorf("upload data: %w", flushErr)
 	}
 	if uploadResult.Error != "" {
 		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)

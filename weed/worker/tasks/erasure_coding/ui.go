@@ -189,7 +189,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	if values, ok := formData["volume_age_hours_seconds"]; ok && len(values) > 0 {
 		hours, err := strconv.Atoi(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid volume age hours: %v", err)
+			return nil, fmt.Errorf("invalid volume age hours: %w", err)
 		}
 		config.VolumeAgeHoursSeconds = hours
 	}
@@ -198,7 +198,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	if values, ok := formData["scan_interval_seconds"]; ok && len(values) > 0 {
 		interval, err := strconv.Atoi(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid scan interval: %v", err)
+			return nil, fmt.Errorf("invalid scan interval: %w", err)
 		}
 		config.ScanIntervalSeconds = interval
 	}
@@ -207,7 +207,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	if values, ok := formData["max_concurrent"]; ok && len(values) > 0 {
 		maxConcurrent, err := strconv.Atoi(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid max concurrent: %v", err)
+			return nil, fmt.Errorf("invalid max concurrent: %w", err)
 		}
 		if maxConcurrent < 1 {
 			return nil, fmt.Errorf("max concurrent must be at least 1")
@@ -219,7 +219,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	if values, ok := formData["shard_count"]; ok && len(values) > 0 {
 		shardCount, err := strconv.Atoi(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid shard count: %v", err)
+			return nil, fmt.Errorf("invalid shard count: %w", err)
 		}
 		if shardCount < 1 {
 			return nil, fmt.Errorf("shard count must be at least 1")
@@ -231,7 +231,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	if values, ok := formData["parity_count"]; ok && len(values) > 0 {
 		parityCount, err := strconv.Atoi(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid parity count: %v", err)
+			return nil, fmt.Errorf("invalid parity count: %w", err)
 		}
 		if parityCount < 1 {
 			return nil, fmt.Errorf("parity count must be at least 1")

@@ -9,7 +9,7 @@ import (
 func ToParquetSchema(topicName string, recordType *schema_pb.RecordType) (*parquet.Schema, error) {
 	rootNode, err := toParquetFieldTypeRecord(recordType)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert record type to parquet schema: %v", err)
+		return nil, fmt.Errorf("failed to convert record type to parquet schema: %w", err)
 	}
 
 	// Fields are sorted by name, so the value should be sorted also

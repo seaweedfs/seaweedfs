@@ -118,7 +118,7 @@ func parseXML[T any](request *http.Request, result *T) error {
 
 	decoder := xml.NewDecoder(request.Body)
 	if err := decoder.Decode(result); err != nil {
-		return fmt.Errorf("error parsing XML: %v", err)
+		return fmt.Errorf("error parsing XML: %w", err)
 	}
 
 	return nil
@@ -249,7 +249,7 @@ func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer
 		// Check if versioning is enabled
 		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
 		if vErr != nil {
-			return nil, fmt.Errorf("error checking versioning: %v", vErr)
+			return nil, fmt.Errorf("error checking versioning: %w", vErr)
 		}
 
 		if versioningEnabled {
@@ -316,7 +316,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 		// Check if versioning is enabled
 		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
 		if vErr != nil {
-			return fmt.Errorf("error checking versioning: %v", vErr)
+			return fmt.Errorf("error checking versioning: %w", vErr)
 		}
 
 		if versioningEnabled {
@@ -427,7 +427,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 		// Check if versioning is enabled
 		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
 		if vErr != nil {
-			return fmt.Errorf("error checking versioning: %v", vErr)
+			return fmt.Errorf("error checking versioning: %w", vErr)
 		}
 
 		if versioningEnabled {
@@ -601,7 +601,7 @@ func (s3a *S3ApiServer) isObjectLockAvailable(bucket string) error {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return ErrBucketNotFound
 		}
-		return fmt.Errorf("error checking versioning status: %v", err)
+		return fmt.Errorf("error checking versioning status: %w", err)
 	}
 
 	if !versioningEnabled {

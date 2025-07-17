@@ -104,7 +104,7 @@ func (iama *IamS3ApiConfigure) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigur
 func (iama *IamS3ApiConfigure) GetS3ApiConfigurationFromCredentialManager(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
 	config, err := iama.credentialManager.LoadConfiguration(context.Background())
 	if err != nil {
-		return fmt.Errorf("failed to load configuration from credential manager: %v", err)
+		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
 	}
 	*s3cfg = *config
 	return nil

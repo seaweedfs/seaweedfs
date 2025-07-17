@@ -48,7 +48,7 @@ func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.R
 
 	sess, err := session.NewSession(config)
 	if err != nil {
-		return nil, fmt.Errorf("create aws session: %v", err)
+		return nil, fmt.Errorf("create aws session: %w", err)
 	}
 	if conf.S3V4Signature {
 		sess.Handlers.Sign.PushBackNamed(v4.SignRequestHandler)
@@ -108,10 +108,10 @@ func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation
 			return true
 		})
 		if listErr != nil {
-			err = fmt.Errorf("list %v: %v", remote, listErr)
+			err = fmt.Errorf("list %v: %w", remote, listErr)
 		}
 		if localErr != nil {
-			err = fmt.Errorf("process %v: %v", remote, localErr)
+			err = fmt.Errorf("process %v: %w", remote, localErr)
 		}
 	}
 	return
@@ -252,7 +252,7 @@ func (s *s3RemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation)
 func (s *s3RemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
 	resp, err := s.conn.ListBuckets(&s3.ListBucketsInput{})
 	if err != nil {
-		return nil, fmt.Errorf("list buckets: %v", err)
+		return nil, fmt.Errorf("list buckets: %w", err)
 	}
 	for _, b := range resp.Buckets {
 		buckets = append(buckets, &remote_storage.Bucket{

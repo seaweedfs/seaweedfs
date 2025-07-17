@@ -194,7 +194,7 @@ func setWatermark(db *leveldb.DB, watermark uint64) error {
 	var wmBytes = make([]byte, 8)
 	util.Uint64toBytes(wmBytes, watermark)
 	if err := db.Put(watermarkKey, wmBytes, nil); err != nil {
-		return fmt.Errorf("failed to setWatermark: %v", err)
+		return fmt.Errorf("failed to setWatermark: %w", err)
 	}
 	return nil
 }
@@ -204,7 +204,7 @@ func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size, update
 	bytes := needle_map.ToBytes(key, offset, size)
 
 	if err := db.Put(bytes[0:NeedleIdSize], bytes[NeedleIdSize:NeedleIdSize+OffsetSize+SizeSize], nil); err != nil {
-		return fmt.Errorf("failed to write leveldb: %v", err)
+		return fmt.Errorf("failed to write leveldb: %w", err)
 	}
 	// set watermark
 	if updateWatermark {

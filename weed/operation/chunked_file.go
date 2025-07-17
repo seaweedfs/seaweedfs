@@ -83,7 +83,7 @@ func (cm *ChunkManifest) DeleteChunks(masterFn GetMasterFn, usePublicUrl bool, g
 	results, err := DeleteFileIds(masterFn, usePublicUrl, grpcDialOption, fileIds)
 	if err != nil {
 		glog.V(0).Infof("delete %+v: %v", fileIds, err)
-		return fmt.Errorf("chunk delete: %v", err)
+		return fmt.Errorf("chunk delete: %w", err)
 	}
 	for _, result := range results {
 		if result.Error != "" {

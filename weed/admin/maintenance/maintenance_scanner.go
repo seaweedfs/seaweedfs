@@ -35,7 +35,7 @@ func (ms *MaintenanceScanner) ScanForMaintenanceTasks() ([]*TaskDetectionResult,
 	// Get volume health metrics
 	volumeMetrics, err := ms.getVolumeHealthMetrics()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get volume health metrics: %v", err)
+		return nil, fmt.Errorf("failed to get volume health metrics: %w", err)
 	}
 
 	// Use task system for all task types

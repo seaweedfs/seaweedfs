@@ -397,7 +397,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				}
 				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, eachEntryFn)
 				if subErr != nil {
-					err = fmt.Errorf("doListFilerEntries2: %v", subErr)
+					err = fmt.Errorf("doListFilerEntries2: %w", subErr)
 					return
 				}
 				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "subNextMarker", subNextMarker)

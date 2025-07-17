@@ -40,7 +40,7 @@ func (fs *FilerServer) TraverseBfsMetadata(req *filer_pb.TraverseBfsMetadataRequ
 			Directory: parent,
 			Entry:     item.ToProtoEntry(),
 		}); err != nil {
-			return fmt.Errorf("send traverse bfs metadata response: %v", err)
+			return fmt.Errorf("send traverse bfs metadata response: %w", err)
 		}
 
 		if !item.IsDirectory() {

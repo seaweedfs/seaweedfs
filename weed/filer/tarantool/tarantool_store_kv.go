@@ -33,7 +33,7 @@ func (store *TarantoolStore) KvPut(ctx context.Context, key []byte, value []byte
 
 	ret := crud.Result{}
 	if err := store.pool.Do(req, pool.RW).GetTyped(&ret); err != nil {
-		return fmt.Errorf("kv put: %v", err)
+		return fmt.Errorf("kv put: %w", err)
 	}
 
 	return nil
@@ -88,7 +88,7 @@ func (store *TarantoolStore) KvDelete(ctx context.Context, key []byte) (err erro
 		Opts(delOpts)
 
 	if _, err := store.pool.Do(req, pool.RW).Get(); err != nil {
-		return fmt.Errorf("kv delete: %v", err)
+		return fmt.Errorf("kv delete: %w", err)
 	}
 
 	return nil

@@ -42,7 +42,7 @@ func (s TencentRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_stor
 
 	sess, err := session.NewSession(config)
 	if err != nil {
-		return nil, fmt.Errorf("create tencent session: %v", err)
+		return nil, fmt.Errorf("create tencent session: %w", err)
 	}
 	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)

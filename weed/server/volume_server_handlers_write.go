@@ -144,7 +144,7 @@ func writeDeleteResult(err error, count int64, w http.ResponseWriter, r *http.Re
 		m["size"] = count
 		writeJsonQuiet(w, r, http.StatusAccepted, m)
 	} else {
-		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Deletion Failed: %v", err))
+		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Deletion Failed: %w", err))
 	}
 }
 

@@ -133,14 +133,14 @@ func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 
 		println("+", parentPath.Child(entry.Name))
 		if err := metaBackup.store.InsertEntry(context.Background(), filer.FromPbEntry(string(parentPath), entry)); err != nil {
-			saveErr = fmt.Errorf("insert entry error: %v\n", err)
+			saveErr = fmt.Errorf("insert entry error: %w\n", err)
 			return
 		}
 
 	})
 
 	if traverseErr != nil {
-		return fmt.Errorf("traverse: %v", traverseErr)
+		return fmt.Errorf("traverse: %w", traverseErr)
 	}
 	return saveErr
 }

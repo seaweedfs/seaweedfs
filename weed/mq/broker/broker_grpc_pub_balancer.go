@@ -15,7 +15,7 @@ func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessagin
 	}
 	req, err := stream.Recv()
 	if err != nil {
-		return fmt.Errorf("receive init message: %v", err)
+		return fmt.Errorf("receive init message: %w", err)
 	}
 
 	// process init message

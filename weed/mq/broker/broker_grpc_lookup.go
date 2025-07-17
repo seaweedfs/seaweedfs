@@ -164,14 +164,14 @@ func (b *MessageQueueBroker) GetTopicConfiguration(ctx context.Context, request 
 
 	if conf, createdAtNs, modifiedAtNs, err = b.fca.ReadTopicConfFromFilerWithMetadata(t); err != nil {
 		glog.V(0).Infof("get topic configuration %s: %v", request.Topic, err)
-		return nil, fmt.Errorf("failed to read topic configuration: %v", err)
+		return nil, fmt.Errorf("failed to read topic configuration: %w", err)
 	}
 
 	// Ensure topic assignments are active
 	err = b.ensureTopicActiveAssignments(t, conf)
 	if err != nil {
 		glog.V(0).Infof("ensure topic active assignments %s: %v", request.Topic, err)
-		return nil, fmt.Errorf("failed to ensure topic assignments: %v", err)
+		return nil, fmt.Errorf("failed to ensure topic assignments: %w", err)
 	}
 
 	// Build the response with complete configuration including metadata
@@ -208,7 +208,7 @@ func (b *MessageQueueBroker) GetTopicPublishers(ctx context.Context, request *mq
 	var conf *mq_pb.ConfigureTopicResponse
 	if conf, _, _, err = b.fca.ReadTopicConfFromFilerWithMetadata(t); err != nil {
 		glog.V(0).Infof("get topic configuration for publishers %s: %v", request.Topic, err)
-		return nil, fmt.Errorf("failed to read topic configuration: %v", err)
+		return nil, fmt.Errorf("failed to read topic configuration: %w", err)
 	}
 
 	// Collect publishers from each partition that is hosted on this broker
@@ -262,7 +262,7 @@ func (b *MessageQueueBroker) GetTopicSubscribers(ctx context.Context, request *m
 	var conf *mq_pb.ConfigureTopicResponse
 	if conf, _, _, err = b.fca.ReadTopicConfFromFilerWithMetadata(t); err != nil {
 		glog.V(0).Infof("get topic configuration for subscribers %s: %v", request.Topic, err)
-		return nil, fmt.Errorf("failed to read topic configuration: %v", err)
+		return nil, fmt.Errorf("failed to read topic configuration: %w", err)
 	}
 
 	// Collect subscribers from each partition that is hosted on this broker

@@ -60,7 +60,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 
 	replicaPlacement, err := super_block.NewReplicaPlacementFromString(*replicationString)
 	if err != nil {
-		return fmt.Errorf("replication format: %v", err)
+		return fmt.Errorf("replication format: %w", err)
 	}
 
 	// collect topology information

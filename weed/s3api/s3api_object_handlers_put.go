@@ -349,7 +349,7 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
 		glog.Errorf("updateLatestVersionInDirectory: failed to get .versions entry: %v", err)
-		return fmt.Errorf("failed to get .versions entry: %v", err)
+		return fmt.Errorf("failed to get .versions entry: %w", err)
 	}
 
 	// Add or update the latest version metadata
@@ -367,7 +367,7 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	})
 	if err != nil {
 		glog.Errorf("updateLatestVersionInDirectory: failed to update .versions directory metadata: %v", err)
-		return fmt.Errorf("failed to update .versions directory metadata: %v", err)
+		return fmt.Errorf("failed to update .versions directory metadata: %w", err)
 	}
 
 	return nil

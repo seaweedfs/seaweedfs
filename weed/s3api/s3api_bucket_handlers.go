@@ -99,7 +99,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			IncludeNormalVolumes: true,
 		}); err != nil {
 			glog.Errorf("list collection: %v", err)
-			return fmt.Errorf("list collections: %v", err)
+			return fmt.Errorf("list collections: %w", err)
 		} else {
 			for _, c := range resp.Collections {
 				if s3a.getCollectionName(bucket) == c.Name {
@@ -161,7 +161,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			// Store the configuration as XML in extended attributes
 			configXML, err := xml.Marshal(objectLockConfig)
 			if err != nil {
-				return fmt.Errorf("failed to marshal Object Lock configuration to XML: %v", err)
+				return fmt.Errorf("failed to marshal Object Lock configuration to XML: %w", err)
 			}
 
 			bucketConfig.Entry.Extended[s3_constants.ExtObjectLockConfigKey] = configXML

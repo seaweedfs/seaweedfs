@@ -78,7 +78,7 @@ func (store *ElasticStore) initialize(options []elastic.ClientOptionFunc) (err e
 	ctx := context.Background()
 	store.client, err = elastic.NewClient(options...)
 	if err != nil {
-		return fmt.Errorf("init elastic %v", err)
+		return fmt.Errorf("init elastic %w", err)
 	}
 	if ok, err := store.client.IndexExists(indexKV).Do(ctx); err == nil && !ok {
 		_, err = store.client.CreateIndex(indexKV).Body(kvMappings).Do(ctx)
@@ -114,7 +114,7 @@ func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 	value, err := jsoniter.Marshal(esEntry)
 	if err != nil {
 		glog.ErrorfCtx(ctx, "insert entry(%s) %v.", string(entry.FullPath), err)
-		return fmt.Errorf("insert entry marshal %v", err)
+		return fmt.Errorf("insert entry marshal %w", err)
 	}
 	_, err = store.client.Index().
 		Index(index).
@@ -124,7 +124,7 @@ func (store *ElasticStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 		Do(ctx)
 	if err != nil {
 		glog.ErrorfCtx(ctx, "insert entry(%s) %v.", string(entry.FullPath), err)
-		return fmt.Errorf("insert entry %v", err)
+		return fmt.Errorf("insert entry %w", err)
 	}
 	return nil
 }
@@ -194,7 +194,7 @@ func (store *ElasticStore) deleteEntry(ctx context.Context, index, id string) (e
 		}
 	}
 	glog.ErrorfCtx(ctx, "delete entry(index:%s,_id:%s) %v.", index, id, err)
-	return fmt.Errorf("delete entry %v", err)
+	return fmt.Errorf("delete entry %w", err)
 }
 
 func (store *ElasticStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {

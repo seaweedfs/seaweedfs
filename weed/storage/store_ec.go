@@ -140,7 +140,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 
 			offset, size, intervals, err := localEcVolume.LocateEcShardNeedle(n.Id, localEcVolume.Version)
 			if err != nil {
-				return 0, fmt.Errorf("locate in local ec volume: %v", err)
+				return 0, fmt.Errorf("locate in local ec volume: %w", err)
 			}
 			if size.IsDeleted() {
 				return 0, ErrorDeleted
@@ -157,7 +157,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 			}
 			bytes, isDeleted, err := s.readEcShardIntervals(vid, n.Id, localEcVolume, intervals)
 			if err != nil {
-				return 0, fmt.Errorf("ReadEcShardIntervals: %v", err)
+				return 0, fmt.Errorf("ReadEcShardIntervals: %w", err)
 			}
 			if isDeleted {
 				return 0, ErrorDeleted
@@ -165,7 +165,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 
 			err = n.ReadBytes(bytes, offset.ToActualOffset(), size, localEcVolume.Version)
 			if err != nil {
-				return 0, fmt.Errorf("readbytes: %v", err)
+				return 0, fmt.Errorf("readbytes: %w", err)
 			}
 
 			return len(bytes), nil
@@ -345,7 +345,7 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 
 	enc, err := reedsolomon.New(erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	if err != nil {
-		return 0, false, fmt.Errorf("failed to create encoder: %v", err)
+		return 0, false, fmt.Errorf("failed to create encoder: %w", err)
 	}
 
 	bufs := make([][]byte, erasure_coding.TotalShardsCount)

@@ -18,7 +18,7 @@ func (store *ArangodbStore) KvPut(ctx context.Context, key []byte, value []byte)
 
 	exists, err := store.kvCollection.DocumentExists(ctx, model.Key)
 	if err != nil {
-		return fmt.Errorf("kv put: %v", err)
+		return fmt.Errorf("kv put: %w", err)
 	}
 	if exists {
 		_, err = store.kvCollection.UpdateDocument(ctx, model.Key, model)
@@ -26,7 +26,7 @@ func (store *ArangodbStore) KvPut(ctx context.Context, key []byte, value []byte)
 		_, err = store.kvCollection.CreateDocument(ctx, model)
 	}
 	if err != nil {
-		return fmt.Errorf("kv put: %v", err)
+		return fmt.Errorf("kv put: %w", err)
 	}
 
 	return nil

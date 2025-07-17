@@ -38,7 +38,7 @@ func (p *TopicPublisher) PublishRecord(key []byte, recordValue *schema_pb.Record
 	// serialize record value
 	value, err := proto.Marshal(recordValue)
 	if err != nil {
-		return fmt.Errorf("failed to marshal record value: %v", err)
+		return fmt.Errorf("failed to marshal record value: %w", err)
 	}
 
 	return p.doPublish(key, value)

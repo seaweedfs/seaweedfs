@@ -540,7 +540,7 @@ func (s *Storage) Store(bucket string, config *CORSConfiguration) error {
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal bucket metadata: %v", err)
+		return fmt.Errorf("failed to marshal bucket metadata: %w", err)
 	}
 
 	// Store metadata
@@ -579,7 +579,7 @@ func (s *Storage) Load(bucket string) (*CORSConfiguration, error) {
 
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(entry.Content, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
 
 	corsData, exists := metadata["cors"]
@@ -590,12 +590,12 @@ func (s *Storage) Load(bucket string) (*CORSConfiguration, error) {
 	// Convert back to CORSConfiguration
 	corsBytes, err := json.Marshal(corsData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal CORS data: %v", err)
+		return nil, fmt.Errorf("failed to marshal CORS data: %w", err)
 	}
 
 	var config CORSConfiguration
 	if err := json.Unmarshal(corsBytes, &config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal CORS configuration: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal CORS configuration: %w", err)
 	}
 
 	return &config, nil
@@ -613,7 +613,7 @@ func (s *Storage) Delete(bucket string) error {
 	var metadata map[string]interface{}
 	if len(entry.Content) > 0 {
 		if err := json.Unmarshal(entry.Content, &metadata); err != nil {
-			return fmt.Errorf("failed to unmarshal metadata: %v", err)
+			return fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
 	} else {
 		return nil // No metadata to delete
@@ -624,7 +624,7 @@ func (s *Storage) Delete(bucket string) error {
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %v", err)
+		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
 	// Update metadata

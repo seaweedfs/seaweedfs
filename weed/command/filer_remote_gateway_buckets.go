@@ -23,7 +23,7 @@ func (option *RemoteGatewayOptions) followBucketUpdatesAndUploadToRemote(filerSo
 
 	// read filer remote storage mount mappings
 	if detectErr := option.collectRemoteStorageConf(); detectErr != nil {
-		return fmt.Errorf("read mount info: %v", detectErr)
+		return fmt.Errorf("read mount info: %w", detectErr)
 	}
 
 	eachEntryFunc, err := option.makeBucketedEventProcessor(filerSource)
@@ -168,7 +168,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			if message.NewEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
 				newMappings, readErr := filer.UnmarshalRemoteStorageMappings(message.NewEntry.Content)
 				if readErr != nil {
-					return fmt.Errorf("unmarshal mappings: %v", readErr)
+					return fmt.Errorf("unmarshal mappings: %w", readErr)
 				}
 				option.mappings = newMappings
 			}

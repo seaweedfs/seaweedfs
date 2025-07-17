@@ -24,7 +24,7 @@ func (store *MongodbStore) KvPut(ctx context.Context, key []byte, value []byte) 
 	_, err = c.UpdateOne(ctx, filter, update, opts)
 
 	if err != nil {
-		return fmt.Errorf("kv put: %v", err)
+		return fmt.Errorf("kv put: %w", err)
 	}
 
 	return nil
@@ -56,7 +56,7 @@ func (store *MongodbStore) KvDelete(ctx context.Context, key []byte) (err error)
 	where := bson.M{"directory": dir, "name": name}
 	_, err = store.connect.Database(store.database).Collection(store.collectionName).DeleteOne(ctx, where)
 	if err != nil {
-		return fmt.Errorf("kv delete: %v", err)
+		return fmt.Errorf("kv delete: %w", err)
 	}
 
 	return nil

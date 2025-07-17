@@ -77,7 +77,7 @@ func StreamBfs(client SeaweedFilerClient, dir util.FullPath, olderThanTsNs int64
 		Directory: string(dir),
 	})
 	if err != nil {
-		return fmt.Errorf("traverse bfs metadata: %v", err)
+		return fmt.Errorf("traverse bfs metadata: %w", err)
 	}
 	for {
 		resp, err := stream.Recv()
@@ -85,7 +85,7 @@ func StreamBfs(client SeaweedFilerClient, dir util.FullPath, olderThanTsNs int64
 			if err == io.EOF {
 				break
 			}
-			return fmt.Errorf("traverse bfs metadata: %v", err)
+			return fmt.Errorf("traverse bfs metadata: %w", err)
 		}
 		if err := fn(util.FullPath(resp.Directory), resp.Entry); err != nil {
 			return err

@@ -37,12 +37,12 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 func (s *MaxVolumeIdCommand) Persist(sink hashicorpRaft.SnapshotSink) error {
 	b, err := json.Marshal(s)
 	if err != nil {
-		return fmt.Errorf("marshal: %v", err)
+		return fmt.Errorf("marshal: %w", err)
 	}
 	_, err = sink.Write(b)
 	if err != nil {
 		sink.Cancel()
-		return fmt.Errorf("sink.Write(): %v", err)
+		return fmt.Errorf("sink.Write(): %w", err)
 	}
 	return sink.Close()
 }

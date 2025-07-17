@@ -307,19 +307,19 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 
 	// Validate and sanitize the filer address
 	if err := h.validateFilerAddress(filerAddress); err != nil {
-		return fmt.Errorf("invalid filer address: %v", err)
+		return fmt.Errorf("invalid filer address: %w", err)
 	}
 
 	// Validate and sanitize the file path
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
-		return fmt.Errorf("invalid file path: %v", err)
+		return fmt.Errorf("invalid file path: %w", err)
 	}
 
 	// Open the file
 	file, err := fileHeader.Open()
 	if err != nil {
-		return fmt.Errorf("failed to open file: %v", err)
+		return fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
 
@@ -330,19 +330,19 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	// Create form file field
 	part, err := writer.CreateFormFile("file", fileHeader.Filename)
 	if err != nil {
-		return fmt.Errorf("failed to create form file: %v", err)
+		return fmt.Errorf("failed to create form file: %w", err)
 	}
 
 	// Copy file content to form
 	_, err = io.Copy(part, file)
 	if err != nil {
-		return fmt.Errorf("failed to copy file content: %v", err)
+		return fmt.Errorf("failed to copy file content: %w", err)
 	}
 
 	// Close the writer to finalize the form
 	err = writer.Close()
 	if err != nil {
-		return fmt.Errorf("failed to close multipart writer: %v", err)
+		return fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
 	// Create the upload URL with validated components
@@ -351,7 +351,7 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	// Create HTTP request
 	req, err := http.NewRequest("POST", uploadURL, &body)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
+		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set content type with boundary
@@ -361,7 +361,7 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	client := &http.Client{Timeout: 60 * time.Second} // Increased timeout for larger files
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to upload file: %v", err)
+		return fmt.Errorf("failed to upload file: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -383,7 +383,7 @@ func (h *FileBrowserHandlers) validateFilerAddress(address string) error {
 	// Parse the address to validate it's a proper host:port format
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
-		return fmt.Errorf("invalid address format: %v", err)
+		return fmt.Errorf("invalid address format: %w", err)
 	}
 
 	// Validate host is not empty
@@ -398,7 +398,7 @@ func (h *FileBrowserHandlers) validateFilerAddress(address string) error {
 
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
-		return fmt.Errorf("invalid port number: %v", err)
+		return fmt.Errorf("invalid port number: %w", err)
 	}
 
 	if portNum < 1 || portNum > 65535 {

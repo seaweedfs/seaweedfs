@@ -407,7 +407,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 	uploader, uploaderErr := operation.NewUploader()
 	if uploaderErr != nil {
 		glog.V(0).Infof("upload data %v: %v", f.name, uploaderErr)
-		return nil, fmt.Errorf("upload data: %v", uploaderErr)
+		return nil, fmt.Errorf("upload data: %w", uploaderErr)
 	}
 
 	fileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
@@ -434,7 +434,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 
 	if flushErr != nil {
 		glog.V(0).Infof("upload data %v: %v", f.name, flushErr)
-		return nil, fmt.Errorf("upload data: %v", flushErr)
+		return nil, fmt.Errorf("upload data: %w", flushErr)
 	}
 	if uploadResult.Error != "" {
 		glog.V(0).Infof("upload failure %v: %v", f.name, flushErr)

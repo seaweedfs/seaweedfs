@@ -34,7 +34,7 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		var buf bytes.Buffer
 		if err := filer.ProtoToText(&buf, config); err != nil {
-			return fmt.Errorf("failed to marshal configuration: %v", err)
+			return fmt.Errorf("failed to marshal configuration: %w", err)
 		}
 		return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
 	})
@@ -44,7 +44,7 @@ func (store *FilerEtcStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 	// Load existing configuration
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %v", err)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	// Check if user already exists
@@ -64,7 +64,7 @@ func (store *FilerEtcStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 func (store *FilerEtcStore) GetUser(ctx context.Context, username string) (*iam_pb.Identity, error) {
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %v", err)
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	for _, identity := range config.Identities {
@@ -79,7 +79,7 @@ func (store *FilerEtcStore) GetUser(ctx context.Context, username string) (*iam_
 func (store *FilerEtcStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %v", err)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	// Find and update the user
@@ -96,7 +96,7 @@ func (store *FilerEtcStore) UpdateUser(ctx context.Context, username string, ide
 func (store *FilerEtcStore) DeleteUser(ctx context.Context, username string) error {
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %v", err)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	// Find and remove the user
@@ -113,7 +113,7 @@ func (store *FilerEtcStore) DeleteUser(ctx context.Context, username string) err
 func (store *FilerEtcStore) ListUsers(ctx context.Context) ([]string, error) {
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %v", err)
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	var usernames []string
@@ -127,7 +127,7 @@ func (store *FilerEtcStore) ListUsers(ctx context.Context) ([]string, error) {
 func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey string) (*iam_pb.Identity, error) {
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %v", err)
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	for _, identity := range config.Identities {
@@ -144,7 +144,7 @@ func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey st
 func (store *FilerEtcStore) CreateAccessKey(ctx context.Context, username string, cred *iam_pb.Credential) error {
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %v", err)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	// Find the user and add the credential
@@ -168,7 +168,7 @@ func (store *FilerEtcStore) CreateAccessKey(ctx context.Context, username string
 func (store *FilerEtcStore) DeleteAccessKey(ctx context.Context, username string, accessKey string) error {
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %v", err)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	// Find the user and remove the credential

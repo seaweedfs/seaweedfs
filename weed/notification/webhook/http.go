@@ -32,7 +32,7 @@ func (h *httpClient) sendMessage(message *webhookMessage) error {
 	// Serialize the protobuf message to JSON for HTTP payload
 	notificationData, err := json.Marshal(message.Notification)
 	if err != nil {
-		return fmt.Errorf("failed to marshal notification: %v", err)
+		return fmt.Errorf("failed to marshal notification: %w", err)
 	}
 
 	payload := map[string]interface{}{
@@ -43,12 +43,12 @@ func (h *httpClient) sendMessage(message *webhookMessage) error {
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal message: %v", err)
+		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
 	req, err := http.NewRequest(http.MethodPost, h.endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
+		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -68,7 +68,7 @@ func (h *httpClient) sendMessage(message *webhookMessage) error {
 			glog.Errorf("failed to drain response: %v", err)
 		}
 
-		return fmt.Errorf("failed to send request: %v", err)
+		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 

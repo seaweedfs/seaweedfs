@@ -153,5 +153,5 @@ func create(tag string, t time.Time) (f *os.File, filename string, err error) {
 		}
 		lastErr = err
 	}
-	return nil, "", fmt.Errorf("log: cannot create log: %v", lastErr)
+	return nil, "", fmt.Errorf("log: cannot create log: %w", lastErr)
 }

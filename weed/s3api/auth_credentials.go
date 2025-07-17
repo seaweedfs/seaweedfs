@@ -178,7 +178,7 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []b
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
-		return fmt.Errorf("unmarshal error: %v", err)
+		return fmt.Errorf("unmarshal error: %w", err)
 	}
 
 	if err := filer.CheckDuplicateAccessKey(s3ApiConfiguration); err != nil {
@@ -534,7 +534,7 @@ func (iam *IdentityAccessManagement) GetCredentialManager() *credential.Credenti
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
 	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
 	if err != nil {
-		return fmt.Errorf("failed to load configuration from credential manager: %v", err)
+		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
 	}
 
 	if len(s3ApiConfiguration.Identities) == 0 {

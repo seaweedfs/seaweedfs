@@ -75,7 +75,7 @@ func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer 
 
 		// pull content from remote
 		if err = c.uncacheContentData(commandEnv, writer, util.FullPath(*dir), fileFiler); err != nil {
-			return fmt.Errorf("uncache content data: %v", err)
+			return fmt.Errorf("uncache content data: %w", err)
 		}
 		return nil
 	}

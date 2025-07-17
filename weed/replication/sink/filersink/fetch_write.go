@@ -94,7 +94,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 	uploader, err := operation.NewUploader()
 	if err != nil {
 		glog.V(0).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), err)
-		return "", fmt.Errorf("upload data: %v", err)
+		return "", fmt.Errorf("upload data: %w", err)
 	}
 
 	fileId, uploadResult, err, _ := uploader.UploadWithRetry(
@@ -128,7 +128,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 
 	if err != nil {
 		glog.V(0).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), err)
-		return "", fmt.Errorf("upload data: %v", err)
+		return "", fmt.Errorf("upload data: %w", err)
 	}
 	if uploadResult.Error != "" {
 		glog.V(0).Infof("upload failure %v: %v", filename, err)

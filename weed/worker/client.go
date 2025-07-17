@@ -83,7 +83,7 @@ func (c *GrpcAdminClient) Connect() error {
 	// Detect TLS support and create appropriate connection
 	conn, err := c.createConnection()
 	if err != nil {
-		return fmt.Errorf("failed to connect to admin server: %v", err)
+		return fmt.Errorf("failed to connect to admin server: %w", err)
 	}
 
 	c.conn = conn
@@ -94,7 +94,7 @@ func (c *GrpcAdminClient) Connect() error {
 	stream, err := c.client.WorkerStream(c.streamCtx)
 	if err != nil {
 		c.conn.Close()
-		return fmt.Errorf("failed to create worker stream: %v", err)
+		return fmt.Errorf("failed to create worker stream: %w", err)
 	}
 
 	c.stream = stream
@@ -116,7 +116,7 @@ func (c *GrpcAdminClient) createConnection() (*grpc.ClientConn, error) {
 
 	conn, err := pb.GrpcDial(ctx, c.adminAddress, false, c.dialOption)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to admin server: %v", err)
+		return nil, fmt.Errorf("failed to connect to admin server: %w", err)
 	}
 
 	glog.Infof("Connected to admin server at %s", c.adminAddress)
@@ -273,7 +273,7 @@ func (c *GrpcAdminClient) reconnect() error {
 	// Create new connection
 	conn, err := c.createConnection()
 	if err != nil {
-		return fmt.Errorf("failed to create connection: %v", err)
+		return fmt.Errorf("failed to create connection: %w", err)
 	}
 
 	client := worker_pb.NewWorkerServiceClient(conn)
@@ -284,7 +284,7 @@ func (c *GrpcAdminClient) reconnect() error {
 	if err != nil {
 		conn.Close()
 		streamCancel()
-		return fmt.Errorf("failed to create stream: %v", err)
+		return fmt.Errorf("failed to create stream: %w", err)
 	}
 
 	// Update client state
@@ -440,7 +440,7 @@ func (c *GrpcAdminClient) SendHeartbeat(workerID string, status *types.WorkerSta
 	if !c.connected {
 		// Wait for reconnection for a short time
 		if err := c.waitForConnection(10 * time.Second); err != nil {
-			return fmt.Errorf("not connected to admin server: %v", err)
+			return fmt.Errorf("not connected to admin server: %w", err)
 		}
 	}
 
@@ -479,7 +479,7 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 	if !c.connected {
 		// Wait for reconnection for a short time
 		if err := c.waitForConnection(5 * time.Second); err != nil {
-			return nil, fmt.Errorf("not connected to admin server: %v", err)
+			return nil, fmt.Errorf("not connected to admin server: %w", err)
 		}
 	}
 
@@ -545,7 +545,7 @@ func (c *GrpcAdminClient) CompleteTask(taskID string, success bool, errorMsg str
 	if !c.connected {
 		// Wait for reconnection for a short time
 		if err := c.waitForConnection(5 * time.Second); err != nil {
-			return fmt.Errorf("not connected to admin server: %v", err)
+			return fmt.Errorf("not connected to admin server: %w", err)
 		}
 	}
 
@@ -576,7 +576,7 @@ func (c *GrpcAdminClient) UpdateTaskProgress(taskID string, progress float64) er
 	if !c.connected {
 		// Wait for reconnection for a short time
 		if err := c.waitForConnection(5 * time.Second); err != nil {
-			return fmt.Errorf("not connected to admin server: %v", err)
+			return fmt.Errorf("not connected to admin server: %w", err)
 		}
 	}
 

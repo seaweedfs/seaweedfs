@@ -149,7 +149,7 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool) (offset uint
 	if ok {
 		existingNeedle, _, _, existingNeedleReadErr := needle.ReadNeedleHeader(v.DataBackend, v.Version(), nv.Offset.ToActualOffset())
 		if existingNeedleReadErr != nil {
-			err = fmt.Errorf("reading existing needle: %v", existingNeedleReadErr)
+			err = fmt.Errorf("reading existing needle: %w", existingNeedleReadErr)
 			return
 		}
 		if n.Cookie == 0 && !checkCookie {

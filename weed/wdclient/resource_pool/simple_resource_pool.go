@@ -238,7 +238,7 @@ func (p *simpleResourcePool) Discard(handle ManagedHandle) error {
 	if h != nil {
 		atomic.AddInt32(p.numActive, -1)
 		if err := p.options.Close(h); err != nil {
-			return fmt.Errorf("failed to close resource handle: %v", err)
+			return fmt.Errorf("failed to close resource handle: %w", err)
 		}
 	}
 	return nil

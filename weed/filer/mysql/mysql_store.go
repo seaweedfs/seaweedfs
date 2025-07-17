@@ -106,7 +106,7 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 	}
 	cfg, err := mysql.ParseDSN(dsn)
 	if err != nil {
-		return fmt.Errorf("can not parse DSN error:%v", err)
+		return fmt.Errorf("can not parse DSN error:%w", err)
 	}
 
 	var dbErr error
