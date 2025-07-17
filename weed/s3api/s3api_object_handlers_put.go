@@ -86,6 +86,13 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		glog.V(1).Infof("PutObjectHandler: bucket %s, object %s, versioningEnabled=%v", bucket, object, versioningEnabled)
 
+		// Validate object lock headers before processing
+		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
+			glog.V(2).Infof("PutObjectHandler: object lock header validation failed: %v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			return
+		}
+
 		// Check object lock permissions before PUT operation (only for versioned buckets)
 		bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
 		if err := s3a.checkObjectLockPermissionsForPut(r, bucket, object, bypassGovernance, versioningEnabled); err != nil {
@@ -380,4 +387,59 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 			glog.Errorf("extractObjectLockMetadataFromRequest: unexpected legal hold value '%s', expected 'ON' or 'OFF'", legalHold)
 		}
 	}
+}
+
+// validateObjectLockHeaders validates object lock headers in PUT requests
+func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, versioningEnabled bool) error {
+	// Extract object lock headers from request
+	mode := r.Header.Get(s3_constants.AmzObjectLockMode)
+	retainUntilDateStr := r.Header.Get(s3_constants.AmzObjectLockRetainUntilDate)
+	legalHold := r.Header.Get(s3_constants.AmzObjectLockLegalHold)
+
+	// Check if any object lock headers are present
+	hasObjectLockHeaders := mode != "" || retainUntilDateStr != "" || legalHold != ""
+
+	// Object lock headers can only be used on versioned buckets
+	if hasObjectLockHeaders && !versioningEnabled {
+		return fmt.Errorf("object lock headers can only be used on versioned buckets")
+	}
+
+	// Validate object lock mode if present
+	if mode != "" {
+		if mode != s3_constants.RetentionModeGovernance && mode != s3_constants.RetentionModeCompliance {
+			return fmt.Errorf("invalid object lock mode: %s", mode)
+		}
+	}
+
+	// Validate retention date if present
+	if retainUntilDateStr != "" {
+		retainUntilDate, err := time.Parse(time.RFC3339, retainUntilDateStr)
+		if err != nil {
+			return fmt.Errorf("invalid retention until date format: %s", retainUntilDateStr)
+		}
+
+		// Retention date must be in the future
+		if retainUntilDate.Before(time.Now()) {
+			return fmt.Errorf("retention until date must be in the future")
+		}
+	}
+
+	// If mode is specified, retention date must also be specified
+	if mode != "" && retainUntilDateStr == "" {
+		return fmt.Errorf("object lock mode requires retention until date")
+	}
+
+	// If retention date is specified, mode must also be specified
+	if retainUntilDateStr != "" && mode == "" {
+		return fmt.Errorf("retention until date requires object lock mode")
+	}
+
+	// Validate legal hold if present
+	if legalHold != "" {
+		if legalHold != s3_constants.LegalHoldOn && legalHold != s3_constants.LegalHoldOff {
+			return fmt.Errorf("invalid legal hold status: %s", legalHold)
+		}
+	}
+
+	return nil
 }
