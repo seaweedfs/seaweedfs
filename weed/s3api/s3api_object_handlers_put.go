@@ -367,7 +367,7 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 			entry.Extended[s3_constants.ExtRetentionUntilDateKey] = []byte(strconv.FormatInt(parsedTime.Unix(), 10))
 			glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing retention until date: %s (timestamp: %d)", retainUntilDate, parsedTime.Unix())
 		} else {
-			glog.Errorf("extractObjectLockMetadataFromRequest: failed to parse retention until date: %s, error: %v", retainUntilDate, err)
+			glog.Errorf("extractObjectLockMetadataFromRequest: failed to parse retention until date: %s, expected format: %s, error: %v", retainUntilDate, time.RFC3339, err)
 		}
 	}
 
