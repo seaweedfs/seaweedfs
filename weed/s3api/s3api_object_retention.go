@@ -622,6 +622,7 @@ func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(request *http.Request, 
 	// For versioned buckets, PUT operations create new versions, not overwrite existing ones
 	// Each version has its own object lock settings, so we don't check existing version permissions
 	// Only non-versioned buckets (which don't support object lock anyway) would overwrite objects
+	glog.V(2).Infof("checkObjectLockPermissionsForPut: versioned bucket %s allows PUT without checking existing object lock permissions", bucket)
 	return nil
 }
 
