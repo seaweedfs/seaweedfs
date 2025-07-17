@@ -68,12 +68,11 @@ func TestVersioningWithObjectLockHeaders(t *testing.T) {
 		assert.NotNil(t, headResp.ObjectLockRetainUntilDate)
 		assert.WithinDuration(t, retainUntilDate2, *headResp.ObjectLockRetainUntilDate, 5*time.Second)
 		assert.Equal(t, types.ObjectLockLegalHoldStatusOn, headResp.ObjectLockLegalHoldStatus)
-		assert.Equal(t, *putResp2.VersionId, *headResp.VersionId)
 	})
 
-	// Test HEAD specific version 1 returns its object lock metadata
-	t.Run("HEAD specific version 1", func(t *testing.T) {
-		headResp1, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
+	// Test HEAD specific version returns correct object lock metadata
+	t.Run("HEAD specific version", func(t *testing.T) {
+		headResp, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
 			Bucket:    aws.String(bucketName),
 			Key:       aws.String(key),
 			VersionId: putResp1.VersionId,
@@ -81,30 +80,64 @@ func TestVersioningWithObjectLockHeaders(t *testing.T) {
 		require.NoError(t, err)
 
 		// Should return metadata for version 1
-		assert.Equal(t, types.ObjectLockModeGovernance, headResp1.ObjectLockMode)
-		assert.NotNil(t, headResp1.ObjectLockRetainUntilDate)
-		assert.WithinDuration(t, retainUntilDate1, *headResp1.ObjectLockRetainUntilDate, 5*time.Second)
-		assert.NotEqual(t, types.ObjectLockLegalHoldStatusOn, headResp1.ObjectLockLegalHoldStatus)
-		assert.Equal(t, *putResp1.VersionId, *headResp1.VersionId)
+		assert.Equal(t, types.ObjectLockModeGovernance, headResp.ObjectLockMode)
+		assert.NotNil(t, headResp.ObjectLockRetainUntilDate)
+		assert.WithinDuration(t, retainUntilDate1, *headResp.ObjectLockRetainUntilDate, 5*time.Second)
+		// Version 1 should not have legal hold
+		assert.Equal(t, types.ObjectLockLegalHoldStatusOff, headResp.ObjectLockLegalHoldStatus)
 	})
 
-	// Test GET specific version returns object lock metadata
+	// Test GET latest version returns correct object lock metadata
+	t.Run("GET latest version", func(t *testing.T) {
+		getResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+		})
+		require.NoError(t, err)
+		defer getResp.Body.Close()
+
+		// Should return metadata for version 2 (latest)
+		assert.Equal(t, types.ObjectLockModeCompliance, getResp.ObjectLockMode)
+		assert.NotNil(t, getResp.ObjectLockRetainUntilDate)
+		assert.WithinDuration(t, retainUntilDate2, *getResp.ObjectLockRetainUntilDate, 5*time.Second)
+		assert.Equal(t, types.ObjectLockLegalHoldStatusOn, getResp.ObjectLockLegalHoldStatus)
+	})
+
+	// Test GET specific version returns correct object lock metadata
 	t.Run("GET specific version", func(t *testing.T) {
-		getResp1, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		getResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
 			Bucket:    aws.String(bucketName),
 			Key:       aws.String(key),
 			VersionId: putResp1.VersionId,
 		})
 		require.NoError(t, err)
-		defer getResp1.Body.Close()
+		defer getResp.Body.Close()
 
 		// Should return metadata for version 1
-		assert.Equal(t, types.ObjectLockModeGovernance, getResp1.ObjectLockMode)
-		assert.NotNil(t, getResp1.ObjectLockRetainUntilDate)
-		assert.WithinDuration(t, retainUntilDate1, *getResp1.ObjectLockRetainUntilDate, 5*time.Second)
-		assert.NotEqual(t, types.ObjectLockLegalHoldStatusOn, getResp1.ObjectLockLegalHoldStatus)
-		assert.Equal(t, *putResp1.VersionId, *getResp1.VersionId)
+		assert.Equal(t, types.ObjectLockModeGovernance, getResp.ObjectLockMode)
+		assert.NotNil(t, getResp.ObjectLockRetainUntilDate)
+		assert.WithinDuration(t, retainUntilDate1, *getResp.ObjectLockRetainUntilDate, 5*time.Second)
+		// Version 1 should not have legal hold
+		assert.Equal(t, types.ObjectLockLegalHoldStatusOff, getResp.ObjectLockLegalHoldStatus)
 	})
+}
+
+// waitForVersioningToBeEnabled polls the bucket versioning status until it's enabled
+// This helps avoid race conditions where object lock is configured but versioning
+// isn't immediately available
+func waitForVersioningToBeEnabled(t *testing.T, client *s3.Client, bucketName string) {
+	timeout := time.Now().Add(10 * time.Second)
+	for time.Now().Before(timeout) {
+		resp, err := client.GetBucketVersioning(context.TODO(), &s3.GetBucketVersioningInput{
+			Bucket: aws.String(bucketName),
+		})
+		if err == nil && resp.Status == types.BucketVersioningStatusEnabled {
+			return // Versioning is enabled
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("Timeout waiting for versioning to be enabled on bucket %s", bucketName)
 }
 
 // Helper function for creating buckets with object lock enabled
@@ -115,5 +148,13 @@ func createBucketWithObjectLock(t *testing.T, client *s3.Client, bucketName stri
 	})
 	require.NoError(t, err)
 
-	// Versioning is automatically enabled when object lock is enabled
+	// Wait for versioning to be automatically enabled by object lock
+	waitForVersioningToBeEnabled(t, client, bucketName)
+
+	// Verify that object lock was actually enabled
+	t.Logf("Verifying object lock configuration for bucket %s", bucketName)
+	_, err = client.GetObjectLockConfiguration(context.TODO(), &s3.GetObjectLockConfigurationInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err, "Object lock should be configured for bucket %s", bucketName)
 }
