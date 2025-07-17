@@ -619,11 +619,9 @@ func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(request *http.Request, 
 		return nil
 	}
 
-	// For PUT operations, we check permissions on the current object (empty versionId)
-	if err := s3a.checkObjectLockPermissions(request, bucket, object, "", bypassGovernance); err != nil {
-		glog.V(2).Infof("checkObjectLockPermissionsForPut: object lock check failed for %s/%s: %v", bucket, object, err)
-		return err
-	}
+	// For versioned buckets, PUT operations create new versions, not overwrite existing ones
+	// Each version has its own object lock settings, so we don't check existing version permissions
+	// Only non-versioned buckets (which don't support object lock anyway) would overwrite objects
 	return nil
 }
 
