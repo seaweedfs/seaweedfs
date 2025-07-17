@@ -260,10 +260,43 @@ func TestAddObjectLockHeadersToResponse(t *testing.T) {
 
 		s3a.addObjectLockHeadersToResponse(w, entry)
 
-		// No object lock headers should be set
+		// No object lock headers should be set for entries without object lock metadata
 		assert.Empty(t, w.Header().Get(s3_constants.AmzObjectLockMode))
 		assert.Empty(t, w.Header().Get(s3_constants.AmzObjectLockRetainUntilDate))
 		assert.Empty(t, w.Header().Get(s3_constants.AmzObjectLockLegalHold))
+	})
+
+	t.Run("Handle entry with object lock mode but no legal hold - should default to OFF", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		entry := &filer_pb.Entry{
+			Extended: map[string][]byte{
+				s3_constants.ExtObjectLockModeKey: []byte("GOVERNANCE"),
+			},
+		}
+
+		s3a.addObjectLockHeadersToResponse(w, entry)
+
+		// Should set mode and default legal hold to OFF
+		assert.Equal(t, "GOVERNANCE", w.Header().Get(s3_constants.AmzObjectLockMode))
+		assert.Empty(t, w.Header().Get(s3_constants.AmzObjectLockRetainUntilDate))
+		assert.Equal(t, "OFF", w.Header().Get(s3_constants.AmzObjectLockLegalHold))
+	})
+
+	t.Run("Handle entry with retention date but no legal hold - should default to OFF", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		retainUntilTime := time.Now().Add(24 * time.Hour)
+		entry := &filer_pb.Entry{
+			Extended: map[string][]byte{
+				s3_constants.ExtRetentionUntilDateKey: []byte(strconv.FormatInt(retainUntilTime.Unix(), 10)),
+			},
+		}
+
+		s3a.addObjectLockHeadersToResponse(w, entry)
+
+		// Should set retention date and default legal hold to OFF
+		assert.Empty(t, w.Header().Get(s3_constants.AmzObjectLockMode))
+		assert.NotEmpty(t, w.Header().Get(s3_constants.AmzObjectLockRetainUntilDate))
+		assert.Equal(t, "OFF", w.Header().Get(s3_constants.AmzObjectLockLegalHold))
 	})
 
 	t.Run("Handle nil entry gracefully", func(t *testing.T) {
