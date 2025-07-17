@@ -470,7 +470,9 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 	switch {
 	case errors.Is(err, ErrObjectLockVersioningRequired):
 		return s3err.ErrInvalidRequest
-	case errors.Is(err, ErrInvalidObjectLockMode), errors.Is(err, ErrInvalidLegalHoldStatus):
+	case errors.Is(err, ErrInvalidObjectLockMode):
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrInvalidLegalHoldStatus):
 		return s3err.ErrInvalidRequest
 	case errors.Is(err, ErrInvalidRetentionDateFormat):
 		return s3err.ErrMalformedDate
