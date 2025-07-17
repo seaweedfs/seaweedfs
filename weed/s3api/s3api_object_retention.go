@@ -611,21 +611,6 @@ func (s3a *S3ApiServer) isObjectLockAvailable(bucket string) error {
 	return nil
 }
 
-// checkObjectLockPermissionsForPut checks object lock permissions for PUT operations
-// This is a shared helper to avoid code duplication in PUT handlers
-func (s3a *S3ApiServer) checkObjectLockPermissionsForPut(request *http.Request, bucket, object string, bypassGovernance bool, versioningEnabled bool) error {
-	// Object Lock only applies to versioned buckets (AWS S3 requirement)
-	if !versioningEnabled {
-		return nil
-	}
-
-	// For versioned buckets, PUT operations create new versions, not overwrite existing ones
-	// Each version has its own object lock settings, so we don't check existing version permissions
-	// Only non-versioned buckets (which don't support object lock anyway) would overwrite objects
-	glog.V(2).Infof("checkObjectLockPermissionsForPut: versioned bucket %s allows PUT without checking existing object lock permissions", bucket)
-	return nil
-}
-
 // handleObjectLockAvailabilityCheck is a helper function to check object lock availability
 // and write the appropriate error response if not available. This reduces code duplication
 // across all retention handlers.

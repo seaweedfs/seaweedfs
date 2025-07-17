@@ -3,6 +3,7 @@ package s3api
 import (
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
+)
+
+// Object lock validation errors
+var (
+	ErrObjectLockVersioningRequired = errors.New("object lock headers can only be used on versioned buckets")
+	ErrInvalidObjectLockMode        = errors.New("invalid object lock mode")
+	ErrInvalidLegalHoldStatus       = errors.New("invalid legal hold status")
+	ErrInvalidRetentionDateFormat   = errors.New("invalid retention until date format")
+	ErrRetentionDateMustBeFuture    = errors.New("retention until date must be in the future")
+	ErrObjectLockModeRequiresDate   = errors.New("object lock mode requires retention until date")
+	ErrRetentionDateRequiresMode    = errors.New("retention until date requires object lock mode")
 )
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -89,14 +101,21 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
 			glog.V(2).Infof("PutObjectHandler: object lock header validation failed: %v", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-			return
-		}
-
-		// Check object lock permissions before PUT operation (only for versioned buckets)
-		bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
-		if err := s3a.checkObjectLockPermissionsForPut(r, bucket, object, bypassGovernance, versioningEnabled); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			// Map specific validation errors to appropriate S3 error codes
+			if errors.Is(err, ErrObjectLockVersioningRequired) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			} else if errors.Is(err, ErrInvalidObjectLockMode) || errors.Is(err, ErrInvalidLegalHoldStatus) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			} else if errors.Is(err, ErrInvalidRetentionDateFormat) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrMalformedDate)
+			} else if errors.Is(err, ErrRetentionDateMustBeFuture) ||
+				errors.Is(err, ErrObjectLockModeRequiresDate) ||
+				errors.Is(err, ErrRetentionDateRequiresMode) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			} else {
+				// Default to invalid request for other validation errors
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			}
 			return
 		}
 
@@ -375,7 +394,7 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 		parsedTime, err := time.Parse(time.RFC3339, retainUntilDate)
 		if err != nil {
 			glog.Errorf("extractObjectLockMetadataFromRequest: failed to parse retention until date, expected format: %s, error: %v", time.RFC3339, err)
-			return fmt.Errorf("invalid retention until date: expected format: %s", time.RFC3339)
+			return ErrInvalidRetentionDateFormat
 		}
 		entry.Extended[s3_constants.ExtRetentionUntilDateKey] = []byte(strconv.FormatInt(parsedTime.Unix(), 10))
 		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing retention until date (timestamp: %d)", parsedTime.Unix())
@@ -389,7 +408,7 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 			glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing legal hold: %s", legalHold)
 		} else {
 			glog.Errorf("extractObjectLockMetadataFromRequest: unexpected legal hold value provided, expected 'ON' or 'OFF'")
-			return fmt.Errorf("invalid legal hold value. Expected 'ON' or 'OFF'")
+			return ErrInvalidLegalHoldStatus
 		}
 	}
 
@@ -408,13 +427,13 @@ func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, versioningEna
 
 	// Object lock headers can only be used on versioned buckets
 	if hasObjectLockHeaders && !versioningEnabled {
-		return fmt.Errorf("object lock headers can only be used on versioned buckets")
+		return ErrObjectLockVersioningRequired
 	}
 
 	// Validate object lock mode if present
 	if mode != "" {
 		if mode != s3_constants.RetentionModeGovernance && mode != s3_constants.RetentionModeCompliance {
-			return fmt.Errorf("invalid object lock mode: %s", mode)
+			return ErrInvalidObjectLockMode
 		}
 	}
 
@@ -422,29 +441,29 @@ func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, versioningEna
 	if retainUntilDateStr != "" {
 		retainUntilDate, err := time.Parse(time.RFC3339, retainUntilDateStr)
 		if err != nil {
-			return fmt.Errorf("invalid retention until date format: %s", retainUntilDateStr)
+			return ErrInvalidRetentionDateFormat
 		}
 
 		// Retention date must be in the future
 		if retainUntilDate.Before(time.Now()) {
-			return fmt.Errorf("retention until date must be in the future")
+			return ErrRetentionDateMustBeFuture
 		}
 	}
 
 	// If mode is specified, retention date must also be specified
 	if mode != "" && retainUntilDateStr == "" {
-		return fmt.Errorf("object lock mode requires retention until date")
+		return ErrObjectLockModeRequiresDate
 	}
 
 	// If retention date is specified, mode must also be specified
 	if retainUntilDateStr != "" && mode == "" {
-		return fmt.Errorf("retention until date requires object lock mode")
+		return ErrRetentionDateRequiresMode
 	}
 
 	// Validate legal hold if present
 	if legalHold != "" {
 		if legalHold != s3_constants.LegalHoldOn && legalHold != s3_constants.LegalHoldOff {
-			return fmt.Errorf("invalid legal hold status: %s", legalHold)
+			return ErrInvalidLegalHoldStatus
 		}
 	}
 
