@@ -128,7 +128,7 @@ func TestCORSConfigurationManagement(t *testing.T) {
 				AllowedMethods: []string{"GET", "POST", "PUT"},
 				AllowedOrigins: []string{"https://example.com"},
 				ExposeHeaders:  []string{"ETag"},
-				MaxAgeSeconds:  3600,
+				MaxAgeSeconds:  aws.Int32(3600),
 			},
 		},
 	}
@@ -162,7 +162,7 @@ func TestCORSConfigurationManagement(t *testing.T) {
 				AllowedMethods: []string{"GET", "POST"},
 				AllowedOrigins: []string{"https://example.com", "https://another.com"},
 				ExposeHeaders:  []string{"ETag", "Content-Length"},
-				MaxAgeSeconds:  7200,
+				MaxAgeSeconds:  aws.Int32(7200),
 			},
 		},
 	}
@@ -209,21 +209,21 @@ func TestCORSMultipleRules(t *testing.T) {
 				AllowedMethods: []string{"GET", "HEAD"},
 				AllowedOrigins: []string{"https://example.com"},
 				ExposeHeaders:  []string{"ETag"},
-				MaxAgeSeconds:  3600,
+				MaxAgeSeconds:  aws.Int32(3600),
 			},
 			{
 				AllowedHeaders: []string{"Content-Type", "Authorization"},
 				AllowedMethods: []string{"POST", "PUT", "DELETE"},
 				AllowedOrigins: []string{"https://app.example.com"},
 				ExposeHeaders:  []string{"ETag", "Content-Length"},
-				MaxAgeSeconds:  7200,
+				MaxAgeSeconds:  aws.Int32(7200),
 			},
 			{
 				AllowedHeaders: []string{"*"},
 				AllowedMethods: []string{"GET"},
 				AllowedOrigins: []string{"*"},
 				ExposeHeaders:  []string{"ETag"},
-				MaxAgeSeconds:  1800,
+				MaxAgeSeconds:  aws.Int32(1800),
 			},
 		},
 	}
@@ -307,7 +307,7 @@ func TestCORSValidation(t *testing.T) {
 				AllowedHeaders: []string{"*"},
 				AllowedMethods: []string{"GET"},
 				AllowedOrigins: []string{"https://example.com"},
-				MaxAgeSeconds:  -1,
+				MaxAgeSeconds:  aws.Int32(-1),
 			},
 		},
 	}
@@ -333,7 +333,7 @@ func TestCORSWithWildcards(t *testing.T) {
 				AllowedMethods: []string{"GET", "POST"},
 				AllowedOrigins: []string{"https://*.example.com"},
 				ExposeHeaders:  []string{"*"},
-				MaxAgeSeconds:  3600,
+				MaxAgeSeconds:  aws.Int32(3600),
 			},
 		},
 	}
@@ -370,7 +370,7 @@ func TestCORSRuleLimit(t *testing.T) {
 			AllowedHeaders: []string{"*"},
 			AllowedMethods: []string{"GET"},
 			AllowedOrigins: []string{fmt.Sprintf("https://example%d.com", i)},
-			MaxAgeSeconds:  3600,
+			MaxAgeSeconds:  aws.Int32(3600),
 		}
 	}
 
@@ -389,7 +389,7 @@ func TestCORSRuleLimit(t *testing.T) {
 		AllowedHeaders: []string{"*"},
 		AllowedMethods: []string{"GET"},
 		AllowedOrigins: []string{"https://example101.com"},
-		MaxAgeSeconds:  3600,
+		MaxAgeSeconds:  aws.Int32(3600),
 	})
 
 	corsConfig.CORSRules = rules
@@ -450,7 +450,7 @@ func TestCORSObjectOperations(t *testing.T) {
 				AllowedMethods: []string{"GET", "POST", "PUT", "DELETE"},
 				AllowedOrigins: []string{"https://example.com"},
 				ExposeHeaders:  []string{"ETag", "Content-Length"},
-				MaxAgeSeconds:  3600,
+				MaxAgeSeconds:  aws.Int32(3600),
 			},
 		},
 	}
@@ -501,7 +501,7 @@ func TestCORSCaching(t *testing.T) {
 				AllowedHeaders: []string{"*"},
 				AllowedMethods: []string{"GET"},
 				AllowedOrigins: []string{"https://example.com"},
-				MaxAgeSeconds:  3600,
+				MaxAgeSeconds:  aws.Int32(3600),
 			},
 		},
 	}
@@ -526,7 +526,7 @@ func TestCORSCaching(t *testing.T) {
 				AllowedHeaders: []string{"Content-Type"},
 				AllowedMethods: []string{"GET", "POST"},
 				AllowedOrigins: []string{"https://example.com", "https://another.com"},
-				MaxAgeSeconds:  7200,
+				MaxAgeSeconds:  aws.Int32(7200),
 			},
 		},
 	}
