@@ -53,7 +53,7 @@ func TestWORMRetentionIntegration(t *testing.T) {
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
-		BypassGovernanceRetention: true,
+		BypassGovernanceRetention: aws.Bool(true),
 	})
 	require.NoError(t, err)
 }
@@ -190,7 +190,7 @@ func TestRetentionBulkOperations(t *testing.T) {
 		Bucket: aws.String(bucketName),
 		Delete: &types.Delete{
 			Objects: objectsToDelete,
-			Quiet:   false,
+			Quiet:   aws.Bool(false),
 		},
 	})
 
@@ -209,10 +209,10 @@ func TestRetentionBulkOperations(t *testing.T) {
 	// Try bulk delete with bypass - should succeed
 	_, err = client.DeleteObjects(context.TODO(), &s3.DeleteObjectsInput{
 		Bucket:                    aws.String(bucketName),
-		BypassGovernanceRetention: true,
+		BypassGovernanceRetention: aws.Bool(true),
 		Delete: &types.Delete{
 			Objects: objectsToDelete,
-			Quiet:   false,
+			Quiet:   aws.Bool(false),
 		},
 	})
 	if err != nil {
@@ -246,7 +246,7 @@ func TestRetentionWithMultipartUpload(t *testing.T) {
 	uploadResp, err := client.UploadPart(context.TODO(), &s3.UploadPartInput{
 		Bucket:     aws.String(bucketName),
 		Key:        aws.String(key),
-		PartNumber: 1,
+		PartNumber: aws.Int32(1),
 		UploadId:   uploadId,
 		Body:       strings.NewReader(partContent),
 	})
@@ -261,7 +261,7 @@ func TestRetentionWithMultipartUpload(t *testing.T) {
 			Parts: []types.CompletedPart{
 				{
 					ETag:       uploadResp.ETag,
-					PartNumber: 1,
+					PartNumber: aws.Int32(1),
 				},
 			},
 		},

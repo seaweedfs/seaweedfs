@@ -32,7 +32,7 @@ func TestBucketCreationWithObjectLockEnabled(t *testing.T) {
 		// This simulates what S3 clients do when testing Object Lock support
 		createResp, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 			Bucket:                     aws.String(bucketName),
-			ObjectLockEnabledForBucket: true, // This should set x-amz-bucket-object-lock-enabled header
+			ObjectLockEnabledForBucket: aws.Bool(true), // This should set x-amz-bucket-object-lock-enabled header
 		})
 		require.NoError(t, err)
 		require.NotNil(t, createResp)
@@ -122,7 +122,7 @@ func TestS3ObjectLockWorkflow(t *testing.T) {
 	t.Run("ClientCreatesBucket", func(t *testing.T) {
 		_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 			Bucket:                     aws.String(bucketName),
-			ObjectLockEnabledForBucket: true,
+			ObjectLockEnabledForBucket: aws.Bool(true),
 		})
 		require.NoError(t, err)
 	})

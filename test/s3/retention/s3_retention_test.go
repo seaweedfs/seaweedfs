@@ -160,10 +160,10 @@ func deleteAllObjectVersions(t *testing.T, client *s3.Client, bucketName string)
 		if len(objectsToDelete) > 0 {
 			_, err := client.DeleteObjects(context.TODO(), &s3.DeleteObjectsInput{
 				Bucket:                    aws.String(bucketName),
-				BypassGovernanceRetention: true,
+				BypassGovernanceRetention: aws.Bool(true),
 				Delete: &types.Delete{
 					Objects: objectsToDelete,
-					Quiet:   true,
+					Quiet:   aws.Bool(true),
 				},
 			})
 			if err != nil {
@@ -174,7 +174,7 @@ func deleteAllObjectVersions(t *testing.T, client *s3.Client, bucketName string)
 						Bucket:                    aws.String(bucketName),
 						Key:                       obj.Key,
 						VersionId:                 obj.VersionId,
-						BypassGovernanceRetention: true,
+						BypassGovernanceRetention: aws.Bool(true),
 					})
 					if delErr != nil {
 						t.Logf("Warning: failed to delete object %s@%s: %v", *obj.Key, *obj.VersionId, delErr)
@@ -277,7 +277,7 @@ func TestBasicRetentionWorkflow(t *testing.T) {
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
-		BypassGovernanceRetention: true,
+		BypassGovernanceRetention: aws.Bool(true),
 	})
 	require.NoError(t, err)
 }
@@ -322,7 +322,7 @@ func TestRetentionModeCompliance(t *testing.T) {
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
-		BypassGovernanceRetention: true,
+		BypassGovernanceRetention: aws.Bool(true),
 	})
 	require.Error(t, err)
 
@@ -420,7 +420,7 @@ func TestObjectLockConfiguration(t *testing.T) {
 			Rule: &types.ObjectLockRule{
 				DefaultRetention: &types.DefaultRetention{
 					Mode: types.ObjectLockRetentionModeGovernance,
-					Days: 30,
+					Days: aws.Int32(30),
 				},
 			},
 		},
@@ -513,7 +513,7 @@ func TestRetentionWithVersions(t *testing.T) {
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
 		VersionId:                 putResp1.VersionId,
-		BypassGovernanceRetention: true,
+		BypassGovernanceRetention: aws.Bool(true),
 	})
 	require.NoError(t, err)
 }
@@ -562,7 +562,7 @@ func TestRetentionAndLegalHoldCombination(t *testing.T) {
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
-		BypassGovernanceRetention: true,
+		BypassGovernanceRetention: aws.Bool(true),
 	})
 	require.Error(t, err)
 
@@ -580,7 +580,7 @@ func TestRetentionAndLegalHoldCombination(t *testing.T) {
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
-		BypassGovernanceRetention: true,
+		BypassGovernanceRetention: aws.Bool(true),
 	})
 	require.NoError(t, err)
 }
