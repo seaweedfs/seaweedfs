@@ -373,7 +373,12 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 
 	// Extract legal hold status
 	if legalHold := r.Header.Get(s3_constants.AmzObjectLockLegalHold); legalHold != "" {
-		entry.Extended[s3_constants.ExtLegalHoldKey] = []byte(legalHold)
-		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing legal hold: %s", legalHold)
+		// Store S3 standard "ON"/"OFF" values directly
+		if legalHold == s3_constants.LegalHoldOn || legalHold == s3_constants.LegalHoldOff {
+			entry.Extended[s3_constants.ExtLegalHoldKey] = []byte(legalHold)
+			glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing legal hold: %s", legalHold)
+		} else {
+			glog.Errorf("extractObjectLockMetadataFromRequest: unexpected legal hold value '%s', expected 'ON' or 'OFF'", legalHold)
+		}
 	}
 }

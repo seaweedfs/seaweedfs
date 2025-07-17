@@ -68,7 +68,7 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 		s3a.extractObjectLockMetadataFromRequest(req, entry)
 
 		assert.Contains(t, entry.Extended, s3_constants.ExtLegalHoldKey)
-		assert.Equal(t, "true", string(entry.Extended[s3_constants.ExtLegalHoldKey]))
+		assert.Equal(t, "ON", string(entry.Extended[s3_constants.ExtLegalHoldKey]))
 	})
 
 	t.Run("Extract legal hold OFF", func(t *testing.T) {
@@ -82,7 +82,7 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 		s3a.extractObjectLockMetadataFromRequest(req, entry)
 
 		assert.Contains(t, entry.Extended, s3_constants.ExtLegalHoldKey)
-		assert.Equal(t, "false", string(entry.Extended[s3_constants.ExtLegalHoldKey]))
+		assert.Equal(t, "OFF", string(entry.Extended[s3_constants.ExtLegalHoldKey]))
 	})
 
 	t.Run("Handle all object lock headers together", func(t *testing.T) {
@@ -101,7 +101,7 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 		// All metadata should be stored
 		assert.Equal(t, "COMPLIANCE", string(entry.Extended[s3_constants.ExtObjectLockModeKey]))
 		assert.Contains(t, entry.Extended, s3_constants.ExtRetentionUntilDateKey)
-		assert.Equal(t, "true", string(entry.Extended[s3_constants.ExtLegalHoldKey]))
+		assert.Equal(t, "ON", string(entry.Extended[s3_constants.ExtLegalHoldKey]))
 	})
 
 	t.Run("Handle no object lock headers", func(t *testing.T) {
@@ -184,7 +184,7 @@ func TestAddObjectLockHeadersToResponse(t *testing.T) {
 		w := httptest.NewRecorder()
 		entry := &filer_pb.Entry{
 			Extended: map[string][]byte{
-				s3_constants.ExtLegalHoldKey: []byte("true"),
+				s3_constants.ExtLegalHoldKey: []byte("ON"),
 			},
 		}
 
@@ -197,7 +197,7 @@ func TestAddObjectLockHeadersToResponse(t *testing.T) {
 		w := httptest.NewRecorder()
 		entry := &filer_pb.Entry{
 			Extended: map[string][]byte{
-				s3_constants.ExtLegalHoldKey: []byte("false"),
+				s3_constants.ExtLegalHoldKey: []byte("OFF"),
 			},
 		}
 
@@ -214,7 +214,7 @@ func TestAddObjectLockHeadersToResponse(t *testing.T) {
 			Extended: map[string][]byte{
 				s3_constants.ExtObjectLockModeKey:     []byte("GOVERNANCE"),
 				s3_constants.ExtRetentionUntilDateKey: []byte(strconv.FormatInt(retainUntilTime.Unix(), 10)),
-				s3_constants.ExtLegalHoldKey:          []byte("true"),
+				s3_constants.ExtLegalHoldKey:          []byte("ON"),
 			},
 		}
 
