@@ -466,6 +466,8 @@ func (s3a *S3ApiServer) addObjectLockHeadersToResponse(w http.ResponseWriter, en
 			if timestamp, err := strconv.ParseInt(dateStr, 10, 64); err == nil {
 				retainUntilDate := time.Unix(timestamp, 0).UTC()
 				w.Header().Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
+			} else {
+				glog.Errorf("Failed to parse retention until date '%s': %v", dateStr, err)
 			}
 		}
 	}
