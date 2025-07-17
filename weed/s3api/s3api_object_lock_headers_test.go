@@ -511,6 +511,23 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		assert.True(t, errors.Is(err, ErrRetentionDateRequiresMode))
 	})
 
+	t.Run("Governance bypass header on non-versioned bucket", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/bucket/object", nil)
+		req.Header.Set("x-amz-bypass-governance-retention", "true")
+
+		err := s3a.validateObjectLockHeaders(req, false) // non-versioned bucket
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrGovernanceBypassVersioningRequired))
+	})
+
+	t.Run("Governance bypass header on versioned bucket should pass", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/bucket/object", nil)
+		req.Header.Set("x-amz-bypass-governance-retention", "true")
+
+		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
+		assert.NoError(t, err)
+	})
+
 	t.Run("No object lock headers should pass", func(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/bucket/object", nil)
 		// No object lock headers set
@@ -571,6 +588,11 @@ func TestMapValidationErrorToS3Error(t *testing.T) {
 		{
 			name:         "ErrRetentionDateRequiresMode",
 			inputError:   ErrRetentionDateRequiresMode,
+			expectedCode: s3err.ErrInvalidRequest,
+		},
+		{
+			name:         "ErrGovernanceBypassVersioningRequired",
+			inputError:   ErrGovernanceBypassVersioningRequired,
 			expectedCode: s3err.ErrInvalidRequest,
 		},
 		{

@@ -24,13 +24,14 @@ import (
 
 // Object lock validation errors
 var (
-	ErrObjectLockVersioningRequired = errors.New("object lock headers can only be used on versioned buckets")
-	ErrInvalidObjectLockMode        = errors.New("invalid object lock mode")
-	ErrInvalidLegalHoldStatus       = errors.New("invalid legal hold status")
-	ErrInvalidRetentionDateFormat   = errors.New("invalid retention until date format")
-	ErrRetentionDateMustBeFuture    = errors.New("retention until date must be in the future")
-	ErrObjectLockModeRequiresDate   = errors.New("object lock mode requires retention until date")
-	ErrRetentionDateRequiresMode    = errors.New("retention until date requires object lock mode")
+	ErrObjectLockVersioningRequired       = errors.New("object lock headers can only be used on versioned buckets")
+	ErrInvalidObjectLockMode              = errors.New("invalid object lock mode")
+	ErrInvalidLegalHoldStatus             = errors.New("invalid legal hold status")
+	ErrInvalidRetentionDateFormat         = errors.New("invalid retention until date format")
+	ErrRetentionDateMustBeFuture          = errors.New("retention until date must be in the future")
+	ErrObjectLockModeRequiresDate         = errors.New("object lock mode requires retention until date")
+	ErrRetentionDateRequiresMode          = errors.New("retention until date requires object lock mode")
+	ErrGovernanceBypassVersioningRequired = errors.New("governance bypass header can only be used on versioned buckets")
 )
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -103,19 +104,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			glog.V(2).Infof("PutObjectHandler: object lock header validation failed: %v", err)
 			s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 			return
-		}
-
-		// Check for governance bypass header (for potential object overwrites)
-		bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
-
-		// For non-versioned buckets, check object lock permissions to ensure governance bypass is honored
-		if !versioningEnabled && bypassGovernance {
-			// Non-versioned PUT operations may overwrite existing objects, so check governance permissions
-			if err := s3a.checkObjectLockPermissions(r, bucket, object, "", bypassGovernance); err != nil {
-				glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-				return
-			}
 		}
 
 		if versioningEnabled {
@@ -466,6 +454,14 @@ func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, versioningEna
 		}
 	}
 
+	// Check for governance bypass header - only valid for versioned buckets
+	bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
+
+	// Governance bypass headers are only valid for versioned buckets (like object lock headers)
+	if bypassGovernance && !versioningEnabled {
+		return ErrGovernanceBypassVersioningRequired
+	}
+
 	return nil
 }
 
@@ -481,6 +477,8 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 	case errors.Is(err, ErrRetentionDateMustBeFuture),
 		errors.Is(err, ErrObjectLockModeRequiresDate),
 		errors.Is(err, ErrRetentionDateRequiresMode):
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrGovernanceBypassVersioningRequired):
 		return s3err.ErrInvalidRequest
 	default:
 		return s3err.ErrInvalidRequest
