@@ -469,7 +469,7 @@ func (s3a *S3ApiServer) addObjectLockHeadersToResponse(w http.ResponseWriter, en
 			w.Header().Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
 			hasRetentionDate = true
 		} else {
-			glog.Errorf("addObjectLockHeadersToResponse: failed to parse retention until date '%s': %v", dateStr, err)
+			glog.Errorf("addObjectLockHeadersToResponse: failed to parse retention until date from stored metadata: %v", err)
 		}
 	}
 

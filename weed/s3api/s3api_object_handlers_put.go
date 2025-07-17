@@ -374,11 +374,11 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 		// Parse the ISO8601 date and convert to Unix timestamp for storage
 		parsedTime, err := time.Parse(time.RFC3339, retainUntilDate)
 		if err != nil {
-			glog.Errorf("extractObjectLockMetadataFromRequest: failed to parse retention until date: %s, expected format: %s, error: %v", retainUntilDate, time.RFC3339, err)
-			return fmt.Errorf("invalid retention until date: %s, expected format: %s", retainUntilDate, time.RFC3339)
+			glog.Errorf("extractObjectLockMetadataFromRequest: failed to parse retention until date, expected format: %s, error: %v", time.RFC3339, err)
+			return fmt.Errorf("invalid retention until date: expected format: %s", time.RFC3339)
 		}
 		entry.Extended[s3_constants.ExtRetentionUntilDateKey] = []byte(strconv.FormatInt(parsedTime.Unix(), 10))
-		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing retention until date: %s (timestamp: %d)", retainUntilDate, parsedTime.Unix())
+		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing retention until date (timestamp: %d)", parsedTime.Unix())
 	}
 
 	// Extract legal hold status
@@ -388,8 +388,8 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 			entry.Extended[s3_constants.ExtLegalHoldKey] = []byte(legalHold)
 			glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing legal hold: %s", legalHold)
 		} else {
-			glog.Errorf("extractObjectLockMetadataFromRequest: unexpected legal hold value '%s', expected 'ON' or 'OFF'", legalHold)
-			return fmt.Errorf("invalid legal hold value: '%s'. Expected 'ON' or 'OFF'", legalHold)
+			glog.Errorf("extractObjectLockMetadataFromRequest: unexpected legal hold value provided, expected 'ON' or 'OFF'")
+			return fmt.Errorf("invalid legal hold value. Expected 'ON' or 'OFF'")
 		}
 	}
 
