@@ -609,3 +609,54 @@ func TestMapValidationErrorToS3Error(t *testing.T) {
 		})
 	}
 }
+
+// TestObjectLockPermissionLogic documents the correct behavior for object lock permission checks
+// in PUT operations for both versioned and non-versioned buckets
+func TestObjectLockPermissionLogic(t *testing.T) {
+	t.Run("Non-versioned bucket PUT operation logic", func(t *testing.T) {
+		// In non-versioned buckets, PUT operations overwrite existing objects
+		// Therefore, we MUST check if the existing object has object lock protections
+		// that would prevent overwrite before allowing the PUT operation.
+		//
+		// This test documents the expected behavior:
+		// 1. Check object lock headers validity (handled by validateObjectLockHeaders)
+		// 2. Check if existing object has object lock protections (handled by checkObjectLockPermissions)
+		// 3. If existing object is under retention/legal hold, deny the PUT unless governance bypass is valid
+
+		t.Log("For non-versioned buckets:")
+		t.Log("- PUT operations overwrite existing objects")
+		t.Log("- Must check existing object lock protections before allowing overwrite")
+		t.Log("- Governance bypass headers can be used to override GOVERNANCE mode retention")
+		t.Log("- COMPLIANCE mode retention and legal holds cannot be bypassed")
+	})
+
+	t.Run("Versioned bucket PUT operation logic", func(t *testing.T) {
+		// In versioned buckets, PUT operations create new versions without overwriting existing ones
+		// Therefore, we do NOT need to check existing object permissions since we're not modifying them.
+		// We only need to validate the object lock headers for the new version being created.
+		//
+		// This test documents the expected behavior:
+		// 1. Check object lock headers validity (handled by validateObjectLockHeaders)
+		// 2. Skip checking existing object permissions (since we're creating a new version)
+		// 3. Apply object lock metadata to the new version being created
+
+		t.Log("For versioned buckets:")
+		t.Log("- PUT operations create new versions without overwriting existing objects")
+		t.Log("- No need to check existing object lock protections")
+		t.Log("- Only validate object lock headers for the new version being created")
+		t.Log("- Each version has independent object lock settings")
+	})
+
+	t.Run("Governance bypass header validation", func(t *testing.T) {
+		// Governance bypass headers should only be used in specific scenarios:
+		// 1. Only valid on versioned buckets (consistent with object lock headers)
+		// 2. For non-versioned buckets: Used to override existing object's GOVERNANCE retention
+		// 3. For versioned buckets: Not typically needed since new versions don't conflict with existing ones
+
+		t.Log("Governance bypass behavior:")
+		t.Log("- Only valid on versioned buckets (header validation)")
+		t.Log("- For non-versioned buckets: Allows overwriting objects under GOVERNANCE retention")
+		t.Log("- For versioned buckets: Not typically needed for PUT operations")
+		t.Log("- Must have s3:BypassGovernanceRetention permission")
+	})
+}
