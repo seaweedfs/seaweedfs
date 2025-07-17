@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -195,6 +196,9 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// Set version ID in response header
 		w.Header().Set("x-amz-version-id", targetVersionId)
+
+		// Add object lock metadata to response headers if present
+		s3a.addObjectLockHeadersToResponse(w, entry)
 	} else {
 		// Handle regular GET (non-versioned)
 		destUrl = s3a.toFilerUrl(bucket, object)
@@ -271,6 +275,9 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 		// Set version ID in response header
 		w.Header().Set("x-amz-version-id", targetVersionId)
+
+		// Add object lock metadata to response headers if present
+		s3a.addObjectLockHeadersToResponse(w, entry)
 	} else {
 		// Handle regular HEAD (non-versioned)
 		destUrl = s3a.toFilerUrl(bucket, object)
@@ -434,4 +441,45 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 		glog.V(1).Infof("passthrough response read %d bytes: %v", bytesTransferred, err)
 	}
 	return statusCode, bytesTransferred
+}
+
+// addObjectLockHeadersToResponse extracts object lock metadata from entry Extended attributes
+// and adds the appropriate S3 headers to the response
+func (s3a *S3ApiServer) addObjectLockHeadersToResponse(w http.ResponseWriter, entry *filer_pb.Entry) {
+	if entry == nil || entry.Extended == nil {
+		return
+	}
+
+	// Check if this entry has any object lock metadata (indicating it's from an object lock enabled bucket)
+	hasObjectLockMode := false
+	hasRetentionDate := false
+
+	// Add object lock mode header if present
+	if modeBytes, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists && len(modeBytes) > 0 {
+		w.Header().Set(s3_constants.AmzObjectLockMode, string(modeBytes))
+		hasObjectLockMode = true
+	}
+
+	// Add retention until date header if present
+	if dateBytes, exists := entry.Extended[s3_constants.ExtRetentionUntilDateKey]; exists && len(dateBytes) > 0 {
+		dateStr := string(dateBytes)
+		// Convert Unix timestamp to ISO8601 format for S3 compatibility
+		if timestamp, err := strconv.ParseInt(dateStr, 10, 64); err == nil {
+			retainUntilDate := time.Unix(timestamp, 0).UTC()
+			w.Header().Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
+			hasRetentionDate = true
+		} else {
+			glog.Errorf("addObjectLockHeadersToResponse: failed to parse retention until date from stored metadata (dateStr: %s): %v", dateStr, err)
+		}
+	}
+
+	// Add legal hold header - AWS S3 behavior: always include legal hold for object lock enabled buckets
+	if legalHoldBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists && len(legalHoldBytes) > 0 {
+		// Return stored S3 standard "ON"/"OFF" values directly
+		w.Header().Set(s3_constants.AmzObjectLockLegalHold, string(legalHoldBytes))
+	} else if hasObjectLockMode || hasRetentionDate {
+		// If this entry has object lock metadata (indicating object lock enabled bucket)
+		// but no legal hold specifically set, default to "OFF" as per AWS S3 behavior
+		w.Header().Set(s3_constants.AmzObjectLockLegalHold, s3_constants.LegalHoldOff)
+	}
 }

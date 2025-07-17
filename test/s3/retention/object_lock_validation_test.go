@@ -26,7 +26,7 @@ func TestObjectLockValidation(t *testing.T) {
 	t.Log("\n1. Creating bucket with x-amz-bucket-object-lock-enabled: true")
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket:                     aws.String(bucketName),
-		ObjectLockEnabledForBucket: true, // This sends x-amz-bucket-object-lock-enabled: true
+		ObjectLockEnabledForBucket: aws.Bool(true), // This sends x-amz-bucket-object-lock-enabled: true
 	})
 	require.NoError(t, err, "Bucket creation should succeed")
 	defer client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{Bucket: aws.String(bucketName)})

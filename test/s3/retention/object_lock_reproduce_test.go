@@ -25,7 +25,7 @@ func TestReproduceObjectLockIssue(t *testing.T) {
 
 	createResp, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket:                     aws.String(bucketName),
-		ObjectLockEnabledForBucket: true, // This sets the x-amz-bucket-object-lock-enabled header
+		ObjectLockEnabledForBucket: aws.Bool(true), // This sets the x-amz-bucket-object-lock-enabled header
 	})
 
 	if err != nil {

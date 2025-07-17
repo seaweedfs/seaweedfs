@@ -29,7 +29,7 @@ func TestCORSPreflightRequest(t *testing.T) {
 				AllowedMethods: []string{"GET", "POST", "PUT", "DELETE"},
 				AllowedOrigins: []string{"https://example.com"},
 				ExposeHeaders:  []string{"ETag", "Content-Length"},
-				MaxAgeSeconds:  3600,
+				MaxAgeSeconds:  aws.Int32(3600),
 			},
 		},
 	}
@@ -81,7 +81,7 @@ func TestCORSActualRequest(t *testing.T) {
 				AllowedMethods: []string{"GET", "PUT"},
 				AllowedOrigins: []string{"https://example.com"},
 				ExposeHeaders:  []string{"ETag", "Content-Length"},
-				MaxAgeSeconds:  3600,
+				MaxAgeSeconds:  aws.Int32(3600),
 			},
 		},
 	}
@@ -175,7 +175,7 @@ func TestCORSOriginMatching(t *testing.T) {
 						AllowedMethods: []string{"GET"},
 						AllowedOrigins: tc.allowedOrigins,
 						ExposeHeaders:  []string{"ETag"},
-						MaxAgeSeconds:  3600,
+						MaxAgeSeconds:  aws.Int32(3600),
 					},
 				},
 			}
@@ -268,7 +268,7 @@ func TestCORSHeaderMatching(t *testing.T) {
 						AllowedMethods: []string{"GET", "POST"},
 						AllowedOrigins: []string{"https://example.com"},
 						ExposeHeaders:  []string{"ETag"},
-						MaxAgeSeconds:  3600,
+						MaxAgeSeconds:  aws.Int32(3600),
 					},
 				},
 			}
@@ -349,7 +349,7 @@ func TestCORSMethodMatching(t *testing.T) {
 				AllowedMethods: []string{"GET", "POST"},
 				AllowedOrigins: []string{"https://example.com"},
 				ExposeHeaders:  []string{"ETag"},
-				MaxAgeSeconds:  3600,
+				MaxAgeSeconds:  aws.Int32(3600),
 			},
 		},
 	}
@@ -413,14 +413,14 @@ func TestCORSMultipleRulesMatching(t *testing.T) {
 				AllowedMethods: []string{"GET"},
 				AllowedOrigins: []string{"https://example.com"},
 				ExposeHeaders:  []string{"ETag"},
-				MaxAgeSeconds:  3600,
+				MaxAgeSeconds:  aws.Int32(3600),
 			},
 			{
 				AllowedHeaders: []string{"Authorization"},
 				AllowedMethods: []string{"POST", "PUT"},
 				AllowedOrigins: []string{"https://api.example.com"},
 				ExposeHeaders:  []string{"Content-Length"},
-				MaxAgeSeconds:  7200,
+				MaxAgeSeconds:  aws.Int32(7200),
 			},
 		},
 	}
