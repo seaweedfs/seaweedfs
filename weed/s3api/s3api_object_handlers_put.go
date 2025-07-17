@@ -101,7 +101,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
-			glog.V(2).Infof("PutObjectHandler: object lock header validation failed: %v", err)
+			glog.V(2).Infof("PutObjectHandler: object lock header validation failed for bucket %s, object %s: %v", bucket, object, err)
 			s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 			return
 		}
