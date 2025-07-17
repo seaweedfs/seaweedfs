@@ -296,7 +296,10 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	versionEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
 	// Extract and store object lock metadata from request headers
-	s3a.extractObjectLockMetadataFromRequest(r, versionEntry)
+	if err := s3a.extractObjectLockMetadataFromRequest(r, versionEntry); err != nil {
+		glog.Errorf("putVersionedObject: failed to extract object lock metadata: %v", err)
+		return "", "", s3err.ErrInvalidRequest
+	}
 
 	// Update the version entry with metadata
 	err = s3a.mkFile(bucketDir, versionObjectPath, versionEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
@@ -355,7 +358,7 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 
 // extractObjectLockMetadataFromRequest extracts object lock headers from PUT requests
 // and stores them in the entry's Extended attributes
-func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, entry *filer_pb.Entry) {
+func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, entry *filer_pb.Entry) error {
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
@@ -369,12 +372,13 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 	// Extract retention until date
 	if retainUntilDate := r.Header.Get(s3_constants.AmzObjectLockRetainUntilDate); retainUntilDate != "" {
 		// Parse the ISO8601 date and convert to Unix timestamp for storage
-		if parsedTime, err := time.Parse(time.RFC3339, retainUntilDate); err == nil {
-			entry.Extended[s3_constants.ExtRetentionUntilDateKey] = []byte(strconv.FormatInt(parsedTime.Unix(), 10))
-			glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing retention until date: %s (timestamp: %d)", retainUntilDate, parsedTime.Unix())
-		} else {
+		parsedTime, err := time.Parse(time.RFC3339, retainUntilDate)
+		if err != nil {
 			glog.Errorf("extractObjectLockMetadataFromRequest: failed to parse retention until date: %s, expected format: %s, error: %v", retainUntilDate, time.RFC3339, err)
+			return fmt.Errorf("invalid retention until date: %s, expected format: %s", retainUntilDate, time.RFC3339)
 		}
+		entry.Extended[s3_constants.ExtRetentionUntilDateKey] = []byte(strconv.FormatInt(parsedTime.Unix(), 10))
+		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing retention until date: %s (timestamp: %d)", retainUntilDate, parsedTime.Unix())
 	}
 
 	// Extract legal hold status
@@ -385,8 +389,11 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 			glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing legal hold: %s", legalHold)
 		} else {
 			glog.Errorf("extractObjectLockMetadataFromRequest: unexpected legal hold value '%s', expected 'ON' or 'OFF'", legalHold)
+			return fmt.Errorf("invalid legal hold value: '%s'. Expected 'ON' or 'OFF'", legalHold)
 		}
 	}
+
+	return nil
 }
 
 // validateObjectLockHeaders validates object lock headers in PUT requests

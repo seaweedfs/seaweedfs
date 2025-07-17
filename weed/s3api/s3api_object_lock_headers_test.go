@@ -27,7 +27,8 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 			Extended: make(map[string][]byte),
 		}
 
-		s3a.extractObjectLockMetadataFromRequest(req, entry)
+		err := s3a.extractObjectLockMetadataFromRequest(req, entry)
+		assert.NoError(t, err)
 
 		// Verify mode was stored
 		assert.Contains(t, entry.Extended, s3_constants.ExtObjectLockModeKey)
@@ -51,7 +52,8 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 			Extended: make(map[string][]byte),
 		}
 
-		s3a.extractObjectLockMetadataFromRequest(req, entry)
+		err := s3a.extractObjectLockMetadataFromRequest(req, entry)
+		assert.NoError(t, err)
 
 		assert.Equal(t, "GOVERNANCE", string(entry.Extended[s3_constants.ExtObjectLockModeKey]))
 		assert.Contains(t, entry.Extended, s3_constants.ExtRetentionUntilDateKey)
@@ -65,7 +67,8 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 			Extended: make(map[string][]byte),
 		}
 
-		s3a.extractObjectLockMetadataFromRequest(req, entry)
+		err := s3a.extractObjectLockMetadataFromRequest(req, entry)
+		assert.NoError(t, err)
 
 		assert.Contains(t, entry.Extended, s3_constants.ExtLegalHoldKey)
 		assert.Equal(t, "ON", string(entry.Extended[s3_constants.ExtLegalHoldKey]))
@@ -79,7 +82,8 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 			Extended: make(map[string][]byte),
 		}
 
-		s3a.extractObjectLockMetadataFromRequest(req, entry)
+		err := s3a.extractObjectLockMetadataFromRequest(req, entry)
+		assert.NoError(t, err)
 
 		assert.Contains(t, entry.Extended, s3_constants.ExtLegalHoldKey)
 		assert.Equal(t, "OFF", string(entry.Extended[s3_constants.ExtLegalHoldKey]))
@@ -96,7 +100,8 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 			Extended: make(map[string][]byte),
 		}
 
-		s3a.extractObjectLockMetadataFromRequest(req, entry)
+		err := s3a.extractObjectLockMetadataFromRequest(req, entry)
+		assert.NoError(t, err)
 
 		// All metadata should be stored
 		assert.Equal(t, "COMPLIANCE", string(entry.Extended[s3_constants.ExtObjectLockModeKey]))
@@ -112,7 +117,8 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 			Extended: make(map[string][]byte),
 		}
 
-		s3a.extractObjectLockMetadataFromRequest(req, entry)
+		err := s3a.extractObjectLockMetadataFromRequest(req, entry)
+		assert.NoError(t, err)
 
 		// No object lock metadata should be stored
 		assert.NotContains(t, entry.Extended, s3_constants.ExtObjectLockModeKey)
@@ -120,7 +126,7 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 		assert.NotContains(t, entry.Extended, s3_constants.ExtLegalHoldKey)
 	})
 
-	t.Run("Handle invalid retention date gracefully", func(t *testing.T) {
+	t.Run("Handle invalid retention date - should return error", func(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/bucket/object", nil)
 		req.Header.Set(s3_constants.AmzObjectLockMode, "GOVERNANCE")
 		req.Header.Set(s3_constants.AmzObjectLockRetainUntilDate, "invalid-date")
@@ -129,11 +135,29 @@ func TestExtractObjectLockMetadataFromRequest(t *testing.T) {
 			Extended: make(map[string][]byte),
 		}
 
-		s3a.extractObjectLockMetadataFromRequest(req, entry)
+		err := s3a.extractObjectLockMetadataFromRequest(req, entry)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid retention until date")
 
 		// Mode should be stored but not invalid date
 		assert.Equal(t, "GOVERNANCE", string(entry.Extended[s3_constants.ExtObjectLockModeKey]))
 		assert.NotContains(t, entry.Extended, s3_constants.ExtRetentionUntilDateKey)
+	})
+
+	t.Run("Handle invalid legal hold value - should return error", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/bucket/object", nil)
+		req.Header.Set(s3_constants.AmzObjectLockLegalHold, "INVALID")
+
+		entry := &filer_pb.Entry{
+			Extended: make(map[string][]byte),
+		}
+
+		err := s3a.extractObjectLockMetadataFromRequest(req, entry)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid legal hold value")
+
+		// No legal hold metadata should be stored due to error
+		assert.NotContains(t, entry.Extended, s3_constants.ExtLegalHoldKey)
 	})
 }
 
@@ -303,7 +327,8 @@ func TestObjectLockHeaderRoundTrip(t *testing.T) {
 		entry := &filer_pb.Entry{
 			Extended: make(map[string][]byte),
 		}
-		s3a.extractObjectLockMetadataFromRequest(req, entry)
+		err := s3a.extractObjectLockMetadataFromRequest(req, entry)
+		assert.NoError(t, err)
 
 		// 3. Add to response headers
 		w := httptest.NewRecorder()
@@ -326,7 +351,8 @@ func TestObjectLockHeaderRoundTrip(t *testing.T) {
 		req.Header.Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
 
 		entry := &filer_pb.Entry{Extended: make(map[string][]byte)}
-		s3a.extractObjectLockMetadataFromRequest(req, entry)
+		err := s3a.extractObjectLockMetadataFromRequest(req, entry)
+		assert.NoError(t, err)
 
 		w := httptest.NewRecorder()
 		s3a.addObjectLockHeadersToResponse(w, entry)
