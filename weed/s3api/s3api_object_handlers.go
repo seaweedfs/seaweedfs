@@ -451,32 +451,24 @@ func (s3a *S3ApiServer) addObjectLockHeadersToResponse(w http.ResponseWriter, en
 	}
 
 	// Add object lock mode header if present
-	if modeBytes, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
-		mode := string(modeBytes)
-		if mode != "" {
-			w.Header().Set(s3_constants.AmzObjectLockMode, mode)
-		}
+	if modeBytes, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists && len(modeBytes) > 0 {
+		w.Header().Set(s3_constants.AmzObjectLockMode, string(modeBytes))
 	}
 
 	// Add retention until date header if present
-	if dateBytes, exists := entry.Extended[s3_constants.ExtRetentionUntilDateKey]; exists {
+	if dateBytes, exists := entry.Extended[s3_constants.ExtRetentionUntilDateKey]; exists && len(dateBytes) > 0 {
 		dateStr := string(dateBytes)
-		if dateStr != "" {
-			// Convert Unix timestamp to ISO8601 format for S3 compatibility
-			if timestamp, err := strconv.ParseInt(dateStr, 10, 64); err == nil {
-				retainUntilDate := time.Unix(timestamp, 0).UTC()
-				w.Header().Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
-			} else {
-				glog.Errorf("Failed to parse retention until date '%s': %v", dateStr, err)
-			}
+		// Convert Unix timestamp to ISO8601 format for S3 compatibility
+		if timestamp, err := strconv.ParseInt(dateStr, 10, 64); err == nil {
+			retainUntilDate := time.Unix(timestamp, 0).UTC()
+			w.Header().Set(s3_constants.AmzObjectLockRetainUntilDate, retainUntilDate.Format(time.RFC3339))
+		} else {
+			glog.Errorf("addObjectLockHeadersToResponse: failed to parse retention until date '%s': %v", dateStr, err)
 		}
 	}
 
 	// Add legal hold header if present
-	if legalHoldBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists {
-		legalHold := string(legalHoldBytes)
-		if legalHold != "" {
-			w.Header().Set(s3_constants.AmzObjectLockLegalHold, legalHold)
-		}
+	if legalHoldBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists && len(legalHoldBytes) > 0 {
+		w.Header().Set(s3_constants.AmzObjectLockLegalHold, string(legalHoldBytes))
 	}
 }
