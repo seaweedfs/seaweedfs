@@ -152,7 +152,7 @@ func TestCORSConfigurationManagement(t *testing.T) {
 	assert.Equal(t, []string{"GET", "POST", "PUT"}, rule.AllowedMethods, "Allowed methods should match")
 	assert.Equal(t, []string{"https://example.com"}, rule.AllowedOrigins, "Allowed origins should match")
 	assert.Equal(t, []string{"ETag"}, rule.ExposeHeaders, "Expose headers should match")
-	assert.Equal(t, int32(3600), rule.MaxAgeSeconds, "Max age should match")
+	assert.Equal(t, aws.Int32(3600), rule.MaxAgeSeconds, "Max age should match")
 
 	// Test 4: Update CORS configuration
 	updatedCorsConfig := &types.CORSConfiguration{
@@ -548,7 +548,7 @@ func TestCORSCaching(t *testing.T) {
 	assert.Equal(t, []string{"Content-Type"}, rule.AllowedHeaders, "Should have updated headers")
 	assert.Equal(t, []string{"GET", "POST"}, rule.AllowedMethods, "Should have updated methods")
 	assert.Equal(t, []string{"https://example.com", "https://another.com"}, rule.AllowedOrigins, "Should have updated origins")
-	assert.Equal(t, int32(7200), rule.MaxAgeSeconds, "Should have updated max age")
+	assert.Equal(t, aws.Int32(7200), rule.MaxAgeSeconds, "Should have updated max age")
 }
 
 // TestCORSErrorHandling tests various error conditions
