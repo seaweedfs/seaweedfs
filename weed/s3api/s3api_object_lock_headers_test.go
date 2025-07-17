@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"strconv"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -527,4 +529,61 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		err := s3a.validateObjectLockHeaders(req, true) // versioned bucket
 		assert.NoError(t, err)
 	})
+}
+
+// TestMapValidationErrorToS3Error tests the error mapping function
+func TestMapValidationErrorToS3Error(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputError   error
+		expectedCode s3err.ErrorCode
+	}{
+		{
+			name:         "ErrObjectLockVersioningRequired",
+			inputError:   ErrObjectLockVersioningRequired,
+			expectedCode: s3err.ErrInvalidRequest,
+		},
+		{
+			name:         "ErrInvalidObjectLockMode",
+			inputError:   ErrInvalidObjectLockMode,
+			expectedCode: s3err.ErrInvalidRequest,
+		},
+		{
+			name:         "ErrInvalidLegalHoldStatus",
+			inputError:   ErrInvalidLegalHoldStatus,
+			expectedCode: s3err.ErrInvalidRequest,
+		},
+		{
+			name:         "ErrInvalidRetentionDateFormat",
+			inputError:   ErrInvalidRetentionDateFormat,
+			expectedCode: s3err.ErrMalformedDate,
+		},
+		{
+			name:         "ErrRetentionDateMustBeFuture",
+			inputError:   ErrRetentionDateMustBeFuture,
+			expectedCode: s3err.ErrInvalidRequest,
+		},
+		{
+			name:         "ErrObjectLockModeRequiresDate",
+			inputError:   ErrObjectLockModeRequiresDate,
+			expectedCode: s3err.ErrInvalidRequest,
+		},
+		{
+			name:         "ErrRetentionDateRequiresMode",
+			inputError:   ErrRetentionDateRequiresMode,
+			expectedCode: s3err.ErrInvalidRequest,
+		},
+		{
+			name:         "Unknown error defaults to ErrInvalidRequest",
+			inputError:   fmt.Errorf("unknown error"),
+			expectedCode: s3err.ErrInvalidRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := mapValidationErrorToS3Error(tt.inputError)
+			assert.Equal(t, tt.expectedCode, result)
+		})
+	}
 }

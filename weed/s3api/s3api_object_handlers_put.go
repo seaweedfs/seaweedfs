@@ -101,22 +101,21 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
 			glog.V(2).Infof("PutObjectHandler: object lock header validation failed: %v", err)
-			// Map specific validation errors to appropriate S3 error codes
-			if errors.Is(err, ErrObjectLockVersioningRequired) {
-				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-			} else if errors.Is(err, ErrInvalidObjectLockMode) || errors.Is(err, ErrInvalidLegalHoldStatus) {
-				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-			} else if errors.Is(err, ErrInvalidRetentionDateFormat) {
-				s3err.WriteErrorResponse(w, r, s3err.ErrMalformedDate)
-			} else if errors.Is(err, ErrRetentionDateMustBeFuture) ||
-				errors.Is(err, ErrObjectLockModeRequiresDate) ||
-				errors.Is(err, ErrRetentionDateRequiresMode) {
-				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-			} else {
-				// Default to invalid request for other validation errors
-				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-			}
+			s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 			return
+		}
+
+		// Check for governance bypass header (for potential object overwrites)
+		bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
+
+		// For non-versioned buckets, check object lock permissions to ensure governance bypass is honored
+		if !versioningEnabled && bypassGovernance {
+			// Non-versioned PUT operations may overwrite existing objects, so check governance permissions
+			if err := s3a.checkObjectLockPermissions(r, bucket, object, "", bypassGovernance); err != nil {
+				glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return
+			}
 		}
 
 		if versioningEnabled {
@@ -468,4 +467,22 @@ func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, versioningEna
 	}
 
 	return nil
+}
+
+// mapValidationErrorToS3Error maps object lock validation errors to appropriate S3 error codes
+func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
+	switch {
+	case errors.Is(err, ErrObjectLockVersioningRequired):
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrInvalidObjectLockMode), errors.Is(err, ErrInvalidLegalHoldStatus):
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrInvalidRetentionDateFormat):
+		return s3err.ErrMalformedDate
+	case errors.Is(err, ErrRetentionDateMustBeFuture),
+		errors.Is(err, ErrObjectLockModeRequiresDate),
+		errors.Is(err, ErrRetentionDateRequiresMode):
+		return s3err.ErrInvalidRequest
+	default:
+		return s3err.ErrInvalidRequest
+	}
 }
