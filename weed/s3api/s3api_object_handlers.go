@@ -467,9 +467,13 @@ func (s3a *S3ApiServer) addObjectLockHeadersToResponse(w http.ResponseWriter, en
 		}
 	}
 
-	// Add legal hold header if present
+	// Add legal hold header - always include it for object lock enabled buckets
+	// Default to "OFF" if not set, as per AWS S3 behavior
 	if legalHoldBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists && len(legalHoldBytes) > 0 {
 		// Return stored S3 standard "ON"/"OFF" values directly
 		w.Header().Set(s3_constants.AmzObjectLockLegalHold, string(legalHoldBytes))
+	} else {
+		// Default to "OFF" when legal hold is not set
+		w.Header().Set(s3_constants.AmzObjectLockLegalHold, s3_constants.LegalHoldOff)
 	}
 }
