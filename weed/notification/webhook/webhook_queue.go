@@ -196,7 +196,21 @@ func (w *Queue) logDeadLetterMessages() error {
 		for {
 			select {
 			case msg := <-ch:
-				glog.Errorf("received dead letter message: %s, key: %s", string(msg.Payload), msg.Metadata["key"])
+				if msg == nil {
+					glog.Errorf("received nil message from dead letter channel")
+					continue
+				}
+				key := "unknown"
+				if msg.Metadata != nil {
+					if keyValue, exists := msg.Metadata["key"]; exists {
+						key = keyValue
+					}
+				}
+				payload := ""
+				if msg.Payload != nil {
+					payload = string(msg.Payload)
+				}
+				glog.Errorf("received dead letter message: %s, key: %s", payload, key)
 			case <-w.ctx.Done():
 				return
 			}
