@@ -394,7 +394,7 @@ func writeToBuffer(client volume_server_pb.VolumeServer_CopyFileClient, buf *byt
 			break
 		}
 		if receiveErr != nil {
-			return fmt.Errorf("receiving: %v", receiveErr)
+			return fmt.Errorf("receiving: %w", receiveErr)
 		}
 		buf.Write(resp.FileContent)
 	}

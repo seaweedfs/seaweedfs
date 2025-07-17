@@ -310,13 +310,13 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 			glog.Errorf("ProcessRangeRequest: %v", err)
 			w.Header().Del("Content-Length")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return fmt.Errorf("ProcessRangeRequest: %v", err)
+			return fmt.Errorf("ProcessRangeRequest: %w", err)
 		}
 		if err = writeFn(bufferedWriter); err != nil {
 			glog.Errorf("ProcessRangeRequest: %v", err)
 			w.Header().Del("Content-Length")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return fmt.Errorf("ProcessRangeRequest: %v", err)
+			return fmt.Errorf("ProcessRangeRequest: %w", err)
 		}
 		return nil
 	}
@@ -327,7 +327,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	if err != nil {
 		glog.Errorf("ProcessRangeRequest headers: %+v err: %v", w.Header(), err)
 		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
-		return fmt.Errorf("ProcessRangeRequest header: %v", err)
+		return fmt.Errorf("ProcessRangeRequest header: %w", err)
 	}
 	if sumRangesSize(ranges) > totalSize {
 		// The total number of bytes in all the ranges
@@ -360,7 +360,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 			glog.Errorf("ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
 			w.Header().Del("Content-Length")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return fmt.Errorf("ProcessRangeRequest: %v", err)
+			return fmt.Errorf("ProcessRangeRequest: %w", err)
 		}
 		w.WriteHeader(http.StatusPartialContent)
 		err = writeFn(bufferedWriter)
@@ -368,7 +368,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 			glog.Errorf("ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
 			w.Header().Del("Content-Length")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return fmt.Errorf("ProcessRangeRequest range[0]: %v", err)
+			return fmt.Errorf("ProcessRangeRequest range[0]: %w", err)
 		}
 		return nil
 	}
@@ -379,7 +379,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	for i, ra := range ranges {
 		if ra.start > totalSize {
 			http.Error(w, "Out of Range", http.StatusRequestedRangeNotSatisfiable)
-			return fmt.Errorf("out of range: %v", err)
+			return fmt.Errorf("out of range: %w", err)
 		}
 		writeFn, err := prepareWriteFn(ra.start, ra.length)
 		if err != nil {
@@ -422,7 +422,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	if _, err := io.CopyN(bufferedWriter, sendContent, sendSize); err != nil {
 		glog.Errorf("ProcessRangeRequest err: %v", err)
 		http.Error(w, "Internal Error", http.StatusInternalServerError)
-		return fmt.Errorf("ProcessRangeRequest err: %v", err)
+		return fmt.Errorf("ProcessRangeRequest err: %w", err)
 	}
 	return nil
 }

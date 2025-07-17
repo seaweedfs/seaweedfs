@@ -160,11 +160,11 @@ func ParseNeedleIdCookie(key_hash_string string) (NeedleId, Cookie, error) {
 	split := len(key_hash_string) - CookieSize*2
 	needleId, err := ParseNeedleId(key_hash_string[:split])
 	if err != nil {
-		return NeedleIdEmpty, 0, fmt.Errorf("Parse needleId error: %v", err)
+		return NeedleIdEmpty, 0, fmt.Errorf("Parse needleId error: %w", err)
 	}
 	cookie, err := ParseCookie(key_hash_string[split:])
 	if err != nil {
-		return NeedleIdEmpty, 0, fmt.Errorf("Parse cookie error: %v", err)
+		return NeedleIdEmpty, 0, fmt.Errorf("Parse cookie error: %w", err)
 	}
 	return needleId, cookie, nil
 }

@@ -142,7 +142,7 @@ func verifyDeletedNeedleIntegrity(datFile backend.BackendStorageFile, v needle.V
 	var fileSize int64
 	fileSize, _, err = datFile.GetStat()
 	if err != nil {
-		return 0, fmt.Errorf("GetStat: %v", err)
+		return 0, fmt.Errorf("GetStat: %w", err)
 	}
 	if err = n.ReadData(datFile, fileSize-size, Size(0), v); err != nil {
 		return n.AppendAtNs, fmt.Errorf("read data [%d,%d) : %v", fileSize-size, size, err)

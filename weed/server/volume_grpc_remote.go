@@ -24,7 +24,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 
 	client, getClientErr := remote_storage.GetRemoteStorage(remoteConf)
 	if getClientErr != nil {
-		return nil, fmt.Errorf("get remote client: %v", getClientErr)
+		return nil, fmt.Errorf("get remote client: %w", getClientErr)
 	}
 
 	remoteStorageLocation := req.RemoteLocation

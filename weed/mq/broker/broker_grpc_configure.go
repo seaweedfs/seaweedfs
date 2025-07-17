@@ -66,7 +66,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 
 	// save the topic configuration on filer
 	if err := b.fca.SaveTopicConfToFiler(t, resp); err != nil {
-		return nil, fmt.Errorf("configure topic: %v", err)
+		return nil, fmt.Errorf("configure topic: %w", err)
 	}
 
 	b.PubBalancer.OnPartitionChange(request.Topic, resp.BrokerPartitionAssignments)

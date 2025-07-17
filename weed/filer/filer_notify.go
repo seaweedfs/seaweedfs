@@ -120,7 +120,7 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 		if visitErr == io.EOF {
 			return
 		}
-		err = fmt.Errorf("reading from persisted logs: %v", visitErr)
+		err = fmt.Errorf("reading from persisted logs: %w", visitErr)
 		return
 	}
 	var logEntry *filer_pb.LogEntry
@@ -130,12 +130,12 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 			if visitErr == io.EOF {
 				break
 			}
-			err = fmt.Errorf("read next from persisted logs: %v", visitErr)
+			err = fmt.Errorf("read next from persisted logs: %w", visitErr)
 			return
 		}
 		isDone, visitErr = eachLogEntryFn(logEntry)
 		if visitErr != nil {
-			err = fmt.Errorf("process persisted log entry: %v", visitErr)
+			err = fmt.Errorf("process persisted log entry: %w", visitErr)
 			return
 		}
 		lastTsNs = logEntry.TsNs

@@ -25,7 +25,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	// read filer remote storage mount mappings
 	_, _, remoteStorageMountLocation, remoteStorage, detectErr := filer.DetectMountInfo(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
 	if detectErr != nil {
-		return fmt.Errorf("read mount info: %v", detectErr)
+		return fmt.Errorf("read mount info: %w", detectErr)
 	}
 
 	eachEntryFunc, err := option.makeEventProcessor(remoteStorage, mountedDir, remoteStorageMountLocation, filerSource)
@@ -99,7 +99,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 		if message.NewEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
 			mappings, readErr := filer.UnmarshalRemoteStorageMappings(message.NewEntry.Content)
 			if readErr != nil {
-				return fmt.Errorf("unmarshal mappings: %v", readErr)
+				return fmt.Errorf("unmarshal mappings: %w", readErr)
 			}
 			if remoteLoc, found := mappings.Mappings[mountedDir]; found {
 				if remoteStorageMountLocation.Bucket != remoteLoc.Bucket || remoteStorageMountLocation.Path != remoteLoc.Path {

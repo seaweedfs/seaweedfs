@@ -52,7 +52,7 @@ func (c *commandS3BucketQuota) Do(args []string, commandEnv *CommandEnv, writer 
 
 		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
-			return fmt.Errorf("get filer configuration: %v", err)
+			return fmt.Errorf("get filer configuration: %w", err)
 		}
 		filerBucketsPath := resp.DirBuckets
 

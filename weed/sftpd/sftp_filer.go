@@ -139,7 +139,7 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 	// Create a temporary file to buffer writes
 	tmpFile, err := os.CreateTemp("", "sftp-upload-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %v", err)
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 
 	return &SeaweedSftpFileWriter{
@@ -303,19 +303,19 @@ func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User
 	// We can skip ContentLength if unknown (chunked transfer encoding)
 	req, err := http.NewRequest(http.MethodPut, uploadUrl, body)
 	if err != nil {
-		return fmt.Errorf("create request: %v", err)
+		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("upload to filer: %v", err)
+		return fmt.Errorf("upload to filer: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read response: %v", err)
+		return fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
@@ -324,7 +324,7 @@ func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User
 
 	var result weed_server.FilerPostResult
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return fmt.Errorf("parse response: %v", err)
+		return fmt.Errorf("parse response: %w", err)
 	}
 	if result.Error != "" {
 		return fmt.Errorf("filer error: %s", result.Error)
@@ -338,7 +338,7 @@ func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User
 				Name:      filename,
 			})
 			if err != nil {
-				return fmt.Errorf("lookup file for attribute update: %v", err)
+				return fmt.Errorf("lookup file for attribute update: %w", err)
 			}
 
 			if lookupResp.Entry == nil {

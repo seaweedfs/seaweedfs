@@ -29,12 +29,12 @@ func ProtoToText(writer io.Writer, config proto.Message) error {
 
 	text, marshalErr := m.Marshal(config)
 	if marshalErr != nil {
-		return fmt.Errorf("marshal proto message: %v", marshalErr)
+		return fmt.Errorf("marshal proto message: %w", marshalErr)
 	}
 
 	_, writeErr := writer.Write(text)
 	if writeErr != nil {
-		return fmt.Errorf("fail to write proto message: %v", writeErr)
+		return fmt.Errorf("fail to write proto message: %w", writeErr)
 	}
 
 	return writeErr

@@ -120,13 +120,13 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	c.bucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
-		return fmt.Errorf("read filer buckets path: %v", err)
+		return fmt.Errorf("read filer buckets path: %w", err)
 	}
 
 	// create a temp folder
 	c.tempFolder, err = os.MkdirTemp(*tempPath, "sw_fsck")
 	if err != nil {
-		return fmt.Errorf("failed to create temp folder: %v", err)
+		return fmt.Errorf("failed to create temp folder: %w", err)
 	}
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "working directory: %s\n", c.tempFolder)
@@ -136,11 +136,11 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	// collect all volume id locations
 	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds()
 	if err != nil {
-		return fmt.Errorf("failed to collect all volume locations: %v", err)
+		return fmt.Errorf("failed to collect all volume locations: %w", err)
 	}
 
 	if err != nil {
-		return fmt.Errorf("read filer buckets path: %v", err)
+		return fmt.Errorf("read filer buckets path: %w", err)
 	}
 
 	var collectCutoffFromAtNs int64 = 0
@@ -189,22 +189,22 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		// collect all filer file ids and paths
 
 		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, collectModifyFromAtNs, collectCutoffFromAtNs); err != nil {
-			return fmt.Errorf("collectFilerFileIdAndPaths: %v", err)
+			return fmt.Errorf("collectFilerFileIdAndPaths: %w", err)
 		}
 		for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 			// for each volume, check filer file ids
 			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging); err != nil {
-				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %v", err)
+				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %w", err)
 			}
 		}
 	} else {
 		// collect all filer file ids
 		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, 0, 0); err != nil {
-			return fmt.Errorf("failed to collect file ids from filer: %v", err)
+			return fmt.Errorf("failed to collect file ids from filer: %w", err)
 		}
 		// volume file ids subtract filer file ids
 		if err = c.findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo, *applyPurging, uint64(collectModifyFromAtNs), uint64(collectCutoffFromAtNs)); err != nil {
-			return fmt.Errorf("findExtraChunksInVolumeServers: %v", err)
+			return fmt.Errorf("findExtraChunksInVolumeServers: %w", err)
 		}
 	}
 

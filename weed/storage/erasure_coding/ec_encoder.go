@@ -31,12 +31,12 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 		defer nm.Close()
 	}
 	if err != nil {
-		return fmt.Errorf("readNeedleMap: %v", err)
+		return fmt.Errorf("readNeedleMap: %w", err)
 	}
 
 	ecxFile, err := os.OpenFile(baseFileName+ext, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open ecx file: %v", err)
+		return fmt.Errorf("failed to open ecx file: %w", err)
 	}
 	defer ecxFile.Close()
 
@@ -47,7 +47,7 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to visit idx file: %v", err)
+		return fmt.Errorf("failed to visit idx file: %w", err)
 	}
 
 	return nil
@@ -69,19 +69,19 @@ func ToExt(ecIndex int) string {
 func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64) error {
 	file, err := os.OpenFile(baseFileName+".dat", os.O_RDONLY, 0)
 	if err != nil {
-		return fmt.Errorf("failed to open dat file: %v", err)
+		return fmt.Errorf("failed to open dat file: %w", err)
 	}
 	defer file.Close()
 
 	fi, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("failed to stat dat file: %v", err)
+		return fmt.Errorf("failed to stat dat file: %w", err)
 	}
 
 	glog.V(0).Infof("encodeDatFile %s.dat size:%d", baseFileName, fi.Size())
 	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize)
 	if err != nil {
-		return fmt.Errorf("encodeDatFile: %v", err)
+		return fmt.Errorf("encodeDatFile: %w", err)
 	}
 	return nil
 }
@@ -112,7 +112,7 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 
 	err = rebuildEcFiles(shardHasData, inputFiles, outputFiles)
 	if err != nil {
-		return nil, fmt.Errorf("rebuildEcFiles: %v", err)
+		return nil, fmt.Errorf("rebuildEcFiles: %w", err)
 	}
 	return
 }
@@ -201,7 +201,7 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 
 	enc, err := reedsolomon.New(DataShardsCount, ParityShardsCount)
 	if err != nil {
-		return fmt.Errorf("failed to create encoder: %v", err)
+		return fmt.Errorf("failed to create encoder: %w", err)
 	}
 
 	buffers := make([][]byte, TotalShardsCount)
@@ -218,7 +218,7 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 	for remainingSize > largeBlockSize*DataShardsCount {
 		err = encodeData(file, enc, processedSize, largeBlockSize, buffers, outputs)
 		if err != nil {
-			return fmt.Errorf("failed to encode large chunk data: %v", err)
+			return fmt.Errorf("failed to encode large chunk data: %w", err)
 		}
 		remainingSize -= largeBlockSize * DataShardsCount
 		processedSize += largeBlockSize * DataShardsCount
@@ -226,7 +226,7 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 	for remainingSize > 0 {
 		err = encodeData(file, enc, processedSize, smallBlockSize, buffers, outputs)
 		if err != nil {
-			return fmt.Errorf("failed to encode small chunk data: %v", err)
+			return fmt.Errorf("failed to encode small chunk data: %w", err)
 		}
 		remainingSize -= smallBlockSize * DataShardsCount
 		processedSize += smallBlockSize * DataShardsCount
@@ -238,7 +238,7 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 
 	enc, err := reedsolomon.New(DataShardsCount, ParityShardsCount)
 	if err != nil {
-		return fmt.Errorf("failed to create encoder: %v", err)
+		return fmt.Errorf("failed to create encoder: %w", err)
 	}
 
 	buffers := make([][]byte, TotalShardsCount)
@@ -273,7 +273,7 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 		// encode the data
 		err = enc.Reconstruct(buffers)
 		if err != nil {
-			return fmt.Errorf("reconstruct: %v", err)
+			return fmt.Errorf("reconstruct: %w", err)
 		}
 
 		// write the data to output files

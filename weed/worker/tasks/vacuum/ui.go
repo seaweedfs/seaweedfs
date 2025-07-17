@@ -180,7 +180,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	// Parse garbage threshold
 	if thresholdStr := formData["garbage_threshold"]; len(thresholdStr) > 0 {
 		if threshold, err := strconv.ParseFloat(thresholdStr[0], 64); err != nil {
-			return nil, fmt.Errorf("invalid garbage threshold: %v", err)
+			return nil, fmt.Errorf("invalid garbage threshold: %w", err)
 		} else if threshold < 0 || threshold > 1 {
 			return nil, fmt.Errorf("garbage threshold must be between 0.0 and 1.0")
 		} else {
@@ -191,7 +191,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	// Parse scan interval
 	if intervalStr := formData["scan_interval"]; len(intervalStr) > 0 {
 		if interval, err := time.ParseDuration(intervalStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid scan interval: %v", err)
+			return nil, fmt.Errorf("invalid scan interval: %w", err)
 		} else {
 			config.ScanIntervalSeconds = durationToSeconds(interval)
 		}
@@ -200,7 +200,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	// Parse min volume age
 	if ageStr := formData["min_volume_age"]; len(ageStr) > 0 {
 		if age, err := time.ParseDuration(ageStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid min volume age: %v", err)
+			return nil, fmt.Errorf("invalid min volume age: %w", err)
 		} else {
 			config.MinVolumeAgeSeconds = durationToSeconds(age)
 		}
@@ -209,7 +209,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	// Parse max concurrent
 	if concurrentStr := formData["max_concurrent"]; len(concurrentStr) > 0 {
 		if concurrent, err := strconv.Atoi(concurrentStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid max concurrent: %v", err)
+			return nil, fmt.Errorf("invalid max concurrent: %w", err)
 		} else if concurrent < 1 {
 			return nil, fmt.Errorf("max concurrent must be at least 1")
 		} else {
@@ -220,7 +220,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	// Parse min interval
 	if intervalStr := formData["min_interval"]; len(intervalStr) > 0 {
 		if interval, err := time.ParseDuration(intervalStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid min interval: %v", err)
+			return nil, fmt.Errorf("invalid min interval: %w", err)
 		} else {
 			config.MinIntervalSeconds = durationToSeconds(interval)
 		}

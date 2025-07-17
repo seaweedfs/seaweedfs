@@ -58,13 +58,13 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		return fmt.Errorf("failed to open database: %v", err)
+		return fmt.Errorf("failed to open database: %w", err)
 	}
 
 	// Test connection
 	if err := db.Ping(); err != nil {
 		db.Close()
-		return fmt.Errorf("failed to ping database: %v", err)
+		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	// Set connection pool settings
@@ -77,7 +77,7 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	// Create tables if they don't exist
 	if err := store.createTables(); err != nil {
 		db.Close()
-		return fmt.Errorf("failed to create tables: %v", err)
+		return fmt.Errorf("failed to create tables: %w", err)
 	}
 
 	store.configured = true
@@ -124,15 +124,15 @@ func (store *PostgresStore) createTables() error {
 
 	// Execute table creation
 	if _, err := store.db.Exec(usersTable); err != nil {
-		return fmt.Errorf("failed to create users table: %v", err)
+		return fmt.Errorf("failed to create users table: %w", err)
 	}
 
 	if _, err := store.db.Exec(credentialsTable); err != nil {
-		return fmt.Errorf("failed to create credentials table: %v", err)
+		return fmt.Errorf("failed to create credentials table: %w", err)
 	}
 
 	if _, err := store.db.Exec(policiesTable); err != nil {
-		return fmt.Errorf("failed to create policies table: %v", err)
+		return fmt.Errorf("failed to create policies table: %w", err)
 	}
 
 	return nil

@@ -15,7 +15,7 @@ var (
 		types.SizeToBytes(b, types.TombstoneFileSize)
 		n, err := file.WriteAt(b, offset+types.NeedleIdSize+types.OffsetSize)
 		if err != nil {
-			return fmt.Errorf("sorted needle write error: %v", err)
+			return fmt.Errorf("sorted needle write error: %w", err)
 		}
 		if n != types.SizeSize {
 			return fmt.Errorf("sorted needle written %d bytes, expecting %d", n, types.SizeSize)
@@ -56,7 +56,7 @@ func RebuildEcxFile(baseFileName string) error {
 
 	ecxFile, err := os.OpenFile(baseFileName+".ecx", os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("rebuild: failed to open ecx file: %v", err)
+		return fmt.Errorf("rebuild: failed to open ecx file: %w", err)
 	}
 	defer ecxFile.Close()
 
@@ -69,7 +69,7 @@ func RebuildEcxFile(baseFileName string) error {
 
 	ecjFile, err := os.OpenFile(baseFileName+".ecj", os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("rebuild: failed to open ecj file: %v", err)
+		return fmt.Errorf("rebuild: failed to open ecj file: %w", err)
 	}
 
 	buf := make([]byte, types.NeedleIdSize)

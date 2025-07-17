@@ -40,18 +40,18 @@ func (cp *ConfigPersistence) SaveMaintenanceConfig(config *MaintenanceConfig) er
 
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(cp.dataDir, ConfigDirPermissions); err != nil {
-		return fmt.Errorf("failed to create config directory: %v", err)
+		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
 	// Marshal configuration to JSON
 	configData, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal maintenance config: %v", err)
+		return fmt.Errorf("failed to marshal maintenance config: %w", err)
 	}
 
 	// Write to file
 	if err := os.WriteFile(configPath, configData, ConfigFilePermissions); err != nil {
-		return fmt.Errorf("failed to write maintenance config file: %v", err)
+		return fmt.Errorf("failed to write maintenance config file: %w", err)
 	}
 
 	glog.V(1).Infof("Saved maintenance configuration to %s", configPath)
@@ -76,13 +76,13 @@ func (cp *ConfigPersistence) LoadMaintenanceConfig() (*MaintenanceConfig, error)
 	// Read file
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read maintenance config file: %v", err)
+		return nil, fmt.Errorf("failed to read maintenance config file: %w", err)
 	}
 
 	// Unmarshal JSON
 	var config MaintenanceConfig
 	if err := json.Unmarshal(configData, &config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal maintenance config: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal maintenance config: %w", err)
 	}
 
 	glog.V(1).Infof("Loaded maintenance configuration from %s", configPath)
@@ -99,18 +99,18 @@ func (cp *ConfigPersistence) SaveAdminConfig(config map[string]interface{}) erro
 
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(cp.dataDir, ConfigDirPermissions); err != nil {
-		return fmt.Errorf("failed to create config directory: %v", err)
+		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
 	// Marshal configuration to JSON
 	configData, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal admin config: %v", err)
+		return fmt.Errorf("failed to marshal admin config: %w", err)
 	}
 
 	// Write to file
 	if err := os.WriteFile(configPath, configData, ConfigFilePermissions); err != nil {
-		return fmt.Errorf("failed to write admin config file: %v", err)
+		return fmt.Errorf("failed to write admin config file: %w", err)
 	}
 
 	glog.V(1).Infof("Saved admin configuration to %s", configPath)
@@ -135,13 +135,13 @@ func (cp *ConfigPersistence) LoadAdminConfig() (map[string]interface{}, error) {
 	// Read file
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read admin config file: %v", err)
+		return nil, fmt.Errorf("failed to read admin config file: %w", err)
 	}
 
 	// Unmarshal JSON
 	var config map[string]interface{}
 	if err := json.Unmarshal(configData, &config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal admin config: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal admin config: %w", err)
 	}
 
 	glog.V(1).Infof("Loaded admin configuration from %s", configPath)
@@ -164,7 +164,7 @@ func (cp *ConfigPersistence) ListConfigFiles() ([]string, error) {
 
 	files, err := os.ReadDir(cp.dataDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config directory: %v", err)
+		return nil, fmt.Errorf("failed to read config directory: %w", err)
 	}
 
 	var configFiles []string
@@ -196,11 +196,11 @@ func (cp *ConfigPersistence) BackupConfig(filename string) error {
 	// Copy file
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return fmt.Errorf("failed to read config file: %v", err)
+		return fmt.Errorf("failed to read config file: %w", err)
 	}
 
 	if err := os.WriteFile(backupPath, configData, ConfigFilePermissions); err != nil {
-		return fmt.Errorf("failed to create backup: %v", err)
+		return fmt.Errorf("failed to create backup: %w", err)
 	}
 
 	glog.V(1).Infof("Created backup of %s as %s", filename, backupName)
@@ -221,13 +221,13 @@ func (cp *ConfigPersistence) RestoreConfig(filename, backupName string) error {
 	// Read backup file
 	backupData, err := os.ReadFile(backupPath)
 	if err != nil {
-		return fmt.Errorf("failed to read backup file: %v", err)
+		return fmt.Errorf("failed to read backup file: %w", err)
 	}
 
 	// Write to config file
 	configPath := filepath.Join(cp.dataDir, filename)
 	if err := os.WriteFile(configPath, backupData, ConfigFilePermissions); err != nil {
-		return fmt.Errorf("failed to restore config: %v", err)
+		return fmt.Errorf("failed to restore config: %w", err)
 	}
 
 	glog.V(1).Infof("Restored %s from backup %s", filename, backupName)

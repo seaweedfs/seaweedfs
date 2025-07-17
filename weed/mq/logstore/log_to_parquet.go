@@ -31,7 +31,7 @@ func CompactTopicPartitions(filerClient filer_pb.FilerClient, t topic.Topic, tim
 	// list the topic partition versions
 	topicVersions, err := collectTopicVersions(filerClient, t, timeAgo)
 	if err != nil {
-		return fmt.Errorf("list topic files: %v", err)
+		return fmt.Errorf("list topic files: %w", err)
 	}
 
 	// compact the partitions
@@ -120,7 +120,7 @@ func compactTopicPartitionDir(filerClient filer_pb.FilerClient, topicName, parti
 	// create a parquet schema
 	parquetSchema, err := schema.ToParquetSchema(topicName, recordType)
 	if err != nil {
-		return fmt.Errorf("ToParquetSchema failed: %v", err)
+		return fmt.Errorf("ToParquetSchema failed: %w", err)
 	}
 
 	// TODO parallelize the writing
@@ -210,7 +210,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 
 	tempFile, err := os.CreateTemp(".", "t*.parquet")
 	if err != nil {
-		return fmt.Errorf("create temp file: %v", err)
+		return fmt.Errorf("create temp file: %w", err)
 	}
 	defer func() {
 		tempFile.Close()
@@ -241,7 +241,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 
 			record := &schema_pb.RecordValue{}
 			if err := proto.Unmarshal(entry.Data, record); err != nil {
-				return fmt.Errorf("unmarshal record value: %v", err)
+				return fmt.Errorf("unmarshal record value: %w", err)
 			}
 
 			record.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{
@@ -256,7 +256,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 			}
 
 			if err := schema.AddRecordValue(rowBuilder, recordType, parquetLevels, record); err != nil {
-				return fmt.Errorf("add record value: %v", err)
+				return fmt.Errorf("add record value: %w", err)
 			}
 
 			rows = append(rows, rowBuilder.Row())
@@ -264,18 +264,18 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 			return nil
 
 		}); err != nil {
-			return fmt.Errorf("iterate log entry %v/%v: %v", partitionDir, logFile.Name, err)
+			return fmt.Errorf("iterate log entry %v/%v: %w", partitionDir, logFile.Name, err)
 		}
 
 		fmt.Printf("processed %d rows\n", len(rows))
 
 		if _, err := writer.WriteRows(rows); err != nil {
-			return fmt.Errorf("write rows: %v", err)
+			return fmt.Errorf("write rows: %w", err)
 		}
 	}
 
 	if err := writer.Close(); err != nil {
-		return fmt.Errorf("close writer: %v", err)
+		return fmt.Errorf("close writer: %w", err)
 	}
 
 	// write to parquet file to partitionDir
@@ -291,13 +291,13 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 func saveParquetFileToPartitionDir(filerClient filer_pb.FilerClient, sourceFile *os.File, partitionDir, parquetFileName string, preference *operation.StoragePreference, startTsNs, stopTsNs int64) error {
 	uploader, err := operation.NewUploader()
 	if err != nil {
-		return fmt.Errorf("new uploader: %v", err)
+		return fmt.Errorf("new uploader: %w", err)
 	}
 
 	// get file size
 	fileInfo, err := sourceFile.Stat()
 	if err != nil {
-		return fmt.Errorf("stat source file: %v", err)
+		return fmt.Errorf("stat source file: %w", err)
 	}
 
 	// upload file in chunks
@@ -360,7 +360,7 @@ func saveParquetFileToPartitionDir(filerClient filer_pb.FilerClient, sourceFile 
 			Entry:     entry,
 		})
 	}); err != nil {
-		return fmt.Errorf("create entry: %v", err)
+		return fmt.Errorf("create entry: %w", err)
 	}
 	fmt.Printf("saved to %s/%s\n", partitionDir, parquetFileName)
 
@@ -436,12 +436,12 @@ func eachChunk(buf []byte, eachLogEntryFn log_buffer.EachLogEntryFuncType) (proc
 		logEntry := &filer_pb.LogEntry{}
 		if err = proto.Unmarshal(entryData, logEntry); err != nil {
 			pos += 4 + int(size)
-			err = fmt.Errorf("unexpected unmarshal mq_pb.Message: %v", err)
+			err = fmt.Errorf("unexpected unmarshal mq_pb.Message: %w", err)
 			return
 		}
 
 		if _, err = eachLogEntryFn(logEntry); err != nil {
-			err = fmt.Errorf("process log entry %v: %v", logEntry, err)
+			err = fmt.Errorf("process log entry %v: %w", logEntry, err)
 			return
 		}
 

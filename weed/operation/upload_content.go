@@ -129,7 +129,7 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 
 			return nil
 		}); grpcAssignErr != nil {
-			return fmt.Errorf("filerGrpcAddress assign volume: %v", grpcAssignErr)
+			return fmt.Errorf("filerGrpcAddress assign volume: %w", grpcAssignErr)
 		}
 
 		uploadOption.UploadUrl = genFileUrlFn(host, fileId)
@@ -171,7 +171,7 @@ func (uploader *Uploader) doUpload(ctx context.Context, reader io.Reader, option
 	} else {
 		data, err = io.ReadAll(reader)
 		if err != nil {
-			err = fmt.Errorf("read input: %v", err)
+			err = fmt.Errorf("read input: %w", err)
 			return
 		}
 	}
@@ -245,7 +245,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		cipherKey := util.GenCipherKey()
 		encryptedData, encryptionErr := util.Encrypt(data, cipherKey)
 		if encryptionErr != nil {
-			err = fmt.Errorf("encrypt input: %v", encryptionErr)
+			err = fmt.Errorf("encrypt input: %w", encryptionErr)
 			return
 		}
 
@@ -389,13 +389,13 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
-		return nil, fmt.Errorf("read response body %v: %v", option.UploadUrl, ra_err)
+		return nil, fmt.Errorf("read response body %v: %w", option.UploadUrl, ra_err)
 	}
 
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.ErrorfCtx(ctx, "unmarshal %s: %v", option.UploadUrl, string(resp_body))
-		return nil, fmt.Errorf("unmarshal %v: %v", option.UploadUrl, unmarshal_err)
+		return nil, fmt.Errorf("unmarshal %v: %w", option.UploadUrl, unmarshal_err)
 	}
 	if ret.Error != "" {
 		return nil, fmt.Errorf("unmarshalled error %v: %v", option.UploadUrl, ret.Error)

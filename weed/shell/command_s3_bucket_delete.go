@@ -52,7 +52,7 @@ func (c *commandS3BucketDelete) Do(args []string, commandEnv *CommandEnv, writer
 	var filerBucketsPath string
 	filerBucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
-		return fmt.Errorf("read buckets: %v", err)
+		return fmt.Errorf("read buckets: %w", err)
 	}
 
 	// delete the collection directly first

@@ -139,7 +139,7 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	}
 
 	if err := raft.ValidateConfig(c); err != nil {
-		return nil, fmt.Errorf(`raft.ValidateConfig: %v`, err)
+		return nil, fmt.Errorf("raft.ValidateConfig: %w", err)
 	}
 
 	if option.RaftBootstrap {
@@ -154,17 +154,17 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 
 	ldb, err := boltdb.NewBoltStore(filepath.Join(baseDir, ldbFile))
 	if err != nil {
-		return nil, fmt.Errorf(`boltdb.NewBoltStore(%q): %v`, filepath.Join(baseDir, "logs.dat"), err)
+		return nil, fmt.Errorf("boltdb.NewBoltStore(%q): %v", filepath.Join(baseDir, "logs.dat"), err)
 	}
 
 	sdb, err := boltdb.NewBoltStore(filepath.Join(baseDir, sdbFile))
 	if err != nil {
-		return nil, fmt.Errorf(`boltdb.NewBoltStore(%q): %v`, filepath.Join(baseDir, "stable.dat"), err)
+		return nil, fmt.Errorf("boltdb.NewBoltStore(%q): %v", filepath.Join(baseDir, "stable.dat"), err)
 	}
 
 	fss, err := raft.NewFileSnapshotStore(baseDir, 3, os.Stderr)
 	if err != nil {
-		return nil, fmt.Errorf(`raft.NewFileSnapshotStore(%q, ...): %v`, baseDir, err)
+		return nil, fmt.Errorf("raft.NewFileSnapshotStore(%q, ...): %v", baseDir, err)
 	}
 
 	s.TransportManager = transport.New(raft.ServerAddress(s.serverAddr), []grpc.DialOption{option.GrpcDialOption})
@@ -172,7 +172,7 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	stateMachine := StateMachine{topo: option.Topo}
 	s.RaftHashicorp, err = raft.NewRaft(c, &stateMachine, ldb, sdb, fss, s.TransportManager.Transport())
 	if err != nil {
-		return nil, fmt.Errorf("raft.NewRaft: %v", err)
+		return nil, fmt.Errorf("raft.NewRaft: %w", err)
 	}
 
 	updatePeers := false
@@ -185,7 +185,7 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		time.Sleep(timeSleep)
 		f := s.RaftHashicorp.BootstrapCluster(cfg)
 		if err := f.Error(); err != nil {
-			return nil, fmt.Errorf("raft.Raft.BootstrapCluster: %v", err)
+			return nil, fmt.Errorf("raft.Raft.BootstrapCluster: %w", err)
 		}
 	} else {
 		updatePeers = true
@@ -214,12 +214,12 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	if sink, err := prometheus.NewPrometheusSinkFrom(prometheus.PrometheusOpts{
 		Registerer: stats.Gather,
 	}); err != nil {
-		return nil, fmt.Errorf("NewPrometheusSink: %v", err)
+		return nil, fmt.Errorf("NewPrometheusSink: %w", err)
 	} else {
 		metricsConf := metrics.DefaultConfig(stats.Namespace)
 		metricsConf.EnableRuntimeMetrics = false
 		if _, err = metrics.NewGlobal(metricsConf, sink); err != nil {
-			return nil, fmt.Errorf("metrics.NewGlobal: %v", err)
+			return nil, fmt.Errorf("metrics.NewGlobal: %w", err)
 		}
 	}
 

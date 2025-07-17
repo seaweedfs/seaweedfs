@@ -25,7 +25,7 @@ func (s *AdminServer) GetClusterTopology() (*ClusterTopology, error) {
 	if err != nil {
 		currentMaster := s.masterClient.GetMaster(context.Background())
 		glog.Errorf("Failed to connect to master server %s: %v", currentMaster, err)
-		return nil, fmt.Errorf("gRPC topology request failed: %v", err)
+		return nil, fmt.Errorf("gRPC topology request failed: %w", err)
 	}
 
 	// Cache the result

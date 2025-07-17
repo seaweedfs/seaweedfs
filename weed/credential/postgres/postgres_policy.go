@@ -18,7 +18,7 @@ func (store *PostgresStore) GetPolicies(ctx context.Context) (map[string]policy_
 
 	rows, err := store.db.QueryContext(ctx, "SELECT name, document FROM policies")
 	if err != nil {
-		return nil, fmt.Errorf("failed to query policies: %v", err)
+		return nil, fmt.Errorf("failed to query policies: %w", err)
 	}
 	defer rows.Close()
 
@@ -27,7 +27,7 @@ func (store *PostgresStore) GetPolicies(ctx context.Context) (map[string]policy_
 		var documentJSON []byte
 
 		if err := rows.Scan(&name, &documentJSON); err != nil {
-			return nil, fmt.Errorf("failed to scan policy row: %v", err)
+			return nil, fmt.Errorf("failed to scan policy row: %w", err)
 		}
 
 		var document policy_engine.PolicyDocument
@@ -49,14 +49,14 @@ func (store *PostgresStore) CreatePolicy(ctx context.Context, name string, docum
 
 	documentJSON, err := json.Marshal(document)
 	if err != nil {
-		return fmt.Errorf("failed to marshal policy document: %v", err)
+		return fmt.Errorf("failed to marshal policy document: %w", err)
 	}
 
 	_, err = store.db.ExecContext(ctx,
 		"INSERT INTO policies (name, document) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET document = $2, updated_at = CURRENT_TIMESTAMP",
 		name, documentJSON)
 	if err != nil {
-		return fmt.Errorf("failed to insert policy: %v", err)
+		return fmt.Errorf("failed to insert policy: %w", err)
 	}
 
 	return nil
@@ -70,19 +70,19 @@ func (store *PostgresStore) UpdatePolicy(ctx context.Context, name string, docum
 
 	documentJSON, err := json.Marshal(document)
 	if err != nil {
-		return fmt.Errorf("failed to marshal policy document: %v", err)
+		return fmt.Errorf("failed to marshal policy document: %w", err)
 	}
 
 	result, err := store.db.ExecContext(ctx,
 		"UPDATE policies SET document = $2, updated_at = CURRENT_TIMESTAMP WHERE name = $1",
 		name, documentJSON)
 	if err != nil {
-		return fmt.Errorf("failed to update policy: %v", err)
+		return fmt.Errorf("failed to update policy: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %v", err)
+		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 
 	if rowsAffected == 0 {
@@ -100,12 +100,12 @@ func (store *PostgresStore) DeletePolicy(ctx context.Context, name string) error
 
 	result, err := store.db.ExecContext(ctx, "DELETE FROM policies WHERE name = $1", name)
 	if err != nil {
-		return fmt.Errorf("failed to delete policy: %v", err)
+		return fmt.Errorf("failed to delete policy: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %v", err)
+		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 
 	if rowsAffected == 0 {

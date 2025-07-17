@@ -36,7 +36,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("read S3 circuit breaker config: %v", err)
+			return fmt.Errorf("read S3 circuit breaker config: %w", err)
 		}
 		return cb.LoadS3ApiConfigurationFromBytes(content)
 	})
@@ -52,7 +52,7 @@ func (cb *CircuitBreaker) LoadS3ApiConfigurationFromBytes(content []byte) error 
 	cbCfg := &s3_pb.S3CircuitBreakerConfig{}
 	if err := filer.ParseS3ConfigurationFromBytes(content, cbCfg); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
-		return fmt.Errorf("unmarshal error: %v", err)
+		return fmt.Errorf("unmarshal error: %w", err)
 	}
 	if err := cb.loadCircuitBreakerConfig(cbCfg); err != nil {
 		return err

@@ -133,7 +133,7 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 	// Wait for initial registration message
 	msg, err := stream.Recv()
 	if err != nil {
-		return fmt.Errorf("failed to receive registration message: %v", err)
+		return fmt.Errorf("failed to receive registration message: %w", err)
 	}
 
 	registration := msg.GetRegistration()

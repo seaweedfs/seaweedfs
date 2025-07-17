@@ -274,7 +274,7 @@ func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfigura
 	var metadata map[string]json.RawMessage
 	if err := json.Unmarshal(entry.Content, &metadata); err != nil {
 		glog.Errorf("loadCORSFromMetadata: failed to unmarshal metadata for bucket %s: %v", bucket, err)
-		return nil, fmt.Errorf("failed to unmarshal metadata: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
 
 	corsData, exists := metadata["cors"]
@@ -287,7 +287,7 @@ func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfigura
 	var config cors.CORSConfiguration
 	if err := json.Unmarshal(corsData, &config); err != nil {
 		glog.Errorf("loadCORSFromMetadata: failed to unmarshal CORS configuration for bucket %s: %v", bucket, err)
-		return nil, fmt.Errorf("failed to unmarshal CORS configuration: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal CORS configuration: %w", err)
 	}
 
 	return &config, nil

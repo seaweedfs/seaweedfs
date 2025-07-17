@@ -53,7 +53,7 @@ func (mm *MaintenanceManager) Start() error {
 
 	// Validate configuration durations to prevent ticker panics
 	if err := mm.validateConfig(); err != nil {
-		return fmt.Errorf("invalid maintenance configuration: %v", err)
+		return fmt.Errorf("invalid maintenance configuration: %w", err)
 	}
 
 	mm.running = true

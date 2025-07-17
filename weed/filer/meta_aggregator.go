@@ -189,7 +189,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		})
 		if err != nil {
 			glog.V(0).Infof("SubscribeLocalMetadata %v: %v", peer, err)
-			return fmt.Errorf("subscribe: %v", err)
+			return fmt.Errorf("subscribe: %w", err)
 		}
 
 		for {
@@ -204,7 +204,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 
 			if err := processEventFn(resp); err != nil {
 				glog.V(0).Infof("SubscribeLocalMetadata process %v: %v", resp, err)
-				return fmt.Errorf("process %v: %v", resp, err)
+				return fmt.Errorf("process %v: %w", resp, err)
 			}
 
 			f.onMetadataChangeEvent(resp)

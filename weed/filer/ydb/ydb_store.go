@@ -140,13 +140,13 @@ func (store *YdbStore) doTxOrDB(ctx context.Context, q *string, params *table.Qu
 	if tx, ok := ctx.Value("tx").(query.Transaction); ok {
 		res, err = tx.Query(ctx, *q, query.WithParameters(params))
 		if err != nil {
-			return fmt.Errorf("execute transaction: %v", err)
+			return fmt.Errorf("execute transaction: %w", err)
 		}
 	} else {
 		err = store.DB.Query().Do(ctx, func(ctx context.Context, s query.Session) (err error) {
 			res, err = s.Query(ctx, *q, query.WithParameters(params), ts)
 			if err != nil {
-				return fmt.Errorf("execute statement: %v", err)
+				return fmt.Errorf("execute statement: %w", err)
 			}
 			return nil
 		}, query.WithIdempotent())
@@ -158,7 +158,7 @@ func (store *YdbStore) doTxOrDB(ctx context.Context, q *string, params *table.Qu
 		defer func() { _ = res.Close(ctx) }()
 		if processResultFunc != nil {
 			if err = processResultFunc(res); err != nil {
-				return fmt.Errorf("process result: %v", err)
+				return fmt.Errorf("process result: %w", err)
 			}
 		}
 	}

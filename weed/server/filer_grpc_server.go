@@ -207,7 +207,7 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 	if existingEntry != nil {
 		garbage, err = filer.MinusChunks(ctx, fs.lookupFileId, existingEntry.GetChunks(), newEntry.GetChunks())
 		if err != nil {
-			return newEntry.GetChunks(), nil, fmt.Errorf("MinusChunks: %v", err)
+			return newEntry.GetChunks(), nil, fmt.Errorf("MinusChunks: %w", err)
 		}
 	}
 

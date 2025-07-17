@@ -16,13 +16,13 @@ func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAdd
 		return readErr
 	}); readErr != nil {
 		if readErr != filer_pb.ErrNotFound {
-			return nil, fmt.Errorf("read existing mapping: %v", readErr)
+			return nil, fmt.Errorf("read existing mapping: %w", readErr)
 		}
 		oldContent = nil
 	}
 	mappings, readErr = UnmarshalRemoteStorageMappings(oldContent)
 	if readErr != nil {
-		return nil, fmt.Errorf("unmarshal mappings: %v", readErr)
+		return nil, fmt.Errorf("unmarshal mappings: %w", readErr)
 	}
 
 	return
@@ -38,7 +38,7 @@ func InsertMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStor
 	})
 	if err != nil {
 		if err != filer_pb.ErrNotFound {
-			return fmt.Errorf("read existing mapping: %v", err)
+			return fmt.Errorf("read existing mapping: %w", err)
 		}
 	}
 
@@ -53,7 +53,7 @@ func InsertMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStor
 		return SaveInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, newContent)
 	})
 	if err != nil {
-		return fmt.Errorf("save mapping: %v", err)
+		return fmt.Errorf("save mapping: %w", err)
 	}
 
 	return nil
@@ -69,7 +69,7 @@ func DeleteMountMapping(filerClient filer_pb.FilerClient, dir string) (err error
 	})
 	if err != nil {
 		if err != filer_pb.ErrNotFound {
-			return fmt.Errorf("read existing mapping: %v", err)
+			return fmt.Errorf("read existing mapping: %w", err)
 		}
 	}
 
@@ -84,7 +84,7 @@ func DeleteMountMapping(filerClient filer_pb.FilerClient, dir string) (err error
 		return SaveInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, newContent)
 	})
 	if err != nil {
-		return fmt.Errorf("save mapping: %v", err)
+		return fmt.Errorf("save mapping: %w", err)
 	}
 
 	return nil
@@ -100,7 +100,7 @@ func addRemoteStorageMapping(oldContent []byte, dir string, storageLocation *rem
 	mappings.Mappings[dir] = storageLocation
 
 	if newContent, err = proto.Marshal(mappings); err != nil {
-		return oldContent, fmt.Errorf("marshal mappings: %v", err)
+		return oldContent, fmt.Errorf("marshal mappings: %w", err)
 	}
 
 	return
@@ -116,7 +116,7 @@ func removeRemoteStorageMapping(oldContent []byte, dir string) (newContent []byt
 	delete(mappings.Mappings, dir)
 
 	if newContent, err = proto.Marshal(mappings); err != nil {
-		return oldContent, fmt.Errorf("marshal mappings: %v", err)
+		return oldContent, fmt.Errorf("marshal mappings: %w", err)
 	}
 
 	return

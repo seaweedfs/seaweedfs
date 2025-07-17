@@ -71,7 +71,7 @@ func (s *SFTPService) Serve(listener net.Listener) error {
 	// Build SSH server config
 	sshConfig, err := s.buildSSHConfig()
 	if err != nil {
-		return fmt.Errorf("failed to create SSH config: %v", err)
+		return fmt.Errorf("failed to create SSH config: %w", err)
 	}
 
 	glog.V(0).Infof("Starting Seaweed SFTP service on %s", listener.Addr().String())
@@ -79,7 +79,7 @@ func (s *SFTPService) Serve(listener net.Listener) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			return fmt.Errorf("failed to accept incoming connection: %v", err)
+			return fmt.Errorf("failed to accept incoming connection: %w", err)
 		}
 		go s.handleSSHConnection(conn, sshConfig)
 	}
@@ -110,7 +110,7 @@ func (s *SFTPService) buildSSHConfig() (*ssh.ServerConfig, error) {
 	if s.options.HostKeysFolder != "" {
 		files, err := os.ReadDir(s.options.HostKeysFolder)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read host keys folder: %v", err)
+			return nil, fmt.Errorf("failed to read host keys folder: %w", err)
 		}
 		for _, file := range files {
 			if file.IsDir() {

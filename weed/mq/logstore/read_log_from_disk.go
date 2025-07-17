@@ -34,7 +34,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			logEntry := &filer_pb.LogEntry{}
 			if err = proto.Unmarshal(entryData, logEntry); err != nil {
 				pos += 4 + int(size)
-				err = fmt.Errorf("unexpected unmarshal mq_pb.Message: %v", err)
+				err = fmt.Errorf("unexpected unmarshal mq_pb.Message: %w", err)
 				return
 			}
 			if logEntry.TsNs <= starTsNs {
@@ -48,7 +48,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 
 			// fmt.Printf(" read logEntry: %v, ts %v\n", string(logEntry.Key), time.Unix(0, logEntry.TsNs).UTC())
 			if _, err = eachLogEntryFn(logEntry); err != nil {
-				err = fmt.Errorf("process log entry %v: %v", logEntry, err)
+				err = fmt.Errorf("process log entry %v: %w", logEntry, err)
 				return
 			}
 

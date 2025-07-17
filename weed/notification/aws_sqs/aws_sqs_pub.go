@@ -49,7 +49,7 @@ func (k *AwsSqsPub) initialize(awsAccessKeyId, awsSecretAccessKey, region, queue
 
 	sess, err := session.NewSession(config)
 	if err != nil {
-		return fmt.Errorf("create aws session: %v", err)
+		return fmt.Errorf("create aws session: %w", err)
 	}
 	k.svc = sqs.New(sess)
 

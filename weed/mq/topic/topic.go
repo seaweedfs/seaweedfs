@@ -52,12 +52,12 @@ func (t Topic) ReadConfFile(client filer_pb.SeaweedFilerClient) (*mq_pb.Configur
 		return nil, err
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read topic.conf of %v: %v", t, err)
+		return nil, fmt.Errorf("read topic.conf of %v: %w", t, err)
 	}
 	// parse into filer conf object
 	conf := &mq_pb.ConfigureTopicResponse{}
 	if err = jsonpb.Unmarshal(data, conf); err != nil {
-		return nil, fmt.Errorf("unmarshal topic %v conf: %v", t, err)
+		return nil, fmt.Errorf("unmarshal topic %v conf: %w", t, err)
 	}
 	return conf, nil
 }
@@ -75,7 +75,7 @@ func (t Topic) ReadConfFileWithMetadata(client filer_pb.SeaweedFilerClient) (*mq
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return nil, 0, 0, err
 		}
-		return nil, 0, 0, fmt.Errorf("lookup topic.conf of %v: %v", t, err)
+		return nil, 0, 0, fmt.Errorf("lookup topic.conf of %v: %w", t, err)
 	}
 
 	// Get file metadata
@@ -88,7 +88,7 @@ func (t Topic) ReadConfFileWithMetadata(client filer_pb.SeaweedFilerClient) (*mq
 	// Parse the configuration
 	conf := &mq_pb.ConfigureTopicResponse{}
 	if err = jsonpb.Unmarshal(resp.Entry.Content, conf); err != nil {
-		return nil, 0, 0, fmt.Errorf("unmarshal topic %v conf: %v", t, err)
+		return nil, 0, 0, fmt.Errorf("unmarshal topic %v conf: %w", t, err)
 	}
 
 	return conf, createdAtNs, modifiedAtNs, nil
@@ -98,7 +98,7 @@ func (t Topic) WriteConfFile(client filer_pb.SeaweedFilerClient, conf *mq_pb.Con
 	var buf bytes.Buffer
 	filer.ProtoToText(&buf, conf)
 	if err := filer.SaveInsideFiler(client, t.Dir(), filer.TopicConfFile, buf.Bytes()); err != nil {
-		return fmt.Errorf("save topic %v conf: %v", t, err)
+		return fmt.Errorf("save topic %v conf: %w", t, err)
 	}
 	return nil
 }

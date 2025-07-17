@@ -144,7 +144,7 @@ func (c *managedConnImpl) Write(b []byte) (n int, err error) {
 	}
 	n, err = conn.Write(b)
 	if err != nil {
-		err = fmt.Errorf("Write error: %v", err)
+		err = fmt.Errorf("Write error: %w", err)
 	}
 	return
 }

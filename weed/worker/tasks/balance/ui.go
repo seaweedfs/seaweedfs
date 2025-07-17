@@ -203,7 +203,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	if values, ok := formData["imbalance_threshold"]; ok && len(values) > 0 {
 		threshold, err := strconv.ParseFloat(values[0], 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid imbalance threshold: %v", err)
+			return nil, fmt.Errorf("invalid imbalance threshold: %w", err)
 		}
 		if threshold < 0 || threshold > 1 {
 			return nil, fmt.Errorf("imbalance threshold must be between 0.0 and 1.0")
@@ -215,7 +215,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	if values, ok := formData["scan_interval"]; ok && len(values) > 0 {
 		duration, err := time.ParseDuration(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid scan interval: %v", err)
+			return nil, fmt.Errorf("invalid scan interval: %w", err)
 		}
 		config.ScanIntervalSeconds = int(duration.Seconds())
 	}
@@ -224,7 +224,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	if values, ok := formData["max_concurrent"]; ok && len(values) > 0 {
 		maxConcurrent, err := strconv.Atoi(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid max concurrent: %v", err)
+			return nil, fmt.Errorf("invalid max concurrent: %w", err)
 		}
 		if maxConcurrent < 1 {
 			return nil, fmt.Errorf("max concurrent must be at least 1")
@@ -236,7 +236,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	if values, ok := formData["min_server_count"]; ok && len(values) > 0 {
 		minServerCount, err := strconv.Atoi(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid min server count: %v", err)
+			return nil, fmt.Errorf("invalid min server count: %w", err)
 		}
 		if minServerCount < 2 {
 			return nil, fmt.Errorf("min server count must be at least 2")
@@ -259,7 +259,7 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	if values, ok := formData["min_interval"]; ok && len(values) > 0 {
 		duration, err := time.ParseDuration(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid min interval: %v", err)
+			return nil, fmt.Errorf("invalid min interval: %w", err)
 		}
 		config.MinIntervalSeconds = int(duration.Seconds())
 	}

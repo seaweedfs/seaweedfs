@@ -44,13 +44,13 @@ func NewPublishSession(agentAddress string, topicSchema *schema.Schema, partitio
 
 	stream, err := agentClient.PublishRecord(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("publish record: %v", err)
+		return nil, fmt.Errorf("publish record: %w", err)
 	}
 
 	if err = stream.Send(&mq_agent_pb.PublishRecordRequest{
 		SessionId: resp.SessionId,
 	}); err != nil {
-		return nil, fmt.Errorf("send session id: %v", err)
+		return nil, fmt.Errorf("send session id: %w", err)
 	}
 
 	return &PublishSession{
@@ -67,7 +67,7 @@ func (a *PublishSession) CloseSession() error {
 	}
 	err := a.stream.CloseSend()
 	if err != nil {
-		return fmt.Errorf("close send: %v", err)
+		return fmt.Errorf("close send: %w", err)
 	}
 	a.schema = nil
 	return err

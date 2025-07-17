@@ -92,7 +92,7 @@ func (w *Worker) Start() error {
 
 	// Connect to admin server
 	if err := w.adminClient.Connect(); err != nil {
-		return fmt.Errorf("failed to connect to admin server: %v", err)
+		return fmt.Errorf("failed to connect to admin server: %w", err)
 	}
 
 	w.running = true
@@ -111,7 +111,7 @@ func (w *Worker) Start() error {
 	if err := w.adminClient.RegisterWorker(workerInfo); err != nil {
 		w.running = false
 		w.adminClient.Disconnect()
-		return fmt.Errorf("failed to register worker: %v", err)
+		return fmt.Errorf("failed to register worker: %w", err)
 	}
 
 	// Start worker loops

@@ -38,7 +38,7 @@ func (cm *MemDb) Set(key NeedleId, offset Offset, size Size) error {
 	bytes := ToBytes(key, offset, size)
 
 	if err := cm.db.Put(bytes[0:NeedleIdSize], bytes[NeedleIdSize:NeedleIdSize+OffsetSize+SizeSize], nil); err != nil {
-		return fmt.Errorf("failed to write temp leveldb: %v", err)
+		return fmt.Errorf("failed to write temp leveldb: %w", err)
 	}
 	return nil
 }

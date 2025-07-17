@@ -46,7 +46,7 @@ func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeIn
 	if err = jsonpb.Unmarshal(fileData, volumeInfo); err != nil {
 		if oldVersionErr := tryOldVersionVolumeInfo(fileData, volumeInfo); oldVersionErr != nil {
 			glog.Warningf("unmarshal error: %v oldFormat: %v", err, oldVersionErr)
-			err = fmt.Errorf("unmarshal error: %v oldFormat: %v", err, oldVersionErr)
+			err = fmt.Errorf("unmarshal error: %w oldFormat: %v", err, oldVersionErr)
 			return
 		} else {
 			err = nil
@@ -89,7 +89,7 @@ func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) er
 func tryOldVersionVolumeInfo(data []byte, volumeInfo *volume_server_pb.VolumeInfo) error {
 	oldVersionVolumeInfo := &volume_server_pb.OldVersionVolumeInfo{}
 	if err := jsonpb.Unmarshal(data, oldVersionVolumeInfo); err != nil {
-		return fmt.Errorf("failed to unmarshal old version volume info: %v", err)
+		return fmt.Errorf("failed to unmarshal old version volume info: %w", err)
 	}
 	volumeInfo.Files = oldVersionVolumeInfo.Files
 	volumeInfo.Version = oldVersionVolumeInfo.Version

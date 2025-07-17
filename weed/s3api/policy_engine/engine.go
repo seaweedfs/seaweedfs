@@ -46,12 +46,12 @@ func NewPolicyEngine() *PolicyEngine {
 func (engine *PolicyEngine) SetBucketPolicy(bucketName string, policyJSON string) error {
 	policy, err := ParsePolicy(policyJSON)
 	if err != nil {
-		return fmt.Errorf("invalid policy: %v", err)
+		return fmt.Errorf("invalid policy: %w", err)
 	}
 
 	compiled, err := CompilePolicy(policy)
 	if err != nil {
-		return fmt.Errorf("failed to compile policy: %v", err)
+		return fmt.Errorf("failed to compile policy: %w", err)
 	}
 
 	engine.mutex.Lock()

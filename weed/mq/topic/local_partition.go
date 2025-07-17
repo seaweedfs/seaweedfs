@@ -155,7 +155,7 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 	followerClient := mq_pb.NewSeaweedMessagingClient(p.followerGrpcConnection)
 	p.publishFolloweMeStream, err = followerClient.PublishFollowMe(ctx)
 	if err != nil {
-		return fmt.Errorf("fail to create publish client: %v", err)
+		return fmt.Errorf("fail to create publish client: %w", err)
 	}
 	if err = p.publishFolloweMeStream.Send(&mq_pb.PublishFollowMeRequest{
 		Message: &mq_pb.PublishFollowMeRequest_Init{

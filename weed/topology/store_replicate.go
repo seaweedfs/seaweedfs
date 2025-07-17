@@ -57,7 +57,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToLocalDisk).Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
-			err = fmt.Errorf("failed to write to local disk: %v", err)
+			err = fmt.Errorf("failed to write to local disk: %w", err)
 			glog.V(0).Infoln(err)
 			return
 		}

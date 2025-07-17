@@ -31,7 +31,7 @@ func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderR
 		lastProcessedTimestampNs, err := sendNeedlesSince(stream, v, lastTimestampNs)
 		if err != nil {
 			glog.Infof("sendNeedlesSince: %v", err)
-			return fmt.Errorf("streamFollow: %v", err)
+			return fmt.Errorf("streamFollow: %w", err)
 		}
 		time.Sleep(2 * time.Second)
 

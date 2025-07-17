@@ -60,7 +60,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 
 	assignResult, err := operation.Assign(context.Background(), f.GetMaster, f.GrpcDialOption, assignRequest)
 	if err != nil {
-		return nil, nil, fmt.Errorf("AssignVolume: %v", err)
+		return nil, nil, fmt.Errorf("AssignVolume: %w", err)
 	}
 	if assignResult.Error != "" {
 		return nil, nil, fmt.Errorf("AssignVolume error: %v", assignResult.Error)

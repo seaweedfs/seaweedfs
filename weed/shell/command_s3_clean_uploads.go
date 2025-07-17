@@ -51,7 +51,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 	var filerBucketsPath string
 	filerBucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
-		return fmt.Errorf("read buckets: %v", err)
+		return fmt.Errorf("read buckets: %w", err)
 	}
 
 	var buckets []string
@@ -60,7 +60,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 		return nil
 	}, "", false, math.MaxUint32)
 	if err != nil {
-		return fmt.Errorf("list buckets under %v: %v", filerBucketsPath, err)
+		return fmt.Errorf("list buckets under %v: %w", filerBucketsPath, err)
 	}
 
 	for _, bucket := range buckets {
@@ -84,7 +84,7 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 		return nil
 	}, "", false, math.MaxUint32)
 	if err != nil {
-		return fmt.Errorf("list uploads under %v: %v", uploadsDir, err)
+		return fmt.Errorf("list uploads under %v: %w", uploadsDir, err)
 	}
 
 	var encodedJwt security.EncodedJwt

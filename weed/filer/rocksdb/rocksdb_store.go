@@ -230,7 +230,7 @@ func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey 
 	}
 
 	if err := iter.Err(); err != nil {
-		return fmt.Errorf("prefix scan iterator: %v", err)
+		return fmt.Errorf("prefix scan iterator: %w", err)
 	}
 	return nil
 }

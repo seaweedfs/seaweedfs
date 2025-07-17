@@ -159,7 +159,7 @@ func (mws *MaintenanceWorkerService) executeGenericTask(task *MaintenanceTask) e
 	// Create task instance using the registry
 	taskInstance, err := mws.taskRegistry.CreateTask(taskType, taskParams)
 	if err != nil {
-		return fmt.Errorf("failed to create task instance: %v", err)
+		return fmt.Errorf("failed to create task instance: %w", err)
 	}
 
 	// Update progress to show task has started
@@ -168,7 +168,7 @@ func (mws *MaintenanceWorkerService) executeGenericTask(task *MaintenanceTask) e
 	// Execute the task
 	err = taskInstance.Execute(taskParams)
 	if err != nil {
-		return fmt.Errorf("task execution failed: %v", err)
+		return fmt.Errorf("task execution failed: %w", err)
 	}
 
 	// Update progress to show completion
@@ -405,7 +405,7 @@ func (mwc *MaintenanceWorkerCommand) Run() error {
 	// Start the worker service
 	err := mwc.workerService.Start()
 	if err != nil {
-		return fmt.Errorf("failed to start maintenance worker: %v", err)
+		return fmt.Errorf("failed to start maintenance worker: %w", err)
 	}
 
 	// Wait for interrupt signal

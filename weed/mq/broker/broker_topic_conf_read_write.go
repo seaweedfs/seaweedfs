@@ -14,12 +14,12 @@ func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partitio
 	conf, readConfErr := b.fca.ReadTopicConfFromFiler(t)
 	if readConfErr != nil {
 		glog.Errorf("topic %v not found: %v", t, readConfErr)
-		return nil, fmt.Errorf("topic %v not found: %v", t, readConfErr)
+		return nil, fmt.Errorf("topic %v not found: %w", t, readConfErr)
 	}
 	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
 	if getOrGenError != nil {
 		glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
-		return nil, fmt.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
+		return nil, fmt.Errorf("topic %v partition %v not setup: %w", t, partition, getOrGenError)
 	}
 	return localTopicPartition, nil
 }

@@ -40,7 +40,7 @@ func (c *commandRaftClusterPs) Do(args []string, commandEnv *CommandEnv, writer 
 	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.RaftListClusterServers(context.Background(), &master_pb.RaftListClusterServersRequest{})
 		if err != nil {
-			return fmt.Errorf("raft list cluster: %v", err)
+			return fmt.Errorf("raft list cluster: %w", err)
 		}
 		fmt.Fprintf(writer, "the raft cluster has %d servers\n", len(resp.ClusterServers))
 		for _, server := range resp.ClusterServers {

@@ -59,7 +59,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
 		if readPersistedLogErr != nil {
-			return fmt.Errorf("reading from persisted logs: %v", readPersistedLogErr)
+			return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
 		}
 		if isDone {
 			return nil
@@ -73,7 +73,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			position := log_buffer.NewMessagePosition(nextDayTs, -2)
 			found, err := fs.filer.HasPersistedLogFiles(position)
 			if err != nil {
-				return fmt.Errorf("checking persisted log files: %v", err)
+				return fmt.Errorf("checking persisted log files: %w", err)
 			}
 			if found {
 				lastReadTime = position
@@ -157,7 +157,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
 		if readPersistedLogErr != nil {
 			glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
-			return fmt.Errorf("reading from persisted logs: %v", readPersistedLogErr)
+			return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
 		}
 		if isDone {
 			return nil
@@ -219,7 +219,7 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 		event := &filer_pb.SubscribeMetadataResponse{}
 		if err := proto.Unmarshal(logEntry.Data, event); err != nil {
 			glog.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
-			return false, fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
+			return false, fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %w", err)
 		}
 
 		if err := eachEventNotificationFn(event.Directory, event.EventNotification, event.TsNs); err != nil {

@@ -15,7 +15,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 
 	db, _, _, err := store.getTxOrDB(ctx, "", false)
 	if err != nil {
-		return fmt.Errorf("findDB: %v", err)
+		return fmt.Errorf("findDB: %w", err)
 	}
 
 	dirStr, dirHash, name := GenDirAndName(key)
@@ -50,7 +50,7 @@ func (store *AbstractSqlStore) KvGet(ctx context.Context, key []byte) (value []b
 
 	db, _, _, err := store.getTxOrDB(ctx, "", false)
 	if err != nil {
-		return nil, fmt.Errorf("findDB: %v", err)
+		return nil, fmt.Errorf("findDB: %w", err)
 	}
 
 	dirStr, dirHash, name := GenDirAndName(key)
@@ -63,7 +63,7 @@ func (store *AbstractSqlStore) KvGet(ctx context.Context, key []byte) (value []b
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("kv get: %v", err)
+		return nil, fmt.Errorf("kv get: %w", err)
 	}
 
 	return
@@ -73,7 +73,7 @@ func (store *AbstractSqlStore) KvDelete(ctx context.Context, key []byte) (err er
 
 	db, _, _, err := store.getTxOrDB(ctx, "", false)
 	if err != nil {
-		return fmt.Errorf("findDB: %v", err)
+		return fmt.Errorf("findDB: %w", err)
 	}
 
 	dirStr, dirHash, name := GenDirAndName(key)

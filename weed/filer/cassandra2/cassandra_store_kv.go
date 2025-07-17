@@ -45,7 +45,7 @@ func (store *Cassandra2Store) KvDelete(ctx context.Context, key []byte) (err err
 	if err := store.session.Query(
 		"DELETE FROM filemeta WHERE dirhash=? AND directory=? AND name=?",
 		util.HashStringToLong(dir), dir, name).Exec(); err != nil {
-		return fmt.Errorf("kv delete: %v", err)
+		return fmt.Errorf("kv delete: %w", err)
 	}
 
 	return nil

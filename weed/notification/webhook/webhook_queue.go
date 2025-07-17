@@ -120,7 +120,7 @@ func (w *Queue) setupWatermillQueue(cfg *config) error {
 		logger,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create router: %v", err)
+		return fmt.Errorf("failed to create router: %w", err)
 	}
 	w.router = router
 
@@ -135,7 +135,7 @@ func (w *Queue) setupWatermillQueue(cfg *config) error {
 
 	poisonQueue, err := middleware.PoisonQueue(w.queueChannel, deadLetterTopic)
 	if err != nil {
-		return fmt.Errorf("failed to create poison queue: %v", err)
+		return fmt.Errorf("failed to create poison queue: %w", err)
 	}
 
 	router.AddPlugin(plugin.SignalsHandler)

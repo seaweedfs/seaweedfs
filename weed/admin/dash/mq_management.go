@@ -154,7 +154,7 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 	// Find broker leader
 	brokerLeader, err := s.findBrokerLeader()
 	if err != nil {
-		return nil, fmt.Errorf("failed to find broker leader: %v", err)
+		return nil, fmt.Errorf("failed to find broker leader: %w", err)
 	}
 
 	var topicDetails *TopicDetailsData
@@ -172,7 +172,7 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to get topic configuration: %v", err)
+			return fmt.Errorf("failed to get topic configuration: %w", err)
 		}
 
 		// Initialize topic details
@@ -297,7 +297,7 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 				if err == io.EOF {
 					break
 				}
-				return fmt.Errorf("failed to receive version entries: %v", err)
+				return fmt.Errorf("failed to receive version entries: %w", err)
 			}
 
 			// Only process directories that are versions (start with "v")
@@ -398,7 +398,7 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get consumer group offsets: %v", err)
+		return nil, fmt.Errorf("failed to get consumer group offsets: %w", err)
 	}
 
 	return offsets, nil
@@ -544,7 +544,7 @@ func (s *AdminServer) findBrokerLeader() (string, error) {
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to list brokers: %v", err)
+		return "", fmt.Errorf("failed to list brokers: %w", err)
 	}
 
 	if len(brokers) == 0 {

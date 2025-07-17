@@ -79,7 +79,7 @@ func (c *commandRemoteMountBuckets) Do(args []string, commandEnv *CommandEnv, wr
 
 	fillerBucketsPath, err := readFilerBucketsPath(commandEnv)
 	if err != nil {
-		return fmt.Errorf("read filer buckets path: %v", err)
+		return fmt.Errorf("read filer buckets path: %w", err)
 	}
 
 	hasSuffixPattern, _ := regexp.Compile(".+-[0-9][0-9][0-9][0-9]")

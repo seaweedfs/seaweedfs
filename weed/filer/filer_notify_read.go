@@ -33,7 +33,7 @@ func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePositi
 
 	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, math.MaxInt32, "", "", "")
 	if listDayErr != nil {
-		return nil, fmt.Errorf("fail to list log by day: %v", listDayErr)
+		return nil, fmt.Errorf("fail to list log by day: %w", listDayErr)
 	}
 
 	return NewOrderedLogVisitor(f, startPosition, stopTsNs, dayEntries)
@@ -45,7 +45,7 @@ func (f *Filer) HasPersistedLogFiles(startPosition log_buffer.MessagePosition) (
 	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, 1, "", "", "")
 
 	if listDayErr != nil {
-		return false, fmt.Errorf("fail to list log by day: %v", listDayErr)
+		return false, fmt.Errorf("fail to list log by day: %w", listDayErr)
 	}
 	if len(dayEntries) == 0 {
 		return false, nil
@@ -118,7 +118,7 @@ func (o *OrderedLogVisitor) GetNext() (logEntry *filer_pb.LogEntry, err error) {
 		if nextErr == io.EOF {
 			// do nothing since the filer has no more log entries
 		} else {
-			return nil, fmt.Errorf("failed to get next log entry: %v", nextErr)
+			return nil, fmt.Errorf("failed to get next log entry: %w", nextErr)
 		}
 	} else {
 		heap.Push(o.pq, &LogEntryItem{
@@ -245,7 +245,7 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 			if nextErr == io.EOF {
 				// do nothing since the filer has no more log entries
 			} else {
-				return fmt.Errorf("failed to get next log entry for %v: %v", entryName, err)
+				return fmt.Errorf("failed to get next log entry for %v: %w", entryName, err)
 			}
 		} else {
 			heap.Push(v.pq, &LogEntryItem{

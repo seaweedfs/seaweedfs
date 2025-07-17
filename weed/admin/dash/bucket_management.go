@@ -251,7 +251,7 @@ func (s *AdminServer) SetBucketQuota(bucketName string, quotaBytes int64, quotaE
 			Name:      bucketName,
 		})
 		if err != nil {
-			return fmt.Errorf("bucket not found: %v", err)
+			return fmt.Errorf("bucket not found: %w", err)
 		}
 
 		bucketEntry := lookupResp.Entry
@@ -275,7 +275,7 @@ func (s *AdminServer) SetBucketQuota(bucketName string, quotaBytes int64, quotaE
 			Entry:     bucketEntry,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to update bucket quota: %v", err)
+			return fmt.Errorf("failed to update bucket quota: %w", err)
 		}
 
 		return nil
@@ -308,7 +308,7 @@ func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes
 		})
 		// Ignore error if directory already exists
 		if err != nil && !strings.Contains(err.Error(), "already exists") && !strings.Contains(err.Error(), "existing entry") {
-			return fmt.Errorf("failed to create /buckets directory: %v", err)
+			return fmt.Errorf("failed to create /buckets directory: %w", err)
 		}
 
 		// Check if bucket already exists
@@ -368,7 +368,7 @@ func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create bucket directory: %v", err)
+			return fmt.Errorf("failed to create bucket directory: %w", err)
 		}
 
 		return nil

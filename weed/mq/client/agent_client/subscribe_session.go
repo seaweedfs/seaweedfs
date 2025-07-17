@@ -50,13 +50,13 @@ func NewSubscribeSession(agentAddress string, option *SubscribeOption) (*Subscri
 
 	stream, err := agentClient.SubscribeRecord(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("subscribe record: %v", err)
+		return nil, fmt.Errorf("subscribe record: %w", err)
 	}
 
 	if err = stream.Send(&mq_agent_pb.SubscribeRecordRequest{
 		Init: initRequest,
 	}); err != nil {
-		return nil, fmt.Errorf("send session id: %v", err)
+		return nil, fmt.Errorf("send session id: %w", err)
 	}
 
 	return &SubscribeSession{

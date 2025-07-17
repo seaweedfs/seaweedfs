@@ -134,7 +134,7 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 			stats.FilerRequestHistogram.WithLabelValues("chunkDownload").Observe(time.Since(start).Seconds())
 			if err != nil {
 				stats.FilerHandlerCounter.WithLabelValues("chunkDownloadError").Inc()
-				return fmt.Errorf("read chunk: %v", err)
+				return fmt.Errorf("read chunk: %w", err)
 			}
 			stats.FilerHandlerCounter.WithLabelValues("chunkDownload").Inc()
 			downloadThrottler.MaybeSlowdown(int64(chunkView.ViewSize))

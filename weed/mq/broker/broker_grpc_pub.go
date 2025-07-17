@@ -145,7 +145,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 
 		// send to the local partition
 		if err = localTopicPartition.Publish(dataMessage); err != nil {
-			return fmt.Errorf("topic %v partition %v publish error: %v", initMessage.Topic, initMessage.Partition, err)
+			return fmt.Errorf("topic %v partition %v publish error: %w", initMessage.Topic, initMessage.Partition, err)
 		}
 
 		// Update published offset and last seen time for this publisher

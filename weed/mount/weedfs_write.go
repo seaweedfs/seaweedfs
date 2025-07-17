@@ -49,7 +49,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 
 		if err != nil {
 			glog.V(0).Infof("upload data %v: %v", filename, err)
-			return nil, fmt.Errorf("upload data: %v", err)
+			return nil, fmt.Errorf("upload data: %w", err)
 		}
 		if uploadResult.Error != "" {
 			glog.V(0).Infof("upload failure %v: %v", filename, err)

@@ -104,7 +104,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("failed to traverse remote storage: %v", err)
+		return fmt.Errorf("failed to traverse remote storage: %w", err)
 	}
 
 	fmt.Fprintf(writer, "Found %d files/directories in remote storage\n", len(remoteFiles))
@@ -120,7 +120,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 			return true
 		})
 		if err != nil {
-			return fmt.Errorf("failed to traverse local directory: %v", err)
+			return fmt.Errorf("failed to traverse local directory: %w", err)
 		}
 		fmt.Fprintf(writer, "Found %d files/directories in local storage\n", len(localFiles))
 	} else {

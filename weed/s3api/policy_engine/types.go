@@ -179,11 +179,11 @@ func validateStatement(stmt *PolicyStatement) error {
 func ParsePolicy(policyJSON string) (*PolicyDocument, error) {
 	var policy PolicyDocument
 	if err := json.Unmarshal([]byte(policyJSON), &policy); err != nil {
-		return nil, fmt.Errorf("failed to parse policy JSON: %v", err)
+		return nil, fmt.Errorf("failed to parse policy JSON: %w", err)
 	}
 
 	if err := ValidatePolicy(&policy); err != nil {
-		return nil, fmt.Errorf("invalid policy: %v", err)
+		return nil, fmt.Errorf("invalid policy: %w", err)
 	}
 
 	return &policy, nil

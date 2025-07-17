@@ -215,7 +215,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get volume information: %v", err)
+		return nil, fmt.Errorf("failed to get volume information: %w", err)
 	}
 
 	// Get filer configuration to determine FilerGroup
@@ -232,7 +232,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get filer configuration: %v", err)
+		return nil, fmt.Errorf("failed to get filer configuration: %w", err)
 	}
 
 	// Now list buckets from the filer and match with collection data
@@ -330,7 +330,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to list Object Store buckets: %v", err)
+		return nil, fmt.Errorf("failed to list Object Store buckets: %w", err)
 	}
 
 	return buckets, nil
@@ -355,7 +355,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 			Name:      bucketName,
 		})
 		if err != nil {
-			return fmt.Errorf("bucket not found: %v", err)
+			return fmt.Errorf("bucket not found: %w", err)
 		}
 
 		details.Bucket.CreatedAt = time.Unix(bucketResp.Entry.Attributes.Crtime, 0)
@@ -488,7 +488,7 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 			IgnoreRecursiveError: false,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to delete bucket: %v", err)
+			return fmt.Errorf("failed to delete bucket: %w", err)
 		}
 
 		return nil
@@ -687,7 +687,7 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get filer nodes from master: %v", err)
+		return nil, fmt.Errorf("failed to get filer nodes from master: %w", err)
 	}
 
 	return &ClusterFilersData{
@@ -729,7 +729,7 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get broker nodes from master: %v", err)
+		return nil, fmt.Errorf("failed to get broker nodes from master: %w", err)
 	}
 
 	return &ClusterBrokersData{
@@ -1170,7 +1170,7 @@ func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigDat
 func (as *AdminServer) updateMaintenanceConfig(config *maintenance.MaintenanceConfig) error {
 	// Save configuration to persistent storage
 	if err := as.configPersistence.SaveMaintenanceConfig(config); err != nil {
-		return fmt.Errorf("failed to save maintenance configuration: %v", err)
+		return fmt.Errorf("failed to save maintenance configuration: %w", err)
 	}
 
 	// Update maintenance manager if available
@@ -1357,7 +1357,7 @@ func (s *AdminServer) CreateTopicWithRetention(namespace, name string, partition
 	// Find broker leader to create the topic
 	brokerLeader, err := s.findBrokerLeader()
 	if err != nil {
-		return fmt.Errorf("failed to find broker leader: %v", err)
+		return fmt.Errorf("failed to find broker leader: %w", err)
 	}
 
 	// Create retention configuration
@@ -1391,7 +1391,7 @@ func (s *AdminServer) CreateTopicWithRetention(namespace, name string, partition
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create topic: %v", err)
+		return fmt.Errorf("failed to create topic: %w", err)
 	}
 
 	glog.V(0).Infof("Created topic %s.%s with %d partitions (retention: enabled=%v, seconds=%d)",
@@ -1421,7 +1421,7 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to get broker nodes from master: %v", err)
+		return fmt.Errorf("failed to get broker nodes from master: %w", err)
 	}
 
 	if brokerAddress == "" {
@@ -1431,7 +1431,7 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 	// Create gRPC connection
 	conn, err := grpc.Dial(brokerAddress, s.grpcDialOption)
 	if err != nil {
-		return fmt.Errorf("failed to connect to broker: %v", err)
+		return fmt.Errorf("failed to connect to broker: %w", err)
 	}
 	defer conn.Close()
 
@@ -1448,7 +1448,7 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to get current topic configuration: %v", err)
+		return fmt.Errorf("failed to get current topic configuration: %w", err)
 	}
 
 	// Create the topic configuration request, preserving all existing settings
@@ -1480,7 +1480,7 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 	// Send the configuration request with preserved settings
 	_, err = client.ConfigureTopic(ctx, configRequest)
 	if err != nil {
-		return fmt.Errorf("failed to update topic retention: %v", err)
+		return fmt.Errorf("failed to update topic retention: %w", err)
 	}
 
 	glog.V(0).Infof("Updated topic %s.%s retention (enabled: %v, seconds: %d) while preserving %d partitions",

@@ -43,7 +43,7 @@ func (s FilebaseRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_sto
 
 	sess, err := session.NewSession(config)
 	if err != nil {
-		return nil, fmt.Errorf("create filebase session: %v", err)
+		return nil, fmt.Errorf("create filebase session: %w", err)
 	}
 	sess.Handlers.Sign.PushBackNamed(v4.SignRequestHandler)
 	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)

@@ -92,7 +92,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 		err = pb.WithOneOfGrpcMasterClients(false, masters, grpcDialOption, func(client master_pb.SeaweedClient) error {
 			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get master grpc address %v configuration: %v", masters, err)
+				return fmt.Errorf("get master grpc address %v configuration: %w", masters, err)
 			}
 			masterOptions.defaultReplication = &resp.DefaultReplication
 			masterOptions.volumeSizeLimitMB = aws.Uint(uint(resp.VolumeSizeLimitMB))

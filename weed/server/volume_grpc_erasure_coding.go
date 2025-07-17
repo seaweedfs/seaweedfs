@@ -408,7 +408,7 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 
 			_, size, _, err := localEcVolume.LocateEcShardNeedle(types.NeedleId(req.FileKey), needle.Version(req.Version))
 			if err != nil {
-				return nil, fmt.Errorf("locate in local ec volume: %v", err)
+				return nil, fmt.Errorf("locate in local ec volume: %w", err)
 			}
 			if size.IsDeleted() {
 				return resp, nil

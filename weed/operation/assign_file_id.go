@@ -80,7 +80,7 @@ func (ap *singleThreadAssignProxy) doAssign(grpcConnection *grpc.ClientConn, pri
 		ap.assignClient, err = client.StreamAssign(context.Background())
 		if err != nil {
 			ap.assignClient = nil
-			return nil, fmt.Errorf("fail to create stream assign client: %v", err)
+			return nil, fmt.Errorf("fail to create stream assign client: %w", err)
 		}
 	}
 
@@ -105,7 +105,7 @@ func (ap *singleThreadAssignProxy) doAssign(grpcConnection *grpc.ClientConn, pri
 			WritableVolumeCount: request.WritableVolumeCount,
 		}
 		if err = ap.assignClient.Send(req); err != nil {
-			return nil, fmt.Errorf("StreamAssignSend: %v", err)
+			return nil, fmt.Errorf("StreamAssignSend: %w", err)
 		}
 		resp, grpcErr := ap.assignClient.Recv()
 		if grpcErr != nil {

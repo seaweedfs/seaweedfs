@@ -51,7 +51,7 @@ func (store *TarantoolStore) Initialize(configuration weed_util.Configuration, p
 	timeoutStr := configuration.GetString(prefix + "timeout")
 	timeout, err := time.ParseDuration(timeoutStr)
 	if err != nil {
-		return fmt.Errorf("parse tarantool store timeout: %v", err)
+		return fmt.Errorf("parse tarantool store timeout: %w", err)
 	}
 
 	maxReconnects := configuration.GetInt(prefix + "maxReconnects")
@@ -80,7 +80,7 @@ func (store *TarantoolStore) initialize(addresses []string, user string, passwor
 	ctx := context.Background()
 	p, err := pool.ConnectWithOpts(ctx, poolInstances, poolOpts)
 	if err != nil {
-		return fmt.Errorf("Can't create connection pool: %v", err)
+		return fmt.Errorf("Can't create connection pool: %w", err)
 	}
 
 	_, err = p.Do(tarantool.NewPingRequest(), pool.ANY).Get()

@@ -53,7 +53,7 @@ func (s *AdminServer) CreateObjectStoreUser(req CreateUserRequest) (*ObjectStore
 		if err == credential.ErrUserAlreadyExists {
 			return nil, fmt.Errorf("user %s already exists", req.Username)
 		}
-		return nil, fmt.Errorf("failed to create user: %v", err)
+		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
 	// Return created user
@@ -82,7 +82,7 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 		if err == credential.ErrUserNotFound {
 			return nil, fmt.Errorf("user %s not found", username)
 		}
-		return nil, fmt.Errorf("failed to get user: %v", err)
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
 	// Create updated identity
@@ -112,7 +112,7 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 	// Update user using credential manager
 	err = s.credentialManager.UpdateUser(ctx, username, updatedIdentity)
 	if err != nil {
-		return nil, fmt.Errorf("failed to update user: %v", err)
+		return nil, fmt.Errorf("failed to update user: %w", err)
 	}
 
 	// Return updated user
@@ -145,7 +145,7 @@ func (s *AdminServer) DeleteObjectStoreUser(username string) error {
 		if err == credential.ErrUserNotFound {
 			return fmt.Errorf("user %s not found", username)
 		}
-		return fmt.Errorf("failed to delete user: %v", err)
+		return fmt.Errorf("failed to delete user: %w", err)
 	}
 
 	return nil
@@ -165,7 +165,7 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 		if err == credential.ErrUserNotFound {
 			return nil, fmt.Errorf("user %s not found", username)
 		}
-		return nil, fmt.Errorf("failed to get user: %v", err)
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
 	details := &UserDetails{
@@ -204,7 +204,7 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 		if err == credential.ErrUserNotFound {
 			return nil, fmt.Errorf("user %s not found", username)
 		}
-		return nil, fmt.Errorf("failed to get user: %v", err)
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
 	// Generate new access key
@@ -219,7 +219,7 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 	// Create access key using credential manager
 	err = s.credentialManager.CreateAccessKey(ctx, username, credential)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create access key: %v", err)
+		return nil, fmt.Errorf("failed to create access key: %w", err)
 	}
 
 	return &AccessKeyInfo{
@@ -246,7 +246,7 @@ func (s *AdminServer) DeleteAccessKey(username, accessKeyId string) error {
 		if err == credential.ErrAccessKeyNotFound {
 			return fmt.Errorf("access key %s not found for user %s", accessKeyId, username)
 		}
-		return fmt.Errorf("failed to delete access key: %v", err)
+		return fmt.Errorf("failed to delete access key: %w", err)
 	}
 
 	return nil
@@ -266,7 +266,7 @@ func (s *AdminServer) GetUserPolicies(username string) ([]string, error) {
 		if err == credential.ErrUserNotFound {
 			return nil, fmt.Errorf("user %s not found", username)
 		}
-		return nil, fmt.Errorf("failed to get user: %v", err)
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
 	return identity.Actions, nil
@@ -286,7 +286,7 @@ func (s *AdminServer) UpdateUserPolicies(username string, actions []string) erro
 		if err == credential.ErrUserNotFound {
 			return fmt.Errorf("user %s not found", username)
 		}
-		return fmt.Errorf("failed to get user: %v", err)
+		return fmt.Errorf("failed to get user: %w", err)
 	}
 
 	// Create updated identity with new actions
@@ -300,7 +300,7 @@ func (s *AdminServer) UpdateUserPolicies(username string, actions []string) erro
 	// Update user using credential manager
 	err = s.credentialManager.UpdateUser(ctx, username, updatedIdentity)
 	if err != nil {
-		return fmt.Errorf("failed to update user policies: %v", err)
+		return fmt.Errorf("failed to update user policies: %w", err)
 	}
 
 	return nil
