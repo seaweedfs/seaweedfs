@@ -122,52 +122,6 @@ func TestVersioningWithObjectLockHeaders(t *testing.T) {
 	})
 }
 
-// TestVersioningWithObjectLockHeadersDebug is a debug test to understand legal hold behavior
-func TestVersioningWithObjectLockHeadersDebug(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	client := getS3Client(t)
-	bucketName := getNewBucketName()
-
-	// Create bucket with object lock and versioning enabled
-	createBucketWithObjectLock(t, client, bucketName)
-	defer deleteBucket(t, client, bucketName)
-
-	key := "test-debug-object"
-	content := "debug content"
-
-	// PUT object with only mode and retention date, NO legal hold
-	retainUntilDate := time.Now().Add(12 * time.Hour)
-	putResp, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket:                    aws.String(bucketName),
-		Key:                       aws.String(key),
-		Body:                      strings.NewReader(content),
-		ObjectLockMode:            types.ObjectLockModeGovernance,
-		ObjectLockRetainUntilDate: aws.Time(retainUntilDate),
-		// Explicitly NOT setting ObjectLockLegalHoldStatus
-	})
-	require.NoError(t, err)
-	require.NotNil(t, putResp.VersionId)
-
-	t.Logf("Created object %s with version %s", key, *putResp.VersionId)
-
-	// Check HEAD response
-	headResp, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
-		Bucket:    aws.String(bucketName),
-		Key:       aws.String(key),
-		VersionId: putResp.VersionId,
-	})
-	require.NoError(t, err)
-
-	t.Logf("HEAD response: ObjectLockMode=%v, ObjectLockRetainUntilDate=%v, ObjectLockLegalHoldStatus=%v",
-		headResp.ObjectLockMode, headResp.ObjectLockRetainUntilDate, headResp.ObjectLockLegalHoldStatus)
-
-	// Verify AWS S3 behavior: legal hold defaults to "OFF" when not explicitly set
-	assert.Equal(t, types.ObjectLockLegalHoldStatusOff, headResp.ObjectLockLegalHoldStatus)
-}
-
 // waitForVersioningToBeEnabled polls the bucket versioning status until it's enabled
 // This helps avoid race conditions where object lock is configured but versioning
 // isn't immediately available
