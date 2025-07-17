@@ -415,7 +415,7 @@ func TestRetentionBucketDefaults(t *testing.T) {
 			Rule: &types.ObjectLockRule{
 				DefaultRetention: &types.DefaultRetention{
 					Mode: types.ObjectLockRetentionModeGovernance,
-					Days: 1, // 1 day default
+					Days: aws.Int32(1), // 1 day default
 				},
 			},
 		},
