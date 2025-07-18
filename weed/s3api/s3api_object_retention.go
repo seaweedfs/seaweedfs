@@ -599,6 +599,15 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 
 // checkObjectLockPermissions checks if an object can be deleted or modified
 func (s3a *S3ApiServer) checkObjectLockPermissions(request *http.Request, bucket, object, versionId string, bypassGovernance bool) error {
+	// For delete operations without versionId (which create delete markers),
+	// we should allow the operation even if the object is under retention.
+	// This is because delete markers are logical deletes, not physical deletes.
+	// Only block deletions when a specific versionId is provided.
+	if versionId == "" {
+		// This is a delete marker creation - allow it
+		return nil
+	}
+
 	// Get the object entry once to check both retention and legal hold
 	entry, err := s3a.getObjectEntry(bucket, object, versionId)
 	if err != nil {
