@@ -600,6 +600,10 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		// For malformed XML in request body, return MalformedXML
 		// This matches the test expectations for invalid retention mode and legal hold status
 		return s3err.ErrMalformedXML
+	case errors.Is(err, ErrInvalidRetentionPeriod):
+		// For invalid retention period (e.g., Days <= 0), return InvalidRetentionPeriod
+		// This matches the test expectations
+		return s3err.ErrInvalidRetentionPeriod
 	// Validation error constants
 	case errors.Is(err, ErrObjectLockConfigurationMissingEnabled):
 		return s3err.ErrMalformedXML

@@ -226,26 +226,38 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 		return ErrInvalidDefaultRetentionMode
 	}
 
-	// Exactly one of Days or Years must be specified
-	if retention.Days == 0 && retention.Years == 0 {
-		return ErrDefaultRetentionMissingPeriod
+	// Check for invalid Years value (negative values are always invalid)
+	if retention.Years < 0 {
+		return ErrInvalidRetentionPeriod
 	}
 
+	// Check for invalid Days value (negative values are invalid)
+	if retention.Days < 0 {
+		return ErrInvalidRetentionPeriod
+	}
+
+	// Check for Days: 0 when Years is also 0 (this should return InvalidRetentionPeriod)
+	if retention.Days == 0 && retention.Years == 0 {
+		return ErrInvalidRetentionPeriod
+	}
+
+	// Check for both Days and Years being specified
 	if retention.Days > 0 && retention.Years > 0 {
 		return ErrDefaultRetentionBothDaysAndYears
 	}
 
-	// Validate ranges - Days must be greater than 0
-	if retention.Days <= 0 {
-		return ErrInvalidRetentionPeriod
+	// Validate Days if specified
+	if retention.Days > 0 {
+		if retention.Days > MaxRetentionDays {
+			return ErrDefaultRetentionDaysOutOfRange
+		}
 	}
 
-	if retention.Days > MaxRetentionDays {
-		return ErrDefaultRetentionDaysOutOfRange
-	}
-
-	if retention.Years < 0 || retention.Years > MaxRetentionYears {
-		return ErrDefaultRetentionYearsOutOfRange
+	// Validate Years if specified
+	if retention.Years > 0 {
+		if retention.Years > MaxRetentionYears {
+			return ErrDefaultRetentionYearsOutOfRange
+		}
 	}
 
 	return nil
