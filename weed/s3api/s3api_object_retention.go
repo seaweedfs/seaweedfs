@@ -189,19 +189,19 @@ func validateLegalHold(legalHold *ObjectLegalHold) error {
 func validateObjectLockConfiguration(config *ObjectLockConfiguration) error {
 	// ObjectLockEnabled is required for bucket-level configuration
 	if config.ObjectLockEnabled == "" {
-		return ErrInvalidRetentionMode
+		return ErrObjectLockConfigurationMissingEnabled
 	}
 
 	// Validate ObjectLockEnabled value
 	if config.ObjectLockEnabled != s3_constants.ObjectLockEnabled {
 		// ObjectLockEnabled can only be 'Enabled', any other value (including 'Disabled') is malformed XML
-		return ErrInvalidRetentionMode
+		return ErrInvalidObjectLockEnabledValue
 	}
 
 	// Validate Rule if present
 	if config.Rule != nil {
 		if config.Rule.DefaultRetention == nil {
-			return ErrInvalidRetentionPeriod
+			return ErrRuleMissingDefaultRetention
 		}
 		return validateDefaultRetention(config.Rule.DefaultRetention)
 	}
@@ -213,30 +213,30 @@ func validateObjectLockConfiguration(config *ObjectLockConfiguration) error {
 func validateDefaultRetention(retention *DefaultRetention) error {
 	// Mode is required
 	if retention.Mode == "" {
-		return ErrInvalidRetentionMode
+		return ErrDefaultRetentionMissingMode
 	}
 
 	// Mode must be valid
 	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
-		return ErrInvalidRetentionMode
+		return ErrInvalidDefaultRetentionMode
 	}
 
 	// Exactly one of Days or Years must be specified
 	if retention.Days == 0 && retention.Years == 0 {
-		return ErrInvalidRetentionPeriod
+		return ErrDefaultRetentionMissingPeriod
 	}
 
 	if retention.Days > 0 && retention.Years > 0 {
-		return ErrBothDaysAndYearsSpecified
+		return ErrDefaultRetentionBothDaysAndYears
 	}
 
 	// Validate ranges
 	if retention.Days < 0 || retention.Days > MaxRetentionDays {
-		return ErrInvalidRetentionPeriod
+		return ErrDefaultRetentionDaysOutOfRange
 	}
 
 	if retention.Years < 0 || retention.Years > MaxRetentionYears {
-		return ErrInvalidRetentionPeriod
+		return ErrDefaultRetentionYearsOutOfRange
 	}
 
 	return nil
