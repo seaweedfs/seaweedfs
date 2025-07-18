@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -17,14 +18,15 @@ import (
 
 // BucketConfig represents cached bucket configuration
 type BucketConfig struct {
-	Name         string
-	Versioning   string // "Enabled", "Suspended", or ""
-	Ownership    string
-	ACL          []byte
-	Owner        string
-	CORS         *cors.CORSConfiguration
-	LastModified time.Time
-	Entry        *filer_pb.Entry
+	Name             string
+	Versioning       string // "Enabled", "Suspended", or ""
+	Ownership        string
+	ACL              []byte
+	Owner            string
+	CORS             *cors.CORSConfiguration
+	ObjectLockConfig *ObjectLockConfiguration // Cached parsed Object Lock configuration
+	LastModified     time.Time
+	Entry            *filer_pb.Entry
 }
 
 // BucketConfigCache provides caching for bucket configurations
@@ -121,6 +123,16 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		if owner, exists := bucketEntry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
 		}
+		// Parse Object Lock configuration if present
+		if objectLockConfigXML, exists := bucketEntry.Extended[s3_constants.ExtObjectLockConfigKey]; exists {
+			var objectLockConfig ObjectLockConfiguration
+			if err := xml.Unmarshal(objectLockConfigXML, &objectLockConfig); err != nil {
+				glog.Errorf("getBucketConfig: failed to parse Object Lock configuration for bucket %s: %v", bucket, err)
+			} else {
+				config.ObjectLockConfig = &objectLockConfig
+				glog.V(2).Infof("getBucketConfig: cached Object Lock configuration for bucket %s", bucket)
+			}
+		}
 	}
 
 	// Load CORS configuration from .s3metadata
@@ -172,6 +184,20 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 	}
 	if config.Owner != "" {
 		config.Entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(config.Owner)
+	}
+	// Update Object Lock configuration in extended attributes
+	if config.ObjectLockConfig != nil {
+		configXML, err := xml.Marshal(config.ObjectLockConfig)
+		if err != nil {
+			glog.Errorf("updateBucketConfig: failed to marshal Object Lock configuration for bucket %s: %v", bucket, err)
+			return s3err.ErrInternalError
+		}
+		config.Entry.Extended[s3_constants.ExtObjectLockConfigKey] = configXML
+
+		// Also set the boolean flag for backward compatibility
+		if config.ObjectLockConfig.ObjectLockEnabled != "" {
+			config.Entry.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(config.ObjectLockConfig.ObjectLockEnabled)
+		}
 	}
 
 	// Save to filer

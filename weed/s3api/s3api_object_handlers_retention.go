@@ -275,22 +275,8 @@ func (s3a *S3ApiServer) PutObjectLockConfigurationHandler(w http.ResponseWriter,
 
 	// Set object lock configuration on the bucket
 	errCode := s3a.updateBucketConfig(bucket, func(bucketConfig *BucketConfig) error {
-		if bucketConfig.Entry.Extended == nil {
-			bucketConfig.Entry.Extended = make(map[string][]byte)
-		}
-
-		// Store the configuration as JSON in extended attributes
-		configXML, err := xml.Marshal(config)
-		if err != nil {
-			return err
-		}
-
-		bucketConfig.Entry.Extended[s3_constants.ExtObjectLockConfigKey] = configXML
-
-		if config.ObjectLockEnabled != "" {
-			bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(config.ObjectLockEnabled)
-		}
-
+		// Set the cached Object Lock configuration
+		bucketConfig.ObjectLockConfig = config
 		return nil
 	})
 
@@ -324,19 +310,33 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 
 	var configXML []byte
 
+	// Check if we have cached Object Lock configuration
+	if bucketConfig.ObjectLockConfig != nil {
+		// Use cached configuration and marshal it to XML for response
+		configXML, err := xml.Marshal(bucketConfig.ObjectLockConfig)
+		if err != nil {
+			glog.Errorf("GetObjectLockConfigurationHandler: failed to marshal cached Object Lock config: %v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+
+		// Write XML response
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		w.Write(configXML)
+		glog.V(3).Infof("GetObjectLockConfigurationHandler: successfully retrieved cached object lock config for %s", bucket)
+		return
+	}
+
+	// Fallback: check for legacy storage in extended attributes
 	if bucketConfig.Entry.Extended != nil {
-		// First check if we have stored XML configuration (includes retention policies)
-		if storedConfigXML, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockConfigKey]; exists {
-			configXML = storedConfigXML
-		} else {
-			// Check if Object Lock is enabled via boolean flag
-			if enabledBytes, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
-				enabled := string(enabledBytes)
-				if enabled == s3_constants.ObjectLockEnabled || enabled == "true" {
-					// Generate minimal XML configuration for enabled Object Lock without retention policies
-					minimalConfig := `<ObjectLockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>`
-					configXML = []byte(minimalConfig)
-				}
+		// Check if Object Lock is enabled via boolean flag
+		if enabledBytes, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
+			enabled := string(enabledBytes)
+			if enabled == s3_constants.ObjectLockEnabled || enabled == "true" {
+				// Generate minimal XML configuration for enabled Object Lock without retention policies
+				minimalConfig := `<ObjectLockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>`
+				configXML = []byte(minimalConfig)
 			}
 		}
 	}

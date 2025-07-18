@@ -12,12 +12,11 @@ import (
 	"time"
 
 	"github.com/pquerna/cachecontrol/cacheobject"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
-
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
@@ -374,28 +373,30 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 }
 
 // extractObjectLockMetadataFromRequest extracts object lock headers from PUT requests
-// and stores them in the entry's Extended attributes
+// and applies bucket default retention if no explicit retention is provided
 func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, entry *filer_pb.Entry) error {
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
 
-	// Extract object lock mode (GOVERNANCE or COMPLIANCE)
-	if mode := r.Header.Get(s3_constants.AmzObjectLockMode); mode != "" {
-		entry.Extended[s3_constants.ExtObjectLockModeKey] = []byte(mode)
-		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing object lock mode: %s", mode)
+	// Extract explicit object lock mode (GOVERNANCE or COMPLIANCE)
+	explicitMode := r.Header.Get(s3_constants.AmzObjectLockMode)
+	if explicitMode != "" {
+		entry.Extended[s3_constants.ExtObjectLockModeKey] = []byte(explicitMode)
+		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing explicit object lock mode: %s", explicitMode)
 	}
 
-	// Extract retention until date
-	if retainUntilDate := r.Header.Get(s3_constants.AmzObjectLockRetainUntilDate); retainUntilDate != "" {
+	// Extract explicit retention until date
+	explicitRetainUntilDate := r.Header.Get(s3_constants.AmzObjectLockRetainUntilDate)
+	if explicitRetainUntilDate != "" {
 		// Parse the ISO8601 date and convert to Unix timestamp for storage
-		parsedTime, err := time.Parse(time.RFC3339, retainUntilDate)
+		parsedTime, err := time.Parse(time.RFC3339, explicitRetainUntilDate)
 		if err != nil {
 			glog.Errorf("extractObjectLockMetadataFromRequest: failed to parse retention until date, expected format: %s, error: %v", time.RFC3339, err)
 			return ErrInvalidRetentionDateFormat
 		}
 		entry.Extended[s3_constants.ExtRetentionUntilDateKey] = []byte(strconv.FormatInt(parsedTime.Unix(), 10))
-		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing retention until date (timestamp: %d)", parsedTime.Unix())
+		glog.V(2).Infof("extractObjectLockMetadataFromRequest: storing explicit retention until date (timestamp: %d)", parsedTime.Unix())
 	}
 
 	// Extract legal hold status
@@ -409,6 +410,89 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 			return ErrInvalidLegalHoldStatus
 		}
 	}
+
+	// Apply bucket default retention if no explicit retention was provided
+	// This implements AWS S3 behavior where bucket default retention automatically applies to new objects
+	if explicitMode == "" && explicitRetainUntilDate == "" {
+		bucket, _ := s3_constants.GetBucketAndObject(r)
+		if err := s3a.applyBucketDefaultRetention(bucket, entry); err != nil {
+			glog.V(2).Infof("extractObjectLockMetadataFromRequest: could not apply bucket default retention for %s: %v", bucket, err)
+			// Don't fail the upload if default retention can't be applied - this matches AWS behavior
+		}
+	}
+
+	return nil
+}
+
+// applyBucketDefaultRetention applies bucket default retention settings to a new object
+// This implements AWS S3 behavior where bucket default retention automatically applies to new objects
+// when no explicit retention headers are provided in the upload request
+func (s3a *S3ApiServer) applyBucketDefaultRetention(bucket string, entry *filer_pb.Entry) error {
+	// Safety check - if bucket config cache is not available, skip default retention
+	if s3a.bucketConfigCache == nil {
+		return nil
+	}
+
+	// Try to get bucket configuration from cache first, then from filer
+	var bucketConfig *BucketConfig
+	var errCode s3err.ErrorCode
+
+	// Check cache first for performance
+	var found bool
+	bucketConfig, found = s3a.bucketConfigCache.Get(bucket)
+	if found {
+		errCode = s3err.ErrNone
+	} else {
+		// Fall back to filer if not in cache
+		bucketConfig, errCode = s3a.getBucketConfig(bucket)
+		if errCode != s3err.ErrNone {
+			return fmt.Errorf("failed to get bucket config: %v", errCode)
+		}
+	}
+
+	// Check if bucket has cached Object Lock configuration
+	if bucketConfig.ObjectLockConfig == nil {
+		return nil // No Object Lock configuration
+	}
+
+	objectLockConfig := bucketConfig.ObjectLockConfig
+
+	// Check if there's a default retention rule
+	if objectLockConfig.Rule == nil || objectLockConfig.Rule.DefaultRetention == nil {
+		return nil // No default retention configured
+	}
+
+	defaultRetention := objectLockConfig.Rule.DefaultRetention
+
+	// Validate default retention has required fields
+	if defaultRetention.Mode == "" {
+		return fmt.Errorf("default retention missing mode")
+	}
+
+	if defaultRetention.Days == 0 && defaultRetention.Years == 0 {
+		return fmt.Errorf("default retention missing period")
+	}
+
+	// Calculate retention until date based on default retention period
+	var retainUntilDate time.Time
+	now := time.Now()
+
+	if defaultRetention.Days > 0 {
+		retainUntilDate = now.AddDate(0, 0, defaultRetention.Days)
+	} else if defaultRetention.Years > 0 {
+		retainUntilDate = now.AddDate(defaultRetention.Years, 0, 0)
+	}
+
+	// Apply default retention to the object
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+
+	entry.Extended[s3_constants.ExtObjectLockModeKey] = []byte(defaultRetention.Mode)
+	entry.Extended[s3_constants.ExtRetentionUntilDateKey] = []byte(strconv.FormatInt(retainUntilDate.Unix(), 10))
+
+	glog.V(2).Infof("applyBucketDefaultRetention: applied default retention %s until %s for bucket %s",
+		defaultRetention.Mode, retainUntilDate.Format(time.RFC3339), bucket)
 
 	return nil
 }
