@@ -54,6 +54,11 @@ func (s3a *S3ApiServer) PutObjectLegalHoldHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Add VersionId to response headers if available (expected by s3-tests)
+	if versionId != "" {
+		w.Header().Set("x-amz-version-id", versionId)
+	}
+
 	// Record metrics
 	stats_collect.RecordBucketActiveTime(bucket)
 

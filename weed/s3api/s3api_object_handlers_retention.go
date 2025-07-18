@@ -54,12 +54,18 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 		}
 
 		if errors.Is(err, ErrComplianceModeActive) || errors.Is(err, ErrGovernanceModeActive) {
+			// Return 403 Forbidden for retention mode changes without proper permissions
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}
 
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
+	}
+
+	// Add VersionId to response headers if available (expected by s3-tests)
+	if versionId != "" {
+		w.Header().Set("x-amz-version-id", versionId)
 	}
 
 	// Record metrics

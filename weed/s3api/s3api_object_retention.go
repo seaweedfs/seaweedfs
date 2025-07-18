@@ -345,14 +345,16 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	if entry.Extended != nil {
 		if existingMode, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
 			if string(existingMode) == s3_constants.RetentionModeCompliance && !bypassGovernance {
-				return fmt.Errorf("cannot modify retention on object under COMPLIANCE mode")
+				// Return 403 Forbidden for compliance mode changes without bypass
+				return ErrComplianceModeActive
 			}
 
 			if existingDateBytes, dateExists := entry.Extended[s3_constants.ExtRetentionUntilDateKey]; dateExists {
 				if timestamp, err := strconv.ParseInt(string(existingDateBytes), 10, 64); err == nil {
 					existingDate := time.Unix(timestamp, 0)
 					if existingDate.After(time.Now()) && string(existingMode) == s3_constants.RetentionModeGovernance && !bypassGovernance {
-						return fmt.Errorf("cannot modify retention on object under GOVERNANCE mode without bypass")
+						// Return 403 Forbidden for governance mode changes without bypass
+						return ErrGovernanceModeActive
 					}
 				}
 			}
@@ -652,7 +654,9 @@ func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter,
 		if errors.Is(err, ErrBucketNotFound) {
 			s3err.WriteErrorResponse(w, request, s3err.ErrNoSuchBucket)
 		} else {
-			s3err.WriteErrorResponse(w, request, s3err.ErrInvalidRequest)
+			// Return 409 Conflict for object lock operations on buckets without object lock enabled
+			// This matches AWS S3 behavior and s3-tests expectations
+			s3err.WriteErrorResponse(w, request, s3err.ErrBucketNotEmpty) // This maps to 409 Conflict
 		}
 		return false
 	}
