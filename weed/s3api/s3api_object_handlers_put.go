@@ -416,7 +416,7 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 	if explicitMode == "" && explicitRetainUntilDate == "" {
 		bucket, _ := s3_constants.GetBucketAndObject(r)
 		if err := s3a.applyBucketDefaultRetention(bucket, entry); err != nil {
-			glog.V(2).Infof("extractObjectLockMetadataFromRequest: could not apply bucket default retention for %s: %v", bucket, err)
+			glog.V(2).Infof("extractObjectLockMetadataFromRequest: skipping bucket default retention for %s: %v", bucket, err)
 			// Don't fail the upload if default retention can't be applied - this matches AWS behavior
 		}
 	}
