@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +23,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 )
 
 type AdminServer struct {
@@ -293,20 +294,11 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				var objectLockDuration int32 = 0
 
 				if resp.Entry.Extended != nil {
-					if versioningBytes, exists := resp.Entry.Extended["s3.versioning"]; exists {
-						versioningEnabled = string(versioningBytes) == "Enabled"
-					}
-					if objectLockBytes, exists := resp.Entry.Extended["s3.objectlock"]; exists {
-						objectLockEnabled = string(objectLockBytes) == "Enabled"
-					}
-					if objectLockModeBytes, exists := resp.Entry.Extended["s3.objectlock.mode"]; exists {
-						objectLockMode = string(objectLockModeBytes)
-					}
-					if objectLockDurationBytes, exists := resp.Entry.Extended["s3.objectlock.duration"]; exists {
-						if duration, err := strconv.ParseInt(string(objectLockDurationBytes), 10, 32); err == nil {
-							objectLockDuration = int32(duration)
-						}
-					}
+					// Use shared utility to extract versioning information
+					versioningEnabled = extractVersioningFromEntry(resp.Entry)
+
+					// Use shared utility to extract Object Lock information
+					objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(resp.Entry)
 				}
 
 				bucket := S3Bucket{
@@ -379,20 +371,11 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		var objectLockDuration int32 = 0
 
 		if bucketResp.Entry.Extended != nil {
-			if versioningBytes, exists := bucketResp.Entry.Extended["s3.versioning"]; exists {
-				versioningEnabled = string(versioningBytes) == "Enabled"
-			}
-			if objectLockBytes, exists := bucketResp.Entry.Extended["s3.objectlock"]; exists {
-				objectLockEnabled = string(objectLockBytes) == "Enabled"
-			}
-			if objectLockModeBytes, exists := bucketResp.Entry.Extended["s3.objectlock.mode"]; exists {
-				objectLockMode = string(objectLockModeBytes)
-			}
-			if objectLockDurationBytes, exists := bucketResp.Entry.Extended["s3.objectlock.duration"]; exists {
-				if duration, err := strconv.ParseInt(string(objectLockDurationBytes), 10, 32); err == nil {
-					objectLockDuration = int32(duration)
-				}
-			}
+			// Use shared utility to extract versioning information
+			versioningEnabled = extractVersioningFromEntry(bucketResp.Entry)
+
+			// Use shared utility to extract Object Lock information
+			objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(bucketResp.Entry)
 		}
 
 		details.Bucket.VersioningEnabled = versioningEnabled
@@ -1501,4 +1484,20 @@ func (s *AdminServer) Shutdown() {
 	}
 
 	glog.V(1).Infof("Admin server shutdown complete")
+}
+
+// Function to extract Object Lock information from bucket entry using shared utilities
+func extractObjectLockInfoFromEntry(entry *filer_pb.Entry) (bool, string, int32) {
+	// Try to load Object Lock configuration using shared utility
+	if config, found := s3api.LoadObjectLockConfigurationFromExtended(entry); found {
+		return s3api.ExtractObjectLockInfoFromConfig(config)
+	}
+
+	return false, "", 0
+}
+
+// Function to extract versioning information from bucket entry using shared utilities
+func extractVersioningFromEntry(entry *filer_pb.Entry) bool {
+	enabled, _ := s3api.LoadVersioningFromExtended(entry)
+	return enabled
 }
