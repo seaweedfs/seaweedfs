@@ -322,14 +322,27 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 		return
 	}
 
-	// Check if object lock configuration exists
-	if bucketConfig.Entry.Extended == nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchObjectLockConfiguration)
-		return
+	var configXML []byte
+
+	if bucketConfig.Entry.Extended != nil {
+		// First check if we have stored XML configuration (includes retention policies)
+		if storedConfigXML, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockConfigKey]; exists {
+			configXML = storedConfigXML
+		} else {
+			// Check if Object Lock is enabled via boolean flag
+			if enabledBytes, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
+				enabled := string(enabledBytes)
+				if enabled == s3_constants.ObjectLockEnabled || enabled == "true" {
+					// Generate minimal XML configuration for enabled Object Lock without retention policies
+					minimalConfig := `<ObjectLockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>`
+					configXML = []byte(minimalConfig)
+				}
+			}
+		}
 	}
 
-	configXML, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockConfigKey]
-	if !exists {
+	// If no Object Lock configuration found, return error
+	if len(configXML) == 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchObjectLockConfiguration)
 		return
 	}
