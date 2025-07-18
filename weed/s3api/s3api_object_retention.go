@@ -348,6 +348,20 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	// Check if object is already under retention
 	if entry.Extended != nil {
 		if existingMode, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
+			// Check if attempting to change retention mode
+			if retention.Mode != "" && string(existingMode) != retention.Mode {
+				// Attempting to change retention mode
+				if string(existingMode) == s3_constants.RetentionModeCompliance {
+					// Cannot change compliance mode retention without bypass
+					return ErrComplianceModeActive
+				}
+
+				if string(existingMode) == s3_constants.RetentionModeGovernance && !bypassGovernance {
+					// Cannot change governance mode retention without bypass
+					return ErrGovernanceModeActive
+				}
+			}
+
 			if existingDateBytes, dateExists := entry.Extended[s3_constants.ExtRetentionUntilDateKey]; dateExists {
 				if timestamp, err := strconv.ParseInt(string(existingDateBytes), 10, 64); err == nil {
 					existingDate := time.Unix(timestamp, 0)
