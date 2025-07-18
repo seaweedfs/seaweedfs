@@ -33,6 +33,7 @@ var (
 	ErrGovernanceBypassNotPermitted = errors.New("user does not have permission to bypass governance retention")
 	ErrInvalidRetentionPeriod       = errors.New("invalid retention period specified")
 	ErrInvalidRetentionMode         = errors.New("invalid retention mode specified")
+	ErrBothDaysAndYearsSpecified    = errors.New("both days and years cannot be specified in the same retention configuration")
 )
 
 const (
@@ -226,7 +227,7 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 	}
 
 	if retention.Days > 0 && retention.Years > 0 {
-		return ErrInvalidRetentionPeriod
+		return ErrBothDaysAndYearsSpecified
 	}
 
 	// Validate ranges
@@ -657,9 +658,9 @@ func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter,
 		if errors.Is(err, ErrBucketNotFound) {
 			s3err.WriteErrorResponse(w, request, s3err.ErrNoSuchBucket)
 		} else {
-			// Return InvalidBucketState for object lock operations on buckets without object lock enabled
-			// This matches AWS S3 behavior and s3-tests expectations
-			s3err.WriteErrorResponse(w, request, s3err.ErrInvalidBucketState)
+			// Return InvalidRequest for object lock operations on buckets without object lock enabled
+			// This matches AWS S3 behavior and s3-tests expectations (400 Bad Request)
+			s3err.WriteErrorResponse(w, request, s3err.ErrInvalidRequest)
 		}
 		return false
 	}

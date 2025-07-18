@@ -565,6 +565,10 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrMalformedXML
 	case errors.Is(err, ErrInvalidRetentionDateFormat):
 		return s3err.ErrMalformedXML
+	case errors.Is(err, ErrBothDaysAndYearsSpecified):
+		// For cases where both Days and Years are specified, return MalformedXML
+		// This is a specific s3-tests expectation
+		return s3err.ErrMalformedXML
 	case errors.Is(err, ErrInvalidRetentionPeriod):
 		// For invalid retention periods (0 days, negative years, etc.), return InvalidRetentionPeriod
 		// This includes cases where retention values are out of valid ranges
