@@ -234,46 +234,8 @@ jobs:
           sleep 10          
           cd /s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
-          tox -- \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_lock \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_bucket \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_lock_enable_after_create \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_lock_with_days_and_years \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_days \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_years \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_mode \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_lock_invalid_status \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_suspend_versioning \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_get_obj_lock \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_get_obj_lock_invalid_bucket \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_retention \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_retention_invalid_bucket \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_retention_invalid_mode \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_get_obj_retention \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_get_obj_retention_iso8601 \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_get_obj_retention_invalid_bucket \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_retention_versionid \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_retention_override_default_retention \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_retention_increase_period \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_retention_shorten_period \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_obj_retention_shorten_period_bypass \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_delete_object_with_retention \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_delete_multipart_object_with_retention \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_delete_object_with_retention_and_marker \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_multi_delete_object_with_retention \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_legal_hold \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_legal_hold_invalid_bucket \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_put_legal_hold_invalid_status \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_get_legal_hold \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_get_legal_hold_invalid_bucket \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_delete_object_with_legal_hold_on \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_delete_multipart_object_with_legal_hold_on \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_delete_object_with_legal_hold_off \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_get_obj_metadata \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_uploading_obj \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_changing_mode_from_governance_with_bypass \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_changing_mode_from_governance_without_bypass \
-          s3tests_boto3/functional/test_s3.py::test_object_lock_changing_mode_from_compliance
+          # Run object lock tests without marker filtering to ensure all tests are executed
+          tox -- -m "object_lock" --tb=short
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
