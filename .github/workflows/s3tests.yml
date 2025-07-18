@@ -44,7 +44,7 @@ jobs:
       - name: Run Ceph S3 tests with KV store
         timeout-minutes: 15
         env:
-          S3TEST_CONF: docker/compose/s3tests.conf
+          S3TEST_CONF: ../docker/compose/s3tests.conf
         shell: bash
         run: |
           cd weed
@@ -223,7 +223,7 @@ jobs:
       - name: Run S3 Object Lock and Retention tests
         timeout-minutes: 15
         env:
-          S3TEST_CONF: docker/compose/s3tests.conf
+          S3TEST_CONF: ../docker/compose/s3tests.conf
         shell: bash
         run: |
           cd weed
@@ -273,7 +273,7 @@ jobs:
       - name: Run Ceph S3 tests with SQL store
         timeout-minutes: 15
         env:
-          S3TEST_CONF: docker/compose/s3tests.conf
+          S3TEST_CONF: ../docker/compose/s3tests.conf
         shell: bash
         run: |
           cd weed
