@@ -147,25 +147,13 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			// Enable versioning (required for Object Lock)
 			bucketConfig.Versioning = s3_constants.VersioningEnabled
 
-			// Enable Object Lock configuration
-			if bucketConfig.Entry.Extended == nil {
-				bucketConfig.Entry.Extended = make(map[string][]byte)
-			}
-
 			// Create basic Object Lock configuration (enabled without default retention)
-			// The ObjectLockConfiguration struct is defined below in this file.
 			objectLockConfig := &ObjectLockConfiguration{
 				ObjectLockEnabled: s3_constants.ObjectLockEnabled,
 			}
 
-			// Store the configuration as XML in extended attributes
-			configXML, err := xml.Marshal(objectLockConfig)
-			if err != nil {
-				return fmt.Errorf("failed to marshal Object Lock configuration to XML: %w", err)
-			}
-
-			bucketConfig.Entry.Extended[s3_constants.ExtObjectLockConfigKey] = configXML
-			bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(s3_constants.ObjectLockEnabled)
+			// Set the cached Object Lock configuration
+			bucketConfig.ObjectLockConfig = objectLockConfig
 
 			return nil
 		})

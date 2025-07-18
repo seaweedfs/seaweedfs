@@ -17,24 +17,29 @@ import (
 
 // BucketConfig represents cached bucket configuration
 type BucketConfig struct {
-	Name         string
-	Versioning   string // "Enabled", "Suspended", or ""
-	Ownership    string
-	ACL          []byte
-	Owner        string
-	CORS         *cors.CORSConfiguration
-	LastModified time.Time
-	Entry        *filer_pb.Entry
+	Name             string
+	Versioning       string // "Enabled", "Suspended", or ""
+	Ownership        string
+	ACL              []byte
+	Owner            string
+	CORS             *cors.CORSConfiguration
+	ObjectLockConfig *ObjectLockConfiguration // Cached parsed Object Lock configuration
+	LastModified     time.Time
+	Entry            *filer_pb.Entry
 }
 
 // BucketConfigCache provides caching for bucket configurations
+// Cache entries are automatically updated/invalidated through metadata subscription events,
+// so TTL serves as a safety fallback rather than the primary consistency mechanism
 type BucketConfigCache struct {
 	cache map[string]*BucketConfig
 	mutex sync.RWMutex
-	ttl   time.Duration
+	ttl   time.Duration // Safety fallback TTL; real-time consistency maintained via events
 }
 
 // NewBucketConfigCache creates a new bucket configuration cache
+// TTL can be set to a longer duration since cache consistency is maintained
+// through real-time metadata subscription events rather than TTL expiration
 func NewBucketConfigCache(ttl time.Duration) *BucketConfigCache {
 	return &BucketConfigCache{
 		cache: make(map[string]*BucketConfig),
@@ -52,7 +57,7 @@ func (bcc *BucketConfigCache) Get(bucket string) (*BucketConfig, bool) {
 		return nil, false
 	}
 
-	// Check if cache entry is expired
+	// Check if cache entry is expired (safety fallback; entries are normally updated via events)
 	if time.Since(config.LastModified) > bcc.ttl {
 		return nil, false
 	}
@@ -121,6 +126,11 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		if owner, exists := bucketEntry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
 		}
+		// Parse Object Lock configuration if present
+		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(bucketEntry); found {
+			config.ObjectLockConfig = objectLockConfig
+			glog.V(2).Infof("getBucketConfig: cached Object Lock configuration for bucket %s", bucket)
+		}
 	}
 
 	// Load CORS configuration from .s3metadata
@@ -172,6 +182,13 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 	}
 	if config.Owner != "" {
 		config.Entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(config.Owner)
+	}
+	// Update Object Lock configuration
+	if config.ObjectLockConfig != nil {
+		if err := StoreObjectLockConfigurationInExtended(config.Entry, config.ObjectLockConfig); err != nil {
+			glog.Errorf("updateBucketConfig: failed to store Object Lock configuration for bucket %s: %v", bucket, err)
+			return s3err.ErrInternalError
+		}
 	}
 
 	// Save to filer
