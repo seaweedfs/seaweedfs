@@ -30,13 +30,17 @@ type BucketConfig struct {
 }
 
 // BucketConfigCache provides caching for bucket configurations
+// Cache entries are automatically updated/invalidated through metadata subscription events,
+// so TTL serves as a safety fallback rather than the primary consistency mechanism
 type BucketConfigCache struct {
 	cache map[string]*BucketConfig
 	mutex sync.RWMutex
-	ttl   time.Duration
+	ttl   time.Duration // Safety fallback TTL; real-time consistency maintained via events
 }
 
 // NewBucketConfigCache creates a new bucket configuration cache
+// TTL can be set to a longer duration since cache consistency is maintained
+// through real-time metadata subscription events rather than TTL expiration
 func NewBucketConfigCache(ttl time.Duration) *BucketConfigCache {
 	return &BucketConfigCache{
 		cache: make(map[string]*BucketConfig),
@@ -54,7 +58,7 @@ func (bcc *BucketConfigCache) Get(bucket string) (*BucketConfig, bool) {
 		return nil, false
 	}
 
-	// Check if cache entry is expired
+	// Check if cache entry is expired (safety fallback; entries are normally updated via events)
 	if time.Since(config.LastModified) > bcc.ttl {
 		return nil, false
 	}
