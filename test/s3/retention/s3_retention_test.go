@@ -438,7 +438,7 @@ func TestObjectLockConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, types.ObjectLockEnabledEnabled, configResp.ObjectLockConfiguration.ObjectLockEnabled)
 	assert.Equal(t, types.ObjectLockRetentionModeGovernance, configResp.ObjectLockConfiguration.Rule.DefaultRetention.Mode)
-	assert.Equal(t, int32(30), configResp.ObjectLockConfiguration.Rule.DefaultRetention.Days)
+	assert.Equal(t, int32(30), *configResp.ObjectLockConfiguration.Rule.DefaultRetention.Days)
 }
 
 // TestRetentionWithVersions tests retention with specific object versions
