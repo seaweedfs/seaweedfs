@@ -76,7 +76,7 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 	// Check if we have cached Object Lock configuration
 	if bucketConfig.ObjectLockConfig != nil {
 		// Use cached configuration and marshal it to XML for response
-		configXML, err := xml.Marshal(bucketConfig.ObjectLockConfig)
+		marshaledXML, err := xml.Marshal(bucketConfig.ObjectLockConfig)
 		if err != nil {
 			glog.Errorf("GetObjectLockConfigurationHandler: failed to marshal cached Object Lock config: %v", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -86,7 +86,10 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 		// Write XML response
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusOK)
-		w.Write(configXML)
+		if _, err := w.Write(marshaledXML); err != nil {
+			glog.Errorf("GetObjectLockConfigurationHandler: failed to write config XML: %v", err)
+			return
+		}
 		glog.V(3).Infof("GetObjectLockConfigurationHandler: successfully retrieved cached object lock config for %s", bucket)
 		return
 	}
