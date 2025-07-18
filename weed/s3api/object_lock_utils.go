@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -218,41 +217,16 @@ func ValidateObjectLockParameters(enabled bool, mode string, duration int32) err
 	}
 
 	if mode != s3_constants.RetentionModeGovernance && mode != s3_constants.RetentionModeCompliance {
-		return fmt.Errorf("invalid object lock mode: %s, must be GOVERNANCE or COMPLIANCE", mode)
+		return fmt.Errorf("invalid object lock mode: %s, must be %s or %s", mode, s3_constants.RetentionModeGovernance, s3_constants.RetentionModeCompliance)
 	}
 
 	if duration <= 0 {
-		return fmt.Errorf("object lock duration must be greater than 0 days")
+		return fmt.Errorf("object lock duration must be greater than 0 days, got: %d", duration)
 	}
 
 	if duration > MaxRetentionDays {
-		return fmt.Errorf("object lock duration exceeds maximum allowed days: %d", MaxRetentionDays)
+		return fmt.Errorf("object lock duration exceeds maximum allowed days: %d, got: %d", MaxRetentionDays, duration)
 	}
 
 	return nil
-}
-
-// SimpleXMLParseObjectLockMode extracts mode from XML string using simple string parsing
-// This is used as a fallback when full XML parsing is not needed
-func SimpleXMLParseObjectLockMode(xmlStr string) string {
-	if strings.Contains(xmlStr, "<Mode>GOVERNANCE</Mode>") {
-		return "GOVERNANCE"
-	} else if strings.Contains(xmlStr, "<Mode>COMPLIANCE</Mode>") {
-		return "COMPLIANCE"
-	}
-	return ""
-}
-
-// SimpleXMLParseObjectLockDays extracts days from XML string using simple string parsing
-// This is used as a fallback when full XML parsing is not needed
-func SimpleXMLParseObjectLockDays(xmlStr string) int32 {
-	if daysStart := strings.Index(xmlStr, "<Days>"); daysStart != -1 {
-		daysStart += 6 // length of "<Days>"
-		if daysEnd := strings.Index(xmlStr[daysStart:], "</Days>"); daysEnd != -1 {
-			if duration, err := strconv.ParseInt(xmlStr[daysStart:daysStart+daysEnd], 10, 32); err == nil {
-				return int32(duration)
-			}
-		}
-	}
-	return 0
 }

@@ -86,6 +86,10 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 		// Write XML response
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte(xml.Header)); err != nil {
+			glog.Errorf("GetObjectLockConfigurationHandler: failed to write XML header: %v", err)
+			return
+		}
 		if _, err := w.Write(marshaledXML); err != nil {
 			glog.Errorf("GetObjectLockConfigurationHandler: failed to write config XML: %v", err)
 			return
