@@ -113,6 +113,7 @@ const (
 	ErrNoSuchTagSet
 	ErrNoSuchObjectLockConfiguration
 	ErrNoSuchObjectLegalHold
+	ErrInvalidRetentionPeriod
 )
 
 // Error message constants for checksum validation
@@ -214,6 +215,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "NoSuchObjectLegalHold",
 		Description:    "The specified object does not have a legal hold configuration",
 		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrInvalidRetentionPeriod: {
+		Code:           "InvalidRetentionPeriod",
+		Description:    "The retention period specified is invalid",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrNoSuchCORSConfiguration: {
 		Code:           "NoSuchCORSConfiguration",

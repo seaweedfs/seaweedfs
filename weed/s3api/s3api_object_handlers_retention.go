@@ -39,7 +39,7 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 	// Validate retention configuration
 	if err := validateRetention(retention); err != nil {
 		glog.Errorf("PutObjectRetentionHandler: invalid retention config: %v", err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 		return
 	}
 

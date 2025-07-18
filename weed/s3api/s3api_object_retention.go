@@ -656,9 +656,9 @@ func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter,
 		if errors.Is(err, ErrBucketNotFound) {
 			s3err.WriteErrorResponse(w, request, s3err.ErrNoSuchBucket)
 		} else {
-			// Return 409 Conflict for object lock operations on buckets without object lock enabled
+			// Return InvalidBucketState for object lock operations on buckets without object lock enabled
 			// This matches AWS S3 behavior and s3-tests expectations
-			s3err.WriteErrorResponse(w, request, s3err.ErrBucketNotEmpty) // This maps to 409 Conflict
+			s3err.WriteErrorResponse(w, request, s3err.ErrInvalidBucketState)
 		}
 		return false
 	}
