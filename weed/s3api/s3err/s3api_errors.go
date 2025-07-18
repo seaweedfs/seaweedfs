@@ -57,6 +57,7 @@ const (
 	ErrNoSuchKey
 	ErrNoSuchUpload
 	ErrInvalidBucketName
+	ErrInvalidBucketState
 	ErrInvalidDigest
 	ErrInvalidMaxKeys
 	ErrInvalidMaxUploads
@@ -153,6 +154,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "InvalidBucketName",
 		Description:    "The specified bucket is not valid.",
 		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidBucketState: {
+		Code:           "InvalidBucketState",
+		Description:    "The bucket is not in a valid state for the requested operation",
+		HTTPStatusCode: http.StatusConflict,
 	},
 	ErrInvalidDigest: {
 		Code:           "InvalidDigest",

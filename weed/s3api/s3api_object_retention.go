@@ -31,6 +31,8 @@ var (
 var (
 	ErrObjectUnderLegalHold         = errors.New("object is under legal hold and cannot be deleted or modified")
 	ErrGovernanceBypassNotPermitted = errors.New("user does not have permission to bypass governance retention")
+	ErrInvalidRetentionPeriod       = errors.New("invalid retention period specified")
+	ErrInvalidRetentionMode         = errors.New("invalid retention mode specified")
 )
 
 const (
@@ -155,19 +157,19 @@ func parseObjectLockConfiguration(request *http.Request) (*ObjectLockConfigurati
 func validateRetention(retention *ObjectRetention) error {
 	// AWS requires both Mode and RetainUntilDate for PutObjectRetention
 	if retention.Mode == "" {
-		return fmt.Errorf("retention configuration must specify Mode")
+		return ErrInvalidRetentionMode
 	}
 
 	if retention.RetainUntilDate == nil {
-		return fmt.Errorf("retention configuration must specify RetainUntilDate")
+		return ErrInvalidRetentionPeriod
 	}
 
 	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
-		return fmt.Errorf("invalid retention mode: %s", retention.Mode)
+		return ErrInvalidRetentionMode
 	}
 
 	if retention.RetainUntilDate.Before(time.Now()) {
-		return fmt.Errorf("retain until date must be in the future")
+		return ErrInvalidRetentionPeriod
 	}
 
 	return nil
@@ -176,7 +178,7 @@ func validateRetention(retention *ObjectRetention) error {
 // validateLegalHold validates legal hold configuration
 func validateLegalHold(legalHold *ObjectLegalHold) error {
 	if legalHold.Status != s3_constants.LegalHoldOn && legalHold.Status != s3_constants.LegalHoldOff {
-		return fmt.Errorf("invalid legal hold status: %s", legalHold.Status)
+		return ErrInvalidLegalHoldStatus
 	}
 
 	return nil
@@ -209,30 +211,30 @@ func validateObjectLockConfiguration(config *ObjectLockConfiguration) error {
 func validateDefaultRetention(retention *DefaultRetention) error {
 	// Mode is required
 	if retention.Mode == "" {
-		return fmt.Errorf("default retention must specify Mode")
+		return ErrInvalidRetentionMode
 	}
 
 	// Mode must be valid
 	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
-		return fmt.Errorf("invalid default retention mode: %s", retention.Mode)
+		return ErrInvalidRetentionMode
 	}
 
 	// Exactly one of Days or Years must be specified
 	if retention.Days == 0 && retention.Years == 0 {
-		return fmt.Errorf("default retention must specify either Days or Years")
+		return ErrInvalidRetentionPeriod
 	}
 
 	if retention.Days > 0 && retention.Years > 0 {
-		return fmt.Errorf("default retention cannot specify both Days and Years")
+		return ErrInvalidRetentionPeriod
 	}
 
 	// Validate ranges
 	if retention.Days < 0 || retention.Days > MaxRetentionDays {
-		return fmt.Errorf("default retention days must be between 0 and %d", MaxRetentionDays)
+		return ErrInvalidRetentionPeriod
 	}
 
 	if retention.Years < 0 || retention.Years > MaxRetentionYears {
-		return fmt.Errorf("default retention years must be between 0 and %d", MaxRetentionYears)
+		return ErrInvalidRetentionPeriod
 	}
 
 	return nil
