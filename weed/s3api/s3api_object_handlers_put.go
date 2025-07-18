@@ -31,6 +31,8 @@ var (
 	ErrObjectLockModeRequiresDate         = errors.New("object lock mode requires retention until date")
 	ErrRetentionDateRequiresMode          = errors.New("retention until date requires object lock mode")
 	ErrGovernanceBypassVersioningRequired = errors.New("governance bypass header can only be used on versioned buckets")
+	ErrInvalidObjectLockDuration          = errors.New("object lock duration must be greater than 0 days")
+	ErrObjectLockDurationExceeded         = errors.New("object lock duration exceeds maximum allowed days")
 )
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -565,6 +567,10 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		errors.Is(err, ErrRetentionDateRequiresMode):
 		return s3err.ErrInvalidRequest
 	case errors.Is(err, ErrGovernanceBypassVersioningRequired):
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrInvalidObjectLockDuration):
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrObjectLockDurationExceeded):
 		return s3err.ErrInvalidRequest
 	default:
 		return s3err.ErrInvalidRequest

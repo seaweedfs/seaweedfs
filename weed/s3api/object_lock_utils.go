@@ -217,15 +217,15 @@ func ValidateObjectLockParameters(enabled bool, mode string, duration int32) err
 	}
 
 	if mode != s3_constants.RetentionModeGovernance && mode != s3_constants.RetentionModeCompliance {
-		return createS3Error("InvalidObjectLockMode", fmt.Sprintf("Invalid object lock mode: %s. Must be %s or %s.", mode, s3_constants.RetentionModeGovernance, s3_constants.RetentionModeCompliance))
+		return ErrInvalidObjectLockMode
 	}
 
 	if duration <= 0 {
-		return createS3Error("InvalidObjectLockDuration", fmt.Sprintf("Object lock duration must be greater than 0 days. Got: %d.", duration))
+		return ErrInvalidObjectLockDuration
 	}
 
 	if duration > MaxRetentionDays {
-		return createS3Error("ObjectLockDurationExceeded", fmt.Sprintf("Object lock duration exceeds maximum allowed days: %d. Got: %d.", MaxRetentionDays, duration))
+		return ErrObjectLockDurationExceeded
 	}
 
 	return nil
