@@ -348,18 +348,26 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	// Check if object is already under retention
 	if entry.Extended != nil {
 		if existingMode, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
-			if string(existingMode) == s3_constants.RetentionModeCompliance && !bypassGovernance {
-				// Return 403 Forbidden for compliance mode changes without bypass
-				return ErrComplianceModeActive
-			}
-
 			if existingDateBytes, dateExists := entry.Extended[s3_constants.ExtRetentionUntilDateKey]; dateExists {
 				if timestamp, err := strconv.ParseInt(string(existingDateBytes), 10, 64); err == nil {
 					existingDate := time.Unix(timestamp, 0)
-					if existingDate.After(time.Now()) && string(existingMode) == s3_constants.RetentionModeGovernance && !bypassGovernance {
-						// Return 403 Forbidden for governance mode changes without bypass
-						return ErrGovernanceModeActive
+
+					// Check if the new retention date is earlier than the existing one
+					if retention.RetainUntilDate != nil && retention.RetainUntilDate.Before(existingDate) {
+						// Attempting to decrease retention period
+						if string(existingMode) == s3_constants.RetentionModeCompliance {
+							// Cannot decrease compliance mode retention without bypass
+							return ErrComplianceModeActive
+						}
+
+						if string(existingMode) == s3_constants.RetentionModeGovernance && !bypassGovernance {
+							// Cannot decrease governance mode retention without bypass
+							return ErrGovernanceModeActive
+						}
 					}
+
+					// If new retention date is later or same, allow the operation
+					// This covers both increasing retention period and overriding with same/later date
 				}
 			}
 		}

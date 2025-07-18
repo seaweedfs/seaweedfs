@@ -4,6 +4,8 @@ import (
 	"encoding/xml"
 	"net/http"
 
+	"errors"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -17,7 +19,16 @@ func (s3a *S3ApiServer) PutObjectLockConfigurationHandler(w http.ResponseWriter,
 	glog.V(3).Infof("PutObjectLockConfigurationHandler %s", bucket)
 
 	// Check if Object Lock is available for this bucket (requires versioning)
-	if !s3a.handleObjectLockAvailabilityCheck(w, r, bucket, "PutObjectLockConfigurationHandler") {
+	// For bucket-level operations, return InvalidBucketState (409) when object lock is not available
+	if err := s3a.isObjectLockAvailable(bucket); err != nil {
+		glog.Errorf("PutObjectLockConfigurationHandler: object lock not available for bucket %s: %v", bucket, err)
+		if errors.Is(err, ErrBucketNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else {
+			// Return InvalidBucketState for bucket-level object lock operations on buckets without object lock enabled
+			// This matches AWS S3 behavior and s3-tests expectations (409 Conflict)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidBucketState)
+		}
 		return
 	}
 
