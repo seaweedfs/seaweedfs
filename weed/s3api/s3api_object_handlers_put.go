@@ -438,7 +438,7 @@ func (s3a *S3ApiServer) applyBucketDefaultRetention(bucket string, entry *filer_
 	// Get bucket configuration (getBucketConfig handles caching internally)
 	bucketConfig, errCode := s3a.getBucketConfig(bucket)
 	if errCode != s3err.ErrNone {
-		return fmt.Errorf("failed to get bucket config: %s", errCode)
+		return fmt.Errorf("failed to get bucket config: %v", errCode)
 	}
 
 	// Check if bucket has cached Object Lock configuration

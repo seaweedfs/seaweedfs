@@ -211,7 +211,7 @@ func (s3a *S3ApiServer) isVersioningEnabled(bucket string) (bool, error) {
 		if errCode == s3err.ErrNoSuchBucket {
 			return false, filer_pb.ErrNotFound
 		}
-		return false, fmt.Errorf("failed to get bucket config: %s", errCode)
+		return false, fmt.Errorf("failed to get bucket config: %v", errCode)
 	}
 
 	return config.Versioning == "Enabled", nil

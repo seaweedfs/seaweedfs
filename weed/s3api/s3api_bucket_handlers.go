@@ -159,7 +159,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		})
 
 		if errCode != s3err.ErrNone {
-			glog.Errorf("PutBucketHandler: failed to enable Object Lock for bucket %s: %s", bucket, errCode)
+			glog.Errorf("PutBucketHandler: failed to enable Object Lock for bucket %s: %v", bucket, errCode)
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
