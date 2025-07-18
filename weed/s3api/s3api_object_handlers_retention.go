@@ -102,7 +102,7 @@ func (s3a *S3ApiServer) GetObjectRetentionHandler(w http.ResponseWriter, r *http
 		}
 
 		if errors.Is(err, ErrNoRetentionConfiguration) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchObjectLockConfiguration)
+			s3err.WriteErrorResponse(w, r, s3err.ErrObjectLockConfigurationNotFoundError)
 			return
 		}
 

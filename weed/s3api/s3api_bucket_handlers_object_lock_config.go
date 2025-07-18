@@ -113,7 +113,7 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 
 	// If no Object Lock configuration found, return error
 	if len(configXML) == 0 {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchObjectLockConfiguration)
+		s3err.WriteErrorResponse(w, r, s3err.ErrObjectLockConfigurationNotFoundError)
 		return
 	}
 

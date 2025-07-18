@@ -225,7 +225,7 @@ func (s3a *S3ApiServer) getBucketVersioningStatus(bucket string) (string, s3err.
 	}
 
 	if config.Versioning == "" {
-		return "Suspended", s3err.ErrNone
+		return s3_constants.VersioningSuspended, s3err.ErrNone
 	}
 
 	return config.Versioning, s3err.ErrNone

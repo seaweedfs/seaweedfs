@@ -114,6 +114,7 @@ const (
 	ErrNoSuchObjectLockConfiguration
 	ErrNoSuchObjectLegalHold
 	ErrInvalidRetentionPeriod
+	ErrObjectLockConfigurationNotFoundError
 )
 
 // Error message constants for checksum validation
@@ -457,6 +458,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	OwnershipControlsNotFoundError: {
 		Code:           "OwnershipControlsNotFoundError",
 		Description:    "The bucket ownership controls were not found",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrObjectLockConfigurationNotFoundError: {
+		Code:           "ObjectLockConfigurationNotFoundError",
+		Description:    "Object Lock configuration does not exist for this bucket",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 }
