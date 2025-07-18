@@ -13,10 +13,6 @@ concurrency:
 permissions:
   contents: read
 
-defaults:
-  run:
-    working-directory: docker
-
 jobs:
   s3tests:
     name: Ceph S3 tests
