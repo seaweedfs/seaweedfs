@@ -596,6 +596,10 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		// For governance bypass on non-versioned bucket, return InvalidRequest
 		// This matches the test expectations
 		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrMalformedXML):
+		// For malformed XML in request body, return MalformedXML
+		// This matches the test expectations for invalid retention mode and legal hold status
+		return s3err.ErrMalformedXML
 	// Validation error constants
 	case errors.Is(err, ErrObjectLockConfigurationMissingEnabled):
 		return s3err.ErrMalformedXML

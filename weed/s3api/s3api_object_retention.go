@@ -34,6 +34,7 @@ var (
 	ErrInvalidRetentionPeriod       = errors.New("invalid retention period specified")
 	ErrInvalidRetentionMode         = errors.New("invalid retention mode specified")
 	ErrBothDaysAndYearsSpecified    = errors.New("both days and years cannot be specified in the same retention configuration")
+	ErrMalformedXML                 = errors.New("malformed XML in request body")
 )
 
 const (
@@ -165,8 +166,10 @@ func validateRetention(retention *ObjectRetention) error {
 		return ErrInvalidRetentionPeriod
 	}
 
+	// For invalid retention mode values, return MalformedXML error
+	// This matches the test expectations for lowercase/invalid mode values
 	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
-		return ErrInvalidRetentionMode
+		return ErrMalformedXML
 	}
 
 	if retention.RetainUntilDate.Before(time.Now()) {
@@ -178,8 +181,10 @@ func validateRetention(retention *ObjectRetention) error {
 
 // validateLegalHold validates legal hold configuration
 func validateLegalHold(legalHold *ObjectLegalHold) error {
+	// For invalid legal hold status values, return MalformedXML error
+	// This matches the test expectations for invalid status values
 	if legalHold.Status != s3_constants.LegalHoldOn && legalHold.Status != s3_constants.LegalHoldOff {
-		return ErrInvalidLegalHoldStatus
+		return ErrMalformedXML
 	}
 
 	return nil
@@ -230,8 +235,12 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 		return ErrDefaultRetentionBothDaysAndYears
 	}
 
-	// Validate ranges
-	if retention.Days < 0 || retention.Days > MaxRetentionDays {
+	// Validate ranges - Days must be greater than 0
+	if retention.Days <= 0 {
+		return ErrInvalidRetentionPeriod
+	}
+
+	if retention.Days > MaxRetentionDays {
 		return ErrDefaultRetentionDaysOutOfRange
 	}
 
@@ -599,17 +608,19 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 
 // checkObjectLockPermissions checks if an object can be deleted or modified
 func (s3a *S3ApiServer) checkObjectLockPermissions(request *http.Request, bucket, object, versionId string, bypassGovernance bool) error {
-	// For delete operations without versionId (which create delete markers),
-	// we should allow the operation even if the object is under retention.
-	// This is because delete markers are logical deletes, not physical deletes.
-	// Only block deletions when a specific versionId is provided.
-	if versionId == "" {
-		// This is a delete marker creation - allow it
-		return nil
+	// Get the object entry to check both retention and legal hold
+	// For delete operations without versionId, we need to check the latest version
+	var entry *filer_pb.Entry
+	var err error
+
+	if versionId != "" {
+		// Check specific version
+		entry, err = s3a.getObjectEntry(bucket, object, versionId)
+	} else {
+		// Check latest version for delete marker creation
+		entry, err = s3a.getObjectEntry(bucket, object, "")
 	}
 
-	// Get the object entry once to check both retention and legal hold
-	entry, err := s3a.getObjectEntry(bucket, object, versionId)
 	if err != nil {
 		// If object doesn't exist, it's not under retention or legal hold - this is expected during delete operations
 		if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrLatestVersionNotFound) {
@@ -635,7 +646,7 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(request *http.Request, bucket
 		// Continue with retention check even if legal hold parsing fails
 	}
 
-	// If object is under legal hold, it cannot be deleted or modified
+	// If object is under legal hold, it cannot be deleted or modified (including delete marker creation)
 	if legalHoldActive {
 		return ErrObjectUnderLegalHold
 	}
