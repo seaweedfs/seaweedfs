@@ -79,20 +79,6 @@ func ObjectLockConfigurationToXML(config *ObjectLockConfiguration) ([]byte, erro
 	return xml.Marshal(config)
 }
 
-// XMLToObjectLockConfiguration parses XML bytes to ObjectLockConfiguration
-func XMLToObjectLockConfiguration(xmlData []byte) (*ObjectLockConfiguration, error) {
-	if len(xmlData) == 0 {
-		return nil, fmt.Errorf("XML data is empty")
-	}
-
-	var config ObjectLockConfiguration
-	if err := xml.Unmarshal(xmlData, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse Object Lock configuration XML: %w", err)
-	}
-
-	return &config, nil
-}
-
 // StoreObjectLockConfigurationInExtended stores Object Lock configuration in entry extended attributes
 func StoreObjectLockConfigurationInExtended(entry *filer_pb.Entry, config *ObjectLockConfiguration) error {
 	if entry.Extended == nil {
@@ -102,19 +88,39 @@ func StoreObjectLockConfigurationInExtended(entry *filer_pb.Entry, config *Objec
 	if config == nil {
 		// Remove Object Lock configuration
 		delete(entry.Extended, s3_constants.ExtObjectLockEnabledKey)
-		delete(entry.Extended, s3_constants.ExtObjectLockConfigKey)
+		delete(entry.Extended, s3_constants.ExtObjectLockDefaultModeKey)
+		delete(entry.Extended, s3_constants.ExtObjectLockDefaultDaysKey)
+		delete(entry.Extended, s3_constants.ExtObjectLockDefaultYearsKey)
 		return nil
 	}
 
 	// Store the enabled flag
 	entry.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(config.ObjectLockEnabled)
 
-	// Store the full XML configuration
-	configXML, err := ObjectLockConfigurationToXML(config)
-	if err != nil {
-		return fmt.Errorf("failed to marshal Object Lock configuration: %w", err)
+	// Store default retention configuration if present
+	if config.Rule != nil && config.Rule.DefaultRetention != nil {
+		defaultRetention := config.Rule.DefaultRetention
+
+		// Store mode
+		if defaultRetention.Mode != "" {
+			entry.Extended[s3_constants.ExtObjectLockDefaultModeKey] = []byte(defaultRetention.Mode)
+		}
+
+		// Store days
+		if defaultRetention.Days > 0 {
+			entry.Extended[s3_constants.ExtObjectLockDefaultDaysKey] = []byte(strconv.Itoa(defaultRetention.Days))
+		}
+
+		// Store years
+		if defaultRetention.Years > 0 {
+			entry.Extended[s3_constants.ExtObjectLockDefaultYearsKey] = []byte(strconv.Itoa(defaultRetention.Years))
+		}
+	} else {
+		// Remove default retention if not present
+		delete(entry.Extended, s3_constants.ExtObjectLockDefaultModeKey)
+		delete(entry.Extended, s3_constants.ExtObjectLockDefaultDaysKey)
+		delete(entry.Extended, s3_constants.ExtObjectLockDefaultYearsKey)
 	}
-	entry.Extended[s3_constants.ExtObjectLockConfigKey] = configXML
 
 	return nil
 }
@@ -136,17 +142,41 @@ func LoadObjectLockConfigurationFromExtended(entry *filer_pb.Entry) (*ObjectLock
 		return nil, false
 	}
 
-	// Try to load full XML configuration
-	if configXML, exists := entry.Extended[s3_constants.ExtObjectLockConfigKey]; exists {
-		if config, err := XMLToObjectLockConfiguration(configXML); err == nil {
-			return config, true
+	// Create basic configuration
+	config := &ObjectLockConfiguration{
+		ObjectLockEnabled: s3_constants.ObjectLockEnabled,
+	}
+
+	// Load default retention configuration if present
+	if modeBytes, exists := entry.Extended[s3_constants.ExtObjectLockDefaultModeKey]; exists {
+		mode := string(modeBytes)
+
+		// Parse days and years
+		var days, years int
+		if daysBytes, exists := entry.Extended[s3_constants.ExtObjectLockDefaultDaysKey]; exists {
+			if parsed, err := strconv.Atoi(string(daysBytes)); err == nil {
+				days = parsed
+			}
+		}
+		if yearsBytes, exists := entry.Extended[s3_constants.ExtObjectLockDefaultYearsKey]; exists {
+			if parsed, err := strconv.Atoi(string(yearsBytes)); err == nil {
+				years = parsed
+			}
+		}
+
+		// Create rule if we have a mode and at least days or years
+		if mode != "" && (days > 0 || years > 0) {
+			config.Rule = &ObjectLockRule{
+				DefaultRetention: &DefaultRetention{
+					Mode:  mode,
+					Days:  days,
+					Years: years,
+				},
+			}
 		}
 	}
 
-	// Fallback: create minimal configuration for enabled Object Lock
-	return &ObjectLockConfiguration{
-		ObjectLockEnabled: s3_constants.ObjectLockEnabled,
-	}, true
+	return config, true
 }
 
 // ExtractObjectLockInfoFromConfig extracts basic Object Lock information from configuration

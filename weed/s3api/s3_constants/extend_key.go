@@ -20,7 +20,11 @@ const (
 	ExtRetentionUntilDateKey = "Seaweed-X-Amz-Retention-Until-Date"
 	ExtLegalHoldKey          = "Seaweed-X-Amz-Legal-Hold"
 	ExtObjectLockEnabledKey  = "Seaweed-X-Amz-Object-Lock-Enabled"
-	ExtObjectLockConfigKey   = "Seaweed-X-Amz-Object-Lock-Config"
+
+	// Object Lock Bucket Configuration (individual components, not XML)
+	ExtObjectLockDefaultModeKey  = "Lock-Default-Mode"
+	ExtObjectLockDefaultDaysKey  = "Lock-Default-Days"
+	ExtObjectLockDefaultYearsKey = "Lock-Default-Years"
 )
 
 // Object Lock and Retention Constants

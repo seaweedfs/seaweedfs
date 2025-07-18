@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"encoding/xml"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -131,14 +130,9 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 			config.Owner = string(owner)
 		}
 		// Parse Object Lock configuration if present
-		if objectLockConfigXML, exists := entry.Extended[s3_constants.ExtObjectLockConfigKey]; exists {
-			var objectLockConfig ObjectLockConfiguration
-			if err := xml.Unmarshal(objectLockConfigXML, &objectLockConfig); err != nil {
-				glog.Errorf("updateBucketConfigCacheFromEntry: failed to parse Object Lock configuration for bucket %s: %v", bucket, err)
-			} else {
-				config.ObjectLockConfig = &objectLockConfig
-				glog.V(2).Infof("updateBucketConfigCacheFromEntry: cached Object Lock configuration for bucket %s", bucket)
-			}
+		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(entry); found {
+			config.ObjectLockConfig = objectLockConfig
+			glog.V(2).Infof("updateBucketConfigCacheFromEntry: cached Object Lock configuration for bucket %s", bucket)
 		}
 	}
 

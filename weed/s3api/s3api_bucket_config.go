@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -128,14 +127,9 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 			config.Owner = string(owner)
 		}
 		// Parse Object Lock configuration if present
-		if objectLockConfigXML, exists := bucketEntry.Extended[s3_constants.ExtObjectLockConfigKey]; exists {
-			var objectLockConfig ObjectLockConfiguration
-			if err := xml.Unmarshal(objectLockConfigXML, &objectLockConfig); err != nil {
-				glog.Errorf("getBucketConfig: failed to parse Object Lock configuration for bucket %s: %v", bucket, err)
-			} else {
-				config.ObjectLockConfig = &objectLockConfig
-				glog.V(2).Infof("getBucketConfig: cached Object Lock configuration for bucket %s", bucket)
-			}
+		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(bucketEntry); found {
+			config.ObjectLockConfig = objectLockConfig
+			glog.V(2).Infof("getBucketConfig: cached Object Lock configuration for bucket %s", bucket)
 		}
 	}
 
@@ -189,18 +183,11 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 	if config.Owner != "" {
 		config.Entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(config.Owner)
 	}
-	// Update Object Lock configuration in extended attributes
+	// Update Object Lock configuration
 	if config.ObjectLockConfig != nil {
-		configXML, err := xml.Marshal(config.ObjectLockConfig)
-		if err != nil {
-			glog.Errorf("updateBucketConfig: failed to marshal Object Lock configuration for bucket %s: %v", bucket, err)
+		if err := StoreObjectLockConfigurationInExtended(config.Entry, config.ObjectLockConfig); err != nil {
+			glog.Errorf("updateBucketConfig: failed to store Object Lock configuration for bucket %s: %v", bucket, err)
 			return s3err.ErrInternalError
-		}
-		config.Entry.Extended[s3_constants.ExtObjectLockConfigKey] = configXML
-
-		// Also set the boolean flag for backward compatibility
-		if config.ObjectLockConfig.ObjectLockEnabled != "" {
-			config.Entry.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(config.ObjectLockConfig.ObjectLockEnabled)
 		}
 	}
 
