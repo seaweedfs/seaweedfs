@@ -559,17 +559,19 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		// This matches AWS S3 behavior and s3-tests expectations
 		return s3err.ErrInvalidBucketState
 	case errors.Is(err, ErrInvalidObjectLockMode):
-		return s3err.ErrInvalidRequest
+		return s3err.ErrMalformedXML
 	case errors.Is(err, ErrInvalidLegalHoldStatus):
 		// For malformed legal hold status, return MalformedXML as expected by s3-tests
 		return s3err.ErrMalformedXML
 	case errors.Is(err, ErrInvalidRetentionDateFormat):
 		return s3err.ErrMalformedXML
 	case errors.Is(err, ErrInvalidRetentionPeriod):
-		// For invalid retention periods (days/years), return InvalidRetentionPeriod
-		return s3err.ErrInvalidRetentionPeriod
+		// For invalid retention periods (days/years), return MalformedXML
+		// This includes cases where both Days and Years are specified
+		return s3err.ErrMalformedXML
 	case errors.Is(err, ErrInvalidRetentionMode):
 		// For invalid retention modes, return MalformedXML
+		// This includes cases where ObjectLockEnabled is 'Disabled'
 		return s3err.ErrMalformedXML
 	default:
 		return s3err.ErrInvalidRequest

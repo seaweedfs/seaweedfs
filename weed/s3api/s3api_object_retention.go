@@ -188,18 +188,19 @@ func validateLegalHold(legalHold *ObjectLegalHold) error {
 func validateObjectLockConfiguration(config *ObjectLockConfiguration) error {
 	// ObjectLockEnabled is required for bucket-level configuration
 	if config.ObjectLockEnabled == "" {
-		return fmt.Errorf("object lock configuration must specify ObjectLockEnabled")
+		return ErrInvalidRetentionMode
 	}
 
 	// Validate ObjectLockEnabled value
 	if config.ObjectLockEnabled != s3_constants.ObjectLockEnabled {
-		return fmt.Errorf("invalid object lock enabled value: %s", config.ObjectLockEnabled)
+		// ObjectLockEnabled can only be 'Enabled', any other value (including 'Disabled') is malformed XML
+		return ErrInvalidRetentionMode
 	}
 
 	// Validate Rule if present
 	if config.Rule != nil {
 		if config.Rule.DefaultRetention == nil {
-			return fmt.Errorf("rule configuration must specify DefaultRetention")
+			return ErrInvalidRetentionPeriod
 		}
 		return validateDefaultRetention(config.Rule.DefaultRetention)
 	}

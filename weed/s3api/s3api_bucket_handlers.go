@@ -758,6 +758,17 @@ func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Check if trying to suspend versioning on a bucket with object lock enabled
+	if status == "Suspended" {
+		// Get bucket configuration to check for object lock
+		bucketConfig, errCode := s3a.getBucketConfig(bucket)
+		if errCode == s3err.ErrNone && bucketConfig.ObjectLockConfig != nil {
+			// Object lock is enabled, cannot suspend versioning
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidBucketState)
+			return
+		}
+	}
+
 	// Update bucket versioning configuration using new bucket config system
 	if errCode := s3a.setBucketVersioningStatus(bucket, status); errCode != s3err.ErrNone {
 		glog.Errorf("PutBucketVersioningHandler save config: %d", errCode)
