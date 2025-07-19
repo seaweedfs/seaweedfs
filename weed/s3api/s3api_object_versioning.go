@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
@@ -48,20 +47,26 @@ type ListObjectVersionsResult struct {
 	CommonPrefixes      []PrefixEntry       `xml:"CommonPrefixes,omitempty"`
 }
 
-// generateVersionId creates a unique version ID
+// generateVersionId creates a unique version ID that preserves chronological order
 func generateVersionId() string {
-	// Generate a random 16-byte value
-	randBytes := make([]byte, 16)
+	// Use nanosecond timestamp to ensure chronological ordering
+	// Format as 16-digit hex (first 16 chars of version ID)
+	now := time.Now().UnixNano()
+	timestampHex := fmt.Sprintf("%016x", now)
+
+	// Generate random 8 bytes for uniqueness (last 16 chars of version ID)
+	randBytes := make([]byte, 8)
 	if _, err := rand.Read(randBytes); err != nil {
 		glog.Errorf("Failed to generate random bytes for version ID: %v", err)
-		return ""
+		// Fallback to timestamp-only if random generation fails
+		return timestampHex + "0000000000000000"
 	}
 
-	// Hash with current timestamp for uniqueness
-	hash := sha256.Sum256(append(randBytes, []byte(fmt.Sprintf("%d", time.Now().UnixNano()))...))
+	// Combine timestamp (16 chars) + random (16 chars) = 32 chars total
+	randomHex := hex.EncodeToString(randBytes)
+	versionId := timestampHex + randomHex
 
-	// Return first 32 characters of hex string (same length as AWS S3 version IDs)
-	return hex.EncodeToString(hash[:])[:32]
+	return versionId
 }
 
 // getVersionedObjectDir returns the directory path for storing object versions
@@ -122,93 +127,17 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*ListObjectVersionsResult, error) {
 	var allVersions []interface{} // Can contain VersionEntry or DeleteMarkerEntry
 
-	// List all entries in bucket
-	entries, _, err := s3a.list(path.Join(s3a.option.BucketsPath, bucket), prefix, keyMarker, false, uint32(maxKeys*2))
+	// Track objects that have been processed to avoid duplicates
+	processedObjects := make(map[string]bool)
+
+	// Recursively find all .versions directories in the bucket
+	bucketPath := path.Join(s3a.option.BucketsPath, bucket)
+	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, bucket, prefix)
 	if err != nil {
 		return nil, err
 	}
 
-	// Track objects that have been processed to avoid duplicates
-	processedObjects := make(map[string]bool)
-
-	// First, process .versions directories (post-versioning objects)
-	for _, entry := range entries {
-		if !entry.IsDirectory {
-			continue
-		}
-
-		// Check if this is a .versions directory
-		if !strings.HasSuffix(entry.Name, ".versions") {
-			continue
-		}
-
-		// Extract object name from .versions directory name
-		objectKey := strings.TrimSuffix(entry.Name, ".versions")
-		processedObjects[objectKey] = true
-
-		versions, err := s3a.getObjectVersionList(bucket, objectKey)
-		if err != nil {
-			glog.Warningf("Failed to get versions for object %s: %v", objectKey, err)
-			continue
-		}
-
-		for _, version := range versions {
-			if version.IsDeleteMarker {
-				deleteMarker := &DeleteMarkerEntry{
-					Key:          objectKey,
-					VersionId:    version.VersionId,
-					IsLatest:     version.IsLatest,
-					LastModified: version.LastModified,
-					Owner:        CanonicalUser{ID: "unknown", DisplayName: "unknown"},
-				}
-				allVersions = append(allVersions, deleteMarker)
-			} else {
-				versionEntry := &VersionEntry{
-					Key:          objectKey,
-					VersionId:    version.VersionId,
-					IsLatest:     version.IsLatest,
-					LastModified: version.LastModified,
-					ETag:         version.ETag,
-					Size:         version.Size,
-					Owner:        CanonicalUser{ID: "unknown", DisplayName: "unknown"},
-					StorageClass: "STANDARD",
-				}
-				allVersions = append(allVersions, versionEntry)
-			}
-		}
-	}
-
-	// Second, process regular files (pre-versioning objects)
-	for _, entry := range entries {
-		if entry.IsDirectory {
-			continue // Skip directories (already processed .versions directories above)
-		}
-
-		objectKey := entry.Name
-
-		// Skip if this object already has a .versions directory (already processed)
-		if processedObjects[objectKey] {
-			continue
-		}
-
-		// This is a pre-versioning object - treat it as a version with VersionId="null"
-		glog.V(2).Infof("listObjectVersions: found pre-versioning object %s", objectKey)
-
-		etag := s3a.calculateETagFromChunks(entry.Chunks)
-		versionEntry := &VersionEntry{
-			Key:          objectKey,
-			VersionId:    "null",
-			IsLatest:     true, // Pre-versioning objects are always the latest (only) version
-			LastModified: time.Unix(entry.Attributes.Mtime, 0),
-			ETag:         etag,
-			Size:         int64(entry.Attributes.FileSize),
-			Owner:        CanonicalUser{ID: "unknown", DisplayName: "unknown"},
-			StorageClass: "STANDARD",
-		}
-		allVersions = append(allVersions, versionEntry)
-	}
-
-	// Sort by key, then by LastModified and VersionId
+	// Sort by key, then by LastModified (newest first), then by VersionId for deterministic ordering
 	sort.Slice(allVersions, func(i, j int) bool {
 		var keyI, keyJ string
 		var lastModifiedI, lastModifiedJ time.Time
@@ -236,13 +165,20 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 			versionIdJ = v.VersionId
 		}
 
+		// First sort by object key
 		if keyI != keyJ {
 			return keyI < keyJ
 		}
-		if !lastModifiedI.Equal(lastModifiedJ) {
+
+		// Then by modification time (newest first) - but use nanosecond precision for ties
+		timeDiff := lastModifiedI.Sub(lastModifiedJ)
+		if timeDiff.Abs() > time.Millisecond {
 			return lastModifiedI.After(lastModifiedJ)
 		}
-		return versionIdI < versionIdJ
+
+		// For very close timestamps (within 1ms), use version ID for deterministic ordering
+		// Sort version IDs in reverse lexicographic order to maintain newest-first semantics
+		return versionIdI > versionIdJ
 	})
 
 	// Build result
@@ -271,6 +207,10 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		}
 	}
 
+	// Always initialize empty slices so boto3 gets the expected fields even when empty
+	result.Versions = make([]VersionEntry, 0)
+	result.DeleteMarkers = make([]DeleteMarkerEntry, 0)
+
 	// Add versions to result
 	for _, version := range allVersions {
 		switch v := version.(type) {
@@ -282,6 +222,100 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	}
 
 	return result, nil
+}
+
+// findVersionsRecursively searches for all .versions directories and regular files recursively
+func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, bucket, prefix string) error {
+	// List entries in current directory
+	entries, _, err := s3a.list(currentPath, "", "", false, 1000)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		entryPath := path.Join(relativePath, entry.Name)
+
+		// Skip if this doesn't match the prefix filter
+		if prefix != "" && !strings.HasPrefix(entryPath, strings.TrimPrefix(prefix, "/")) {
+			continue
+		}
+
+		if entry.IsDirectory {
+			// Check if this is a .versions directory
+			if strings.HasSuffix(entry.Name, ".versions") {
+				// Extract object name from .versions directory name
+				objectKey := strings.TrimSuffix(entryPath, ".versions")
+				processedObjects[objectKey] = true
+
+				glog.V(2).Infof("findVersionsRecursively: found .versions directory for object %s", objectKey)
+
+				versions, err := s3a.getObjectVersionList(bucket, objectKey)
+				if err != nil {
+					glog.Warningf("Failed to get versions for object %s: %v", objectKey, err)
+					continue
+				}
+
+				for _, version := range versions {
+					if version.IsDeleteMarker {
+						deleteMarker := &DeleteMarkerEntry{
+							Key:          objectKey,
+							VersionId:    version.VersionId,
+							IsLatest:     version.IsLatest,
+							LastModified: version.LastModified,
+							Owner:        CanonicalUser{ID: "unknown", DisplayName: "unknown"},
+						}
+						*allVersions = append(*allVersions, deleteMarker)
+					} else {
+						versionEntry := &VersionEntry{
+							Key:          objectKey,
+							VersionId:    version.VersionId,
+							IsLatest:     version.IsLatest,
+							LastModified: version.LastModified,
+							ETag:         version.ETag,
+							Size:         version.Size,
+							Owner:        CanonicalUser{ID: "unknown", DisplayName: "unknown"},
+							StorageClass: "STANDARD",
+						}
+						*allVersions = append(*allVersions, versionEntry)
+					}
+				}
+			} else {
+				// Recursively search subdirectories
+				fullPath := path.Join(currentPath, entry.Name)
+				err := s3a.findVersionsRecursively(fullPath, entryPath, allVersions, processedObjects, bucket, prefix)
+				if err != nil {
+					glog.Warningf("Error searching subdirectory %s: %v", entryPath, err)
+					continue
+				}
+			}
+		} else {
+			// This is a regular file - check if it's a pre-versioning object
+			objectKey := entryPath
+
+			// Skip if this object already has a .versions directory (already processed)
+			if processedObjects[objectKey] {
+				continue
+			}
+
+			// This is a pre-versioning object - treat it as a version with VersionId="null"
+			glog.V(2).Infof("findVersionsRecursively: found pre-versioning object %s", objectKey)
+
+			etag := s3a.calculateETagFromChunks(entry.Chunks)
+			versionEntry := &VersionEntry{
+				Key:          objectKey,
+				VersionId:    "null",
+				IsLatest:     true, // Pre-versioning objects are always the latest (only) version
+				LastModified: time.Unix(entry.Attributes.Mtime, 0),
+				ETag:         etag,
+				Size:         int64(entry.Attributes.FileSize),
+				Owner:        CanonicalUser{ID: "unknown", DisplayName: "unknown"},
+				StorageClass: "STANDARD",
+			}
+			*allVersions = append(*allVersions, versionEntry)
+		}
+	}
+
+	return nil
 }
 
 // getObjectVersionList returns all versions of a specific object
@@ -365,10 +399,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 		versions = append(versions, version)
 	}
 
-	// Sort by modification time (newest first)
-	sort.Slice(versions, func(i, j int) bool {
-		return versions[i].LastModified.After(versions[j].LastModified)
-	})
+	// Don't sort here - let the main listObjectVersions function handle sorting consistently
 
 	glog.V(2).Infof("getObjectVersionList: returning %d total versions for %s/%s", len(versions), bucket, object)
 	for i, version := range versions {
