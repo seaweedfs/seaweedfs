@@ -94,7 +94,7 @@ func (dr *DefaultRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 		Years *int `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Years,omitempty"`
 	}{Alias: (*Alias)(dr)}
 	if err := d.DecodeElement(aux, &start); err != nil {
-		glog.Errorf("DefaultRetention.UnmarshalXML: decode error: %v", err)
+		glog.V(2).Infof("DefaultRetention.UnmarshalXML: decode error: %v", err)
 		return err
 	}
 	if aux.Days != nil {
