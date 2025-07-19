@@ -261,9 +261,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		return nil, s3err.ErrInternalError
 	}
 
-	// Check if versioning is enabled for this bucket
-	versioningEnabled, vErr := s3a.isVersioningEnabled(*input.Bucket)
-	if vErr == nil && versioningEnabled {
+	// Check if versioning is configured for this bucket
+	versioningState, vErr := s3a.getVersioningState(*input.Bucket)
+	if vErr == nil && versioningState == s3_constants.VersioningEnabled {
 		// For versioned buckets, create a version and return the version ID
 		versionId := generateVersionId()
 		versionFileName := s3a.getVersionFileName(versionId)
@@ -321,6 +321,38 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			ETag:      aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:       objectKey(input.Key),
 			VersionId: aws.String(versionId),
+		}
+	} else if vErr == nil && versioningState == s3_constants.VersioningSuspended {
+		// For suspended versioning, add "null" version ID metadata and return "null" version ID
+		err = s3a.mkFile(dirName, entryName, finalParts, func(entry *filer_pb.Entry) {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+			for k, v := range pentry.Extended {
+				if k != "key" {
+					entry.Extended[k] = v
+				}
+			}
+			if pentry.Attributes.Mime != "" {
+				entry.Attributes.Mime = pentry.Attributes.Mime
+			} else if mime != "" {
+				entry.Attributes.Mime = mime
+			}
+			entry.Attributes.FileSize = uint64(offset)
+		})
+
+		if err != nil {
+			glog.Errorf("completeMultipartUpload: failed to create suspended versioning object: %v", err)
+			return nil, s3err.ErrInternalError
+		}
+
+		output = &CompleteMultipartUploadResult{
+			Location:  aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+			Bucket:    input.Bucket,
+			ETag:      aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
+			Key:       objectKey(input.Key),
+			VersionId: aws.String("null"),
 		}
 	} else {
 		// For non-versioned buckets, return response without VersionId

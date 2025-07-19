@@ -714,11 +714,22 @@ func (s3a *S3ApiServer) GetBucketVersioningHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, &s3.PutBucketVersioningInput{
-		VersioningConfiguration: &s3.VersioningConfiguration{
-			Status: aws.String(versioningStatus),
-		},
-	})
+	// AWS S3 behavior: If versioning was never configured, don't return Status field
+	var response *s3.PutBucketVersioningInput
+	if versioningStatus == "" {
+		// No versioning configuration - return empty response (no Status field)
+		response = &s3.PutBucketVersioningInput{
+			VersioningConfiguration: &s3.VersioningConfiguration{},
+		}
+	} else {
+		// Versioning was explicitly configured - return the status
+		response = &s3.PutBucketVersioningInput{
+			VersioningConfiguration: &s3.VersioningConfiguration{
+				Status: aws.String(versioningStatus),
+			},
+		}
+	}
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, response)
 }
 
 // PutBucketVersioningHandler Put bucket Versioning
