@@ -220,7 +220,7 @@ jobs:
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
 
-      - name: Run S3 Object Lock and Retention tests
+      - name: Run S3 Object Lock, Retention, and Versioning tests
         timeout-minutes: 15
         env:
           S3TEST_CONF: ../docker/compose/s3tests.conf
@@ -230,7 +230,7 @@ jobs:
           go install -buildvcs=false
           set -x
           # Create clean data directory for this test run
-          export WEED_DATA_DIR="/tmp/seaweedfs-objectlock-$(date +%s)"
+          export WEED_DATA_DIR="/tmp/seaweedfs-objectlock-versioning-$(date +%s)"
           mkdir -p "$WEED_DATA_DIR"
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
@@ -241,8 +241,9 @@ jobs:
           sleep 10          
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
-          # Run object lock tests by pattern matching test names
-          tox -- -k "object_lock" --tb=short
+          # Run object lock and versioning tests by pattern matching test names
+          # This tests our recent fixes for mixed versioned/non-versioned objects
+          tox -- -k "object_lock or versioning" --tb=short
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
