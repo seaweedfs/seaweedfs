@@ -305,11 +305,26 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 			// This is a pre-versioning object - treat it as a version with VersionId="null"
 			glog.V(2).Infof("findVersionsRecursively: found pre-versioning object %s", objectKey)
 
+			// Check if this null version should be marked as latest
+			// It's only latest if there's no .versions directory OR no latest version metadata
+			isLatest := true
+			versionsObjectPath := objectKey + ".versions"
+			if versionsEntry, err := s3a.getEntry(currentPath, versionsObjectPath); err == nil {
+				// .versions directory exists, check if there's latest version metadata
+				if versionsEntry.Extended != nil {
+					if _, hasLatest := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]; hasLatest {
+						// There is a latest version in the .versions directory, so null is not latest
+						isLatest = false
+						glog.V(2).Infof("findVersionsRecursively: null version for %s is not latest due to versioned objects", objectKey)
+					}
+				}
+			}
+
 			etag := s3a.calculateETagFromChunks(entry.Chunks)
 			versionEntry := &VersionEntry{
 				Key:          objectKey,
 				VersionId:    "null",
-				IsLatest:     true, // Pre-versioning objects are always the latest (only) version
+				IsLatest:     isLatest,
 				LastModified: time.Unix(entry.Attributes.Mtime, 0),
 				ETag:         etag,
 				Size:         int64(entry.Attributes.FileSize),
