@@ -130,9 +130,12 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	// Track objects that have been processed to avoid duplicates
 	processedObjects := make(map[string]bool)
 
+	// Track version IDs globally to prevent duplicates across the entire listing
+	seenVersionIds := make(map[string]bool)
+
 	// Recursively find all .versions directories in the bucket
 	bucketPath := path.Join(s3a.option.BucketsPath, bucket)
-	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, bucket, prefix)
+	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +228,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 }
 
 // findVersionsRecursively searches for all .versions directories and regular files recursively
-func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, bucket, prefix string) error {
+func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix string) error {
 	// List entries in current directory
 	entries, _, err := s3a.list(currentPath, "", "", false, 1000)
 	if err != nil {
@@ -261,6 +264,14 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 				}
 
 				for _, version := range versions {
+					// Check for duplicate version IDs and skip if already seen
+					versionKey := objectKey + ":" + version.VersionId
+					if seenVersionIds[versionKey] {
+						glog.Warningf("findVersionsRecursively: duplicate version %s for object %s detected, skipping", version.VersionId, objectKey)
+						continue
+					}
+					seenVersionIds[versionKey] = true
+
 					if version.IsDeleteMarker {
 						deleteMarker := &DeleteMarkerEntry{
 							Key:          objectKey,
@@ -287,7 +298,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 			} else {
 				// Recursively search subdirectories
 				fullPath := path.Join(currentPath, entry.Name)
-				err := s3a.findVersionsRecursively(fullPath, entryPath, allVersions, processedObjects, bucket, prefix)
+				err := s3a.findVersionsRecursively(fullPath, entryPath, allVersions, processedObjects, seenVersionIds, bucket, prefix)
 				if err != nil {
 					glog.Warningf("Error searching subdirectory %s: %v", entryPath, err)
 					continue
@@ -375,6 +386,9 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 
 	glog.V(2).Infof("getObjectVersionList: found %d entries in versions directory", len(entries))
 
+	// Use a map to detect and prevent duplicate version IDs
+	seenVersionIds := make(map[string]bool)
+
 	for i, entry := range entries {
 		if entry.Extended == nil {
 			glog.V(2).Infof("getObjectVersionList: entry %d has no Extended metadata, skipping", i)
@@ -388,6 +402,13 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 		}
 
 		versionId := string(versionIdBytes)
+
+		// Check for duplicate version IDs and skip if already seen
+		if seenVersionIds[versionId] {
+			glog.Warningf("getObjectVersionList: duplicate version ID %s detected for object %s/%s, skipping", versionId, bucket, object)
+			continue
+		}
+		seenVersionIds[versionId] = true
 
 		// Check if this version is the latest by comparing with directory metadata
 		isLatest := (versionId == latestVersionId)
@@ -421,7 +442,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 
 	// Don't sort here - let the main listObjectVersions function handle sorting consistently
 
-	glog.V(2).Infof("getObjectVersionList: returning %d total versions for %s/%s", len(versions), bucket, object)
+	glog.V(2).Infof("getObjectVersionList: returning %d total versions for %s/%s (after deduplication from %d entries)", len(versions), bucket, object, len(entries))
 	for i, version := range versions {
 		glog.V(2).Infof("getObjectVersionList: version %d: %s (isLatest=%v, isDeleteMarker=%v)", i, version.VersionId, version.IsLatest, version.IsDeleteMarker)
 	}
