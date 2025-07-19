@@ -338,8 +338,85 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		return "", s3err.ErrInternalError
 	}
 
+	// Update all existing versions/delete markers to set IsLatest=false since "null" is now latest
+	err = s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, object)
+	if err != nil {
+		glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
+		// Don't fail the request, but log the warning
+	}
+
 	glog.V(2).Infof("putSuspendedVersioningObject: successfully created null version for %s/%s", bucket, object)
 	return etag, s3err.ErrNone
+}
+
+// updateIsLatestFlagsForSuspendedVersioning sets IsLatest=false on all existing versions/delete markers
+// when a new "null" version becomes the latest during suspended versioning
+func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object string) error {
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	cleanObject := strings.TrimPrefix(object, "/")
+	versionsObjectPath := cleanObject + ".versions"
+	versionsDir := bucketDir + "/" + versionsObjectPath
+
+	glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: updating flags for %s/%s", bucket, cleanObject)
+
+	// Check if .versions directory exists
+	_, err := s3a.getEntry(bucketDir, versionsObjectPath)
+	if err != nil {
+		// No .versions directory exists, nothing to update
+		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: no .versions directory for %s/%s", bucket, cleanObject)
+		return nil
+	}
+
+	// List all entries in .versions directory
+	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
+	if err != nil {
+		return fmt.Errorf("failed to list versions directory: %v", err)
+	}
+
+	glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: found %d entries to update", len(entries))
+
+	// Update each version/delete marker to set IsLatest=false
+	for _, entry := range entries {
+		if entry.Extended == nil {
+			continue
+		}
+
+		// Check if this entry has a version ID (it should be a version or delete marker)
+		versionIdBytes, hasVersionId := entry.Extended[s3_constants.ExtVersionIdKey]
+		if !hasVersionId {
+			continue
+		}
+
+		versionId := string(versionIdBytes)
+		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: setting IsLatest=false for version %s", versionId)
+
+		// Update the entry to set IsLatest=false (we don't explicitly store this flag,
+		// it's determined by comparison with latest version metadata)
+		// We need to clear the latest version metadata from the .versions directory
+		// so that our getObjectVersionList function will correctly show IsLatest=false
+	}
+
+	// Clear the latest version metadata from .versions directory since "null" is now latest
+	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
+	if err == nil && versionsEntry.Extended != nil {
+		// Remove latest version metadata so all versions show IsLatest=false
+		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
+		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
+
+		// Update the .versions directory entry
+		err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+			updatedEntry.Extended = versionsEntry.Extended
+			updatedEntry.Attributes = versionsEntry.Attributes
+			updatedEntry.Chunks = versionsEntry.Chunks
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
+		}
+
+		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: cleared latest version metadata for %s/%s", bucket, cleanObject)
+	}
+
+	return nil
 }
 
 func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (versionId string, etag string, errCode s3err.ErrorCode) {
