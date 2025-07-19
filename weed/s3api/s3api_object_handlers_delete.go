@@ -137,8 +137,9 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 // ObjectIdentifier represents an object to be deleted with its key name and optional version ID.
 type ObjectIdentifier struct {
-	Key       string `xml:"Key"`
-	VersionId string `xml:"VersionId,omitempty"`
+	Key          string `xml:"Key"`
+	VersionId    string `xml:"VersionId,omitempty"`
+	DeleteMarker bool   `xml:"DeleteMarker,omitempty"`
 }
 
 // DeleteObjectsRequest - xml carrying the object key names which needs to be deleted.
@@ -236,31 +237,83 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 					continue
 				}
 			}
-			lastSeparator := strings.LastIndex(object.Key, "/")
-			parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.Key, true, false
-			if lastSeparator > 0 && lastSeparator+1 < len(object.Key) {
-				entryName = object.Key[lastSeparator+1:]
-				parentDirectoryPath = "/" + object.Key[:lastSeparator]
-			}
-			parentDirectoryPath = fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
 
-			err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
-			if err == nil {
-				directoriesWithDeletion[parentDirectoryPath]++
-				deletedObjects = append(deletedObjects, object)
-			} else if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
-				deletedObjects = append(deletedObjects, object)
+			var deleteVersionId string
+			var isDeleteMarker bool
+
+			if versioningEnabled {
+				// Handle versioned delete
+				if object.VersionId != "" {
+					// Delete specific version
+					err := s3a.deleteSpecificObjectVersion(bucket, object.Key, object.VersionId)
+					if err != nil {
+						deleteErrors = append(deleteErrors, DeleteError{
+							Code:      "",
+							Message:   err.Error(),
+							Key:       object.Key,
+							VersionId: object.VersionId,
+						})
+						continue
+					}
+					deleteVersionId = object.VersionId
+				} else {
+					// Create delete marker (logical delete)
+					deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object.Key)
+					if err != nil {
+						deleteErrors = append(deleteErrors, DeleteError{
+							Code:      "",
+							Message:   err.Error(),
+							Key:       object.Key,
+							VersionId: object.VersionId,
+						})
+						continue
+					}
+					deleteVersionId = deleteMarkerVersionId
+					isDeleteMarker = true
+				}
+
+				// Add to successful deletions with version info
+				deletedObject := ObjectIdentifier{
+					Key:          object.Key,
+					VersionId:    deleteVersionId,
+					DeleteMarker: isDeleteMarker,
+				}
+				if !deleteObjects.Quiet {
+					deletedObjects = append(deletedObjects, deletedObject)
+				}
+				if isDeleteMarker {
+					// For delete markers, we don't need to track directories for cleanup
+					continue
+				}
 			} else {
-				delete(directoriesWithDeletion, parentDirectoryPath)
-				deleteErrors = append(deleteErrors, DeleteError{
-					Code:      "",
-					Message:   err.Error(),
-					Key:       object.Key,
-					VersionId: object.VersionId,
-				})
+				// Handle non-versioned delete (original logic)
+				lastSeparator := strings.LastIndex(object.Key, "/")
+				parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.Key, true, false
+				if lastSeparator > 0 && lastSeparator+1 < len(object.Key) {
+					entryName = object.Key[lastSeparator+1:]
+					parentDirectoryPath = "/" + object.Key[:lastSeparator]
+				}
+				parentDirectoryPath = fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
+
+				err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+				if err == nil {
+					directoriesWithDeletion[parentDirectoryPath]++
+					deletedObjects = append(deletedObjects, object)
+				} else if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
+					deletedObjects = append(deletedObjects, object)
+				} else {
+					delete(directoriesWithDeletion, parentDirectoryPath)
+					deleteErrors = append(deleteErrors, DeleteError{
+						Code:      "",
+						Message:   err.Error(),
+						Key:       object.Key,
+						VersionId: object.VersionId,
+					})
+				}
 			}
+
 			if auditLog != nil {
-				auditLog.Key = entryName
+				auditLog.Key = object.Key
 				s3err.PostAccessLog(*auditLog)
 			}
 		}
