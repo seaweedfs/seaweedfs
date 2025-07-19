@@ -144,7 +144,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			// Set ETag in response
 			setEtag(w, etag)
 		} else {
-			// Handle regular PUT (non-versioned)
+			// Handle regular PUT (non-versioned or suspended versioning)
 			glog.V(1).Infof("PutObjectHandler: using regular PUT for %s/%s", bucket, object)
 			uploadUrl := s3a.toFilerUrl(bucket, object)
 			if objectContentType == "" {
@@ -156,6 +156,17 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
 				return
+			}
+
+			// Check if versioning is suspended (different from never enabled)
+			bucketDir := s3a.option.BucketsPath + "/" + bucket
+			if bucketEntry, bucketErr := s3a.getEntry(bucketDir, ""); bucketErr == nil && bucketEntry.Extended != nil {
+				if versioningBytes, exists := bucketEntry.Extended[s3_constants.ExtVersioningKey]; exists {
+					if string(versioningBytes) == s3_constants.VersioningSuspended {
+						// For suspended versioning, set version ID to "null" in response
+						w.Header().Set("x-amz-version-id", "null")
+					}
+				}
 			}
 
 			setEtag(w, etag)

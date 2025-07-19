@@ -179,6 +179,10 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 					targetVersionId = string(versionIdBytes)
 				}
 			}
+			// If no version ID found in entry, this is a pre-versioning object
+			if targetVersionId == "" {
+				targetVersionId = "null"
+			}
 		}
 
 		// Check if this is a delete marker
@@ -189,10 +193,17 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		// All versions are stored in .versions directory
-		versionObjectPath := object + ".versions/" + s3a.getVersionFileName(targetVersionId)
-		destUrl = s3a.toFilerUrl(bucket, versionObjectPath)
-		glog.V(2).Infof("GetObject: version %s URL: %s", targetVersionId, destUrl)
+		// Determine the actual file path based on whether this is a versioned or pre-versioning object
+		if targetVersionId == "null" {
+			// Pre-versioning object - stored as regular file
+			destUrl = s3a.toFilerUrl(bucket, object)
+			glog.V(2).Infof("GetObject: pre-versioning object URL: %s", destUrl)
+		} else {
+			// Versioned object - stored in .versions directory
+			versionObjectPath := object + ".versions/" + s3a.getVersionFileName(targetVersionId)
+			destUrl = s3a.toFilerUrl(bucket, versionObjectPath)
+			glog.V(2).Infof("GetObject: version %s URL: %s", targetVersionId, destUrl)
+		}
 
 		// Set version ID in response header
 		w.Header().Set("x-amz-version-id", targetVersionId)
@@ -258,6 +269,10 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 					targetVersionId = string(versionIdBytes)
 				}
 			}
+			// If no version ID found in entry, this is a pre-versioning object
+			if targetVersionId == "" {
+				targetVersionId = "null"
+			}
 		}
 
 		// Check if this is a delete marker
@@ -268,10 +283,17 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		// All versions are stored in .versions directory
-		versionObjectPath := object + ".versions/" + s3a.getVersionFileName(targetVersionId)
-		destUrl = s3a.toFilerUrl(bucket, versionObjectPath)
-		glog.V(2).Infof("HeadObject: version %s URL: %s", targetVersionId, destUrl)
+		// Determine the actual file path based on whether this is a versioned or pre-versioning object
+		if targetVersionId == "null" {
+			// Pre-versioning object - stored as regular file
+			destUrl = s3a.toFilerUrl(bucket, object)
+			glog.V(2).Infof("HeadObject: pre-versioning object URL: %s", destUrl)
+		} else {
+			// Versioned object - stored in .versions directory
+			versionObjectPath := object + ".versions/" + s3a.getVersionFileName(targetVersionId)
+			destUrl = s3a.toFilerUrl(bucket, versionObjectPath)
+			glog.V(2).Infof("HeadObject: version %s URL: %s", targetVersionId, destUrl)
+		}
 
 		// Set version ID in response header
 		w.Header().Set("x-amz-version-id", targetVersionId)
