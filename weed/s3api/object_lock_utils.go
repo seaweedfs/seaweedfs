@@ -299,15 +299,15 @@ func ValidateObjectLockConfiguration(config *ObjectLockConfiguration) error {
 		if config.Rule.DefaultRetention == nil {
 			return ErrRuleMissingDefaultRetention
 		}
-		return ValidateDefaultRetention(config.Rule.DefaultRetention)
+		return validateDefaultRetention(config.Rule.DefaultRetention)
 	}
 
 	return nil
 }
 
-// ValidateDefaultRetention validates default retention configuration for bucket-level settings
-func ValidateDefaultRetention(retention *DefaultRetention) error {
-	glog.V(2).Infof("ValidateDefaultRetention: Mode=%s, Days=%d (set=%v), Years=%d (set=%v)",
+// validateDefaultRetention validates default retention configuration for bucket-level settings
+func validateDefaultRetention(retention *DefaultRetention) error {
+	glog.V(2).Infof("validateDefaultRetention: Mode=%s, Days=%d (set=%v), Years=%d (set=%v)",
 		retention.Mode, retention.Days, retention.DaysSet, retention.Years, retention.YearsSet)
 
 	// Mode is required
