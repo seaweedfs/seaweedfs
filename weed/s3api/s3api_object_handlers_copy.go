@@ -77,8 +77,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if source bucket has versioning enabled
-	srcVersioningEnabled, err := s3a.isVersioningEnabled(srcBucket)
+	// Check if source bucket has versioning configured
+	srcVersioningConfigured, err := s3a.isVersioningConfigured(srcBucket)
 	if err != nil {
 		glog.Errorf("Error checking versioning status for source bucket %s: %v", srcBucket, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
@@ -87,7 +87,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// Get the source entry with version awareness
 	var entry *filer_pb.Entry
-	if srcVersioningEnabled {
+	if srcVersioningConfigured {
 		// For versioned buckets, use versioning-aware retrieval
 		if srcVersionId != "" {
 			// Get specific version
@@ -162,8 +162,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		dstEntry.Chunks = dstChunks
 	}
 
-	// Check if destination bucket has versioning enabled
-	dstVersioningEnabled, err := s3a.isVersioningEnabled(dstBucket)
+	// Check if destination bucket has versioning configured
+	dstVersioningConfigured, err := s3a.isVersioningConfigured(dstBucket)
 	if err != nil {
 		glog.Errorf("Error checking versioning status for destination bucket %s: %v", dstBucket, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	var dstVersionId string
 	var etag string
 
-	if dstVersioningEnabled {
+	if dstVersioningConfigured {
 		// For versioned destination, create a new version
 		dstVersionId = generateVersionId()
 		glog.V(2).Infof("CopyObjectHandler: creating version %s for destination %s/%s", dstVersionId, dstBucket, dstObject)
@@ -340,8 +340,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Check if source bucket has versioning enabled
-	srcVersioningEnabled, err := s3a.isVersioningEnabled(srcBucket)
+	// Check if source bucket has versioning configured
+	srcVersioningConfigured, err := s3a.isVersioningConfigured(srcBucket)
 	if err != nil {
 		glog.Errorf("Error checking versioning status for source bucket %s: %v", srcBucket, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
@@ -350,7 +350,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	// Get the source entry with version awareness
 	var entry *filer_pb.Entry
-	if srcVersioningEnabled {
+	if srcVersioningConfigured {
 		// For versioned buckets, use versioning-aware retrieval
 		if srcVersionId != "" {
 			// Get specific version
