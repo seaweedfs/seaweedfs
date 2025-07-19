@@ -238,30 +238,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	}
 
 	entryName, dirName := s3a.getEntryNameAndDir(input)
-	err = s3a.mkFile(dirName, entryName, finalParts, func(entry *filer_pb.Entry) {
-		if entry.Extended == nil {
-			entry.Extended = make(map[string][]byte)
-		}
-		entry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
-		for k, v := range pentry.Extended {
-			if k != "key" {
-				entry.Extended[k] = v
-			}
-		}
-		if pentry.Attributes.Mime != "" {
-			entry.Attributes.Mime = pentry.Attributes.Mime
-		} else if mime != "" {
-			entry.Attributes.Mime = mime
-		}
-		entry.Attributes.FileSize = uint64(offset)
-	})
 
-	if err != nil {
-		glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
-		return nil, s3err.ErrInternalError
-	}
-
-	// Check if versioning is configured for this bucket
+	// Check if versioning is configured for this bucket BEFORE creating any files
 	versioningState, vErr := s3a.getVersioningState(*input.Bucket)
 	if vErr == nil && versioningState == s3_constants.VersioningEnabled {
 		// For versioned buckets, create a version and return the version ID
@@ -345,6 +323,30 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			// VersionId field intentionally omitted for suspended versioning
 		}
 	} else {
+		// For non-versioned buckets, create main object file
+		err = s3a.mkFile(dirName, entryName, finalParts, func(entry *filer_pb.Entry) {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			entry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
+			for k, v := range pentry.Extended {
+				if k != "key" {
+					entry.Extended[k] = v
+				}
+			}
+			if pentry.Attributes.Mime != "" {
+				entry.Attributes.Mime = pentry.Attributes.Mime
+			} else if mime != "" {
+				entry.Attributes.Mime = mime
+			}
+			entry.Attributes.FileSize = uint64(offset)
+		})
+
+		if err != nil {
+			glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
+			return nil, s3err.ErrInternalError
+		}
+
 		// For non-versioned buckets, return response without VersionId
 		output = &CompleteMultipartUploadResult{
 			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),

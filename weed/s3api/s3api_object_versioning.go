@@ -241,6 +241,11 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 		}
 
 		if entry.IsDirectory {
+			// Skip .uploads directory (multipart upload temporary files)
+			if strings.HasPrefix(entry.Name, ".uploads") {
+				continue
+			}
+
 			// Check if this is a .versions directory
 			if strings.HasSuffix(entry.Name, ".versions") {
 				// Extract object name from .versions directory name
