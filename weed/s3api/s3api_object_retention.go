@@ -32,7 +32,6 @@ var (
 	ErrObjectUnderLegalHold         = errors.New("object is under legal hold and cannot be deleted or modified")
 	ErrGovernanceBypassNotPermitted = errors.New("user does not have permission to bypass governance retention")
 	ErrInvalidRetentionPeriod       = errors.New("invalid retention period specified")
-	ErrInvalidRetentionMode         = errors.New("invalid retention mode specified")
 	ErrBothDaysAndYearsSpecified    = errors.New("both days and years cannot be specified in the same retention configuration")
 	ErrMalformedXML                 = errors.New("malformed XML in request body")
 
@@ -228,7 +227,7 @@ func validateObjectLockConfiguration(config *ObjectLockConfiguration) error {
 
 // validateDefaultRetention validates default retention configuration
 func validateDefaultRetention(retention *DefaultRetention) error {
-	glog.Infof("validateDefaultRetention: Mode=%s, Days=%d (set=%v), Years=%d (set=%v)", retention.Mode, retention.Days, retention.DaysSet, retention.Years, retention.YearsSet)
+	glog.V(2).Infof("validateDefaultRetention: Mode=%s, Days=%d (set=%v), Years=%d (set=%v)", retention.Mode, retention.Days, retention.DaysSet, retention.Years, retention.YearsSet)
 	// Mode is required
 	if retention.Mode == "" {
 		return ErrDefaultRetentionMissingMode

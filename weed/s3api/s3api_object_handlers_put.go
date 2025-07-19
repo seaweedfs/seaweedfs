@@ -604,10 +604,6 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		// For invalid retention period (e.g., Days <= 0), return InvalidRetentionPeriod
 		// This matches the test expectations
 		return s3err.ErrInvalidRetentionPeriod
-	case errors.Is(err, ErrInvalidRetentionMode):
-		// For invalid retention mode, return InvalidRequest
-		// This matches the test expectations
-		return s3err.ErrInvalidRequest
 	case errors.Is(err, ErrComplianceModeActive):
 		// For compliance mode retention violations, return AccessDenied
 		// This matches the test expectations
