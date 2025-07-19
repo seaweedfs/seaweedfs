@@ -100,16 +100,16 @@ func (dr *DefaultRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 	if aux.Days != nil {
 		dr.Days = *aux.Days
 		dr.DaysSet = true
-		glog.Infof("DefaultRetention.UnmarshalXML: Days present, value=%d", dr.Days)
+		glog.V(4).Infof("DefaultRetention.UnmarshalXML: Days present, value=%d", dr.Days)
 	} else {
-		glog.Infof("DefaultRetention.UnmarshalXML: Days not present")
+		glog.V(4).Infof("DefaultRetention.UnmarshalXML: Days not present")
 	}
 	if aux.Years != nil {
 		dr.Years = *aux.Years
 		dr.YearsSet = true
-		glog.Infof("DefaultRetention.UnmarshalXML: Years present, value=%d", dr.Years)
+		glog.V(4).Infof("DefaultRetention.UnmarshalXML: Years present, value=%d", dr.Years)
 	} else {
-		glog.Infof("DefaultRetention.UnmarshalXML: Years not present")
+		glog.V(4).Infof("DefaultRetention.UnmarshalXML: Years not present")
 	}
 	return nil
 }
