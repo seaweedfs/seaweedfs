@@ -148,6 +148,8 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	glog.V(1).Infof("GetObject: bucket %s, object %s, versioningConfigured=%v, versionId=%s", bucket, object, versioningConfigured, versionId)
+
 	var destUrl string
 
 	if versioningConfigured {
@@ -167,10 +169,10 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			targetVersionId = versionId
 		} else {
 			// Request for latest version
-			glog.V(2).Infof("GetObject: requesting latest version for %s/%s", bucket, object)
+			glog.V(1).Infof("GetObject: requesting latest version for %s/%s", bucket, object)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
-				glog.Errorf("Failed to get latest version: %v", err)
+				glog.Errorf("GetObject: Failed to get latest version for %s/%s: %v", bucket, object, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}

@@ -680,7 +680,17 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 
 	// Check if directory has latest version metadata
 	if versionsEntry.Extended == nil {
-		return nil, fmt.Errorf("no version metadata found in .versions directory for %s/%s", bucket, object)
+		// No metadata means all versioned objects have been deleted.
+		// Fall back to checking for a pre-versioning object.
+		glog.V(2).Infof("getLatestObjectVersion: no Extended metadata in .versions directory for %s/%s, checking for pre-versioning object", bucket, cleanObject)
+
+		regularEntry, regularErr := s3a.getEntry(bucketDir, cleanObject)
+		if regularErr != nil {
+			return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s/%s", bucket, cleanObject)
+		}
+
+		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s (no Extended metadata case)", bucket, cleanObject)
+		return regularEntry, nil
 	}
 
 	latestVersionIdBytes, hasLatestVersionId := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]
