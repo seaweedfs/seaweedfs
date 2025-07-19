@@ -316,12 +316,20 @@ func TestRetentionWithMultipartUpload(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Try to delete - should fail
+	// Try simple DELETE - should succeed and create delete marker (AWS S3 behavior)
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.Error(t, err)
+	require.NoError(t, err, "Simple DELETE should succeed and create delete marker")
+
+	// Try DELETE with version ID - should fail due to GOVERNANCE retention
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: completeResp.VersionId,
+	})
+	require.Error(t, err, "DELETE with version ID should be blocked by GOVERNANCE retention")
 }
 
 // TestRetentionExtendedAttributes tests that retention uses extended attributes correctly
