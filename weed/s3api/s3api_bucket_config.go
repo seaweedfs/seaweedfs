@@ -226,10 +226,8 @@ func (s3a *S3ApiServer) getBucketVersioningStatus(bucket string) (string, s3err.
 		return "", errCode
 	}
 
-	if config.Versioning == "" {
-		return s3_constants.VersioningSuspended, s3err.ErrNone
-	}
-
+	// Return exactly what's stored - empty string means versioning was never configured
+	// This matches AWS S3 behavior where new buckets have no Status field in GetBucketVersioning response
 	return config.Versioning, s3err.ErrNone
 }
 

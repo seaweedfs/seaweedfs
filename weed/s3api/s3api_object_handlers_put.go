@@ -158,16 +158,17 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			// Check if versioning is suspended (different from never enabled)
-			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			if bucketEntry, bucketErr := s3a.getEntry(bucketDir, ""); bucketErr == nil && bucketEntry.Extended != nil {
-				if versioningBytes, exists := bucketEntry.Extended[s3_constants.ExtVersioningKey]; exists {
-					if string(versioningBytes) == s3_constants.VersioningSuspended {
-						// For suspended versioning, set version ID to "null" in response
-						w.Header().Set("x-amz-version-id", "null")
-					}
+			// Check versioning status to determine if we should return VersionId header
+			bucketConfig, configErr := s3a.getBucketConfig(bucket)
+			if configErr == s3err.ErrNone && bucketConfig.Versioning != "" {
+				// Versioning was explicitly configured (either Enabled or Suspended)
+				if bucketConfig.Versioning == s3_constants.VersioningSuspended {
+					// For suspended versioning, set version ID to "null" in response
+					w.Header().Set("x-amz-version-id", "null")
 				}
+				// Note: For enabled versioning, we would have taken the versioned PUT path above
 			}
+			// For buckets where versioning was never configured, don't return VersionId header at all
 
 			setEtag(w, etag)
 		}

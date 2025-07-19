@@ -400,6 +400,16 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 		return s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"))
 	}
 
+	if versionId == "null" {
+		// "null" version ID refers to pre-versioning objects stored as regular files
+		bucketDir := s3a.option.BucketsPath + "/" + bucket
+		entry, err := s3a.getEntry(bucketDir, object)
+		if err != nil {
+			return nil, fmt.Errorf("null version object %s not found: %v", object, err)
+		}
+		return entry, nil
+	}
+
 	// Get specific version from .versions directory
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionFile := s3a.getVersionFileName(versionId)
