@@ -392,25 +392,27 @@ func TestLegalHoldWorkflow(t *testing.T) {
 	})
 	require.Error(t, err, "DELETE with version ID should be blocked by legal hold")
 
-	// Remove legal hold
+	// Remove legal hold (must specify version ID since latest version is now delete marker)
 	_, err = client.PutObjectLegalHold(context.TODO(), &s3.PutObjectLegalHoldInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
 		LegalHold: &types.ObjectLockLegalHold{
 			Status: types.ObjectLockLegalHoldStatusOff,
 		},
 	})
 	require.NoError(t, err)
 
-	// Verify legal hold is off
+	// Verify legal hold is off (must specify version ID)
 	legalHoldResp, err = client.GetObjectLegalHold(context.TODO(), &s3.GetObjectLegalHoldInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, types.ObjectLockLegalHoldStatusOff, legalHoldResp.LegalHold.Status)
 
-	// Now DELETE with version ID should succeed
+	// Now DELETE with version ID should succeed after legal hold removed
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:    aws.String(bucketName),
 		Key:       aws.String(key),
@@ -594,10 +596,11 @@ func TestRetentionAndLegalHoldCombination(t *testing.T) {
 	})
 	require.Error(t, err, "Legal hold should prevent deletion even with governance bypass")
 
-	// Remove legal hold
+	// Remove legal hold (must specify version ID since latest version is now delete marker)
 	_, err = client.PutObjectLegalHold(context.TODO(), &s3.PutObjectLegalHoldInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
 		LegalHold: &types.ObjectLockLegalHold{
 			Status: types.ObjectLockLegalHoldStatusOff,
 		},
