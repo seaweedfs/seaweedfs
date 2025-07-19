@@ -128,7 +128,10 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		return nil, err
 	}
 
-	// For each entry, check if it's a .versions directory
+	// Track objects that have been processed to avoid duplicates
+	processedObjects := make(map[string]bool)
+
+	// First, process .versions directories (post-versioning objects)
 	for _, entry := range entries {
 		if !entry.IsDirectory {
 			continue
@@ -141,6 +144,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 
 		// Extract object name from .versions directory name
 		objectKey := strings.TrimSuffix(entry.Name, ".versions")
+		processedObjects[objectKey] = true
 
 		versions, err := s3a.getObjectVersionList(bucket, objectKey)
 		if err != nil {
@@ -172,6 +176,36 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 				allVersions = append(allVersions, versionEntry)
 			}
 		}
+	}
+
+	// Second, process regular files (pre-versioning objects)
+	for _, entry := range entries {
+		if entry.IsDirectory {
+			continue // Skip directories (already processed .versions directories above)
+		}
+
+		objectKey := entry.Name
+
+		// Skip if this object already has a .versions directory (already processed)
+		if processedObjects[objectKey] {
+			continue
+		}
+
+		// This is a pre-versioning object - treat it as a version with VersionId="null"
+		glog.V(2).Infof("listObjectVersions: found pre-versioning object %s", objectKey)
+
+		etag := s3a.calculateETagFromChunks(entry.Chunks)
+		versionEntry := &VersionEntry{
+			Key:          objectKey,
+			VersionId:    "null",
+			IsLatest:     true, // Pre-versioning objects are always the latest (only) version
+			LastModified: time.Unix(entry.Attributes.Mtime, 0),
+			ETag:         etag,
+			Size:         int64(entry.Attributes.FileSize),
+			Owner:        CanonicalUser{ID: "unknown", DisplayName: "unknown"},
+			StorageClass: "STANDARD",
+		}
+		allVersions = append(allVersions, versionEntry)
 	}
 
 	// Sort by key, then by LastModified and VersionId
@@ -455,7 +489,18 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	// Get the .versions directory entry to read latest version metadata
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get .versions directory: %w", err)
+		// .versions directory doesn't exist - this can happen for objects that existed
+		// before versioning was enabled on the bucket. Fall back to checking for a
+		// regular (non-versioned) object file.
+		glog.V(2).Infof("getLatestObjectVersion: no .versions directory for %s/%s, checking for pre-versioning object", bucket, object)
+
+		regularEntry, regularErr := s3a.getEntry(bucketDir, object)
+		if regularErr != nil {
+			return nil, fmt.Errorf("failed to get %s/%s .versions directory and no regular object found: %w", bucket, object, err)
+		}
+
+		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s", bucket, object)
+		return regularEntry, nil
 	}
 
 	// Check if directory has latest version metadata
