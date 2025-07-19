@@ -25,8 +25,8 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 	// Get version ID from query parameters
 	versionId := r.URL.Query().Get("versionId")
 
-	// Validate governance bypass permission
-	bypassGovernance := s3a.validateGovernanceBypass(r, bucket, object)
+	// Evaluate governance bypass request (header + permission validation)
+	governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
 
 	// Parse retention configuration from request body
 	retention, err := parseObjectRetention(r)
@@ -44,7 +44,7 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 	}
 
 	// Set retention on the object
-	if err := s3a.setObjectRetention(bucket, object, versionId, retention, bypassGovernance); err != nil {
+	if err := s3a.setObjectRetention(bucket, object, versionId, retention, governanceBypassAllowed); err != nil {
 		glog.Errorf("PutObjectRetentionHandler: failed to set retention: %v", err)
 
 		// Handle specific error cases
