@@ -627,6 +627,18 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 	return false
 }
 
+// validateGovernanceBypass checks if the user has requested governance bypass via header
+// and validates they have the required s3:BypassGovernanceRetention permission.
+// This helper method consolidates the repetitive governance bypass validation logic
+// used across multiple handlers (DELETE, PUT, etc.).
+func (s3a *S3ApiServer) validateGovernanceBypass(r *http.Request, bucket, object string) bool {
+	// Check if governance bypass header is present
+	bypassRequested := r.Header.Get("x-amz-bypass-governance-retention") == "true"
+
+	// Only allow bypass if both header is present AND user has permission
+	return bypassRequested && s3a.checkGovernanceBypassPermission(r, bucket, object)
+}
+
 // checkObjectLockPermissions checks if an object can be deleted or modified
 func (s3a *S3ApiServer) checkObjectLockPermissions(request *http.Request, bucket, object, versionId string, bypassGovernance bool) error {
 	// Get the object entry to check both retention and legal hold
@@ -682,12 +694,8 @@ func (s3a *S3ApiServer) checkObjectLockPermissions(request *http.Request, bucket
 			if !bypassGovernance {
 				return ErrGovernanceModeActive
 			}
-
-			// If bypass is requested, check if user has permission
-			if !s3a.checkGovernanceBypassPermission(request, bucket, object) {
-				glog.V(2).Infof("User does not have s3:BypassGovernanceRetention permission for %s/%s", bucket, object)
-				return ErrGovernanceBypassNotPermitted
-			}
+			// Note: bypassGovernance parameter is already validated by validateGovernanceBypass()
+			// which checks both header presence and IAM permissions, so we trust it here
 		}
 	}
 

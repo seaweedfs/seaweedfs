@@ -25,8 +25,8 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 	// Get version ID from query parameters
 	versionId := r.URL.Query().Get("versionId")
 
-	// Check for bypass governance retention header
-	bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
+	// Validate governance bypass permission
+	bypassGovernance := s3a.validateGovernanceBypass(r, bucket, object)
 
 	// Parse retention configuration from request body
 	retention, err := parseObjectRetention(r)
