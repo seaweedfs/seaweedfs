@@ -27,7 +27,7 @@ var (
 	ErrInvalidObjectLockMode                 = errors.New("invalid object lock mode")
 	ErrInvalidLegalHoldStatus                = errors.New("invalid legal hold status")
 	ErrInvalidRetentionDateFormat            = errors.New("invalid retention until date format")
-	ErrRetentionDateMustBeFuture             = errors.New("retention until date must be in the future")
+	ErrRetentionDateMustBeFuture             = errors.New("retain until date must be in the future")
 	ErrObjectLockModeRequiresDate            = errors.New("object lock mode requires retention until date")
 	ErrRetentionDateRequiresMode             = errors.New("retention until date requires object lock mode")
 	ErrGovernanceBypassVersioningRequired    = errors.New("governance bypass header can only be used on versioned buckets")
@@ -604,6 +604,10 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		// For invalid retention period (e.g., Days <= 0), return InvalidRetentionPeriod
 		// This matches the test expectations
 		return s3err.ErrInvalidRetentionPeriod
+	case errors.Is(err, ErrInvalidRetentionMode):
+		// For invalid retention mode, return InvalidRequest
+		// This matches the test expectations
+		return s3err.ErrInvalidRequest
 	// Validation error constants
 	case errors.Is(err, ErrObjectLockConfigurationMissingEnabled):
 		return s3err.ErrMalformedXML
@@ -623,6 +627,16 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrInvalidRetentionPeriod
 	case errors.Is(err, ErrDefaultRetentionYearsOutOfRange):
 		return s3err.ErrInvalidRetentionPeriod
+	}
+
+	// Check for error constants from the updated validation functions
+	switch {
+	case errors.Is(err, ErrRetentionMissingMode):
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrRetentionMissingRetainUntilDate):
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrInvalidRetentionModeValue):
+		return s3err.ErrInvalidRequest
 	}
 
 	return s3err.ErrInvalidRequest

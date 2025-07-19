@@ -35,6 +35,11 @@ var (
 	ErrInvalidRetentionMode         = errors.New("invalid retention mode specified")
 	ErrBothDaysAndYearsSpecified    = errors.New("both days and years cannot be specified in the same retention configuration")
 	ErrMalformedXML                 = errors.New("malformed XML in request body")
+
+	// Validation error constants with specific messages for tests
+	ErrRetentionMissingMode            = errors.New("retention configuration must specify Mode")
+	ErrRetentionMissingRetainUntilDate = errors.New("retention configuration must specify RetainUntilDate")
+	ErrInvalidRetentionModeValue       = errors.New("invalid retention mode")
 )
 
 const (
@@ -157,23 +162,24 @@ func parseObjectLockConfiguration(request *http.Request) (*ObjectLockConfigurati
 
 // validateRetention validates retention configuration
 func validateRetention(retention *ObjectRetention) error {
-	// AWS requires both Mode and RetainUntilDate for PutObjectRetention
+	// Check if mode is specified
 	if retention.Mode == "" {
-		return ErrInvalidRetentionMode
+		return ErrRetentionMissingMode
 	}
 
+	// Check if retain until date is specified
 	if retention.RetainUntilDate == nil {
-		return ErrInvalidRetentionPeriod
+		return ErrRetentionMissingRetainUntilDate
 	}
 
-	// For invalid retention mode values, return MalformedXML error
-	// This matches the test expectations for lowercase/invalid mode values
+	// Check if mode is valid
 	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
-		return ErrMalformedXML
+		return ErrInvalidRetentionModeValue
 	}
 
+	// Check if retain until date is in the future
 	if retention.RetainUntilDate.Before(time.Now()) {
-		return ErrInvalidRetentionPeriod
+		return ErrRetentionDateMustBeFuture
 	}
 
 	return nil
@@ -181,10 +187,9 @@ func validateRetention(retention *ObjectRetention) error {
 
 // validateLegalHold validates legal hold configuration
 func validateLegalHold(legalHold *ObjectLegalHold) error {
-	// For invalid legal hold status values, return MalformedXML error
-	// This matches the test expectations for invalid status values
+	// Check if status is valid
 	if legalHold.Status != s3_constants.LegalHoldOn && legalHold.Status != s3_constants.LegalHoldOff {
-		return ErrMalformedXML
+		return ErrInvalidLegalHoldStatus
 	}
 
 	return nil
@@ -236,9 +241,9 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 		return ErrInvalidRetentionPeriod
 	}
 
-	// Check for Days: 0 when Years is also 0 (this should return InvalidRetentionPeriod)
+	// Check for neither Days nor Years being specified
 	if retention.Days == 0 && retention.Years == 0 {
-		return ErrInvalidRetentionPeriod
+		return ErrDefaultRetentionMissingPeriod
 	}
 
 	// Check for both Days and Years being specified
