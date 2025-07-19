@@ -49,19 +49,17 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
 	}
 
-	// Check object lock permissions before deletion (only for versioned buckets)
-	if versioningEnabled {
-		bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
-		if err := s3a.checkObjectLockPermissions(r, bucket, object, versionId, bypassGovernance); err != nil {
-			glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			return
-		}
-	}
-
 	if versioningEnabled {
 		// Handle versioned delete
 		if versionId != "" {
+			// Check object lock permissions before deleting specific version
+			bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
+			if err := s3a.checkObjectLockPermissions(r, bucket, object, versionId, bypassGovernance); err != nil {
+				glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return
+			}
+
 			// Delete specific version
 			err := s3a.deleteSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
@@ -73,7 +71,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			// Set version ID in response header
 			w.Header().Set("x-amz-version-id", versionId)
 		} else {
-			// Create delete marker (logical delete)
+			// Create delete marker (logical delete) - this is NOT blocked by object lock retention
 			deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object)
 			if err != nil {
 				glog.Errorf("Failed to create delete marker: %v", err)

@@ -573,9 +573,9 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		// This matches the test expectations
 		return s3err.ErrInvalidRequest
 	case errors.Is(err, ErrInvalidLegalHoldStatus):
-		// For invalid legal hold status, return InvalidRequest
-		// This matches the test expectations
-		return s3err.ErrInvalidRequest
+		// For invalid legal hold status, return MalformedXML
+		// AWS S3 returns MalformedXML for invalid legal hold status values
+		return s3err.ErrMalformedXML
 	case errors.Is(err, ErrInvalidRetentionDateFormat):
 		// For malformed retention date format, return MalformedDate
 		// This matches the test expectations
