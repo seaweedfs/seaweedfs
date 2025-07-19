@@ -4,7 +4,9 @@ import (
 	"encoding/xml"
 	"fmt"
 	"strconv"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
@@ -233,6 +235,128 @@ func ValidateObjectLockParameters(enabled bool, mode string, duration int32) err
 
 	if duration > MaxRetentionDays {
 		return ErrObjectLockDurationExceeded
+	}
+
+	return nil
+}
+
+// ====================================================================
+// OBJECT LOCK VALIDATION FUNCTIONS
+// ====================================================================
+// These validation functions provide comprehensive validation for
+// all Object Lock related configurations and requests.
+
+// ValidateRetention validates retention configuration for object-level retention
+func ValidateRetention(retention *ObjectRetention) error {
+	// Check if mode is specified
+	if retention.Mode == "" {
+		return ErrRetentionMissingMode
+	}
+
+	// Check if retain until date is specified
+	if retention.RetainUntilDate == nil {
+		return ErrRetentionMissingRetainUntilDate
+	}
+
+	// Check if mode is valid
+	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
+		return ErrInvalidRetentionModeValue
+	}
+
+	// Check if retain until date is in the future
+	if retention.RetainUntilDate.Before(time.Now()) {
+		return ErrRetentionDateMustBeFuture
+	}
+
+	return nil
+}
+
+// ValidateLegalHold validates legal hold configuration
+func ValidateLegalHold(legalHold *ObjectLegalHold) error {
+	// Check if status is valid
+	if legalHold.Status != s3_constants.LegalHoldOn && legalHold.Status != s3_constants.LegalHoldOff {
+		return ErrInvalidLegalHoldStatus
+	}
+
+	return nil
+}
+
+// ValidateObjectLockConfiguration validates object lock configuration at bucket level
+func ValidateObjectLockConfiguration(config *ObjectLockConfiguration) error {
+	// ObjectLockEnabled is required for bucket-level configuration
+	if config.ObjectLockEnabled == "" {
+		return ErrObjectLockConfigurationMissingEnabled
+	}
+
+	// Validate ObjectLockEnabled value
+	if config.ObjectLockEnabled != s3_constants.ObjectLockEnabled {
+		// ObjectLockEnabled can only be 'Enabled', any other value (including 'Disabled') is malformed XML
+		return ErrInvalidObjectLockEnabledValue
+	}
+
+	// Validate Rule if present
+	if config.Rule != nil {
+		if config.Rule.DefaultRetention == nil {
+			return ErrRuleMissingDefaultRetention
+		}
+		return validateDefaultRetention(config.Rule.DefaultRetention)
+	}
+
+	return nil
+}
+
+// validateDefaultRetention validates default retention configuration for bucket-level settings
+func validateDefaultRetention(retention *DefaultRetention) error {
+	glog.V(2).Infof("validateDefaultRetention: Mode=%s, Days=%d (set=%v), Years=%d (set=%v)",
+		retention.Mode, retention.Days, retention.DaysSet, retention.Years, retention.YearsSet)
+
+	// Mode is required
+	if retention.Mode == "" {
+		return ErrDefaultRetentionMissingMode
+	}
+
+	// Mode must be valid
+	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
+		return ErrInvalidDefaultRetentionMode
+	}
+
+	// Check for invalid Years value (negative values are always invalid)
+	if retention.YearsSet && retention.Years < 0 {
+		return ErrInvalidRetentionPeriod
+	}
+
+	// Check for invalid Days value (negative values are invalid)
+	if retention.DaysSet && retention.Days < 0 {
+		return ErrInvalidRetentionPeriod
+	}
+
+	// Check for invalid Days value (zero is invalid when explicitly provided)
+	if retention.DaysSet && retention.Days == 0 {
+		return ErrInvalidRetentionPeriod
+	}
+
+	// Check for neither Days nor Years being specified
+	if !retention.DaysSet && !retention.YearsSet {
+		return ErrDefaultRetentionMissingPeriod
+	}
+
+	// Check for both Days and Years being specified
+	if retention.DaysSet && retention.YearsSet {
+		return ErrDefaultRetentionBothDaysAndYears
+	}
+
+	// Validate Days if specified
+	if retention.DaysSet && retention.Days > 0 {
+		if retention.Days > MaxRetentionDays {
+			return ErrDefaultRetentionDaysOutOfRange
+		}
+	}
+
+	// Validate Years if specified
+	if retention.YearsSet && retention.Years > 0 {
+		if retention.Years > MaxRetentionYears {
+			return ErrDefaultRetentionYearsOutOfRange
+		}
 	}
 
 	return nil

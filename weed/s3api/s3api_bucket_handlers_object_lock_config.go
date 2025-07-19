@@ -41,7 +41,7 @@ func (s3a *S3ApiServer) PutObjectLockConfigurationHandler(w http.ResponseWriter,
 	}
 
 	// Validate object lock configuration
-	if err := validateObjectLockConfiguration(config); err != nil {
+	if err := ValidateObjectLockConfiguration(config); err != nil {
 		glog.Errorf("PutObjectLockConfigurationHandler: invalid object lock config: %v", err)
 		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 		return

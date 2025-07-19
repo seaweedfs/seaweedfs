@@ -34,7 +34,7 @@ func (s3a *S3ApiServer) PutObjectLegalHoldHandler(w http.ResponseWriter, r *http
 	}
 
 	// Validate legal hold configuration
-	if err := validateLegalHold(legalHold); err != nil {
+	if err := ValidateLegalHold(legalHold); err != nil {
 		glog.Errorf("PutObjectLegalHoldHandler: invalid legal hold config: %v", err)
 		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 		return
