@@ -95,12 +95,14 @@ func TestObjectLockValidation(t *testing.T) {
 	require.Error(t, err, "DELETE with version ID should be blocked by COMPLIANCE retention")
 	t.Log("   ✅ Object version is properly protected by retention policy")
 
-	// Verify we can read the object (should still work)
+	// Verify we can read the object version (should still work)
+	// Note: Need to specify version ID since latest version is now a delete marker
 	getResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
 	})
-	require.NoError(t, err, "Reading protected object should still work")
+	require.NoError(t, err, "Reading protected object version should still work")
 	defer getResp.Body.Close()
 	t.Log("   ✅ Protected object can still be read")
 
