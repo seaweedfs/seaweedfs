@@ -155,8 +155,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			// Set version ID to "null" in response header for suspended versioning
-			w.Header().Set("x-amz-version-id", "null")
+			// Note: Suspended versioning should NOT return x-amz-version-id header according to AWS S3 spec
+			// The object is stored with "null" version internally but no version header is returned
 
 			// Set ETag in response
 			setEtag(w, etag)
