@@ -347,12 +347,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			return nil, s3err.ErrInternalError
 		}
 
+		// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
 		output = &CompleteMultipartUploadResult{
-			Location:  aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
-			Bucket:    input.Bucket,
-			ETag:      aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
-			Key:       objectKey(input.Key),
-			VersionId: aws.String("null"),
+			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+			Bucket:   input.Bucket,
+			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
+			Key:      objectKey(input.Key),
+			// VersionId field intentionally omitted for suspended versioning
 		}
 	} else {
 		// For non-versioned buckets, return response without VersionId
