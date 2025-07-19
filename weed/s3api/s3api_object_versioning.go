@@ -472,7 +472,9 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		// Check if the object exists
 		_, err := s3a.getEntry(bucketDir, cleanObject)
 		if err != nil {
-			return fmt.Errorf("null version object %s not found: %v", cleanObject, err)
+			// Object doesn't exist - this is OK for delete operations (idempotent)
+			glog.V(2).Infof("deleteSpecificObjectVersion: null version object %s already deleted or doesn't exist", cleanObject)
+			return nil
 		}
 
 		// Delete the regular file
