@@ -497,16 +497,120 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		return fmt.Errorf("version %s not found: %v", versionId, err)
 	}
 
-	// Version exists, delete it
+	// Check if this is the latest version before deleting
+	versionsEntry, dirErr := s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), object+".versions")
+	isLatestVersion := false
+	if dirErr == nil && versionsEntry.Extended != nil {
+		if latestVersionIdBytes, hasLatest := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]; hasLatest {
+			isLatestVersion = (string(latestVersionIdBytes) == versionId)
+		}
+	}
+
+	// Delete the version file
 	deleteErr := s3a.rm(versionsDir, versionFile, true, false)
 	if deleteErr != nil {
 		// Check if file was already deleted by another process
 		if _, checkErr := s3a.getEntry(versionsDir, versionFile); checkErr != nil {
 			// File doesn't exist anymore, deletion was successful
-			return nil
+		} else {
+			return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
 		}
-		return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
 	}
+
+	// If we deleted the latest version, update the .versions directory metadata to point to the new latest
+	if isLatestVersion {
+		err := s3a.updateLatestVersionAfterDeletion(bucket, object)
+		if err != nil {
+			glog.Warningf("deleteSpecificObjectVersion: failed to update latest version after deletion: %v", err)
+			// Don't return error since the deletion was successful
+		}
+	}
+
+	return nil
+}
+
+// updateLatestVersionAfterDeletion finds the new latest version after deleting the current latest
+func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) error {
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	cleanObject := strings.TrimPrefix(object, "/")
+	versionsObjectPath := cleanObject + ".versions"
+	versionsDir := bucketDir + "/" + versionsObjectPath
+
+	glog.V(1).Infof("updateLatestVersionAfterDeletion: updating latest version for %s/%s, listing %s", bucket, object, versionsDir)
+
+	// List all remaining version files in the .versions directory
+	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
+	if err != nil {
+		glog.Errorf("updateLatestVersionAfterDeletion: failed to list versions in %s: %v", versionsDir, err)
+		return fmt.Errorf("failed to list versions: %v", err)
+	}
+
+	glog.V(1).Infof("updateLatestVersionAfterDeletion: found %d entries in %s", len(entries), versionsDir)
+
+	// Find the most recent remaining version (latest timestamp in version ID)
+	var latestVersionId string
+	var latestVersionFileName string
+
+	for _, entry := range entries {
+		if entry.Extended == nil {
+			continue
+		}
+
+		versionIdBytes, hasVersionId := entry.Extended[s3_constants.ExtVersionIdKey]
+		if !hasVersionId {
+			continue
+		}
+
+		versionId := string(versionIdBytes)
+
+		// Skip delete markers when finding latest content version
+		isDeleteMarkerBytes, _ := entry.Extended[s3_constants.ExtDeleteMarkerKey]
+		if string(isDeleteMarkerBytes) == "true" {
+			continue
+		}
+
+		// Compare version IDs chronologically (our version IDs start with timestamp)
+		if latestVersionId == "" || versionId > latestVersionId {
+			glog.V(1).Infof("updateLatestVersionAfterDeletion: found newer version %s (file: %s)", versionId, entry.Name)
+			latestVersionId = versionId
+			latestVersionFileName = entry.Name
+		} else {
+			glog.V(1).Infof("updateLatestVersionAfterDeletion: skipping older version %s", versionId)
+		}
+	}
+
+	// Update the .versions directory metadata
+	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
+	if err != nil {
+		return fmt.Errorf("failed to get .versions directory: %v", err)
+	}
+
+	if versionsEntry.Extended == nil {
+		versionsEntry.Extended = make(map[string][]byte)
+	}
+
+	if latestVersionId != "" {
+		// Update metadata to point to new latest version
+		versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(latestVersionId)
+		versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(latestVersionFileName)
+		glog.V(2).Infof("updateLatestVersionAfterDeletion: new latest version for %s/%s is %s", bucket, object, latestVersionId)
+	} else {
+		// No versions left, remove latest version metadata
+		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
+		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
+		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s", bucket, object)
+	}
+
+	// Update the .versions directory entry
+	err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = versionsEntry.Extended
+		updatedEntry.Attributes = versionsEntry.Attributes
+		updatedEntry.Chunks = versionsEntry.Chunks
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update .versions directory metadata: %v", err)
+	}
+
 	return nil
 }
 
@@ -554,7 +658,8 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 // getLatestObjectVersion finds the latest version of an object by reading .versions directory metadata
 func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb.Entry, error) {
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	versionsObjectPath := object + ".versions"
+	cleanObject := strings.TrimPrefix(object, "/")
+	versionsObjectPath := cleanObject + ".versions"
 
 	// Get the .versions directory entry to read latest version metadata
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
@@ -564,12 +669,12 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 		// regular (non-versioned) object file.
 		glog.V(2).Infof("getLatestObjectVersion: no .versions directory for %s/%s, checking for pre-versioning object", bucket, object)
 
-		regularEntry, regularErr := s3a.getEntry(bucketDir, object)
+		regularEntry, regularErr := s3a.getEntry(bucketDir, cleanObject)
 		if regularErr != nil {
-			return nil, fmt.Errorf("failed to get %s/%s .versions directory and no regular object found: %w", bucket, object, err)
+			return nil, fmt.Errorf("failed to get %s/%s .versions directory and no regular object found: %w", bucket, cleanObject, err)
 		}
 
-		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s", bucket, object)
+		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s", bucket, cleanObject)
 		return regularEntry, nil
 	}
 
@@ -582,7 +687,17 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	latestVersionFileBytes, hasLatestVersionFile := versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
 
 	if !hasLatestVersionId || !hasLatestVersionFile {
-		return nil, fmt.Errorf("incomplete latest version metadata in .versions directory for %s/%s", bucket, object)
+		// No version metadata means all versioned objects have been deleted.
+		// Fall back to checking for a pre-versioning object.
+		glog.V(2).Infof("getLatestObjectVersion: no version metadata in .versions directory for %s/%s, checking for pre-versioning object", bucket, object)
+
+		regularEntry, regularErr := s3a.getEntry(bucketDir, cleanObject)
+		if regularErr != nil {
+			return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s/%s", bucket, cleanObject)
+		}
+
+		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s after version deletion", bucket, cleanObject)
+		return regularEntry, nil
 	}
 
 	latestVersionId := string(latestVersionIdBytes)
