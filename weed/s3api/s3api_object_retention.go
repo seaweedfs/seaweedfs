@@ -15,6 +15,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// ====================================================================
+// ERROR DEFINITIONS
+// ====================================================================
+
 // Sentinel errors for proper error handling instead of string matching
 var (
 	ErrNoRetentionConfiguration = errors.New("no retention configuration found")
@@ -47,6 +51,10 @@ const (
 	MaxRetentionYears = 100   // Maximum number of years for object retention
 )
 
+// ====================================================================
+// DATA STRUCTURES
+// ====================================================================
+
 // ObjectRetention represents S3 Object Retention configuration
 type ObjectRetention struct {
 	XMLName         xml.Name   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Retention"`
@@ -75,7 +83,6 @@ type ObjectLockRule struct {
 
 // DefaultRetention represents default retention settings
 // Implements custom XML unmarshal to track if Days/Years were present in XML
-
 type DefaultRetention struct {
 	XMLName  xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DefaultRetention"`
 	Mode     string   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Mode,omitempty"`
@@ -85,6 +92,12 @@ type DefaultRetention struct {
 	YearsSet bool     `xml:"-"`
 }
 
+// ====================================================================
+// XML PARSING
+// ====================================================================
+
+// UnmarshalXML implements custom XML unmarshaling for DefaultRetention
+// to track whether Days/Years fields were explicitly present in the XML
 func (dr *DefaultRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias DefaultRetention
 	aux := &struct {
@@ -166,110 +179,9 @@ func parseObjectLockConfiguration(request *http.Request) (*ObjectLockConfigurati
 	return &config, nil
 }
 
-// validateRetention validates retention configuration
-func validateRetention(retention *ObjectRetention) error {
-	// Check if mode is specified
-	if retention.Mode == "" {
-		return ErrRetentionMissingMode
-	}
-
-	// Check if retain until date is specified
-	if retention.RetainUntilDate == nil {
-		return ErrRetentionMissingRetainUntilDate
-	}
-
-	// Check if mode is valid
-	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
-		return ErrInvalidRetentionModeValue
-	}
-
-	// Check if retain until date is in the future
-	if retention.RetainUntilDate.Before(time.Now()) {
-		return ErrRetentionDateMustBeFuture
-	}
-
-	return nil
-}
-
-// validateLegalHold validates legal hold configuration
-func validateLegalHold(legalHold *ObjectLegalHold) error {
-	// Check if status is valid
-	if legalHold.Status != s3_constants.LegalHoldOn && legalHold.Status != s3_constants.LegalHoldOff {
-		return ErrInvalidLegalHoldStatus
-	}
-
-	return nil
-}
-
-// validateObjectLockConfiguration validates object lock configuration
-func validateObjectLockConfiguration(config *ObjectLockConfiguration) error {
-	// ObjectLockEnabled is required for bucket-level configuration
-	if config.ObjectLockEnabled == "" {
-		return ErrObjectLockConfigurationMissingEnabled
-	}
-
-	// Validate ObjectLockEnabled value
-	if config.ObjectLockEnabled != s3_constants.ObjectLockEnabled {
-		// ObjectLockEnabled can only be 'Enabled', any other value (including 'Disabled') is malformed XML
-		return ErrInvalidObjectLockEnabledValue
-	}
-
-	// Validate Rule if present
-	if config.Rule != nil {
-		if config.Rule.DefaultRetention == nil {
-			return ErrRuleMissingDefaultRetention
-		}
-		return validateDefaultRetention(config.Rule.DefaultRetention)
-	}
-
-	return nil
-}
-
-// validateDefaultRetention validates default retention configuration
-func validateDefaultRetention(retention *DefaultRetention) error {
-	glog.V(2).Infof("validateDefaultRetention: Mode=%s, Days=%d (set=%v), Years=%d (set=%v)", retention.Mode, retention.Days, retention.DaysSet, retention.Years, retention.YearsSet)
-	// Mode is required
-	if retention.Mode == "" {
-		return ErrDefaultRetentionMissingMode
-	}
-	// Mode must be valid
-	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
-		return ErrInvalidDefaultRetentionMode
-	}
-	// Check for invalid Years value (negative values are always invalid)
-	if retention.YearsSet && retention.Years < 0 {
-		return ErrInvalidRetentionPeriod
-	}
-	// Check for invalid Days value (negative values are invalid)
-	if retention.DaysSet && retention.Days < 0 {
-		return ErrInvalidRetentionPeriod
-	}
-	// Check for invalid Days value (zero is invalid when explicitly provided)
-	if retention.DaysSet && retention.Days == 0 {
-		return ErrInvalidRetentionPeriod
-	}
-	// Check for neither Days nor Years being specified
-	if !retention.DaysSet && !retention.YearsSet {
-		return ErrDefaultRetentionMissingPeriod
-	}
-	// Check for both Days and Years being specified
-	if retention.DaysSet && retention.YearsSet && retention.Days > 0 && retention.Years > 0 {
-		return ErrDefaultRetentionBothDaysAndYears
-	}
-	// Validate Days if specified
-	if retention.DaysSet && retention.Days > 0 {
-		if retention.Days > MaxRetentionDays {
-			return ErrDefaultRetentionDaysOutOfRange
-		}
-	}
-	// Validate Years if specified
-	if retention.YearsSet && retention.Years > 0 {
-		if retention.Years > MaxRetentionYears {
-			return ErrDefaultRetentionYearsOutOfRange
-		}
-	}
-	return nil
-}
+// ====================================================================
+// OBJECT ENTRY OPERATIONS
+// ====================================================================
 
 // getObjectEntry retrieves the appropriate object entry based on versioning and versionId
 func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer_pb.Entry, error) {
@@ -300,7 +212,11 @@ func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer
 	return entry, nil
 }
 
-// getObjectRetention retrieves retention configuration from object metadata
+// ====================================================================
+// RETENTION OPERATIONS
+// ====================================================================
+
+// getObjectRetention retrieves object retention configuration
 func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*ObjectRetention, error) {
 	entry, err := s3a.getObjectEntry(bucket, object, versionId)
 	if err != nil {
@@ -333,7 +249,7 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 	return retention, nil
 }
 
-// setObjectRetention sets retention configuration on object metadata
+// setObjectRetention sets object retention configuration
 func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, retention *ObjectRetention, bypassGovernance bool) error {
 	var entry *filer_pb.Entry
 	var err error
@@ -446,7 +362,11 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	})
 }
 
-// getObjectLegalHold retrieves legal hold configuration from object metadata
+// ====================================================================
+// LEGAL HOLD OPERATIONS
+// ====================================================================
+
+// getObjectLegalHold retrieves object legal hold configuration
 func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*ObjectLegalHold, error) {
 	entry, err := s3a.getObjectEntry(bucket, object, versionId)
 	if err != nil {
@@ -468,7 +388,7 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 	return legalHold, nil
 }
 
-// setObjectLegalHold sets legal hold configuration on object metadata
+// setObjectLegalHold sets object legal hold configuration
 func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, legalHold *ObjectLegalHold) error {
 	var entry *filer_pb.Entry
 	var err error
@@ -529,7 +449,11 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 	})
 }
 
-// isObjectRetentionActive checks if an object is currently under retention
+// ====================================================================
+// PROTECTION ENFORCEMENT
+// ====================================================================
+
+// isObjectRetentionActive checks if object has active retention
 func (s3a *S3ApiServer) isObjectRetentionActive(bucket, object, versionId string) (bool, error) {
 	retention, err := s3a.getObjectRetention(bucket, object, versionId)
 	if err != nil {
@@ -547,7 +471,7 @@ func (s3a *S3ApiServer) isObjectRetentionActive(bucket, object, versionId string
 	return false, nil
 }
 
-// getRetentionFromEntry extracts retention configuration from an existing entry
+// getRetentionFromEntry extracts retention configuration from filer entry
 func (s3a *S3ApiServer) getRetentionFromEntry(entry *filer_pb.Entry) (*ObjectRetention, bool, error) {
 	if entry.Extended == nil {
 		return nil, false, nil
@@ -577,7 +501,7 @@ func (s3a *S3ApiServer) getRetentionFromEntry(entry *filer_pb.Entry) (*ObjectRet
 	return retention, isActive, nil
 }
 
-// getLegalHoldFromEntry extracts legal hold configuration from an existing entry
+// getLegalHoldFromEntry extracts legal hold configuration from filer entry
 func (s3a *S3ApiServer) getLegalHoldFromEntry(entry *filer_pb.Entry) (*ObjectLegalHold, bool, error) {
 	if entry.Extended == nil {
 		return nil, false, nil
@@ -595,14 +519,11 @@ func (s3a *S3ApiServer) getLegalHoldFromEntry(entry *filer_pb.Entry) (*ObjectLeg
 	return legalHold, isActive, nil
 }
 
-// checkGovernanceBypassPermission validates if the user has IAM permission to bypass governance retention.
-// This is the low-level permission check that integrates with the IAM system.
-//
-// Returns true if:
-// - User has s3:BypassGovernanceRetention permission for the resource, OR
-// - User has Admin permissions for the resource
-//
-// This function does NOT check if the bypass header is present - that's handled separately.
+// ====================================================================
+// GOVERNANCE BYPASS
+// ====================================================================
+
+// checkGovernanceBypassPermission checks if user has permission to bypass governance retention
 func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, bucket, object string) bool {
 	// Use the existing IAM auth system to check the specific permission
 	// Create the governance bypass action with proper bucket/object concatenation
@@ -633,15 +554,7 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 	return false
 }
 
-// evaluateGovernanceBypassRequest determines if a governance bypass should be allowed.
-// This is the high-level validation that combines header checking with permission validation.
-//
-// AWS S3 requires BOTH conditions:
-// 1. Client sends x-amz-bypass-governance-retention: true header (intent)
-// 2. User has s3:BypassGovernanceRetention IAM permission (authorization)
-//
-// Returns true only if both conditions are met.
-// Used by all handlers that need to check governance bypass (DELETE, PUT, etc.).
+// evaluateGovernanceBypassRequest evaluates if governance bypass is requested and permitted
 func (s3a *S3ApiServer) evaluateGovernanceBypassRequest(r *http.Request, bucket, object string) bool {
 	// Step 1: Check if governance bypass was requested via header
 	bypassRequested := r.Header.Get("x-amz-bypass-governance-retention") == "true"
@@ -661,18 +574,7 @@ func (s3a *S3ApiServer) evaluateGovernanceBypassRequest(r *http.Request, bucket,
 	return true
 }
 
-// enforceObjectLockProtections checks if an object operation should be blocked by object lock.
-// This function enforces retention and legal hold policies based on pre-validated permissions.
-//
-// Parameters:
-//   - request: HTTP request (for logging/context only - permissions already validated)
-//   - bucket, object, versionId: Object identifier
-//   - governanceBypassAllowed: Pre-validated governance bypass permission (from evaluateGovernanceBypassRequest)
-//
-// Important: The governanceBypassAllowed parameter is TRUSTED - it should only be set to true
-// if evaluateGovernanceBypassRequest() has already validated both header presence and IAM permissions.
-//
-// Returns error if operation should be blocked, nil if operation is allowed.
+// enforceObjectLockProtections enforces object lock protections for operations
 func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, bucket, object, versionId string, governanceBypassAllowed bool) error {
 	// Get the object entry to check both retention and legal hold
 	// For delete operations without versionId, we need to check the latest version
@@ -735,8 +637,11 @@ func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, buck
 	return nil
 }
 
-// isObjectLockAvailable checks if Object Lock features are available for the bucket
-// Object Lock requires versioning to be enabled (AWS S3 requirement)
+// ====================================================================
+// AVAILABILITY CHECKS
+// ====================================================================
+
+// isObjectLockAvailable checks if object lock is available for the bucket
 func (s3a *S3ApiServer) isObjectLockAvailable(bucket string) error {
 	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
 	if err != nil {
@@ -753,9 +658,7 @@ func (s3a *S3ApiServer) isObjectLockAvailable(bucket string) error {
 	return nil
 }
 
-// handleObjectLockAvailabilityCheck is a helper function to check object lock availability
-// and write the appropriate error response if not available. This reduces code duplication
-// across all retention handlers.
+// handleObjectLockAvailabilityCheck handles object lock availability checks for API endpoints
 func (s3a *S3ApiServer) handleObjectLockAvailabilityCheck(w http.ResponseWriter, request *http.Request, bucket, handlerName string) bool {
 	if err := s3a.isObjectLockAvailable(bucket); err != nil {
 		glog.Errorf("%s: object lock not available for bucket %s: %v", handlerName, bucket, err)

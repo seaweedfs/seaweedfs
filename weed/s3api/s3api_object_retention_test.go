@@ -80,7 +80,7 @@ func TestValidateRetention(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateRetention(tt.retention)
+			err := ValidateRetention(tt.retention)
 
 			if tt.expectError {
 				if err == nil {
@@ -154,7 +154,7 @@ func TestValidateLegalHold(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateLegalHold(tt.legalHold)
+			err := ValidateLegalHold(tt.legalHold)
 
 			if tt.expectError {
 				if err == nil {
@@ -631,7 +631,7 @@ func TestValidateObjectLockConfiguration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateObjectLockConfiguration(tt.config)
+			err := ValidateObjectLockConfiguration(tt.config)
 
 			if tt.expectError {
 				if err == nil {
@@ -716,7 +716,7 @@ func TestValidateDefaultRetention(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateDefaultRetention(tt.retention)
+			err := ValidateDefaultRetention(tt.retention)
 
 			if tt.expectError {
 				if err == nil {
