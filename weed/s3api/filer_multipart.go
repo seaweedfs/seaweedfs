@@ -294,6 +294,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			return nil, s3err.ErrInternalError
 		}
 
+		// Update the .versions directory metadata to indicate this is the latest version
+		err = s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName)
+		if err != nil {
+			glog.Errorf("completeMultipartUpload: failed to update latest version in directory: %v", err)
+			return nil, s3err.ErrInternalError
+		}
+
 		// Create a delete marker for the main object (latest version)
 		err = s3a.mkFile(dirName, entryName, nil, func(mainEntry *filer_pb.Entry) {
 			if mainEntry.Extended == nil {
