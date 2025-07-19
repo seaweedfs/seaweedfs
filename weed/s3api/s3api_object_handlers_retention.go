@@ -25,8 +25,8 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 	// Get version ID from query parameters
 	versionId := r.URL.Query().Get("versionId")
 
-	// Check for bypass governance retention header
-	bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
+	// Evaluate governance bypass request (header + permission validation)
+	governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
 
 	// Parse retention configuration from request body
 	retention, err := parseObjectRetention(r)
@@ -39,12 +39,12 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 	// Validate retention configuration
 	if err := validateRetention(retention); err != nil {
 		glog.Errorf("PutObjectRetentionHandler: invalid retention config: %v", err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 		return
 	}
 
 	// Set retention on the object
-	if err := s3a.setObjectRetention(bucket, object, versionId, retention, bypassGovernance); err != nil {
+	if err := s3a.setObjectRetention(bucket, object, versionId, retention, governanceBypassAllowed); err != nil {
 		glog.Errorf("PutObjectRetentionHandler: failed to set retention: %v", err)
 
 		// Handle specific error cases
@@ -54,12 +54,18 @@ func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http
 		}
 
 		if errors.Is(err, ErrComplianceModeActive) || errors.Is(err, ErrGovernanceModeActive) {
+			// Return 403 Forbidden for retention mode changes without proper permissions
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}
 
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
+	}
+
+	// Add VersionId to response headers if available (expected by s3-tests)
+	if versionId != "" {
+		w.Header().Set("x-amz-version-id", versionId)
 	}
 
 	// Record metrics
@@ -96,7 +102,7 @@ func (s3a *S3ApiServer) GetObjectRetentionHandler(w http.ResponseWriter, r *http
 		}
 
 		if errors.Is(err, ErrNoRetentionConfiguration) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchObjectLockConfiguration)
+			s3err.WriteErrorResponse(w, r, s3err.ErrObjectLockConfigurationNotFoundError)
 			return
 		}
 

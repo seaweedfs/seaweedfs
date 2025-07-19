@@ -318,20 +318,29 @@ func TestRetentionModeCompliance(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, types.ObjectLockRetentionModeCompliance, retentionResp.Retention.Mode)
 
-	// Try to delete object with bypass - should still fail (compliance mode)
-	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
-		Bucket:                    aws.String(bucketName),
-		Key:                       aws.String(key),
-		BypassGovernanceRetention: aws.Bool(true),
-	})
-	require.Error(t, err)
-
-	// Try to delete object without bypass - should also fail
+	// Try simple DELETE - should succeed and create delete marker (AWS S3 behavior)
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.Error(t, err)
+	require.NoError(t, err, "Simple DELETE should succeed and create delete marker")
+
+	// Try DELETE with version ID - should fail for COMPLIANCE mode
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
+	})
+	require.Error(t, err, "DELETE with version ID should be blocked by COMPLIANCE retention")
+
+	// Try DELETE with version ID and bypass - should still fail (COMPLIANCE mode ignores bypass)
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:                    aws.String(bucketName),
+		Key:                       aws.String(key),
+		VersionId:                 putResp.VersionId,
+		BypassGovernanceRetention: aws.Bool(true),
+	})
+	require.Error(t, err, "COMPLIANCE mode should ignore governance bypass")
 }
 
 // TestLegalHoldWorkflow tests legal hold functionality
@@ -368,37 +377,48 @@ func TestLegalHoldWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, types.ObjectLockLegalHoldStatusOn, legalHoldResp.LegalHold.Status)
 
-	// Try to delete object - should fail due to legal hold
+	// Try simple DELETE - should succeed and create delete marker (AWS S3 behavior)
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.Error(t, err)
+	require.NoError(t, err, "Simple DELETE should succeed and create delete marker")
 
-	// Remove legal hold
+	// Try DELETE with version ID - should fail due to legal hold
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
+	})
+	require.Error(t, err, "DELETE with version ID should be blocked by legal hold")
+
+	// Remove legal hold (must specify version ID since latest version is now delete marker)
 	_, err = client.PutObjectLegalHold(context.TODO(), &s3.PutObjectLegalHoldInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
 		LegalHold: &types.ObjectLockLegalHold{
 			Status: types.ObjectLockLegalHoldStatusOff,
 		},
 	})
 	require.NoError(t, err)
 
-	// Verify legal hold is off
+	// Verify legal hold is off (must specify version ID)
 	legalHoldResp, err = client.GetObjectLegalHold(context.TODO(), &s3.GetObjectLegalHoldInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, types.ObjectLockLegalHoldStatusOff, legalHoldResp.LegalHold.Status)
 
-	// Now delete should succeed
+	// Now DELETE with version ID should succeed after legal hold removed
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
 	})
-	require.NoError(t, err)
+	require.NoError(t, err, "DELETE with version ID should succeed after legal hold removed")
 }
 
 // TestObjectLockConfiguration tests bucket object lock configuration
@@ -560,31 +580,41 @@ func TestRetentionAndLegalHoldCombination(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Try to delete with bypass governance - should still fail due to legal hold
+	// Try simple DELETE - should succeed and create delete marker (AWS S3 behavior)
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(key),
+	})
+	require.NoError(t, err, "Simple DELETE should succeed and create delete marker")
+
+	// Try DELETE with version ID and bypass - should still fail due to legal hold
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
+		VersionId:                 putResp.VersionId,
 		BypassGovernanceRetention: aws.Bool(true),
 	})
-	require.Error(t, err)
+	require.Error(t, err, "Legal hold should prevent deletion even with governance bypass")
 
-	// Remove legal hold
+	// Remove legal hold (must specify version ID since latest version is now delete marker)
 	_, err = client.PutObjectLegalHold(context.TODO(), &s3.PutObjectLegalHoldInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
 		LegalHold: &types.ObjectLockLegalHold{
 			Status: types.ObjectLockLegalHoldStatusOff,
 		},
 	})
 	require.NoError(t, err)
 
-	// Now delete with bypass governance should succeed
+	// Now DELETE with version ID and bypass governance should succeed
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
+		VersionId:                 putResp.VersionId,
 		BypassGovernanceRetention: aws.Bool(true),
 	})
-	require.NoError(t, err)
+	require.NoError(t, err, "DELETE with version ID should succeed after legal hold removed and with governance bypass")
 }
 
 // TestExpiredRetention tests that objects can be deleted after retention expires

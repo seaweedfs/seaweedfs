@@ -214,7 +214,9 @@ func (s3a *S3ApiServer) isVersioningEnabled(bucket string) (bool, error) {
 		return false, fmt.Errorf("failed to get bucket config: %v", errCode)
 	}
 
-	return config.Versioning == "Enabled", nil
+	// Versioning is enabled if explicitly set to "Enabled" OR if object lock is enabled
+	// (since object lock requires versioning to be enabled)
+	return config.Versioning == s3_constants.VersioningEnabled || config.ObjectLockConfig != nil, nil
 }
 
 // getBucketVersioningStatus returns the versioning status for a bucket
@@ -225,7 +227,7 @@ func (s3a *S3ApiServer) getBucketVersioningStatus(bucket string) (string, s3err.
 	}
 
 	if config.Versioning == "" {
-		return "Suspended", s3err.ErrNone
+		return s3_constants.VersioningSuspended, s3err.ErrNone
 	}
 
 	return config.Versioning, s3err.ErrNone

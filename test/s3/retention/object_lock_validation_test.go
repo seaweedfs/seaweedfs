@@ -77,20 +77,32 @@ func TestObjectLockValidation(t *testing.T) {
 	require.NoError(t, err, "Setting Object Lock retention should succeed")
 	t.Log("   ✅ Object Lock retention applied successfully")
 
-	// Verify retention is in effect
+	// Verify retention allows simple DELETE (creates delete marker) but blocks version deletion
+	// AWS S3 behavior: Simple DELETE (without version ID) is ALWAYS allowed and creates delete marker
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.Error(t, err, "Object should be protected by retention and cannot be deleted")
-	t.Log("   ✅ Object is properly protected by retention policy")
+	require.NoError(t, err, "Simple DELETE should succeed and create delete marker (AWS S3 behavior)")
+	t.Log("   ✅ Simple DELETE succeeded (creates delete marker - correct AWS behavior)")
 
-	// Verify we can read the object (should still work)
-	getResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
+	// Now verify that DELETE with version ID is properly blocked by retention
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
 	})
-	require.NoError(t, err, "Reading protected object should still work")
+	require.Error(t, err, "DELETE with version ID should be blocked by COMPLIANCE retention")
+	t.Log("   ✅ Object version is properly protected by retention policy")
+
+	// Verify we can read the object version (should still work)
+	// Note: Need to specify version ID since latest version is now a delete marker
+	getResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
+	})
+	require.NoError(t, err, "Reading protected object version should still work")
 	defer getResp.Body.Close()
 	t.Log("   ✅ Protected object can still be read")
 

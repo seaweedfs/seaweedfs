@@ -59,9 +59,11 @@ func CreateObjectLockConfiguration(enabled bool, mode string, days int, years in
 	if mode != "" && (days > 0 || years > 0) {
 		config.Rule = &ObjectLockRule{
 			DefaultRetention: &DefaultRetention{
-				Mode:  mode,
-				Days:  days,
-				Years: years,
+				Mode:     mode,
+				Days:     days,
+				Years:    years,
+				DaysSet:  days > 0,
+				YearsSet: years > 0,
 			},
 		}
 	}
@@ -106,12 +108,12 @@ func StoreObjectLockConfigurationInExtended(entry *filer_pb.Entry, config *Objec
 		}
 
 		// Store days
-		if defaultRetention.Days > 0 {
+		if defaultRetention.DaysSet && defaultRetention.Days > 0 {
 			entry.Extended[s3_constants.ExtObjectLockDefaultDaysKey] = []byte(strconv.Itoa(defaultRetention.Days))
 		}
 
 		// Store years
-		if defaultRetention.Years > 0 {
+		if defaultRetention.YearsSet && defaultRetention.Years > 0 {
 			entry.Extended[s3_constants.ExtObjectLockDefaultYearsKey] = []byte(strconv.Itoa(defaultRetention.Years))
 		}
 	} else {
@@ -167,9 +169,11 @@ func LoadObjectLockConfigurationFromExtended(entry *filer_pb.Entry) (*ObjectLock
 		if mode != "" && (days > 0 || years > 0) {
 			config.Rule = &ObjectLockRule{
 				DefaultRetention: &DefaultRetention{
-					Mode:  mode,
-					Days:  days,
-					Years: years,
+					Mode:     mode,
+					Days:     days,
+					Years:    years,
+					DaysSet:  days > 0,
+					YearsSet: years > 0,
 				},
 			}
 		}
@@ -192,8 +196,11 @@ func ExtractObjectLockInfoFromConfig(config *ObjectLockConfiguration) (bool, str
 	defaultRetention := config.Rule.DefaultRetention
 
 	// Convert years to days for consistent representation
-	days := defaultRetention.Days
-	if defaultRetention.Years > 0 {
+	days := 0
+	if defaultRetention.DaysSet {
+		days = defaultRetention.Days
+	}
+	if defaultRetention.YearsSet && defaultRetention.Years > 0 {
 		days += defaultRetention.Years * 365
 	}
 

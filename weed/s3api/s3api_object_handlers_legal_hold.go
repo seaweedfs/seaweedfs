@@ -36,7 +36,7 @@ func (s3a *S3ApiServer) PutObjectLegalHoldHandler(w http.ResponseWriter, r *http
 	// Validate legal hold configuration
 	if err := validateLegalHold(legalHold); err != nil {
 		glog.Errorf("PutObjectLegalHoldHandler: invalid legal hold config: %v", err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 		return
 	}
 
@@ -52,6 +52,11 @@ func (s3a *S3ApiServer) PutObjectLegalHoldHandler(w http.ResponseWriter, r *http
 
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
+	}
+
+	// Add VersionId to response headers if available (expected by s3-tests)
+	if versionId != "" {
+		w.Header().Set("x-amz-version-id", versionId)
 	}
 
 	// Record metrics

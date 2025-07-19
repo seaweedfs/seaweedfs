@@ -13,16 +13,10 @@ concurrency:
 permissions:
   contents: read
 
-defaults:
-  run:
-    working-directory: docker
-
 jobs:
   s3tests:
     name: Ceph S3 tests
     runs-on: ubuntu-22.04
-    container:
-      image: docker.io/kmlebedev/ceph-s3-tests:0.0.2
     timeout-minutes: 30
     steps:
       - name: Check out code into the Go module directory
@@ -34,13 +28,26 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Clone s3-tests
+        run: |
+          git clone https://github.com/ceph/s3-tests.git
+          cd s3-tests
+          pip install -r requirements.txt
+          pip install tox
+          pip install -e .
+
       - name: Run Ceph S3 tests with KV store
         timeout-minutes: 15
         env:
-          S3TEST_CONF: /__w/seaweedfs/seaweedfs/docker/compose/s3tests.conf
+          S3TEST_CONF: ../docker/compose/s3tests.conf
         shell: bash
         run: |
-          cd /__w/seaweedfs/seaweedfs/weed
+          cd weed
           go install -buildvcs=false
           set -x
           # Create clean data directory for this test run
@@ -53,7 +60,7 @@ jobs:
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
           sleep 10          
-          cd /s3-tests
+          cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
           tox -- \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_empty \
@@ -213,11 +220,38 @@ jobs:
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
 
+      - name: Run S3 Object Lock and Retention tests
+        timeout-minutes: 15
+        env:
+          S3TEST_CONF: ../docker/compose/s3tests.conf
+        shell: bash
+        run: |
+          cd weed
+          go install -buildvcs=false
+          set -x
+          # Create clean data directory for this test run
+          export WEED_DATA_DIR="/tmp/seaweedfs-objectlock-$(date +%s)"
+          mkdir -p "$WEED_DATA_DIR"
+          weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
+            -dir="$WEED_DATA_DIR" \
+            -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
+            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+          pid=$!
+          sleep 10          
+          cd ../s3-tests
+          sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
+          # Run object lock tests by pattern matching test names
+          tox -- -k "object_lock" --tb=short
+          kill -9 $pid || true
+          # Clean up data directory
+          rm -rf "$WEED_DATA_DIR" || true
+
       - name: Run SeaweedFS Custom S3 Copy tests
         timeout-minutes: 10
         shell: bash
         run: |
-          cd /__w/seaweedfs/seaweedfs/weed
+          cd weed
           go install -buildvcs=false
           # Create clean data directory for this test run
           export WEED_DATA_DIR="/tmp/seaweedfs-copy-test-$(date +%s)"
@@ -239,10 +273,10 @@ jobs:
       - name: Run Ceph S3 tests with SQL store
         timeout-minutes: 15
         env:
-          S3TEST_CONF: /__w/seaweedfs/seaweedfs/docker/compose/s3tests.conf
+          S3TEST_CONF: ../docker/compose/s3tests.conf
         shell: bash
         run: |
-          cd /__w/seaweedfs/seaweedfs/weed
+          cd weed
           go install -tags "sqlite" -buildvcs=false
           # Create clean data directory for this test run
           export WEED_DATA_DIR="/tmp/seaweedfs-sql-test-$(date +%s)"
@@ -256,7 +290,7 @@ jobs:
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
           sleep 10          
-          cd /s3-tests
+          cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
           tox -- \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_empty \

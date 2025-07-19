@@ -568,7 +568,7 @@ func TestMapValidationErrorToS3Error(t *testing.T) {
 		{
 			name:         "ErrInvalidLegalHoldStatus",
 			inputError:   ErrInvalidLegalHoldStatus,
-			expectedCode: s3err.ErrInvalidRequest,
+			expectedCode: s3err.ErrMalformedXML,
 		},
 		{
 			name:         "ErrInvalidRetentionDateFormat",

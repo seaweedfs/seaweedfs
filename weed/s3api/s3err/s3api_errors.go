@@ -57,6 +57,7 @@ const (
 	ErrNoSuchKey
 	ErrNoSuchUpload
 	ErrInvalidBucketName
+	ErrInvalidBucketState
 	ErrInvalidDigest
 	ErrInvalidMaxKeys
 	ErrInvalidMaxUploads
@@ -112,6 +113,8 @@ const (
 	ErrNoSuchTagSet
 	ErrNoSuchObjectLockConfiguration
 	ErrNoSuchObjectLegalHold
+	ErrInvalidRetentionPeriod
+	ErrObjectLockConfigurationNotFoundError
 )
 
 // Error message constants for checksum validation
@@ -153,6 +156,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "InvalidBucketName",
 		Description:    "The specified bucket is not valid.",
 		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidBucketState: {
+		Code:           "InvalidBucketState",
+		Description:    "The bucket is not in a valid state for the requested operation",
+		HTTPStatusCode: http.StatusConflict,
 	},
 	ErrInvalidDigest: {
 		Code:           "InvalidDigest",
@@ -208,6 +216,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "NoSuchObjectLegalHold",
 		Description:    "The specified object does not have a legal hold configuration",
 		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrInvalidRetentionPeriod: {
+		Code:           "InvalidRetentionPeriod",
+		Description:    "The retention period specified is invalid",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrNoSuchCORSConfiguration: {
 		Code:           "NoSuchCORSConfiguration",
@@ -445,6 +458,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	OwnershipControlsNotFoundError: {
 		Code:           "OwnershipControlsNotFoundError",
 		Description:    "The bucket ownership controls were not found",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrObjectLockConfigurationNotFoundError: {
+		Code:           "ObjectLockConfigurationNotFoundError",
+		Description:    "Object Lock configuration does not exist for this bucket",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 }

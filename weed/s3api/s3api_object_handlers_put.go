@@ -23,16 +23,25 @@ import (
 
 // Object lock validation errors
 var (
-	ErrObjectLockVersioningRequired       = errors.New("object lock headers can only be used on versioned buckets")
-	ErrInvalidObjectLockMode              = errors.New("invalid object lock mode")
-	ErrInvalidLegalHoldStatus             = errors.New("invalid legal hold status")
-	ErrInvalidRetentionDateFormat         = errors.New("invalid retention until date format")
-	ErrRetentionDateMustBeFuture          = errors.New("retention until date must be in the future")
-	ErrObjectLockModeRequiresDate         = errors.New("object lock mode requires retention until date")
-	ErrRetentionDateRequiresMode          = errors.New("retention until date requires object lock mode")
-	ErrGovernanceBypassVersioningRequired = errors.New("governance bypass header can only be used on versioned buckets")
-	ErrInvalidObjectLockDuration          = errors.New("object lock duration must be greater than 0 days")
-	ErrObjectLockDurationExceeded         = errors.New("object lock duration exceeds maximum allowed days")
+	ErrObjectLockVersioningRequired          = errors.New("object lock headers can only be used on versioned buckets")
+	ErrInvalidObjectLockMode                 = errors.New("invalid object lock mode")
+	ErrInvalidLegalHoldStatus                = errors.New("invalid legal hold status")
+	ErrInvalidRetentionDateFormat            = errors.New("invalid retention until date format")
+	ErrRetentionDateMustBeFuture             = errors.New("retain until date must be in the future")
+	ErrObjectLockModeRequiresDate            = errors.New("object lock mode requires retention until date")
+	ErrRetentionDateRequiresMode             = errors.New("retention until date requires object lock mode")
+	ErrGovernanceBypassVersioningRequired    = errors.New("governance bypass header can only be used on versioned buckets")
+	ErrInvalidObjectLockDuration             = errors.New("object lock duration must be greater than 0 days")
+	ErrObjectLockDurationExceeded            = errors.New("object lock duration exceeds maximum allowed days")
+	ErrObjectLockConfigurationMissingEnabled = errors.New("object lock configuration must specify ObjectLockEnabled")
+	ErrInvalidObjectLockEnabledValue         = errors.New("invalid object lock enabled value")
+	ErrRuleMissingDefaultRetention           = errors.New("rule configuration must specify DefaultRetention")
+	ErrDefaultRetentionMissingMode           = errors.New("default retention must specify Mode")
+	ErrInvalidDefaultRetentionMode           = errors.New("invalid default retention mode")
+	ErrDefaultRetentionMissingPeriod         = errors.New("default retention must specify either Days or Years")
+	ErrDefaultRetentionBothDaysAndYears      = errors.New("default retention cannot specify both Days and Years")
+	ErrDefaultRetentionDaysOutOfRange        = errors.New("default retention days must be between 0 and 36500")
+	ErrDefaultRetentionYearsOutOfRange       = errors.New("default retention years must be between 0 and 100")
 )
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -110,8 +119,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		// For non-versioned buckets, check if existing object has object lock protections
 		// that would prevent overwrite (PUT operations overwrite existing objects in non-versioned buckets)
 		if !versioningEnabled {
-			bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
-			if err := s3a.checkObjectLockPermissions(r, bucket, object, "", bypassGovernance); err != nil {
+			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+			if err := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); err != nil {
 				glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 				return
@@ -460,7 +469,7 @@ func (s3a *S3ApiServer) applyBucketDefaultRetention(bucket string, entry *filer_
 		return fmt.Errorf("default retention missing mode")
 	}
 
-	if defaultRetention.Days == 0 && defaultRetention.Years == 0 {
+	if !defaultRetention.DaysSet && !defaultRetention.YearsSet {
 		return fmt.Errorf("default retention missing period")
 	}
 
@@ -468,9 +477,9 @@ func (s3a *S3ApiServer) applyBucketDefaultRetention(bucket string, entry *filer_
 	var retainUntilDate time.Time
 	now := time.Now()
 
-	if defaultRetention.Days > 0 {
+	if defaultRetention.DaysSet && defaultRetention.Days > 0 {
 		retainUntilDate = now.AddDate(0, 0, defaultRetention.Days)
-	} else if defaultRetention.Years > 0 {
+	} else if defaultRetention.YearsSet && defaultRetention.Years > 0 {
 		retainUntilDate = now.AddDate(defaultRetention.Years, 0, 0)
 	}
 
@@ -553,26 +562,94 @@ func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, versioningEna
 
 // mapValidationErrorToS3Error maps object lock validation errors to appropriate S3 error codes
 func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
+	// Check for sentinel errors first
 	switch {
 	case errors.Is(err, ErrObjectLockVersioningRequired):
+		// For object lock operations on non-versioned buckets, return InvalidRequest
+		// This matches the test expectations
 		return s3err.ErrInvalidRequest
 	case errors.Is(err, ErrInvalidObjectLockMode):
+		// For invalid object lock mode, return InvalidRequest
+		// This matches the test expectations
 		return s3err.ErrInvalidRequest
 	case errors.Is(err, ErrInvalidLegalHoldStatus):
-		return s3err.ErrInvalidRequest
+		// For invalid legal hold status in XML body, return MalformedXML
+		// AWS S3 treats invalid status values in XML as malformed content
+		return s3err.ErrMalformedXML
 	case errors.Is(err, ErrInvalidRetentionDateFormat):
+		// For malformed retention date format, return MalformedDate
+		// This matches the test expectations
 		return s3err.ErrMalformedDate
-	case errors.Is(err, ErrRetentionDateMustBeFuture),
-		errors.Is(err, ErrObjectLockModeRequiresDate),
-		errors.Is(err, ErrRetentionDateRequiresMode):
+	case errors.Is(err, ErrRetentionDateMustBeFuture):
+		// For retention dates in the past, return InvalidRequest
+		// This matches the test expectations
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrObjectLockModeRequiresDate):
+		// For mode without retention date, return InvalidRequest
+		// This matches the test expectations
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrRetentionDateRequiresMode):
+		// For retention date without mode, return InvalidRequest
+		// This matches the test expectations
 		return s3err.ErrInvalidRequest
 	case errors.Is(err, ErrGovernanceBypassVersioningRequired):
+		// For governance bypass on non-versioned bucket, return InvalidRequest
+		// This matches the test expectations
 		return s3err.ErrInvalidRequest
-	case errors.Is(err, ErrInvalidObjectLockDuration):
-		return s3err.ErrInvalidRequest
-	case errors.Is(err, ErrObjectLockDurationExceeded):
-		return s3err.ErrInvalidRequest
-	default:
-		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrMalformedXML):
+		// For malformed XML in request body, return MalformedXML
+		// This matches the test expectations for invalid retention mode and legal hold status
+		return s3err.ErrMalformedXML
+	case errors.Is(err, ErrInvalidRetentionPeriod):
+		// For invalid retention period (e.g., Days <= 0), return InvalidRetentionPeriod
+		// This matches the test expectations
+		return s3err.ErrInvalidRetentionPeriod
+	case errors.Is(err, ErrComplianceModeActive):
+		// For compliance mode retention violations, return AccessDenied
+		// This matches the test expectations
+		return s3err.ErrAccessDenied
+	case errors.Is(err, ErrGovernanceModeActive):
+		// For governance mode retention violations, return AccessDenied
+		// This matches the test expectations
+		return s3err.ErrAccessDenied
+	case errors.Is(err, ErrObjectUnderLegalHold):
+		// For legal hold violations, return AccessDenied
+		// This matches the test expectations
+		return s3err.ErrAccessDenied
+	case errors.Is(err, ErrGovernanceBypassNotPermitted):
+		// For governance bypass permission violations, return AccessDenied
+		// This matches the test expectations
+		return s3err.ErrAccessDenied
+	// Validation error constants
+	case errors.Is(err, ErrObjectLockConfigurationMissingEnabled):
+		return s3err.ErrMalformedXML
+	case errors.Is(err, ErrInvalidObjectLockEnabledValue):
+		return s3err.ErrMalformedXML
+	case errors.Is(err, ErrRuleMissingDefaultRetention):
+		return s3err.ErrMalformedXML
+	case errors.Is(err, ErrDefaultRetentionMissingMode):
+		return s3err.ErrMalformedXML
+	case errors.Is(err, ErrInvalidDefaultRetentionMode):
+		return s3err.ErrMalformedXML
+	case errors.Is(err, ErrDefaultRetentionMissingPeriod):
+		return s3err.ErrMalformedXML
+	case errors.Is(err, ErrDefaultRetentionBothDaysAndYears):
+		return s3err.ErrMalformedXML
+	case errors.Is(err, ErrDefaultRetentionDaysOutOfRange):
+		return s3err.ErrInvalidRetentionPeriod
+	case errors.Is(err, ErrDefaultRetentionYearsOutOfRange):
+		return s3err.ErrInvalidRetentionPeriod
 	}
+
+	// Check for error constants from the updated validation functions
+	switch {
+	case errors.Is(err, ErrRetentionMissingMode):
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrRetentionMissingRetainUntilDate):
+		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrInvalidRetentionModeValue):
+		return s3err.ErrMalformedXML
+	}
+
+	return s3err.ErrInvalidRequest
 }

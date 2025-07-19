@@ -498,8 +498,9 @@ func TestValidateObjectLockConfiguration(t *testing.T) {
 				ObjectLockEnabled: "Enabled",
 				Rule: &ObjectLockRule{
 					DefaultRetention: &DefaultRetention{
-						Mode: "GOVERNANCE",
-						Days: 30,
+						Mode:    "GOVERNANCE",
+						Days:    30,
+						DaysSet: true,
 					},
 				},
 			},
@@ -511,8 +512,9 @@ func TestValidateObjectLockConfiguration(t *testing.T) {
 				ObjectLockEnabled: "Enabled",
 				Rule: &ObjectLockRule{
 					DefaultRetention: &DefaultRetention{
-						Mode:  "COMPLIANCE",
-						Years: 1,
+						Mode:     "COMPLIANCE",
+						Years:    1,
+						YearsSet: true,
 					},
 				},
 			},
@@ -545,9 +547,11 @@ func TestValidateObjectLockConfiguration(t *testing.T) {
 				ObjectLockEnabled: "Enabled",
 				Rule: &ObjectLockRule{
 					DefaultRetention: &DefaultRetention{
-						Mode:  "GOVERNANCE",
-						Days:  30,
-						Years: 1,
+						Mode:     "GOVERNANCE",
+						Days:     30,
+						Years:    1,
+						DaysSet:  true,
+						YearsSet: true,
 					},
 				},
 			},
@@ -573,8 +577,9 @@ func TestValidateObjectLockConfiguration(t *testing.T) {
 				ObjectLockEnabled: "Enabled",
 				Rule: &ObjectLockRule{
 					DefaultRetention: &DefaultRetention{
-						Mode: "INVALID_MODE",
-						Days: 30,
+						Mode:    "INVALID_MODE",
+						Days:    30,
+						DaysSet: true,
 					},
 				},
 			},
@@ -587,8 +592,9 @@ func TestValidateObjectLockConfiguration(t *testing.T) {
 				ObjectLockEnabled: "Enabled",
 				Rule: &ObjectLockRule{
 					DefaultRetention: &DefaultRetention{
-						Mode: "GOVERNANCE",
-						Days: 50000,
+						Mode:    "GOVERNANCE",
+						Days:    50000,
+						DaysSet: true,
 					},
 				},
 			},
@@ -601,8 +607,9 @@ func TestValidateObjectLockConfiguration(t *testing.T) {
 				ObjectLockEnabled: "Enabled",
 				Rule: &ObjectLockRule{
 					DefaultRetention: &DefaultRetention{
-						Mode:  "GOVERNANCE",
-						Years: 200,
+						Mode:     "GOVERNANCE",
+						Years:    200,
+						YearsSet: true,
 					},
 				},
 			},
@@ -651,23 +658,26 @@ func TestValidateDefaultRetention(t *testing.T) {
 		{
 			name: "Valid retention with days",
 			retention: &DefaultRetention{
-				Mode: "GOVERNANCE",
-				Days: 30,
+				Mode:    "GOVERNANCE",
+				Days:    30,
+				DaysSet: true,
 			},
 			expectError: false,
 		},
 		{
 			name: "Valid retention with years",
 			retention: &DefaultRetention{
-				Mode:  "COMPLIANCE",
-				Years: 1,
+				Mode:     "COMPLIANCE",
+				Years:    1,
+				YearsSet: true,
 			},
 			expectError: false,
 		},
 		{
 			name: "Missing mode",
 			retention: &DefaultRetention{
-				Days: 30,
+				Days:    30,
+				DaysSet: true,
 			},
 			expectError: true,
 			errorMsg:    "default retention must specify Mode",
@@ -675,8 +685,9 @@ func TestValidateDefaultRetention(t *testing.T) {
 		{
 			name: "Invalid mode",
 			retention: &DefaultRetention{
-				Mode: "INVALID",
-				Days: 30,
+				Mode:    "INVALID",
+				Days:    30,
+				DaysSet: true,
 			},
 			expectError: true,
 			errorMsg:    "invalid default retention mode",
@@ -684,9 +695,11 @@ func TestValidateDefaultRetention(t *testing.T) {
 		{
 			name: "Both days and years specified",
 			retention: &DefaultRetention{
-				Mode:  "GOVERNANCE",
-				Days:  30,
-				Years: 1,
+				Mode:     "GOVERNANCE",
+				Days:     30,
+				Years:    1,
+				DaysSet:  true,
+				YearsSet: true,
 			},
 			expectError: true,
 			errorMsg:    "default retention cannot specify both Days and Years",
