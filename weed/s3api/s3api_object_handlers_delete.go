@@ -71,16 +71,9 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			// Set version ID in response header
 			w.Header().Set("x-amz-version-id", versionId)
 		} else {
-			// Check object lock permissions before creating delete marker
-			// AWS S3 behavior: delete operations fail if latest version has retention protection
-			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-			if err := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); err != nil {
-				glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-				return
-			}
-
 			// Create delete marker (logical delete)
+			// AWS S3 behavior: Delete marker creation is NOT blocked by object retention
+			// because it's a logical delete that doesn't actually remove the retained version
 			deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object)
 			if err != nil {
 				glog.Errorf("Failed to create delete marker: %v", err)
