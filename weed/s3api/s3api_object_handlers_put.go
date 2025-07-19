@@ -608,6 +608,22 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		// For invalid retention mode, return InvalidRequest
 		// This matches the test expectations
 		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrComplianceModeActive):
+		// For compliance mode retention violations, return AccessDenied
+		// This matches the test expectations
+		return s3err.ErrAccessDenied
+	case errors.Is(err, ErrGovernanceModeActive):
+		// For governance mode retention violations, return AccessDenied
+		// This matches the test expectations
+		return s3err.ErrAccessDenied
+	case errors.Is(err, ErrObjectUnderLegalHold):
+		// For legal hold violations, return AccessDenied
+		// This matches the test expectations
+		return s3err.ErrAccessDenied
+	case errors.Is(err, ErrGovernanceBypassNotPermitted):
+		// For governance bypass permission violations, return AccessDenied
+		// This matches the test expectations
+		return s3err.ErrAccessDenied
 	// Validation error constants
 	case errors.Is(err, ErrObjectLockConfigurationMissingEnabled):
 		return s3err.ErrMalformedXML
