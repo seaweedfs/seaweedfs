@@ -77,27 +77,35 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if source bucket has versioning configured
-	srcVersioningConfigured, err := s3a.isVersioningConfigured(srcBucket)
+	// Get detailed versioning state for source bucket
+	srcVersioningState, err := s3a.getVersioningState(srcBucket)
 	if err != nil {
-		glog.Errorf("Error checking versioning status for source bucket %s: %v", srcBucket, err)
+		glog.Errorf("Error checking versioning state for source bucket %s: %v", srcBucket, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
 
-	// Get the source entry with version awareness
+	// Get the source entry with version awareness based on versioning state
 	var entry *filer_pb.Entry
-	if srcVersioningConfigured {
-		// For versioned buckets, use versioning-aware retrieval
-		if srcVersionId != "" {
-			// Get specific version
-			entry, err = s3a.getSpecificObjectVersion(srcBucket, srcObject, srcVersionId)
-		} else {
-			// Get latest version
+	if srcVersionId != "" {
+		// Specific version requested - always use version-aware retrieval
+		entry, err = s3a.getSpecificObjectVersion(srcBucket, srcObject, srcVersionId)
+	} else if srcVersioningState == s3_constants.VersioningEnabled {
+		// Versioning enabled - get latest version from .versions directory
+		entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
+	} else if srcVersioningState == s3_constants.VersioningSuspended {
+		// Versioning suspended - current object is stored as regular file ("null" version)
+		// Try regular file first, fall back to latest version if needed
+		srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
+		dir, name := srcPath.DirAndName()
+		entry, err = s3a.getEntry(dir, name)
+		if err != nil {
+			// If regular file doesn't exist, try latest version as fallback
+			glog.V(2).Infof("CopyObject: regular file not found for suspended versioning, trying latest version")
 			entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
 		}
 	} else {
-		// For non-versioned buckets, use regular retrieval
+		// No versioning configured - use regular retrieval
 		srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
 		dir, name := srcPath.DirAndName()
 		entry, err = s3a.getEntry(dir, name)
@@ -340,27 +348,35 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Check if source bucket has versioning configured
-	srcVersioningConfigured, err := s3a.isVersioningConfigured(srcBucket)
+	// Get detailed versioning state for source bucket
+	srcVersioningState, err := s3a.getVersioningState(srcBucket)
 	if err != nil {
-		glog.Errorf("Error checking versioning status for source bucket %s: %v", srcBucket, err)
+		glog.Errorf("Error checking versioning state for source bucket %s: %v", srcBucket, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
 
-	// Get the source entry with version awareness
+	// Get the source entry with version awareness based on versioning state
 	var entry *filer_pb.Entry
-	if srcVersioningConfigured {
-		// For versioned buckets, use versioning-aware retrieval
-		if srcVersionId != "" {
-			// Get specific version
-			entry, err = s3a.getSpecificObjectVersion(srcBucket, srcObject, srcVersionId)
-		} else {
-			// Get latest version
+	if srcVersionId != "" {
+		// Specific version requested - always use version-aware retrieval
+		entry, err = s3a.getSpecificObjectVersion(srcBucket, srcObject, srcVersionId)
+	} else if srcVersioningState == s3_constants.VersioningEnabled {
+		// Versioning enabled - get latest version from .versions directory
+		entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
+	} else if srcVersioningState == s3_constants.VersioningSuspended {
+		// Versioning suspended - current object is stored as regular file ("null" version)
+		// Try regular file first, fall back to latest version if needed
+		srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
+		dir, name := srcPath.DirAndName()
+		entry, err = s3a.getEntry(dir, name)
+		if err != nil {
+			// If regular file doesn't exist, try latest version as fallback
+			glog.V(2).Infof("CopyObjectPart: regular file not found for suspended versioning, trying latest version")
 			entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
 		}
 	} else {
-		// For non-versioned buckets, use regular retrieval
+		// No versioning configured - use regular retrieval
 		srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
 		dir, name := srcPath.DirAndName()
 		entry, err = s3a.getEntry(dir, name)
