@@ -469,7 +469,7 @@ func (s3a *S3ApiServer) applyBucketDefaultRetention(bucket string, entry *filer_
 		return fmt.Errorf("default retention missing mode")
 	}
 
-	if defaultRetention.Days == 0 && defaultRetention.Years == 0 {
+	if !defaultRetention.DaysSet && !defaultRetention.YearsSet {
 		return fmt.Errorf("default retention missing period")
 	}
 
@@ -477,9 +477,9 @@ func (s3a *S3ApiServer) applyBucketDefaultRetention(bucket string, entry *filer_
 	var retainUntilDate time.Time
 	now := time.Now()
 
-	if defaultRetention.Days > 0 {
+	if defaultRetention.DaysSet && defaultRetention.Days > 0 {
 		retainUntilDate = now.AddDate(0, 0, defaultRetention.Days)
-	} else if defaultRetention.Years > 0 {
+	} else if defaultRetention.YearsSet && defaultRetention.Years > 0 {
 		retainUntilDate = now.AddDate(defaultRetention.Years, 0, 0)
 	}
 
@@ -652,7 +652,7 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 	case errors.Is(err, ErrRetentionMissingRetainUntilDate):
 		return s3err.ErrInvalidRequest
 	case errors.Is(err, ErrInvalidRetentionModeValue):
-		return s3err.ErrInvalidRequest
+		return s3err.ErrMalformedXML
 	}
 
 	return s3err.ErrInvalidRequest

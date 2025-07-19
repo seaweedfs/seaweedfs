@@ -51,59 +51,66 @@ const (
 // ObjectRetention represents S3 Object Retention configuration
 type ObjectRetention struct {
 	XMLName         xml.Name   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Retention"`
-	Mode            string     `xml:"Mode,omitempty"`
-	RetainUntilDate *time.Time `xml:"RetainUntilDate,omitempty"`
+	Mode            string     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Mode,omitempty"`
+	RetainUntilDate *time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ RetainUntilDate,omitempty"`
 }
 
 // ObjectLegalHold represents S3 Object Legal Hold configuration
 type ObjectLegalHold struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LegalHold"`
-	Status  string   `xml:"Status,omitempty"`
+	Status  string   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Status,omitempty"`
 }
 
 // ObjectLockConfiguration represents S3 Object Lock Configuration
 type ObjectLockConfiguration struct {
 	XMLName           xml.Name        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ObjectLockConfiguration"`
-	ObjectLockEnabled string          `xml:"ObjectLockEnabled,omitempty"`
-	Rule              *ObjectLockRule `xml:"Rule,omitempty"`
+	ObjectLockEnabled string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ObjectLockEnabled,omitempty"`
+	Rule              *ObjectLockRule `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Rule,omitempty"`
 }
 
 // ObjectLockRule represents an Object Lock Rule
 type ObjectLockRule struct {
-	XMLName          xml.Name          `xml:"Rule"`
-	DefaultRetention *DefaultRetention `xml:"DefaultRetention,omitempty"`
+	XMLName          xml.Name          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Rule"`
+	DefaultRetention *DefaultRetention `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DefaultRetention,omitempty"`
 }
 
 // DefaultRetention represents default retention settings
+// Implements custom XML unmarshal to track if Days/Years were present in XML
+
 type DefaultRetention struct {
-	XMLName xml.Name `xml:"DefaultRetention"`
-	Mode    string   `xml:"Mode,omitempty"`
-	Days    int      `xml:"Days,omitempty"`
-	Years   int      `xml:"Years,omitempty"`
+	XMLName  xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DefaultRetention"`
+	Mode     string   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Mode,omitempty"`
+	Days     int      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Days,omitempty"`
+	Years    int      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Years,omitempty"`
+	DaysSet  bool     `xml:"-"`
+	YearsSet bool     `xml:"-"`
 }
 
-// Custom time unmarshalling for AWS S3 ISO8601 format
-func (or *ObjectRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
-	type Alias ObjectRetention
+func (dr *DefaultRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias DefaultRetention
 	aux := &struct {
 		*Alias
-		RetainUntilDate *string `xml:"RetainUntilDate,omitempty"`
-	}{
-		Alias: (*Alias)(or),
-	}
-
+		Days  *int `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Days,omitempty"`
+		Years *int `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Years,omitempty"`
+	}{Alias: (*Alias)(dr)}
 	if err := d.DecodeElement(aux, &start); err != nil {
+		glog.Errorf("DefaultRetention.UnmarshalXML: decode error: %v", err)
 		return err
 	}
-
-	if aux.RetainUntilDate != nil {
-		t, err := time.Parse(time.RFC3339, *aux.RetainUntilDate)
-		if err != nil {
-			return err
-		}
-		or.RetainUntilDate = &t
+	if aux.Days != nil {
+		dr.Days = *aux.Days
+		dr.DaysSet = true
+		glog.Infof("DefaultRetention.UnmarshalXML: Days present, value=%d", dr.Days)
+	} else {
+		glog.Infof("DefaultRetention.UnmarshalXML: Days not present")
 	}
-
+	if aux.Years != nil {
+		dr.Years = *aux.Years
+		dr.YearsSet = true
+		glog.Infof("DefaultRetention.UnmarshalXML: Years present, value=%d", dr.Years)
+	} else {
+		glog.Infof("DefaultRetention.UnmarshalXML: Years not present")
+	}
 	return nil
 }
 
@@ -221,50 +228,47 @@ func validateObjectLockConfiguration(config *ObjectLockConfiguration) error {
 
 // validateDefaultRetention validates default retention configuration
 func validateDefaultRetention(retention *DefaultRetention) error {
+	glog.Infof("validateDefaultRetention: Mode=%s, Days=%d (set=%v), Years=%d (set=%v)", retention.Mode, retention.Days, retention.DaysSet, retention.Years, retention.YearsSet)
 	// Mode is required
 	if retention.Mode == "" {
 		return ErrDefaultRetentionMissingMode
 	}
-
 	// Mode must be valid
 	if retention.Mode != s3_constants.RetentionModeGovernance && retention.Mode != s3_constants.RetentionModeCompliance {
 		return ErrInvalidDefaultRetentionMode
 	}
-
 	// Check for invalid Years value (negative values are always invalid)
-	if retention.Years < 0 {
+	if retention.YearsSet && retention.Years < 0 {
 		return ErrInvalidRetentionPeriod
 	}
-
 	// Check for invalid Days value (negative values are invalid)
-	if retention.Days < 0 {
+	if retention.DaysSet && retention.Days < 0 {
 		return ErrInvalidRetentionPeriod
 	}
-
+	// Check for invalid Days value (zero is invalid when explicitly provided)
+	if retention.DaysSet && retention.Days == 0 {
+		return ErrInvalidRetentionPeriod
+	}
 	// Check for neither Days nor Years being specified
-	if retention.Days == 0 && retention.Years == 0 {
+	if !retention.DaysSet && !retention.YearsSet {
 		return ErrDefaultRetentionMissingPeriod
 	}
-
 	// Check for both Days and Years being specified
-	if retention.Days > 0 && retention.Years > 0 {
+	if retention.DaysSet && retention.YearsSet && retention.Days > 0 && retention.Years > 0 {
 		return ErrDefaultRetentionBothDaysAndYears
 	}
-
 	// Validate Days if specified
-	if retention.Days > 0 {
+	if retention.DaysSet && retention.Days > 0 {
 		if retention.Days > MaxRetentionDays {
 			return ErrDefaultRetentionDaysOutOfRange
 		}
 	}
-
 	// Validate Years if specified
-	if retention.Years > 0 {
+	if retention.YearsSet && retention.Years > 0 {
 		if retention.Years > MaxRetentionYears {
 			return ErrDefaultRetentionYearsOutOfRange
 		}
 	}
-
 	return nil
 }
 
