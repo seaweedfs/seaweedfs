@@ -301,19 +301,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			return nil, s3err.ErrInternalError
 		}
 
-		// Create a delete marker for the main object (latest version)
-		err = s3a.mkFile(dirName, entryName, nil, func(mainEntry *filer_pb.Entry) {
-			if mainEntry.Extended == nil {
-				mainEntry.Extended = make(map[string][]byte)
-			}
-			mainEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
-			mainEntry.Extended[s3_constants.ExtDeleteMarkerKey] = []byte("false") // This is the latest version, not a delete marker
-		})
-
-		if err != nil {
-			glog.Errorf("completeMultipartUpload: failed to update main entry: %v", err)
-			return nil, s3err.ErrInternalError
-		}
+		// For versioned buckets, don't create a main object file - all content is stored in .versions directory
+		// The latest version information is tracked in the .versions directory metadata
 
 		output = &CompleteMultipartUploadResult{
 			Location:  aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
