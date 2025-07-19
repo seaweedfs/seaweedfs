@@ -42,17 +42,26 @@ func TestWORMRetentionIntegration(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Try to delete - should fail due to retention
+	// Try simple DELETE - should succeed and create delete marker (AWS S3 behavior)
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.Error(t, err)
+	require.NoError(t, err, "Simple DELETE should succeed and create delete marker")
 
-	// Delete with bypass should succeed
+	// Try DELETE with version ID - should fail due to GOVERNANCE retention
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(key),
+		VersionId: putResp.VersionId,
+	})
+	require.Error(t, err, "DELETE with version ID should be blocked by GOVERNANCE retention")
+
+	// Delete with version ID and bypass should succeed
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
+		VersionId:                 putResp.VersionId,
 		BypassGovernanceRetention: aws.Bool(true),
 	})
 	require.NoError(t, err)
