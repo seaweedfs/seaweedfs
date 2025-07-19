@@ -136,8 +136,8 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
 
-	// Check if versioning is enabled for the bucket
-	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
+	// Check if versioning is configured for the bucket (Enabled or Suspended)
+	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
@@ -150,7 +150,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	var destUrl string
 
-	if versioningEnabled {
+	if versioningConfigured {
 		// Handle versioned GET - all versions are stored in .versions directory
 		var targetVersionId string
 		var entry *filer_pb.Entry
@@ -226,8 +226,8 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
 
-	// Check if versioning is enabled for the bucket
-	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
+	// Check if versioning is configured for the bucket (Enabled or Suspended)
+	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
@@ -240,7 +240,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 	var destUrl string
 
-	if versioningEnabled {
+	if versioningConfigured {
 		// Handle versioned HEAD - all versions are stored in .versions directory
 		var targetVersionId string
 		var entry *filer_pb.Entry

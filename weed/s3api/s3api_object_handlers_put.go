@@ -95,8 +95,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	} else {
-		// Check if versioning is enabled for the bucket
-		versioningEnabled, err := s3a.isVersioningEnabled(bucket)
+		// Get detailed versioning state for the bucket
+		versioningState, err := s3a.getVersioningState(bucket)
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
@@ -107,7 +107,10 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		glog.V(1).Infof("PutObjectHandler: bucket %s, object %s, versioningEnabled=%v", bucket, object, versioningEnabled)
+		versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
+		versioningConfigured := (versioningState != "")
+
+		glog.V(1).Infof("PutObjectHandler: bucket %s, object %s, versioningState=%s", bucket, object, versioningState)
 
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
@@ -118,7 +121,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// For non-versioned buckets, check if existing object has object lock protections
 		// that would prevent overwrite (PUT operations overwrite existing objects in non-versioned buckets)
-		if !versioningEnabled {
+		if !versioningConfigured {
 			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
 			if err := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); err != nil {
 				glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, err)
@@ -127,8 +130,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		if versioningEnabled {
-			// Handle versioned PUT
+		if versioningState == s3_constants.VersioningEnabled {
+			// Handle enabled versioning - create new versions with real version IDs
 			glog.V(1).Infof("PutObjectHandler: using versioned PUT for %s/%s", bucket, object)
 			versionId, etag, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
@@ -143,8 +146,22 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 			// Set ETag in response
 			setEtag(w, etag)
+		} else if versioningState == s3_constants.VersioningSuspended {
+			// Handle suspended versioning - overwrite with "null" version ID but preserve existing versions
+			glog.V(1).Infof("PutObjectHandler: using suspended versioning PUT for %s/%s", bucket, object)
+			etag, errCode := s3a.putSuspendedVersioningObject(r, bucket, object, dataReader, objectContentType)
+			if errCode != s3err.ErrNone {
+				s3err.WriteErrorResponse(w, r, errCode)
+				return
+			}
+
+			// Set version ID to "null" in response header for suspended versioning
+			w.Header().Set("x-amz-version-id", "null")
+
+			// Set ETag in response
+			setEtag(w, etag)
 		} else {
-			// Handle regular PUT (non-versioned or suspended versioning)
+			// Handle regular PUT (never configured versioning)
 			glog.V(1).Infof("PutObjectHandler: using regular PUT for %s/%s", bucket, object)
 			uploadUrl := s3a.toFilerUrl(bucket, object)
 			if objectContentType == "" {
@@ -158,18 +175,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			// Check versioning status to determine if we should return VersionId header
-			bucketConfig, configErr := s3a.getBucketConfig(bucket)
-			if configErr == s3err.ErrNone && bucketConfig.Versioning != "" {
-				// Versioning was explicitly configured (either Enabled or Suspended)
-				if bucketConfig.Versioning == s3_constants.VersioningSuspended {
-					// For suspended versioning, set version ID to "null" in response
-					w.Header().Set("x-amz-version-id", "null")
-				}
-				// Note: For enabled versioning, we would have taken the versioned PUT path above
-			}
-			// For buckets where versioning was never configured, don't return VersionId header at all
-
+			// No version ID header for never-configured versioning
 			setEtag(w, etag)
 		}
 	}
@@ -286,6 +292,56 @@ func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string 
 
 // putVersionedObject handles PUT operations for versioned buckets using the new layout
 // where all versions (including latest) are stored in the .versions directory
+func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (etag string, errCode s3err.ErrorCode) {
+	// For suspended versioning, store as regular object (version ID "null") but preserve existing versions
+	glog.V(2).Infof("putSuspendedVersioningObject: creating null version for %s/%s", bucket, object)
+
+	uploadUrl := s3a.toFilerUrl(bucket, object)
+	if objectContentType == "" {
+		dataReader = mimeDetect(r, dataReader)
+	}
+
+	etag, errCode = s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
+	if errCode != s3err.ErrNone {
+		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
+		return "", errCode
+	}
+
+	// Get the uploaded entry to add version metadata indicating this is "null" version
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	entry, err := s3a.getEntry(bucketDir, object)
+	if err != nil {
+		glog.Errorf("putSuspendedVersioningObject: failed to get object entry: %v", err)
+		return "", s3err.ErrInternalError
+	}
+
+	// Add metadata to indicate this is a "null" version for suspended versioning
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+	entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+
+	// Extract and store object lock metadata from request headers (if any)
+	if err := s3a.extractObjectLockMetadataFromRequest(r, entry); err != nil {
+		glog.Errorf("putSuspendedVersioningObject: failed to extract object lock metadata: %v", err)
+		return "", s3err.ErrInvalidRequest
+	}
+
+	// Update the entry with metadata
+	err = s3a.mkFile(bucketDir, object, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = entry.Extended
+		updatedEntry.Attributes = entry.Attributes
+		updatedEntry.Chunks = entry.Chunks
+	})
+	if err != nil {
+		glog.Errorf("putSuspendedVersioningObject: failed to update object metadata: %v", err)
+		return "", s3err.ErrInternalError
+	}
+
+	glog.V(2).Infof("putSuspendedVersioningObject: successfully created null version for %s/%s", bucket, object)
+	return etag, s3err.ErrNone
+}
+
 func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (versionId string, etag string, errCode s3err.ErrorCode) {
 	// Generate version ID
 	versionId = generateVersionId()
