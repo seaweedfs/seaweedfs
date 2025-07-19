@@ -3,7 +3,7 @@ version: '3.9'
 services:
   server-left:
     image: chrislusf/seaweedfs:local
-    command: "-v=0 server -ip=server-left -filer -filer.maxMB 5 -s3 -s3.config=/etc/seaweedfs/s3.json -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1"
+    command: "-v=0 server -ip=server-left -filer -filer.maxMB 5 -s3 -s3.config=/etc/seaweedfs/s3.json -volume.max=0 -master.volumeSizeLimitMB=100 -volume.preStopSeconds=1"
     volumes:
       - ./s3.json:/etc/seaweedfs/s3.json
     healthcheck:
@@ -13,7 +13,7 @@ services:
       timeout: 30s
   server-right:
     image: chrislusf/seaweedfs:local
-    command: "-v=0 server -ip=server-right -filer -filer.maxMB 64 -s3 -s3.config=/etc/seaweedfs/s3.json -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1"
+    command: "-v=0 server -ip=server-right -filer -filer.maxMB 64 -s3 -s3.config=/etc/seaweedfs/s3.json -volume.max=0 -master.volumeSizeLimitMB=100 -volume.preStopSeconds=1"
     volumes:
       - ./s3.json:/etc/seaweedfs/s3.json
     healthcheck:

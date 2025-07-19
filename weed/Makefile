@@ -23,7 +23,7 @@ debug_mount:
 
 debug_server:
 	go build -gcflags="all=-N -l"
-	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ./weed -- server -dir=~/tmp/99 -filer -volume.port=8343 -s3 -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ./weed -- server -dir=~/tmp/99 -filer -volume.port=8343 -s3 -volume.max=0 -master.volumeSizeLimitMB=100 -volume.preStopSeconds=1
 
 debug_volume:
 	go build -tags=5BytesOffset -gcflags="all=-N -l"
