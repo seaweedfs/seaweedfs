@@ -137,9 +137,10 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 // ObjectIdentifier represents an object to be deleted with its key name and optional version ID.
 type ObjectIdentifier struct {
-	Key          string `xml:"Key"`
-	VersionId    string `xml:"VersionId,omitempty"`
-	DeleteMarker bool   `xml:"DeleteMarker,omitempty"`
+	Key                   string `xml:"Key"`
+	VersionId             string `xml:"VersionId,omitempty"`
+	DeleteMarker          bool   `xml:"DeleteMarker,omitempty"`
+	DeleteMarkerVersionId string `xml:"DeleteMarkerVersionId,omitempty"`
 }
 
 // DeleteObjectsRequest - xml carrying the object key names which needs to be deleted.
@@ -277,6 +278,13 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 					Key:          object.Key,
 					VersionId:    deleteVersionId,
 					DeleteMarker: isDeleteMarker,
+				}
+
+				// For delete markers, also set DeleteMarkerVersionId field
+				if isDeleteMarker {
+					deletedObject.DeleteMarkerVersionId = deleteVersionId
+					// Don't set VersionId for delete markers, use DeleteMarkerVersionId instead
+					deletedObject.VersionId = ""
 				}
 				if !deleteObjects.Quiet {
 					deletedObjects = append(deletedObjects, deletedObject)

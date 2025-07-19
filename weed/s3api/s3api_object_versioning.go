@@ -428,6 +428,30 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		return fmt.Errorf("version ID is required for version-specific deletion")
 	}
 
+	if versionId == "null" {
+		// Delete "null" version (pre-versioning object stored as regular file)
+		bucketDir := s3a.option.BucketsPath + "/" + bucket
+		cleanObject := strings.TrimPrefix(object, "/")
+
+		// Check if the object exists
+		_, err := s3a.getEntry(bucketDir, cleanObject)
+		if err != nil {
+			return fmt.Errorf("null version object %s not found: %v", cleanObject, err)
+		}
+
+		// Delete the regular file
+		deleteErr := s3a.rm(bucketDir, cleanObject, true, false)
+		if deleteErr != nil {
+			// Check if file was already deleted by another process
+			if _, checkErr := s3a.getEntry(bucketDir, cleanObject); checkErr != nil {
+				// File doesn't exist anymore, deletion was successful
+				return nil
+			}
+			return fmt.Errorf("failed to delete null version %s: %v", cleanObject, deleteErr)
+		}
+		return nil
+	}
+
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionFile := s3a.getVersionFileName(versionId)
 
