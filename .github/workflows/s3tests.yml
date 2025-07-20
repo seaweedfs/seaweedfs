@@ -123,29 +123,6 @@ jobs:
             sleep 2
           done
           
-          # Final check: if S3 server is not responding, fail early
-          if ! curl -s -f http://localhost:8004/ > /dev/null 2>&1; then
-            echo "❌ ERROR: S3 server on port 8004 is not responding after all attempts"
-            echo "=== Final Diagnostics ==="
-            echo "Server PID: $pid"
-            if kill -0 $pid 2>/dev/null; then
-              echo "✅ Server process $pid is still running"
-            else
-              echo "❌ Server process $pid has died"
-            fi
-            ps aux | grep weed || echo "No weed processes found"
-            netstat -tulpn | grep 8004 || echo "Port 8004 not bound"
-            echo "=== Environment Variables ==="
-            echo "WEED_LEVELDB2_ENABLED: $WEED_LEVELDB2_ENABLED"
-            echo "WEED_SQLITE_ENABLED: $WEED_SQLITE_ENABLED"
-            echo "WEED_SQLITE_DBFILE: $WEED_SQLITE_DBFILE"
-            echo "=== Server Log (last 50 lines) ==="
-            tail -50 /tmp/seaweedfs-sql-server.log 2>/dev/null || echo "No server log available"
-            echo "=== Data Directory Contents ==="
-            ls -la "$WEED_DATA_DIR" || echo "Data directory not accessible"
-            exit 1
-          fi
-          
           echo "✅ S3 server is responding, starting tests..."
           
           tox -- \
