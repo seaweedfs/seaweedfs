@@ -56,10 +56,50 @@ jobs:
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -volume.max=100 -volume.preStopSeconds=1 \
+            -master.port=9333 -volume.port=8080 -filer.port=8888 -s3.port=8000 -metricsPort=9324 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
-          sleep 10          
+          
+          # Wait for all SeaweedFS components to be ready
+          echo "Waiting for SeaweedFS components to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:9333/cluster/status > /dev/null 2>&1; then
+              echo "Master server is ready"
+              break
+            fi
+            echo "Waiting for master server... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/status > /dev/null 2>&1; then
+              echo "Volume server is ready"
+              break
+            fi
+            echo "Waiting for volume server... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8888/ > /dev/null 2>&1; then
+              echo "Filer is ready"
+              break
+            fi
+            echo "Waiting for filer... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8000/ > /dev/null 2>&1; then
+              echo "S3 server is ready"
+              break
+            fi
+            echo "Waiting for S3 server... ($i/30)"
+            sleep 2
+          done
+          
+          echo "All SeaweedFS components are ready!"
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
           tox -- \
@@ -249,8 +289,6 @@ jobs:
 
       - name: Run S3 Object Lock, Retention, and Versioning tests
         timeout-minutes: 15
-        env:
-          S3TEST_CONF: ../docker/compose/s3tests.conf
         shell: bash
         run: |
           cd weed
@@ -262,17 +300,59 @@ jobs:
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8001 -metricsPort=9325 \
+            -volume.max=100 -volume.preStopSeconds=1 \
+            -master.port=9334 -volume.port=8081 -filer.port=8889 -s3.port=8001 -metricsPort=9325 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
-          sleep 10          
+          
+          # Wait for all SeaweedFS components to be ready
+          echo "Waiting for SeaweedFS components to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:9334/cluster/status > /dev/null 2>&1; then
+              echo "Master server is ready"
+              break
+            fi
+            echo "Waiting for master server... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8081/status > /dev/null 2>&1; then
+              echo "Volume server is ready"
+              break
+            fi
+            echo "Waiting for volume server... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8889/ > /dev/null 2>&1; then
+              echo "Filer is ready"
+              break
+            fi
+            echo "Waiting for filer... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8001/ > /dev/null 2>&1; then
+              echo "S3 server is ready"
+              break
+            fi
+            echo "Waiting for S3 server... ($i/30)"
+            sleep 2
+          done
+          
+          echo "All SeaweedFS components are ready!"
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
           # Fix bucket creation conflicts in versioning tests by replacing _create_objects calls
           sed -i 's/bucket_name = _create_objects(bucket_name=bucket_name,keys=key_names)/# Use the existing bucket for object creation\n    client = get_client()\n    for key in key_names:\n        client.put_object(Bucket=bucket_name, Body=key, Key=key)/' s3tests_boto3/functional/test_s3.py
           sed -i 's/bucket = _create_objects(bucket_name=bucket_name, keys=key_names)/# Use the existing bucket for object creation\n    client = get_client()\n    for key in key_names:\n        client.put_object(Bucket=bucket_name, Body=key, Key=key)/' s3tests_boto3/functional/test_s3.py
-          # Update s3tests.conf to use port 8001
-          sed -i 's/:8000/:8001/g' ../docker/compose/s3tests.conf
+          # Create and update s3tests.conf to use port 8001
+          cp ../docker/compose/s3tests.conf ../docker/compose/s3tests-versioning.conf
+          sed -i 's/:8000/:8001/g' ../docker/compose/s3tests-versioning.conf
+          export S3TEST_CONF=../docker/compose/s3tests-versioning.conf
           tox -- s3tests_boto3/functional/test_s3.py -k "object_lock or (versioning and not test_versioning_obj_suspend_versions and not test_bucket_list_return_data_versioning and not test_versioning_concurrent_multi_object_delete)" --tb=short
           kill -9 $pid || true
           # Clean up data directory
@@ -307,8 +387,6 @@ jobs:
 
       - name: Run S3 CORS tests
         timeout-minutes: 10
-        env:
-          S3TEST_CONF: ../docker/compose/s3tests.conf
         shell: bash
         run: |
           cd weed
@@ -320,14 +398,56 @@ jobs:
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8002 -metricsPort=9326 \
+            -volume.max=100 -volume.preStopSeconds=1 \
+            -master.port=9335 -volume.port=8082 -filer.port=8890 -s3.port=8002 -metricsPort=9326 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
-          sleep 10          
+          
+          # Wait for all SeaweedFS components to be ready
+          echo "Waiting for SeaweedFS components to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:9335/cluster/status > /dev/null 2>&1; then
+              echo "Master server is ready"
+              break
+            fi
+            echo "Waiting for master server... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8082/status > /dev/null 2>&1; then
+              echo "Volume server is ready"
+              break
+            fi
+            echo "Waiting for volume server... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8890/ > /dev/null 2>&1; then
+              echo "Filer is ready"
+              break
+            fi
+            echo "Waiting for filer... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8002/ > /dev/null 2>&1; then
+              echo "S3 server is ready"
+              break
+            fi
+            echo "Waiting for S3 server... ($i/30)"
+            sleep 2
+          done
+          
+          echo "All SeaweedFS components are ready!"
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
-          # Update s3tests.conf to use port 8002
-          sed -i 's/:8000/:8002/g' ../docker/compose/s3tests.conf
+          # Create and update s3tests.conf to use port 8002
+          cp ../docker/compose/s3tests.conf ../docker/compose/s3tests-cors.conf
+          sed -i 's/:8000/:8002/g' ../docker/compose/s3tests-cors.conf
+          export S3TEST_CONF=../docker/compose/s3tests-cors.conf
           # Run CORS-specific tests from s3-tests suite
           tox -- s3tests_boto3/functional/test_s3.py -k "cors" --tb=short || echo "No CORS tests found in s3-tests suite"
           # If no specific CORS tests exist, run bucket configuration tests that include CORS
@@ -365,10 +485,50 @@ jobs:
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8003 -metricsPort=9327 \
+            -volume.max=100 -volume.preStopSeconds=1 \
+            -master.port=9336 -volume.port=8083 -filer.port=8891 -s3.port=8003 -metricsPort=9327 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
-          sleep 10
+          
+          # Wait for all SeaweedFS components to be ready
+          echo "Waiting for SeaweedFS components to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:9336/cluster/status > /dev/null 2>&1; then
+              echo "Master server is ready"
+              break
+            fi
+            echo "Waiting for master server... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8083/status > /dev/null 2>&1; then
+              echo "Volume server is ready"
+              break
+            fi
+            echo "Waiting for volume server... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8891/ > /dev/null 2>&1; then
+              echo "Filer is ready"
+              break
+            fi
+            echo "Waiting for filer... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8003/ > /dev/null 2>&1; then
+              echo "S3 server is ready"
+              break
+            fi
+            echo "Waiting for S3 server... ($i/30)"
+            sleep 2
+          done
+          
+          echo "All SeaweedFS components are ready!"
           cd ../test/s3/copying
           go test -v
           kill -9 $pid || true
@@ -404,8 +564,6 @@ jobs:
 
       - name: Run Ceph S3 tests with SQL store
         timeout-minutes: 15
-        env:
-          S3TEST_CONF: ../docker/compose/s3tests.conf
         shell: bash
         run: |
           cd weed
@@ -418,14 +576,56 @@ jobs:
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8004 -metricsPort=9328 \
+            -volume.max=100 -volume.preStopSeconds=1 \
+            -master.port=9337 -volume.port=8084 -filer.port=8892 -s3.port=8004 -metricsPort=9328 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
-          sleep 10          
+          
+          # Wait for all SeaweedFS components to be ready
+          echo "Waiting for SeaweedFS components to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:9337/cluster/status > /dev/null 2>&1; then
+              echo "Master server is ready"
+              break
+            fi
+            echo "Waiting for master server... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8084/status > /dev/null 2>&1; then
+              echo "Volume server is ready"
+              break
+            fi
+            echo "Waiting for volume server... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8892/ > /dev/null 2>&1; then
+              echo "Filer is ready"
+              break
+            fi
+            echo "Waiting for filer... ($i/30)"
+            sleep 2
+          done
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8004/ > /dev/null 2>&1; then
+              echo "S3 server is ready"
+              break
+            fi
+            echo "Waiting for S3 server... ($i/30)"
+            sleep 2
+          done
+          
+          echo "All SeaweedFS components are ready!"
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
-          # Update s3tests.conf to use port 8004
-          sed -i 's/:8000/:8004/g' ../docker/compose/s3tests.conf
+          # Create and update s3tests.conf to use port 8004
+          cp ../docker/compose/s3tests.conf ../docker/compose/s3tests-sql.conf
+          sed -i 's/:8000/:8004/g' ../docker/compose/s3tests-sql.conf
+          export S3TEST_CONF=../docker/compose/s3tests-sql.conf
           tox -- \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_empty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_distinct \
