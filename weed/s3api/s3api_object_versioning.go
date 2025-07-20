@@ -130,7 +130,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	// Track objects that have been processed to avoid duplicates
 	processedObjects := make(map[string]bool)
 
-	// Track version IDs globally to prevent duplicates across the entire listing
+	// Track version IDs globally to prevent duplicates throughout the listing
 	seenVersionIds := make(map[string]bool)
 
 	// Recursively find all .versions directories in the bucket
