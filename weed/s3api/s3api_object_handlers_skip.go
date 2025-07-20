@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -153,6 +154,38 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		objectOwner = amzAccountId
 	}
 
+	// **PERMISSION CHECKS**
+
+	// 1. Check if user is admin (admins can modify any ACL)
+	if !s3a.isUserAdmin(r) {
+		// 2. Check object ownership - only object owner can modify ACL (unless admin)
+		if objectOwner != amzAccountId {
+			glog.V(3).Infof("PutObjectAclHandler: Access denied - user %s is not owner of object %s/%s (owner: %s)",
+				amzAccountId, bucket, object, objectOwner)
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+
+		// 3. Check object-level WRITE_ACP permission
+		// Create the specific action for this object
+		writeAcpAction := Action(fmt.Sprintf("WriteAcp:%s/%s", bucket, object))
+		identity, errCode := s3a.iam.authRequest(r, writeAcpAction)
+		if errCode != s3err.ErrNone {
+			glog.V(3).Infof("PutObjectAclHandler: Auth failed for WriteAcp action on %s/%s: %v", bucket, object, errCode)
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+
+		// 4. Verify the authenticated identity can perform WriteAcp on this specific object
+		if identity == nil || !identity.canDo(writeAcpAction, bucket, object) {
+			glog.V(3).Infof("PutObjectAclHandler: Identity %v cannot perform WriteAcp on %s/%s", identity, bucket, object)
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+	} else {
+		glog.V(3).Infof("PutObjectAclHandler: Admin user %s granted ACL modification permission for %s/%s", amzAccountId, bucket, object)
+	}
+
 	// Get bucket config for ownership settings
 	bucketConfig, errCode := s3a.getBucketConfig(bucket)
 	if errCode != s3err.ErrNone {
@@ -164,6 +197,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	bucketOwnerId := bucketConfig.Owner
 
 	// Extract ACL from request (either canned ACL or XML body)
+	// This function also validates that the owner in the request matches the object owner
 	grants, errCode := ExtractAcl(r, s3a.iam, bucketOwnership, bucketOwnerId, objectOwner, amzAccountId)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -196,5 +230,6 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	glog.V(3).Infof("PutObjectAclHandler: Successfully updated ACL for %s/%s by user %s", bucket, object, amzAccountId)
 	writeSuccessResponseEmpty(w, r)
 }
