@@ -353,17 +353,16 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 // when a new "null" version becomes the latest during suspended versioning
 func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object string) error {
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	cleanObject := strings.TrimPrefix(object, "/")
-	versionsObjectPath := cleanObject + ".versions"
+	versionsObjectPath := object + ".versions"
 	versionsDir := bucketDir + "/" + versionsObjectPath
 
-	glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: updating flags for %s/%s", bucket, cleanObject)
+	glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: updating flags for %s%s", bucket, object)
 
 	// Check if .versions directory exists
 	_, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
 		// No .versions directory exists, nothing to update
-		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: no .versions directory for %s/%s", bucket, cleanObject)
+		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: no .versions directory for %s%s", bucket, object)
 		return nil
 	}
 

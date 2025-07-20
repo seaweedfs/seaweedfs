@@ -696,8 +696,7 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 // getLatestObjectVersion finds the latest version of an object by reading .versions directory metadata
 func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb.Entry, error) {
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	cleanObject := strings.TrimPrefix(object, "/")
-	versionsObjectPath := cleanObject + ".versions"
+	versionsObjectPath := object + ".versions"
 
 	// Get the .versions directory entry to read latest version metadata
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
@@ -705,14 +704,14 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 		// .versions directory doesn't exist - this can happen for objects that existed
 		// before versioning was enabled on the bucket. Fall back to checking for a
 		// regular (non-versioned) object file.
-		glog.V(2).Infof("getLatestObjectVersion: no .versions directory for %s/%s, checking for pre-versioning object", bucket, object)
+		glog.V(2).Infof("getLatestObjectVersion: no .versions directory for %s%s, checking for pre-versioning object", bucket, object)
 
-		regularEntry, regularErr := s3a.getEntry(bucketDir, cleanObject)
+		regularEntry, regularErr := s3a.getEntry(bucketDir, object)
 		if regularErr != nil {
-			return nil, fmt.Errorf("failed to get %s/%s .versions directory and no regular object found: %w", bucket, cleanObject, err)
+			return nil, fmt.Errorf("failed to get %s%s .versions directory and no regular object found: %w", bucket, object, err)
 		}
 
-		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s", bucket, cleanObject)
+		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s", bucket, object)
 		return regularEntry, nil
 	}
 
@@ -720,14 +719,14 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	if versionsEntry.Extended == nil {
 		// No metadata means all versioned objects have been deleted.
 		// Fall back to checking for a pre-versioning object.
-		glog.V(2).Infof("getLatestObjectVersion: no Extended metadata in .versions directory for %s/%s, checking for pre-versioning object", bucket, cleanObject)
+		glog.V(2).Infof("getLatestObjectVersion: no Extended metadata in .versions directory for %s%s, checking for pre-versioning object", bucket, object)
 
-		regularEntry, regularErr := s3a.getEntry(bucketDir, cleanObject)
+		regularEntry, regularErr := s3a.getEntry(bucketDir, object)
 		if regularErr != nil {
-			return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s/%s", bucket, cleanObject)
+			return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s%s", bucket, object)
 		}
 
-		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s (no Extended metadata case)", bucket, cleanObject)
+		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s%s (no Extended metadata case)", bucket, object)
 		return regularEntry, nil
 	}
 
