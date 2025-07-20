@@ -520,7 +520,7 @@ jobs:
           done
           
           for i in {1..30}; do
-            if curl -s http://localhost:8003/ > /dev/null 2>&1; then
+            if curl -s http://localhost:8000/ > /dev/null 2>&1; then
               echo "S3 server is ready"
               break
             fi
