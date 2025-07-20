@@ -123,6 +123,19 @@ jobs:
             sleep 2
           done
           
+          # Final check: if S3 server is not responding, fail early
+          if ! curl -s -f http://localhost:8004/ > /dev/null 2>&1; then
+            echo "❌ ERROR: S3 server on port 8004 is not responding after all attempts"
+            echo "=== Final Diagnostics ==="
+            ps aux | grep weed || echo "No weed processes found"
+            netstat -tulpn | grep 8004 || echo "Port 8004 not bound"
+            echo "=== Server Command Used ==="
+            echo "weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 -dir=$WEED_DATA_DIR -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 -volume.max=100 -volume.preStopSeconds=1 -master.port=9337 -volume.port=8084 -filer.port=8892 -s3.port=8004 -metricsPort=9328 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json"
+            exit 1
+          fi
+          
+          echo "✅ S3 server is responding, starting tests..."
+          
           tox -- \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_empty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_distinct \
@@ -731,12 +744,32 @@ jobs:
           
           # Test S3 connection before running tests
           echo "Testing S3 connection..."
+          
+          # Debug: Check if SeaweedFS processes are running
+          echo "=== Process Status ==="
+          ps aux | grep -E "(weed|seaweedfs)" | grep -v grep || echo "No SeaweedFS processes found"
+          
+          # Debug: Check port status
+          echo "=== Port Status ==="
+          netstat -tulpn | grep -E "(8004|9337|8084|8892)" || echo "Ports not found"
+          
+          # Debug: Check server logs
+          echo "=== Recent Server Logs ==="
+          echo "--- Master Log ---"
+          tail -20 /tmp/seaweedfs-*.log 2>/dev/null || echo "No log files found"
+          
           for i in {1..10}; do
             if curl -s -f http://localhost:8004/ > /dev/null 2>&1; then
               echo "S3 connection test successful"
               break
             fi
             echo "S3 connection test failed, retrying... ($i/10)"
+            
+            # Debug: Try different HTTP methods
+            echo "Debug: Testing different endpoints..."
+            curl -s -I http://localhost:8004/ || echo "HEAD request failed"
+            curl -s http://localhost:8004/status || echo "Status endpoint failed"
+            
             sleep 2
           done
           tox -- \
