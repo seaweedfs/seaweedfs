@@ -249,7 +249,7 @@ jobs:
           # Skip test_versioning_obj_suspend_versions due to IndexError bug in test framework
           # Skip tests that require ACL Owner field support which SeaweedFS doesn't implement yet
           # Skip test_versioning_concurrent_multi_object_delete due to concurrency issue in SeaweedFS
-          tox -- -k "object_lock or (versioning and not test_versioning_obj_suspend_versions and not test_bucket_list_return_data_versioning and not test_versioning_concurrent_multi_object_delete)" --tb=short
+          tox -- s3tests_boto3/functional/test_s3.py -k "object_lock or (versioning and not test_versioning_obj_suspend_versions and not test_bucket_list_return_data_versioning and not test_versioning_concurrent_multi_object_delete)" --tb=short
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
