@@ -111,7 +111,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		return
 	}
 
-	response, errCode := s3a.completeMultipartUpload(&s3.CompleteMultipartUploadInput{
+	response, errCode := s3a.completeMultipartUpload(r, &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      objectKey(aws.String(object)),
 		UploadId: aws.String(uploadID),

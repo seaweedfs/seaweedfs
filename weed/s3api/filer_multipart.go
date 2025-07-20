@@ -51,6 +51,13 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			entry.Extended = make(map[string][]byte)
 		}
 		entry.Extended["key"] = []byte(*input.Key)
+
+		// Set object owner for multipart upload
+		amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+		if amzAccountId != "" {
+			entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
+		}
+
 		for k, v := range input.Metadata {
 			entry.Extended[k] = []byte(*v)
 		}
@@ -92,7 +99,7 @@ type CompleteMultipartUploadResult struct {
 	VersionId *string `xml:"-"`
 }
 
-func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload) (output *CompleteMultipartUploadResult, code s3err.ErrorCode) {
+func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload) (output *CompleteMultipartUploadResult, code s3err.ErrorCode) {
 
 	glog.V(2).Infof("completeMultipartUpload input %v", input)
 	if len(parts.Parts) == 0 {
@@ -254,6 +261,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			}
 			versionEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
 			versionEntry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
+
+			// Set object owner for versioned multipart objects
+			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+			if amzAccountId != "" {
+				versionEntry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
+			}
+
 			for k, v := range pentry.Extended {
 				if k != "key" {
 					versionEntry.Extended[k] = v
@@ -296,6 +310,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+
+			// Set object owner for suspended versioning multipart objects
+			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+			if amzAccountId != "" {
+				entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
+			}
+
 			for k, v := range pentry.Extended {
 				if k != "key" {
 					entry.Extended[k] = v
@@ -329,6 +350,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
+
+			// Set object owner for non-versioned multipart objects
+			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+			if amzAccountId != "" {
+				entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
+			}
+
 			for k, v := range pentry.Extended {
 				if k != "key" {
 					entry.Extended[k] = v

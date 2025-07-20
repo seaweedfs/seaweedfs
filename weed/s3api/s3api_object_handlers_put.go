@@ -213,6 +213,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			proxyReq.Header.Add(header, value)
 		}
 	}
+
+	// Set object owner header for filer to extract
+	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+	if amzAccountId != "" {
+		proxyReq.Header.Set(s3_constants.ExtAmzOwnerKey, amzAccountId)
+		glog.V(2).Infof("putToFiler: setting owner header %s for object %s", amzAccountId, uploadUrl)
+	}
+
 	// ensure that the Authorization header is overriding any previous
 	// Authorization header which might be already present in proxyReq
 	s3a.maybeAddFilerJwtAuthorization(proxyReq, true)
@@ -244,8 +252,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.Errorf("upload to filer error: %v", ret.Error)
 		return "", filerErrorToS3Error(ret.Error)
 	}
+
 	stats_collect.RecordBucketActiveTime(bucket)
-	stats_collect.S3BucketTrafficReceivedBytesCounter.WithLabelValues(bucket).Add(float64(ret.Size))
 	return etag, s3err.ErrNone
 }
 
@@ -290,6 +298,18 @@ func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string 
 	return string(encodedJwt)
 }
 
+// setObjectOwnerFromRequest sets the object owner metadata based on the authenticated user
+func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, entry *filer_pb.Entry) {
+	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+	if amzAccountId != "" {
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
+		entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
+		glog.V(2).Infof("setObjectOwnerFromRequest: set object owner to %s", amzAccountId)
+	}
+}
+
 // putVersionedObject handles PUT operations for versioned buckets using the new layout
 // where all versions (including latest) are stored in the .versions directory
 func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (etag string, errCode s3err.ErrorCode) {
@@ -320,6 +340,9 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		entry.Extended = make(map[string][]byte)
 	}
 	entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+
+	// Set object owner for suspended versioning objects
+	s3a.setObjectOwnerFromRequest(r, entry)
 
 	// Extract and store object lock metadata from request headers (if any)
 	if err := s3a.extractObjectLockMetadataFromRequest(r, entry); err != nil {
@@ -466,6 +489,9 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 		etag = "\"" + etag + "\""
 	}
 	versionEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
+	// Set object owner for versioned objects
+	s3a.setObjectOwnerFromRequest(r, versionEntry)
 
 	// Extract and store object lock metadata from request headers
 	if err := s3a.extractObjectLockMetadataFromRequest(r, versionEntry); err != nil {
