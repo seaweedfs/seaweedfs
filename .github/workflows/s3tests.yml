@@ -102,6 +102,27 @@ jobs:
           echo "All SeaweedFS components are ready!"
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
+          
+          # Debug: Show the config file contents
+          echo "=== S3 Config File Contents ==="
+          cat ../docker/compose/s3tests.conf
+          echo "=== End Config ==="
+          
+          # Additional wait for S3-Filer integration to be fully ready
+          echo "Waiting additional 10 seconds for S3-Filer integration..."
+          sleep 10
+          
+          # Test S3 connection before running tests
+          echo "Testing S3 connection..."
+          for i in {1..10}; do
+            if curl -s -f http://localhost:8000/ > /dev/null 2>&1; then
+              echo "S3 connection test successful"
+              break
+            fi
+            echo "S3 connection test failed, retrying... ($i/10)"
+            sleep 2
+          done
+          
           tox -- \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_empty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_distinct \
@@ -352,7 +373,29 @@ jobs:
           # Create and update s3tests.conf to use port 8001
           cp ../docker/compose/s3tests.conf ../docker/compose/s3tests-versioning.conf
           sed -i 's/:8000/:8001/g' ../docker/compose/s3tests-versioning.conf
+          sed -i 's/localhost:8000/localhost:8001/g' ../docker/compose/s3tests-versioning.conf
+          sed -i 's/127\.0\.0\.1:8000/127.0.0.1:8001/g' ../docker/compose/s3tests-versioning.conf
           export S3TEST_CONF=../docker/compose/s3tests-versioning.conf
+          
+          # Debug: Show the config file contents
+          echo "=== S3 Config File Contents ==="
+          cat ../docker/compose/s3tests-versioning.conf
+          echo "=== End Config ==="
+          
+          # Additional wait for S3-Filer integration to be fully ready
+          echo "Waiting additional 10 seconds for S3-Filer integration..."
+          sleep 10
+          
+          # Test S3 connection before running tests
+          echo "Testing S3 connection..."
+          for i in {1..10}; do
+            if curl -s -f http://localhost:8001/ > /dev/null 2>&1; then
+              echo "S3 connection test successful"
+              break
+            fi
+            echo "S3 connection test failed, retrying... ($i/10)"
+            sleep 2
+          done
           tox -- s3tests_boto3/functional/test_s3.py -k "object_lock or (versioning and not test_versioning_obj_suspend_versions and not test_bucket_list_return_data_versioning and not test_versioning_concurrent_multi_object_delete)" --tb=short
           kill -9 $pid || true
           # Clean up data directory
@@ -447,7 +490,29 @@ jobs:
           # Create and update s3tests.conf to use port 8002
           cp ../docker/compose/s3tests.conf ../docker/compose/s3tests-cors.conf
           sed -i 's/:8000/:8002/g' ../docker/compose/s3tests-cors.conf
+          sed -i 's/localhost:8000/localhost:8002/g' ../docker/compose/s3tests-cors.conf
+          sed -i 's/127\.0\.0\.1:8000/127.0.0.1:8002/g' ../docker/compose/s3tests-cors.conf
           export S3TEST_CONF=../docker/compose/s3tests-cors.conf
+          
+          # Debug: Show the config file contents
+          echo "=== S3 Config File Contents ==="
+          cat ../docker/compose/s3tests-cors.conf
+          echo "=== End Config ==="
+          
+          # Additional wait for S3-Filer integration to be fully ready
+          echo "Waiting additional 10 seconds for S3-Filer integration..."
+          sleep 10
+          
+          # Test S3 connection before running tests
+          echo "Testing S3 connection..."
+          for i in {1..10}; do
+            if curl -s -f http://localhost:8002/ > /dev/null 2>&1; then
+              echo "S3 connection test successful"
+              break
+            fi
+            echo "S3 connection test failed, retrying... ($i/10)"
+            sleep 2
+          done
           # Run CORS-specific tests from s3-tests suite
           tox -- s3tests_boto3/functional/test_s3.py -k "cors" --tb=short || echo "No CORS tests found in s3-tests suite"
           # If no specific CORS tests exist, run bucket configuration tests that include CORS
@@ -532,6 +597,27 @@ jobs:
           cd ../test/s3/copying
           # Patch Go tests to use the correct S3 endpoint (port 8003)
           sed -i 's/http:\/\/127\.0\.0\.1:8000/http:\/\/127.0.0.1:8003/g' s3_copying_test.go
+          
+          # Debug: Show what endpoint the Go tests will use
+          echo "=== Go Test Configuration ==="
+          grep -n "127.0.0.1" s3_copying_test.go || echo "No IP configuration found"
+          echo "=== End Configuration ==="
+          
+          # Additional wait for S3-Filer integration to be fully ready
+          echo "Waiting additional 10 seconds for S3-Filer integration..."
+          sleep 10
+          
+          # Test S3 connection before running tests
+          echo "Testing S3 connection..."
+          for i in {1..10}; do
+            if curl -s -f http://localhost:8003/ > /dev/null 2>&1; then
+              echo "S3 connection test successful"
+              break
+            fi
+            echo "S3 connection test failed, retrying... ($i/10)"
+            sleep 2
+          done
+          
           go test -v
           kill -9 $pid || true
           # Clean up data directory
@@ -627,7 +713,29 @@ jobs:
           # Create and update s3tests.conf to use port 8004
           cp ../docker/compose/s3tests.conf ../docker/compose/s3tests-sql.conf
           sed -i 's/:8000/:8004/g' ../docker/compose/s3tests-sql.conf
+          sed -i 's/localhost:8000/localhost:8004/g' ../docker/compose/s3tests-sql.conf
+          sed -i 's/127\.0\.0\.1:8000/127.0.0.1:8004/g' ../docker/compose/s3tests-sql.conf
           export S3TEST_CONF=../docker/compose/s3tests-sql.conf
+          
+          # Debug: Show the config file contents
+          echo "=== S3 Config File Contents ==="
+          cat ../docker/compose/s3tests-sql.conf
+          echo "=== End Config ==="
+          
+          # Additional wait for S3-Filer integration to be fully ready
+          echo "Waiting additional 10 seconds for S3-Filer integration..."
+          sleep 10
+          
+          # Test S3 connection before running tests
+          echo "Testing S3 connection..."
+          for i in {1..10}; do
+            if curl -s -f http://localhost:8004/ > /dev/null 2>&1; then
+              echo "S3 connection test successful"
+              break
+            fi
+            echo "S3 connection test failed, retrying... ($i/10)"
+            sleep 2
+          done
           tox -- \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_empty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_distinct \
