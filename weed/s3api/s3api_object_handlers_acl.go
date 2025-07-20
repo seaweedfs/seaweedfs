@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -27,7 +28,7 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	entry, err := s3a.getEntry(bucketDir, object)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
@@ -126,7 +127,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	entry, err := s3a.getEntry(bucketDir, object)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}

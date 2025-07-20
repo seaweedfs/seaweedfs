@@ -230,7 +230,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
-	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || err == filer_pb.ErrNotFound {
+	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || errors.Is(err, filer_pb.ErrNotFound) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		return
 	}
@@ -240,7 +240,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 
 func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorCode {
 	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
-	if entry == nil || err == filer_pb.ErrNotFound {
+	if entry == nil || errors.Is(err, filer_pb.ErrNotFound) {
 		return s3err.ErrNoSuchBucket
 	}
 
@@ -669,7 +669,7 @@ func (s3a *S3ApiServer) DeleteBucketOwnershipControls(w http.ResponseWriter, r *
 
 	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 			return
 		}

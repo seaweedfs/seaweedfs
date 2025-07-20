@@ -98,7 +98,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Get detailed versioning state for the bucket
 		versioningState, err := s3a.getVersioningState(bucket)
 		if err != nil {
-			if err == filer_pb.ErrNotFound {
+			if errors.Is(err, filer_pb.ErrNotFound) {
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 				return
 			}

@@ -98,10 +98,11 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		return config, s3err.ErrNone
 	}
 
-	// Load from filer
-	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	// Try to get from filer
+	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			// Bucket doesn't exist
 			return nil, s3err.ErrNoSuchBucket
 		}
 		glog.Errorf("getBucketConfig: failed to get bucket entry for %s: %v", bucket, err)
@@ -110,25 +111,25 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 
 	config := &BucketConfig{
 		Name:  bucket,
-		Entry: bucketEntry,
+		Entry: entry,
 	}
 
 	// Extract configuration from extended attributes
-	if bucketEntry.Extended != nil {
-		if versioning, exists := bucketEntry.Extended[s3_constants.ExtVersioningKey]; exists {
+	if entry.Extended != nil {
+		if versioning, exists := entry.Extended[s3_constants.ExtVersioningKey]; exists {
 			config.Versioning = string(versioning)
 		}
-		if ownership, exists := bucketEntry.Extended[s3_constants.ExtOwnershipKey]; exists {
+		if ownership, exists := entry.Extended[s3_constants.ExtOwnershipKey]; exists {
 			config.Ownership = string(ownership)
 		}
-		if acl, exists := bucketEntry.Extended[s3_constants.ExtAmzAclKey]; exists {
+		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
 			config.ACL = acl
 		}
-		if owner, exists := bucketEntry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
+		if owner, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
 		}
 		// Parse Object Lock configuration if present
-		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(bucketEntry); found {
+		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(entry); found {
 			config.ObjectLockConfig = objectLockConfig
 			glog.V(2).Infof("getBucketConfig: cached Object Lock configuration for bucket %s", bucket)
 		}

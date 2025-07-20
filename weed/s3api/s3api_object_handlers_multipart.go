@@ -3,6 +3,7 @@ package s3api
 import (
 	"crypto/sha1"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,7 +42,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 	// Check if versioning is enabled for the bucket (needed for object lock)
 	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 			return
 		}
