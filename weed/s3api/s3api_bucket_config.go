@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -135,7 +136,7 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 
 	// Load CORS configuration from .s3metadata
 	if corsConfig, err := s3a.loadCORSFromMetadata(bucket); err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			// Missing metadata is not an error; fall back cleanly
 			glog.V(2).Infof("CORS metadata not found for bucket %s, falling back to default behavior", bucket)
 		} else {
@@ -310,7 +311,7 @@ func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfigura
 	entry, err := s3a.getEntry("", bucketMetadataPath)
 	if err != nil {
 		glog.V(3).Infof("loadCORSFromMetadata: error retrieving metadata for bucket %s: %v", bucket, err)
-		return nil, fmt.Errorf("error retrieving metadata for bucket %s: %v", bucket, err)
+		return nil, fmt.Errorf("error retrieving metadata for bucket %s: %w", bucket, err)
 	}
 	if entry == nil {
 		glog.V(3).Infof("loadCORSFromMetadata: no metadata entry found for bucket %s", bucket)
