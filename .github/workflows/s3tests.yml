@@ -668,21 +668,51 @@ jobs:
           echo "=== Cleanup existing processes ==="
           pkill -f weed || echo "No weed processes found"
           
-          # Force kill processes using our specific ports
+          # More aggressive port cleanup using multiple methods
           for port in 9337 8084 8892 8004 9328; do
+            echo "Cleaning port $port..."
+            
+            # Method 1: lsof
             pid=$(lsof -ti :$port 2>/dev/null || echo "")
             if [ -n "$pid" ]; then
-              echo "Killing process $pid using port $port"
+              echo "Found process $pid using port $port (via lsof)"
               kill -9 $pid 2>/dev/null || echo "Failed to kill $pid"
-              sleep 1
             fi
+            
+            # Method 2: netstat + ps (for cases where lsof fails)
+            netstat_pids=$(netstat -tlnp 2>/dev/null | grep ":$port " | awk '{print $7}' | cut -d'/' -f1 | grep -v '^-$' || echo "")
+            for npid in $netstat_pids; do
+              if [ -n "$npid" ] && [ "$npid" != "-" ]; then
+                echo "Found process $npid using port $port (via netstat)"
+                kill -9 $npid 2>/dev/null || echo "Failed to kill $npid"
+              fi
+            done
+            
+            # Method 3: fuser (if available)
+            if command -v fuser >/dev/null 2>&1; then
+              fuser -k ${port}/tcp 2>/dev/null || echo "No process found via fuser for port $port"
+            fi
+            
+            sleep 1
           done
           
           # Wait for ports to be released
-          sleep 3
+          sleep 5
           
           echo "=== Post-cleanup Port Check ==="
           netstat -tulpn | grep -E "(9337|8084|8892|8004|9328)" || echo "All ports are now free"
+          
+          # If any ports are still in use, fail fast
+          if netstat -tulpn | grep -E "(9337|8084|8892|8004|9328)" >/dev/null 2>&1; then
+            echo "❌ ERROR: Some ports are still in use after aggressive cleanup!"
+            echo "=== Detailed Port Analysis ==="
+            for port in 9337 8084 8892 8004 9328; do
+              echo "Port $port:"
+              netstat -tlnp 2>/dev/null | grep ":$port " || echo "  Not in use"
+              lsof -i :$port 2>/dev/null || echo "  No lsof info"
+            done
+            exit 1
+          fi
           
           go install -tags "sqlite" -buildvcs=false
           # Create clean data directory for this test run with unique timestamp and process ID
