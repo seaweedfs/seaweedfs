@@ -292,7 +292,7 @@ func pathToBucketObjectAndVersion(path string) (bucket, object, versionId string
 	// Parse versionId from query string if present
 	// Format: /bucket/object?versionId=version-id
 	if idx := strings.Index(path, "?versionId="); idx != -1 {
-		versionId = path[idx+11:] // len("?versionId=") = 11
+		versionId = path[idx+len("?versionId="):] // dynamically calculate length
 		path = path[:idx]
 	}
 
