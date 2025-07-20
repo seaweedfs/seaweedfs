@@ -520,7 +520,7 @@ jobs:
           done
           
           for i in {1..30}; do
-            if curl -s http://localhost:8000/ > /dev/null 2>&1; then
+            if curl -s http://localhost:8003/ > /dev/null 2>&1; then
               echo "S3 server is ready"
               break
             fi
@@ -530,6 +530,8 @@ jobs:
           
           echo "All SeaweedFS components are ready!"
           cd ../test/s3/copying
+          # Patch Go tests to use the correct S3 endpoint (port 8003)
+          sed -i 's/http:\/\/127\.0\.0\.1:8000/http:\/\/127.0.0.1:8003/g' s3_copying_test.go
           go test -v
           kill -9 $pid || true
           # Clean up data directory
