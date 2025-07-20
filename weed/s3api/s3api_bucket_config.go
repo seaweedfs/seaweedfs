@@ -311,7 +311,7 @@ func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfigura
 	entry, err := s3a.getEntry("", bucketMetadataPath)
 	if err != nil {
 		glog.V(3).Infof("loadCORSFromMetadata: error retrieving metadata for bucket %s: %v", bucket, err)
-		return nil, fmt.Errorf("error retrieving metadata for bucket %s: %w", bucket, err)
+		return nil, fmt.Errorf("error retrieving CORS metadata for bucket %s: %w", bucket, err)
 	}
 	if entry == nil {
 		glog.V(3).Infof("loadCORSFromMetadata: no metadata entry found for bucket %s", bucket)
