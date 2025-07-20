@@ -170,7 +170,7 @@ func checkVersioningStatusEmpty(t *testing.T, client *s3.Client, bucketName stri
 		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err)
-	// For newly created buckets, AWS S3 returns empty versioning configuration with no Status field
+	// AWS S3 returns an empty versioning configuration (no Status field) for buckets that have never had versioning configured, such as newly created buckets.
 	assert.Empty(t, resp.Status, "Newly created bucket should have empty versioning status")
 }
 
