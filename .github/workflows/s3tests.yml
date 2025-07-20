@@ -666,9 +666,23 @@ jobs:
           
           # Kill any existing weed processes that might interfere
           echo "=== Cleanup existing processes ==="
-          pkill -f "weed.*-master.port=9337" || true
-          pkill -f "weed.*-s3.port=8004" || true
-          sleep 2
+          pkill -f weed || echo "No weed processes found"
+          
+          # Force kill processes using our specific ports
+          for port in 9337 8084 8892 8004 9328; do
+            pid=$(lsof -ti :$port 2>/dev/null || echo "")
+            if [ -n "$pid" ]; then
+              echo "Killing process $pid using port $port"
+              kill -9 $pid 2>/dev/null || echo "Failed to kill $pid"
+              sleep 1
+            fi
+          done
+          
+          # Wait for ports to be released
+          sleep 3
+          
+          echo "=== Post-cleanup Port Check ==="
+          netstat -tulpn | grep -E "(9337|8084|8892|8004|9328)" || echo "All ports are now free"
           
           go install -tags "sqlite" -buildvcs=false
           # Create clean data directory for this test run with unique timestamp and process ID
