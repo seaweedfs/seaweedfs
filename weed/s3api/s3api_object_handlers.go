@@ -85,6 +85,64 @@ func removeDuplicateSlashes(object string) string {
 	return result.String()
 }
 
+// checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists
+// Returns the directory entry if found, nil if not a directory object or doesn't exist
+func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.Entry, error) {
+	if !strings.HasSuffix(object, "/") {
+		return nil, nil // Not a directory object
+	}
+
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	cleanObject := strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
+
+	if cleanObject == "" {
+		return nil, nil // Root level, not a specific directory object
+	}
+
+	// Check if directory exists
+	dirEntry, err := s3a.getEntry(bucketDir, cleanObject)
+	if err != nil {
+		return nil, nil // Directory doesn't exist
+	}
+
+	if !dirEntry.IsDirectory {
+		return nil, nil // Exists but not a directory
+	}
+
+	return dirEntry, nil
+}
+
+// serveDirectoryContent serves the content of a directory object directly
+func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry) {
+	// Set content type
+	w.Header().Set("Content-Type", entry.Attributes.Mime)
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+
+	// Set content length
+	contentLength := len(entry.Content)
+	w.Header().Set("Content-Length", strconv.Itoa(contentLength))
+
+	// Set last modified
+	w.Header().Set("Last-Modified", time.Unix(entry.Attributes.Mtime, 0).UTC().Format(http.TimeFormat))
+
+	// Set ETag
+	w.Header().Set("ETag", "\""+filer.ETag(entry)+"\"")
+
+	// For HEAD requests, don't write body
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Write content
+	w.WriteHeader(http.StatusOK)
+	if len(entry.Content) > 0 {
+		w.Write(entry.Content)
+	}
+}
+
 func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool, encodingTypeUrl bool) (listEntry ListEntry) {
 	storageClass := "STANDARD"
 	if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
@@ -128,8 +186,15 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
-	if strings.HasSuffix(r.URL.Path, "/") {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+	// Check if this is a directory object and handle it directly
+	if dirEntry, _ := s3a.checkDirectoryObject(bucket, object); dirEntry != nil {
+		glog.V(2).Infof("GetObjectHandler: directory object %s/%s found, serving content", bucket, object)
+		s3a.serveDirectoryContent(w, r, dirEntry)
+		return
+	} else if strings.HasSuffix(object, "/") {
+		// Directory object but doesn't exist
+		glog.V(2).Infof("GetObjectHandler: directory object %s/%s not found", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 		return
 	}
 
@@ -224,6 +289,18 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
+
+	// Check if this is a directory object and handle it directly
+	if dirEntry, _ := s3a.checkDirectoryObject(bucket, object); dirEntry != nil {
+		glog.V(2).Infof("HeadObjectHandler: directory object %s/%s found, serving content", bucket, object)
+		s3a.serveDirectoryContent(w, r, dirEntry)
+		return
+	} else if strings.HasSuffix(object, "/") {
+		// Directory object but doesn't exist
+		glog.V(2).Infof("HeadObjectHandler: directory object %s/%s not found", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return
+	}
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
