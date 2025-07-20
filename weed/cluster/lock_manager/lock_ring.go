@@ -138,9 +138,8 @@ func (r *LockRing) compactSnapshots() {
 	r.Lock()
 	defer r.Unlock()
 
-	if r.lastCompactTime.After(r.lastUpdateTime) {
-		return
-	}
+	// Always attempt compaction when called, regardless of lastCompactTime
+	// This ensures proper cleanup even with multiple concurrent compaction requests
 
 	ts := time.Now()
 	// remove old snapshots
