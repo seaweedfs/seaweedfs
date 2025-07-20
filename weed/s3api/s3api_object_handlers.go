@@ -87,34 +87,36 @@ func removeDuplicateSlashes(object string) string {
 }
 
 // checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists
-// Returns the directory entry if found, nil with no error if not a directory object or doesn't exist
-// Returns an error if there was a problem accessing the filer
-func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.Entry, error) {
+// Returns: (entry, isDirectoryObject, error)
+// - entry: the directory entry if found and is a directory
+// - isDirectoryObject: true if the request was for a directory object (ends with "/")
+// - error: any error encountered while checking
+func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.Entry, bool, error) {
 	if !strings.HasSuffix(object, "/") {
-		return nil, nil // Not a directory object
+		return nil, false, nil // Not a directory object
 	}
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	cleanObject := strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
 
 	if cleanObject == "" {
-		return nil, nil // Root level, not a specific directory object
+		return nil, true, nil // Root level directory object, but we don't handle it
 	}
 
 	// Check if directory exists
 	dirEntry, err := s3a.getEntry(bucketDir, cleanObject)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
-			return nil, nil // Directory doesn't exist - this is expected
+			return nil, true, nil // Directory object requested but doesn't exist
 		}
-		return nil, err // Other errors should be propagated
+		return nil, true, err // Other errors should be propagated
 	}
 
 	if !dirEntry.IsDirectory {
-		return nil, nil // Exists but not a directory
+		return nil, true, nil // Exists but not a directory
 	}
 
-	return dirEntry, nil
+	return dirEntry, true, nil
 }
 
 // serveDirectoryContent serves the content of a directory object directly
@@ -126,9 +128,9 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", contentType)
 
-	// Set content length
-	contentLength := len(entry.Content)
-	w.Header().Set("Content-Length", strconv.Itoa(contentLength))
+	// Set content length - use FileSize for accuracy, especially for large files
+	contentLength := int64(entry.Attributes.FileSize)
+	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
 
 	// Set last modified
 	w.Header().Set("Last-Modified", time.Unix(entry.Attributes.Mtime, 0).UTC().Format(http.TimeFormat))
@@ -195,7 +197,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
 	// Check if this is a directory object and handle it directly
-	if dirEntry, err := s3a.checkDirectoryObject(bucket, object); err != nil {
+	if dirEntry, isDirectoryObject, err := s3a.checkDirectoryObject(bucket, object); err != nil {
 		glog.Errorf("GetObjectHandler: error checking directory object %s/%s: %v", bucket, object, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
@@ -203,7 +205,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		glog.V(2).Infof("GetObjectHandler: directory object %s/%s found, serving content", bucket, object)
 		s3a.serveDirectoryContent(w, r, dirEntry)
 		return
-	} else if strings.HasSuffix(object, "/") {
+	} else if isDirectoryObject {
 		// Directory object but doesn't exist
 		glog.V(2).Infof("GetObjectHandler: directory object %s/%s not found", bucket, object)
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
@@ -303,7 +305,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
 	// Check if this is a directory object and handle it directly
-	if dirEntry, err := s3a.checkDirectoryObject(bucket, object); err != nil {
+	if dirEntry, isDirectoryObject, err := s3a.checkDirectoryObject(bucket, object); err != nil {
 		glog.Errorf("HeadObjectHandler: error checking directory object %s/%s: %v", bucket, object, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
@@ -311,7 +313,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		glog.V(2).Infof("HeadObjectHandler: directory object %s/%s found, serving content", bucket, object)
 		s3a.serveDirectoryContent(w, r, dirEntry)
 		return
-	} else if strings.HasSuffix(object, "/") {
+	} else if isDirectoryObject {
 		// Directory object but doesn't exist
 		glog.V(2).Infof("HeadObjectHandler: directory object %s/%s not found", bucket, object)
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
