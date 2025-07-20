@@ -153,6 +153,28 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	}
 }
 
+// handleDirectoryObjectRequest is a helper function that handles directory object requests
+// for both GET and HEAD operations, eliminating code duplication
+func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string) bool {
+	// Check if this is a directory object and handle it directly
+	if dirEntry, isDirectoryObject, err := s3a.checkDirectoryObject(bucket, object); err != nil {
+		glog.Errorf("%s: error checking directory object %s/%s: %v", handlerName, bucket, object, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return true // Request was handled (with error)
+	} else if dirEntry != nil {
+		glog.V(2).Infof("%s: directory object %s/%s found, serving content", handlerName, bucket, object)
+		s3a.serveDirectoryContent(w, r, dirEntry)
+		return true // Request was handled successfully
+	} else if isDirectoryObject {
+		// Directory object but doesn't exist
+		glog.V(2).Infof("%s: directory object %s/%s not found", handlerName, bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return true // Request was handled (with not found)
+	}
+
+	return false // Not a directory object, continue with normal processing
+}
+
 func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool, encodingTypeUrl bool) (listEntry ListEntry) {
 	storageClass := "STANDARD"
 	if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
@@ -196,20 +218,9 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
-	// Check if this is a directory object and handle it directly
-	if dirEntry, isDirectoryObject, err := s3a.checkDirectoryObject(bucket, object); err != nil {
-		glog.Errorf("GetObjectHandler: error checking directory object %s/%s: %v", bucket, object, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	} else if dirEntry != nil {
-		glog.V(2).Infof("GetObjectHandler: directory object %s/%s found, serving content", bucket, object)
-		s3a.serveDirectoryContent(w, r, dirEntry)
-		return
-	} else if isDirectoryObject {
-		// Directory object but doesn't exist
-		glog.V(2).Infof("GetObjectHandler: directory object %s/%s not found", bucket, object)
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-		return
+	// Handle directory objects with shared logic
+	if s3a.handleDirectoryObjectRequest(w, r, bucket, object, "GetObjectHandler") {
+		return // Directory object request was handled
 	}
 
 	// Check for specific version ID in query parameters
@@ -304,20 +315,9 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
-	// Check if this is a directory object and handle it directly
-	if dirEntry, isDirectoryObject, err := s3a.checkDirectoryObject(bucket, object); err != nil {
-		glog.Errorf("HeadObjectHandler: error checking directory object %s/%s: %v", bucket, object, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	} else if dirEntry != nil {
-		glog.V(2).Infof("HeadObjectHandler: directory object %s/%s found, serving content", bucket, object)
-		s3a.serveDirectoryContent(w, r, dirEntry)
-		return
-	} else if isDirectoryObject {
-		// Directory object but doesn't exist
-		glog.V(2).Infof("HeadObjectHandler: directory object %s/%s not found", bucket, object)
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-		return
+	// Handle directory objects with shared logic
+	if s3a.handleDirectoryObjectRequest(w, r, bucket, object, "HeadObjectHandler") {
+		return // Directory object request was handled
 	}
 
 	// Check for specific version ID in query parameters
