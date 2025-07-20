@@ -6,7 +6,7 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-    command: "master -ip=master -volumeSizeLimitMB=1024"
+    command: "master -ip=master -volumeSizeLimitMB=100"
   volume:
     image: chrislusf/seaweedfs:local
     ports:

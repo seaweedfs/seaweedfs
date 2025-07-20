@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -135,7 +136,7 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 
 	// Load CORS configuration from .s3metadata
 	if corsConfig, err := s3a.loadCORSFromMetadata(bucket); err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			// Missing metadata is not an error; fall back cleanly
 			glog.V(2).Infof("CORS metadata not found for bucket %s, falling back to default behavior", bucket)
 		} else {
@@ -219,6 +220,40 @@ func (s3a *S3ApiServer) isVersioningEnabled(bucket string) (bool, error) {
 	return config.Versioning == s3_constants.VersioningEnabled || config.ObjectLockConfig != nil, nil
 }
 
+// isVersioningConfigured checks if versioning has been configured (either Enabled or Suspended)
+func (s3a *S3ApiServer) isVersioningConfigured(bucket string) (bool, error) {
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		if errCode == s3err.ErrNoSuchBucket {
+			return false, filer_pb.ErrNotFound
+		}
+		return false, fmt.Errorf("failed to get bucket config: %v", errCode)
+	}
+
+	// Versioning is configured if explicitly set to either "Enabled" or "Suspended"
+	// OR if object lock is enabled (which forces versioning)
+	return config.Versioning != "" || config.ObjectLockConfig != nil, nil
+}
+
+// getVersioningState returns the detailed versioning state for a bucket
+func (s3a *S3ApiServer) getVersioningState(bucket string) (string, error) {
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		if errCode == s3err.ErrNoSuchBucket {
+			return "", filer_pb.ErrNotFound
+		}
+		return "", fmt.Errorf("failed to get bucket config: %v", errCode)
+	}
+
+	// If object lock is enabled, versioning must be enabled regardless of explicit setting
+	if config.ObjectLockConfig != nil {
+		return s3_constants.VersioningEnabled, nil
+	}
+
+	// Return the explicit versioning status (empty string means never configured)
+	return config.Versioning, nil
+}
+
 // getBucketVersioningStatus returns the versioning status for a bucket
 func (s3a *S3ApiServer) getBucketVersioningStatus(bucket string) (string, s3err.ErrorCode) {
 	config, errCode := s3a.getBucketConfig(bucket)
@@ -226,10 +261,8 @@ func (s3a *S3ApiServer) getBucketVersioningStatus(bucket string) (string, s3err.
 		return "", errCode
 	}
 
-	if config.Versioning == "" {
-		return s3_constants.VersioningSuspended, s3err.ErrNone
-	}
-
+	// Return exactly what's stored - empty string means versioning was never configured
+	// This matches AWS S3 behavior where new buckets have no Status field in GetBucketVersioning response
 	return config.Versioning, s3err.ErrNone
 }
 
@@ -278,7 +311,7 @@ func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfigura
 	entry, err := s3a.getEntry("", bucketMetadataPath)
 	if err != nil {
 		glog.V(3).Infof("loadCORSFromMetadata: error retrieving metadata for bucket %s: %v", bucket, err)
-		return nil, fmt.Errorf("error retrieving metadata for bucket %s: %v", bucket, err)
+		return nil, fmt.Errorf("error retrieving CORS metadata for bucket %s: %w", bucket, err)
 	}
 	if entry == nil {
 		glog.V(3).Infof("loadCORSFromMetadata: no metadata entry found for bucket %s", bucket)
