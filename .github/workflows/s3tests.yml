@@ -127,10 +127,22 @@ jobs:
           if ! curl -s -f http://localhost:8004/ > /dev/null 2>&1; then
             echo "❌ ERROR: S3 server on port 8004 is not responding after all attempts"
             echo "=== Final Diagnostics ==="
+            echo "Server PID: $pid"
+            if kill -0 $pid 2>/dev/null; then
+              echo "✅ Server process $pid is still running"
+            else
+              echo "❌ Server process $pid has died"
+            fi
             ps aux | grep weed || echo "No weed processes found"
             netstat -tulpn | grep 8004 || echo "Port 8004 not bound"
-            echo "=== Server Command Used ==="
-            echo "weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 -dir=$WEED_DATA_DIR -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 -volume.max=100 -volume.preStopSeconds=1 -master.port=9337 -volume.port=8084 -filer.port=8892 -s3.port=8004 -metricsPort=9328 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json"
+            echo "=== Environment Variables ==="
+            echo "WEED_LEVELDB2_ENABLED: $WEED_LEVELDB2_ENABLED"
+            echo "WEED_SQLITE_ENABLED: $WEED_SQLITE_ENABLED"
+            echo "WEED_SQLITE_DBFILE: $WEED_SQLITE_DBFILE"
+            echo "=== Server Log (last 50 lines) ==="
+            tail -50 /tmp/seaweedfs-sql-server.log 2>/dev/null || echo "No server log available"
+            echo "=== Data Directory Contents ==="
+            ls -la "$WEED_DATA_DIR" || echo "Data directory not accessible"
             exit 1
           fi
           
@@ -670,28 +682,71 @@ jobs:
         shell: bash
         run: |
           cd weed
+          
+          # Debug: Check for port conflicts before starting
+          echo "=== Pre-start Port Check ==="
+          netstat -tulpn | grep -E "(9337|8084|8892|8004|9328)" || echo "Ports are free"
+          
+          # Kill any existing weed processes that might interfere
+          echo "=== Cleanup existing processes ==="
+          pkill -f "weed.*-master.port=9337" || true
+          pkill -f "weed.*-s3.port=8004" || true
+          sleep 2
+          
           go install -tags "sqlite" -buildvcs=false
-          # Create clean data directory for this test run
-          export WEED_DATA_DIR="/tmp/seaweedfs-sql-test-$(date +%s)"
+          # Create clean data directory for this test run with unique timestamp and process ID
+          export WEED_DATA_DIR="/tmp/seaweedfs-sql-test-$(date +%s)-$$"
           mkdir -p "$WEED_DATA_DIR"
-          export WEED_LEVELDB2_ENABLED="false" WEED_SQLITE_ENABLED="true" WEED_SQLITE_DBFILE="$WEED_DATA_DIR/filer.db"
+          chmod 777 "$WEED_DATA_DIR"
+          
+          # SQLite-specific configuration
+          export WEED_LEVELDB2_ENABLED="false" 
+          export WEED_SQLITE_ENABLED="true" 
+          export WEED_SQLITE_DBFILE="$WEED_DATA_DIR/filer.db"
+          
+          echo "=== SQL Store Configuration ==="
+          echo "Data Dir: $WEED_DATA_DIR"
+          echo "SQLite DB: $WEED_SQLITE_DBFILE"
+          echo "LEVELDB2_ENABLED: $WEED_LEVELDB2_ENABLED"
+          echo "SQLITE_ENABLED: $WEED_SQLITE_ENABLED"
+          
           set -x
-          weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
+          weed -v 1 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
             -volume.max=100 -volume.preStopSeconds=1 \
             -master.port=9337 -volume.port=8084 -filer.port=8892 -s3.port=8004 -metricsPort=9328 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json \
+            > /tmp/seaweedfs-sql-server.log 2>&1 &
           pid=$!
+          
+          echo "=== Server started with PID: $pid ==="
           
           # Wait for all SeaweedFS components to be ready
           echo "Waiting for SeaweedFS components to start..."
+          
+          # Check if server process is still alive before waiting
+          if ! kill -0 $pid 2>/dev/null; then
+            echo "❌ Server process died immediately after start"
+            echo "=== Immediate Log Check ==="
+            tail -20 /tmp/seaweedfs-sql-server.log 2>/dev/null || echo "No log available"
+            exit 1
+          fi
+          
+          sleep 5  # Give SQLite more time to initialize
+          
           for i in {1..30}; do
             if curl -s http://localhost:9337/cluster/status > /dev/null 2>&1; then
               echo "Master server is ready"
               break
             fi
             echo "Waiting for master server... ($i/30)"
+            # Check if server process is still alive
+            if ! kill -0 $pid 2>/dev/null; then
+              echo "❌ Server process died while waiting for master"
+              tail -20 /tmp/seaweedfs-sql-server.log 2>/dev/null
+              exit 1
+            fi
             sleep 2
           done
           
@@ -701,17 +756,31 @@ jobs:
               break
             fi
             echo "Waiting for volume server... ($i/30)"
+            if ! kill -0 $pid 2>/dev/null; then
+              echo "❌ Server process died while waiting for volume"
+              tail -20 /tmp/seaweedfs-sql-server.log 2>/dev/null
+              exit 1
+            fi
             sleep 2
           done
           
           for i in {1..30}; do
             if curl -s http://localhost:8892/ > /dev/null 2>&1; then
-              echo "Filer is ready"
+              echo "Filer (SQLite) is ready"
               break
             fi
-            echo "Waiting for filer... ($i/30)"
+            echo "Waiting for filer (SQLite)... ($i/30)"
+            if ! kill -0 $pid 2>/dev/null; then
+              echo "❌ Server process died while waiting for filer"
+              tail -20 /tmp/seaweedfs-sql-server.log 2>/dev/null
+              exit 1
+            fi
             sleep 2
           done
+          
+          # Extra wait for SQLite filer to fully initialize
+          echo "Giving SQLite filer extra time to initialize..."
+          sleep 5
           
           for i in {1..30}; do
             if curl -s http://localhost:8004/ > /dev/null 2>&1; then
@@ -719,6 +788,11 @@ jobs:
               break
             fi
             echo "Waiting for S3 server... ($i/30)"
+            if ! kill -0 $pid 2>/dev/null; then
+              echo "❌ Server process died while waiting for S3"
+              tail -20 /tmp/seaweedfs-sql-server.log 2>/dev/null
+              exit 1
+            fi
             sleep 2
           done
           
@@ -755,8 +829,10 @@ jobs:
           
           # Debug: Check server logs
           echo "=== Recent Server Logs ==="
-          echo "--- Master Log ---"
-          tail -20 /tmp/seaweedfs-*.log 2>/dev/null || echo "No log files found"
+          echo "--- SQL Server Log ---"
+          tail -20 /tmp/seaweedfs-sql-server.log 2>/dev/null || echo "No SQL server log found"
+          echo "--- Other Logs ---"
+          ls -la /tmp/seaweedfs-*.log 2>/dev/null || echo "No other log files found"
           
           for i in {1..10}; do
             if curl -s -f http://localhost:8004/ > /dev/null 2>&1; then
