@@ -14,10 +14,10 @@ permissions:
   contents: read
 
 jobs:
-  s3tests:
-    name: Ceph S3 tests
+  basic-s3-tests:
+    name: Basic S3 tests (KV store)
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v4
@@ -41,7 +41,7 @@ jobs:
           pip install tox
           pip install -e .
 
-      - name: Run Ceph S3 tests with KV store
+      - name: Run Basic S3 tests
         timeout-minutes: 15
         env:
           S3TEST_CONF: ../docker/compose/s3tests.conf
@@ -220,6 +220,33 @@ jobs:
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
 
+  versioning-tests:
+    name: S3 Versioning & Object Lock tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v5.5.0
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Clone s3-tests
+        run: |
+          git clone https://github.com/ceph/s3-tests.git
+          cd s3-tests
+          pip install -r requirements.txt
+          pip install tox
+          pip install -e .
+
       - name: Run S3 Object Lock, Retention, and Versioning tests
         timeout-minutes: 15
         env:
@@ -235,7 +262,7 @@ jobs:
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8001 -metricsPort=9325 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
           sleep 10          
@@ -244,15 +271,39 @@ jobs:
           # Fix bucket creation conflicts in versioning tests by replacing _create_objects calls
           sed -i 's/bucket_name = _create_objects(bucket_name=bucket_name,keys=key_names)/# Use the existing bucket for object creation\n    client = get_client()\n    for key in key_names:\n        client.put_object(Bucket=bucket_name, Body=key, Key=key)/' s3tests_boto3/functional/test_s3.py
           sed -i 's/bucket = _create_objects(bucket_name=bucket_name, keys=key_names)/# Use the existing bucket for object creation\n    client = get_client()\n    for key in key_names:\n        client.put_object(Bucket=bucket_name, Body=key, Key=key)/' s3tests_boto3/functional/test_s3.py
-          # Run object lock and versioning tests by pattern matching test names
-          # This tests our recent fixes for mixed versioned/non-versioned objects
-          # Skip test_versioning_obj_suspend_versions due to IndexError bug in test framework
-          # Skip tests that require ACL Owner field support which SeaweedFS doesn't implement yet
-          # Skip test_versioning_concurrent_multi_object_delete due to concurrency issue in SeaweedFS
+          # Update s3tests.conf to use port 8001
+          sed -i 's/:8000/:8001/g' ../docker/compose/s3tests.conf
           tox -- s3tests_boto3/functional/test_s3.py -k "object_lock or (versioning and not test_versioning_obj_suspend_versions and not test_bucket_list_return_data_versioning and not test_versioning_concurrent_multi_object_delete)" --tb=short
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
+
+  cors-tests:
+    name: S3 CORS tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v5.5.0
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Clone s3-tests
+        run: |
+          git clone https://github.com/ceph/s3-tests.git
+          cd s3-tests
+          pip install -r requirements.txt
+          pip install tox
+          pip install -e .
 
       - name: Run S3 CORS tests
         timeout-minutes: 10
@@ -269,12 +320,14 @@ jobs:
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8002 -metricsPort=9326 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
           sleep 10          
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
+          # Update s3tests.conf to use port 8002
+          sed -i 's/:8000/:8002/g' ../docker/compose/s3tests.conf
           # Run CORS-specific tests from s3-tests suite
           tox -- s3tests_boto3/functional/test_s3.py -k "cors" --tb=short || echo "No CORS tests found in s3-tests suite"
           # If no specific CORS tests exist, run bucket configuration tests that include CORS
@@ -284,6 +337,20 @@ jobs:
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
+
+  copy-tests:
+    name: SeaweedFS Custom S3 Copy tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v5.5.0
+        with:
+          go-version-file: 'go.mod'
+        id: go
 
       - name: Run SeaweedFS Custom S3 Copy tests
         timeout-minutes: 10
@@ -298,7 +365,7 @@ jobs:
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8003 -metricsPort=9327 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
           sleep 10
@@ -307,6 +374,33 @@ jobs:
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
+
+  sql-store-tests:
+    name: Basic S3 tests (SQL store)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v5.5.0
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Clone s3-tests
+        run: |
+          git clone https://github.com/ceph/s3-tests.git
+          cd s3-tests
+          pip install -r requirements.txt
+          pip install tox
+          pip install -e .
 
       - name: Run Ceph S3 tests with SQL store
         timeout-minutes: 15
@@ -324,12 +418,14 @@ jobs:
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8004 -metricsPort=9328 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           pid=$!
           sleep 10          
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
+          # Update s3tests.conf to use port 8004
+          sed -i 's/:8000/:8004/g' ../docker/compose/s3tests.conf
           tox -- \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_empty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_distinct \
