@@ -164,6 +164,16 @@ func checkVersioningStatus(t *testing.T, client *s3.Client, bucketName string, e
 	assert.Equal(t, expectedStatus, resp.Status)
 }
 
+// checkVersioningStatusEmpty verifies that a bucket has no versioning configuration (newly created bucket)
+func checkVersioningStatusEmpty(t *testing.T, client *s3.Client, bucketName string) {
+	resp, err := client.GetBucketVersioning(context.TODO(), &s3.GetBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	// For newly created buckets, AWS S3 returns empty versioning configuration with no Status field
+	assert.Empty(t, resp.Status, "Newly created bucket should have empty versioning status")
+}
+
 // putObject puts an object into a bucket
 func putObject(t *testing.T, client *s3.Client, bucketName, key, content string) *s3.PutObjectOutput {
 	resp, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
@@ -284,8 +294,9 @@ func TestVersioningBasicWorkflow(t *testing.T) {
 	createBucket(t, client, bucketName)
 	defer deleteBucket(t, client, bucketName)
 
-	// Initially, versioning should be suspended/disabled
-	checkVersioningStatus(t, client, bucketName, types.BucketVersioningStatusSuspended)
+	// Initially, versioning should be unset/empty (not suspended) for newly created buckets
+	// This matches AWS S3 behavior where new buckets have no versioning status
+	checkVersioningStatusEmpty(t, client, bucketName)
 
 	// Enable versioning
 	enableVersioning(t, client, bucketName)
