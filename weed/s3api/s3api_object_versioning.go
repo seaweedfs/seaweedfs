@@ -738,12 +738,12 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 		// Fall back to checking for a pre-versioning object.
 		glog.V(2).Infof("getLatestObjectVersion: no version metadata in .versions directory for %s/%s, checking for pre-versioning object", bucket, object)
 
-		regularEntry, regularErr := s3a.getEntry(bucketDir, cleanObject)
+		regularEntry, regularErr := s3a.getEntry(bucketDir, object)
 		if regularErr != nil {
-			return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s/%s", bucket, cleanObject)
+			return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s%s", bucket, object)
 		}
 
-		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s after version deletion", bucket, cleanObject)
+		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s%s after version deletion", bucket, object)
 		return regularEntry, nil
 	}
 
