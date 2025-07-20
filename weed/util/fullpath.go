@@ -8,6 +8,7 @@ import (
 type FullPath string
 
 func NewFullPath(dir, name string) FullPath {
+	name = strings.TrimSuffix(name, "/")
 	return FullPath(dir).Child(name)
 }
 
