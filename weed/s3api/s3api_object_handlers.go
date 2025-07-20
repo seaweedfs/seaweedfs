@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,7 +87,8 @@ func removeDuplicateSlashes(object string) string {
 }
 
 // checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists
-// Returns the directory entry if found, nil if not a directory object or doesn't exist
+// Returns the directory entry if found, nil with no error if not a directory object or doesn't exist
+// Returns an error if there was a problem accessing the filer
 func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.Entry, error) {
 	if !strings.HasSuffix(object, "/") {
 		return nil, nil // Not a directory object
@@ -102,7 +104,10 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 	// Check if directory exists
 	dirEntry, err := s3a.getEntry(bucketDir, cleanObject)
 	if err != nil {
-		return nil, nil // Directory doesn't exist
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil, nil // Directory doesn't exist - this is expected
+		}
+		return nil, err // Other errors should be propagated
 	}
 
 	if !dirEntry.IsDirectory {
@@ -114,11 +119,12 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 
 // serveDirectoryContent serves the content of a directory object directly
 func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry) {
-	// Set content type
-	w.Header().Set("Content-Type", entry.Attributes.Mime)
-	if w.Header().Get("Content-Type") == "" {
-		w.Header().Set("Content-Type", "application/octet-stream")
+	// Set content type - use stored MIME type or default
+	contentType := entry.Attributes.Mime
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
+	w.Header().Set("Content-Type", contentType)
 
 	// Set content length
 	contentLength := len(entry.Content)
@@ -139,7 +145,9 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	// Write content
 	w.WriteHeader(http.StatusOK)
 	if len(entry.Content) > 0 {
-		w.Write(entry.Content)
+		if _, err := w.Write(entry.Content); err != nil {
+			glog.Errorf("serveDirectoryContent: failed to write response: %v", err)
+		}
 	}
 }
 
@@ -187,7 +195,11 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
 	// Check if this is a directory object and handle it directly
-	if dirEntry, _ := s3a.checkDirectoryObject(bucket, object); dirEntry != nil {
+	if dirEntry, err := s3a.checkDirectoryObject(bucket, object); err != nil {
+		glog.Errorf("GetObjectHandler: error checking directory object %s/%s: %v", bucket, object, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	} else if dirEntry != nil {
 		glog.V(2).Infof("GetObjectHandler: directory object %s/%s found, serving content", bucket, object)
 		s3a.serveDirectoryContent(w, r, dirEntry)
 		return
@@ -291,7 +303,11 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
 	// Check if this is a directory object and handle it directly
-	if dirEntry, _ := s3a.checkDirectoryObject(bucket, object); dirEntry != nil {
+	if dirEntry, err := s3a.checkDirectoryObject(bucket, object); err != nil {
+		glog.Errorf("HeadObjectHandler: error checking directory object %s/%s: %v", bucket, object, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	} else if dirEntry != nil {
 		glog.V(2).Infof("HeadObjectHandler: directory object %s/%s found, serving content", bucket, object)
 		s3a.serveDirectoryContent(w, r, dirEntry)
 		return
