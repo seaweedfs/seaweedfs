@@ -3,9 +3,11 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -709,6 +711,89 @@ func TestVersionedObjectListBehavior(t *testing.T) {
 	assert.Len(t, versionsResp.Versions, 2, "list-object-versions should show both versions")
 
 	t.Logf("Successfully verified versioned object list behavior")
+}
+
+// TestPrefixFilteringLogic tests the prefix filtering logic fix for list object versions
+// This addresses the issue raised by gemini-code-assist bot where files could be incorrectly included
+func TestPrefixFilteringLogic(t *testing.T) {
+	s3Client := setupS3Client(t)
+	bucketName := "test-bucket-" + fmt.Sprintf("%d", time.Now().UnixNano())
+
+	// Create bucket
+	_, err := s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	defer cleanupBucket(t, s3Client, bucketName)
+
+	// Enable versioning
+	_, err = s3Client.PutBucketVersioning(context.Background(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err)
+
+	// Create test files that could trigger the edge case:
+	// - File "a" (which should NOT be included when searching for prefix "a/b")
+	// - File "a/b" (which SHOULD be included when searching for prefix "a/b")
+	_, err = s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("a"),
+		Body:   strings.NewReader("content of file a"),
+	})
+	require.NoError(t, err)
+
+	_, err = s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("a/b"),
+		Body:   strings.NewReader("content of file a/b"),
+	})
+	require.NoError(t, err)
+
+	// Test list-object-versions with prefix "a/b" - should NOT include file "a"
+	versionsResponse, err := s3Client.ListObjectVersions(context.Background(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String("a/b"),
+	})
+	require.NoError(t, err)
+
+	// Verify that only "a/b" is returned, not "a"
+	require.Len(t, versionsResponse.Versions, 1, "Should only find one version matching prefix 'a/b'")
+	assert.Equal(t, "a/b", aws.ToString(versionsResponse.Versions[0].Key), "Should only return 'a/b', not 'a'")
+
+	// Test list-object-versions with prefix "a/" - should include "a/b" but not "a"
+	versionsResponse, err = s3Client.ListObjectVersions(context.Background(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String("a/"),
+	})
+	require.NoError(t, err)
+
+	// Verify that only "a/b" is returned, not "a"
+	require.Len(t, versionsResponse.Versions, 1, "Should only find one version matching prefix 'a/'")
+	assert.Equal(t, "a/b", aws.ToString(versionsResponse.Versions[0].Key), "Should only return 'a/b', not 'a'")
+
+	// Test list-object-versions with prefix "a" - should include both "a" and "a/b"
+	versionsResponse, err = s3Client.ListObjectVersions(context.Background(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String("a"),
+	})
+	require.NoError(t, err)
+
+	// Should find both files
+	require.Len(t, versionsResponse.Versions, 2, "Should find both versions matching prefix 'a'")
+
+	// Extract keys and sort them for predictable comparison
+	var keys []string
+	for _, version := range versionsResponse.Versions {
+		keys = append(keys, aws.ToString(version.Key))
+	}
+	sort.Strings(keys)
+
+	assert.Equal(t, []string{"a", "a/b"}, keys, "Should return both 'a' and 'a/b'")
+
+	t.Logf("✅ Prefix filtering logic correctly handles edge cases")
 }
 
 // Helper function to setup S3 client

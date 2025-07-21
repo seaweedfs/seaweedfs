@@ -263,20 +263,21 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 		entryPath := path.Join(relativePath, entry.Name)
 
 		// Skip if this doesn't match the prefix filter
-		// Normalize both entryPath and prefix to handle leading slash differences
 		if prefix != "" {
 			normalizedPrefix := strings.TrimPrefix(prefix, "/")
 			if normalizedPrefix != "" {
-				// For directories, also check if the directory name with trailing slash matches the prefix
-				entryPathWithSlash := entryPath
-				if entry.IsDirectory && !strings.HasSuffix(entryPathWithSlash, "/") {
-					entryPathWithSlash += "/"
+				// An entry is a candidate if:
+				// 1. Its path is prefixed by normalizedPrefix.
+				// 2. It is a directory that is a prefix of normalizedPrefix (so we can descend into it).
+				isPrefixed := strings.HasPrefix(entryPath, normalizedPrefix)
+				if !isPrefixed && entry.IsDirectory {
+					// For directories, also check with a trailing slash.
+					isPrefixed = strings.HasPrefix(entryPath+"/", normalizedPrefix)
 				}
 
-				// Check if either the entry path or the path with slash matches the prefix
-				if !strings.HasPrefix(entryPath, normalizedPrefix) &&
-					!strings.HasPrefix(entryPathWithSlash, normalizedPrefix) &&
-					!strings.HasPrefix(normalizedPrefix, entryPath) {
+				canDescend := entry.IsDirectory && strings.HasPrefix(normalizedPrefix, entryPath)
+
+				if !isPrefixed && !canDescend {
 					continue
 				}
 			}
