@@ -263,8 +263,23 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 		entryPath := path.Join(relativePath, entry.Name)
 
 		// Skip if this doesn't match the prefix filter
-		if prefix != "" && !strings.HasPrefix(entryPath, strings.TrimPrefix(prefix, "/")) {
-			continue
+		// Normalize both entryPath and prefix to handle leading slash differences
+		if prefix != "" {
+			normalizedPrefix := strings.TrimPrefix(prefix, "/")
+			if normalizedPrefix != "" {
+				// For directories, also check if the directory name with trailing slash matches the prefix
+				entryPathWithSlash := entryPath
+				if entry.IsDirectory && !strings.HasSuffix(entryPathWithSlash, "/") {
+					entryPathWithSlash += "/"
+				}
+
+				// Check if either the entry path or the path with slash matches the prefix
+				if !strings.HasPrefix(entryPath, normalizedPrefix) &&
+					!strings.HasPrefix(entryPathWithSlash, normalizedPrefix) &&
+					!strings.HasPrefix(normalizedPrefix, entryPath) {
+					continue
+				}
+			}
 		}
 
 		if entry.IsDirectory {
@@ -715,7 +730,8 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 
 	// Parse query parameters
 	query := r.URL.Query()
-	prefix := query.Get("prefix")
+	originalPrefix := query.Get("prefix") // Keep original prefix for response
+	prefix := originalPrefix              // Use for internal processing
 	if prefix != "" && !strings.HasPrefix(prefix, "/") {
 		prefix = "/" + prefix
 	}
@@ -739,6 +755,9 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
+
+	// Set the original prefix in the response (not the normalized internal prefix)
+	result.Prefix = originalPrefix
 
 	writeSuccessResponseXML(w, r, result)
 }
