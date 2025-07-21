@@ -581,13 +581,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionFile := s3a.getVersionFileName(versionId)
 
-	// Delete the specific version from .versions directory
-	_, err := s3a.getEntry(versionsDir, versionFile)
-	if err != nil {
-		return fmt.Errorf("version %s not found: %v", versionId, err)
-	}
-
-	// Check if this is the latest version before deleting
+	// Check if this is the latest version before attempting deletion (for potential metadata update)
 	versionsEntry, dirErr := s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), object+".versions")
 	isLatestVersion := false
 	if dirErr == nil && versionsEntry.Extended != nil {
@@ -596,15 +590,19 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		}
 	}
 
-	// Delete the version file
+	// Attempt to delete the version file
+	// Note: We don't check if the file exists first to avoid race conditions
+	// The deletion operation should be idempotent
 	deleteErr := s3a.rm(versionsDir, versionFile, true, false)
 	if deleteErr != nil {
-		// Check if file was already deleted by another process
+		// Check if file was already deleted by another process (race condition handling)
 		if _, checkErr := s3a.getEntry(versionsDir, versionFile); checkErr != nil {
-			// File doesn't exist anymore, deletion was successful
-		} else {
-			return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
+			// File doesn't exist anymore, deletion was successful (another thread deleted it)
+			glog.V(2).Infof("deleteSpecificObjectVersion: version %s for %s%s already deleted by another process", versionId, bucket, object)
+			return nil
 		}
+		// File still exists but deletion failed for another reason
+		return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
 	}
 
 	// If we deleted the latest version, update the .versions directory metadata to point to the new latest

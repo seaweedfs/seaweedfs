@@ -2,7 +2,9 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -321,6 +323,125 @@ func TestVersionedObjectAcl(t *testing.T) {
 
 	t.Logf("Successfully verified ACL operations on versioned object %s with versions %s and %s",
 		objectKey, *putResp.VersionId, *putResp2.VersionId)
+}
+
+// TestConcurrentMultiObjectDelete tests that concurrent delete operations work correctly without race conditions
+// This test verifies the fix for the race condition in deleteSpecificObjectVersion
+func TestConcurrentMultiObjectDelete(t *testing.T) {
+	bucketName := "test-concurrent-delete"
+	numObjects := 5
+	numThreads := 5
+
+	client := setupS3Client(t)
+
+	// Create bucket
+	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+
+	// Clean up
+	defer func() {
+		cleanupBucket(t, client, bucketName)
+	}()
+
+	// Enable versioning
+	_, err = client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err)
+
+	// Create objects
+	var objectKeys []string
+	var versionIds []string
+
+	for i := 0; i < numObjects; i++ {
+		objectKey := fmt.Sprintf("key_%d", i)
+		objectKeys = append(objectKeys, objectKey)
+
+		putResp, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+			Body:   strings.NewReader(fmt.Sprintf("content for key_%d", i)),
+		})
+		require.NoError(t, err)
+		require.NotNil(t, putResp.VersionId)
+		versionIds = append(versionIds, *putResp.VersionId)
+	}
+
+	// Verify objects were created
+	listResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	assert.Len(t, listResp.Versions, numObjects, "Should have created %d objects", numObjects)
+
+	// Create delete objects request
+	var objectsToDelete []types.ObjectIdentifier
+	for i, objectKey := range objectKeys {
+		objectsToDelete = append(objectsToDelete, types.ObjectIdentifier{
+			Key:       aws.String(objectKey),
+			VersionId: aws.String(versionIds[i]),
+		})
+	}
+
+	// Run concurrent delete operations
+	results := make([]*s3.DeleteObjectsOutput, numThreads)
+	var wg sync.WaitGroup
+
+	for i := 0; i < numThreads; i++ {
+		wg.Add(1)
+		go func(threadIdx int) {
+			defer wg.Done()
+			deleteResp, err := client.DeleteObjects(context.TODO(), &s3.DeleteObjectsInput{
+				Bucket: aws.String(bucketName),
+				Delete: &types.Delete{
+					Objects: objectsToDelete,
+					Quiet:   aws.Bool(false),
+				},
+			})
+			if err != nil {
+				t.Errorf("Thread %d: delete objects failed: %v", threadIdx, err)
+				return
+			}
+			results[threadIdx] = deleteResp
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify results
+	for i, result := range results {
+		require.NotNil(t, result, "Thread %d should have a result", i)
+		assert.Len(t, result.Deleted, numObjects, "Thread %d should have deleted all %d objects", i, numObjects)
+
+		if len(result.Errors) > 0 {
+			for _, deleteError := range result.Errors {
+				t.Errorf("Thread %d delete error: %s - %s (Key: %s, VersionId: %s)",
+					i, *deleteError.Code, *deleteError.Message, *deleteError.Key,
+					func() string {
+						if deleteError.VersionId != nil {
+							return *deleteError.VersionId
+						} else {
+							return "nil"
+						}
+					}())
+			}
+		}
+		assert.Empty(t, result.Errors, "Thread %d should have no delete errors", i)
+	}
+
+	// Verify objects are deleted (bucket should be empty)
+	finalListResp, err := client.ListObjects(context.TODO(), &s3.ListObjectsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	assert.Nil(t, finalListResp.Contents, "Bucket should be empty after all deletions")
+
+	t.Logf("Successfully verified concurrent deletion of %d objects from %d threads", numObjects, numThreads)
 }
 
 // Helper function to setup S3 client
