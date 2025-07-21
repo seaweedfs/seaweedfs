@@ -205,10 +205,6 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 								delimiterFound = true
 								lastEntryWasCommonPrefix = true
 								lastCommonPrefixName = delimitedPath[0]
-							} else {
-								// This object belongs to an existing CommonPrefix, skip it entirely
-								// to prevent it from affecting truncation logic
-								return
 							}
 						}
 					}
