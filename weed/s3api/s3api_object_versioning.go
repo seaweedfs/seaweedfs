@@ -296,6 +296,30 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 					}
 				}
 			} else {
+				// This is a regular directory - add it as a directory entry before recursing
+				directoryKey := entryPath
+				if !strings.HasSuffix(directoryKey, "/") {
+					directoryKey += "/"
+				}
+
+				// Add directory as a version entry with VersionId "null" (following S3/Minio behavior)
+				glog.V(2).Infof("findVersionsRecursively: found directory %s", directoryKey)
+
+				// Calculate ETag for empty directory (same as Minio: MD5 of empty string)
+				directoryETag := "\"d41d8cd98f00b204e9800998ecf8427e\""
+
+				versionEntry := &VersionEntry{
+					Key:          directoryKey,
+					VersionId:    "null",
+					IsLatest:     true,
+					LastModified: time.Unix(entry.Attributes.Mtime, 0),
+					ETag:         directoryETag,
+					Size:         0, // Directories have size 0
+					Owner:        s3a.getObjectOwnerFromEntry(entry),
+					StorageClass: "STANDARD",
+				}
+				*allVersions = append(*allVersions, versionEntry)
+
 				// Recursively search subdirectories
 				fullPath := path.Join(currentPath, entry.Name)
 				err := s3a.findVersionsRecursively(fullPath, entryPath, allVersions, processedObjects, seenVersionIds, bucket, prefix)
