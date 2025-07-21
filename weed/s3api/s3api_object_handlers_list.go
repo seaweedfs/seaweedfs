@@ -148,6 +148,25 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
 	}
 
+	// Special case: when maxKeys = 0, return empty results immediately
+	if maxKeys == 0 {
+		response = ListBucketResult{
+			Name:           bucket,
+			Prefix:         originalPrefix,
+			Marker:         originalMarker,
+			NextMarker:     "",
+			MaxKeys:        int(maxKeys),
+			Delimiter:      delimiter,
+			IsTruncated:    false,
+			Contents:       contents,
+			CommonPrefixes: commonPrefixes,
+		}
+		if encodingTypeUrl {
+			response.EncodingType = s3.EncodingTypeUrl
+		}
+		return
+	}
+
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for {
