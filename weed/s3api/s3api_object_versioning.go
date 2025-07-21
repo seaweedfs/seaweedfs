@@ -305,7 +305,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 				// Add directory as a version entry with VersionId "null" (following S3/Minio behavior)
 				glog.V(2).Infof("findVersionsRecursively: found directory %s", directoryKey)
 
-				// Calculate ETag for empty directory (same as Minio: MD5 of empty string)
+				// Calculate ETag for empty directory
 				directoryETag := "\"d41d8cd98f00b204e9800998ecf8427e\""
 
 				versionEntry := &VersionEntry{
