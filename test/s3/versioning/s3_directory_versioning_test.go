@@ -444,6 +444,169 @@ func TestConcurrentMultiObjectDelete(t *testing.T) {
 	t.Logf("Successfully verified concurrent deletion of %d objects from %d threads", numObjects, numThreads)
 }
 
+// TestSuspendedVersioningDeleteBehavior tests that delete operations during suspended versioning
+// actually delete the "null" version object rather than creating delete markers
+func TestSuspendedVersioningDeleteBehavior(t *testing.T) {
+	bucketName := "test-suspended-versioning-delete"
+	objectKey := "testobj"
+
+	client := setupS3Client(t)
+
+	// Create bucket
+	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+
+	// Clean up
+	defer func() {
+		cleanupBucket(t, client, bucketName)
+	}()
+
+	// Enable versioning and create some versions
+	_, err = client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err)
+
+	// Create 3 versions
+	var versionIds []string
+	for i := 0; i < 3; i++ {
+		putResp, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+			Body:   strings.NewReader(fmt.Sprintf("content version %d", i+1)),
+		})
+		require.NoError(t, err)
+		require.NotNil(t, putResp.VersionId)
+		versionIds = append(versionIds, *putResp.VersionId)
+	}
+
+	// Verify 3 versions exist
+	listResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	assert.Len(t, listResp.Versions, 3, "Should have 3 versions initially")
+
+	// Suspend versioning
+	_, err = client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusSuspended,
+		},
+	})
+	require.NoError(t, err)
+
+	// Create a new object during suspended versioning (this should be a "null" version)
+	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   strings.NewReader("null version content"),
+	})
+	require.NoError(t, err)
+
+	// Verify we still have 3 versions + 1 null version = 4 total
+	listResp, err = client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	assert.Len(t, listResp.Versions, 4, "Should have 3 versions + 1 null version")
+
+	// Find the null version
+	var nullVersionFound bool
+	for _, version := range listResp.Versions {
+		if *version.VersionId == "null" {
+			nullVersionFound = true
+			assert.True(t, *version.IsLatest, "Null version should be marked as latest during suspended versioning")
+			break
+		}
+	}
+	assert.True(t, nullVersionFound, "Should have found a null version")
+
+	// Delete the object during suspended versioning (should actually delete the null version)
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		// No VersionId specified - should delete the "null" version during suspended versioning
+	})
+	require.NoError(t, err)
+
+	// Verify the null version was actually deleted (not a delete marker created)
+	listResp, err = client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	assert.Len(t, listResp.Versions, 3, "Should be back to 3 versions after deleting null version")
+	assert.Empty(t, listResp.DeleteMarkers, "Should have no delete markers during suspended versioning delete")
+
+	// Verify null version is gone
+	nullVersionFound = false
+	for _, version := range listResp.Versions {
+		if *version.VersionId == "null" {
+			nullVersionFound = true
+			break
+		}
+	}
+	assert.False(t, nullVersionFound, "Null version should be deleted, not present")
+
+	// Create another null version and delete it multiple times to test idempotency
+	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   strings.NewReader("another null version"),
+	})
+	require.NoError(t, err)
+
+	// Delete it twice to test idempotency
+	for i := 0; i < 2; i++ {
+		_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Delete should be idempotent - iteration %d", i+1)
+	}
+
+	// Re-enable versioning
+	_, err = client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err)
+
+	// Create a new version with versioning enabled
+	putResp, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   strings.NewReader("new version after re-enabling"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putResp.VersionId)
+
+	// Now delete without version ID (should create delete marker)
+	deleteResp, err := client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "true", deleteResp.DeleteMarker, "Should create delete marker when versioning is enabled")
+
+	// Verify final state
+	listResp, err = client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	assert.Len(t, listResp.Versions, 4, "Should have 3 original versions + 1 new version")
+	assert.Len(t, listResp.DeleteMarkers, 1, "Should have 1 delete marker")
+
+	t.Logf("Successfully verified suspended versioning delete behavior")
+}
+
 // Helper function to setup S3 client
 func setupS3Client(t *testing.T) *s3.Client {
 	// S3TestConfig holds configuration for S3 tests
