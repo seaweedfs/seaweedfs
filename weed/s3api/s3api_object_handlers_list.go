@@ -391,8 +391,18 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 		}
 		if cursor.maxKeys <= 0 {
-			cursor.isTruncated = true
-			continue
+			// Check if there are more entries available by trying to peek at the next one
+			_, nextRecvErr := stream.Recv()
+			if nextRecvErr == nil {
+				// There is another entry available, so we're truncated
+				cursor.isTruncated = true
+			} else if nextRecvErr != io.EOF {
+				// Some other error occurred
+				err = fmt.Errorf("peeking next entry: %v", nextRecvErr)
+				return
+			}
+			// If nextRecvErr == io.EOF, there are no more entries, so isTruncated remains false
+			break
 		}
 		entry := resp.Entry
 		nextMarker = entry.Name
@@ -462,6 +472,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	// Create logical entries for objects that have .versions directories
 	for _, versionsDir := range versionsDirs {
 		if cursor.maxKeys <= 0 {
+			// We have versioned objects remaining but can't process them due to limit
 			cursor.isTruncated = true
 			break
 		}

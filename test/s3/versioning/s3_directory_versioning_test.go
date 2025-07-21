@@ -877,6 +877,87 @@ func TestNextMarkerDelimiterFix(t *testing.T) {
 	t.Logf("✅ NextMarker correctly includes trailing slash for CommonPrefixes")
 }
 
+// TestIsTruncatedLogicFix tests the IsTruncated flag behavior for list operations
+// This addresses the test failures where IsTruncated was incorrectly set to true
+func TestIsTruncatedLogicFix(t *testing.T) {
+	s3Client := setupS3Client(t)
+	bucketName := "test-bucket-" + fmt.Sprintf("%d", time.Now().UnixNano())
+
+	// Create bucket
+	_, err := s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	defer cleanupBucket(t, s3Client, bucketName)
+
+	// Create test objects that match the failing test pattern
+	testObjects := []string{
+		"asdf",
+		"boo/bar",
+		"boo/baz/xyzzy",
+		"cquux/thud",
+		"cquux/bla",
+	}
+
+	for _, objectKey := range testObjects {
+		_, err = s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+			Body:   strings.NewReader("test content for " + objectKey),
+		})
+		require.NoError(t, err)
+	}
+
+	// Test ListObjectsV2 with the exact failing pattern from the s3tests
+	// With delimiter="/", this creates: 'asdf' (object), 'boo/' (CommonPrefix), 'cquux/' (CommonPrefix)
+	// So total of 3 "items" to return
+
+	// First call: MaxKeys=1, should return 'asdf', IsTruncated=true (2 more items)
+	listResponse, err := s3Client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
+		Bucket:    aws.String(bucketName),
+		Delimiter: aws.String("/"),
+		MaxKeys:   aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	assert.True(t, *listResponse.IsTruncated, "First response should be truncated")
+	assert.Equal(t, 1, listResponse.KeyCount, "Should return 1 item")
+	assert.Len(t, listResponse.Contents, 1, "Should return 1 object")
+	assert.Equal(t, "asdf", aws.ToString(listResponse.Contents[0].Key), "First object should be 'asdf'")
+
+	// Second call: continue with NextContinuationToken, MaxKeys=1, should return 'boo/', IsTruncated=true (1 more item)
+	listResponse, err = s3Client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
+		Bucket:            aws.String(bucketName),
+		Delimiter:         aws.String("/"),
+		MaxKeys:           aws.Int32(1),
+		ContinuationToken: listResponse.NextContinuationToken,
+	})
+	require.NoError(t, err)
+
+	assert.True(t, *listResponse.IsTruncated, "Second response should be truncated")
+	assert.Equal(t, 1, listResponse.KeyCount, "Should return 1 item")
+	assert.Len(t, listResponse.CommonPrefixes, 1, "Should return 1 CommonPrefix")
+	assert.Equal(t, "boo/", aws.ToString(listResponse.CommonPrefixes[0].Prefix), "CommonPrefix should be 'boo/'")
+
+	// Third call: continue with NextContinuationToken, MaxKeys=1, should return 'cquux/', IsTruncated=FALSE (no more items)
+	listResponse, err = s3Client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
+		Bucket:            aws.String(bucketName),
+		Delimiter:         aws.String("/"),
+		MaxKeys:           aws.Int32(1),
+		ContinuationToken: listResponse.NextContinuationToken,
+	})
+	require.NoError(t, err)
+
+	// This is the critical assertion that was failing before the fix
+	assert.False(t, *listResponse.IsTruncated, "Third response should NOT be truncated (this was the bug)")
+	assert.Equal(t, 1, listResponse.KeyCount, "Should return 1 item")
+	assert.Len(t, listResponse.CommonPrefixes, 1, "Should return 1 CommonPrefix")
+	assert.Equal(t, "cquux/", aws.ToString(listResponse.CommonPrefixes[0].Prefix), "CommonPrefix should be 'cquux/'")
+	assert.Nil(t, listResponse.NextContinuationToken, "NextContinuationToken should be nil when not truncated")
+
+	t.Logf("✅ IsTruncated logic correctly identifies when there are no more results")
+}
+
 // Helper function to setup S3 client
 func setupS3Client(t *testing.T) *s3.Client {
 	// S3TestConfig holds configuration for S3 tests
