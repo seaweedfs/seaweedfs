@@ -447,21 +447,35 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 
 		// Extract object name from .versions directory name (remove .versions suffix)
-		objectName := strings.TrimSuffix(versionsDir, ".versions")
+		baseObjectName := strings.TrimSuffix(versionsDir, ".versions")
 
-		// Check if we already processed a regular file with this name (avoid duplicates)
-		// This can happen if an object existed before versioning was enabled
-
-		// Get bucket name from directory path to check versioning
+		// Construct full object path relative to bucket
+		// dir is something like "/buckets/sea-test-1/Veeam/Backup/vbr/Config"
+		// we need to get the path relative to bucket: "Veeam/Backup/vbr/Config/Owner"
 		bucketPath := strings.TrimPrefix(dir, s3a.option.BucketsPath+"/")
 		bucketName := strings.Split(bucketPath, "/")[0]
 
+		// Remove bucket name from path to get directory within bucket
+		bucketRelativePath := strings.Join(strings.Split(bucketPath, "/")[1:], "/")
+
+		var fullObjectPath string
+		if bucketRelativePath == "" {
+			// Object is at bucket root
+			fullObjectPath = baseObjectName
+		} else {
+			// Object is in subdirectory
+			fullObjectPath = bucketRelativePath + "/" + baseObjectName
+		}
+
+		glog.V(4).Infof("Processing versioned object: baseObjectName=%s, bucketRelativePath=%s, fullObjectPath=%s",
+			baseObjectName, bucketRelativePath, fullObjectPath)
+
 		// Get the latest version information for this object
-		if latestVersionEntry, latestVersionErr := s3a.getLatestVersionEntryForListOperation(bucketName, objectName); latestVersionErr == nil {
-			glog.V(4).Infof("Creating logical entry for versioned object: %s", objectName)
+		if latestVersionEntry, latestVersionErr := s3a.getLatestVersionEntryForListOperation(bucketName, fullObjectPath); latestVersionErr == nil {
+			glog.V(4).Infof("Creating logical entry for versioned object: %s", fullObjectPath)
 			eachEntryFn(dir, latestVersionEntry)
 		} else {
-			glog.V(4).Infof("Failed to get latest version for %s: %v", objectName, latestVersionErr)
+			glog.V(4).Infof("Failed to get latest version for %s: %v", fullObjectPath, latestVersionErr)
 		}
 	}
 

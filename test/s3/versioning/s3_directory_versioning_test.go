@@ -607,6 +607,110 @@ func TestSuspendedVersioningDeleteBehavior(t *testing.T) {
 	t.Logf("Successfully verified suspended versioning delete behavior")
 }
 
+// TestVersionedObjectListBehavior tests that list operations show logical object names for versioned objects
+// and that owner information is properly extracted from S3 metadata
+func TestVersionedObjectListBehavior(t *testing.T) {
+	bucketName := "test-versioned-list"
+	objectKey := "testfile"
+
+	client := setupS3Client(t)
+
+	// Create bucket with object lock enabled (which enables versioning)
+	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+		Bucket:                     aws.String(bucketName),
+		ObjectLockEnabledForBucket: aws.Bool(true),
+	})
+	require.NoError(t, err)
+
+	// Clean up
+	defer func() {
+		cleanupBucket(t, client, bucketName)
+	}()
+
+	// Verify versioning is enabled
+	versioningResp, err := client.GetBucketVersioning(context.TODO(), &s3.GetBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, types.BucketVersioningStatusEnabled, versioningResp.Status, "Bucket versioning should be enabled")
+
+	// Create a versioned object
+	content := "test content for versioned object"
+	putResp, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   strings.NewReader(content),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putResp.VersionId)
+
+	versionId := *putResp.VersionId
+	t.Logf("Created versioned object with version ID: %s", versionId)
+
+	// Test list-objects operation - should show logical object name, not internal versioned path
+	listResp, err := client.ListObjects(context.TODO(), &s3.ListObjectsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	require.Len(t, listResp.Contents, 1, "Should list exactly one object")
+
+	listedObject := listResp.Contents[0]
+
+	// Verify the object key is the logical name, not the internal versioned path
+	assert.Equal(t, objectKey, *listedObject.Key, "Should show logical object name, not internal versioned path")
+	assert.NotContains(t, *listedObject.Key, ".versions", "Object key should not contain .versions")
+	assert.NotContains(t, *listedObject.Key, versionId, "Object key should not contain version ID")
+
+	// Verify object properties
+	assert.Equal(t, int64(len(content)), listedObject.Size, "Object size should match")
+	assert.NotNil(t, listedObject.ETag, "Object should have ETag")
+	assert.NotNil(t, listedObject.LastModified, "Object should have LastModified")
+
+	// Verify owner information is present (even if anonymous)
+	require.NotNil(t, listedObject.Owner, "Object should have Owner information")
+	assert.NotEmpty(t, listedObject.Owner.ID, "Owner ID should not be empty")
+	assert.NotEmpty(t, listedObject.Owner.DisplayName, "Owner DisplayName should not be empty")
+
+	t.Logf("Listed object: Key=%s, Size=%d, Owner.ID=%s, Owner.DisplayName=%s",
+		*listedObject.Key, listedObject.Size, *listedObject.Owner.ID, *listedObject.Owner.DisplayName)
+
+	// Test list-objects-v2 operation as well
+	listV2Resp, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+		Bucket:     aws.String(bucketName),
+		FetchOwner: aws.Bool(true), // Explicitly request owner information
+	})
+	require.NoError(t, err)
+	require.Len(t, listV2Resp.Contents, 1, "ListObjectsV2 should also list exactly one object")
+
+	listedObjectV2 := listV2Resp.Contents[0]
+	assert.Equal(t, objectKey, *listedObjectV2.Key, "ListObjectsV2 should also show logical object name")
+	assert.NotNil(t, listedObjectV2.Owner, "ListObjectsV2 should include owner when FetchOwner=true")
+
+	// Create another version to ensure multiple versions don't appear in regular list
+	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   strings.NewReader("updated content"),
+	})
+	require.NoError(t, err)
+
+	// List again - should still show only one logical object (the latest version)
+	listRespAfterUpdate, err := client.ListObjects(context.TODO(), &s3.ListObjectsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	assert.Len(t, listRespAfterUpdate.Contents, 1, "Should still list exactly one object after creating second version")
+
+	// Compare with list-object-versions which should show both versions
+	versionsResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	assert.Len(t, versionsResp.Versions, 2, "list-object-versions should show both versions")
+
+	t.Logf("Successfully verified versioned object list behavior")
+}
+
 // Helper function to setup S3 client
 func setupS3Client(t *testing.T) *s3.Client {
 	// S3TestConfig holds configuration for S3 tests
