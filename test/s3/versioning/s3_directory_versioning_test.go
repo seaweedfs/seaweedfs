@@ -226,6 +226,103 @@ func TestListObjectVersionsDeleteMarkers(t *testing.T) {
 	t.Logf("Successfully verified: 1 version + 3 delete markers for object %s", objectKey)
 }
 
+// TestVersionedObjectAcl tests that ACL operations work correctly on objects in versioned buckets
+// This test verifies the fix for the NoSuchKey error when getting ACLs for objects in versioned buckets
+func TestVersionedObjectAcl(t *testing.T) {
+	bucketName := "test-versioned-acl"
+
+	client := setupS3Client(t)
+
+	// Create bucket
+	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+
+	// Clean up
+	defer func() {
+		cleanupBucket(t, client, bucketName)
+	}()
+
+	// Enable versioning
+	_, err = client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err)
+
+	objectKey := "test-acl-object"
+
+	// Create an object in the versioned bucket
+	putResp, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   strings.NewReader("test content for ACL"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putResp.VersionId, "Object should have a version ID")
+
+	// Test 1: Get ACL for the object (without specifying version ID - should get latest version)
+	getAclResp, err := client.GetObjectAcl(context.TODO(), &s3.GetObjectAclInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Should be able to get ACL for object in versioned bucket")
+	require.NotNil(t, getAclResp.Owner, "ACL response should have owner information")
+
+	// Test 2: Get ACL for specific version ID
+	getAclVersionResp, err := client.GetObjectAcl(context.TODO(), &s3.GetObjectAclInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: putResp.VersionId,
+	})
+	require.NoError(t, err, "Should be able to get ACL for specific version")
+	require.NotNil(t, getAclVersionResp.Owner, "Versioned ACL response should have owner information")
+
+	// Test 3: Verify both ACL responses are the same (same object, same version)
+	assert.Equal(t, getAclResp.Owner.ID, getAclVersionResp.Owner.ID, "Owner ID should match for latest and specific version")
+
+	// Test 4: Create another version of the same object
+	putResp2, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   strings.NewReader("updated content for ACL"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putResp2.VersionId, "Second object version should have a version ID")
+	require.NotEqual(t, putResp.VersionId, putResp2.VersionId, "Version IDs should be different")
+
+	// Test 5: Get ACL for latest version (should be the second version)
+	getAclLatestResp, err := client.GetObjectAcl(context.TODO(), &s3.GetObjectAclInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Should be able to get ACL for latest version after update")
+	require.NotNil(t, getAclLatestResp.Owner, "Latest ACL response should have owner information")
+
+	// Test 6: Get ACL for the first version specifically
+	getAclFirstResp, err := client.GetObjectAcl(context.TODO(), &s3.GetObjectAclInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: putResp.VersionId,
+	})
+	require.NoError(t, err, "Should be able to get ACL for first version specifically")
+	require.NotNil(t, getAclFirstResp.Owner, "First version ACL response should have owner information")
+
+	// Test 7: Verify we can put ACL on versioned objects
+	_, err = client.PutObjectAcl(context.TODO(), &s3.PutObjectAclInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		ACL:    types.ObjectCannedACLPrivate,
+	})
+	require.NoError(t, err, "Should be able to put ACL on versioned object")
+
+	t.Logf("Successfully verified ACL operations on versioned object %s with versions %s and %s",
+		objectKey, *putResp.VersionId, *putResp2.VersionId)
+}
+
 // Helper function to setup S3 client
 func setupS3Client(t *testing.T) *s3.Client {
 	// S3TestConfig holds configuration for S3 tests
