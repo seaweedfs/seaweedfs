@@ -41,8 +41,29 @@ func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Create directory structure by putting objects (which creates directories implicitly)
-	testObjects := []string{
+	// First create explicit directory objects (keys ending with "/")
+	// These are the directories that should appear in list-object-versions
+	explicitDirectories := []string{
+		"Veeam/",
+		"Veeam/Archive/",
+		"Veeam/Archive/vbr/",
+		"Veeam/Backup/",
+		"Veeam/Backup/vbr/",
+		"Veeam/Backup/vbr/Clients/",
+	}
+
+	// Create explicit directory objects
+	for _, dirKey := range explicitDirectories {
+		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(dirKey),
+			Body:   strings.NewReader(""), // Empty content for directories
+		})
+		require.NoError(t, err, "Failed to create directory object %s", dirKey)
+	}
+
+	// Now create some test files
+	testFiles := []string{
 		"Veeam/test-file.txt",
 		"Veeam/Archive/test-file2.txt",
 		"Veeam/Archive/vbr/test-file3.txt",
@@ -51,14 +72,14 @@ func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 		"Veeam/Backup/vbr/Clients/test-file6.txt",
 	}
 
-	// Upload test objects to create directory structure
-	for _, objectKey := range testObjects {
+	// Upload test files
+	for _, objectKey := range testFiles {
 		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(objectKey),
 			Body:   strings.NewReader("test content"),
 		})
-		require.NoError(t, err, "Failed to create object %s", objectKey)
+		require.NoError(t, err, "Failed to create file %s", objectKey)
 	}
 
 	// List object versions
@@ -105,7 +126,7 @@ func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 	}
 
 	// Also verify that actual files are included
-	for _, objectKey := range testObjects {
+	for _, objectKey := range testFiles {
 		found := false
 		for _, version := range listResp.Versions {
 			if *version.Key == objectKey {
@@ -131,7 +152,78 @@ func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 
 	t.Logf("Found %d directories and %d files", directoryCount, fileCount)
 	assert.Equal(t, len(expectedDirectories), directoryCount, "Should find exactly %d directories", len(expectedDirectories))
-	assert.Equal(t, len(testObjects), fileCount, "Should find exactly %d files", len(testObjects))
+	assert.Equal(t, len(testFiles), fileCount, "Should find exactly %d files", len(testFiles))
+}
+
+// TestListObjectVersionsDeleteMarkers tests that delete markers are properly separated from versions
+// This test verifies the fix for the issue where delete markers were incorrectly categorized as versions
+func TestListObjectVersionsDeleteMarkers(t *testing.T) {
+	bucketName := "test-delete-markers"
+
+	client := setupS3Client(t)
+
+	// Create bucket
+	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+
+	// Clean up
+	defer func() {
+		cleanupBucket(t, client, bucketName)
+	}()
+
+	// Enable versioning
+	_, err = client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err)
+
+	objectKey := "test1/a"
+
+	// 1. Create one version of the file
+	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   strings.NewReader("test content"),
+	})
+	require.NoError(t, err)
+
+	// 2. Delete the object 3 times to create 3 delete markers
+	for i := 0; i < 3; i++ {
+		_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err)
+	}
+
+	// 3. List object versions and verify the response structure
+	listResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+
+	// 4. Verify that we have exactly 1 version and 3 delete markers
+	assert.Len(t, listResp.Versions, 1, "Should have exactly 1 file version")
+	assert.Len(t, listResp.DeleteMarkers, 3, "Should have exactly 3 delete markers")
+
+	// 5. Verify the version is for our test file
+	version := listResp.Versions[0]
+	assert.Equal(t, objectKey, *version.Key, "Version should be for our test file")
+	assert.NotEqual(t, "null", *version.VersionId, "File version should have a real version ID")
+	assert.Greater(t, *version.Size, int64(0), "File version should have size > 0")
+
+	// 6. Verify all delete markers are for our test file
+	for i, deleteMarker := range listResp.DeleteMarkers {
+		assert.Equal(t, objectKey, *deleteMarker.Key, "Delete marker %d should be for our test file", i)
+		assert.NotEqual(t, "null", *deleteMarker.VersionId, "Delete marker %d should have a real version ID", i)
+	}
+
+	t.Logf("Successfully verified: 1 version + 3 delete markers for object %s", objectKey)
 }
 
 // Helper function to setup S3 client
