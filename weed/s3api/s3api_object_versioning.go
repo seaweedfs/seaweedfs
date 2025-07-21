@@ -19,18 +19,31 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// ObjectVersion represents a version of an S3 object
-type ObjectVersion struct {
-	VersionId      string
-	IsLatest       bool
-	IsDeleteMarker bool
-	LastModified   time.Time
-	ETag           string
-	Size           int64
-	Entry          *filer_pb.Entry
+// S3ListObjectVersionsResult - Custom struct for S3 list-object-versions response
+// This avoids conflicts with the XSD generated ListVersionsResult struct
+// and ensures proper separation of versions and delete markers into arrays
+type S3ListObjectVersionsResult struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListVersionsResult"`
+
+	Name                string `xml:"Name"`
+	Prefix              string `xml:"Prefix,omitempty"`
+	KeyMarker           string `xml:"KeyMarker,omitempty"`
+	VersionIdMarker     string `xml:"VersionIdMarker,omitempty"`
+	NextKeyMarker       string `xml:"NextKeyMarker,omitempty"`
+	NextVersionIdMarker string `xml:"NextVersionIdMarker,omitempty"`
+	MaxKeys             int    `xml:"MaxKeys"`
+	Delimiter           string `xml:"Delimiter,omitempty"`
+	IsTruncated         bool   `xml:"IsTruncated"`
+
+	// These are the critical fields - arrays instead of single elements
+	Versions      []VersionEntry      `xml:"Version,omitempty"`      // Array for versions
+	DeleteMarkers []DeleteMarkerEntry `xml:"DeleteMarker,omitempty"` // Array for delete markers
+
+	CommonPrefixes []PrefixEntry `xml:"CommonPrefixes,omitempty"`
+	EncodingType   string        `xml:"EncodingType,omitempty"`
 }
 
-// ListObjectVersionsResult represents the response for ListObjectVersions
+// Original struct - keeping for compatibility but will use S3ListObjectVersionsResult for XML response
 type ListObjectVersionsResult struct {
 	XMLName             xml.Name            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListVersionsResult"`
 	Name                string              `xml:"Name"`
@@ -45,6 +58,17 @@ type ListObjectVersionsResult struct {
 	Versions            []VersionEntry      `xml:"Version,omitempty"`
 	DeleteMarkers       []DeleteMarkerEntry `xml:"DeleteMarker,omitempty"`
 	CommonPrefixes      []PrefixEntry       `xml:"CommonPrefixes,omitempty"`
+}
+
+// ObjectVersion represents a version of an S3 object
+type ObjectVersion struct {
+	VersionId      string
+	IsLatest       bool
+	IsDeleteMarker bool
+	LastModified   time.Time
+	ETag           string
+	Size           int64
+	Entry          *filer_pb.Entry
 }
 
 // generateVersionId creates a unique version ID that preserves chronological order
@@ -124,7 +148,7 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 }
 
 // listObjectVersions lists all versions of an object
-func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*ListObjectVersionsResult, error) {
+func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*S3ListObjectVersionsResult, error) {
 	var allVersions []interface{} // Can contain VersionEntry or DeleteMarkerEntry
 
 	// Track objects that have been processed to avoid duplicates
@@ -184,8 +208,8 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		return versionIdI > versionIdJ
 	})
 
-	// Build result
-	result := &ListObjectVersionsResult{
+	// Build result using S3ListObjectVersionsResult to avoid conflicts with XSD structs
+	result := &S3ListObjectVersionsResult{
 		Name:        bucket,
 		Prefix:      prefix,
 		KeyMarker:   keyMarker,
@@ -296,7 +320,35 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 					}
 				}
 			} else {
-				// Recursively search subdirectories
+				// This is a regular directory - check if it's an explicit S3 directory object
+				// Only include directories that were explicitly created via S3 API (have FolderMimeType)
+				// This excludes implicit directories created when uploading files like "test1/a"
+				if entry.Attributes.Mime == s3_constants.FolderMimeType {
+					directoryKey := entryPath
+					if !strings.HasSuffix(directoryKey, "/") {
+						directoryKey += "/"
+					}
+
+					// Add directory as a version entry with VersionId "null" (following S3/Minio behavior)
+					glog.V(2).Infof("findVersionsRecursively: found explicit S3 directory %s", directoryKey)
+
+					// Calculate ETag for empty directory
+					directoryETag := "\"d41d8cd98f00b204e9800998ecf8427e\""
+
+					versionEntry := &VersionEntry{
+						Key:          directoryKey,
+						VersionId:    "null",
+						IsLatest:     true,
+						LastModified: time.Unix(entry.Attributes.Mtime, 0),
+						ETag:         directoryETag,
+						Size:         0, // Directories have size 0
+						Owner:        s3a.getObjectOwnerFromEntry(entry),
+						StorageClass: "STANDARD",
+					}
+					*allVersions = append(*allVersions, versionEntry)
+				}
+
+				// Recursively search subdirectories (regardless of whether they're explicit or implicit)
 				fullPath := path.Join(currentPath, entry.Name)
 				err := s3a.findVersionsRecursively(fullPath, entryPath, allVersions, processedObjects, seenVersionIds, bucket, prefix)
 				if err != nil {
@@ -529,13 +581,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 	versionsDir := s3a.getVersionedObjectDir(bucket, object)
 	versionFile := s3a.getVersionFileName(versionId)
 
-	// Delete the specific version from .versions directory
-	_, err := s3a.getEntry(versionsDir, versionFile)
-	if err != nil {
-		return fmt.Errorf("version %s not found: %v", versionId, err)
-	}
-
-	// Check if this is the latest version before deleting
+	// Check if this is the latest version before attempting deletion (for potential metadata update)
 	versionsEntry, dirErr := s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), object+".versions")
 	isLatestVersion := false
 	if dirErr == nil && versionsEntry.Extended != nil {
@@ -544,15 +590,19 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		}
 	}
 
-	// Delete the version file
+	// Attempt to delete the version file
+	// Note: We don't check if the file exists first to avoid race conditions
+	// The deletion operation should be idempotent
 	deleteErr := s3a.rm(versionsDir, versionFile, true, false)
 	if deleteErr != nil {
-		// Check if file was already deleted by another process
+		// Check if file was already deleted by another process (race condition handling)
 		if _, checkErr := s3a.getEntry(versionsDir, versionFile); checkErr != nil {
-			// File doesn't exist anymore, deletion was successful
-		} else {
-			return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
+			// File doesn't exist anymore, deletion was successful (another thread deleted it)
+			glog.V(2).Infof("deleteSpecificObjectVersion: version %s for %s%s already deleted by another process", versionId, bucket, object)
+			return nil
 		}
+		// File still exists but deletion failed for another reason
+		return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
 	}
 
 	// If we deleted the latest version, update the .versions directory metadata to point to the new latest

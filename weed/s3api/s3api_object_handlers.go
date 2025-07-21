@@ -198,9 +198,33 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 		StorageClass: StorageClass(storageClass),
 	}
 	if fetchOwner {
+		// Extract owner from S3 metadata (Extended attributes) instead of file system attributes
+		var ownerID, displayName string
+		if entry.Extended != nil {
+			if ownerBytes, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
+				ownerID = string(ownerBytes)
+			}
+		}
+
+		// Fallback to anonymous if no S3 owner found
+		if ownerID == "" {
+			ownerID = s3_constants.AccountAnonymousId
+			displayName = "anonymous"
+		} else {
+			// Try to resolve display name from IAM system
+			displayName = "unknown"
+			// Note: IAM resolution would require access to the S3ApiServer instance
+			// For now, use a simple fallback or could be enhanced later
+		}
+
+		// Additional fallback to file system username if available and no display name resolved
+		if displayName == "unknown" && entry.Attributes.UserName != "" {
+			displayName = entry.Attributes.UserName
+		}
+
 		listEntry.Owner = CanonicalUser{
-			ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
-			DisplayName: entry.Attributes.UserName,
+			ID:          ownerID,
+			DisplayName: displayName,
 		}
 	}
 	return listEntry

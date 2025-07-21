@@ -32,8 +32,8 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
 
-	// Check if versioning is configured for the bucket (Enabled or Suspended)
-	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
+	// Get detailed versioning state for proper handling of suspended vs enabled versioning
+	versioningState, err := s3a.getVersioningState(bucket)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
@@ -44,14 +44,19 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
+	versioningSuspended := (versioningState == s3_constants.VersioningSuspended)
+	versioningConfigured := (versioningState != "")
+
 	var auditLog *s3err.AccessLog
 	if s3err.Logger != nil {
 		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
 	}
 
 	if versioningConfigured {
-		// Handle versioned delete
+		// Handle versioned delete based on specific versioning state
 		if versionId != "" {
+			// Delete specific version (same for both enabled and suspended)
 			// Check object lock permissions before deleting specific version
 			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
 			if err := s3a.enforceObjectLockProtections(r, bucket, object, versionId, governanceBypassAllowed); err != nil {
@@ -71,19 +76,44 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			// Set version ID in response header
 			w.Header().Set("x-amz-version-id", versionId)
 		} else {
-			// Create delete marker (logical delete)
-			// AWS S3 behavior: Delete marker creation is NOT blocked by object retention
-			// because it's a logical delete that doesn't actually remove the retained version
-			deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object)
-			if err != nil {
-				glog.Errorf("Failed to create delete marker: %v", err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-				return
-			}
+			// Delete without version ID - behavior depends on versioning state
+			if versioningEnabled {
+				// Enabled versioning: Create delete marker (logical delete)
+				// AWS S3 behavior: Delete marker creation is NOT blocked by object retention
+				// because it's a logical delete that doesn't actually remove the retained version
+				deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object)
+				if err != nil {
+					glog.Errorf("Failed to create delete marker: %v", err)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return
+				}
 
-			// Set delete marker version ID in response header
-			w.Header().Set("x-amz-version-id", deleteMarkerVersionId)
-			w.Header().Set("x-amz-delete-marker", "true")
+				// Set delete marker version ID in response header
+				w.Header().Set("x-amz-version-id", deleteMarkerVersionId)
+				w.Header().Set("x-amz-delete-marker", "true")
+			} else if versioningSuspended {
+				// Suspended versioning: Actually delete the "null" version object
+				glog.V(2).Infof("DeleteObjectHandler: deleting null version for suspended versioning %s/%s", bucket, object)
+
+				// Check object lock permissions before deleting "null" version
+				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+				if err := s3a.enforceObjectLockProtections(r, bucket, object, "null", governanceBypassAllowed); err != nil {
+					glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
+
+				// Delete the "null" version (the regular file)
+				err := s3a.deleteSpecificObjectVersion(bucket, object, "null")
+				if err != nil {
+					glog.Errorf("Failed to delete null version: %v", err)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return
+				}
+
+				// Note: According to AWS S3 spec, suspended versioning should NOT return version ID headers
+				// The object is deleted but no version information is returned
+			}
 		}
 	} else {
 		// Handle regular delete (non-versioned)
@@ -203,8 +233,8 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
 	}
 
-	// Check if versioning is configured for the bucket (needed for object lock checks)
-	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
+	// Get detailed versioning state for proper handling of suspended vs enabled versioning
+	versioningState, err := s3a.getVersioningState(bucket)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
@@ -214,6 +244,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
+
+	versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
+	versioningSuspended := (versioningState == s3_constants.VersioningSuspended)
+	versioningConfigured := (versioningState != "")
 
 	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -243,9 +277,9 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			var isDeleteMarker bool
 
 			if versioningConfigured {
-				// Handle versioned delete
+				// Handle versioned delete based on specific versioning state
 				if object.VersionId != "" {
-					// Delete specific version
+					// Delete specific version (same for both enabled and suspended)
 					err := s3a.deleteSpecificObjectVersion(bucket, object.Key, object.VersionId)
 					if err != nil {
 						deleteErrors = append(deleteErrors, DeleteError{
@@ -258,19 +292,39 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 					}
 					deleteVersionId = object.VersionId
 				} else {
-					// Create delete marker (logical delete)
-					deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object.Key)
-					if err != nil {
-						deleteErrors = append(deleteErrors, DeleteError{
-							Code:      "",
-							Message:   err.Error(),
-							Key:       object.Key,
-							VersionId: object.VersionId,
-						})
-						continue
+					// Delete without version ID - behavior depends on versioning state
+					if versioningEnabled {
+						// Enabled versioning: Create delete marker (logical delete)
+						deleteMarkerVersionId, err := s3a.createDeleteMarker(bucket, object.Key)
+						if err != nil {
+							deleteErrors = append(deleteErrors, DeleteError{
+								Code:      "",
+								Message:   err.Error(),
+								Key:       object.Key,
+								VersionId: object.VersionId,
+							})
+							continue
+						}
+						deleteVersionId = deleteMarkerVersionId
+						isDeleteMarker = true
+					} else if versioningSuspended {
+						// Suspended versioning: Actually delete the "null" version object
+						glog.V(2).Infof("DeleteMultipleObjectsHandler: deleting null version for suspended versioning %s/%s", bucket, object.Key)
+
+						err := s3a.deleteSpecificObjectVersion(bucket, object.Key, "null")
+						if err != nil {
+							deleteErrors = append(deleteErrors, DeleteError{
+								Code:      "",
+								Message:   err.Error(),
+								Key:       object.Key,
+								VersionId: "null",
+							})
+							continue
+						}
+						deleteVersionId = "null"
+						// Note: For suspended versioning, we don't set isDeleteMarker=true
+						// because we actually deleted the object, not created a delete marker
 					}
-					deleteVersionId = deleteMarkerVersionId
-					isDeleteMarker = true
 				}
 
 				// Add to successful deletions with version info

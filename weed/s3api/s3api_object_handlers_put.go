@@ -90,6 +90,9 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 					entry.Content, _ = io.ReadAll(r.Body)
 				}
 				entry.Attributes.Mime = objectContentType
+
+				// Set object owner for directory objects (same as regular objects)
+				s3a.setObjectOwnerFromRequest(r, entry)
 			}); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
