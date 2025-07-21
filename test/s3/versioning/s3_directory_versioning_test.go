@@ -720,7 +720,7 @@ func TestPrefixFilteringLogic(t *testing.T) {
 	bucketName := "test-bucket-" + fmt.Sprintf("%d", time.Now().UnixNano())
 
 	// Create bucket
-	_, err := s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+	_, err := s3Client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err)
