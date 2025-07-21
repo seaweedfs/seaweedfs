@@ -209,12 +209,17 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 		// Fallback to anonymous if no S3 owner found
 		if ownerID == "" {
 			ownerID = s3_constants.AccountAnonymousId
+			displayName = "anonymous"
+		} else {
+			// Try to resolve display name from IAM system
+			displayName = "unknown"
+			// Note: IAM resolution would require access to the S3ApiServer instance
+			// For now, use a simple fallback or could be enhanced later
 		}
 
-		// For display name, we can use file system username as fallback or try to resolve from IAM
-		displayName = entry.Attributes.UserName
-		if displayName == "" {
-			displayName = "anonymous"
+		// Additional fallback to file system username if available and no display name resolved
+		if displayName == "unknown" && entry.Attributes.UserName != "" {
+			displayName = entry.Attributes.UserName
 		}
 
 		listEntry.Owner = CanonicalUser{
