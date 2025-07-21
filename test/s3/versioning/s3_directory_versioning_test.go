@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
@@ -17,7 +19,7 @@ import (
 func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 	bucketName := "test-versioning-directories"
 
-	client := setupS3Client()
+	client := setupS3Client(t)
 
 	// Create bucket
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
@@ -27,7 +29,7 @@ func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 
 	// Clean up
 	defer func() {
-		cleanupBucket(client, bucketName)
+		cleanupBucket(t, client, bucketName)
 	}()
 
 	// Enable versioning
@@ -132,15 +134,115 @@ func TestListObjectVersionsIncludesDirectories(t *testing.T) {
 	assert.Equal(t, len(testObjects), fileCount, "Should find exactly %d files", len(testObjects))
 }
 
-// Helper function to setup S3 client (assumes this exists in the test package)
-func setupS3Client() *s3.Client {
-	// This should be implemented based on existing test setup
-	// Usually involves setting up endpoint, credentials, etc.
-	return nil // Placeholder - implement based on existing pattern
+// Helper function to setup S3 client
+func setupS3Client(t *testing.T) *s3.Client {
+	// S3TestConfig holds configuration for S3 tests
+	type S3TestConfig struct {
+		Endpoint      string
+		AccessKey     string
+		SecretKey     string
+		Region        string
+		BucketPrefix  string
+		UseSSL        bool
+		SkipVerifySSL bool
+	}
+
+	// Default test configuration - should match s3tests.conf
+	defaultConfig := &S3TestConfig{
+		Endpoint:      "http://localhost:8333", // Default SeaweedFS S3 port
+		AccessKey:     "some_access_key1",
+		SecretKey:     "some_secret_key1",
+		Region:        "us-east-1",
+		BucketPrefix:  "test-versioning-",
+		UseSSL:        false,
+		SkipVerifySSL: true,
+	}
+
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithRegion(defaultConfig.Region),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			defaultConfig.AccessKey,
+			defaultConfig.SecretKey,
+			"",
+		)),
+		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{
+					URL:               defaultConfig.Endpoint,
+					SigningRegion:     defaultConfig.Region,
+					HostnameImmutable: true,
+				}, nil
+			})),
+	)
+	require.NoError(t, err)
+
+	return s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true // Important for SeaweedFS
+	})
 }
 
-// Helper function to clean up bucket (assumes this exists in the test package)
-func cleanupBucket(client *s3.Client, bucketName string) {
-	// This should be implemented based on existing test cleanup
-	// Usually involves deleting all objects and then the bucket
+// Helper function to clean up bucket
+func cleanupBucket(t *testing.T, client *s3.Client, bucketName string) {
+	// First, delete all objects and versions
+	err := deleteAllObjectVersions(t, client, bucketName)
+	if err != nil {
+		t.Logf("Warning: failed to delete all object versions: %v", err)
+	}
+
+	// Then delete the bucket
+	_, err = client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	if err != nil {
+		t.Logf("Warning: failed to delete bucket %s: %v", bucketName, err)
+	}
+}
+
+// deleteAllObjectVersions deletes all object versions in a bucket
+func deleteAllObjectVersions(t *testing.T, client *s3.Client, bucketName string) error {
+	// List all object versions
+	paginator := s3.NewListObjectVersionsPaginator(client, &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	})
+
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(context.TODO())
+		if err != nil {
+			return err
+		}
+
+		var objectsToDelete []types.ObjectIdentifier
+
+		// Add versions
+		for _, version := range page.Versions {
+			objectsToDelete = append(objectsToDelete, types.ObjectIdentifier{
+				Key:       version.Key,
+				VersionId: version.VersionId,
+			})
+		}
+
+		// Add delete markers
+		for _, deleteMarker := range page.DeleteMarkers {
+			objectsToDelete = append(objectsToDelete, types.ObjectIdentifier{
+				Key:       deleteMarker.Key,
+				VersionId: deleteMarker.VersionId,
+			})
+		}
+
+		// Delete objects in batches
+		if len(objectsToDelete) > 0 {
+			_, err := client.DeleteObjects(context.TODO(), &s3.DeleteObjectsInput{
+				Bucket: aws.String(bucketName),
+				Delete: &types.Delete{
+					Objects: objectsToDelete,
+					Quiet:   aws.Bool(true),
+				},
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
