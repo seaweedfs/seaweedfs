@@ -249,7 +249,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versionId != "" {
 			// Request for specific version
-			glog.V(2).Infof("GetObject: requesting specific version %s for %s/%s", versionId, bucket, object)
+			glog.V(2).Infof("GetObject: requesting specific version %s for %s%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
 				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
@@ -259,10 +259,10 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			targetVersionId = versionId
 		} else {
 			// Request for latest version
-			glog.V(1).Infof("GetObject: requesting latest version for %s/%s", bucket, object)
+			glog.V(1).Infof("GetObject: requesting latest version for %s%s", bucket, object)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
-				glog.Errorf("GetObject: Failed to get latest version for %s/%s: %v", bucket, object, err)
+				glog.Errorf("GetObject: Failed to get latest version for %s%s: %v", bucket, object, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
@@ -344,7 +344,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 		if versionId != "" {
 			// Request for specific version
-			glog.V(2).Infof("HeadObject: requesting specific version %s for %s/%s", versionId, bucket, object)
+			glog.V(2).Infof("HeadObject: requesting specific version %s for %s%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
 				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
@@ -354,7 +354,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			targetVersionId = versionId
 		} else {
 			// Request for latest version
-			glog.V(2).Infof("HeadObject: requesting latest version for %s/%s", bucket, object)
+			glog.V(2).Infof("HeadObject: requesting latest version for %s%s", bucket, object)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
 				glog.Errorf("Failed to get latest version: %v", err)
