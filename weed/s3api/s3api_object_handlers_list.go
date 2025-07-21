@@ -152,6 +152,9 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for {
 			empty := true
+			var lastEntryWasCommonPrefix bool
+			var lastCommonPrefixName string
+
 			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
 				empty = false
 				dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
@@ -159,6 +162,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					if entry.IsDirectoryKeyObject() {
 						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false))
 						cursor.maxKeys--
+						lastEntryWasCommonPrefix = false
 						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 					} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
 						commonPrefixes = append(commonPrefixes, PrefixEntry{
@@ -166,6 +170,8 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						})
 						//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
 						cursor.maxKeys--
+						lastEntryWasCommonPrefix = true
+						lastCommonPrefixName = entry.Name
 					}
 				} else {
 					var delimiterFound bool
@@ -196,12 +202,15 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 								})
 								cursor.maxKeys--
 								delimiterFound = true
+								lastEntryWasCommonPrefix = true
+								lastCommonPrefixName = delimitedPath[0]
 							}
 						}
 					}
 					if !delimiterFound {
 						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
 						cursor.maxKeys--
+						lastEntryWasCommonPrefix = false
 					}
 				}
 			})
@@ -209,10 +218,21 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				return doErr
 			}
 
-			if cursor.isTruncated {
+			// Adjust nextMarker for CommonPrefixes to include trailing slash (AWS S3 compliance)
+			if cursor.isTruncated && lastEntryWasCommonPrefix && lastCommonPrefixName != "" {
+				// For CommonPrefixes, NextMarker should include the trailing slash
+				if requestDir != "" {
+					nextMarker = requestDir + "/" + lastCommonPrefixName + "/"
+				} else {
+					nextMarker = lastCommonPrefixName + "/"
+				}
+			} else if cursor.isTruncated {
 				if requestDir != "" {
 					nextMarker = requestDir + "/" + nextMarker
 				}
+			}
+
+			if cursor.isTruncated {
 				break
 			} else if empty || strings.HasSuffix(originalPrefix, "/") {
 				nextMarker = ""

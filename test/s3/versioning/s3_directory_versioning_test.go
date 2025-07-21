@@ -796,6 +796,87 @@ func TestPrefixFilteringLogic(t *testing.T) {
 	t.Logf("✅ Prefix filtering logic correctly handles edge cases")
 }
 
+// TestNextMarkerDelimiterFix tests the NextMarker behavior with delimiters for directory prefixes
+// This addresses the test failures where NextMarker should include trailing slash for CommonPrefixes
+func TestNextMarkerDelimiterFix(t *testing.T) {
+	s3Client := setupS3Client(t)
+	bucketName := "test-bucket-" + fmt.Sprintf("%d", time.Now().UnixNano())
+
+	// Create bucket
+	_, err := s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	defer cleanupBucket(t, s3Client, bucketName)
+
+	// Create test objects that match the failing test pattern
+	testObjects := []string{
+		"asdf",
+		"boo/bar",
+		"boo/baz/xyzzy",
+		"cquux/thud",
+		"cquux/bla",
+	}
+
+	for _, objectKey := range testObjects {
+		_, err = s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+			Body:   strings.NewReader("test content for " + objectKey),
+		})
+		require.NoError(t, err)
+	}
+
+	// Test the specific failing case: list with delimiter "/" and maxKeys=1
+	// This should return objects/prefixes one at a time with correct NextMarker
+
+	// First call: should return "asdf" with NextMarker="asdf"
+	listResponse, err := s3Client.ListObjects(context.Background(), &s3.ListObjectsInput{
+		Bucket:    aws.String(bucketName),
+		Delimiter: aws.String("/"),
+		MaxKeys:   aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	assert.True(t, *listResponse.IsTruncated, "First response should be truncated")
+	assert.Len(t, listResponse.Contents, 1, "Should return exactly 1 object")
+	assert.Equal(t, "asdf", aws.ToString(listResponse.Contents[0].Key), "First object should be 'asdf'")
+	assert.Equal(t, "asdf", aws.ToString(listResponse.NextMarker), "NextMarker should be 'asdf'")
+
+	// Second call: continue from "asdf", should return CommonPrefix "boo/" with NextMarker="boo/"
+	listResponse, err = s3Client.ListObjects(context.Background(), &s3.ListObjectsInput{
+		Bucket:    aws.String(bucketName),
+		Delimiter: aws.String("/"),
+		Marker:    listResponse.NextMarker,
+		MaxKeys:   aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	assert.True(t, *listResponse.IsTruncated, "Second response should be truncated")
+	assert.Len(t, listResponse.Contents, 0, "Should return no direct objects")
+	assert.Len(t, listResponse.CommonPrefixes, 1, "Should return exactly 1 CommonPrefix")
+	assert.Equal(t, "boo/", aws.ToString(listResponse.CommonPrefixes[0].Prefix), "CommonPrefix should be 'boo/'")
+
+	// This is the critical assertion that was failing:
+	assert.Equal(t, "boo/", aws.ToString(listResponse.NextMarker), "NextMarker should be 'boo/' (with trailing slash)")
+
+	// Third call: continue from "boo/", should return CommonPrefix "cquux/"
+	listResponse, err = s3Client.ListObjects(context.Background(), &s3.ListObjectsInput{
+		Bucket:    aws.String(bucketName),
+		Delimiter: aws.String("/"),
+		Marker:    listResponse.NextMarker,
+		MaxKeys:   aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	assert.False(t, *listResponse.IsTruncated, "Third response should not be truncated")
+	assert.Len(t, listResponse.Contents, 0, "Should return no direct objects")
+	assert.Len(t, listResponse.CommonPrefixes, 1, "Should return exactly 1 CommonPrefix")
+	assert.Equal(t, "cquux/", aws.ToString(listResponse.CommonPrefixes[0].Prefix), "CommonPrefix should be 'cquux/'")
+
+	t.Logf("✅ NextMarker correctly includes trailing slash for CommonPrefixes")
+}
+
 // Helper function to setup S3 client
 func setupS3Client(t *testing.T) *s3.Client {
 	// S3TestConfig holds configuration for S3 tests
