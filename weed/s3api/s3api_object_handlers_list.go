@@ -4,16 +4,17 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 type OptionalString struct {
@@ -356,6 +357,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		return
 	}
 
+	// Track .versions directories found in this directory for later processing
+	var versionsDirs []string
+
 	for {
 		resp, recvErr := stream.Recv()
 		if recvErr != nil {
@@ -386,6 +390,14 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			if entry.Name == s3_constants.MultipartUploadsFolder { // FIXME no need to apply to all directories. this extra also affects maxKeys
 				continue
 			}
+
+			// Skip .versions directories in regular list operations but track them for logical object creation
+			if strings.HasSuffix(entry.Name, ".versions") {
+				glog.V(4).Infof("Found .versions directory: %s", entry.Name)
+				versionsDirs = append(versionsDirs, entry.Name)
+				continue
+			}
+
 			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
 				if cursor.prefixEndsOnDelimiter {
 					cursor.prefixEndsOnDelimiter = false
@@ -425,6 +437,34 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			cursor.prefixEndsOnDelimiter = false
 		}
 	}
+
+	// After processing all regular entries, handle versioned objects
+	// Create logical entries for objects that have .versions directories
+	for _, versionsDir := range versionsDirs {
+		if cursor.maxKeys <= 0 {
+			cursor.isTruncated = true
+			break
+		}
+
+		// Extract object name from .versions directory name (remove .versions suffix)
+		objectName := strings.TrimSuffix(versionsDir, ".versions")
+
+		// Check if we already processed a regular file with this name (avoid duplicates)
+		// This can happen if an object existed before versioning was enabled
+
+		// Get bucket name from directory path to check versioning
+		bucketPath := strings.TrimPrefix(dir, s3a.option.BucketsPath+"/")
+		bucketName := strings.Split(bucketPath, "/")[0]
+
+		// Get the latest version information for this object
+		if latestVersionEntry, latestVersionErr := s3a.getLatestVersionEntryForListOperation(bucketName, objectName); latestVersionErr == nil {
+			glog.V(4).Infof("Creating logical entry for versioned object: %s", objectName)
+			eachEntryFn(dir, latestVersionEntry)
+		} else {
+			glog.V(4).Infof("Failed to get latest version for %s: %v", objectName, latestVersionErr)
+		}
+	}
+
 	return
 }
 
@@ -512,4 +552,33 @@ func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFile
 	}
 
 	return true, nil
+}
+
+// getLatestVersionEntryForListOperation gets the latest version of an object and creates a logical entry for list operations
+// This is used to show versioned objects as logical object names in regular list operations
+func (s3a *S3ApiServer) getLatestVersionEntryForListOperation(bucket, object string) (*filer_pb.Entry, error) {
+	// Get the latest version entry
+	latestVersionEntry, err := s3a.getLatestObjectVersion(bucket, object)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest version: %w", err)
+	}
+
+	// Check if this is a delete marker (should not be shown in regular list)
+	if latestVersionEntry.Extended != nil {
+		if deleteMarker, exists := latestVersionEntry.Extended[s3_constants.ExtDeleteMarkerKey]; exists && string(deleteMarker) == "true" {
+			return nil, fmt.Errorf("latest version is a delete marker")
+		}
+	}
+
+	// Create a logical entry that appears to be stored at the object path (not the versioned path)
+	// This allows the list operation to show the logical object name while preserving all metadata
+	logicalEntry := &filer_pb.Entry{
+		Name:        strings.TrimPrefix(object, "/"),
+		IsDirectory: false,
+		Attributes:  latestVersionEntry.Attributes,
+		Extended:    latestVersionEntry.Extended,
+		Chunks:      latestVersionEntry.Chunks,
+	}
+
+	return logicalEntry, nil
 }
