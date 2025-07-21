@@ -154,7 +154,7 @@ require (
 	github.com/tarantool/go-tarantool/v2 v2.4.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.112.0
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.113.1
 	go.etcd.io/etcd/client/pkg/v3 v3.6.2
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.16.0
@@ -165,7 +165,6 @@ require github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // ind
 
 require (
 	github.com/cenkalti/backoff/v3 v3.2.2 // indirect
-	github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
 	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 )
 
