@@ -124,7 +124,7 @@ require (
 require (
 	github.com/Jille/raft-grpc-transport v1.6.1
 	github.com/ThreeDotsLabs/watermill v1.4.7
-	github.com/a-h/templ v0.3.906
+	github.com/a-h/templ v0.3.920
 	github.com/arangodb/go-driver v1.6.6
 	github.com/armon/go-metrics v0.4.1
 	github.com/aws/aws-sdk-go-v2 v1.36.5
@@ -165,7 +165,6 @@ require github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // ind
 
 require (
 	github.com/cenkalti/backoff/v3 v3.2.2 // indirect
-	github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
 	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 )
 
