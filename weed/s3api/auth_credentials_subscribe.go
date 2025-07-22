@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"errors"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -107,12 +108,12 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 	}
 
 	bucket := entry.Name
-	glog.V(2).Infof("updateBucketConfigCacheFromEntry: updating cache for bucket %s", bucket)
 
 	// Create new bucket config from the entry
 	config := &BucketConfig{
-		Name:  bucket,
-		Entry: entry,
+		Name:         bucket,
+		Entry:        entry,
+		IsPublicRead: false, // Explicitly default to false for private buckets
 	}
 
 	// Extract configuration from extended attributes
@@ -125,6 +126,11 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 		}
 		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
 			config.ACL = acl
+			// Parse ACL and cache public-read status
+			config.IsPublicRead = parseAndCachePublicReadStatus(acl)
+		} else {
+			// No ACL means private bucket
+			config.IsPublicRead = false
 		}
 		if owner, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
@@ -136,12 +142,21 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 		}
 	}
 
+	// Load CORS configuration from bucket directory content
+	if corsConfig, err := s3a.loadCORSFromBucketContent(bucket); err != nil {
+		if !errors.Is(err, filer_pb.ErrNotFound) {
+			glog.Errorf("updateBucketConfigCacheFromEntry: failed to load CORS configuration for bucket %s: %v", bucket, err)
+		}
+	} else {
+		config.CORS = corsConfig
+		glog.V(2).Infof("updateBucketConfigCacheFromEntry: loaded CORS config for bucket %s", bucket)
+	}
+
 	// Update timestamp
 	config.LastModified = time.Now()
 
 	// Update cache
 	s3a.bucketConfigCache.Set(bucket, config)
-	glog.V(2).Infof("updateBucketConfigCacheFromEntry: updated bucket config cache for %s", bucket)
 }
 
 // invalidateBucketConfigCache removes a bucket from the configuration cache
