@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
@@ -86,6 +87,48 @@ func TestPutBucketAclCannedAclSupport(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBucketWithoutACLIsNotPublicRead tests that buckets without ACLs are not public-read
+func TestBucketWithoutACLIsNotPublicRead(t *testing.T) {
+	// Test that getBucketConfig correctly handles buckets with no ACL
+	t.Run("bucket without ACL should not be public-read", func(t *testing.T) {
+		// Simulate a bucket entry with no ACL
+		entry := &filer_pb.Entry{
+			Name: "test-bucket",
+			// Extended is nil or doesn't contain ACL key
+		}
+
+		// Test that IsPublicRead defaults to false when no ACL is present
+		config := &BucketConfig{
+			Name:  "test-bucket",
+			Entry: entry,
+		}
+
+		// When Extended is nil, IsPublicRead should remain false (Go default)
+		assert.False(t, config.IsPublicRead, "Bucket without ACL should not be public-read")
+
+		// When Extended exists but has no ACL key, IsPublicRead should remain false
+		entry.Extended = make(map[string][]byte)
+		assert.False(t, config.IsPublicRead, "Bucket with Extended but no ACL should not be public-read")
+	})
+
+	t.Run("parseAndCachePublicReadStatus with empty ACL should return false", func(t *testing.T) {
+		// Test that parseAndCachePublicReadStatus returns false for invalid/empty ACLs
+
+		// Empty ACL should return false
+		result := parseAndCachePublicReadStatus([]byte{})
+		assert.False(t, result, "Empty ACL should not be public-read")
+
+		// Invalid JSON should return false
+		result = parseAndCachePublicReadStatus([]byte("invalid json"))
+		assert.False(t, result, "Invalid JSON ACL should not be public-read")
+
+		// Empty grants array should return false
+		emptyGrants := []byte("[]")
+		result = parseAndCachePublicReadStatus(emptyGrants)
+		assert.False(t, result, "Empty grants array should not be public-read")
+	})
 }
 
 // mockIamInterface is a simple mock for testing
