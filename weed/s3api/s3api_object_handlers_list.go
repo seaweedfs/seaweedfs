@@ -53,7 +53,12 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
 
-	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys, allowUnordered := getListObjectsV2Args(r.URL.Query())
+	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys, allowUnordered, errCode := getListObjectsV2Args(r.URL.Query())
+
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
@@ -116,7 +121,12 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
 
-	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys, allowUnordered := getListObjectsV1Args(r.URL.Query())
+	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
+
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
@@ -548,7 +558,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	return
 }
 
-func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys uint16, allowUnordered bool) {
+func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys uint16, allowUnordered bool, errCode s3err.ErrorCode) {
 	prefix = values.Get("prefix")
 	token = OptionalString{set: values.Has("continuation-token"), string: values.Get("continuation-token")}
 	startAfter = values.Get("start-after")
@@ -557,16 +567,21 @@ func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter stri
 	if values.Get("max-keys") != "" {
 		if maxKeys, err := strconv.ParseUint(values.Get("max-keys"), 10, 16); err == nil {
 			maxkeys = uint16(maxKeys)
+		} else {
+			// Invalid max-keys value (non-numeric)
+			errCode = s3err.ErrInvalidMaxKeys
+			return
 		}
 	} else {
 		maxkeys = maxObjectListSizeLimit
 	}
 	fetchOwner = values.Get("fetch-owner") == "true"
 	allowUnordered = values.Get("allow-unordered") == "true"
+	errCode = s3err.ErrNone
 	return
 }
 
-func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int16, allowUnordered bool) {
+func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int16, allowUnordered bool, errCode s3err.ErrorCode) {
 	prefix = values.Get("prefix")
 	marker = values.Get("marker")
 	delimiter = values.Get("delimiter")
@@ -574,11 +589,16 @@ func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, 
 	if values.Get("max-keys") != "" {
 		if maxKeys, err := strconv.ParseInt(values.Get("max-keys"), 10, 16); err == nil {
 			maxkeys = int16(maxKeys)
+		} else {
+			// Invalid max-keys value (non-numeric)
+			errCode = s3err.ErrInvalidMaxKeys
+			return
 		}
 	} else {
 		maxkeys = maxObjectListSizeLimit
 	}
 	allowUnordered = values.Get("allow-unordered") == "true"
+	errCode = s3err.ErrNone
 	return
 }
 

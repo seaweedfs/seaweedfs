@@ -100,19 +100,22 @@ func TestAllowUnorderedParameterValidation(t *testing.T) {
 			"allow-unordered": {"true"},
 			"delimiter":       {"/"},
 		}
-		_, _, _, _, _, allowUnordered := getListObjectsV1Args(values)
+		_, _, _, _, _, allowUnordered, errCode := getListObjectsV1Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.True(t, allowUnordered, "allow-unordered should be true when set to 'true'")
 
 		// Test with allow-unordered=false
 		values = map[string][]string{
 			"allow-unordered": {"false"},
 		}
-		_, _, _, _, _, allowUnordered = getListObjectsV1Args(values)
+		_, _, _, _, _, allowUnordered, errCode = getListObjectsV1Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.False(t, allowUnordered, "allow-unordered should be false when set to 'false'")
 
 		// Test without allow-unordered parameter
 		values = map[string][]string{}
-		_, _, _, _, _, allowUnordered = getListObjectsV1Args(values)
+		_, _, _, _, _, allowUnordered, errCode = getListObjectsV1Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.False(t, allowUnordered, "allow-unordered should be false when not set")
 	})
 
@@ -123,19 +126,22 @@ func TestAllowUnorderedParameterValidation(t *testing.T) {
 			"allow-unordered": {"true"},
 			"delimiter":       {"/"},
 		}
-		_, _, _, _, _, _, _, allowUnordered := getListObjectsV2Args(values)
+		_, _, _, _, _, _, _, allowUnordered, errCode := getListObjectsV2Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.True(t, allowUnordered, "allow-unordered should be true when set to 'true'")
 
 		// Test with allow-unordered=false
 		values = map[string][]string{
 			"allow-unordered": {"false"},
 		}
-		_, _, _, _, _, _, _, allowUnordered = getListObjectsV2Args(values)
+		_, _, _, _, _, _, _, allowUnordered, errCode = getListObjectsV2Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.False(t, allowUnordered, "allow-unordered should be false when set to 'false'")
 
 		// Test without allow-unordered parameter
 		values = map[string][]string{}
-		_, _, _, _, _, _, _, allowUnordered = getListObjectsV2Args(values)
+		_, _, _, _, _, _, _, allowUnordered, errCode = getListObjectsV2Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.False(t, allowUnordered, "allow-unordered should be false when not set")
 	})
 }
@@ -149,7 +155,8 @@ func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
 		values := req.URL.Query()
 
 		// Test ListObjectsV1Args
-		_, _, delimiter, _, _, allowUnordered := getListObjectsV1Args(values)
+		_, _, delimiter, _, _, allowUnordered, errCode := getListObjectsV1Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.True(t, allowUnordered, "allow-unordered should be true")
 		assert.Equal(t, "/", delimiter, "delimiter should be '/'")
 
@@ -161,7 +168,8 @@ func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
 		}
 
 		// Test ListObjectsV2Args
-		_, _, delimiter2, _, _, _, _, allowUnordered2 := getListObjectsV2Args(values)
+		_, _, delimiter2, _, _, _, _, allowUnordered2, errCode2 := getListObjectsV2Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode2, "should not return error for valid parameters")
 		assert.True(t, allowUnordered2, "allow-unordered should be true")
 		assert.Equal(t, "/", delimiter2, "delimiter should be '/'")
 
@@ -180,7 +188,8 @@ func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
 		values := req.URL.Query()
 
 		// Test ListObjectsV1Args
-		_, _, delimiter, _, _, allowUnordered := getListObjectsV1Args(values)
+		_, _, delimiter, _, _, allowUnordered, errCode := getListObjectsV1Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.True(t, allowUnordered, "allow-unordered should be true")
 		assert.Equal(t, "", delimiter, "delimiter should be empty")
 
@@ -199,7 +208,8 @@ func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
 		values := req.URL.Query()
 
 		// Test ListObjectsV1Args
-		_, _, delimiter, _, _, allowUnordered := getListObjectsV1Args(values)
+		_, _, delimiter, _, _, allowUnordered, errCode := getListObjectsV1Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.False(t, allowUnordered, "allow-unordered should be false")
 		assert.Equal(t, "/", delimiter, "delimiter should be '/'")
 
@@ -209,5 +219,44 @@ func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
 		} else {
 			assert.True(t, true, "Valid combination correctly allowed")
 		}
+	})
+}
+
+// TestMaxKeysParameterValidation tests the validation of max-keys parameter
+func TestMaxKeysParameterValidation(t *testing.T) {
+	t.Run("valid max-keys values should work", func(t *testing.T) {
+		// Test valid numeric values
+		values := map[string][]string{
+			"max-keys": {"100"},
+		}
+		_, _, _, _, _, _, errCode := getListObjectsV1Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "valid max-keys should not return error")
+
+		_, _, _, _, _, _, _, _, errCode = getListObjectsV2Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "valid max-keys should not return error")
+	})
+
+	t.Run("invalid max-keys values should return error", func(t *testing.T) {
+		// Test non-numeric value
+		values := map[string][]string{
+			"max-keys": {"blah"},
+		}
+		_, _, _, _, _, _, errCode := getListObjectsV1Args(values)
+		assert.Equal(t, s3err.ErrInvalidMaxKeys, errCode, "non-numeric max-keys should return ErrInvalidMaxKeys")
+
+		_, _, _, _, _, _, _, _, errCode = getListObjectsV2Args(values)
+		assert.Equal(t, s3err.ErrInvalidMaxKeys, errCode, "non-numeric max-keys should return ErrInvalidMaxKeys")
+	})
+
+	t.Run("empty max-keys should use default", func(t *testing.T) {
+		// Test empty max-keys
+		values := map[string][]string{}
+		_, _, _, _, maxkeys, _, errCode := getListObjectsV1Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "empty max-keys should not return error")
+		assert.Equal(t, int16(1000), maxkeys, "empty max-keys should use default value")
+
+		_, _, _, _, _, _, maxkeys2, _, errCode := getListObjectsV2Args(values)
+		assert.Equal(t, s3err.ErrNone, errCode, "empty max-keys should not return error")
+		assert.Equal(t, uint16(1000), maxkeys2, "empty max-keys should use default value")
 	})
 }
