@@ -210,7 +210,10 @@ func (s3a *S3ApiServer) listFilerEntriesCustom(bucket string, originalPrefix str
 		for {
 			empty := true
 
-			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
+			var preserveNextMarker string
+			var returnedMarker string
+
+			returnedMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
 				empty = false
 				dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
@@ -226,35 +229,32 @@ func (s3a *S3ApiServer) listFilerEntriesCustom(bucket string, originalPrefix str
 						//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = true
-						lastCommonPrefixName = entry.Name
+						lastCommonPrefixName = entry.Name + "/" // Include trailing slash for NextMarker
 					}
 				} else {
-					// Handle objects that end with the delimiter when delimiter is specified
-					if delimiter != "" && strings.HasSuffix(entry.Name, delimiter) {
-						// Objects ending with delimiter should be grouped as common prefixes
-						commonPrefixes = append(commonPrefixes, PrefixEntry{
-							Prefix: fmt.Sprintf("%s/%s", dirName, prefixName)[len(bucketPrefix):],
-						})
-						cursor.maxKeys--
-						lastEntryWasCommonPrefix = true
-						lastCommonPrefixName = entry.Name
-					} else {
-						// Regular objects (not ending with delimiter)
-						contents = append(contents, newCustomListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
-						cursor.maxKeys--
-						lastEntryWasCommonPrefix = false
-					}
+					// Regular objects - just add them to contents for now
+					// TODO: Implement proper delimiter grouping
+					contents = append(contents, newCustomListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
+					cursor.maxKeys--
+					lastEntryWasCommonPrefix = false
 				}
 				if lastEntryWasCommonPrefix {
-					nextMarker = lastCommonPrefixName
+					preserveNextMarker = lastCommonPrefixName
 				} else {
-					nextMarker = entry.Name
+					// For regular entries, we'll use the returnedMarker from doListFilerEntries
 				}
 			})
 
 			if doErr != nil {
 				err = doErr
 				return err
+			}
+
+			// Choose the correct nextMarker: preserve CommonPrefix marker or use returned marker
+			if preserveNextMarker != "" {
+				nextMarker = preserveNextMarker
+			} else {
+				nextMarker = returnedMarker
 			}
 
 			if cursor.isTruncated {
