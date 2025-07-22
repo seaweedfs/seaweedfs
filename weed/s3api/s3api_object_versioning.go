@@ -263,23 +263,23 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 		entryPath := path.Join(relativePath, entry.Name)
 
 		// Skip if this doesn't match the prefix filter
-		if prefix != "" {
-			normalizedPrefix := strings.TrimPrefix(prefix, "/")
-			if normalizedPrefix != "" {
-				// An entry is a candidate if:
-				// 1. Its path is prefixed by normalizedPrefix.
-				// 2. It is a directory that is a prefix of normalizedPrefix (so we can descend into it).
-				isPrefixed := strings.HasPrefix(entryPath, normalizedPrefix)
-				if !isPrefixed && entry.IsDirectory {
-					// For directories, also check with a trailing slash.
-					isPrefixed = strings.HasPrefix(entryPath+"/", normalizedPrefix)
-				}
+		if normalizedPrefix := strings.TrimPrefix(prefix, "/"); normalizedPrefix != "" {
+			// An entry is a candidate if:
+			// 1. Its path is a match for the prefix.
+			// 2. It is a directory that is an ancestor of the prefix path, so we must descend into it.
 
-				canDescend := entry.IsDirectory && strings.HasPrefix(normalizedPrefix, entryPath)
+			// Condition 1: The entry's path starts with the prefix.
+			isMatch := strings.HasPrefix(entryPath, normalizedPrefix)
+			if !isMatch && entry.IsDirectory {
+				// Also check if a directory entry matches a directory-style prefix (e.g., prefix "a/", entry "a").
+				isMatch = strings.HasPrefix(entryPath+"/", normalizedPrefix)
+			}
 
-				if !isPrefixed && !canDescend {
-					continue
-				}
+			// Condition 2: The prefix path starts with the entry's path (and it's a directory).
+			canDescend := entry.IsDirectory && strings.HasPrefix(normalizedPrefix, entryPath)
+
+			if !isMatch && !canDescend {
+				continue
 			}
 		}
 
