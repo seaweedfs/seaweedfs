@@ -294,10 +294,12 @@ func (s3a *S3ApiServer) isBucketPublicRead(bucket string) bool {
 	// Get bucket configuration which contains cached public-read status
 	config, errCode := s3a.getBucketConfig(bucket)
 	if errCode != s3err.ErrNone {
+		glog.V(3).Infof("isBucketPublicRead: getBucketConfig failed for bucket %s: %v", bucket, errCode)
 		return false
 	}
 
 	// Return the cached public-read status (no JSON parsing needed)
+	glog.V(3).Infof("isBucketPublicRead: bucket %s, IsPublicRead=%v", bucket, config.IsPublicRead)
 	return config.IsPublicRead
 }
 
@@ -324,6 +326,8 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 		// Check if user is anonymous
 		isAnonymous := getRequestAuthType(r) == authTypeAnonymous
 
+		glog.V(3).Infof("AuthWithPublicRead: bucket=%s, isAnonymous=%v", bucket, isAnonymous)
+
 		// If anonymous user and bucket is public-read, allow access
 		if isAnonymous && s3a.isBucketPublicRead(bucket) {
 			glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s", bucket)
@@ -331,6 +335,7 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 			return
 		}
 
+		glog.V(3).Infof("AuthWithPublicRead: delegating to IAM auth for bucket %s", bucket)
 		// Otherwise, use normal IAM authentication
 		s3a.iam.Auth(handler, action)(w, r)
 	}
@@ -418,7 +423,7 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	glog.V(3).Infof("PutBucketAclHandler: Successfully stored ACL for bucket %s with %d grants", bucket, len(grants))
+	glog.V(3).Infof("PutBucketAclHandler: Successfully stored ACL for bucket %s with %d grants, isPublicRead=%v", bucket, len(grants), isPublicReadGrants(grants))
 
 	writeSuccessResponseEmpty(w, r)
 }
