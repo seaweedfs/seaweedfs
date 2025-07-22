@@ -62,7 +62,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 
 	// AWS S3 compatibility: allow-unordered cannot be used with delimiter
 	if allowUnordered && delimiter != "" {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidUnorderedWithDelimiter)
 		return
 	}
 
@@ -125,7 +125,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	// AWS S3 compatibility: allow-unordered cannot be used with delimiter
 	if allowUnordered && delimiter != "" {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidUnorderedWithDelimiter)
 		return
 	}
 
