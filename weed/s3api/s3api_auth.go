@@ -3,8 +3,6 @@ package s3api
 import (
 	"net/http"
 	"strings"
-
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // AWS Signature Version '4' constants.
@@ -81,54 +79,27 @@ const (
 func getRequestAuthType(r *http.Request) authType {
 	var authType authType
 
-	// Debug: log all headers
-	glog.Infof("[DEBUG] getRequestAuthType: request %s %s", r.Method, r.URL.Path)
-	glog.Infof("[DEBUG] getRequestAuthType: headers:")
-	for name, values := range r.Header {
-		for _, value := range values {
-			if strings.Contains(strings.ToLower(name), "auth") ||
-				strings.Contains(strings.ToLower(name), "sign") ||
-				strings.Contains(strings.ToLower(name), "credential") ||
-				strings.Contains(strings.ToLower(name), "amz") {
-				glog.Infof("[DEBUG] getRequestAuthType: %s: %s", name, value)
-			}
-		}
-	}
-
 	if isRequestSignatureV2(r) {
 		authType = authTypeSignedV2
-		glog.Infof("[DEBUG] getRequestAuthType: detected SignatureV2")
 	} else if isRequestPresignedSignatureV2(r) {
 		authType = authTypePresignedV2
-		glog.Infof("[DEBUG] getRequestAuthType: detected PresignedSignatureV2")
 	} else if isRequestSignStreamingV4(r) {
 		authType = authTypeStreamingSigned
-		glog.Infof("[DEBUG] getRequestAuthType: detected StreamingV4")
 	} else if isRequestUnsignedStreaming(r) {
 		authType = authTypeStreamingUnsigned
-		glog.Infof("[DEBUG] getRequestAuthType: detected UnsignedStreaming")
 	} else if isRequestSignatureV4(r) {
 		authType = authTypeSigned
-		glog.Infof("[DEBUG] getRequestAuthType: detected SignatureV4")
 	} else if isRequestPresignedSignatureV4(r) {
 		authType = authTypePresigned
-		glog.Infof("[DEBUG] getRequestAuthType: detected PresignedSignatureV4")
 	} else if isRequestJWT(r) {
 		authType = authTypeJWT
-		glog.Infof("[DEBUG] getRequestAuthType: detected JWT")
 	} else if isRequestPostPolicySignatureV4(r) {
 		authType = authTypePostPolicy
-		glog.Infof("[DEBUG] getRequestAuthType: detected PostPolicy")
 	} else if _, ok := r.Header["Authorization"]; !ok {
 		authType = authTypeAnonymous
-		glog.Infof("[DEBUG] getRequestAuthType: detected Anonymous (no Authorization header)")
 	} else {
 		authType = authTypeUnknown
-		glog.Infof("[DEBUG] getRequestAuthType: detected Unknown")
 	}
-
-	glog.Infof("[DEBUG] getRequestAuthType: request %s %s -> authType=%v, hasAuth=%v",
-		r.Method, r.URL.Path, authType, r.Header.Get("Authorization") != "")
 
 	return authType
 }

@@ -108,18 +108,40 @@ func TestCORSActualRequest(t *testing.T) {
 	require.NoError(t, err, "Should be able to put object")
 
 	// Test GET request with CORS headers using raw HTTP
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	// Create a completely isolated HTTP client to avoid AWS SDK auto-signing
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+		// Use a completely clean transport to avoid any AWS SDK middleware
+		Transport: &http.Transport{},
+	}
 
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/%s/%s", getDefaultConfig().Endpoint, bucketName, objectKey), nil)
+	// Create URL manually to avoid any AWS SDK endpoint processing
+	requestURL := fmt.Sprintf("http://localhost:8333/%s/%s", bucketName, objectKey)
+	req, err := http.NewRequest("GET", requestURL, nil)
 	require.NoError(t, err, "Should be able to create GET request")
 
 	// Add Origin header to simulate CORS request
 	req.Header.Set("Origin", "https://example.com")
 
+	// Explicitly ensure no AWS headers are present (defensive programming)
+	req.Header.Del("Authorization")
+	req.Header.Del("X-Amz-Content-Sha256")
+	req.Header.Del("X-Amz-Date")
+	req.Header.Del("Amz-Sdk-Invocation-Id")
+	req.Header.Del("Amz-Sdk-Request")
+
+	// Log the request to verify it's truly anonymous
+	t.Logf("Making anonymous request to: %s", requestURL)
+	t.Logf("Request headers: %v", req.Header)
+
 	// Send the request
 	resp, err := httpClient.Do(req)
 	require.NoError(t, err, "Should be able to send GET request")
 	defer resp.Body.Close()
+
+	// Log response for debugging
+	t.Logf("Response status: %d", resp.StatusCode)
+	t.Logf("Response headers: %v", resp.Header)
 
 	// Verify CORS headers are present even in error responses (CORS spec requirement)
 	assert.Equal(t, "https://example.com", resp.Header.Get("Access-Control-Allow-Origin"), "Should have correct Allow-Origin header")
