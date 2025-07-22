@@ -311,15 +311,33 @@ func matchWildcard(pattern, text string) bool {
 
 // matchesHeader checks if a header is allowed
 func matchesHeader(allowedHeaders []string, header string) bool {
+	// If no headers are specified, all headers are allowed
+	if len(allowedHeaders) == 0 {
+		return true
+	}
+
 	// Header matching is case-insensitive
 	header = strings.ToLower(header)
 
 	for _, allowedHeader := range allowedHeaders {
-		if strings.ToLower(allowedHeader) == "*" {
+		allowedHeaderLower := strings.ToLower(allowedHeader)
+
+		// Wildcard match
+		if allowedHeaderLower == "*" {
 			return true
 		}
-		if strings.ToLower(allowedHeader) == header {
+
+		// Exact match
+		if allowedHeaderLower == header {
 			return true
+		}
+
+		// Prefix wildcard match (e.g., "x-amz-*" matches "x-amz-date")
+		if strings.HasSuffix(allowedHeaderLower, "*") {
+			prefix := strings.TrimSuffix(allowedHeaderLower, "*")
+			if strings.HasPrefix(header, prefix) {
+				return true
+			}
 		}
 	}
 	return false
