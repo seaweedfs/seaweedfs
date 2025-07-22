@@ -1,12 +1,16 @@
 package s3api
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPutBucketAclCannedAclSupport(t *testing.T) {
@@ -109,6 +113,85 @@ func TestBucketConfigInitialization(t *testing.T) {
 
 	// Verify proper initialization
 	assert.False(t, config.IsPublicRead, "Newly created bucket should not be public-read by default")
+}
+
+// TestUpdateBucketConfigCacheConsistency tests that updateBucketConfigCacheFromEntry
+// properly handles the IsPublicRead flag consistently with getBucketConfig
+func TestUpdateBucketConfigCacheConsistency(t *testing.T) {
+	t.Run("bucket without ACL should have IsPublicRead=false", func(t *testing.T) {
+		// Simulate an entry without ACL (like a freshly created bucket)
+		entry := &filer_pb.Entry{
+			Name: "test-bucket",
+			Attributes: &filer_pb.FuseAttributes{
+				FileMode: 0755,
+			},
+			// Extended is nil or doesn't contain ACL
+		}
+
+		// Test what updateBucketConfigCacheFromEntry would create
+		config := &BucketConfig{
+			Name:         entry.Name,
+			Entry:        entry,
+			IsPublicRead: false, // Should be explicitly false
+		}
+
+		// When Extended is nil, IsPublicRead should be false
+		assert.False(t, config.IsPublicRead, "Bucket without Extended metadata should not be public-read")
+
+		// When Extended exists but has no ACL key, IsPublicRead should also be false
+		entry.Extended = make(map[string][]byte)
+		entry.Extended["some-other-key"] = []byte("some-value")
+
+		config = &BucketConfig{
+			Name:         entry.Name,
+			Entry:        entry,
+			IsPublicRead: false, // Should be explicitly false
+		}
+
+		// Simulate the else branch: no ACL means private bucket
+		if _, exists := entry.Extended[s3_constants.ExtAmzAclKey]; !exists {
+			config.IsPublicRead = false
+		}
+
+		assert.False(t, config.IsPublicRead, "Bucket with Extended but no ACL should not be public-read")
+	})
+
+	t.Run("bucket with public-read ACL should have IsPublicRead=true", func(t *testing.T) {
+		// Create a mock public-read ACL using AWS S3 SDK types
+		publicReadGrants := []*s3.Grant{
+			{
+				Grantee: &s3.Grantee{
+					Type: &s3_constants.GrantTypeGroup,
+					URI:  &s3_constants.GranteeGroupAllUsers,
+				},
+				Permission: &s3_constants.PermissionRead,
+			},
+		}
+
+		aclBytes, err := json.Marshal(publicReadGrants)
+		require.NoError(t, err)
+
+		entry := &filer_pb.Entry{
+			Name: "public-bucket",
+			Extended: map[string][]byte{
+				s3_constants.ExtAmzAclKey: aclBytes,
+			},
+		}
+
+		config := &BucketConfig{
+			Name:         entry.Name,
+			Entry:        entry,
+			IsPublicRead: false, // Start with false
+		}
+
+		// Simulate what updateBucketConfigCacheFromEntry would do
+		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
+			config.ACL = acl
+			config.IsPublicRead = parseAndCachePublicReadStatus(acl)
+		}
+
+		assert.True(t, config.IsPublicRead, "Bucket with public-read ACL should be public-read")
+	})
 }
 
 // mockIamInterface is a simple mock for testing

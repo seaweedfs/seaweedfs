@@ -112,8 +112,9 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 
 	// Create new bucket config from the entry
 	config := &BucketConfig{
-		Name:  bucket,
-		Entry: entry,
+		Name:         bucket,
+		Entry:        entry,
+		IsPublicRead: false, // Explicitly default to false for private buckets
 	}
 
 	// Extract configuration from extended attributes
@@ -128,6 +129,9 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 			config.ACL = acl
 			// Parse ACL and cache public-read status
 			config.IsPublicRead = parseAndCachePublicReadStatus(acl)
+		} else {
+			// No ACL means private bucket
+			config.IsPublicRead = false
 		}
 		if owner, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
