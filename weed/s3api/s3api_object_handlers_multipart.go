@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	maxObjectListSizeLimit = 10000 // Limit number of objects in a listObjectsResponse.
+	maxObjectListSizeLimit = 1000  // Limit number of objects in a listObjectsResponse.
 	maxUploadsList         = 10000 // Limit number of uploads in a listUploadsResponse.
 	maxPartsList           = 10000 // Limit number of parts in a listPartsResponse.
 	globalMaxPartID        = 100000

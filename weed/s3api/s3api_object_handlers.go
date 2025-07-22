@@ -175,7 +175,7 @@ func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *h
 	return false // Not a directory object, continue with normal processing
 }
 
-func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool, encodingTypeUrl bool) (listEntry ListEntry) {
+func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool, encodingTypeUrl bool, iam AccountManager) (listEntry ListEntry) {
 	storageClass := "STANDARD"
 	if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
 		storageClass = string(v)
@@ -211,18 +211,15 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 			ownerID = s3_constants.AccountAnonymousId
 			displayName = "anonymous"
 		} else {
-			// Try to resolve display name from IAM system
-			displayName = "unknown"
-			// Note: IAM resolution would require access to the S3ApiServer instance
-			// For now, use a simple fallback or could be enhanced later
+			// Get the proper display name from IAM system
+			displayName = iam.GetAccountNameById(ownerID)
+			// Fallback to ownerID if no display name found
+			if displayName == "" {
+				displayName = ownerID
+			}
 		}
 
-		// Additional fallback to file system username if available and no display name resolved
-		if displayName == "unknown" && entry.Attributes.UserName != "" {
-			displayName = entry.Attributes.UserName
-		}
-
-		listEntry.Owner = CanonicalUser{
+		listEntry.Owner = &CanonicalUser{
 			ID:          ownerID,
 			DisplayName: displayName,
 		}

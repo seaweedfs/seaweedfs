@@ -33,3 +33,24 @@ message S3CircuitBreakerOptions {
     bool enabled=1;
     map<string, int64> actions = 2;
 }
+
+//////////////////////////////////////////////////
+// Bucket Metadata
+
+message CORSRule {
+    repeated string allowed_headers = 1;
+    repeated string allowed_methods = 2;
+    repeated string allowed_origins = 3;
+    repeated string expose_headers = 4;
+    int32 max_age_seconds = 5;
+    string id = 6;
+}
+
+message CORSConfiguration {
+    repeated CORSRule cors_rules = 1;
+}
+
+message BucketMetadata {
+    map<string, string> tags = 1;
+    CORSConfiguration cors = 2;
+}

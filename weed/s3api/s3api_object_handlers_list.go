@@ -53,10 +53,21 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
 
-	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys := getListObjectsV2Args(r.URL.Query())
+	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys, allowUnordered, errCode := getListObjectsV2Args(r.URL.Query())
+
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
+		return
+	}
+
+	// AWS S3 compatibility: allow-unordered cannot be used with delimiter
+	if allowUnordered && delimiter != "" {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidUnorderedWithDelimiter)
 		return
 	}
 
@@ -64,6 +75,9 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	if !continuationToken.set {
 		marker = startAfter
 	}
+
+	// Adjust marker if it ends with delimiter to skip all entries with that prefix
+	marker = adjustMarkerForDelimiter(marker, delimiter)
 
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, fetchOwner)
 
@@ -107,12 +121,27 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
 
-	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys := getListObjectsV1Args(r.URL.Query())
+	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
+
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
 		return
 	}
+
+	// AWS S3 compatibility: allow-unordered cannot be used with delimiter
+	if allowUnordered && delimiter != "" {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidUnorderedWithDelimiter)
+		return
+	}
+
+	// Adjust marker if it ends with delimiter to skip all entries with that prefix
+	marker = adjustMarkerForDelimiter(marker, delimiter)
+
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
 
 	if err != nil {
@@ -148,17 +177,84 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
 	}
 
+	// Special case: when maxKeys = 0, return empty results immediately with IsTruncated=false
+	if maxKeys == 0 {
+		response = ListBucketResult{
+			Name:           bucket,
+			Prefix:         originalPrefix,
+			Marker:         originalMarker,
+			NextMarker:     "",
+			MaxKeys:        int(maxKeys),
+			Delimiter:      delimiter,
+			IsTruncated:    false,
+			Contents:       contents,
+			CommonPrefixes: commonPrefixes,
+		}
+		if encodingTypeUrl {
+			response.EncodingType = s3.EncodingTypeUrl
+		}
+		return
+	}
+
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		var lastEntryWasCommonPrefix bool
+		var lastCommonPrefixName string
+
 		for {
 			empty := true
+
 			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
 				empty = false
 				dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
-					if entry.IsDirectoryKeyObject() {
-						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false))
+					// When delimiter is specified, apply delimiter logic to directory key objects too
+					if delimiter != "" && entry.IsDirectoryKeyObject() {
+						// Apply the same delimiter logic as for regular files
+						var delimiterFound bool
+						undelimitedPath := fmt.Sprintf("%s/%s/", dirName, entryName)[len(bucketPrefix):]
+
+						// take into account a prefix if supplied while delimiting.
+						undelimitedPath = strings.TrimPrefix(undelimitedPath, originalPrefix)
+
+						delimitedPath := strings.SplitN(undelimitedPath, delimiter, 2)
+
+						if len(delimitedPath) == 2 {
+							// S3 clients expect the delimited prefix to contain the delimiter and prefix.
+							delimitedPrefix := originalPrefix + delimitedPath[0] + delimiter
+
+							for i := range commonPrefixes {
+								if commonPrefixes[i].Prefix == delimitedPrefix {
+									delimiterFound = true
+									break
+								}
+							}
+
+							if !delimiterFound {
+								commonPrefixes = append(commonPrefixes, PrefixEntry{
+									Prefix: delimitedPrefix,
+								})
+								cursor.maxKeys--
+								delimiterFound = true
+								lastEntryWasCommonPrefix = true
+								lastCommonPrefixName = delimitedPath[0]
+							} else {
+								// This directory object belongs to an existing CommonPrefix, skip it
+								delimiterFound = true
+							}
+						}
+
+						// If no delimiter found in the directory object name, treat it as a regular key
+						if !delimiterFound {
+							contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false, s3a.iam))
+							cursor.maxKeys--
+							lastEntryWasCommonPrefix = false
+						}
+					} else if entry.IsDirectoryKeyObject() {
+						// No delimiter specified, or delimiter doesn't apply - treat as regular key
+						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false, s3a.iam))
 						cursor.maxKeys--
+						lastEntryWasCommonPrefix = false
 						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 					} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
 						commonPrefixes = append(commonPrefixes, PrefixEntry{
@@ -166,6 +262,8 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						})
 						//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
 						cursor.maxKeys--
+						lastEntryWasCommonPrefix = true
+						lastCommonPrefixName = entry.Name
 					}
 				} else {
 					var delimiterFound bool
@@ -196,12 +294,19 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 								})
 								cursor.maxKeys--
 								delimiterFound = true
+								lastEntryWasCommonPrefix = true
+								lastCommonPrefixName = delimitedPath[0]
+							} else {
+								// This object belongs to an existing CommonPrefix, skip it
+								// but continue processing to maintain correct flow
+								delimiterFound = true
 							}
 						}
 					}
 					if !delimiterFound {
-						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
+						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false, s3a.iam))
 						cursor.maxKeys--
+						lastEntryWasCommonPrefix = false
 					}
 				}
 			})
@@ -209,10 +314,21 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				return doErr
 			}
 
-			if cursor.isTruncated {
+			// Adjust nextMarker for CommonPrefixes to include trailing slash (AWS S3 compliance)
+			if cursor.isTruncated && lastEntryWasCommonPrefix && lastCommonPrefixName != "" {
+				// For CommonPrefixes, NextMarker should include the trailing slash
+				if requestDir != "" {
+					nextMarker = requestDir + "/" + lastCommonPrefixName + "/"
+				} else {
+					nextMarker = lastCommonPrefixName + "/"
+				}
+			} else if cursor.isTruncated {
 				if requestDir != "" {
 					nextMarker = requestDir + "/" + nextMarker
 				}
+			}
+
+			if cursor.isTruncated {
 				break
 			} else if empty || strings.HasSuffix(originalPrefix, "/") {
 				nextMarker = ""
@@ -318,7 +434,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		return
 	}
 	if cursor.maxKeys <= 0 {
-		return
+		return // Don't set isTruncated here - let caller decide based on whether more entries exist
 	}
 
 	if strings.Contains(marker, "/") {
@@ -370,11 +486,14 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				return
 			}
 		}
+		entry := resp.Entry
+
 		if cursor.maxKeys <= 0 {
 			cursor.isTruncated = true
 			continue
 		}
-		entry := resp.Entry
+
+		// Set nextMarker only when we have quota to process this entry
 		nextMarker = entry.Name
 		if cursor.prefixEndsOnDelimiter {
 			if entry.Name == prefix && entry.IsDirectory {
@@ -482,7 +601,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	return
 }
 
-func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys uint16) {
+func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys uint16, allowUnordered bool, errCode s3err.ErrorCode) {
 	prefix = values.Get("prefix")
 	token = OptionalString{set: values.Has("continuation-token"), string: values.Get("continuation-token")}
 	startAfter = values.Get("start-after")
@@ -491,15 +610,21 @@ func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter stri
 	if values.Get("max-keys") != "" {
 		if maxKeys, err := strconv.ParseUint(values.Get("max-keys"), 10, 16); err == nil {
 			maxkeys = uint16(maxKeys)
+		} else {
+			// Invalid max-keys value (non-numeric)
+			errCode = s3err.ErrInvalidMaxKeys
+			return
 		}
 	} else {
 		maxkeys = maxObjectListSizeLimit
 	}
 	fetchOwner = values.Get("fetch-owner") == "true"
+	allowUnordered = values.Get("allow-unordered") == "true"
+	errCode = s3err.ErrNone
 	return
 }
 
-func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int16) {
+func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int16, allowUnordered bool, errCode s3err.ErrorCode) {
 	prefix = values.Get("prefix")
 	marker = values.Get("marker")
 	delimiter = values.Get("delimiter")
@@ -507,10 +632,16 @@ func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, 
 	if values.Get("max-keys") != "" {
 		if maxKeys, err := strconv.ParseInt(values.Get("max-keys"), 10, 16); err == nil {
 			maxkeys = int16(maxKeys)
+		} else {
+			// Invalid max-keys value (non-numeric)
+			errCode = s3err.ErrInvalidMaxKeys
+			return
 		}
 	} else {
 		maxkeys = maxObjectListSizeLimit
 	}
+	allowUnordered = values.Get("allow-unordered") == "true"
+	errCode = s3err.ErrNone
 	return
 }
 
@@ -595,4 +726,27 @@ func (s3a *S3ApiServer) getLatestVersionEntryForListOperation(bucket, object str
 	}
 
 	return logicalEntry, nil
+}
+
+// adjustMarkerForDelimiter handles delimiter-ending markers by incrementing them to skip entries with that prefix.
+// For example, when continuation token is "boo/", this returns "boo~" to skip all "boo/*" entries
+// but still finds any "bop" or later entries. We add a high ASCII character rather than incrementing
+// the last character to avoid skipping potential directory entries.
+// This is essential for correct S3 list operations with delimiters and CommonPrefixes.
+func adjustMarkerForDelimiter(marker, delimiter string) string {
+	if delimiter == "" || !strings.HasSuffix(marker, delimiter) {
+		return marker
+	}
+
+	// Remove the trailing delimiter and append a high ASCII character
+	// This ensures we skip all entries under the prefix but don't skip
+	// potential directory entries that start with a similar prefix
+	prefix := strings.TrimSuffix(marker, delimiter)
+	if len(prefix) == 0 {
+		return marker
+	}
+
+	// Use tilde (~) which has ASCII value 126, higher than most printable characters
+	// This skips "prefix/*" entries but still finds "prefix" + any higher character
+	return prefix + "~"
 }

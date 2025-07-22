@@ -115,6 +115,7 @@ const (
 	ErrNoSuchObjectLegalHold
 	ErrInvalidRetentionPeriod
 	ErrObjectLockConfigurationNotFoundError
+	ErrInvalidUnorderedWithDelimiter
 )
 
 // Error message constants for checksum validation
@@ -464,6 +465,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "ObjectLockConfigurationNotFoundError",
 		Description:    "Object Lock configuration does not exist for this bucket",
 		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrInvalidUnorderedWithDelimiter: {
+		Code:           "InvalidArgument",
+		Description:    "Unordered listing cannot be used with delimiter",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 }
 
