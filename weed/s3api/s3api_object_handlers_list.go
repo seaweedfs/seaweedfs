@@ -65,6 +65,9 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		marker = startAfter
 	}
 
+	// Adjust marker if it ends with delimiter to skip all entries with that prefix
+	marker = adjustMarkerForDelimiter(marker, delimiter)
+
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, fetchOwner)
 
 	if err != nil {
@@ -113,6 +116,10 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
 		return
 	}
+
+	// Adjust marker if it ends with delimiter to skip all entries with that prefix
+	marker = adjustMarkerForDelimiter(marker, delimiter)
+
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
 
 	if err != nil {
@@ -362,8 +369,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		return
 	}
 	if cursor.maxKeys <= 0 {
-		cursor.isTruncated = true
-		return
+		return // Don't set isTruncated here - let caller decide based on whether more entries exist
 	}
 
 	if strings.Contains(marker, "/") {
@@ -415,11 +421,14 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				return
 			}
 		}
+		entry := resp.Entry
+
 		if cursor.maxKeys <= 0 {
 			cursor.isTruncated = true
 			continue
 		}
-		entry := resp.Entry
+
+		// Set nextMarker only when we have quota to process this entry
 		nextMarker = entry.Name
 		if cursor.prefixEndsOnDelimiter {
 			if entry.Name == prefix && entry.IsDirectory {
@@ -640,4 +649,27 @@ func (s3a *S3ApiServer) getLatestVersionEntryForListOperation(bucket, object str
 	}
 
 	return logicalEntry, nil
+}
+
+// adjustMarkerForDelimiter handles delimiter-ending markers by incrementing them to skip entries with that prefix.
+// For example, when continuation token is "boo/", this returns "bop" to skip all "boo/*" entries.
+// This is essential for correct S3 list operations with delimiters and CommonPrefixes.
+func adjustMarkerForDelimiter(marker, delimiter string) string {
+	if delimiter == "" || !strings.HasSuffix(marker, delimiter) {
+		return marker
+	}
+
+	// Remove the trailing delimiter and increment the last character
+	prefix := strings.TrimSuffix(marker, delimiter)
+	if len(prefix) == 0 {
+		return marker
+	}
+
+	lastChar := prefix[len(prefix)-1]
+	if lastChar < 255 {
+		return prefix[:len(prefix)-1] + string(lastChar+1)
+	} else {
+		// Handle edge case where last character is 255 (ÿ)
+		return prefix + "0"
+	}
 }
