@@ -652,24 +652,24 @@ func (s3a *S3ApiServer) getLatestVersionEntryForListOperation(bucket, object str
 }
 
 // adjustMarkerForDelimiter handles delimiter-ending markers by incrementing them to skip entries with that prefix.
-// For example, when continuation token is "boo/", this returns "bop" to skip all "boo/*" entries.
+// For example, when continuation token is "boo/", this returns "boo~" to skip all "boo/*" entries
+// but still finds any "bop" or later entries. We add a high ASCII character rather than incrementing
+// the last character to avoid skipping potential directory entries.
 // This is essential for correct S3 list operations with delimiters and CommonPrefixes.
 func adjustMarkerForDelimiter(marker, delimiter string) string {
 	if delimiter == "" || !strings.HasSuffix(marker, delimiter) {
 		return marker
 	}
 
-	// Remove the trailing delimiter and increment the last character
+	// Remove the trailing delimiter and append a high ASCII character
+	// This ensures we skip all entries under the prefix but don't skip
+	// potential directory entries that start with a similar prefix
 	prefix := strings.TrimSuffix(marker, delimiter)
 	if len(prefix) == 0 {
 		return marker
 	}
 
-	lastChar := prefix[len(prefix)-1]
-	if lastChar < 255 {
-		return prefix[:len(prefix)-1] + string(lastChar+1)
-	} else {
-		// Handle edge case where last character is 255 (ÿ)
-		return prefix + "0"
-	}
+	// Use tilde (~) which has ASCII value 126, higher than most printable characters
+	// This skips "prefix/*" entries but still finds "prefix" + any higher character
+	return prefix + "~"
 }
