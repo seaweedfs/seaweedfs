@@ -335,9 +335,7 @@ func (s3a *S3ApiServer) updateCORSConfiguration(bucket string, corsConfig *cors.
 		return s3err.ErrInternalError
 	}
 
-	// Invalidate cache
-	s3a.bucketConfigCache.Remove(bucket)
-
+	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 
@@ -359,9 +357,7 @@ func (s3a *S3ApiServer) removeCORSConfiguration(bucket string) s3err.ErrorCode {
 		return s3err.ErrInternalError
 	}
 
-	// Invalidate cache
-	s3a.bucketConfigCache.Remove(bucket)
-
+	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 
@@ -439,56 +435,67 @@ func getMaxAgeSecondsValue(maxAge *int) int {
 
 // getBucketMetadata retrieves bucket metadata from bucket directory content using protobuf
 func (s3a *S3ApiServer) getBucketMetadata(bucket string) (map[string]string, *cors.CORSConfiguration, error) {
+	glog.Errorf("DEBUG: getBucketMetadata called for bucket %s", bucket)
 	// Validate bucket name to prevent path traversal attacks
 	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
 		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
+		glog.Errorf("DEBUG: Invalid bucket name: %s", bucket)
 		return nil, nil, fmt.Errorf("invalid bucket name: %s", bucket)
 	}
 
 	// Clean the bucket name further to prevent any potential path traversal
 	bucket = filepath.Clean(bucket)
 	if bucket == "." || bucket == ".." {
+		glog.Errorf("DEBUG: Invalid bucket name: %s", bucket)
 		return nil, nil, fmt.Errorf("invalid bucket name: %s", bucket)
 	}
 
 	// Get bucket directory entry to access its content
 	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if err != nil {
+		glog.Errorf("DEBUG: Error retrieving bucket directory %s: %w", bucket, err)
 		return nil, nil, fmt.Errorf("error retrieving bucket directory %s: %w", bucket, err)
 	}
 	if entry == nil {
+		glog.Errorf("DEBUG: Bucket directory not found %s", bucket)
 		return nil, nil, fmt.Errorf("bucket directory not found %s", bucket)
 	}
 
 	// If no content, return empty metadata
 	if len(entry.Content) == 0 {
+		glog.Errorf("DEBUG: No content in bucket directory %s, returning empty metadata", bucket)
 		return make(map[string]string), nil, nil
 	}
 
 	// Unmarshal metadata from protobuf
 	var protoMetadata s3_pb.BucketMetadata
 	if err := proto.Unmarshal(entry.Content, &protoMetadata); err != nil {
-		glog.Errorf("getBucketMetadata: failed to unmarshal protobuf metadata for bucket %s: %v", bucket, err)
+		glog.Errorf("DEBUG: Failed to unmarshal protobuf metadata for bucket %s: %v", bucket, err)
+		glog.Errorf("DEBUG: Returning empty metadata on error, don't fail")
 		return make(map[string]string), nil, nil // Return empty metadata on error, don't fail
 	}
 
 	// Convert protobuf CORS to standard CORS
 	corsConfig := corsConfigFromProto(protoMetadata.Cors)
+	glog.Errorf("DEBUG: getBucketMetadata returning corsConfig=%v for bucket %s", corsConfig != nil, bucket)
 
 	return protoMetadata.Tags, corsConfig, nil
 }
 
 // setBucketMetadata stores bucket metadata in bucket directory content using protobuf
 func (s3a *S3ApiServer) setBucketMetadata(bucket string, tags map[string]string, corsConfig *cors.CORSConfiguration) error {
+	glog.Errorf("DEBUG: setBucketMetadata called for bucket %s", bucket)
 	// Validate bucket name to prevent path traversal attacks
 	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
 		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
+		glog.Errorf("DEBUG: Invalid bucket name: %s", bucket)
 		return fmt.Errorf("invalid bucket name: %s", bucket)
 	}
 
 	// Clean the bucket name further to prevent any potential path traversal
 	bucket = filepath.Clean(bucket)
 	if bucket == "." || bucket == ".." {
+		glog.Errorf("DEBUG: Invalid bucket name: %s", bucket)
 		return fmt.Errorf("invalid bucket name: %s", bucket)
 	}
 
@@ -501,17 +508,20 @@ func (s3a *S3ApiServer) setBucketMetadata(bucket string, tags map[string]string,
 	// Marshal metadata to protobuf
 	metadataBytes, err := proto.Marshal(protoMetadata)
 	if err != nil {
+		glog.Errorf("DEBUG: Failed to marshal bucket metadata to protobuf: %w", err)
 		return fmt.Errorf("failed to marshal bucket metadata to protobuf: %w", err)
 	}
 
 	// Update the bucket entry with new content
-	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Get current bucket entry
 		entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 		if err != nil {
+			glog.Errorf("DEBUG: Error retrieving bucket directory %s: %w", bucket, err)
 			return fmt.Errorf("error retrieving bucket directory %s: %w", bucket, err)
 		}
 		if entry == nil {
+			glog.Errorf("DEBUG: Bucket directory not found %s", bucket)
 			return fmt.Errorf("bucket directory not found %s", bucket)
 		}
 
@@ -526,16 +536,22 @@ func (s3a *S3ApiServer) setBucketMetadata(bucket string, tags map[string]string,
 		_, err = client.UpdateEntry(context.Background(), request)
 		return err
 	})
+	glog.Errorf("DEBUG: setBucketMetadata finished for bucket %s, err=%v", bucket, err)
+	return err
 }
 
 // getBucketTags retrieves bucket tags from bucket directory content
 func (s3a *S3ApiServer) getBucketTags(bucket string) (map[string]string, error) {
+	glog.Errorf("DEBUG: getBucketTags called for bucket %s", bucket)
 	tags, _, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
+		glog.Errorf("DEBUG: getBucketTags returned error for bucket %s: %v", bucket, err)
 		return nil, err
 	}
 
+	glog.Errorf("DEBUG: getBucketTags returning tags=%v for bucket %s", tags, bucket)
 	if len(tags) == 0 {
+		glog.Errorf("DEBUG: No tags configuration found for bucket %s", bucket)
 		return nil, fmt.Errorf("no tags configuration found")
 	}
 
@@ -544,25 +560,33 @@ func (s3a *S3ApiServer) getBucketTags(bucket string) (map[string]string, error) 
 
 // setBucketTags stores bucket tags in bucket directory content
 func (s3a *S3ApiServer) setBucketTags(bucket string, tags map[string]string) error {
+	glog.Errorf("DEBUG: setBucketTags called for bucket %s", bucket)
 	// Get existing metadata
 	_, existingCorsConfig, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
+		glog.Errorf("DEBUG: setBucketTags returned error for bucket %s: %v", bucket, err)
 		return err
 	}
 
 	// Store updated metadata with new tags
-	return s3a.setBucketMetadata(bucket, tags, existingCorsConfig)
+	err = s3a.setBucketMetadata(bucket, tags, existingCorsConfig)
+	glog.Errorf("DEBUG: setBucketTags finished for bucket %s, err=%v", bucket, err)
+	return err
 }
 
 // deleteBucketTags removes bucket tags from bucket directory content
 func (s3a *S3ApiServer) deleteBucketTags(bucket string) error {
+	glog.Errorf("DEBUG: deleteBucketTags called for bucket %s", bucket)
 	// Get existing metadata
 	_, existingCorsConfig, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
+		glog.Errorf("DEBUG: deleteBucketTags returned error for bucket %s: %v", bucket, err)
 		return err
 	}
 
 	// Store updated metadata with empty tags
 	emptyTags := make(map[string]string)
-	return s3a.setBucketMetadata(bucket, emptyTags, existingCorsConfig)
+	err = s3a.setBucketMetadata(bucket, emptyTags, existingCorsConfig)
+	glog.Errorf("DEBUG: deleteBucketTags finished for bucket %s, err=%v", bucket, err)
+	return err
 }
