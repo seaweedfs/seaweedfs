@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,29 @@ func TestCORSPreflightRequest(t *testing.T) {
 
 // TestCORSActualRequest tests CORS behavior with actual requests
 func TestCORSActualRequest(t *testing.T) {
+	// Temporarily clear AWS environment variables to ensure truly anonymous requests
+	// This prevents AWS SDK from auto-signing requests in GitHub Actions
+	originalAccessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	originalSecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	originalSessionToken := os.Getenv("AWS_SESSION_TOKEN")
+	originalProfile := os.Getenv("AWS_PROFILE")
+	originalRegion := os.Getenv("AWS_REGION")
+
+	os.Setenv("AWS_ACCESS_KEY_ID", "")
+	os.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	os.Setenv("AWS_SESSION_TOKEN", "")
+	os.Setenv("AWS_PROFILE", "")
+	os.Setenv("AWS_REGION", "")
+
+	defer func() {
+		// Restore original environment variables
+		os.Setenv("AWS_ACCESS_KEY_ID", originalAccessKey)
+		os.Setenv("AWS_SECRET_ACCESS_KEY", originalSecretKey)
+		os.Setenv("AWS_SESSION_TOKEN", originalSessionToken)
+		os.Setenv("AWS_PROFILE", originalProfile)
+		os.Setenv("AWS_REGION", originalRegion)
+	}()
+
 	client := getS3Client(t)
 	bucketName := createTestBucket(t, client)
 	defer cleanupTestBucket(t, client, bucketName)
@@ -109,14 +133,30 @@ func TestCORSActualRequest(t *testing.T) {
 
 	// Test GET request with CORS headers using raw HTTP
 	// Create a completely isolated HTTP client to avoid AWS SDK auto-signing
+	transport := &http.Transport{
+		// Completely disable any proxy or middleware
+		Proxy: nil,
+	}
+
 	httpClient := &http.Client{
 		Timeout: 10 * time.Second,
 		// Use a completely clean transport to avoid any AWS SDK middleware
-		Transport: &http.Transport{},
+		Transport: transport,
 	}
 
 	// Create URL manually to avoid any AWS SDK endpoint processing
-	requestURL := fmt.Sprintf("http://localhost:8333/%s/%s", bucketName, objectKey)
+	// Use the same endpoint as the S3 client to ensure compatibility with GitHub Actions
+	config := getDefaultConfig()
+	endpoint := config.Endpoint
+	// Remove any protocol prefix and ensure it's http for anonymous requests
+	if strings.HasPrefix(endpoint, "https://") {
+		endpoint = strings.Replace(endpoint, "https://", "http://", 1)
+	}
+	if !strings.HasPrefix(endpoint, "http://") {
+		endpoint = "http://" + endpoint
+	}
+
+	requestURL := fmt.Sprintf("%s/%s/%s", endpoint, bucketName, objectKey)
 	req, err := http.NewRequest("GET", requestURL, nil)
 	require.NoError(t, err, "Should be able to create GET request")
 
@@ -124,15 +164,34 @@ func TestCORSActualRequest(t *testing.T) {
 	req.Header.Set("Origin", "https://example.com")
 
 	// Explicitly ensure no AWS headers are present (defensive programming)
+	// Clear ALL potential AWS-related headers that might be auto-added
 	req.Header.Del("Authorization")
 	req.Header.Del("X-Amz-Content-Sha256")
 	req.Header.Del("X-Amz-Date")
 	req.Header.Del("Amz-Sdk-Invocation-Id")
 	req.Header.Del("Amz-Sdk-Request")
+	req.Header.Del("X-Amz-Security-Token")
+	req.Header.Del("X-Amz-Session-Token")
+	req.Header.Del("AWS-Session-Token")
+	req.Header.Del("X-Amz-Target")
+	req.Header.Del("X-Amz-User-Agent")
+
+	// Ensure User-Agent doesn't indicate AWS SDK
+	req.Header.Set("User-Agent", "anonymous-cors-test/1.0")
 
 	// Log the request to verify it's truly anonymous
 	t.Logf("Making anonymous request to: %s", requestURL)
 	t.Logf("Request headers: %v", req.Header)
+
+	// Verify no AWS-related headers are present
+	for name := range req.Header {
+		headerLower := strings.ToLower(name)
+		if strings.Contains(headerLower, "aws") ||
+			strings.Contains(headerLower, "amz") ||
+			strings.Contains(headerLower, "authorization") {
+			t.Fatalf("Found AWS-related header in anonymous request: %s", name)
+		}
+	}
 
 	// Send the request
 	resp, err := httpClient.Do(req)
