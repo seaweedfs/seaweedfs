@@ -319,15 +319,27 @@ func isPublicReadGrants(grants []*s3.Grant) bool {
 func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bucket, _ := s3_constants.GetBucketAndObject(r)
-		isAnonymous := getRequestAuthType(r) == authTypeAnonymous
+		authType := getRequestAuthType(r)
+		isAnonymous := authType == authTypeAnonymous
+
+		// Debug logging for GitHub Actions
+		glog.Infof("CORS DEBUG: bucket=%s, authType=%d, isAnonymous=%v, URL=%s", bucket, authType, isAnonymous, r.URL.Path)
+		glog.Infof("CORS DEBUG: Authorization header present=%v", r.Header.Get("Authorization") != "")
+		glog.Infof("CORS DEBUG: User-Agent=%s", r.Header.Get("User-Agent"))
 
 		if isAnonymous {
 			isPublic := s3a.isBucketPublicRead(bucket)
+			glog.Infof("CORS DEBUG: Anonymous request to bucket=%s, isPublic=%v", bucket, isPublic)
 
 			if isPublic {
+				glog.Infof("CORS DEBUG: ALLOWING anonymous access to public bucket %s", bucket)
 				handler(w, r)
 				return
+			} else {
+				glog.Infof("CORS DEBUG: DENYING anonymous access to private bucket %s, redirecting to IAM", bucket)
 			}
+		} else {
+			glog.Infof("CORS DEBUG: Authenticated request (authType=%d), redirecting to IAM", authType)
 		}
 		s3a.iam.Auth(handler, action)(w, r) // Fallback to normal IAM auth
 	}

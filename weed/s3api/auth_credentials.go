@@ -336,15 +336,24 @@ func (iam *IdentityAccessManagement) GetAccountIdByEmail(email string) string {
 
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Debug logging for GitHub Actions CORS issue
+		authType := getRequestAuthType(r)
+		glog.Infof("IAM DEBUG: isEnabled=%v, authType=%d, URL=%s", iam.isEnabled(), authType, r.URL.Path)
+		glog.Infof("IAM DEBUG: Authorization header=%s", r.Header.Get("Authorization"))
+
 		if !iam.isEnabled() {
+			glog.Infof("IAM DEBUG: IAM is DISABLED - allowing request through without authentication")
 			f(w, r)
 			return
 		}
 
 		identity, errCode := iam.authRequest(r, action)
 		glog.V(3).Infof("auth error: %v", errCode)
+		glog.Infof("IAM DEBUG: authRequest result - identity=%v, errCode=%v", identity, errCode)
+
 		if errCode == s3err.ErrNone {
 			if identity != nil && identity.Name != "" {
+				glog.Infof("IAM DEBUG: Setting identity header to %s", identity.Name)
 				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
 			}
 			f(w, r)

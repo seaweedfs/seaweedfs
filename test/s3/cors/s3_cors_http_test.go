@@ -205,7 +205,9 @@ func TestCORSActualRequest(t *testing.T) {
 	// Verify CORS headers are present even in error responses (CORS spec requirement)
 	assert.Equal(t, "https://example.com", resp.Header.Get("Access-Control-Allow-Origin"), "Should have correct Allow-Origin header")
 	assert.Contains(t, resp.Header.Get("Access-Control-Expose-Headers"), "ETag", "Should expose ETag header")
+
 	// Unauthenticated requests should return 403, but CORS headers should still be present
+	// The debug logs will help us understand why GitHub Actions behaves differently
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "Unauthenticated GET request should return 403")
 }
 
