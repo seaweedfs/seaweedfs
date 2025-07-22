@@ -9,7 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
@@ -302,10 +303,7 @@ func (s3a *S3ApiServer) loadCORSFromBucketContent(bucket string) (*cors.CORSConf
 		return nil, err
 	}
 
-	if corsConfig == nil {
-		return nil, fmt.Errorf("no CORS configuration found")
-	}
-
+	// Note: corsConfig can be nil if no CORS configuration is set, which is valid
 	return corsConfig, nil
 }
 
