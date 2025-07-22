@@ -322,6 +322,14 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 		authType := getRequestAuthType(r)
 		isAnonymous := authType == authTypeAnonymous
 
+		// Special debug logging for our anonymous CORS test
+		userAgent := r.Header.Get("User-Agent")
+		if userAgent == "anonymous-cors-test/1.0" {
+			glog.Infof("ANONYMOUS TEST FOUND: bucket=%s, authType=%d, isAnonymous=%v, URL=%s", bucket, authType, isAnonymous, r.URL.Path)
+			glog.Infof("ANONYMOUS TEST FOUND: Authorization header=%s", r.Header.Get("Authorization"))
+			glog.Infof("ANONYMOUS TEST FOUND: All headers=%v", r.Header)
+		}
+
 		// Debug logging for GitHub Actions
 		glog.Infof("CORS DEBUG: bucket=%s, authType=%d, isAnonymous=%v, URL=%s", bucket, authType, isAnonymous, r.URL.Path)
 		glog.Infof("CORS DEBUG: Authorization header present=%v", r.Header.Get("Authorization") != "")
