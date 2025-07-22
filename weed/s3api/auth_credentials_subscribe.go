@@ -126,6 +126,8 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 		}
 		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
 			config.ACL = acl
+			// Parse ACL and cache public-read status
+			config.IsPublicRead = parseAndCachePublicReadStatus(acl)
 		}
 		if owner, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
