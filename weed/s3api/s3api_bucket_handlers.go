@@ -318,21 +318,16 @@ func isPublicReadGrants(grants []*s3.Grant) bool {
 // AuthWithPublicRead creates an auth wrapper that allows anonymous access for public-read buckets
 func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Extract bucket name from request
 		bucket, _ := s3_constants.GetBucketAndObject(r)
-
-		// Check if user is anonymous
 		isAnonymous := getRequestAuthType(r) == authTypeAnonymous
 
-		// If anonymous user and bucket is public-read, allow access
 		if isAnonymous && s3a.isBucketPublicRead(bucket) {
 			glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s", bucket)
 			handler(w, r)
 			return
 		}
 
-		// Otherwise, use normal IAM authentication
-		s3a.iam.Auth(handler, action)(w, r)
+		s3a.iam.Auth(handler, action)(w, r) // Fallback to normal IAM auth
 	}
 }
 
