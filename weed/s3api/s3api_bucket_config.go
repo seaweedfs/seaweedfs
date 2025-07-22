@@ -183,6 +183,7 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 	// Cache the result
 	s3a.bucketConfigCache.Set(bucket, config)
 	glog.Infof("[DEBUG] getBucketConfig: bucket %s cached with final IsPublicRead=%v", bucket, config.IsPublicRead)
+	fmt.Printf("[CRITICAL DEBUG] getBucketConfig: bucket %s cached with final IsPublicRead=%v\n", bucket, config.IsPublicRead)
 
 	return config, s3err.ErrNone
 }
