@@ -1130,12 +1130,12 @@ type ListBucketResult struct {
 }
 
 type ListEntry struct {
-	Key          string        `xml:"Key"`
-	LastModified time.Time     `xml:"LastModified"`
-	ETag         string        `xml:"ETag"`
-	Size         int64         `xml:"Size"`
-	Owner        CanonicalUser `xml:"Owner,omitempty"`
-	StorageClass StorageClass  `xml:"StorageClass"`
+	Key          string         `xml:"Key"`
+	LastModified time.Time      `xml:"LastModified"`
+	ETag         string         `xml:"ETag"`
+	Size         int64          `xml:"Size"`
+	Owner        *CanonicalUser `xml:"Owner,omitempty"`
+	StorageClass StorageClass   `xml:"StorageClass"`
 }
 
 func (t *ListEntry) MarshalXML(e *xml.Encoder, start xml.StartElement) error {

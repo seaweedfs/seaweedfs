@@ -220,7 +220,7 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 			}
 		}
 
-		listEntry.Owner = CanonicalUser{
+		listEntry.Owner = &CanonicalUser{
 			ID:          ownerID,
 			DisplayName: displayName,
 		}
