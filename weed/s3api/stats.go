@@ -7,26 +7,17 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 func track(f http.HandlerFunc, action string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		bucket, _ := s3_constants.GetBucketAndObject(r)
-
-		// Special logging to catch anonymous CORS test request
-		userAgent := r.Header.Get("User-Agent")
-		if userAgent == "anonymous-cors-test/1.0" {
-			glog.Infof("TRACK FOUND ANONYMOUS TEST: action=%s, method=%s, bucket=%s, URL=%s", action, r.Method, bucket, r.URL.Path)
-			glog.Infof("TRACK FOUND ANONYMOUS TEST: headers=%v", r.Header)
-		}
-
 		inFlightGauge := stats_collect.S3InFlightRequestsGauge.WithLabelValues(action)
 		inFlightGauge.Inc()
 		defer inFlightGauge.Dec()
 
+		bucket, _ := s3_constants.GetBucketAndObject(r)
 		w.Header().Set("Server", "SeaweedFS "+version.VERSION)
 		recorder := stats_collect.NewStatusResponseWriter(w)
 		start := time.Now()

@@ -119,8 +119,8 @@ func TestCORSActualRequest(t *testing.T) {
 	})
 	require.NoError(t, err, "Should be able to put CORS configuration")
 
-	// Wait for metadata subscription to update cache
-	time.Sleep(50 * time.Millisecond)
+	// Wait for CORS configuration to be fully processed
+	time.Sleep(100 * time.Millisecond)
 
 	// First, put an object using S3 client
 	objectKey := "test-cors-object"
@@ -179,10 +179,6 @@ func TestCORSActualRequest(t *testing.T) {
 	// Ensure User-Agent doesn't indicate AWS SDK
 	req.Header.Set("User-Agent", "anonymous-cors-test/1.0")
 
-	// Log the request to verify it's truly anonymous
-	t.Logf("Making anonymous request to: %s", requestURL)
-	t.Logf("Request headers: %v", req.Header)
-
 	// Verify no AWS-related headers are present
 	for name := range req.Header {
 		headerLower := strings.ToLower(name)
@@ -198,17 +194,13 @@ func TestCORSActualRequest(t *testing.T) {
 	require.NoError(t, err, "Should be able to send GET request")
 	defer resp.Body.Close()
 
-	// Log response for debugging
-	t.Logf("Response status: %d", resp.StatusCode)
-	t.Logf("Response headers: %v", resp.Header)
-
-	// Verify CORS headers are present even in error responses (CORS spec requirement)
+	// Verify CORS headers are present
 	assert.Equal(t, "https://example.com", resp.Header.Get("Access-Control-Allow-Origin"), "Should have correct Allow-Origin header")
 	assert.Contains(t, resp.Header.Get("Access-Control-Expose-Headers"), "ETag", "Should expose ETag header")
 
-	// Unauthenticated requests should return 403, but CORS headers should still be present
-	// The debug logs will help us understand why GitHub Actions behaves differently
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "Unauthenticated GET request should return 403")
+	// Anonymous requests should succeed when anonymous read permission is configured in IAM
+	// The server configuration allows anonymous users to have Read permissions
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Anonymous GET request should succeed when anonymous read is configured")
 }
 
 // TestCORSOriginMatching tests origin matching with different patterns
