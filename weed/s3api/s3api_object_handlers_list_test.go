@@ -1,10 +1,11 @@
 package s3api
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestListObjectsHandler(t *testing.T) {
@@ -26,7 +27,7 @@ func TestListObjectsHandler(t *testing.T) {
 			LastModified: time.Date(2011, 4, 9, 12, 34, 49, 0, time.UTC),
 			ETag:         "\"4397da7a7649e8085de9916c240e8166\"",
 			Size:         1234567,
-			Owner: CanonicalUser{
+			Owner: &CanonicalUser{
 				ID: "65a011niqo39cdf8ec533ec3d1ccaafsa932",
 			},
 			StorageClass: "STANDARD",
