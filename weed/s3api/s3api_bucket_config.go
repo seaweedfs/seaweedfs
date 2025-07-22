@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -10,8 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/cors"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -296,16 +297,16 @@ func (s3a *S3ApiServer) setBucketOwnership(bucket, ownership string) s3err.Error
 
 // loadCORSFromBucketContent loads CORS configuration from bucket directory content
 func (s3a *S3ApiServer) loadCORSFromBucketContent(bucket string) (*cors.CORSConfiguration, error) {
-	metadata, err := s3a.getBucketMetadata(bucket)
+	_, corsConfig, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
 		return nil, err
 	}
 
-	if metadata.CORS == nil {
+	if corsConfig == nil {
 		return nil, fmt.Errorf("no CORS configuration found")
 	}
 
-	return metadata.CORS, nil
+	return corsConfig, nil
 }
 
 // getCORSConfiguration retrieves CORS configuration with caching
@@ -318,100 +319,169 @@ func (s3a *S3ApiServer) getCORSConfiguration(bucket string) (*cors.CORSConfigura
 	return config.CORS, s3err.ErrNone
 }
 
-// updateCORSConfiguration updates CORS configuration in bucket directory content
+// updateCORSConfiguration updates the CORS configuration for a bucket
 func (s3a *S3ApiServer) updateCORSConfiguration(bucket string, corsConfig *cors.CORSConfiguration) s3err.ErrorCode {
 	// Get existing metadata
-	metadata, err := s3a.getBucketMetadata(bucket)
+	existingTags, _, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
 		glog.Errorf("updateCORSConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
 	// Update CORS configuration
-	metadata.CORS = corsConfig
+	updatedCorsConfig := corsConfig
 
 	// Store updated metadata
-	if err := s3a.setBucketMetadata(bucket, metadata); err != nil {
+	if err := s3a.setBucketMetadata(bucket, existingTags, updatedCorsConfig); err != nil {
 		glog.Errorf("updateCORSConfiguration: failed to persist CORS config to bucket content for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
-	// Invalidate cache to force reload from disk
+	// Invalidate cache
 	s3a.bucketConfigCache.Remove(bucket)
 
 	return s3err.ErrNone
 }
 
-// removeCORSConfiguration removes CORS configuration from bucket directory content
+// removeCORSConfiguration removes the CORS configuration for a bucket
 func (s3a *S3ApiServer) removeCORSConfiguration(bucket string) s3err.ErrorCode {
 	// Get existing metadata
-	metadata, err := s3a.getBucketMetadata(bucket)
+	existingTags, _, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
 		glog.Errorf("removeCORSConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
 	// Remove CORS configuration
-	metadata.CORS = nil
+	var nilCorsConfig *cors.CORSConfiguration = nil
 
 	// Store updated metadata
-	if err := s3a.setBucketMetadata(bucket, metadata); err != nil {
+	if err := s3a.setBucketMetadata(bucket, existingTags, nilCorsConfig); err != nil {
 		glog.Errorf("removeCORSConfiguration: failed to remove CORS config from bucket content for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
-	// Invalidate cache to force reload from disk
+	// Invalidate cache
 	s3a.bucketConfigCache.Remove(bucket)
 
 	return s3err.ErrNone
 }
 
-// BucketMetadata represents the unified bucket metadata structure
-type BucketMetadata struct {
-	Tags map[string]string       `json:"tags,omitempty"`
-	CORS *cors.CORSConfiguration `json:"cors,omitempty"`
+// Conversion functions between CORS types and protobuf types
+
+// corsRuleToProto converts a CORS rule to protobuf format
+func corsRuleToProto(rule cors.CORSRule) *s3_pb.CORSRule {
+	return &s3_pb.CORSRule{
+		AllowedHeaders: rule.AllowedHeaders,
+		AllowedMethods: rule.AllowedMethods,
+		AllowedOrigins: rule.AllowedOrigins,
+		ExposeHeaders:  rule.ExposeHeaders,
+		MaxAgeSeconds:  int32(getMaxAgeSecondsValue(rule.MaxAgeSeconds)),
+		Id:             rule.ID,
+	}
 }
 
-// getBucketMetadata retrieves bucket metadata from bucket directory content
-func (s3a *S3ApiServer) getBucketMetadata(bucket string) (*BucketMetadata, error) {
+// corsRuleFromProto converts a protobuf CORS rule to standard format
+func corsRuleFromProto(protoRule *s3_pb.CORSRule) cors.CORSRule {
+	var maxAge *int
+	if protoRule.MaxAgeSeconds > 0 {
+		age := int(protoRule.MaxAgeSeconds)
+		maxAge = &age
+	}
+
+	return cors.CORSRule{
+		AllowedHeaders: protoRule.AllowedHeaders,
+		AllowedMethods: protoRule.AllowedMethods,
+		AllowedOrigins: protoRule.AllowedOrigins,
+		ExposeHeaders:  protoRule.ExposeHeaders,
+		MaxAgeSeconds:  maxAge,
+		ID:             protoRule.Id,
+	}
+}
+
+// corsConfigToProto converts CORS configuration to protobuf format
+func corsConfigToProto(config *cors.CORSConfiguration) *s3_pb.CORSConfiguration {
+	if config == nil {
+		return nil
+	}
+
+	protoRules := make([]*s3_pb.CORSRule, len(config.CORSRules))
+	for i, rule := range config.CORSRules {
+		protoRules[i] = corsRuleToProto(rule)
+	}
+
+	return &s3_pb.CORSConfiguration{
+		CorsRules: protoRules,
+	}
+}
+
+// corsConfigFromProto converts protobuf CORS configuration to standard format
+func corsConfigFromProto(protoConfig *s3_pb.CORSConfiguration) *cors.CORSConfiguration {
+	if protoConfig == nil {
+		return nil
+	}
+
+	rules := make([]cors.CORSRule, len(protoConfig.CorsRules))
+	for i, protoRule := range protoConfig.CorsRules {
+		rules[i] = corsRuleFromProto(protoRule)
+	}
+
+	return &cors.CORSConfiguration{
+		CORSRules: rules,
+	}
+}
+
+// getMaxAgeSecondsValue safely extracts max age seconds value
+func getMaxAgeSecondsValue(maxAge *int) int {
+	if maxAge == nil {
+		return 0
+	}
+	return *maxAge
+}
+
+// getBucketMetadata retrieves bucket metadata from bucket directory content using protobuf
+func (s3a *S3ApiServer) getBucketMetadata(bucket string) (map[string]string, *cors.CORSConfiguration, error) {
 	// Validate bucket name to prevent path traversal attacks
 	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
 		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
-		return nil, fmt.Errorf("invalid bucket name: %s", bucket)
+		return nil, nil, fmt.Errorf("invalid bucket name: %s", bucket)
 	}
 
 	// Clean the bucket name further to prevent any potential path traversal
 	bucket = filepath.Clean(bucket)
 	if bucket == "." || bucket == ".." {
-		return nil, fmt.Errorf("invalid bucket name: %s", bucket)
+		return nil, nil, fmt.Errorf("invalid bucket name: %s", bucket)
 	}
 
 	// Get bucket directory entry to access its content
 	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if err != nil {
-		return nil, fmt.Errorf("error retrieving bucket directory %s: %w", bucket, err)
+		return nil, nil, fmt.Errorf("error retrieving bucket directory %s: %w", bucket, err)
 	}
 	if entry == nil {
-		return nil, fmt.Errorf("bucket directory not found %s", bucket)
+		return nil, nil, fmt.Errorf("bucket directory not found %s", bucket)
 	}
 
 	// If no content, return empty metadata
 	if len(entry.Content) == 0 {
-		return &BucketMetadata{}, nil
+		return make(map[string]string), nil, nil
 	}
 
-	// Unmarshal metadata from JSON
-	var metadata BucketMetadata
-	if err := json.Unmarshal(entry.Content, &metadata); err != nil {
-		glog.Errorf("getBucketMetadata: failed to unmarshal metadata for bucket %s: %v", bucket, err)
-		return &BucketMetadata{}, nil // Return empty metadata on error, don't fail
+	// Unmarshal metadata from protobuf
+	var protoMetadata s3_pb.BucketMetadata
+	if err := proto.Unmarshal(entry.Content, &protoMetadata); err != nil {
+		glog.Errorf("getBucketMetadata: failed to unmarshal protobuf metadata for bucket %s: %v", bucket, err)
+		return make(map[string]string), nil, nil // Return empty metadata on error, don't fail
 	}
 
-	return &metadata, nil
+	// Convert protobuf CORS to standard CORS
+	corsConfig := corsConfigFromProto(protoMetadata.Cors)
+
+	return protoMetadata.Tags, corsConfig, nil
 }
 
-// setBucketMetadata stores bucket metadata in bucket directory content
-func (s3a *S3ApiServer) setBucketMetadata(bucket string, metadata *BucketMetadata) error {
+// setBucketMetadata stores bucket metadata in bucket directory content using protobuf
+func (s3a *S3ApiServer) setBucketMetadata(bucket string, tags map[string]string, corsConfig *cors.CORSConfiguration) error {
 	// Validate bucket name to prevent path traversal attacks
 	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
 		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
@@ -424,10 +494,16 @@ func (s3a *S3ApiServer) setBucketMetadata(bucket string, metadata *BucketMetadat
 		return fmt.Errorf("invalid bucket name: %s", bucket)
 	}
 
-	// Marshal metadata to JSON
-	metadataBytes, err := json.Marshal(metadata)
+	// Create protobuf metadata
+	protoMetadata := &s3_pb.BucketMetadata{
+		Tags: tags,
+		Cors: corsConfigToProto(corsConfig),
+	}
+
+	// Marshal metadata to protobuf
+	metadataBytes, err := proto.Marshal(protoMetadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal bucket metadata: %w", err)
+		return fmt.Errorf("failed to marshal bucket metadata to protobuf: %w", err)
 	}
 
 	// Update the bucket entry with new content
@@ -456,44 +532,39 @@ func (s3a *S3ApiServer) setBucketMetadata(bucket string, metadata *BucketMetadat
 
 // getBucketTags retrieves bucket tags from bucket directory content
 func (s3a *S3ApiServer) getBucketTags(bucket string) (map[string]string, error) {
-	metadata, err := s3a.getBucketMetadata(bucket)
+	tags, _, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
 		return nil, err
 	}
 
-	if metadata.Tags == nil {
+	if len(tags) == 0 {
 		return nil, fmt.Errorf("no tags configuration found")
 	}
 
-	return metadata.Tags, nil
+	return tags, nil
 }
 
 // setBucketTags stores bucket tags in bucket directory content
 func (s3a *S3ApiServer) setBucketTags(bucket string, tags map[string]string) error {
 	// Get existing metadata
-	metadata, err := s3a.getBucketMetadata(bucket)
+	_, existingCorsConfig, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
 		return err
 	}
 
-	// Update tags
-	metadata.Tags = tags
-
-	// Store updated metadata
-	return s3a.setBucketMetadata(bucket, metadata)
+	// Store updated metadata with new tags
+	return s3a.setBucketMetadata(bucket, tags, existingCorsConfig)
 }
 
 // deleteBucketTags removes bucket tags from bucket directory content
 func (s3a *S3ApiServer) deleteBucketTags(bucket string) error {
 	// Get existing metadata
-	metadata, err := s3a.getBucketMetadata(bucket)
+	_, existingCorsConfig, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
 		return err
 	}
 
-	// Remove tags
-	metadata.Tags = nil
-
-	// Store updated metadata
-	return s3a.setBucketMetadata(bucket, metadata)
+	// Store updated metadata with empty tags
+	emptyTags := make(map[string]string)
+	return s3a.setBucketMetadata(bucket, emptyTags, existingCorsConfig)
 }
