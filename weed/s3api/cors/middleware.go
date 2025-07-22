@@ -20,15 +20,13 @@ type CORSConfigGetter interface {
 
 // Middleware handles CORS evaluation for all S3 API requests
 type Middleware struct {
-	storage          *Storage
 	bucketChecker    BucketChecker
 	corsConfigGetter CORSConfigGetter
 }
 
 // NewMiddleware creates a new CORS middleware instance
-func NewMiddleware(storage *Storage, bucketChecker BucketChecker, corsConfigGetter CORSConfigGetter) *Middleware {
+func NewMiddleware(bucketChecker BucketChecker, corsConfigGetter CORSConfigGetter) *Middleware {
 	return &Middleware{
-		storage:          storage,
 		bucketChecker:    bucketChecker,
 		corsConfigGetter: corsConfigGetter,
 	}

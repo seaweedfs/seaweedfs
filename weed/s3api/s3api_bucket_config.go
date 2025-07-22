@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,8 +136,8 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		}
 	}
 
-	// Load CORS configuration from .s3metadata
-	if corsConfig, err := s3a.loadCORSFromMetadata(bucket); err != nil {
+	// Load CORS configuration from bucket directory content
+	if corsConfig, err := s3a.loadCORSFromBucketContent(bucket); err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			// Missing metadata is not an error; fall back cleanly
 			glog.V(2).Infof("CORS metadata not found for bucket %s, falling back to default behavior", bucket)
@@ -293,57 +294,18 @@ func (s3a *S3ApiServer) setBucketOwnership(bucket, ownership string) s3err.Error
 	})
 }
 
-// loadCORSFromMetadata loads CORS configuration from bucket metadata
-func (s3a *S3ApiServer) loadCORSFromMetadata(bucket string) (*cors.CORSConfiguration, error) {
-	// Validate bucket name to prevent path traversal attacks
-	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
-		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
-		return nil, fmt.Errorf("invalid bucket name: %s", bucket)
-	}
-
-	// Clean the bucket name further to prevent any potential path traversal
-	bucket = filepath.Clean(bucket)
-	if bucket == "." || bucket == ".." {
-		return nil, fmt.Errorf("invalid bucket name: %s", bucket)
-	}
-
-	bucketMetadataPath := filepath.Join(s3a.option.BucketsPath, bucket, cors.S3MetadataFileName)
-
-	entry, err := s3a.getEntry("", bucketMetadataPath)
+// loadCORSFromBucketContent loads CORS configuration from bucket directory content
+func (s3a *S3ApiServer) loadCORSFromBucketContent(bucket string) (*cors.CORSConfiguration, error) {
+	metadata, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
-		glog.V(3).Infof("loadCORSFromMetadata: error retrieving metadata for bucket %s: %v", bucket, err)
-		return nil, fmt.Errorf("error retrieving CORS metadata for bucket %s: %w", bucket, err)
-	}
-	if entry == nil {
-		glog.V(3).Infof("loadCORSFromMetadata: no metadata entry found for bucket %s", bucket)
-		return nil, fmt.Errorf("no metadata entry found for bucket %s", bucket)
+		return nil, err
 	}
 
-	if len(entry.Content) == 0 {
-		glog.V(3).Infof("loadCORSFromMetadata: empty metadata content for bucket %s", bucket)
-		return nil, fmt.Errorf("no metadata content for bucket %s", bucket)
-	}
-
-	var metadata map[string]json.RawMessage
-	if err := json.Unmarshal(entry.Content, &metadata); err != nil {
-		glog.Errorf("loadCORSFromMetadata: failed to unmarshal metadata for bucket %s: %v", bucket, err)
-		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-	}
-
-	corsData, exists := metadata["cors"]
-	if !exists {
-		glog.V(3).Infof("loadCORSFromMetadata: no CORS configuration found for bucket %s", bucket)
+	if metadata.CORS == nil {
 		return nil, fmt.Errorf("no CORS configuration found")
 	}
 
-	// Directly unmarshal the raw JSON to CORSConfiguration to avoid round-trip allocations
-	var config cors.CORSConfiguration
-	if err := json.Unmarshal(corsData, &config); err != nil {
-		glog.Errorf("loadCORSFromMetadata: failed to unmarshal CORS configuration for bucket %s: %v", bucket, err)
-		return nil, fmt.Errorf("failed to unmarshal CORS configuration: %w", err)
-	}
-
-	return &config, nil
+	return metadata.CORS, nil
 }
 
 // getCORSConfiguration retrieves CORS configuration with caching
@@ -356,50 +318,182 @@ func (s3a *S3ApiServer) getCORSConfiguration(bucket string) (*cors.CORSConfigura
 	return config.CORS, s3err.ErrNone
 }
 
-// getCORSStorage returns a CORS storage instance for persistent operations
-func (s3a *S3ApiServer) getCORSStorage() *cors.Storage {
-	entryGetter := &S3EntryGetter{server: s3a}
-	return cors.NewStorage(s3a, entryGetter, s3a.option.BucketsPath)
-}
-
-// updateCORSConfiguration updates CORS configuration and invalidates cache
+// updateCORSConfiguration updates CORS configuration in bucket directory content
 func (s3a *S3ApiServer) updateCORSConfiguration(bucket string, corsConfig *cors.CORSConfiguration) s3err.ErrorCode {
-	// Update in-memory cache
-	errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
-		config.CORS = corsConfig
-		return nil
-	})
-	if errCode != s3err.ErrNone {
-		return errCode
-	}
-
-	// Persist to .s3metadata file
-	storage := s3a.getCORSStorage()
-	if err := storage.Store(bucket, corsConfig); err != nil {
-		glog.Errorf("updateCORSConfiguration: failed to persist CORS config to metadata for bucket %s: %v", bucket, err)
+	// Get existing metadata
+	metadata, err := s3a.getBucketMetadata(bucket)
+	if err != nil {
+		glog.Errorf("updateCORSConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
+
+	// Update CORS configuration
+	metadata.CORS = corsConfig
+
+	// Store updated metadata
+	if err := s3a.setBucketMetadata(bucket, metadata); err != nil {
+		glog.Errorf("updateCORSConfiguration: failed to persist CORS config to bucket content for bucket %s: %v", bucket, err)
+		return s3err.ErrInternalError
+	}
+
+	// Invalidate cache to force reload from disk
+	s3a.bucketConfigCache.Remove(bucket)
 
 	return s3err.ErrNone
 }
 
-// removeCORSConfiguration removes CORS configuration and invalidates cache
+// removeCORSConfiguration removes CORS configuration from bucket directory content
 func (s3a *S3ApiServer) removeCORSConfiguration(bucket string) s3err.ErrorCode {
-	// Remove from in-memory cache
-	errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
-		config.CORS = nil
-		return nil
-	})
-	if errCode != s3err.ErrNone {
-		return errCode
-	}
-
-	// Remove from .s3metadata file
-	storage := s3a.getCORSStorage()
-	if err := storage.Delete(bucket); err != nil {
-		glog.Errorf("removeCORSConfiguration: failed to remove CORS config from metadata for bucket %s: %v", bucket, err)
+	// Get existing metadata
+	metadata, err := s3a.getBucketMetadata(bucket)
+	if err != nil {
+		glog.Errorf("removeCORSConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
+	// Remove CORS configuration
+	metadata.CORS = nil
+
+	// Store updated metadata
+	if err := s3a.setBucketMetadata(bucket, metadata); err != nil {
+		glog.Errorf("removeCORSConfiguration: failed to remove CORS config from bucket content for bucket %s: %v", bucket, err)
+		return s3err.ErrInternalError
+	}
+
+	// Invalidate cache to force reload from disk
+	s3a.bucketConfigCache.Remove(bucket)
+
 	return s3err.ErrNone
+}
+
+// BucketMetadata represents the unified bucket metadata structure
+type BucketMetadata struct {
+	Tags map[string]string       `json:"tags,omitempty"`
+	CORS *cors.CORSConfiguration `json:"cors,omitempty"`
+}
+
+// getBucketMetadata retrieves bucket metadata from bucket directory content
+func (s3a *S3ApiServer) getBucketMetadata(bucket string) (*BucketMetadata, error) {
+	// Validate bucket name to prevent path traversal attacks
+	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
+		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
+		return nil, fmt.Errorf("invalid bucket name: %s", bucket)
+	}
+
+	// Clean the bucket name further to prevent any potential path traversal
+	bucket = filepath.Clean(bucket)
+	if bucket == "." || bucket == ".." {
+		return nil, fmt.Errorf("invalid bucket name: %s", bucket)
+	}
+
+	// Get bucket directory entry to access its content
+	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		return nil, fmt.Errorf("error retrieving bucket directory %s: %w", bucket, err)
+	}
+	if entry == nil {
+		return nil, fmt.Errorf("bucket directory not found %s", bucket)
+	}
+
+	// If no content, return empty metadata
+	if len(entry.Content) == 0 {
+		return &BucketMetadata{}, nil
+	}
+
+	// Unmarshal metadata from JSON
+	var metadata BucketMetadata
+	if err := json.Unmarshal(entry.Content, &metadata); err != nil {
+		glog.Errorf("getBucketMetadata: failed to unmarshal metadata for bucket %s: %v", bucket, err)
+		return &BucketMetadata{}, nil // Return empty metadata on error, don't fail
+	}
+
+	return &metadata, nil
+}
+
+// setBucketMetadata stores bucket metadata in bucket directory content
+func (s3a *S3ApiServer) setBucketMetadata(bucket string, metadata *BucketMetadata) error {
+	// Validate bucket name to prevent path traversal attacks
+	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
+		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
+		return fmt.Errorf("invalid bucket name: %s", bucket)
+	}
+
+	// Clean the bucket name further to prevent any potential path traversal
+	bucket = filepath.Clean(bucket)
+	if bucket == "." || bucket == ".." {
+		return fmt.Errorf("invalid bucket name: %s", bucket)
+	}
+
+	// Marshal metadata to JSON
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal bucket metadata: %w", err)
+	}
+
+	// Update the bucket entry with new content
+	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Get current bucket entry
+		entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+		if err != nil {
+			return fmt.Errorf("error retrieving bucket directory %s: %w", bucket, err)
+		}
+		if entry == nil {
+			return fmt.Errorf("bucket directory not found %s", bucket)
+		}
+
+		// Update content with metadata
+		entry.Content = metadataBytes
+
+		request := &filer_pb.UpdateEntryRequest{
+			Directory: s3a.option.BucketsPath,
+			Entry:     entry,
+		}
+
+		_, err = client.UpdateEntry(context.Background(), request)
+		return err
+	})
+}
+
+// getBucketTags retrieves bucket tags from bucket directory content
+func (s3a *S3ApiServer) getBucketTags(bucket string) (map[string]string, error) {
+	metadata, err := s3a.getBucketMetadata(bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	if metadata.Tags == nil {
+		return nil, fmt.Errorf("no tags configuration found")
+	}
+
+	return metadata.Tags, nil
+}
+
+// setBucketTags stores bucket tags in bucket directory content
+func (s3a *S3ApiServer) setBucketTags(bucket string, tags map[string]string) error {
+	// Get existing metadata
+	metadata, err := s3a.getBucketMetadata(bucket)
+	if err != nil {
+		return err
+	}
+
+	// Update tags
+	metadata.Tags = tags
+
+	// Store updated metadata
+	return s3a.setBucketMetadata(bucket, metadata)
+}
+
+// deleteBucketTags removes bucket tags from bucket directory content
+func (s3a *S3ApiServer) deleteBucketTags(bucket string) error {
+	// Get existing metadata
+	metadata, err := s3a.getBucketMetadata(bucket)
+	if err != nil {
+		return err
+	}
+
+	// Remove tags
+	metadata.Tags = nil
+
+	// Store updated metadata
+	return s3a.setBucketMetadata(bucket, metadata)
 }
