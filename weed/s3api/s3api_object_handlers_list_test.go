@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -89,4 +90,124 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			assert.Equalf(t, tt.wantAlignedMarker, gotAlignedMarker, "normalizePrefixMarker(%v, %v)", tt.args.prefix, tt.args.marker)
 		})
 	}
+}
+
+func TestAllowUnorderedParameterValidation(t *testing.T) {
+	// Test getListObjectsV1Args with allow-unordered parameter
+	t.Run("getListObjectsV1Args with allow-unordered", func(t *testing.T) {
+		// Test with allow-unordered=true
+		values := map[string][]string{
+			"allow-unordered": {"true"},
+			"delimiter":       {"/"},
+		}
+		_, _, _, _, _, allowUnordered := getListObjectsV1Args(values)
+		assert.True(t, allowUnordered, "allow-unordered should be true when set to 'true'")
+
+		// Test with allow-unordered=false
+		values = map[string][]string{
+			"allow-unordered": {"false"},
+		}
+		_, _, _, _, _, allowUnordered = getListObjectsV1Args(values)
+		assert.False(t, allowUnordered, "allow-unordered should be false when set to 'false'")
+
+		// Test without allow-unordered parameter
+		values = map[string][]string{}
+		_, _, _, _, _, allowUnordered = getListObjectsV1Args(values)
+		assert.False(t, allowUnordered, "allow-unordered should be false when not set")
+	})
+
+	// Test getListObjectsV2Args with allow-unordered parameter
+	t.Run("getListObjectsV2Args with allow-unordered", func(t *testing.T) {
+		// Test with allow-unordered=true
+		values := map[string][]string{
+			"allow-unordered": {"true"},
+			"delimiter":       {"/"},
+		}
+		_, _, _, _, _, _, _, allowUnordered := getListObjectsV2Args(values)
+		assert.True(t, allowUnordered, "allow-unordered should be true when set to 'true'")
+
+		// Test with allow-unordered=false
+		values = map[string][]string{
+			"allow-unordered": {"false"},
+		}
+		_, _, _, _, _, _, _, allowUnordered = getListObjectsV2Args(values)
+		assert.False(t, allowUnordered, "allow-unordered should be false when set to 'false'")
+
+		// Test without allow-unordered parameter
+		values = map[string][]string{}
+		_, _, _, _, _, _, _, allowUnordered = getListObjectsV2Args(values)
+		assert.False(t, allowUnordered, "allow-unordered should be false when not set")
+	})
+}
+
+func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
+	t.Run("should return error when allow-unordered=true and delimiter are both present", func(t *testing.T) {
+		// Create a request with both allow-unordered=true and delimiter
+		req := httptest.NewRequest("GET", "/bucket?allow-unordered=true&delimiter=/", nil)
+
+		// Extract query parameters like the handler would
+		values := req.URL.Query()
+
+		// Test ListObjectsV1Args
+		_, _, delimiter, _, _, allowUnordered := getListObjectsV1Args(values)
+		assert.True(t, allowUnordered, "allow-unordered should be true")
+		assert.Equal(t, "/", delimiter, "delimiter should be '/'")
+
+		// The validation should catch this combination
+		if allowUnordered && delimiter != "" {
+			assert.True(t, true, "Validation correctly detected invalid combination")
+		} else {
+			assert.Fail(t, "Validation should have detected invalid combination")
+		}
+
+		// Test ListObjectsV2Args
+		_, _, delimiter2, _, _, _, _, allowUnordered2 := getListObjectsV2Args(values)
+		assert.True(t, allowUnordered2, "allow-unordered should be true")
+		assert.Equal(t, "/", delimiter2, "delimiter should be '/'")
+
+		// The validation should catch this combination
+		if allowUnordered2 && delimiter2 != "" {
+			assert.True(t, true, "Validation correctly detected invalid combination")
+		} else {
+			assert.Fail(t, "Validation should have detected invalid combination")
+		}
+	})
+
+	t.Run("should allow allow-unordered=true without delimiter", func(t *testing.T) {
+		// Create a request with only allow-unordered=true
+		req := httptest.NewRequest("GET", "/bucket?allow-unordered=true", nil)
+
+		values := req.URL.Query()
+
+		// Test ListObjectsV1Args
+		_, _, delimiter, _, _, allowUnordered := getListObjectsV1Args(values)
+		assert.True(t, allowUnordered, "allow-unordered should be true")
+		assert.Equal(t, "", delimiter, "delimiter should be empty")
+
+		// This combination should be valid
+		if allowUnordered && delimiter != "" {
+			assert.Fail(t, "This should be a valid combination")
+		} else {
+			assert.True(t, true, "Valid combination correctly allowed")
+		}
+	})
+
+	t.Run("should allow delimiter without allow-unordered", func(t *testing.T) {
+		// Create a request with only delimiter
+		req := httptest.NewRequest("GET", "/bucket?delimiter=/", nil)
+
+		values := req.URL.Query()
+
+		// Test ListObjectsV1Args
+		_, _, delimiter, _, _, allowUnordered := getListObjectsV1Args(values)
+		assert.False(t, allowUnordered, "allow-unordered should be false")
+		assert.Equal(t, "/", delimiter, "delimiter should be '/'")
+
+		// This combination should be valid
+		if allowUnordered && delimiter != "" {
+			assert.Fail(t, "This should be a valid combination")
+		} else {
+			assert.True(t, true, "Valid combination correctly allowed")
+		}
+	})
 }

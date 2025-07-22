@@ -53,10 +53,16 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
 
-	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys := getListObjectsV2Args(r.URL.Query())
+	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys, allowUnordered := getListObjectsV2Args(r.URL.Query())
 
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
+		return
+	}
+
+	// AWS S3 compatibility: allow-unordered cannot be used with delimiter
+	if allowUnordered && delimiter != "" {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
 	}
 
@@ -110,10 +116,16 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
 
-	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys := getListObjectsV1Args(r.URL.Query())
+	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys, allowUnordered := getListObjectsV1Args(r.URL.Query())
 
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
+		return
+	}
+
+	// AWS S3 compatibility: allow-unordered cannot be used with delimiter
+	if allowUnordered && delimiter != "" {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
 	}
 
@@ -536,7 +548,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	return
 }
 
-func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys uint16) {
+func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys uint16, allowUnordered bool) {
 	prefix = values.Get("prefix")
 	token = OptionalString{set: values.Has("continuation-token"), string: values.Get("continuation-token")}
 	startAfter = values.Get("start-after")
@@ -550,10 +562,11 @@ func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter stri
 		maxkeys = maxObjectListSizeLimit
 	}
 	fetchOwner = values.Get("fetch-owner") == "true"
+	allowUnordered = values.Get("allow-unordered") == "true"
 	return
 }
 
-func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int16) {
+func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int16, allowUnordered bool) {
 	prefix = values.Get("prefix")
 	marker = values.Get("marker")
 	delimiter = values.Get("delimiter")
@@ -565,6 +578,7 @@ func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, 
 	} else {
 		maxkeys = maxObjectListSizeLimit
 	}
+	allowUnordered = values.Get("allow-unordered") == "true"
 	return
 }
 
