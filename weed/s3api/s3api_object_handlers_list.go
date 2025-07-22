@@ -208,7 +208,50 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				empty = false
 				dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
-					if entry.IsDirectoryKeyObject() {
+					// When delimiter is specified, apply delimiter logic to directory key objects too
+					if delimiter != "" && entry.IsDirectoryKeyObject() {
+						// Apply the same delimiter logic as for regular files
+						var delimiterFound bool
+						undelimitedPath := fmt.Sprintf("%s/%s/", dirName, entryName)[len(bucketPrefix):]
+
+						// take into account a prefix if supplied while delimiting.
+						undelimitedPath = strings.TrimPrefix(undelimitedPath, originalPrefix)
+
+						delimitedPath := strings.SplitN(undelimitedPath, delimiter, 2)
+
+						if len(delimitedPath) == 2 {
+							// S3 clients expect the delimited prefix to contain the delimiter and prefix.
+							delimitedPrefix := originalPrefix + delimitedPath[0] + delimiter
+
+							for i := range commonPrefixes {
+								if commonPrefixes[i].Prefix == delimitedPrefix {
+									delimiterFound = true
+									break
+								}
+							}
+
+							if !delimiterFound {
+								commonPrefixes = append(commonPrefixes, PrefixEntry{
+									Prefix: delimitedPrefix,
+								})
+								cursor.maxKeys--
+								delimiterFound = true
+								lastEntryWasCommonPrefix = true
+								lastCommonPrefixName = delimitedPath[0]
+							} else {
+								// This directory object belongs to an existing CommonPrefix, skip it
+								delimiterFound = true
+							}
+						}
+
+						// If no delimiter found in the directory object name, treat it as a regular key
+						if !delimiterFound {
+							contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false, s3a.iam))
+							cursor.maxKeys--
+							lastEntryWasCommonPrefix = false
+						}
+					} else if entry.IsDirectoryKeyObject() {
+						// No delimiter specified, or delimiter doesn't apply - treat as regular key
 						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false, s3a.iam))
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = false
