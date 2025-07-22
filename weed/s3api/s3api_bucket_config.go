@@ -378,13 +378,13 @@ func corsRuleToProto(rule cors.CORSRule) *s3_pb.CORSRule {
 // corsRuleFromProto converts a protobuf CORS rule to standard format
 func corsRuleFromProto(protoRule *s3_pb.CORSRule) cors.CORSRule {
 	var maxAge *int
-	// Fix: Always set maxAge if MaxAgeSeconds was explicitly stored (even if 0)
-	// Only leave it nil if it was originally nil (which gets stored as 0, but we can't distinguish)
-	// For now, if MaxAgeSeconds >= 0, create the pointer
+	// Always create the pointer if MaxAgeSeconds is >= 0
+	// This prevents nil pointer dereferences in tests and matches AWS behavior
 	if protoRule.MaxAgeSeconds >= 0 {
 		age := int(protoRule.MaxAgeSeconds)
 		maxAge = &age
 	}
+	// Only leave maxAge as nil if MaxAgeSeconds was explicitly set to a negative value
 
 	return cors.CORSRule{
 		AllowedHeaders: protoRule.AllowedHeaders,

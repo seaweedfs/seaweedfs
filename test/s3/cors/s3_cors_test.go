@@ -78,6 +78,9 @@ func createTestBucket(t *testing.T, client *s3.Client) string {
 	})
 	require.NoError(t, err)
 
+	// Wait for bucket metadata to be fully processed
+	time.Sleep(50 * time.Millisecond)
+
 	return bucketName
 }
 
@@ -138,6 +141,9 @@ func TestCORSConfigurationManagement(t *testing.T) {
 		CORSConfiguration: corsConfig,
 	})
 	assert.NoError(t, err, "Should be able to put CORS configuration")
+
+	// Wait for metadata subscription to update cache
+	time.Sleep(50 * time.Millisecond)
 
 	// Test 3: Get CORS configuration
 	getResp, err := client.GetBucketCors(context.TODO(), &s3.GetBucketCorsInput{
@@ -512,6 +518,9 @@ func TestCORSCaching(t *testing.T) {
 	})
 	assert.NoError(t, err, "Should be able to put initial CORS configuration")
 
+	// Wait for metadata subscription to update cache
+	time.Sleep(50 * time.Millisecond)
+
 	// Get the configuration
 	getResp1, err := client.GetBucketCors(context.TODO(), &s3.GetBucketCorsInput{
 		Bucket: aws.String(bucketName),
@@ -536,6 +545,9 @@ func TestCORSCaching(t *testing.T) {
 		CORSConfiguration: corsConfig2,
 	})
 	assert.NoError(t, err, "Should be able to update CORS configuration")
+
+	// Wait for metadata subscription to update cache
+	time.Sleep(50 * time.Millisecond)
 
 	// Get the updated configuration (should reflect the changes)
 	getResp2, err := client.GetBucketCors(context.TODO(), &s3.GetBucketCorsInput{

@@ -40,6 +40,9 @@ func TestCORSPreflightRequest(t *testing.T) {
 	})
 	require.NoError(t, err, "Should be able to put CORS configuration")
 
+	// Wait for metadata subscription to update cache
+	time.Sleep(50 * time.Millisecond)
+
 	// Test preflight request with raw HTTP
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
@@ -92,6 +95,9 @@ func TestCORSActualRequest(t *testing.T) {
 	})
 	require.NoError(t, err, "Should be able to put CORS configuration")
 
+	// Wait for metadata subscription to update cache
+	time.Sleep(50 * time.Millisecond)
+
 	// First, put an object using S3 client
 	objectKey := "test-cors-object"
 	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
@@ -115,10 +121,11 @@ func TestCORSActualRequest(t *testing.T) {
 	require.NoError(t, err, "Should be able to send GET request")
 	defer resp.Body.Close()
 
-	// Verify CORS headers in response
+	// Verify CORS headers are present even in error responses (CORS spec requirement)
 	assert.Equal(t, "https://example.com", resp.Header.Get("Access-Control-Allow-Origin"), "Should have correct Allow-Origin header")
 	assert.Contains(t, resp.Header.Get("Access-Control-Expose-Headers"), "ETag", "Should expose ETag header")
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "GET request should return 200")
+	// Unauthenticated requests should return 403, but CORS headers should still be present
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "Unauthenticated GET request should return 403")
 }
 
 // TestCORSOriginMatching tests origin matching with different patterns
@@ -185,6 +192,9 @@ func TestCORSOriginMatching(t *testing.T) {
 				CORSConfiguration: corsConfig,
 			})
 			require.NoError(t, err, "Should be able to put CORS configuration")
+
+			// Wait for metadata subscription to update cache
+			time.Sleep(50 * time.Millisecond)
 
 			// Test preflight request
 			httpClient := &http.Client{Timeout: 10 * time.Second}
@@ -279,6 +289,9 @@ func TestCORSHeaderMatching(t *testing.T) {
 			})
 			require.NoError(t, err, "Should be able to put CORS configuration")
 
+			// Wait for metadata subscription to update cache
+			time.Sleep(50 * time.Millisecond)
+
 			// Test preflight request
 			httpClient := &http.Client{Timeout: 10 * time.Second}
 
@@ -360,6 +373,9 @@ func TestCORSMethodMatching(t *testing.T) {
 	})
 	require.NoError(t, err, "Should be able to put CORS configuration")
 
+	// Wait for metadata subscription to update cache
+	time.Sleep(50 * time.Millisecond)
+
 	testCases := []struct {
 		method      string
 		shouldAllow bool
@@ -430,6 +446,9 @@ func TestCORSMultipleRulesMatching(t *testing.T) {
 		CORSConfiguration: corsConfig,
 	})
 	require.NoError(t, err, "Should be able to put CORS configuration")
+
+	// Wait for metadata subscription to update cache
+	time.Sleep(50 * time.Millisecond)
 
 	// Test first rule
 	httpClient := &http.Client{Timeout: 10 * time.Second}

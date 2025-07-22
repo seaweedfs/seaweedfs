@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"errors"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -134,6 +135,16 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 			config.ObjectLockConfig = objectLockConfig
 			glog.V(2).Infof("updateBucketConfigCacheFromEntry: cached Object Lock configuration for bucket %s", bucket)
 		}
+	}
+
+	// Load CORS configuration from bucket directory content
+	if corsConfig, err := s3a.loadCORSFromBucketContent(bucket); err != nil {
+		if !errors.Is(err, filer_pb.ErrNotFound) {
+			glog.Errorf("updateBucketConfigCacheFromEntry: failed to load CORS configuration for bucket %s: %v", bucket, err)
+		}
+	} else {
+		config.CORS = corsConfig
+		glog.V(2).Infof("updateBucketConfigCacheFromEntry: loaded CORS config for bucket %s", bucket)
 	}
 
 	// Update timestamp

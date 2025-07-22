@@ -78,24 +78,33 @@ func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", time.Now().UnixNano()))
 	w.Header().Set("Accept-Ranges", "bytes")
 
-	// Only set static CORS headers for service-level requests, not bucket-specific requests
+	// Handle CORS headers for requests with Origin header
 	if r.Header.Get("Origin") != "" {
 		// Use mux.Vars to detect bucket-specific requests more reliably
 		vars := mux.Vars(r)
 		bucket := vars["bucket"]
 		isBucketRequest := bucket != ""
 
-		// Only apply static CORS headers if this is NOT a bucket-specific request
-		// and no bucket-specific CORS headers were already set
-		if !isBucketRequest && w.Header().Get("Access-Control-Allow-Origin") == "" {
-			// This is a service-level request (like OPTIONS /), apply static CORS
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "*")
-			w.Header().Set("Access-Control-Allow-Headers", "*")
-			w.Header().Set("Access-Control-Expose-Headers", "*")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		if !isBucketRequest {
+			// Service-level request (like OPTIONS /) - apply static CORS if none set
+			if w.Header().Get("Access-Control-Allow-Origin") == "" {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("Access-Control-Allow-Methods", "*")
+				w.Header().Set("Access-Control-Allow-Headers", "*")
+				w.Header().Set("Access-Control-Expose-Headers", "*")
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
+		} else {
+			// Bucket-specific request - preserve existing CORS headers or set default
+			// This handles cases where CORS middleware set headers but auth failed
+			if w.Header().Get("Access-Control-Allow-Origin") == "" {
+				// No CORS headers were set by middleware, so this request doesn't match any CORS rule
+				// According to CORS spec, we should not set CORS headers for non-matching requests
+				// However, if the bucket has CORS config but request doesn't match,
+				// we still should not set headers here as it would be incorrect
+			}
+			// If CORS headers were already set by middleware, preserve them
 		}
-		// For bucket-specific requests, let the CORS middleware handle the headers
 	}
 }
 
