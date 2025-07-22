@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go/service/s3"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -26,6 +28,7 @@ type BucketConfig struct {
 	Ownership        string
 	ACL              []byte
 	Owner            string
+	IsPublicRead     bool // Cached flag to avoid JSON parsing on every request
 	CORS             *cors.CORSConfiguration
 	ObjectLockConfig *ObjectLockConfiguration // Cached parsed Object Lock configuration
 	LastModified     time.Time
@@ -127,6 +130,8 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		}
 		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
 			config.ACL = acl
+			// Parse ACL once and cache public-read status
+			config.IsPublicRead = parseAndCachePublicReadStatus(acl)
 		}
 		if owner, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
@@ -434,6 +439,28 @@ func getMaxAgeSecondsValue(maxAge *int) int {
 		return 0
 	}
 	return *maxAge
+}
+
+// parseAndCachePublicReadStatus parses the ACL and caches the public-read status
+func parseAndCachePublicReadStatus(acl []byte) bool {
+	var grants []*s3.Grant
+	if err := json.Unmarshal(acl, &grants); err != nil {
+		glog.V(3).Infof("parseAndCachePublicReadStatus: failed to parse ACL: %v", err)
+		return false
+	}
+
+	// Check if any grant gives read permission to "AllUsers" group
+	for _, grant := range grants {
+		if grant.Grantee != nil && grant.Grantee.URI != nil && grant.Permission != nil {
+			// Check for AllUsers group with Read permission
+			if *grant.Grantee.URI == s3_constants.GranteeGroupAllUsers &&
+				(*grant.Permission == s3_constants.PermissionRead || *grant.Permission == s3_constants.PermissionFullControl) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // getBucketMetadata retrieves bucket metadata from bucket directory content using protobuf

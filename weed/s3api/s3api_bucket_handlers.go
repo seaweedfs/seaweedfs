@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -288,6 +289,53 @@ func (s3a *S3ApiServer) isUserAdmin(r *http.Request) bool {
 	return identity != nil && identity.isAdmin()
 }
 
+// isBucketPublicRead checks if a bucket allows anonymous read access based on its cached ACL status
+func (s3a *S3ApiServer) isBucketPublicRead(bucket string) bool {
+	// Get bucket configuration which contains cached public-read status
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		return false
+	}
+
+	// Return the cached public-read status (no JSON parsing needed)
+	return config.IsPublicRead
+}
+
+// isPublicReadGrants checks if the grants allow public read access
+func isPublicReadGrants(grants []*s3.Grant) bool {
+	for _, grant := range grants {
+		if grant.Grantee != nil && grant.Grantee.URI != nil && grant.Permission != nil {
+			// Check for AllUsers group with Read permission
+			if *grant.Grantee.URI == s3_constants.GranteeGroupAllUsers &&
+				(*grant.Permission == s3_constants.PermissionRead || *grant.Permission == s3_constants.PermissionFullControl) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// AuthWithPublicRead creates an auth wrapper that allows anonymous access for public-read buckets
+func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Action) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract bucket name from request
+		bucket, _ := s3_constants.GetBucketAndObject(r)
+
+		// Check if user is anonymous
+		isAnonymous := getRequestAuthType(r) == authTypeAnonymous
+
+		// If anonymous user and bucket is public-read, allow access
+		if isAnonymous && s3a.isBucketPublicRead(bucket) {
+			glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s", bucket)
+			handler(w, r)
+			return
+		}
+
+		// Otherwise, use normal IAM authentication
+		s3a.iam.Auth(handler, action)(w, r)
+	}
+}
+
 // GetBucketAclHandler Get Bucket ACL
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAcl.html
 func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Request) {
@@ -346,10 +394,31 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// For bucket ACLs, we accept the parsed grants but don't store them persistently
-	// This allows the tests to pass while maintaining S3 API compatibility
-	// In a full implementation, bucket ACLs would be stored in bucket metadata
-	glog.V(3).Infof("PutBucketAclHandler: Successfully processed ACL for bucket %s with %d grants", bucket, len(grants))
+	// Store the bucket ACL in bucket metadata
+	errCode = s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
+		if len(grants) > 0 {
+			grantsBytes, err := json.Marshal(grants)
+			if err != nil {
+				glog.Errorf("PutBucketAclHandler: failed to marshal grants: %v", err)
+				return err
+			}
+			config.ACL = grantsBytes
+			// Cache the public-read status to avoid JSON parsing on every request
+			config.IsPublicRead = isPublicReadGrants(grants)
+		} else {
+			config.ACL = nil
+			config.IsPublicRead = false
+		}
+		config.Owner = amzAccountId
+		return nil
+	})
+
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	glog.V(3).Infof("PutBucketAclHandler: Successfully stored ACL for bucket %s with %d grants", bucket, len(grants))
 
 	writeSuccessResponseEmpty(w, r)
 }
