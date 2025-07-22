@@ -175,7 +175,7 @@ func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *h
 	return false // Not a directory object, continue with normal processing
 }
 
-func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool, encodingTypeUrl bool) (listEntry ListEntry) {
+func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool, encodingTypeUrl bool, iam AccountManager) (listEntry ListEntry) {
 	storageClass := "STANDARD"
 	if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
 		storageClass = string(v)
@@ -211,12 +211,11 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 			ownerID = s3_constants.AccountAnonymousId
 			displayName = "anonymous"
 		} else {
-			// Use the ownerID as displayName if no better option is available
-			displayName = ownerID
-
-			// Additional fallback to file system username if available and different from ownerID
-			if entry.Attributes.UserName != "" && entry.Attributes.UserName != ownerID {
-				displayName = entry.Attributes.UserName
+			// Get the proper display name from IAM system
+			displayName = iam.GetAccountNameById(ownerID)
+			// Fallback to ownerID if no display name found
+			if displayName == "" {
+				displayName = ownerID
 			}
 		}
 
