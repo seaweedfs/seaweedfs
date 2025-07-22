@@ -1,10 +1,11 @@
 package s3api
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
