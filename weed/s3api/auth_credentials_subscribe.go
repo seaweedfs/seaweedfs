@@ -108,7 +108,7 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 	}
 
 	bucket := entry.Name
-	glog.V(2).Infof("updateBucketConfigCacheFromEntry: updating cache for bucket %s", bucket)
+	glog.Infof("[DEBUG] updateBucketConfigCacheFromEntry: updating cache for bucket %s", bucket)
 
 	// Create new bucket config from the entry
 	config := &BucketConfig{
@@ -119,28 +119,39 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 
 	// Extract configuration from extended attributes
 	if entry.Extended != nil {
+		glog.Infof("[DEBUG] updateBucketConfigCacheFromEntry: bucket %s has %d extended attributes", bucket, len(entry.Extended))
+
 		if versioning, exists := entry.Extended[s3_constants.ExtVersioningKey]; exists {
 			config.Versioning = string(versioning)
+			glog.Infof("[DEBUG] updateBucketConfigCacheFromEntry: bucket %s versioning=%s", bucket, config.Versioning)
 		}
 		if ownership, exists := entry.Extended[s3_constants.ExtOwnershipKey]; exists {
 			config.Ownership = string(ownership)
+			glog.Infof("[DEBUG] updateBucketConfigCacheFromEntry: bucket %s ownership=%s", bucket, config.Ownership)
 		}
 		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
 			config.ACL = acl
 			// Parse ACL and cache public-read status
 			config.IsPublicRead = parseAndCachePublicReadStatus(acl)
+			glog.Infof("[DEBUG] updateBucketConfigCacheFromEntry: bucket %s has ACL len=%d, parsed IsPublicRead=%v",
+				bucket, len(acl), config.IsPublicRead)
+			glog.Infof("[DEBUG] updateBucketConfigCacheFromEntry: bucket %s ACL content: %s", bucket, string(acl))
 		} else {
 			// No ACL means private bucket
 			config.IsPublicRead = false
+			glog.Infof("[DEBUG] updateBucketConfigCacheFromEntry: bucket %s has no ACL, setting IsPublicRead=false", bucket)
 		}
 		if owner, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
+			glog.Infof("[DEBUG] updateBucketConfigCacheFromEntry: bucket %s owner=%s", bucket, config.Owner)
 		}
 		// Parse Object Lock configuration if present
 		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(entry); found {
 			config.ObjectLockConfig = objectLockConfig
 			glog.V(2).Infof("updateBucketConfigCacheFromEntry: cached Object Lock configuration for bucket %s", bucket)
 		}
+	} else {
+		glog.Infof("[DEBUG] updateBucketConfigCacheFromEntry: bucket %s has no extended attributes", bucket)
 	}
 
 	// Load CORS configuration from bucket directory content
@@ -158,7 +169,7 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 
 	// Update cache
 	s3a.bucketConfigCache.Set(bucket, config)
-	glog.V(2).Infof("updateBucketConfigCacheFromEntry: updated bucket config cache for %s", bucket)
+	glog.Infof("[DEBUG] updateBucketConfigCacheFromEntry: updated bucket config cache for %s with IsPublicRead=%v", bucket, config.IsPublicRead)
 }
 
 // invalidateBucketConfigCache removes a bucket from the configuration cache

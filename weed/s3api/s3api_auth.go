@@ -3,6 +3,8 @@ package s3api
 import (
 	"net/http"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // AWS Signature Version '4' constants.
@@ -77,24 +79,32 @@ const (
 
 // Get request authentication type.
 func getRequestAuthType(r *http.Request) authType {
+	var authType authType
+
 	if isRequestSignatureV2(r) {
-		return authTypeSignedV2
+		authType = authTypeSignedV2
 	} else if isRequestPresignedSignatureV2(r) {
-		return authTypePresignedV2
+		authType = authTypePresignedV2
 	} else if isRequestSignStreamingV4(r) {
-		return authTypeStreamingSigned
+		authType = authTypeStreamingSigned
 	} else if isRequestUnsignedStreaming(r) {
-		return authTypeStreamingUnsigned
+		authType = authTypeStreamingUnsigned
 	} else if isRequestSignatureV4(r) {
-		return authTypeSigned
+		authType = authTypeSigned
 	} else if isRequestPresignedSignatureV4(r) {
-		return authTypePresigned
+		authType = authTypePresigned
 	} else if isRequestJWT(r) {
-		return authTypeJWT
+		authType = authTypeJWT
 	} else if isRequestPostPolicySignatureV4(r) {
-		return authTypePostPolicy
+		authType = authTypePostPolicy
 	} else if _, ok := r.Header["Authorization"]; !ok {
-		return authTypeAnonymous
+		authType = authTypeAnonymous
+	} else {
+		authType = authTypeUnknown
 	}
-	return authTypeUnknown
+
+	glog.Infof("[DEBUG] getRequestAuthType: request %s %s -> authType=%v, hasAuth=%v",
+		r.Method, r.URL.Path, authType, r.Header.Get("Authorization") != "")
+
+	return authType
 }

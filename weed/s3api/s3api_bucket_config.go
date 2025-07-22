@@ -99,21 +99,30 @@ func (bcc *BucketConfigCache) Clear() {
 
 // getBucketConfig retrieves bucket configuration with caching
 func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.ErrorCode) {
+	glog.Infof("[DEBUG] getBucketConfig: checking bucket %s", bucket)
+
 	// Try cache first
 	if config, found := s3a.bucketConfigCache.Get(bucket); found {
+		glog.Infof("[DEBUG] getBucketConfig: bucket %s found in cache - ACL len=%d, IsPublicRead=%v",
+			bucket, len(config.ACL), config.IsPublicRead)
 		return config, s3err.ErrNone
 	}
+
+	glog.Infof("[DEBUG] getBucketConfig: bucket %s not in cache, loading from filer", bucket)
 
 	// Try to get from filer
 	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
+			glog.Infof("[DEBUG] getBucketConfig: bucket %s not found in filer", bucket)
 			// Bucket doesn't exist
 			return nil, s3err.ErrNoSuchBucket
 		}
 		glog.Errorf("getBucketConfig: failed to get bucket entry for %s: %v", bucket, err)
 		return nil, s3err.ErrInternalError
 	}
+
+	glog.Infof("[DEBUG] getBucketConfig: bucket %s found in filer, creating config", bucket)
 
 	config := &BucketConfig{
 		Name:         bucket,
@@ -123,28 +132,39 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 
 	// Extract configuration from extended attributes
 	if entry.Extended != nil {
+		glog.Infof("[DEBUG] getBucketConfig: bucket %s has %d extended attributes", bucket, len(entry.Extended))
+
 		if versioning, exists := entry.Extended[s3_constants.ExtVersioningKey]; exists {
 			config.Versioning = string(versioning)
+			glog.Infof("[DEBUG] getBucketConfig: bucket %s versioning=%s", bucket, config.Versioning)
 		}
 		if ownership, exists := entry.Extended[s3_constants.ExtOwnershipKey]; exists {
 			config.Ownership = string(ownership)
+			glog.Infof("[DEBUG] getBucketConfig: bucket %s ownership=%s", bucket, config.Ownership)
 		}
 		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
 			config.ACL = acl
 			// Parse ACL once and cache public-read status
 			config.IsPublicRead = parseAndCachePublicReadStatus(acl)
+			glog.Infof("[DEBUG] getBucketConfig: bucket %s has ACL len=%d, parsed IsPublicRead=%v",
+				bucket, len(acl), config.IsPublicRead)
+			glog.Infof("[DEBUG] getBucketConfig: bucket %s ACL content: %s", bucket, string(acl))
 		} else {
 			// No ACL means private bucket
 			config.IsPublicRead = false
+			glog.Infof("[DEBUG] getBucketConfig: bucket %s has no ACL, setting IsPublicRead=false", bucket)
 		}
 		if owner, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
+			glog.Infof("[DEBUG] getBucketConfig: bucket %s owner=%s", bucket, config.Owner)
 		}
 		// Parse Object Lock configuration if present
 		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(entry); found {
 			config.ObjectLockConfig = objectLockConfig
 			glog.V(2).Infof("getBucketConfig: cached Object Lock configuration for bucket %s", bucket)
 		}
+	} else {
+		glog.Infof("[DEBUG] getBucketConfig: bucket %s has no extended attributes", bucket)
 	}
 
 	// Load CORS configuration from bucket directory content
@@ -162,6 +182,7 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 
 	// Cache the result
 	s3a.bucketConfigCache.Set(bucket, config)
+	glog.Infof("[DEBUG] getBucketConfig: bucket %s cached with final IsPublicRead=%v", bucket, config.IsPublicRead)
 
 	return config, s3err.ErrNone
 }
@@ -447,23 +468,34 @@ func getMaxAgeSecondsValue(maxAge *int) int {
 
 // parseAndCachePublicReadStatus parses the ACL and caches the public-read status
 func parseAndCachePublicReadStatus(acl []byte) bool {
+	glog.Infof("[DEBUG] parseAndCachePublicReadStatus: parsing ACL len=%d", len(acl))
+	glog.Infof("[DEBUG] parseAndCachePublicReadStatus: ACL content: %s", string(acl))
+
 	var grants []*s3.Grant
 	if err := json.Unmarshal(acl, &grants); err != nil {
-		glog.V(3).Infof("parseAndCachePublicReadStatus: failed to parse ACL: %v", err)
+		glog.Infof("[DEBUG] parseAndCachePublicReadStatus: failed to parse ACL: %v, returning false", err)
 		return false
 	}
 
+	glog.Infof("[DEBUG] parseAndCachePublicReadStatus: parsed %d grants", len(grants))
+
 	// Check if any grant gives read permission to "AllUsers" group
-	for _, grant := range grants {
+	for i, grant := range grants {
+		glog.Infof("[DEBUG] parseAndCachePublicReadStatus: grant %d - grantee=%v, permission=%v", i, grant.Grantee, grant.Permission)
+
 		if grant.Grantee != nil && grant.Grantee.URI != nil && grant.Permission != nil {
+			glog.Infof("[DEBUG] parseAndCachePublicReadStatus: grant %d - URI=%s, permission=%s", i, *grant.Grantee.URI, *grant.Permission)
+
 			// Check for AllUsers group with Read permission
 			if *grant.Grantee.URI == s3_constants.GranteeGroupAllUsers &&
 				(*grant.Permission == s3_constants.PermissionRead || *grant.Permission == s3_constants.PermissionFullControl) {
+				glog.Infof("[DEBUG] parseAndCachePublicReadStatus: found public read grant, returning true")
 				return true
 			}
 		}
 	}
 
+	glog.Infof("[DEBUG] parseAndCachePublicReadStatus: no public read grants found, returning false")
 	return false
 }
 

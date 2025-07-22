@@ -81,8 +81,9 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
+	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("PutBucketHandler %s", bucket)
+	glog.Infof("[DEBUG] PutBucketHandler: creating bucket %s", bucket)
 
 	// validate the bucket name
 	err := s3bucket.VerifyS3BucketName(bucket)
@@ -291,14 +292,30 @@ func (s3a *S3ApiServer) isUserAdmin(r *http.Request) bool {
 
 // isBucketPublicRead checks if a bucket allows anonymous read access based on its cached ACL status
 func (s3a *S3ApiServer) isBucketPublicRead(bucket string) bool {
+	glog.Infof("[DEBUG] isBucketPublicRead: checking bucket %s", bucket)
+
 	// Get bucket configuration which contains cached public-read status
 	config, errCode := s3a.getBucketConfig(bucket)
 	if errCode != s3err.ErrNone {
+		glog.Infof("[DEBUG] isBucketPublicRead: bucket %s error %v, returning false", bucket, errCode)
 		return false
 	}
 
+	// Log detailed bucket configuration
+	glog.Infof("[DEBUG] isBucketPublicRead: bucket %s config - ACL len=%d, IsPublicRead=%v, Owner=%s",
+		bucket, len(config.ACL), config.IsPublicRead, config.Owner)
+
+	if len(config.ACL) > 0 {
+		glog.Infof("[DEBUG] isBucketPublicRead: bucket %s has ACL: %s", bucket, string(config.ACL))
+	} else {
+		glog.Infof("[DEBUG] isBucketPublicRead: bucket %s has no ACL (should be private)", bucket)
+	}
+
 	// Return the cached public-read status (no JSON parsing needed)
-	return config.IsPublicRead
+	result := config.IsPublicRead
+	glog.Infof("[DEBUG] isBucketPublicRead: bucket %s final result=%v", bucket, result)
+	fmt.Printf("[CRITICAL DEBUG] isBucketPublicRead: bucket %s final result=%v\n", bucket, result)
+	return result
 }
 
 // isPublicReadGrants checks if the grants allow public read access
@@ -321,10 +338,24 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 		bucket, _ := s3_constants.GetBucketAndObject(r)
 		isAnonymous := getRequestAuthType(r) == authTypeAnonymous
 
-		if isAnonymous && s3a.isBucketPublicRead(bucket) {
-			glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s", bucket)
-			handler(w, r)
-			return
+		glog.Infof("[DEBUG] AuthWithPublicRead: bucket=%s, isAnonymous=%v, method=%s, path=%s", bucket, isAnonymous, r.Method, r.URL.Path)
+
+		if isAnonymous {
+			isPublic := s3a.isBucketPublicRead(bucket)
+			glog.Infof("[DEBUG] AuthWithPublicRead: anonymous request to bucket %s, isBucketPublicRead=%v", bucket, isPublic)
+			fmt.Printf("[CRITICAL DEBUG] AuthWithPublicRead: anonymous request to bucket %s, isBucketPublicRead=%v\n", bucket, isPublic)
+
+			if isPublic {
+				glog.Infof("[DEBUG] AuthWithPublicRead: ALLOWING anonymous access to public-read bucket %s", bucket)
+				fmt.Printf("[CRITICAL DEBUG] AuthWithPublicRead: ALLOWING anonymous access to public-read bucket %s\n", bucket)
+				handler(w, r)
+				return
+			} else {
+				glog.Infof("[DEBUG] AuthWithPublicRead: DENYING anonymous access to private bucket %s, falling back to IAM auth", bucket)
+				fmt.Printf("[CRITICAL DEBUG] AuthWithPublicRead: DENYING anonymous access to private bucket %s, falling back to IAM auth\n", bucket)
+			}
+		} else {
+			glog.Infof("[DEBUG] AuthWithPublicRead: authenticated request to bucket %s, falling back to IAM auth", bucket)
 		}
 
 		s3a.iam.Auth(handler, action)(w, r) // Fallback to normal IAM auth
