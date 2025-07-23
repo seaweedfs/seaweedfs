@@ -160,13 +160,13 @@ var cmdS3 = &Command{
   ]
 }
 
-	Alternatively, you can use environment variables to supplement admin credentials:
+	Alternatively, you can use environment variables as fallback admin credentials:
 
 	AWS_ACCESS_KEY_ID=your_access_key AWS_SECRET_ACCESS_KEY=your_secret_key weed s3
 
-	This will add admin credentials from environment variables to any existing
-	configuration. Environment variables are added after loading file/filer 
-	configurations and are skipped if the same access key already exists.
+	Environment variables are only used when no S3 configuration file is provided
+	and no configuration is available from the filer. This provides a simple way
+	to get started without requiring configuration files.
 
 `,
 }

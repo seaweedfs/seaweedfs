@@ -292,27 +292,31 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 		secretAccessKey   string
 		expectEnvIdentity bool
 		expectedName      string
+		description       string
 	}{
 		{
-			name:              "Both env vars set",
+			name:              "Environment variables used as fallback",
 			accessKeyId:       "AKIA1234567890ABCDEF",
 			secretAccessKey:   "secret123456789012345678901234567890abcdef12",
 			expectEnvIdentity: true,
 			expectedName:      "admin-AKIA1234",
+			description:       "When no config file and no filer config, environment variables should be used",
 		},
 		{
-			name:              "Short access key",
+			name:              "Short access key fallback",
 			accessKeyId:       "SHORT",
 			secretAccessKey:   "secret123456789012345678901234567890abcdef12",
 			expectEnvIdentity: true,
 			expectedName:      "admin-SHORT",
+			description:       "Short access keys should work correctly as fallback",
 		},
 		{
-			name:              "No env vars set",
+			name:              "No env vars means no identities",
 			accessKeyId:       "",
 			secretAccessKey:   "",
 			expectEnvIdentity: false,
 			expectedName:      "",
+			description:       "When no env vars and no config, should have no identities",
 		},
 	}
 
@@ -330,26 +334,22 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 				os.Unsetenv("AWS_SECRET_ACCESS_KEY")
 			}
 
-			// Create IAM instance with memory store for testing
+			// Create IAM instance with memory store for testing (no config file)
 			option := &S3ApiServerOption{
-				Config: "", // No config file, should use environment variables
+				Config: "", // No config file - this should trigger environment variable fallback
 			}
 			iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
 
 			if tt.expectEnvIdentity {
-				// Check that environment variable identity was created
-				found := false
-				for _, identity := range iam.identities {
-					if identity.Name == tt.expectedName {
-						found = true
-						assert.Len(t, identity.Credentials, 1, "Should have one credential")
-						assert.Equal(t, tt.accessKeyId, identity.Credentials[0].AccessKey, "Access key should match environment variable")
-						assert.Equal(t, tt.secretAccessKey, identity.Credentials[0].SecretKey, "Secret key should match environment variable")
-						assert.Contains(t, identity.Actions, Action(ACTION_ADMIN), "Should have admin action")
-						break
-					}
-				}
-				assert.True(t, found, "Should find identity created from environment variables")
+				// Should have exactly one identity from environment variables
+				assert.Len(t, iam.identities, 1, "Should have exactly one identity from environment variables")
+
+				identity := iam.identities[0]
+				assert.Equal(t, tt.expectedName, identity.Name, "Identity name should match expected")
+				assert.Len(t, identity.Credentials, 1, "Should have one credential")
+				assert.Equal(t, tt.accessKeyId, identity.Credentials[0].AccessKey, "Access key should match environment variable")
+				assert.Equal(t, tt.secretAccessKey, identity.Credentials[0].SecretKey, "Secret key should match environment variable")
+				assert.Contains(t, identity.Actions, Action(ACTION_ADMIN), "Should have admin action")
 			} else {
 				// When no env vars, should have no identities (since no config file)
 				assert.Len(t, iam.identities, 0, "Should have no identities when no env vars and no config file")
