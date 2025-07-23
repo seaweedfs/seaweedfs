@@ -263,8 +263,24 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 		entryPath := path.Join(relativePath, entry.Name)
 
 		// Skip if this doesn't match the prefix filter
-		if prefix != "" && !strings.HasPrefix(entryPath, strings.TrimPrefix(prefix, "/")) {
-			continue
+		if normalizedPrefix := strings.TrimPrefix(prefix, "/"); normalizedPrefix != "" {
+			// An entry is a candidate if:
+			// 1. Its path is a match for the prefix.
+			// 2. It is a directory that is an ancestor of the prefix path, so we must descend into it.
+
+			// Condition 1: The entry's path starts with the prefix.
+			isMatch := strings.HasPrefix(entryPath, normalizedPrefix)
+			if !isMatch && entry.IsDirectory {
+				// Also check if a directory entry matches a directory-style prefix (e.g., prefix "a/", entry "a").
+				isMatch = strings.HasPrefix(entryPath+"/", normalizedPrefix)
+			}
+
+			// Condition 2: The prefix path starts with the entry's path (and it's a directory).
+			canDescend := entry.IsDirectory && strings.HasPrefix(normalizedPrefix, entryPath)
+
+			if !isMatch && !canDescend {
+				continue
+			}
 		}
 
 		if entry.IsDirectory {
@@ -715,7 +731,8 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 
 	// Parse query parameters
 	query := r.URL.Query()
-	prefix := query.Get("prefix")
+	originalPrefix := query.Get("prefix") // Keep original prefix for response
+	prefix := originalPrefix              // Use for internal processing
 	if prefix != "" && !strings.HasPrefix(prefix, "/") {
 		prefix = "/" + prefix
 	}
@@ -739,6 +756,9 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
+
+	// Set the original prefix in the response (not the normalized internal prefix)
+	result.Prefix = originalPrefix
 
 	writeSuccessResponseXML(w, r, result)
 }

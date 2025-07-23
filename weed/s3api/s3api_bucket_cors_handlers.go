@@ -5,20 +5,10 @@ import (
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/cors"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
-
-// S3EntryGetter implements cors.EntryGetter interface
-type S3EntryGetter struct {
-	server *S3ApiServer
-}
-
-func (g *S3EntryGetter) GetEntry(directory, name string) (*filer_pb.Entry, error) {
-	return g.server.getEntry(directory, name)
-}
 
 // S3BucketChecker implements cors.BucketChecker interface
 type S3BucketChecker struct {
@@ -40,11 +30,10 @@ func (g *S3CORSConfigGetter) GetCORSConfiguration(bucket string) (*cors.CORSConf
 
 // getCORSMiddleware returns a CORS middleware instance with caching
 func (s3a *S3ApiServer) getCORSMiddleware() *cors.Middleware {
-	storage := s3a.getCORSStorage()
 	bucketChecker := &S3BucketChecker{server: s3a}
 	corsConfigGetter := &S3CORSConfigGetter{server: s3a}
 
-	return cors.NewMiddleware(storage, bucketChecker, corsConfigGetter)
+	return cors.NewMiddleware(bucketChecker, corsConfigGetter)
 }
 
 // GetBucketCorsHandler handles Get bucket CORS configuration
