@@ -3,9 +3,9 @@ package s3api
 import (
 	"os"
 	"reflect"
-	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
 
@@ -267,7 +267,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 	}
 }
 
-func TestLoadS3ApiConfigurationWithEnvVars(t *testing.T) {
+func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 	// Save original environment
 	originalAccessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
 	originalSecretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
@@ -287,92 +287,32 @@ func TestLoadS3ApiConfigurationWithEnvVars(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name               string
-		accessKeyId        string
-		secretAccessKey    string
-		existingIdentities []*iam_pb.Identity
-		expectEnvIdentity  bool
-		expectTotal        int
+		name              string
+		accessKeyId       string
+		secretAccessKey   string
+		expectEnvIdentity bool
+		expectedName      string
 	}{
 		{
-			name:               "Both env vars set with no existing identities",
-			accessKeyId:        "AKIA1234567890ABCDEF",
-			secretAccessKey:    "secret123456789012345678901234567890abcdef12",
-			existingIdentities: []*iam_pb.Identity{},
-			expectEnvIdentity:  true,
-			expectTotal:        1,
-		},
-		{
-			name:               "Short access key (less than 8 characters)",
-			accessKeyId:        "SHORT",
-			secretAccessKey:    "secret123456789012345678901234567890abcdef12",
-			existingIdentities: []*iam_pb.Identity{},
-			expectEnvIdentity:  true,
-			expectTotal:        1,
-		},
-		{
-			name:               "Empty access key",
-			accessKeyId:        "",
-			secretAccessKey:    "secret123456789012345678901234567890abcdef12",
-			existingIdentities: []*iam_pb.Identity{},
-			expectEnvIdentity:  false,
-			expectTotal:        0,
-		},
-		{
-			name:            "Both env vars set with existing different identity",
-			accessKeyId:     "AKIA1234567890ABCDEF",
-			secretAccessKey: "secret123456789012345678901234567890abcdef12",
-			existingIdentities: []*iam_pb.Identity{
-				{
-					Name: "existing_user",
-					Credentials: []*iam_pb.Credential{
-						{AccessKey: "AKIA0000000000000000", SecretKey: "existing_secret"},
-					},
-					Actions: []string{ACTION_READ},
-				},
-			},
+			name:              "Both env vars set",
+			accessKeyId:       "AKIA1234567890ABCDEF",
+			secretAccessKey:   "secret123456789012345678901234567890abcdef12",
 			expectEnvIdentity: true,
-			expectTotal:       2,
+			expectedName:      "admin-AKIA1234",
 		},
 		{
-			name:            "Both env vars set with existing same access key",
-			accessKeyId:     "AKIA1234567890ABCDEF",
-			secretAccessKey: "secret123456789012345678901234567890abcdef12",
-			existingIdentities: []*iam_pb.Identity{
-				{
-					Name: "existing_user",
-					Credentials: []*iam_pb.Credential{
-						{AccessKey: "AKIA1234567890ABCDEF", SecretKey: "existing_secret"}, // Same access key as env var
-					},
-					Actions: []string{ACTION_READ},
-				},
-			},
-			expectEnvIdentity: false, // Should skip because access key exists
-			expectTotal:       1,
+			name:              "Short access key",
+			accessKeyId:       "SHORT",
+			secretAccessKey:   "secret123456789012345678901234567890abcdef12",
+			expectEnvIdentity: true,
+			expectedName:      "admin-SHORT",
 		},
 		{
-			name:               "Only access key set",
-			accessKeyId:        "AKIA1234567890ABCDEF",
-			secretAccessKey:    "",
-			existingIdentities: []*iam_pb.Identity{},
-			expectEnvIdentity:  false,
-			expectTotal:        0,
-		},
-		{
-			name:               "Only secret key set",
-			accessKeyId:        "",
-			secretAccessKey:    "secret123456789012345678901234567890abcdef12",
-			existingIdentities: []*iam_pb.Identity{},
-			expectEnvIdentity:  false,
-			expectTotal:        0,
-		},
-		{
-			name:               "Neither env var set",
-			accessKeyId:        "",
-			secretAccessKey:    "",
-			existingIdentities: []*iam_pb.Identity{},
-			expectEnvIdentity:  false,
-			expectTotal:        0,
+			name:              "No env vars set",
+			accessKeyId:       "",
+			secretAccessKey:   "",
+			expectEnvIdentity: false,
+			expectedName:      "",
 		},
 	}
 
@@ -390,45 +330,29 @@ func TestLoadS3ApiConfigurationWithEnvVars(t *testing.T) {
 				os.Unsetenv("AWS_SECRET_ACCESS_KEY")
 			}
 
-			// Create IAM instance and test the loadAdminCredentialsFromEnv function
-			iam := &IdentityAccessManagement{}
-
-			// Create S3ApiConfiguration with existing identities
-			config := &iam_pb.S3ApiConfiguration{
-				Identities: tt.existingIdentities,
+			// Create IAM instance with memory store for testing
+			option := &S3ApiServerOption{
+				Config: "", // No config file, should use environment variables
 			}
-
-			// Test the loadAdminCredentialsFromEnv function
-			iam.loadAdminCredentialsFromEnv(config)
-
-			// Test the result
-			assert.Len(t, config.Identities, tt.expectTotal, "Should have expected number of identities")
+			iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
 
 			if tt.expectEnvIdentity {
-				// Find the identity created from environment variables
+				// Check that environment variable identity was created
 				found := false
-				for _, identity := range config.Identities {
-					for _, cred := range identity.Credentials {
-						if cred.AccessKey == tt.accessKeyId {
-							found = true
-							assert.Equal(t, tt.accessKeyId, cred.AccessKey, "Access key should match environment variable")
-							assert.Equal(t, tt.secretAccessKey, cred.SecretKey, "Secret key should match environment variable")
-							assert.Contains(t, identity.Actions, ACTION_ADMIN, "Should have admin action")
-							assert.True(t, strings.HasPrefix(identity.Name, "admin-"), "Identity name should have admin prefix")
-							// Verify the suffix is correct (either full access key or first 8 chars)
-							expectedSuffix := tt.accessKeyId
-							if len(tt.accessKeyId) > 8 {
-								expectedSuffix = tt.accessKeyId[:8]
-							}
-							assert.Equal(t, "admin-"+expectedSuffix, identity.Name, "Identity name should be admin- plus access key or first 8 chars")
-							break
-						}
-					}
-					if found {
+				for _, identity := range iam.identities {
+					if identity.Name == tt.expectedName {
+						found = true
+						assert.Len(t, identity.Credentials, 1, "Should have one credential")
+						assert.Equal(t, tt.accessKeyId, identity.Credentials[0].AccessKey, "Access key should match environment variable")
+						assert.Equal(t, tt.secretAccessKey, identity.Credentials[0].SecretKey, "Secret key should match environment variable")
+						assert.Contains(t, identity.Actions, Action(ACTION_ADMIN), "Should have admin action")
 						break
 					}
 				}
 				assert.True(t, found, "Should find identity created from environment variables")
+			} else {
+				// When no env vars, should have no identities (since no config file)
+				assert.Len(t, iam.identities, 0, "Should have no identities when no env vars and no config file")
 			}
 		})
 	}

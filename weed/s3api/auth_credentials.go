@@ -103,52 +103,6 @@ func (action Action) getPermission() Permission {
 	}
 }
 
-// loadAdminCredentialsFromEnv loads admin credentials from environment variables
-// and adds them to the S3ApiConfiguration if both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set
-func (iam *IdentityAccessManagement) loadAdminCredentialsFromEnv(s3ApiConfiguration *iam_pb.S3ApiConfiguration) {
-	accessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
-	secretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-
-	if accessKeyId == "" || secretAccessKey == "" {
-		return // Both must be set to create admin credentials
-	}
-
-	glog.V(0).Infof("Loading S3 admin credentials from AWS environment variables")
-
-	// Check if an identity with this access key already exists
-	for _, identity := range s3ApiConfiguration.Identities {
-		for _, cred := range identity.Credentials {
-			if cred.AccessKey == accessKeyId {
-				glog.V(0).Infof("Access key %s already exists, skipping environment variable credentials", accessKeyId)
-				return
-			}
-		}
-	}
-
-	// Create admin identity with environment variable credentials
-	// Use access key as identity name for consistency
-	identityNameSuffix := accessKeyId
-	if len(accessKeyId) > 8 {
-		identityNameSuffix = accessKeyId[:8]
-	}
-
-	adminIdentity := &iam_pb.Identity{
-		Name: "admin-" + identityNameSuffix, // Use prefix + access key (truncated if > 8 chars)
-		Credentials: []*iam_pb.Credential{
-			{
-				AccessKey: accessKeyId,
-				SecretKey: secretAccessKey,
-			},
-		},
-		Actions: []string{
-			s3_constants.ACTION_ADMIN,
-		},
-	}
-
-	s3ApiConfiguration.Identities = append(s3ApiConfiguration.Identities, adminIdentity)
-	glog.V(0).Infof("Added admin identity from AWS environment variables: %s", adminIdentity.Name)
-}
-
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
 	return NewIdentityAccessManagementWithStore(option, "")
 }
@@ -177,6 +131,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 
 	iam.credentialManager = credentialManager
 
+	// First, load configurations from file or filer
 	if option.Config != "" {
 		glog.V(3).Infof("loading static config file %s", option.Config)
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
@@ -189,20 +144,65 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		}
 	}
 
-	// Always load admin credentials from environment variables after loading other configurations
-	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
-	if err != nil {
-		glog.Warningf("failed to load configuration for environment variables: %v", err)
-		// Create empty configuration if loading fails
-		s3ApiConfiguration = &iam_pb.S3ApiConfiguration{}
-	}
+	// Then, add admin credentials from environment variables if available
+	// This ensures environment variables take precedence and supplement existing config
+	accessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
-	// Load environment variable credentials
-	iam.loadAdminCredentialsFromEnv(s3ApiConfiguration)
+	if accessKeyId != "" && secretAccessKey != "" {
+		glog.V(0).Infof("Adding S3 admin credentials from AWS environment variables")
 
-	// Apply the updated configuration
-	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
-		glog.Warningf("failed to apply environment variable configuration: %v", err)
+		// Check if an identity with this access key already exists
+		accessKeyExists := false
+		iam.m.RLock()
+		for _, identity := range iam.identities {
+			for _, cred := range identity.Credentials {
+				if cred.AccessKey == accessKeyId {
+					accessKeyExists = true
+					break
+				}
+			}
+			if accessKeyExists {
+				break
+			}
+		}
+		iam.m.RUnlock()
+
+		if !accessKeyExists {
+			// Create environment variable identity name
+			identityNameSuffix := accessKeyId
+			if len(accessKeyId) > 8 {
+				identityNameSuffix = accessKeyId[:8]
+			}
+
+			// Create admin identity with environment variable credentials
+			envIdentity := &Identity{
+				Name:    "admin-" + identityNameSuffix,
+				Account: &AccountAdmin,
+				Credentials: []*Credential{
+					{
+						AccessKey: accessKeyId,
+						SecretKey: secretAccessKey,
+					},
+				},
+				Actions: []Action{
+					s3_constants.ACTION_ADMIN,
+				},
+			}
+
+			// Add to existing configuration
+			iam.m.Lock()
+			iam.identities = append(iam.identities, envIdentity)
+			iam.accessKeyIdent[accessKeyId] = envIdentity
+			if !iam.isAuthEnabled {
+				iam.isAuthEnabled = true
+			}
+			iam.m.Unlock()
+
+			glog.V(0).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
+		} else {
+			glog.V(0).Infof("Access key %s already exists, skipping environment variable credentials", accessKeyId)
+		}
 	}
 
 	return iam
