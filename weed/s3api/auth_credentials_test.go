@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"os"
 	"reflect"
 	"testing"
 
@@ -262,5 +263,145 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 		if !reflect.DeepEqual(ident, tc.expectIdent) {
 			t.Errorf("not expect for ident name %s", ident.Name)
 		}
+	}
+}
+
+func TestLoadS3ApiConfigurationWithEnvVars(t *testing.T) {
+	// Save original environment
+	originalAdminUser := os.Getenv("WEED_S3_ADMIN_USER")
+	originalAdminPassword := os.Getenv("WEED_S3_ADMIN_PASSWORD")
+
+	// Clean up after test
+	defer func() {
+		if originalAdminUser != "" {
+			os.Setenv("WEED_S3_ADMIN_USER", originalAdminUser)
+		} else {
+			os.Unsetenv("WEED_S3_ADMIN_USER")
+		}
+		if originalAdminPassword != "" {
+			os.Setenv("WEED_S3_ADMIN_PASSWORD", originalAdminPassword)
+		} else {
+			os.Unsetenv("WEED_S3_ADMIN_PASSWORD")
+		}
+	}()
+
+	tests := []struct {
+		name               string
+		adminUser          string
+		adminPassword      string
+		existingIdentities []*iam_pb.Identity
+		expectEnvIdentity  bool
+		expectTotal        int
+	}{
+		{
+			name:               "Both env vars set with no existing identities",
+			adminUser:          "admin_user",
+			adminPassword:      "admin_password",
+			existingIdentities: []*iam_pb.Identity{},
+			expectEnvIdentity:  true,
+			expectTotal:        1,
+		},
+		{
+			name:          "Both env vars set with existing different identity",
+			adminUser:     "admin_user",
+			adminPassword: "admin_password",
+			existingIdentities: []*iam_pb.Identity{
+				{
+					Name: "existing_user",
+					Credentials: []*iam_pb.Credential{
+						{AccessKey: "existing_key", SecretKey: "existing_secret"},
+					},
+					Actions: []string{ACTION_READ},
+				},
+			},
+			expectEnvIdentity: true,
+			expectTotal:       2,
+		},
+		{
+			name:          "Both env vars set with existing same name identity",
+			adminUser:     "admin_user",
+			adminPassword: "admin_password",
+			existingIdentities: []*iam_pb.Identity{
+				{
+					Name: "admin_user", // Same name as env var
+					Credentials: []*iam_pb.Credential{
+						{AccessKey: "existing_key", SecretKey: "existing_secret"},
+					},
+					Actions: []string{ACTION_READ},
+				},
+			},
+			expectEnvIdentity: false, // Should skip because name exists
+			expectTotal:       1,
+		},
+		{
+			name:               "Only admin user set",
+			adminUser:          "admin_user",
+			adminPassword:      "",
+			existingIdentities: []*iam_pb.Identity{},
+			expectEnvIdentity:  false,
+			expectTotal:        0,
+		},
+		{
+			name:               "Only admin password set",
+			adminUser:          "",
+			adminPassword:      "admin_password",
+			existingIdentities: []*iam_pb.Identity{},
+			expectEnvIdentity:  false,
+			expectTotal:        0,
+		},
+		{
+			name:               "Neither env var set",
+			adminUser:          "",
+			adminPassword:      "",
+			existingIdentities: []*iam_pb.Identity{},
+			expectEnvIdentity:  false,
+			expectTotal:        0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up environment variables
+			if tt.adminUser != "" {
+				os.Setenv("WEED_S3_ADMIN_USER", tt.adminUser)
+			} else {
+				os.Unsetenv("WEED_S3_ADMIN_USER")
+			}
+			if tt.adminPassword != "" {
+				os.Setenv("WEED_S3_ADMIN_PASSWORD", tt.adminPassword)
+			} else {
+				os.Unsetenv("WEED_S3_ADMIN_PASSWORD")
+			}
+
+			// Create IAM instance and test the loadAdminCredentialsFromEnv function
+			iam := &IdentityAccessManagement{}
+
+			// Create S3ApiConfiguration with existing identities
+			config := &iam_pb.S3ApiConfiguration{
+				Identities: tt.existingIdentities,
+			}
+
+			// Test the loadAdminCredentialsFromEnv function
+			iam.loadAdminCredentialsFromEnv(config)
+
+			// Test the result
+			assert.Len(t, config.Identities, tt.expectTotal, "Should have expected number of identities")
+
+			if tt.expectEnvIdentity {
+				// Find the identity created from environment variables
+				found := false
+				for _, identity := range config.Identities {
+					if identity.Name == tt.adminUser {
+						found = true
+						assert.Len(t, identity.Credentials, 1, "Should have one credential")
+						assert.Equal(t, tt.adminUser, identity.Credentials[0].AccessKey, "Access key should match admin user")
+						assert.Equal(t, tt.adminPassword, identity.Credentials[0].SecretKey, "Secret key should match admin password")
+						assert.Contains(t, identity.Actions, ACTION_ADMIN, "Should have admin action")
+						break
+					}
+				}
+				assert.True(t, found, "Should find identity created from environment variables")
+			}
+		})
 	}
 }

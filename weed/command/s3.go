@@ -160,6 +160,19 @@ var cmdS3 = &Command{
   ]
 }
 
+	Alternatively, you can use environment variables to set admin credentials
+	without requiring a configuration file:
+
+	WEED_S3_ADMIN_USER=admin_user WEED_S3_ADMIN_PASSWORD=admin_password weed s3
+
+	This will create a default admin identity with full Admin permissions.
+ 	  * The admin access key is from WEED_S3_ADMIN_USER.
+	  * The admin secret key is from WEED_S3_ADMIN_PASSWORD.
+	
+	The environment variables are always loaded when both are set, regardless
+	of whether a configuration file is provided. If an identity with the same
+	name already exists, the environment variable credentials will be skipped.
+
 `,
 }
 

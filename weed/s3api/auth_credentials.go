@@ -85,22 +85,6 @@ type Credential struct {
 	SecretKey string
 }
 
-func (i *Identity) isAnonymous() bool {
-	return i.Account.Id == s3_constants.AccountAnonymousId
-}
-
-func (action Action) isAdmin() bool {
-	return strings.HasPrefix(string(action), s3_constants.ACTION_ADMIN)
-}
-
-func (action Action) isOwner(bucket string) bool {
-	return string(action) == s3_constants.ACTION_ADMIN+":"+bucket
-}
-
-func (action Action) overBucket(bucket string) bool {
-	return strings.HasSuffix(string(action), ":"+bucket) || strings.HasSuffix(string(action), ":*")
-}
-
 // "Permission": "FULL_CONTROL"|"WRITE"|"WRITE_ACP"|"READ"|"READ_ACP"
 func (action Action) getPermission() Permission {
 	switch act := strings.Split(string(action), ":")[0]; act {
@@ -117,6 +101,44 @@ func (action Action) getPermission() Permission {
 	default:
 		return Permission("")
 	}
+}
+
+// loadAdminCredentialsFromEnv loads admin credentials from environment variables
+// and adds them to the S3ApiConfiguration if both WEED_S3_ADMIN_USER and WEED_S3_ADMIN_PASSWORD are set
+func (iam *IdentityAccessManagement) loadAdminCredentialsFromEnv(s3ApiConfiguration *iam_pb.S3ApiConfiguration) {
+	adminUser := os.Getenv("WEED_S3_ADMIN_USER")
+	adminPassword := os.Getenv("WEED_S3_ADMIN_PASSWORD")
+
+	if adminUser == "" || adminPassword == "" {
+		return // Both must be set to create admin credentials
+	}
+
+	glog.V(0).Infof("Loading S3 admin credentials from environment variables")
+
+	// Check if an identity with this name already exists
+	for _, identity := range s3ApiConfiguration.Identities {
+		if identity.Name == adminUser {
+			glog.V(0).Infof("Identity %s already exists, skipping environment variable credentials", adminUser)
+			return
+		}
+	}
+
+	// Create admin identity with environment variable credentials
+	adminIdentity := &iam_pb.Identity{
+		Name: adminUser,
+		Credentials: []*iam_pb.Credential{
+			{
+				AccessKey: adminUser,
+				SecretKey: adminPassword,
+			},
+		},
+		Actions: []string{
+			s3_constants.ACTION_ADMIN,
+		},
+	}
+
+	s3ApiConfiguration.Identities = append(s3ApiConfiguration.Identities, adminIdentity)
+	glog.V(0).Infof("Added admin identity from environment variables: %s", adminUser)
 }
 
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
@@ -158,6 +180,23 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 			glog.Warningf("fail to load config: %v", err)
 		}
 	}
+
+	// Always load admin credentials from environment variables after loading other configurations
+	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
+	if err != nil {
+		glog.Warningf("failed to load configuration for environment variables: %v", err)
+		// Create empty configuration if loading fails
+		s3ApiConfiguration = &iam_pb.S3ApiConfiguration{}
+	}
+
+	// Load environment variable credentials
+	iam.loadAdminCredentialsFromEnv(s3ApiConfiguration)
+
+	// Apply the updated configuration
+	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
+		glog.Warningf("failed to apply environment variable configuration: %v", err)
+	}
+
 	return iam
 }
 
@@ -536,10 +575,6 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
-	}
-
-	if len(s3ApiConfiguration.Identities) == 0 {
-		return fmt.Errorf("no identities found")
 	}
 
 	return iam.loadS3ApiConfiguration(s3ApiConfiguration)
