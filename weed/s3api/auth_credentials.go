@@ -186,9 +186,11 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 
 			// Set as the only configuration
 			iam.m.Lock()
-			iam.identities = []*Identity{envIdentity}
-			iam.accessKeyIdent = map[string]*Identity{accessKeyId: envIdentity}
-			iam.isAuthEnabled = true
+			if len(iam.identities) == 0 {
+				iam.identities = []*Identity{envIdentity}
+				iam.accessKeyIdent = map[string]*Identity{accessKeyId: envIdentity}
+				iam.isAuthEnabled = true
+			}
 			iam.m.Unlock()
 
 			glog.V(0).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
