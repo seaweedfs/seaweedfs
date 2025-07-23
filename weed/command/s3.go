@@ -160,15 +160,13 @@ var cmdS3 = &Command{
   ]
 }
 
-	Alternatively, you can use environment variables to set admin credentials
-	without requiring a configuration file:
+	Alternatively, you can use environment variables to supplement admin credentials:
 
-	AWS_ACCESS_KEY_ID=access_key AWS_SECRET_ACCESS_KEY=secret_key weed s3
+	AWS_ACCESS_KEY_ID=your_access_key AWS_SECRET_ACCESS_KEY=your_secret_key weed s3
 
-	This will create a default admin identity with full Admin permissions.
-	The environment variables are always loaded when both are set, regardless
-	of whether a configuration file is provided. If an identity with the same
-	access key already exists, the environment variable credentials will be skipped.
+	This will add admin credentials from environment variables to any existing
+	configuration. Environment variables are added after loading file/filer 
+	configurations and are skipped if the same access key already exists.
 
 `,
 }
