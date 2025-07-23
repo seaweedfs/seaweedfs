@@ -145,7 +145,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	}
 
 	// Then, add admin credentials from environment variables if available
-	// This ensures environment variables take precedence and supplement existing config
+// This supplements the configuration by adding admin credentials from environment variables if they don't already exist.
 	accessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
 	secretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
