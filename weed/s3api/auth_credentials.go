@@ -153,19 +153,8 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		glog.V(0).Infof("Adding S3 admin credentials from AWS environment variables")
 
 		// Check if an identity with this access key already exists
-		accessKeyExists := false
 		iam.m.RLock()
-		for _, identity := range iam.identities {
-			for _, cred := range identity.Credentials {
-				if cred.AccessKey == accessKeyId {
-					accessKeyExists = true
-					break
-				}
-			}
-			if accessKeyExists {
-				break
-			}
-		}
+		_, accessKeyExists := iam.accessKeyIdent[accessKeyId]
 		iam.m.RUnlock()
 
 		if !accessKeyExists {
