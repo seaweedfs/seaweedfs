@@ -1,9 +1,11 @@
 package s3api
 
 import (
+	"os"
 	"reflect"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
 
@@ -262,5 +264,96 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 		if !reflect.DeepEqual(ident, tc.expectIdent) {
 			t.Errorf("not expect for ident name %s", ident.Name)
 		}
+	}
+}
+
+func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
+	// Save original environment
+	originalAccessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
+	originalSecretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+
+	// Clean up after test
+	defer func() {
+		if originalAccessKeyId != "" {
+			os.Setenv("AWS_ACCESS_KEY_ID", originalAccessKeyId)
+		} else {
+			os.Unsetenv("AWS_ACCESS_KEY_ID")
+		}
+		if originalSecretAccessKey != "" {
+			os.Setenv("AWS_SECRET_ACCESS_KEY", originalSecretAccessKey)
+		} else {
+			os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+		}
+	}()
+
+	tests := []struct {
+		name              string
+		accessKeyId       string
+		secretAccessKey   string
+		expectEnvIdentity bool
+		expectedName      string
+	}{
+		{
+			name:              "Both env vars set",
+			accessKeyId:       "AKIA1234567890ABCDEF",
+			secretAccessKey:   "secret123456789012345678901234567890abcdef12",
+			expectEnvIdentity: true,
+			expectedName:      "admin-AKIA1234",
+		},
+		{
+			name:              "Short access key",
+			accessKeyId:       "SHORT",
+			secretAccessKey:   "secret123456789012345678901234567890abcdef12",
+			expectEnvIdentity: true,
+			expectedName:      "admin-SHORT",
+		},
+		{
+			name:              "No env vars set",
+			accessKeyId:       "",
+			secretAccessKey:   "",
+			expectEnvIdentity: false,
+			expectedName:      "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up environment variables
+			if tt.accessKeyId != "" {
+				os.Setenv("AWS_ACCESS_KEY_ID", tt.accessKeyId)
+			} else {
+				os.Unsetenv("AWS_ACCESS_KEY_ID")
+			}
+			if tt.secretAccessKey != "" {
+				os.Setenv("AWS_SECRET_ACCESS_KEY", tt.secretAccessKey)
+			} else {
+				os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+			}
+
+			// Create IAM instance with memory store for testing
+			option := &S3ApiServerOption{
+				Config: "", // No config file, should use environment variables
+			}
+			iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
+
+			if tt.expectEnvIdentity {
+				// Check that environment variable identity was created
+				found := false
+				for _, identity := range iam.identities {
+					if identity.Name == tt.expectedName {
+						found = true
+						assert.Len(t, identity.Credentials, 1, "Should have one credential")
+						assert.Equal(t, tt.accessKeyId, identity.Credentials[0].AccessKey, "Access key should match environment variable")
+						assert.Equal(t, tt.secretAccessKey, identity.Credentials[0].SecretKey, "Secret key should match environment variable")
+						assert.Contains(t, identity.Actions, Action(ACTION_ADMIN), "Should have admin action")
+						break
+					}
+				}
+				assert.True(t, found, "Should find identity created from environment variables")
+			} else {
+				// When no env vars, should have no identities (since no config file)
+				assert.Len(t, iam.identities, 0, "Should have no identities when no env vars and no config file")
+			}
+		})
 	}
 }
