@@ -142,7 +142,7 @@ spec:
               {{- if .Values.allInOne.disableHttp }}
               -disableHttp={{ .Values.allInOne.disableHttp }} \
               {{- end }}
-              {{- if index .Values.volume.dataDirs 0 "maxVolumes" }}
+              {{- if and (.Values.volume.dataDirs) (index .Values.volume.dataDirs 0 "maxVolumes") }}
               -volume.max={{ index .Values.volume.dataDirs 0 "maxVolumes" }} \
               {{- end }}
               -master.port={{ .Values.master.port }} \
