@@ -3,6 +3,7 @@ package s3api
 import (
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -268,48 +269,64 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 
 func TestLoadS3ApiConfigurationWithEnvVars(t *testing.T) {
 	// Save original environment
-	originalAdminUser := os.Getenv("WEED_S3_ADMIN_USER")
-	originalAdminPassword := os.Getenv("WEED_S3_ADMIN_PASSWORD")
+	originalAccessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
+	originalSecretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
 	// Clean up after test
 	defer func() {
-		if originalAdminUser != "" {
-			os.Setenv("WEED_S3_ADMIN_USER", originalAdminUser)
+		if originalAccessKeyId != "" {
+			os.Setenv("AWS_ACCESS_KEY_ID", originalAccessKeyId)
 		} else {
-			os.Unsetenv("WEED_S3_ADMIN_USER")
+			os.Unsetenv("AWS_ACCESS_KEY_ID")
 		}
-		if originalAdminPassword != "" {
-			os.Setenv("WEED_S3_ADMIN_PASSWORD", originalAdminPassword)
+		if originalSecretAccessKey != "" {
+			os.Setenv("AWS_SECRET_ACCESS_KEY", originalSecretAccessKey)
 		} else {
-			os.Unsetenv("WEED_S3_ADMIN_PASSWORD")
+			os.Unsetenv("AWS_SECRET_ACCESS_KEY")
 		}
 	}()
 
 	tests := []struct {
 		name               string
-		adminUser          string
-		adminPassword      string
+		accessKeyId        string
+		secretAccessKey    string
 		existingIdentities []*iam_pb.Identity
 		expectEnvIdentity  bool
 		expectTotal        int
 	}{
 		{
 			name:               "Both env vars set with no existing identities",
-			adminUser:          "admin_user",
-			adminPassword:      "admin_password",
+			accessKeyId:        "AKIA1234567890ABCDEF",
+			secretAccessKey:    "secret123456789012345678901234567890abcdef12",
 			existingIdentities: []*iam_pb.Identity{},
 			expectEnvIdentity:  true,
 			expectTotal:        1,
 		},
 		{
-			name:          "Both env vars set with existing different identity",
-			adminUser:     "admin_user",
-			adminPassword: "admin_password",
+			name:               "Short access key (less than 8 characters)",
+			accessKeyId:        "SHORT",
+			secretAccessKey:    "secret123456789012345678901234567890abcdef12",
+			existingIdentities: []*iam_pb.Identity{},
+			expectEnvIdentity:  true,
+			expectTotal:        1,
+		},
+		{
+			name:               "Empty access key",
+			accessKeyId:        "",
+			secretAccessKey:    "secret123456789012345678901234567890abcdef12",
+			existingIdentities: []*iam_pb.Identity{},
+			expectEnvIdentity:  false,
+			expectTotal:        0,
+		},
+		{
+			name:            "Both env vars set with existing different identity",
+			accessKeyId:     "AKIA1234567890ABCDEF",
+			secretAccessKey: "secret123456789012345678901234567890abcdef12",
 			existingIdentities: []*iam_pb.Identity{
 				{
 					Name: "existing_user",
 					Credentials: []*iam_pb.Credential{
-						{AccessKey: "existing_key", SecretKey: "existing_secret"},
+						{AccessKey: "AKIA0000000000000000", SecretKey: "existing_secret"},
 					},
 					Actions: []string{ACTION_READ},
 				},
@@ -318,41 +335,41 @@ func TestLoadS3ApiConfigurationWithEnvVars(t *testing.T) {
 			expectTotal:       2,
 		},
 		{
-			name:          "Both env vars set with existing same name identity",
-			adminUser:     "admin_user",
-			adminPassword: "admin_password",
+			name:            "Both env vars set with existing same access key",
+			accessKeyId:     "AKIA1234567890ABCDEF",
+			secretAccessKey: "secret123456789012345678901234567890abcdef12",
 			existingIdentities: []*iam_pb.Identity{
 				{
-					Name: "admin_user", // Same name as env var
+					Name: "existing_user",
 					Credentials: []*iam_pb.Credential{
-						{AccessKey: "existing_key", SecretKey: "existing_secret"},
+						{AccessKey: "AKIA1234567890ABCDEF", SecretKey: "existing_secret"}, // Same access key as env var
 					},
 					Actions: []string{ACTION_READ},
 				},
 			},
-			expectEnvIdentity: false, // Should skip because name exists
+			expectEnvIdentity: false, // Should skip because access key exists
 			expectTotal:       1,
 		},
 		{
-			name:               "Only admin user set",
-			adminUser:          "admin_user",
-			adminPassword:      "",
+			name:               "Only access key set",
+			accessKeyId:        "AKIA1234567890ABCDEF",
+			secretAccessKey:    "",
 			existingIdentities: []*iam_pb.Identity{},
 			expectEnvIdentity:  false,
 			expectTotal:        0,
 		},
 		{
-			name:               "Only admin password set",
-			adminUser:          "",
-			adminPassword:      "admin_password",
+			name:               "Only secret key set",
+			accessKeyId:        "",
+			secretAccessKey:    "secret123456789012345678901234567890abcdef12",
 			existingIdentities: []*iam_pb.Identity{},
 			expectEnvIdentity:  false,
 			expectTotal:        0,
 		},
 		{
 			name:               "Neither env var set",
-			adminUser:          "",
-			adminPassword:      "",
+			accessKeyId:        "",
+			secretAccessKey:    "",
 			existingIdentities: []*iam_pb.Identity{},
 			expectEnvIdentity:  false,
 			expectTotal:        0,
@@ -362,15 +379,15 @@ func TestLoadS3ApiConfigurationWithEnvVars(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up environment variables
-			if tt.adminUser != "" {
-				os.Setenv("WEED_S3_ADMIN_USER", tt.adminUser)
+			if tt.accessKeyId != "" {
+				os.Setenv("AWS_ACCESS_KEY_ID", tt.accessKeyId)
 			} else {
-				os.Unsetenv("WEED_S3_ADMIN_USER")
+				os.Unsetenv("AWS_ACCESS_KEY_ID")
 			}
-			if tt.adminPassword != "" {
-				os.Setenv("WEED_S3_ADMIN_PASSWORD", tt.adminPassword)
+			if tt.secretAccessKey != "" {
+				os.Setenv("AWS_SECRET_ACCESS_KEY", tt.secretAccessKey)
 			} else {
-				os.Unsetenv("WEED_S3_ADMIN_PASSWORD")
+				os.Unsetenv("AWS_SECRET_ACCESS_KEY")
 			}
 
 			// Create IAM instance and test the loadAdminCredentialsFromEnv function
@@ -391,12 +408,23 @@ func TestLoadS3ApiConfigurationWithEnvVars(t *testing.T) {
 				// Find the identity created from environment variables
 				found := false
 				for _, identity := range config.Identities {
-					if identity.Name == tt.adminUser {
-						found = true
-						assert.Len(t, identity.Credentials, 1, "Should have one credential")
-						assert.Equal(t, tt.adminUser, identity.Credentials[0].AccessKey, "Access key should match admin user")
-						assert.Equal(t, tt.adminPassword, identity.Credentials[0].SecretKey, "Secret key should match admin password")
-						assert.Contains(t, identity.Actions, ACTION_ADMIN, "Should have admin action")
+					for _, cred := range identity.Credentials {
+						if cred.AccessKey == tt.accessKeyId {
+							found = true
+							assert.Equal(t, tt.accessKeyId, cred.AccessKey, "Access key should match environment variable")
+							assert.Equal(t, tt.secretAccessKey, cred.SecretKey, "Secret key should match environment variable")
+							assert.Contains(t, identity.Actions, ACTION_ADMIN, "Should have admin action")
+							assert.True(t, strings.HasPrefix(identity.Name, "admin-"), "Identity name should have admin prefix")
+							// Verify the suffix is correct (either full access key or first 8 chars)
+							expectedSuffix := tt.accessKeyId
+							if len(tt.accessKeyId) > 8 {
+								expectedSuffix = tt.accessKeyId[:8]
+							}
+							assert.Equal(t, "admin-"+expectedSuffix, identity.Name, "Identity name should be admin- plus access key or first 8 chars")
+							break
+						}
+					}
+					if found {
 						break
 					}
 				}
