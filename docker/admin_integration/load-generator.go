@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"strconv"
@@ -83,12 +84,34 @@ func (lg *LoadGenerator) uploadFile(filename string, data []byte) error {
 		url = fmt.Sprintf("http://%s/%s/%s", lg.filerAddr, lg.collection, filename)
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	// Create multipart form data
+	var b bytes.Buffer
+	writer := multipart.NewWriter(&b)
+
+	// Create form file field
+	part, err := writer.CreateFormFile("file", filename)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set("Content-Type", "application/octet-stream")
+	// Write file data
+	_, err = part.Write(data)
+	if err != nil {
+		return err
+	}
+
+	// Close the multipart writer
+	err = writer.Close()
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", url, &b)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)

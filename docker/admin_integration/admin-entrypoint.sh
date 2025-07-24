@@ -26,7 +26,6 @@ import (
     "log"
     "net/http"
     "os"
-    "strconv"
     "time"
 )
 
@@ -74,6 +73,71 @@ func (s *AdminServer) statusHandler(w http.ResponseWriter, r *http.Request) {
         "workers":      s.workers,
         "uptime":       time.Since(s.startTime).String(),
     })
+}
+
+func (s *AdminServer) registerWorkerHandler(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    
+    var worker Worker
+    if err := json.NewDecoder(r.Body).Decode(&worker); err != nil {
+        http.Error(w, "Invalid JSON", http.StatusBadRequest)
+        return
+    }
+    
+    worker.LastSeen = time.Now()
+    worker.Status = "active"
+    
+    // Check if worker already exists, update if so
+    found := false
+    for i, w := range s.workers {
+        if w.ID == worker.ID {
+            s.workers[i] = worker
+            found = true
+            break
+        }
+    }
+    
+    if !found {
+        s.workers = append(s.workers, worker)
+        log.Printf("Registered new worker: %s with capabilities: %v", worker.ID, worker.Capabilities)
+    } else {
+        log.Printf("Updated worker: %s", worker.ID)
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{"status": "registered"})
+}
+
+func (s *AdminServer) heartbeatHandler(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    
+    var heartbeat struct {
+        WorkerID string `json:"worker_id"`
+        Status   string `json:"status"`
+    }
+    
+    if err := json.NewDecoder(r.Body).Decode(&heartbeat); err != nil {
+        http.Error(w, "Invalid JSON", http.StatusBadRequest)
+        return
+    }
+    
+    // Update worker last seen time
+    for i, w := range s.workers {
+        if w.ID == heartbeat.WorkerID {
+            s.workers[i].LastSeen = time.Now()
+            s.workers[i].Status = heartbeat.Status
+            break
+        }
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (s *AdminServer) detectVolumesForEC() {
@@ -134,6 +198,8 @@ func main() {
     
     http.HandleFunc("/health", server.healthHandler)
     http.HandleFunc("/status", server.statusHandler)
+    http.HandleFunc("/register", server.registerWorkerHandler)
+    http.HandleFunc("/heartbeat", server.heartbeatHandler)
     
     // Start volume detection
     server.detectVolumesForEC()
