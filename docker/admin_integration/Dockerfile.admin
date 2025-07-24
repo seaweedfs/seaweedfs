@@ -6,19 +6,22 @@ RUN apk --no-cache add curl ca-certificates go
 
 WORKDIR /root/
 
-# Copy admin server binary (if it exists) or create a simple one
-COPY ./docker/admin_integration/admin-entrypoint.sh /entrypoint.sh
+# Copy gRPC admin files
+COPY ./docker/admin_integration/admin-grpc-entrypoint.sh /entrypoint.sh
+COPY ./docker/admin_integration/admin_grpc_server.go /admin_grpc_server.go
+COPY ./weed/pb/worker.proto /worker.proto
 RUN chmod +x /entrypoint.sh
 
 # Create directories
 RUN mkdir -p /data /config /work
 
-# Expose admin port
-EXPOSE 9900
+# Expose admin ports (HTTP and gRPC)
+EXPOSE 9900 9901
 
 # Set environment variables
 ENV MASTER_ADDRESS="master:9333"
-ENV ADMIN_PORT="9900" 
+ENV ADMIN_PORT="9900"
+ENV GRPC_PORT="9901"
 ENV SCAN_INTERVAL="30s"
 ENV WORKER_TIMEOUT="5m"
 ENV TASK_TIMEOUT="30m"

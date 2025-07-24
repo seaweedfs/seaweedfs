@@ -227,9 +227,11 @@ services:
     container_name: seaweed-admin
     ports:
       - "9900:9900"
+      - "9901:9901"
     environment:
       - MASTER_ADDRESS=master:9333
       - ADMIN_PORT=9900
+      - GRPC_PORT=9901
       - SCAN_INTERVAL=30s
       - WORKER_TIMEOUT=5m
       - TASK_TIMEOUT=30m
@@ -258,7 +260,7 @@ services:
       dockerfile: docker/admin_integration/Dockerfile.worker
     container_name: seaweed-worker1
     environment:
-      - ADMIN_ADDRESS=admin:9900
+      - ADMIN_GRPC_ADDRESS=admin:9901
       - WORKER_ID=worker-1
       - WORKER_ADDRESS=worker1:9001
       - CAPABILITIES=erasure_coding
@@ -284,7 +286,7 @@ services:
       dockerfile: docker/admin_integration/Dockerfile.worker
     container_name: seaweed-worker2
     environment:
-      - ADMIN_ADDRESS=admin:9900
+      - ADMIN_GRPC_ADDRESS=admin:9901
       - WORKER_ID=worker-2
       - WORKER_ADDRESS=worker2:9001
       - CAPABILITIES=erasure_coding,vacuum
@@ -310,7 +312,7 @@ services:
       dockerfile: docker/admin_integration/Dockerfile.worker
     container_name: seaweed-worker3
     environment:
-      - ADMIN_ADDRESS=admin:9900
+      - ADMIN_GRPC_ADDRESS=admin:9901
       - WORKER_ID=worker-3
       - WORKER_ADDRESS=worker3:9001
       - CAPABILITIES=erasure_coding,vacuum
