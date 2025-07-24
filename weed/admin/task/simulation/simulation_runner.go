@@ -1,4 +1,4 @@
-package task
+package simulation
 
 import (
 	"fmt"
@@ -152,7 +152,7 @@ func (csr *ComprehensiveSimulationRunner) RunSpecificEdgeCaseTest(scenarioName s
 	// Find and run specific scenario
 	for _, scenario := range csr.simulator.scenarios {
 		if scenario.Name == scenarioName {
-			err := csr.simulator.runScenario(scenario)
+			err := csr.simulator.RunScenario(scenario)
 			if err != nil {
 				return fmt.Errorf("scenario %s failed: %v", scenarioName, err)
 			}

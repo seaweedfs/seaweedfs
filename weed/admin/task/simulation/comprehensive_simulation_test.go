@@ -1,9 +1,11 @@
-package task
+package simulation
 
 import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/admin/task"
 )
 
 func TestComprehensiveSimulation_VolumeCreationDuringTask(t *testing.T) {
@@ -13,8 +15,8 @@ func TestComprehensiveSimulation_VolumeCreationDuringTask(t *testing.T) {
 		Name:        "volume_creation_during_task",
 		Description: "Tests state consistency when master reports new volume while task is creating it",
 		InitialState: &ClusterState{
-			Volumes:  make(map[uint32]*VolumeInfo),
-			ECShards: make(map[uint32]map[int]*ShardInfo),
+			Volumes:  make(map[uint32]*task.VolumeInfo),
+			ECShards: make(map[uint32]map[int]*task.ShardInfo),
 		},
 		EventSequence: []*SimulationEvent{
 			{Type: EventTaskStarted, VolumeID: 1, TaskID: "create_task_1", Parameters: map[string]interface{}{"type": "create"}},
@@ -23,12 +25,12 @@ func TestComprehensiveSimulation_VolumeCreationDuringTask(t *testing.T) {
 			{Type: EventTaskCompleted, TaskID: "create_task_1"},
 		},
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "No unexpected volumes", Type: InconsistencyVolumeUnexpected, MaxAllowedCount: 0},
+			{Name: "No unexpected volumes", Type: task.InconsistencyVolumeUnexpected, MaxAllowedCount: 0},
 		},
 		Duration: 30 * time.Second,
 	}
 
-	err := simulator.runScenario(scenario)
+	err := simulator.RunScenario(scenario)
 	if err != nil {
 		t.Errorf("Volume creation during task scenario failed: %v", err)
 	}
@@ -43,7 +45,7 @@ func TestComprehensiveSimulation_VolumeDeletionDuringTask(t *testing.T) {
 		Name:        "volume_deletion_during_task",
 		Description: "Tests handling when volume is deleted while task is working on it",
 		InitialState: &ClusterState{
-			Volumes: map[uint32]*VolumeInfo{
+			Volumes: map[uint32]*task.VolumeInfo{
 				1: {ID: 1, Size: 1024 * 1024 * 1024},
 			},
 		},
@@ -54,12 +56,12 @@ func TestComprehensiveSimulation_VolumeDeletionDuringTask(t *testing.T) {
 			{Type: EventTaskFailed, TaskID: "vacuum_task_1", Parameters: map[string]interface{}{"reason": "volume_deleted"}},
 		},
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "Missing volume detected", Type: InconsistencyVolumeMissing, ExpectedCount: 1, MaxAllowedCount: 1},
+			{Name: "Missing volume detected", Type: task.InconsistencyVolumeMissing, ExpectedCount: 1, MaxAllowedCount: 1},
 		},
 		Duration: 30 * time.Second,
 	}
 
-	err := simulator.runScenario(scenario)
+	err := simulator.RunScenario(scenario)
 	if err != nil {
 		t.Errorf("Volume deletion during task scenario failed: %v", err)
 	}
@@ -74,7 +76,7 @@ func TestComprehensiveSimulation_ShardCreationRaceCondition(t *testing.T) {
 		Name:        "shard_creation_race_condition",
 		Description: "Tests race condition between EC task creating shards and master sync",
 		InitialState: &ClusterState{
-			Volumes: map[uint32]*VolumeInfo{
+			Volumes: map[uint32]*task.VolumeInfo{
 				1: {ID: 1, Size: 28 * 1024 * 1024 * 1024}, // Large volume ready for EC
 			},
 		},
@@ -90,12 +92,12 @@ func TestComprehensiveSimulation_ShardCreationRaceCondition(t *testing.T) {
 			{Type: EventMasterSync},
 		},
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "All shards accounted for", Type: InconsistencyShardMissing, MaxAllowedCount: 0},
+			{Name: "All shards accounted for", Type: task.InconsistencyShardMissing, MaxAllowedCount: 0},
 		},
 		Duration: 45 * time.Second,
 	}
 
-	err := simulator.runScenario(scenario)
+	err := simulator.RunScenario(scenario)
 	if err != nil {
 		t.Errorf("Shard creation race condition scenario failed: %v", err)
 	}
@@ -119,12 +121,12 @@ func TestComprehensiveSimulation_NetworkPartitionRecovery(t *testing.T) {
 			{Type: EventTaskCompleted, TaskID: "partition_task_1"},
 		},
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "State reconciled after partition", Type: InconsistencyVolumeUnexpected, MaxAllowedCount: 1},
+			{Name: "State reconciled after partition", Type: task.InconsistencyVolumeUnexpected, MaxAllowedCount: 1},
 		},
 		Duration: 30 * time.Second,
 	}
 
-	err := simulator.runScenario(scenario)
+	err := simulator.RunScenario(scenario)
 	if err != nil {
 		t.Errorf("Network partition recovery scenario failed: %v", err)
 	}
@@ -149,12 +151,12 @@ func TestComprehensiveSimulation_ConcurrentTasksCapacityTracking(t *testing.T) {
 			{Type: EventMasterSync},
 		},
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "Capacity tracking accurate", Type: InconsistencyCapacityMismatch, MaxAllowedCount: 0},
+			{Name: "Capacity tracking accurate", Type: task.InconsistencyCapacityMismatch, MaxAllowedCount: 0},
 		},
 		Duration: 60 * time.Second,
 	}
 
-	err := simulator.runScenario(scenario)
+	err := simulator.RunScenario(scenario)
 	if err != nil {
 		t.Errorf("Concurrent tasks capacity tracking scenario failed: %v", err)
 	}
@@ -184,7 +186,7 @@ func TestComprehensiveSimulation_ComplexECOperation(t *testing.T) {
 		Duration: 60 * time.Second,
 	}
 
-	err := simulator.runScenario(scenario)
+	err := simulator.RunScenario(scenario)
 	if err != nil {
 		t.Errorf("Complex EC operation scenario failed: %v", err)
 	}
@@ -232,7 +234,7 @@ func TestComprehensiveSimulation_HighLoadStressTest(t *testing.T) {
 		Duration:      2 * time.Minute, // Reduced for faster test
 	}
 
-	err := simulator.runScenario(scenario)
+	err := simulator.RunScenario(scenario)
 	if err != nil {
 		t.Errorf("High load stress test scenario failed: %v", err)
 	}
@@ -279,7 +281,7 @@ func TestComprehensiveSimulation_AllScenarios(t *testing.T) {
 			// Reduce duration for faster testing
 			scenario.Duration = 15 * time.Second
 
-			err := simulator.runScenario(scenario)
+			err := simulator.RunScenario(scenario)
 			if err != nil {
 				t.Errorf("Scenario %s failed: %v", scenarioName, err)
 			} else {
@@ -345,15 +347,15 @@ func TestComprehensiveSimulation_StateManagementIntegration(t *testing.T) {
 	simulator := NewComprehensiveSimulator()
 
 	// Use mock master client instead of nil to avoid nil pointer errors
-	simulator.stateManager.masterClient = nil // Skip master client calls for test
+	simulator.stateManager = task.NewVolumeStateManager(nil) // Skip master client calls for test
 
 	// Setup realistic initial state
 	initialState := &ClusterState{
-		Volumes: map[uint32]*VolumeInfo{
+		Volumes: map[uint32]*task.VolumeInfo{
 			1: {ID: 1, Size: 28 * 1024 * 1024 * 1024, Server: "server1"},                                           // Ready for EC
 			2: {ID: 2, Size: 20 * 1024 * 1024 * 1024, Server: "server2", DeletedByteCount: 8 * 1024 * 1024 * 1024}, // Needs vacuum
 		},
-		ServerCapacity: map[string]*CapacityInfo{
+		ServerCapacity: map[string]*task.CapacityInfo{
 			"server1": {Server: "server1", TotalCapacity: 100 * 1024 * 1024 * 1024, UsedCapacity: 30 * 1024 * 1024 * 1024},
 			"server2": {Server: "server2", TotalCapacity: 100 * 1024 * 1024 * 1024, UsedCapacity: 25 * 1024 * 1024 * 1024},
 		},
@@ -388,13 +390,13 @@ func TestComprehensiveSimulation_StateManagementIntegration(t *testing.T) {
 		EventSequence: eventSequence,
 		Duration:      30 * time.Second, // Reduced for faster test
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "No state inconsistencies", Type: InconsistencyVolumeUnexpected, MaxAllowedCount: 0},
-			{Name: "No capacity mismatches", Type: InconsistencyCapacityMismatch, MaxAllowedCount: 0},
-			{Name: "No orphaned tasks", Type: InconsistencyTaskOrphaned, MaxAllowedCount: 0},
+			{Name: "No state inconsistencies", Type: task.InconsistencyVolumeUnexpected, MaxAllowedCount: 0},
+			{Name: "No capacity mismatches", Type: task.InconsistencyCapacityMismatch, MaxAllowedCount: 0},
+			{Name: "No orphaned tasks", Type: task.InconsistencyTaskOrphaned, MaxAllowedCount: 0},
 		},
 	}
 
-	err := simulator.runScenario(scenario)
+	err := simulator.RunScenario(scenario)
 	if err != nil {
 		t.Errorf("State management integration test failed: %v", err)
 	}
@@ -434,8 +436,8 @@ func BenchmarkComprehensiveSimulation_EventExecution(b *testing.B) {
 }
 
 // Helper functions for tests
-func createTestVolumeInfo(id uint32, size uint64) *VolumeInfo {
-	return &VolumeInfo{
+func createTestVolumeInfo(id uint32, size uint64) *task.VolumeInfo {
+	return &task.VolumeInfo{
 		ID:   id,
 		Size: size,
 	}

@@ -1,4 +1,4 @@
-package task
+package simulation
 
 import (
 	"context"
@@ -7,13 +7,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/task"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // ComprehensiveSimulator tests all possible edge cases in volume/shard state management
 type ComprehensiveSimulator struct {
-	stateManager    *VolumeStateManager
+	stateManager    *task.VolumeStateManager
 	mockMaster      *MockMasterServer
 	mockWorkers     []*MockWorker
 	scenarios       []*StateTestScenario
@@ -36,10 +37,10 @@ type StateTestScenario struct {
 
 // ClusterState represents the complete state of the cluster
 type ClusterState struct {
-	Volumes         map[uint32]*VolumeInfo
-	ECShards        map[uint32]map[int]*ShardInfo
-	ServerCapacity  map[string]*CapacityInfo
-	InProgressTasks map[string]*TaskImpact
+	Volumes         map[uint32]*task.VolumeInfo
+	ECShards        map[uint32]map[int]*task.ShardInfo
+	ServerCapacity  map[string]*task.CapacityInfo
+	InProgressTasks map[string]*task.TaskImpact
 	Timestamp       time.Time
 }
 
@@ -100,21 +101,30 @@ const (
 // InconsistencyCheck defines what inconsistencies to check for
 type InconsistencyCheck struct {
 	Name              string
-	Type              InconsistencyType
+	Type              task.InconsistencyType
 	ExpectedCount     int
 	MaxAllowedCount   int
-	SeverityThreshold SeverityLevel
+	SeverityThreshold task.SeverityLevel
 }
 
 // MockMasterServer simulates master server behavior with controllable inconsistencies
 type MockMasterServer struct {
-	volumes            map[uint32]*VolumeInfo
-	ecShards           map[uint32]map[int]*ShardInfo
-	serverCapacity     map[string]*CapacityInfo
+	volumes            map[uint32]*task.VolumeInfo
+	ecShards           map[uint32]map[int]*task.ShardInfo
+	serverCapacity     map[string]*task.CapacityInfo
 	inconsistencyMode  bool
 	networkPartitioned bool
 	responseDelay      time.Duration
 	mutex              sync.RWMutex
+}
+
+// MockWorker represents a mock worker for testing
+type MockWorker struct {
+	ID           string
+	Capabilities []types.TaskType
+	IsActive     bool
+	TaskDelay    time.Duration
+	FailureRate  float64
 }
 
 // SimulationResults tracks comprehensive simulation results
@@ -125,7 +135,7 @@ type SimulationResults struct {
 	Duration               time.Duration
 	TotalEvents            int
 	EventsByType           map[EventType]int
-	InconsistenciesFound   map[InconsistencyType]int
+	InconsistenciesFound   map[task.InconsistencyType]int
 	TasksExecuted          int
 	TasksSucceeded         int
 	TasksFailed            int
@@ -140,13 +150,13 @@ type SimulationResults struct {
 // NewComprehensiveSimulator creates a new comprehensive simulator
 func NewComprehensiveSimulator() *ComprehensiveSimulator {
 	return &ComprehensiveSimulator{
-		stateManager: NewVolumeStateManager(nil),
+		stateManager: task.NewVolumeStateManager(nil),
 		mockMaster:   NewMockMasterServer(),
 		scenarios:    []*StateTestScenario{},
 		eventLog:     []*SimulationEvent{},
 		results: &SimulationResults{
 			EventsByType:         make(map[EventType]int),
-			InconsistenciesFound: make(map[InconsistencyType]int),
+			InconsistenciesFound: make(map[task.InconsistencyType]int),
 			CriticalErrors:       []string{},
 			Warnings:             []string{},
 			DetailedLog:          []string{},
@@ -186,7 +196,7 @@ func (cs *ComprehensiveSimulator) RunAllComprehensiveScenarios() (*SimulationRes
 	for _, scenario := range cs.scenarios {
 		glog.Infof("Running scenario: %s", scenario.Name)
 
-		if err := cs.runScenario(scenario); err != nil {
+		if err := cs.RunScenario(scenario); err != nil {
 			cs.results.CriticalErrors = append(cs.results.CriticalErrors,
 				fmt.Sprintf("Scenario %s failed: %v", scenario.Name, err))
 		}
@@ -212,8 +222,8 @@ func (cs *ComprehensiveSimulator) createVolumeCreationDuringTaskScenario() *Stat
 		Name:        "volume_creation_during_task",
 		Description: "Tests state consistency when master reports new volume while task is creating it",
 		InitialState: &ClusterState{
-			Volumes:  make(map[uint32]*VolumeInfo),
-			ECShards: make(map[uint32]map[int]*ShardInfo),
+			Volumes:  make(map[uint32]*task.VolumeInfo),
+			ECShards: make(map[uint32]map[int]*task.ShardInfo),
 		},
 		EventSequence: []*SimulationEvent{
 			{Type: EventTaskStarted, VolumeID: 1, TaskID: "create_task_1", Parameters: map[string]interface{}{"type": "create"}},
@@ -222,12 +232,12 @@ func (cs *ComprehensiveSimulator) createVolumeCreationDuringTaskScenario() *Stat
 			{Type: EventTaskCompleted, TaskID: "create_task_1"},
 		},
 		ExpectedFinalState: &ClusterState{
-			Volumes: map[uint32]*VolumeInfo{
+			Volumes: map[uint32]*task.VolumeInfo{
 				1: {ID: 1, Size: 1024 * 1024 * 1024},
 			},
 		},
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "No unexpected volumes", Type: InconsistencyVolumeUnexpected, MaxAllowedCount: 0},
+			{Name: "No unexpected volumes", Type: task.InconsistencyVolumeUnexpected, MaxAllowedCount: 0},
 		},
 		Duration: 30 * time.Second,
 	}
@@ -238,7 +248,7 @@ func (cs *ComprehensiveSimulator) createVolumeDeletionDuringTaskScenario() *Stat
 		Name:        "volume_deletion_during_task",
 		Description: "Tests handling when volume is deleted while task is working on it",
 		InitialState: &ClusterState{
-			Volumes: map[uint32]*VolumeInfo{
+			Volumes: map[uint32]*task.VolumeInfo{
 				1: {ID: 1, Size: 1024 * 1024 * 1024},
 			},
 		},
@@ -249,7 +259,7 @@ func (cs *ComprehensiveSimulator) createVolumeDeletionDuringTaskScenario() *Stat
 			{Type: EventTaskFailed, TaskID: "vacuum_task_1", Parameters: map[string]interface{}{"reason": "volume_deleted"}},
 		},
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "Missing volume detected", Type: InconsistencyVolumeMissing, ExpectedCount: 1},
+			{Name: "Missing volume detected", Type: task.InconsistencyVolumeMissing, ExpectedCount: 1},
 		},
 		Duration: 30 * time.Second,
 	}
@@ -260,7 +270,7 @@ func (cs *ComprehensiveSimulator) createShardCreationRaceConditionScenario() *St
 		Name:        "shard_creation_race_condition",
 		Description: "Tests race condition between EC task creating shards and master sync",
 		InitialState: &ClusterState{
-			Volumes: map[uint32]*VolumeInfo{
+			Volumes: map[uint32]*task.VolumeInfo{
 				1: {ID: 1, Size: 28 * 1024 * 1024 * 1024}, // Large volume ready for EC
 			},
 		},
@@ -276,7 +286,7 @@ func (cs *ComprehensiveSimulator) createShardCreationRaceConditionScenario() *St
 			{Type: EventMasterSync},
 		},
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "All shards accounted for", Type: InconsistencyShardMissing, MaxAllowedCount: 0},
+			{Name: "All shards accounted for", Type: task.InconsistencyShardMissing, MaxAllowedCount: 0},
 		},
 		Duration: 45 * time.Second,
 	}
@@ -296,7 +306,7 @@ func (cs *ComprehensiveSimulator) createNetworkPartitionScenario() *StateTestSce
 			{Type: EventTaskCompleted, TaskID: "partition_task_1"},
 		},
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "State reconciled after partition", Type: InconsistencyVolumeUnexpected, MaxAllowedCount: 1},
+			{Name: "State reconciled after partition", Type: task.InconsistencyVolumeUnexpected, MaxAllowedCount: 1},
 		},
 		Duration: 60 * time.Second,
 	}
@@ -317,7 +327,7 @@ func (cs *ComprehensiveSimulator) createConcurrentTasksScenario() *StateTestScen
 			{Type: EventMasterSync},
 		},
 		InconsistencyChecks: []*InconsistencyCheck{
-			{Name: "Capacity tracking accurate", Type: InconsistencyCapacityMismatch, MaxAllowedCount: 0},
+			{Name: "Capacity tracking accurate", Type: task.InconsistencyCapacityMismatch, MaxAllowedCount: 0},
 		},
 		Duration: 90 * time.Second,
 	}
@@ -412,8 +422,8 @@ func (cs *ComprehensiveSimulator) createVolumeStateRollbackScenario() *StateTest
 	return &StateTestScenario{Name: "volume_state_rollback", Description: "Test", Duration: 30 * time.Second}
 }
 
-// runScenario executes a single test scenario
-func (cs *ComprehensiveSimulator) runScenario(scenario *StateTestScenario) error {
+// RunScenario executes a single test scenario
+func (cs *ComprehensiveSimulator) RunScenario(scenario *StateTestScenario) error {
 	cs.mutex.Lock()
 	cs.currentScenario = scenario
 	cs.mutex.Unlock()
@@ -486,14 +496,14 @@ func (cs *ComprehensiveSimulator) executeEvent(event *SimulationEvent) error {
 func (cs *ComprehensiveSimulator) simulateTaskStart(event *SimulationEvent) error {
 	taskType, _ := event.Parameters["type"].(string)
 
-	impact := &TaskImpact{
+	impact := &task.TaskImpact{
 		TaskID:        event.TaskID,
 		TaskType:      types.TaskType(taskType),
 		VolumeID:      event.VolumeID,
 		StartedAt:     time.Now(),
 		EstimatedEnd:  time.Now().Add(30 * time.Second),
-		VolumeChanges: &VolumeChanges{},
-		ShardChanges:  make(map[int]*ShardChange),
+		VolumeChanges: &task.VolumeChanges{},
+		ShardChanges:  make(map[int]*task.ShardChange),
 		CapacityDelta: make(map[string]int64),
 	}
 
@@ -633,9 +643,9 @@ func (cs *ComprehensiveSimulator) generateDetailedReport() {
 // Mock Master Server implementation
 func NewMockMasterServer() *MockMasterServer {
 	return &MockMasterServer{
-		volumes:        make(map[uint32]*VolumeInfo),
-		ecShards:       make(map[uint32]map[int]*ShardInfo),
-		serverCapacity: make(map[string]*CapacityInfo),
+		volumes:        make(map[uint32]*task.VolumeInfo),
+		ecShards:       make(map[uint32]map[int]*task.ShardInfo),
+		serverCapacity: make(map[string]*task.CapacityInfo),
 	}
 }
 
@@ -643,7 +653,7 @@ func (mms *MockMasterServer) CreateVolume(volumeID uint32, size int64) {
 	mms.mutex.Lock()
 	defer mms.mutex.Unlock()
 
-	mms.volumes[volumeID] = &VolumeInfo{
+	mms.volumes[volumeID] = &task.VolumeInfo{
 		ID:   volumeID,
 		Size: uint64(size),
 	}
@@ -662,13 +672,13 @@ func (mms *MockMasterServer) CreateShard(volumeID uint32, shardID int, server st
 	defer mms.mutex.Unlock()
 
 	if mms.ecShards[volumeID] == nil {
-		mms.ecShards[volumeID] = make(map[int]*ShardInfo)
+		mms.ecShards[volumeID] = make(map[int]*task.ShardInfo)
 	}
 
-	mms.ecShards[volumeID][shardID] = &ShardInfo{
+	mms.ecShards[volumeID][shardID] = &task.ShardInfo{
 		ShardID: shardID,
 		Server:  server,
-		Status:  ShardStatusExists,
+		Status:  task.ShardStatusExists,
 	}
 }
 

@@ -129,49 +129,12 @@ func simulateWorkersExample() {
 func runSimulationsExample() {
 	glog.Infof("\n--- Example 3: Running Simulation Scenarios ---")
 
-	// Create simulation runner
-	runner := NewSimulationRunner()
+	// Note: Simulation framework moved to simulation package
+	// To use: simulationRunner := simulation.NewComprehensiveSimulationRunner()
+	// simulationRunner.RunAllComprehensiveTests()
 
-	// Demonstrate system capabilities
-	runner.DemonstrateSystemCapabilities()
-
-	// Create a custom scenario
-	runner.CreateCustomScenario(
-		"custom_test",
-		"Custom test scenario for demonstration",
-		3,              // 3 workers
-		10,             // 10 volumes
-		60*time.Second, // 60 second duration
-		[]*FailurePattern{
-			{
-				Type:        FailureWorkerTimeout,
-				Probability: 0.2, // 20% chance
-				Timing: &TimingSpec{
-					MinProgress: 30.0,
-					MaxProgress: 70.0,
-				},
-			},
-		},
-	)
-
-	// Run specific scenario
-	result, err := runner.RunSpecificScenario("custom_test")
-	if err != nil {
-		glog.Errorf("Failed to run scenario: %v", err)
-	} else {
-		glog.Infof("✓ Custom scenario completed:")
-		glog.Infof("  - Tasks Created: %d", result.TasksCreated)
-		glog.Infof("  - Tasks Completed: %d", result.TasksCompleted)
-		glog.Infof("  - Duration: %v", result.Duration)
-		glog.Infof("  - Success: %v", result.Success)
-	}
-
-	// Validate system behavior
-	if err := runner.ValidateSystemBehavior(); err != nil {
-		glog.Errorf("System validation failed: %v", err)
-	} else {
-		glog.Infof("✓ All system validation tests passed")
-	}
+	glog.Infof("✅ Simulation framework available in separate package")
+	glog.Infof("Use simulation.NewComprehensiveSimulationRunner() to access comprehensive testing")
 }
 
 // demonstrateFeaturesExample shows key system features
@@ -366,21 +329,18 @@ func demonstrateTaskScheduling() {
 func RunComprehensiveDemo() {
 	glog.Infof("Starting comprehensive task distribution system demonstration...")
 
-	// Run the main example
+	// Run comprehensive example
 	ExampleUsage()
 
-	// Run all simulation scenarios
-	runner := NewSimulationRunner()
-	if err := runner.RunAllScenarios(); err != nil {
-		glog.Errorf("Failed to run all scenarios: %v", err)
-	}
+	// Note: To run the comprehensive simulation framework, use:
+	// simulationRunner := simulation.NewComprehensiveSimulationRunner()
+	// simulationRunner.RunAllComprehensiveTests()
 
 	glog.Infof("=== Comprehensive demonstration complete ===")
-	glog.Infof("The task distribution system is ready for production use!")
-	glog.Infof("Key benefits demonstrated:")
-	glog.Infof("  ✓ Automatic task discovery and assignment")
-	glog.Infof("  ✓ Robust failure handling and recovery")
-	glog.Infof("  ✓ Volume state consistency and reconciliation")
-	glog.Infof("  ✓ Worker load balancing and performance tracking")
-	glog.Infof("  ✓ Comprehensive simulation and validation framework")
+	glog.Infof("💡 To run comprehensive simulations, use the simulation package separately")
+	glog.Infof("Step 9: Comprehensive Simulation Testing")
+	glog.Infof("Note: Simulation framework moved to separate 'simulation' package")
+	glog.Infof("To run simulations: simulation.NewComprehensiveSimulationRunner().RunAllComprehensiveTests()")
+	glog.Infof("✅ Simulation framework available in separate package")
+	glog.Infof("")
 }
