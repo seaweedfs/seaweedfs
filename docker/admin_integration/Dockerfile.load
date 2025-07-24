@@ -1,0 +1,44 @@
+FROM golang:1.24-alpine AS builder
+
+# Install dependencies
+RUN apk add --no-cache git build-base
+
+# Set working directory
+WORKDIR /app
+
+# Copy and create load generator
+COPY ./docker/admin_integration/load-generator.go .
+COPY go.mod go.sum ./
+RUN go mod download
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o load-generator load-generator.go
+
+# Final stage
+FROM alpine:latest
+
+# Install dependencies
+RUN apk --no-cache add curl ca-certificates openssl
+
+WORKDIR /root/
+
+# Copy the binary
+COPY --from=builder /app/load-generator .
+
+# Copy load generator script
+COPY ./docker/admin_integration/load-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Create directories for test data
+RUN mkdir -p /test-data /temp
+
+# Set environment variables
+ENV FILER_ADDRESS="filer:8888"
+ENV MASTER_ADDRESS="master:9333"
+ENV WRITE_RATE="10"
+ENV DELETE_RATE="2"
+ENV FILE_SIZE_MIN="1MB"
+ENV FILE_SIZE_MAX="5MB"
+ENV TEST_DURATION="3600"
+ENV COLLECTION=""
+
+# Start load generator
+ENTRYPOINT ["/entrypoint.sh"] 

@@ -1,0 +1,393 @@
+services:
+  # Master server - coordinates the cluster
+  master:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweed-master
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    command: >
+      master 
+      -ip=master 
+      -port=9333 
+      -volumeSizeLimitMB=50
+      -defaultReplication=001
+    volumes:
+      - master_data:/data
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://master:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Volume Server 1
+  volume1:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweed-volume1
+    ports:
+      - "8080:8080"
+      - "18080:18080"
+    command: >
+      volume 
+      -mserver=master:9333 
+      -ip=volume1 
+      -port=8080
+      -dir=/data
+      -max=100
+      -dataCenter=dc1
+      -rack=rack1
+    volumes:
+      - volume1_data:/data
+    depends_on:
+      master:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Volume Server 2  
+  volume2:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweed-volume2
+    ports:
+      - "8081:8080"
+      - "18081:18080"
+    command: >
+      volume 
+      -mserver=master:9333 
+      -ip=volume2 
+      -port=8080
+      -dir=/data
+      -max=100
+      -dataCenter=dc1
+      -rack=rack1
+    volumes:
+      - volume2_data:/data
+    depends_on:
+      master:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Volume Server 3
+  volume3:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweed-volume3
+    ports:
+      - "8082:8080"
+      - "18082:18080"
+    command: >
+      volume 
+      -mserver=master:9333 
+      -ip=volume3 
+      -port=8080
+      -dir=/data
+      -max=100
+      -dataCenter=dc1
+      -rack=rack2
+    volumes:
+      - volume3_data:/data
+    depends_on:
+      master:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Volume Server 4
+  volume4:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweed-volume4
+    ports:
+      - "8083:8080"
+      - "18083:18080"
+    command: >
+      volume 
+      -mserver=master:9333 
+      -ip=volume4 
+      -port=8080
+      -dir=/data
+      -max=100
+      -dataCenter=dc2
+      -rack=rack1
+    volumes:
+      - volume4_data:/data
+    depends_on:
+      master:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Volume Server 5
+  volume5:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweed-volume5
+    ports:
+      - "8084:8080"
+      - "18084:18080"
+    command: >
+      volume 
+      -mserver=master:9333 
+      -ip=volume5 
+      -port=8080
+      -dir=/data
+      -max=100
+      -dataCenter=dc2
+      -rack=rack2
+    volumes:
+      - volume5_data:/data
+    depends_on:
+      master:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Volume Server 6
+  volume6:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweed-volume6
+    ports:
+      - "8085:8080"
+      - "18085:18080"
+    command: >
+      volume 
+      -mserver=master:9333 
+      -ip=volume6 
+      -port=8080
+      -dir=/data
+      -max=100
+      -dataCenter=dc2
+      -rack=rack3
+    volumes:
+      - volume6_data:/data
+    depends_on:
+      master:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Filer for easier data access
+  filer:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweed-filer
+    ports:
+      - "8888:8888"
+      - "18888:18888"
+    command: >
+      filer 
+      -master=master:9333
+      -ip=filer
+      -port=8888
+    depends_on:
+      master:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Admin Server - manages EC tasks
+  admin:
+    build:
+      context: ../../
+      dockerfile: docker/admin_integration/Dockerfile.admin
+    container_name: seaweed-admin
+    ports:
+      - "9900:9900"
+    environment:
+      - MASTER_ADDRESS=master:9333
+      - ADMIN_PORT=9900
+      - SCAN_INTERVAL=30s
+      - WORKER_TIMEOUT=5m
+      - TASK_TIMEOUT=30m
+      - MAX_RETRIES=3
+      - MAX_CONCURRENT_TASKS=5
+    volumes:
+      - admin_data:/data
+      - ./admin-config:/config
+    depends_on:
+      master:
+        condition: service_healthy
+      filer:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9900/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # EC Worker 1
+  worker1:
+    build:
+      context: ../../
+      dockerfile: docker/admin_integration/Dockerfile.worker
+    container_name: seaweed-worker1
+    environment:
+      - ADMIN_ADDRESS=admin:9900
+      - WORKER_ID=worker-1
+      - WORKER_ADDRESS=worker1:9001
+      - CAPABILITIES=erasure_coding
+      - MAX_CONCURRENT=2
+      - WORK_DIR=/work
+    volumes:
+      - worker1_data:/work
+    depends_on:
+      admin:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # EC Worker 2
+  worker2:
+    build:
+      context: ../../
+      dockerfile: docker/admin_integration/Dockerfile.worker
+    container_name: seaweed-worker2
+    environment:
+      - ADMIN_ADDRESS=admin:9900
+      - WORKER_ID=worker-2
+      - WORKER_ADDRESS=worker2:9001
+      - CAPABILITIES=erasure_coding,vacuum
+      - MAX_CONCURRENT=2
+      - WORK_DIR=/work
+    volumes:
+      - worker2_data:/work
+    depends_on:
+      admin:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # EC Worker 3
+  worker3:
+    build:
+      context: ../../
+      dockerfile: docker/admin_integration/Dockerfile.worker
+    container_name: seaweed-worker3
+    environment:
+      - ADMIN_ADDRESS=admin:9900
+      - WORKER_ID=worker-3
+      - WORKER_ADDRESS=worker3:9001
+      - CAPABILITIES=erasure_coding,vacuum
+      - MAX_CONCURRENT=1
+      - WORK_DIR=/work
+    volumes:
+      - worker3_data:/work
+    depends_on:
+      admin:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # Continuous Load Generator
+  load_generator:
+    build:
+      context: ../../
+      dockerfile: docker/admin_integration/Dockerfile.load
+    container_name: seaweed-load
+    environment:
+      - FILER_ADDRESS=filer:8888
+      - MASTER_ADDRESS=master:9333
+      - WRITE_RATE=10  # files per second
+      - DELETE_RATE=2  # files per second
+      - FILE_SIZE_MIN=1MB
+      - FILE_SIZE_MAX=5MB
+      - TEST_DURATION=3600  # 1 hour
+    depends_on:
+      filer:
+        condition: service_healthy
+      admin:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+
+  # Monitoring and Health Check
+  monitor:
+    build:
+      context: ../../
+      dockerfile: docker/admin_integration/Dockerfile.monitor
+    container_name: seaweed-monitor
+    ports:
+      - "9999:9999"
+    environment:
+      - MASTER_ADDRESS=master:9333
+      - ADMIN_ADDRESS=admin:9900
+      - FILER_ADDRESS=filer:8888
+      - MONITOR_INTERVAL=10s
+    depends_on:
+      admin:
+        condition: service_healthy
+    networks:
+      - seaweed_net
+    volumes:
+      - ./monitor-data:/monitor-data
+
+volumes:
+  master_data:
+  volume1_data:
+  volume2_data:
+  volume3_data:
+  volume4_data:
+  volume5_data:
+  volume6_data:
+  admin_data:
+  worker1_data:
+  worker2_data:
+  worker3_data:
+
+networks:
+  seaweed_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 

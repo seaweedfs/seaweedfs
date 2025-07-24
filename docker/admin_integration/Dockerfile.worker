@@ -1,0 +1,33 @@
+# Final stage
+FROM alpine:latest
+
+# Install dependencies including Go for the entrypoint script
+RUN apk --no-cache add curl ca-certificates go
+
+WORKDIR /root/
+
+# Copy worker entrypoint script
+COPY ./docker/admin_integration/worker-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Create working directories
+RUN mkdir -p /work /tmp/ec_work
+
+# Expose worker port
+EXPOSE 9001
+
+# Set environment variables
+ENV ADMIN_ADDRESS="admin:9900"
+ENV WORKER_ID="worker-1"
+ENV WORKER_ADDRESS="worker:9001"
+ENV CAPABILITIES="erasure_coding"
+ENV MAX_CONCURRENT="2"
+ENV WORK_DIR="/work"
+ENV HEARTBEAT_INTERVAL="10s"
+
+# Health check
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:9001/health || exit 1
+
+# Start worker
+ENTRYPOINT ["/entrypoint.sh"] 
