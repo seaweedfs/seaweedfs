@@ -11,20 +11,84 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// AdminServer manages the distributed task system
+// TaskHistory represents task execution history
+type TaskHistory struct {
+	entries []TaskHistoryEntry
+	mutex   sync.RWMutex
+}
+
+// TaskHistoryEntry represents a single task history entry
+type TaskHistoryEntry struct {
+	TaskID       string
+	TaskType     types.TaskType
+	VolumeID     uint32
+	WorkerID     string
+	Status       types.TaskStatus
+	StartedAt    time.Time
+	CompletedAt  time.Time
+	Duration     time.Duration
+	ErrorMessage string
+}
+
+// NewTaskHistory creates a new task history
+func NewTaskHistory() *TaskHistory {
+	return &TaskHistory{
+		entries: make([]TaskHistoryEntry, 0),
+	}
+}
+
+// AddEntry adds a new task history entry
+func (th *TaskHistory) AddEntry(entry TaskHistoryEntry) {
+	th.mutex.Lock()
+	defer th.mutex.Unlock()
+
+	th.entries = append(th.entries, entry)
+
+	// Keep only the last 1000 entries
+	if len(th.entries) > 1000 {
+		th.entries = th.entries[len(th.entries)-1000:]
+	}
+}
+
+// GetRecentEntries returns the most recent entries
+func (th *TaskHistory) GetRecentEntries(limit int) []*TaskHistoryEntry {
+	th.mutex.RLock()
+	defer th.mutex.RUnlock()
+
+	start := len(th.entries) - limit
+	if start < 0 {
+		start = 0
+	}
+
+	result := make([]*TaskHistoryEntry, len(th.entries)-start)
+	for i, entry := range th.entries[start:] {
+		entryCopy := entry
+		result[i] = &entryCopy
+	}
+
+	return result
+}
+
+// AdminServer manages task distribution and worker coordination
 type AdminServer struct {
-	config             *AdminConfig
+	ID                 string
+	Config             *AdminConfig
 	masterClient       *wdclient.MasterClient
-	taskDiscovery      *TaskDiscoveryEngine
+	volumeStateManager *VolumeStateManager
 	workerRegistry     *WorkerRegistry
-	taskScheduler      *TaskScheduler
-	volumeStateManager *VolumeStateManager // Enhanced state management
-	failureHandler     *FailureHandler
-	inProgressTasks    map[string]*InProgressTask
 	taskQueue          *PriorityTaskQueue
+	taskScheduler      *TaskScheduler
+	taskHistory        *TaskHistory
+	failureHandler     *FailureHandler
+	masterSync         *MasterSynchronizer
+	workerComm         *WorkerCommunicationManager
 	running            bool
-	stopChan           chan struct{}
+	stopCh             chan struct{}
 	mutex              sync.RWMutex
+
+	// Task tracking
+	activeTasks map[string]*InProgressTask
+	tasksMutex  sync.RWMutex
 }
 
 // AdminConfig holds configuration for the admin server
@@ -40,18 +104,26 @@ type AdminConfig struct {
 
 // NewAdminServer creates a new admin server instance
 func NewAdminServer(config *AdminConfig, masterClient *wdclient.MasterClient) *AdminServer {
-	if config == nil {
-		config = DefaultAdminConfig()
+	adminServer := &AdminServer{
+		ID:                 generateAdminServerID(),
+		Config:             config,
+		masterClient:       masterClient,
+		volumeStateManager: NewVolumeStateManager(masterClient),
+		workerRegistry:     NewWorkerRegistry(),
+		taskQueue:          NewPriorityTaskQueue(),
+		taskHistory:        NewTaskHistory(),
+		failureHandler:     NewFailureHandler(config),
+		activeTasks:        make(map[string]*InProgressTask),
+		stopCh:             make(chan struct{}),
 	}
 
-	return &AdminServer{
-		config:             config,
-		masterClient:       masterClient,
-		volumeStateManager: NewVolumeStateManager(masterClient), // Initialize comprehensive state manager
-		inProgressTasks:    make(map[string]*InProgressTask),
-		taskQueue:          NewPriorityTaskQueue(),
-		stopChan:           make(chan struct{}),
-	}
+	// Initialize components that depend on admin server
+	adminServer.taskScheduler = NewTaskScheduler(adminServer.workerRegistry, adminServer.taskQueue)
+	adminServer.masterSync = NewMasterSynchronizer(masterClient, adminServer.volumeStateManager, adminServer)
+	adminServer.workerComm = NewWorkerCommunicationManager(adminServer)
+
+	glog.Infof("Created admin server %s", adminServer.ID)
+	return adminServer
 }
 
 // Start starts the admin server
@@ -60,59 +132,46 @@ func (as *AdminServer) Start() error {
 	defer as.mutex.Unlock()
 
 	if as.running {
-		return fmt.Errorf("admin server is already running")
+		return nil
 	}
 
-	// Initialize components
-	as.taskDiscovery = NewTaskDiscoveryEngine(as.masterClient, as.config.ScanInterval)
-	as.workerRegistry = NewWorkerRegistry()
-	as.taskScheduler = NewTaskScheduler(as.workerRegistry, as.taskQueue)
-	as.failureHandler = NewFailureHandler(as.config)
+	glog.Infof("Starting admin server %s", as.ID)
+
+	// Start components
+	as.masterSync.Start()
+	as.workerComm.Start()
+
+	// Start background loops
+	go as.taskAssignmentLoop()
+	go as.taskMonitoringLoop()
+	go as.reconciliationLoop()
+	go as.metricsLoop()
 
 	as.running = true
+	glog.Infof("Admin server %s started successfully", as.ID)
 
-	// Start background goroutines
-	go as.discoveryLoop()
-	go as.schedulingLoop()
-	go as.monitoringLoop()
-	go as.reconciliationLoop()
-
-	if as.config.EnableFailureRecovery {
-		go as.failureRecoveryLoop()
-	}
-
-	glog.Infof("Admin server started")
 	return nil
 }
 
 // Stop stops the admin server
-func (as *AdminServer) Stop() error {
+func (as *AdminServer) Stop() {
 	as.mutex.Lock()
 	defer as.mutex.Unlock()
 
 	if !as.running {
-		return nil
+		return
 	}
+
+	glog.Infof("Stopping admin server %s", as.ID)
+
+	close(as.stopCh)
+
+	// Stop components
+	as.masterSync.Stop()
+	as.workerComm.Stop()
 
 	as.running = false
-	close(as.stopChan)
-
-	// Wait for in-progress tasks to complete or timeout
-	timeout := time.NewTimer(30 * time.Second)
-	defer timeout.Stop()
-
-	for len(as.inProgressTasks) > 0 {
-		select {
-		case <-timeout.C:
-			glog.Warningf("Admin server stopping with %d tasks still running", len(as.inProgressTasks))
-			break
-		case <-time.After(time.Second):
-			// Check again
-		}
-	}
-
-	glog.Infof("Admin server stopped")
-	return nil
+	glog.Infof("Admin server %s stopped", as.ID)
 }
 
 // RegisterWorker registers a new worker
@@ -133,11 +192,11 @@ func (as *AdminServer) UnregisterWorker(workerID string) error {
 	defer as.mutex.Unlock()
 
 	// Reschedule any tasks assigned to this worker
-	for taskID, task := range as.inProgressTasks {
+	for taskID, task := range as.activeTasks {
 		if task.WorkerID == workerID {
 			glog.Warningf("Rescheduling task %s due to worker %s unregistration", taskID, workerID)
-			as.rescheduleTask(task.Task)
-			delete(as.inProgressTasks, taskID)
+			as.ReassignTask(taskID, "worker unregistration")
+			delete(as.activeTasks, taskID)
 		}
 	}
 
@@ -178,7 +237,7 @@ func (as *AdminServer) RequestTask(workerID string, capabilities []types.TaskTyp
 	}
 
 	// Check if volume can be assigned (using comprehensive state management)
-	if !as.canAssignTask(task, worker) {
+	if !as.canAssignTask(task, workerID) {
 		return nil, nil // Cannot assign due to capacity or state constraints
 	}
 
@@ -192,11 +251,11 @@ func (as *AdminServer) RequestTask(workerID string, capabilities []types.TaskTyp
 		EstimatedEnd: time.Now().Add(as.estimateTaskDuration(task)),
 	}
 
-	as.inProgressTasks[task.ID] = inProgressTask
+	as.activeTasks[task.ID] = inProgressTask
 	worker.CurrentLoad++
 
 	// Register task impact with state manager
-	impact := as.createTaskImpact(task, workerID)
+	impact := as.createTaskImpact(task)
 	as.volumeStateManager.RegisterTaskImpact(task.ID, impact)
 	inProgressTask.VolumeReserved = true
 
@@ -206,16 +265,16 @@ func (as *AdminServer) RequestTask(workerID string, capabilities []types.TaskTyp
 
 // UpdateTaskProgress updates task progress
 func (as *AdminServer) UpdateTaskProgress(taskID string, progress float64) error {
-	as.mutex.Lock()
-	defer as.mutex.Unlock()
+	as.tasksMutex.Lock()
+	defer as.tasksMutex.Unlock()
 
-	task, exists := as.inProgressTasks[taskID]
+	inProgressTask, exists := as.activeTasks[taskID]
 	if !exists {
 		return fmt.Errorf("task %s not found", taskID)
 	}
 
-	task.Progress = progress
-	task.LastUpdate = time.Now()
+	inProgressTask.Progress = progress
+	inProgressTask.LastUpdate = time.Now()
 
 	glog.V(2).Infof("Task %s progress: %.1f%%", taskID, progress)
 	return nil
@@ -223,442 +282,418 @@ func (as *AdminServer) UpdateTaskProgress(taskID string, progress float64) error
 
 // CompleteTask marks a task as completed
 func (as *AdminServer) CompleteTask(taskID string, success bool, errorMsg string) error {
-	as.mutex.Lock()
-	defer as.mutex.Unlock()
+	as.tasksMutex.Lock()
+	defer as.tasksMutex.Unlock()
 
-	task, exists := as.inProgressTasks[taskID]
+	inProgressTask, exists := as.activeTasks[taskID]
 	if !exists {
 		return fmt.Errorf("task %s not found", taskID)
 	}
 
+	// Remove from active tasks
+	delete(as.activeTasks, taskID)
+
 	// Update worker load
-	if worker, exists := as.workerRegistry.GetWorker(task.WorkerID); exists {
+	if worker, exists := as.workerRegistry.GetWorker(inProgressTask.WorkerID); exists {
 		worker.CurrentLoad--
 	}
 
-	// Unregister task impact from state manager
-	if task.VolumeReserved {
-		as.volumeStateManager.UnregisterTaskImpact(taskID)
+	// Unregister task impact
+	as.volumeStateManager.UnregisterTaskImpact(taskID)
+
+	// Record in task history
+	status := types.TaskStatusCompleted
+	if !success {
+		status = types.TaskStatusFailed
 	}
 
-	// Record completion
-	if success {
-		glog.Infof("Task %s completed successfully by worker %s", taskID, task.WorkerID)
-		// The state manager will handle volume state updates
-	} else {
-		glog.Errorf("Task %s failed: %s", taskID, errorMsg)
+	as.taskHistory.AddEntry(TaskHistoryEntry{
+		TaskID:       taskID,
+		TaskType:     inProgressTask.Task.Type,
+		VolumeID:     inProgressTask.Task.VolumeID,
+		WorkerID:     inProgressTask.WorkerID,
+		Status:       status,
+		StartedAt:    inProgressTask.StartedAt,
+		CompletedAt:  time.Now(),
+		Duration:     time.Since(inProgressTask.StartedAt),
+		ErrorMessage: errorMsg,
+	})
 
-		// Reschedule if retries available
-		if task.Task.RetryCount < as.config.MaxRetries {
-			task.Task.RetryCount++
-			task.Task.Error = errorMsg
-			as.rescheduleTask(task.Task)
-		}
-	}
-
-	delete(as.inProgressTasks, taskID)
+	glog.Infof("Task %s completed: success=%v", taskID, success)
 	return nil
 }
 
-// GetInProgressTask returns in-progress task for a volume
-func (as *AdminServer) GetInProgressTask(volumeID uint32) *InProgressTask {
-	as.mutex.RLock()
-	defer as.mutex.RUnlock()
-
-	for _, task := range as.inProgressTasks {
-		if task.Task.VolumeID == volumeID {
-			return task
-		}
-	}
-	return nil
-}
-
-// GetPendingChange returns pending volume change
-func (as *AdminServer) GetPendingChange(volumeID uint32) *VolumeChange {
-	return as.volumeStateManager.GetPendingChange(volumeID)
-}
-
-// discoveryLoop runs task discovery periodically
-func (as *AdminServer) discoveryLoop() {
-	ticker := time.NewTicker(as.config.ScanInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-as.stopChan:
-			return
-		case <-ticker.C:
-			as.runTaskDiscovery()
-		}
-	}
-}
-
-// runTaskDiscovery discovers new tasks
-func (as *AdminServer) runTaskDiscovery() {
-	candidates, err := as.taskDiscovery.ScanForTasks()
-	if err != nil {
-		glog.Errorf("Task discovery failed: %v", err)
-		return
-	}
-
-	for _, candidate := range candidates {
-		// Check for duplicates
-		if as.isDuplicateTask(candidate) {
-			continue
-		}
-
-		// Create task
-		task := &types.Task{
-			ID:          generateTaskID(),
-			Type:        candidate.TaskType,
-			Status:      types.TaskStatusPending,
-			Priority:    candidate.Priority,
-			VolumeID:    candidate.VolumeID,
-			Server:      candidate.Server,
-			Collection:  candidate.Collection,
-			Parameters:  candidate.Parameters,
-			CreatedAt:   time.Now(),
-			ScheduledAt: candidate.ScheduleAt,
-			MaxRetries:  as.config.MaxRetries,
-		}
-
-		as.taskQueue.Push(task)
-		glog.V(1).Infof("Discovered new task: %s for volume %d", task.Type, task.VolumeID)
-	}
-}
-
-// schedulingLoop runs task scheduling
-func (as *AdminServer) schedulingLoop() {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-as.stopChan:
-			return
-		case <-ticker.C:
-			as.processTaskQueue()
-		}
-	}
-}
-
-// processTaskQueue processes pending tasks
-func (as *AdminServer) processTaskQueue() {
-	// Get available workers
-	workers := as.workerRegistry.GetAvailableWorkers()
-	if len(workers) == 0 {
-		return
-	}
-
-	// Process up to max concurrent tasks
-	processed := 0
-	for processed < as.config.MaxConcurrentTasks && !as.taskQueue.IsEmpty() {
-		task := as.taskQueue.Peek()
-		if task == nil {
-			break
-		}
-
-		// Find suitable worker
-		worker := as.taskScheduler.SelectWorker(task, workers)
-		if worker == nil {
-			break // No suitable workers available
-		}
-
-		// Task will be assigned when worker requests it
-		as.taskQueue.Pop()
-		processed++
-	}
-}
-
-// monitoringLoop monitors task progress and timeouts
-func (as *AdminServer) monitoringLoop() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-as.stopChan:
-			return
-		case <-ticker.C:
-			as.checkTaskTimeouts()
-		}
-	}
-}
-
-// checkTaskTimeouts checks for stuck or timed-out tasks
-func (as *AdminServer) checkTaskTimeouts() {
+// QueueTask adds a new task to the task queue
+func (as *AdminServer) QueueTask(task *types.Task) error {
 	as.mutex.Lock()
 	defer as.mutex.Unlock()
 
-	now := time.Now()
-	for taskID, task := range as.inProgressTasks {
-		// Check for stuck tasks (no progress updates)
-		if now.Sub(task.LastUpdate) > as.config.TaskTimeout {
-			glog.Warningf("Task %s appears stuck, last update %v ago", taskID, now.Sub(task.LastUpdate))
-			as.handleStuckTask(task)
-			continue
-		}
-
-		// Check for tasks exceeding estimated time
-		if now.After(task.EstimatedEnd) && task.Progress < 90.0 {
-			estimatedRemaining := time.Duration(float64(now.Sub(task.StartedAt)) * (100.0 - task.Progress) / task.Progress)
-			if estimatedRemaining > 2*as.config.TaskTimeout {
-				glog.Warningf("Task %s significantly over estimated time", taskID)
-				as.handleSlowTask(task)
-			}
-		}
-	}
-}
-
-// reconciliationLoop reconciles volume state with master
-func (as *AdminServer) reconciliationLoop() {
-	ticker := time.NewTicker(as.config.ReconcileInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-as.stopChan:
-			return
-		case <-ticker.C:
-			// Use comprehensive state manager for reconciliation
-			if err := as.volumeStateManager.SyncWithMaster(); err != nil {
-				glog.Errorf("Volume state reconciliation failed: %v", err)
-			}
-		}
-	}
-}
-
-// failureRecoveryLoop handles worker failures and recovery
-func (as *AdminServer) failureRecoveryLoop() {
-	ticker := time.NewTicker(as.config.WorkerTimeout / 2)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-as.stopChan:
-			return
-		case <-ticker.C:
-			as.handleWorkerFailures()
-		}
-	}
-}
-
-// handleWorkerFailures detects and handles worker failures
-func (as *AdminServer) handleWorkerFailures() {
-	as.mutex.Lock()
-	defer as.mutex.Unlock()
-
-	timedOutWorkers := as.workerRegistry.GetTimedOutWorkers(as.config.WorkerTimeout)
-	for _, workerID := range timedOutWorkers {
-		glog.Warningf("Worker %s timed out, rescheduling tasks", workerID)
-
-		// Reschedule tasks from timed-out worker
-		for taskID, task := range as.inProgressTasks {
-			if task.WorkerID == workerID {
-				as.rescheduleTask(task.Task)
-				delete(as.inProgressTasks, taskID)
-			}
-		}
-
-		as.workerRegistry.MarkWorkerInactive(workerID)
-	}
-}
-
-// isDuplicateTask checks if a task is duplicate
-func (as *AdminServer) isDuplicateTask(candidate *VolumeCandidate) bool {
-	// Check in-progress tasks
-	for _, task := range as.inProgressTasks {
-		if task.Task.VolumeID == candidate.VolumeID && task.Task.Type == candidate.TaskType {
-			return true
-		}
+	if !as.running {
+		return fmt.Errorf("admin server is not running")
 	}
 
-	// Check pending tasks
-	return as.taskQueue.HasTask(candidate.VolumeID, candidate.TaskType)
-}
+	// Validate the task
+	if task == nil {
+		return fmt.Errorf("task cannot be nil")
+	}
 
-// rescheduleTask reschedules a failed task
-func (as *AdminServer) rescheduleTask(task *types.Task) {
-	task.Status = types.TaskStatusPending
-	task.ScheduledAt = time.Now().Add(time.Duration(task.RetryCount) * 5 * time.Minute) // Exponential backoff
+	if task.ID == "" {
+		task.ID = generateTaskID()
+	}
+
+	// Set creation timestamp if not set
+	if task.CreatedAt.IsZero() {
+		task.CreatedAt = time.Now()
+	}
+
+	// Check if task for this volume is already queued or in progress
+	if as.isVolumeAlreadyQueued(task.VolumeID, task.Type) {
+		glog.V(2).Infof("Task for volume %d already queued or in progress, skipping", task.VolumeID)
+		return nil
+	}
+
+	// Add to task queue
 	as.taskQueue.Push(task)
+
+	glog.V(1).Infof("Queued task %s (%s) for volume %d with priority %v",
+		task.ID, task.Type, task.VolumeID, task.Priority)
+
+	return nil
 }
 
-// handleStuckTask handles a stuck task
-func (as *AdminServer) handleStuckTask(task *InProgressTask) {
-	glog.Warningf("Handling stuck task %s", task.Task.ID)
+// Helper methods
 
-	// Mark worker as potentially problematic
-	as.workerRegistry.RecordWorkerIssue(task.WorkerID, "task_stuck")
-
-	// Reschedule task
-	if task.Task.RetryCount < as.config.MaxRetries {
-		as.rescheduleTask(task.Task)
-	}
-
-	// Release volume reservation
-	if task.VolumeReserved {
-		as.volumeStateManager.UnregisterTaskImpact(task.Task.ID) // Use state manager to release
-	}
-
-	delete(as.inProgressTasks, task.Task.ID)
-}
-
-// handleSlowTask handles a slow task
-func (as *AdminServer) handleSlowTask(task *InProgressTask) {
-	glog.V(1).Infof("Task %s is running slower than expected", task.Task.ID)
-	// Could implement priority adjustments or resource allocation here
-}
-
-// estimateTaskDuration estimates how long a task will take
-func (as *AdminServer) estimateTaskDuration(task *types.Task) time.Duration {
-	switch task.Type {
-	case types.TaskTypeErasureCoding:
-		return 15 * time.Minute // Base estimate
-	case types.TaskTypeVacuum:
-		return 10 * time.Minute // Base estimate
-	default:
-		return 5 * time.Minute
-	}
-}
-
-// DefaultAdminConfig returns default admin server configuration
-func DefaultAdminConfig() *AdminConfig {
-	return &AdminConfig{
-		ScanInterval:          30 * time.Minute,
-		WorkerTimeout:         5 * time.Minute,
-		TaskTimeout:           10 * time.Minute,
-		MaxRetries:            3,
-		ReconcileInterval:     5 * time.Minute,
-		EnableFailureRecovery: true,
-		MaxConcurrentTasks:    10,
-	}
-}
-
-// canAssignTask checks if a task can be assigned considering current state
-func (as *AdminServer) canAssignTask(task *types.Task, worker *types.Worker) bool {
-	// Check server capacity using accurate state information
-	volumeState := as.volumeStateManager.GetVolumeState(task.VolumeID)
-	if volumeState == nil {
-		glog.Warningf("No state information for volume %d", task.VolumeID)
+// canAssignTask checks if a task can be assigned to a worker
+func (as *AdminServer) canAssignTask(task *types.Task, workerID string) bool {
+	worker, exists := as.workerRegistry.GetWorker(workerID)
+	if !exists {
 		return false
 	}
 
-	// For EC tasks, check if volume is suitable and capacity is available
-	if task.Type == types.TaskTypeErasureCoding {
-		// Estimate space needed for EC shards (roughly 40% more space)
-		estimatedShardSize := int64(float64(volumeState.CurrentState.Size) * 1.4)
-
-		if !as.volumeStateManager.CanAssignVolumeToServer(estimatedShardSize, worker.Address) {
-			glog.V(2).Infof("Insufficient capacity on server %s for EC task on volume %d",
-				worker.Address, task.VolumeID)
-			return false
-		}
+	// Check worker capacity
+	if worker.CurrentLoad >= worker.MaxConcurrent {
+		return false
 	}
 
-	// For vacuum tasks, check if there are conflicts
-	if task.Type == types.TaskTypeVacuum {
-		// Check if volume is already being worked on
-		for _, inProgressTask := range as.inProgressTasks {
-			if inProgressTask.Task.VolumeID == task.VolumeID {
-				glog.V(2).Infof("Volume %d already has task in progress", task.VolumeID)
-				return false
-			}
+	// Check if worker has required capability
+	hasCapability := false
+	for _, cap := range worker.Capabilities {
+		if cap == task.Type {
+			hasCapability = true
+			break
 		}
+	}
+	if !hasCapability {
+		return false
 	}
 
 	return true
 }
 
-// createTaskImpact creates a TaskImpact for state tracking
-func (as *AdminServer) createTaskImpact(task *types.Task, workerID string) *TaskImpact {
+// createTaskImpact creates a TaskImpact for the given task
+func (as *AdminServer) createTaskImpact(task *types.Task) *TaskImpact {
 	impact := &TaskImpact{
 		TaskID:        task.ID,
-		TaskType:      task.Type,
 		VolumeID:      task.VolumeID,
-		WorkerID:      workerID,
+		TaskType:      task.Type,
 		StartedAt:     time.Now(),
 		EstimatedEnd:  time.Now().Add(as.estimateTaskDuration(task)),
+		CapacityDelta: make(map[string]int64),
 		VolumeChanges: &VolumeChanges{},
 		ShardChanges:  make(map[int]*ShardChange),
-		CapacityDelta: make(map[string]int64),
 	}
 
-	// Configure impact based on task type
+	// Set task-specific impacts
 	switch task.Type {
 	case types.TaskTypeErasureCoding:
 		impact.VolumeChanges.WillBecomeReadOnly = true
-		// EC will create 14 shards, estimate capacity impact
-		volumeState := as.volumeStateManager.GetVolumeState(task.VolumeID)
-		if volumeState != nil {
-			estimatedShardSize := int64(float64(volumeState.CurrentState.Size) * 1.4)
-			impact.CapacityDelta[task.Server] = estimatedShardSize
-		}
+		impact.EstimatedEnd = time.Now().Add(2 * time.Hour) // EC takes longer
 
-		// Plan shard creation
-		for i := 0; i < 14; i++ { // 10 data + 4 parity shards
-			impact.ShardChanges[i] = &ShardChange{
-				ShardID:       i,
-				WillBeCreated: true,
-				TargetServer:  task.Server, // Simplified - in real implementation would distribute across servers
+		// EC encoding requires temporary space
+		if server, ok := task.Parameters["server"]; ok {
+			if serverStr, ok := server.(string); ok {
+				volumeState := as.volumeStateManager.GetVolumeState(task.VolumeID)
+				if volumeState != nil && volumeState.CurrentState != nil {
+					// Estimate 2x volume size needed temporarily
+					impact.CapacityDelta[serverStr] = int64(volumeState.CurrentState.Size * 2)
+				}
 			}
 		}
 
 	case types.TaskTypeVacuum:
-		// Vacuum typically reduces volume size
-		volumeState := as.volumeStateManager.GetVolumeState(task.VolumeID)
-		if volumeState != nil {
-			// Estimate space savings (based on garbage ratio)
-			garbageRatio := float64(volumeState.CurrentState.DeletedByteCount) / float64(volumeState.CurrentState.Size)
-			spaceSavings := int64(float64(volumeState.CurrentState.Size) * garbageRatio)
-			impact.VolumeChanges.SizeChange = -spaceSavings
-			impact.CapacityDelta[task.Server] = -spaceSavings
+		// Vacuum reduces volume size
+		if server, ok := task.Parameters["server"]; ok {
+			if serverStr, ok := server.(string); ok {
+				// Estimate 30% space reclamation
+				volumeState := as.volumeStateManager.GetVolumeState(task.VolumeID)
+				if volumeState != nil && volumeState.CurrentState != nil {
+					impact.CapacityDelta[serverStr] = -int64(float64(volumeState.CurrentState.Size) * 0.3)
+				}
+			}
 		}
 	}
 
 	return impact
 }
 
-// GetVolumeState returns current volume state (for debugging/monitoring)
-func (as *AdminServer) GetVolumeState(volumeID uint32) *VolumeState {
-	return as.volumeStateManager.GetVolumeState(volumeID)
+// estimateTaskDuration estimates how long a task will take
+func (as *AdminServer) estimateTaskDuration(task *types.Task) time.Duration {
+	switch task.Type {
+	case types.TaskTypeErasureCoding:
+		return 2 * time.Hour
+	case types.TaskTypeVacuum:
+		return 30 * time.Minute
+	default:
+		return 1 * time.Hour
+	}
 }
 
-// GetSystemStats returns comprehensive system statistics
-func (as *AdminServer) GetSystemStats() map[string]interface{} {
-	as.mutex.RLock()
-	defer as.mutex.RUnlock()
+// isVolumeAlreadyQueued checks if a task for the volume is already queued or in progress
+func (as *AdminServer) isVolumeAlreadyQueued(volumeID uint32, taskType types.TaskType) bool {
+	// Check active tasks
+	as.tasksMutex.RLock()
+	for _, inProgressTask := range as.activeTasks {
+		if inProgressTask.Task.VolumeID == volumeID && inProgressTask.Task.Type == taskType {
+			as.tasksMutex.RUnlock()
+			return true
+		}
+	}
+	as.tasksMutex.RUnlock()
 
-	stats := make(map[string]interface{})
+	// Check queued tasks
+	return as.taskQueue.HasTask(volumeID, taskType)
+}
 
-	// Basic stats
-	stats["running"] = as.running
-	stats["in_progress_tasks"] = len(as.inProgressTasks)
-	stats["queued_tasks"] = as.taskQueue.Size()
-	stats["last_reconciliation"] = as.volumeStateManager.lastMasterSync
+// Background loops
 
-	// Worker stats
-	if as.workerRegistry != nil {
-		stats["worker_registry"] = as.workerRegistry.GetRegistryStats()
+// taskAssignmentLoop handles automatic task assignment to workers
+func (as *AdminServer) taskAssignmentLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			as.processTaskAssignments()
+		case <-as.stopCh:
+			return
+		}
+	}
+}
+
+// processTaskAssignments attempts to assign pending tasks to available workers
+func (as *AdminServer) processTaskAssignments() {
+	// Get available workers
+	workers := as.workerRegistry.GetAvailableWorkers()
+	if len(workers) == 0 {
+		return // No workers available
 	}
 
-	// Get server capacity information
-	serverStats := make(map[string]*CapacityInfo)
-	// This would iterate through known servers and get their capacity info
-	stats["server_capacity"] = serverStats
-
-	// Task breakdown by type
-	tasksByType := make(map[types.TaskType]int)
-	for _, task := range as.inProgressTasks {
-		tasksByType[task.Task.Type]++
+	// For each worker with available capacity, try to assign a task
+	for _, worker := range workers {
+		if worker.CurrentLoad < worker.MaxConcurrent {
+			task := as.taskScheduler.GetNextTask(worker.ID, worker.Capabilities)
+			if task != nil {
+				// Try to assign task directly
+				_, err := as.RequestTask(worker.ID, worker.Capabilities)
+				if err != nil {
+					glog.Errorf("Failed to assign task to worker %s: %v", worker.ID, err)
+				}
+			}
+		}
 	}
-	stats["tasks_by_type"] = tasksByType
+}
 
-	return stats
+// taskMonitoringLoop monitors task progress and handles timeouts
+func (as *AdminServer) taskMonitoringLoop() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			as.checkTaskTimeouts()
+		case <-as.stopCh:
+			return
+		}
+	}
+}
+
+// checkTaskTimeouts checks for tasks that have timed out
+func (as *AdminServer) checkTaskTimeouts() {
+	as.tasksMutex.Lock()
+	defer as.tasksMutex.Unlock()
+
+	now := time.Now()
+	timeout := 2 * time.Hour // Default task timeout
+
+	for taskID, inProgressTask := range as.activeTasks {
+		if now.Sub(inProgressTask.LastUpdate) > timeout {
+			glog.Warningf("Task %s timed out (last update: %v)", taskID, inProgressTask.LastUpdate)
+			as.ReassignTask(taskID, "task timeout")
+		}
+	}
+}
+
+// ReassignTask reassigns a task due to worker failure
+func (as *AdminServer) ReassignTask(taskID, reason string) {
+	as.tasksMutex.Lock()
+	defer as.tasksMutex.Unlock()
+
+	inProgressTask, exists := as.activeTasks[taskID]
+	if !exists {
+		return
+	}
+
+	glog.Infof("Reassigning task %s due to: %s", taskID, reason)
+
+	// Reset task status
+	inProgressTask.Task.Status = types.TaskStatusPending
+
+	// Unregister current task impact
+	as.volumeStateManager.UnregisterTaskImpact(taskID)
+
+	// Remove from active tasks
+	delete(as.activeTasks, taskID)
+
+	// Put back in queue with higher priority
+	inProgressTask.Task.Priority = types.TaskPriorityHigh
+	as.taskQueue.Push(inProgressTask.Task)
+}
+
+// reconciliationLoop periodically reconciles state with master
+func (as *AdminServer) reconciliationLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			as.performReconciliation()
+		case <-as.stopCh:
+			return
+		}
+	}
+}
+
+// performReconciliation reconciles admin state with master
+func (as *AdminServer) performReconciliation() {
+	glog.V(1).Infof("Starting state reconciliation")
+
+	// Sync with master
+	err := as.volumeStateManager.SyncWithMaster()
+	if err != nil {
+		glog.Errorf("Failed to sync with master during reconciliation: %v", err)
+		return
+	}
+
+	glog.V(1).Infof("State reconciliation completed")
+}
+
+// metricsLoop periodically logs metrics and statistics
+func (as *AdminServer) metricsLoop() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			as.logMetrics()
+		case <-as.stopCh:
+			return
+		}
+	}
+}
+
+// logMetrics logs current system metrics
+func (as *AdminServer) logMetrics() {
+	as.tasksMutex.RLock()
+	activeTasks := len(as.activeTasks)
+	as.tasksMutex.RUnlock()
+
+	queuedTasks := as.taskQueue.Size()
+	activeWorkers := len(as.workerRegistry.GetAvailableWorkers())
+
+	glog.V(1).Infof("Admin server metrics: active_tasks=%d, queued_tasks=%d, active_workers=%d",
+		activeTasks, queuedTasks, activeWorkers)
+}
+
+// GetAvailableWorkers returns workers capable of handling the specified task type
+func (as *AdminServer) GetAvailableWorkers(taskType string) []*types.Worker {
+	workers := as.workerRegistry.GetAvailableWorkers()
+	var available []*types.Worker
+
+	for _, worker := range workers {
+		if worker.CurrentLoad < worker.MaxConcurrent {
+			for _, cap := range worker.Capabilities {
+				if string(cap) == taskType {
+					available = append(available, worker)
+					break
+				}
+			}
+		}
+	}
+
+	return available
+}
+
+// GetSystemStats returns current system statistics
+func (as *AdminServer) GetSystemStats() *SystemStats {
+	as.tasksMutex.RLock()
+	activeTasks := len(as.activeTasks)
+	as.tasksMutex.RUnlock()
+
+	queuedTasks := as.taskQueue.Size()
+	activeWorkers := len(as.workerRegistry.GetAvailableWorkers())
+
+	return &SystemStats{
+		ActiveTasks:   activeTasks,
+		QueuedTasks:   queuedTasks,
+		ActiveWorkers: activeWorkers,
+		TotalWorkers:  len(as.workerRegistry.GetAvailableWorkers()),
+		Uptime:        time.Since(time.Now()), // This should be tracked properly
+	}
+}
+
+// Getter methods for testing
+func (as *AdminServer) GetQueuedTaskCount() int {
+	return as.taskQueue.Size()
+}
+
+func (as *AdminServer) GetActiveTaskCount() int {
+	as.tasksMutex.RLock()
+	defer as.tasksMutex.RUnlock()
+	return len(as.activeTasks)
+}
+
+func (as *AdminServer) GetTaskHistory() []*TaskHistoryEntry {
+	return as.taskHistory.GetRecentEntries(100)
+}
+
+func (as *AdminServer) GetVolumeStateManager() *VolumeStateManager {
+	return as.volumeStateManager
+}
+
+func (as *AdminServer) GetWorkerRegistry() *WorkerRegistry {
+	return as.workerRegistry
 }
 
 // generateTaskID generates a unique task ID
 func generateTaskID() string {
-	// Simple task ID generation - in production would use UUID or similar
 	return fmt.Sprintf("task_%d_%d", time.Now().UnixNano(), rand.Intn(10000))
+}
+
+// generateAdminServerID generates a unique admin server ID
+func generateAdminServerID() string {
+	return fmt.Sprintf("admin-%d", time.Now().Unix())
+}
+
+// SystemStats represents system statistics
+type SystemStats struct {
+	ActiveTasks    int
+	QueuedTasks    int
+	ActiveWorkers  int
+	TotalWorkers   int
+	Uptime         time.Duration
+	LastMasterSync time.Time
 }
