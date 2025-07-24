@@ -2,11 +2,11 @@ package task
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -18,7 +18,7 @@ type AdminServer struct {
 	taskDiscovery      *TaskDiscoveryEngine
 	workerRegistry     *WorkerRegistry
 	taskScheduler      *TaskScheduler
-	volumeStateTracker *VolumeStateTracker
+	volumeStateManager *VolumeStateManager // Enhanced state management
 	failureHandler     *FailureHandler
 	inProgressTasks    map[string]*InProgressTask
 	taskQueue          *PriorityTaskQueue
@@ -45,11 +45,12 @@ func NewAdminServer(config *AdminConfig, masterClient *wdclient.MasterClient) *A
 	}
 
 	return &AdminServer{
-		config:          config,
-		masterClient:    masterClient,
-		inProgressTasks: make(map[string]*InProgressTask),
-		taskQueue:       NewPriorityTaskQueue(),
-		stopChan:        make(chan struct{}),
+		config:             config,
+		masterClient:       masterClient,
+		volumeStateManager: NewVolumeStateManager(masterClient), // Initialize comprehensive state manager
+		inProgressTasks:    make(map[string]*InProgressTask),
+		taskQueue:          NewPriorityTaskQueue(),
+		stopChan:           make(chan struct{}),
 	}
 }
 
@@ -66,7 +67,6 @@ func (as *AdminServer) Start() error {
 	as.taskDiscovery = NewTaskDiscoveryEngine(as.masterClient, as.config.ScanInterval)
 	as.workerRegistry = NewWorkerRegistry()
 	as.taskScheduler = NewTaskScheduler(as.workerRegistry, as.taskQueue)
-	as.volumeStateTracker = NewVolumeStateTracker(as.masterClient, as.config.ReconcileInterval)
 	as.failureHandler = NewFailureHandler(as.config)
 
 	as.running = true
@@ -177,6 +177,11 @@ func (as *AdminServer) RequestTask(workerID string, capabilities []types.TaskTyp
 		return nil, nil // No suitable tasks
 	}
 
+	// Check if volume can be assigned (using comprehensive state management)
+	if !as.canAssignTask(task, worker) {
+		return nil, nil // Cannot assign due to capacity or state constraints
+	}
+
 	// Assign task to worker
 	inProgressTask := &InProgressTask{
 		Task:         task,
@@ -190,11 +195,10 @@ func (as *AdminServer) RequestTask(workerID string, capabilities []types.TaskTyp
 	as.inProgressTasks[task.ID] = inProgressTask
 	worker.CurrentLoad++
 
-	// Reserve volume capacity if needed
-	if task.Type == types.TaskTypeErasureCoding || task.Type == types.TaskTypeVacuum {
-		as.volumeStateTracker.ReserveVolume(task.VolumeID, task.ID)
-		inProgressTask.VolumeReserved = true
-	}
+	// Register task impact with state manager
+	impact := as.createTaskImpact(task, workerID)
+	as.volumeStateManager.RegisterTaskImpact(task.ID, impact)
+	inProgressTask.VolumeReserved = true
 
 	glog.V(1).Infof("Assigned task %s to worker %s", task.ID, workerID)
 	return task, nil
@@ -232,15 +236,15 @@ func (as *AdminServer) CompleteTask(taskID string, success bool, errorMsg string
 		worker.CurrentLoad--
 	}
 
-	// Release volume reservation
+	// Unregister task impact from state manager
 	if task.VolumeReserved {
-		as.volumeStateTracker.ReleaseVolume(task.Task.VolumeID, taskID)
+		as.volumeStateManager.UnregisterTaskImpact(taskID)
 	}
 
 	// Record completion
 	if success {
 		glog.Infof("Task %s completed successfully by worker %s", taskID, task.WorkerID)
-		as.volumeStateTracker.RecordVolumeChange(task.Task.VolumeID, task.Task.Type, taskID)
+		// The state manager will handle volume state updates
 	} else {
 		glog.Errorf("Task %s failed: %s", taskID, errorMsg)
 
@@ -271,7 +275,7 @@ func (as *AdminServer) GetInProgressTask(volumeID uint32) *InProgressTask {
 
 // GetPendingChange returns pending volume change
 func (as *AdminServer) GetPendingChange(volumeID uint32) *VolumeChange {
-	return as.volumeStateTracker.GetPendingChange(volumeID)
+	return as.volumeStateManager.GetPendingChange(volumeID)
 }
 
 // discoveryLoop runs task discovery periodically
@@ -305,7 +309,7 @@ func (as *AdminServer) runTaskDiscovery() {
 
 		// Create task
 		task := &types.Task{
-			ID:          util.RandomToken(),
+			ID:          generateTaskID(),
 			Type:        candidate.TaskType,
 			Status:      types.TaskStatusPending,
 			Priority:    candidate.Priority,
@@ -416,7 +420,10 @@ func (as *AdminServer) reconciliationLoop() {
 		case <-as.stopChan:
 			return
 		case <-ticker.C:
-			as.volumeStateTracker.ReconcileWithMaster()
+			// Use comprehensive state manager for reconciliation
+			if err := as.volumeStateManager.SyncWithMaster(); err != nil {
+				glog.Errorf("Volume state reconciliation failed: %v", err)
+			}
 		}
 	}
 }
@@ -491,7 +498,7 @@ func (as *AdminServer) handleStuckTask(task *InProgressTask) {
 
 	// Release volume reservation
 	if task.VolumeReserved {
-		as.volumeStateTracker.ReleaseVolume(task.Task.VolumeID, task.Task.ID)
+		as.volumeStateManager.UnregisterTaskImpact(task.Task.ID) // Use state manager to release
 	}
 
 	delete(as.inProgressTasks, task.Task.ID)
@@ -526,4 +533,132 @@ func DefaultAdminConfig() *AdminConfig {
 		EnableFailureRecovery: true,
 		MaxConcurrentTasks:    10,
 	}
+}
+
+// canAssignTask checks if a task can be assigned considering current state
+func (as *AdminServer) canAssignTask(task *types.Task, worker *types.Worker) bool {
+	// Check server capacity using accurate state information
+	volumeState := as.volumeStateManager.GetVolumeState(task.VolumeID)
+	if volumeState == nil {
+		glog.Warningf("No state information for volume %d", task.VolumeID)
+		return false
+	}
+
+	// For EC tasks, check if volume is suitable and capacity is available
+	if task.Type == types.TaskTypeErasureCoding {
+		// Estimate space needed for EC shards (roughly 40% more space)
+		estimatedShardSize := int64(float64(volumeState.CurrentState.Size) * 1.4)
+
+		if !as.volumeStateManager.CanAssignVolumeToServer(estimatedShardSize, worker.Address) {
+			glog.V(2).Infof("Insufficient capacity on server %s for EC task on volume %d",
+				worker.Address, task.VolumeID)
+			return false
+		}
+	}
+
+	// For vacuum tasks, check if there are conflicts
+	if task.Type == types.TaskTypeVacuum {
+		// Check if volume is already being worked on
+		for _, inProgressTask := range as.inProgressTasks {
+			if inProgressTask.Task.VolumeID == task.VolumeID {
+				glog.V(2).Infof("Volume %d already has task in progress", task.VolumeID)
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// createTaskImpact creates a TaskImpact for state tracking
+func (as *AdminServer) createTaskImpact(task *types.Task, workerID string) *TaskImpact {
+	impact := &TaskImpact{
+		TaskID:        task.ID,
+		TaskType:      task.Type,
+		VolumeID:      task.VolumeID,
+		WorkerID:      workerID,
+		StartedAt:     time.Now(),
+		EstimatedEnd:  time.Now().Add(as.estimateTaskDuration(task)),
+		VolumeChanges: &VolumeChanges{},
+		ShardChanges:  make(map[int]*ShardChange),
+		CapacityDelta: make(map[string]int64),
+	}
+
+	// Configure impact based on task type
+	switch task.Type {
+	case types.TaskTypeErasureCoding:
+		impact.VolumeChanges.WillBecomeReadOnly = true
+		// EC will create 14 shards, estimate capacity impact
+		volumeState := as.volumeStateManager.GetVolumeState(task.VolumeID)
+		if volumeState != nil {
+			estimatedShardSize := int64(float64(volumeState.CurrentState.Size) * 1.4)
+			impact.CapacityDelta[task.Server] = estimatedShardSize
+		}
+
+		// Plan shard creation
+		for i := 0; i < 14; i++ { // 10 data + 4 parity shards
+			impact.ShardChanges[i] = &ShardChange{
+				ShardID:       i,
+				WillBeCreated: true,
+				TargetServer:  task.Server, // Simplified - in real implementation would distribute across servers
+			}
+		}
+
+	case types.TaskTypeVacuum:
+		// Vacuum typically reduces volume size
+		volumeState := as.volumeStateManager.GetVolumeState(task.VolumeID)
+		if volumeState != nil {
+			// Estimate space savings (based on garbage ratio)
+			garbageRatio := float64(volumeState.CurrentState.DeletedByteCount) / float64(volumeState.CurrentState.Size)
+			spaceSavings := int64(float64(volumeState.CurrentState.Size) * garbageRatio)
+			impact.VolumeChanges.SizeChange = -spaceSavings
+			impact.CapacityDelta[task.Server] = -spaceSavings
+		}
+	}
+
+	return impact
+}
+
+// GetVolumeState returns current volume state (for debugging/monitoring)
+func (as *AdminServer) GetVolumeState(volumeID uint32) *VolumeState {
+	return as.volumeStateManager.GetVolumeState(volumeID)
+}
+
+// GetSystemStats returns comprehensive system statistics
+func (as *AdminServer) GetSystemStats() map[string]interface{} {
+	as.mutex.RLock()
+	defer as.mutex.RUnlock()
+
+	stats := make(map[string]interface{})
+
+	// Basic stats
+	stats["running"] = as.running
+	stats["in_progress_tasks"] = len(as.inProgressTasks)
+	stats["queued_tasks"] = as.taskQueue.Size()
+	stats["last_reconciliation"] = as.volumeStateManager.lastMasterSync
+
+	// Worker stats
+	if as.workerRegistry != nil {
+		stats["worker_registry"] = as.workerRegistry.GetRegistryStats()
+	}
+
+	// Get server capacity information
+	serverStats := make(map[string]*CapacityInfo)
+	// This would iterate through known servers and get their capacity info
+	stats["server_capacity"] = serverStats
+
+	// Task breakdown by type
+	tasksByType := make(map[types.TaskType]int)
+	for _, task := range as.inProgressTasks {
+		tasksByType[task.Task.Type]++
+	}
+	stats["tasks_by_type"] = tasksByType
+
+	return stats
+}
+
+// generateTaskID generates a unique task ID
+func generateTaskID() string {
+	// Simple task ID generation - in production would use UUID or similar
+	return fmt.Sprintf("task_%d_%d", time.Now().UnixNano(), rand.Intn(10000))
 }

@@ -266,9 +266,10 @@ func (sr *SimulationRunner) DemonstrateSystemCapabilities() {
 }
 
 func (sr *SimulationRunner) demonstrateHighAvailability() {
+	glog.Infof("High Availability Features:")
 	glog.Infof("✓ Workers can fail without affecting overall system operation")
 	glog.Infof("✓ Tasks are automatically reassigned when workers become unavailable")
-	glog.Infof("✓ System maintains service even with 50% worker failure rate")
+	glog.Infof("✓ System maintains service even with 50 percent worker failure rate")
 }
 
 func (sr *SimulationRunner) demonstrateLoadBalancing() {
