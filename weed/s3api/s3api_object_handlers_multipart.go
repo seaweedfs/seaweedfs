@@ -331,9 +331,8 @@ func (s3a *S3ApiServer) genPartUploadUrl(bucket, uploadID string, partID int) st
 
 // Generate uploadID hash string from object
 func (s3a *S3ApiServer) generateUploadID(object string) string {
-	if strings.HasPrefix(object, "/") {
-		object = object[1:]
-	}
+
+	object = strings.TrimPrefix(object, "/")
 	h := sha1.New()
 	h.Write([]byte(object))
 	return fmt.Sprintf("%x", h.Sum(nil))
