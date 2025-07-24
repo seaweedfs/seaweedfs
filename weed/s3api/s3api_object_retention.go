@@ -591,7 +591,7 @@ func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, buck
 
 	if err != nil {
 		// If object doesn't exist, it's not under retention or legal hold - this is expected during delete operations
-		if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrLatestVersionNotFound) {
+		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrLatestVersionNotFound) {
 			// Object doesn't exist, so it can't be under retention or legal hold - this is normal
 			glog.V(4).Infof("Object %s/%s (versionId: %s) not found during object lock check (expected during delete operations)", bucket, object, versionId)
 			return nil

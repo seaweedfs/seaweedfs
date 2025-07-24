@@ -253,7 +253,7 @@ func (s3a *S3ApiServer) getVersioningState(bucket string) (string, error) {
 	config, errCode := s3a.getBucketConfig(bucket)
 	if errCode != s3err.ErrNone {
 		if errCode == s3err.ErrNoSuchBucket {
-			return "", filer_pb.ErrNotFound
+			return "", nil
 		}
 		return "", fmt.Errorf("failed to get bucket config: %v", errCode)
 	}
