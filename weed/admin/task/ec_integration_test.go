@@ -10,9 +10,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// TestEnhancedECIntegration tests the enhanced EC implementation with the admin server
-func TestEnhancedECIntegration(t *testing.T) {
-	t.Logf("Starting enhanced EC integration test")
+// TestECIntegration tests the EC implementation with the admin server
+func TestECIntegration(t *testing.T) {
+	t.Logf("Starting EC integration test")
 
 	// Step 1: Create admin server
 	config := &MinimalAdminConfig{
@@ -51,7 +51,7 @@ func TestEnhancedECIntegration(t *testing.T) {
 
 	// Step 3: Create an EC task
 	ecTask := &types.Task{
-		ID:       "enhanced-ec-task-1",
+		ID:       "ec-task-1",
 		Type:     types.TaskTypeErasureCoding,
 		VolumeID: 12345,
 		Server:   "localhost:8080",
@@ -70,7 +70,7 @@ func TestEnhancedECIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to queue EC task: %v", err)
 	}
-	t.Logf("Successfully queued enhanced EC task %s for volume %d", ecTask.ID, ecTask.VolumeID)
+	t.Logf("Successfully queued EC task %s for volume %d", ecTask.ID, ecTask.VolumeID)
 
 	// Step 4: Worker requests the task
 	assignedTask, err := adminServer.RequestTask("ec-worker-1", []types.TaskType{types.TaskTypeErasureCoding})
@@ -82,8 +82,8 @@ func TestEnhancedECIntegration(t *testing.T) {
 		t.Logf("EC worker got task: %s (%s) for volume %d",
 			assignedTask.ID, assignedTask.Type, assignedTask.VolumeID)
 
-		// Step 5: Simulate enhanced EC task execution progress
-		t.Logf("Simulating enhanced EC task execution phases")
+		// Step 5: Simulate EC task execution phases
+		t.Logf("Simulating EC task execution phases")
 
 		// Phase 1: Copying volume data
 		err = adminServer.UpdateTaskProgress(assignedTask.ID, 15.0)
@@ -132,7 +132,7 @@ func TestEnhancedECIntegration(t *testing.T) {
 		if err != nil {
 			t.Errorf("Failed to complete EC task: %v", err)
 		}
-		t.Logf("Successfully completed enhanced EC task %s", assignedTask.ID)
+		t.Logf("Successfully completed EC task %s", assignedTask.ID)
 	} else {
 		t.Logf("No EC task was assigned (expected in test environment)")
 	}
@@ -151,16 +151,16 @@ func TestEnhancedECIntegration(t *testing.T) {
 			lastEntry.TaskID, lastEntry.TaskType, lastEntry.Duration)
 
 		if lastEntry.TaskType == types.TaskTypeErasureCoding {
-			t.Logf("Enhanced EC task completed successfully")
+			t.Logf("EC task completed successfully")
 		}
 	}
 
-	t.Logf("Enhanced EC integration test completed successfully")
+	t.Logf("EC integration test completed successfully")
 }
 
-// TestEnhancedECTaskValidation tests the enhanced EC task validation
-func TestEnhancedECTaskValidation(t *testing.T) {
-	t.Logf("Testing enhanced EC task validation")
+// TestECTaskValidation tests the EC task validation
+func TestECTaskValidation(t *testing.T) {
+	t.Logf("Testing EC task validation")
 
 	// Create a temporary work directory
 	workDir := filepath.Join(os.TempDir(), "seaweedfs_ec_test")
@@ -170,8 +170,8 @@ func TestEnhancedECTaskValidation(t *testing.T) {
 	}
 	defer os.RemoveAll(workDir)
 
-	// Create enhanced EC task
-	enhancedTask := ec_task.NewEnhancedECTask(
+	// Create EC task
+	ecTask := ec_task.NewTaskWithParams(
 		"localhost:8080", // source server
 		12345,            // volume ID
 		"localhost:9333", // master client
@@ -188,7 +188,7 @@ func TestEnhancedECTaskValidation(t *testing.T) {
 		},
 	}
 
-	err = enhancedTask.Validate(validParams)
+	err = ecTask.Validate(validParams)
 	if err != nil {
 		t.Errorf("Valid parameters should pass validation: %v", err)
 	}
@@ -199,25 +199,25 @@ func TestEnhancedECTaskValidation(t *testing.T) {
 		Server:   "", // Empty server
 	}
 
-	err = enhancedTask.Validate(invalidParams)
+	err = ecTask.Validate(invalidParams)
 	if err == nil {
 		t.Errorf("Invalid parameters should fail validation")
 	}
 
 	// Test time estimation
-	estimatedTime := enhancedTask.EstimateTime(validParams)
+	estimatedTime := ecTask.EstimateTime(validParams)
 	t.Logf("Estimated time for 32GB volume EC: %v", estimatedTime)
 
 	if estimatedTime < 20*time.Minute {
 		t.Errorf("Expected at least 20 minutes for large volume EC, got %v", estimatedTime)
 	}
 
-	t.Logf("Enhanced EC task validation completed successfully")
+	t.Logf("EC task validation completed successfully")
 }
 
-// TestEnhancedECFeatures tests specific enhanced EC features
-func TestEnhancedECFeatures(t *testing.T) {
-	t.Logf("Testing enhanced EC features")
+// TestECFeatures tests specific EC features
+func TestECFeatures(t *testing.T) {
+	t.Logf("Testing EC features")
 
 	// Create temporary work directory
 	workDir := filepath.Join(os.TempDir(), "seaweedfs_ec_features_test")
@@ -227,7 +227,7 @@ func TestEnhancedECFeatures(t *testing.T) {
 	}
 	defer os.RemoveAll(workDir)
 
-	enhancedTask := ec_task.NewEnhancedECTask(
+	ecTask := ec_task.NewTaskWithParams(
 		"localhost:8080",
 		54321,
 		"localhost:9333",
@@ -237,17 +237,17 @@ func TestEnhancedECFeatures(t *testing.T) {
 	// Test step tracking
 	t.Logf("Testing step tracking functionality")
 
-	currentStep := enhancedTask.GetCurrentStep()
+	currentStep := ecTask.GetCurrentStep()
 	t.Logf("Initial current step: %s", currentStep)
 
-	progress := enhancedTask.GetProgress()
+	progress := ecTask.GetProgress()
 	t.Logf("Initial progress: %.1f%%", progress)
 
 	// Test parameter extraction
 	params := types.TaskParams{
 		VolumeID:   54321,
 		Server:     "localhost:8080",
-		Collection: "enhanced_test",
+		Collection: "features_test",
 		Parameters: map[string]interface{}{
 			"volume_size":    int64(64 * 1024 * 1024 * 1024), // 64GB
 			"data_shards":    10,
@@ -256,7 +256,7 @@ func TestEnhancedECFeatures(t *testing.T) {
 		},
 	}
 
-	estimatedTime := enhancedTask.EstimateTime(params)
+	estimatedTime := ecTask.EstimateTime(params)
 	expectedMinTime := time.Duration(64*2) * time.Minute // 2 minutes per GB
 
 	t.Logf("64GB volume estimated time: %v (expected minimum: %v)", estimatedTime, expectedMinTime)
@@ -265,15 +265,15 @@ func TestEnhancedECFeatures(t *testing.T) {
 		t.Errorf("Time estimate seems too low for 64GB volume")
 	}
 
-	t.Logf("Enhanced EC features test completed successfully")
+	t.Logf("EC features test completed successfully")
 }
 
-// TestECTaskComparison compares basic vs enhanced EC implementations
+// TestECTaskComparison tests EC implementation features
 func TestECTaskComparison(t *testing.T) {
-	t.Logf("Comparing basic vs enhanced EC implementations")
+	t.Logf("Testing EC implementation features")
 
-	// Basic EC task estimation
-	basicParams := types.TaskParams{
+	// EC task estimation
+	params := types.TaskParams{
 		VolumeID: 11111,
 		Server:   "localhost:8080",
 		Parameters: map[string]interface{}{
@@ -281,44 +281,29 @@ func TestECTaskComparison(t *testing.T) {
 		},
 	}
 
-	// Create basic task (existing implementation)
-	basicTask := ec_task.NewTask("localhost:8080", 11111)
-	basicTime := basicTask.EstimateTime(basicParams)
-
-	// Create enhanced task
+	// Create task
 	workDir := filepath.Join(os.TempDir(), "seaweedfs_ec_comparison")
 	defer os.RemoveAll(workDir)
 
-	enhancedTask := ec_task.NewEnhancedECTask(
+	ecTask := ec_task.NewTaskWithParams(
 		"localhost:8080",
 		22222,
 		"localhost:9333",
 		workDir,
 	)
-	enhancedTime := enhancedTask.EstimateTime(basicParams)
+	estimatedTime := ecTask.EstimateTime(params)
 
-	t.Logf("Basic EC task estimated time: %v", basicTime)
-	t.Logf("Enhanced EC task estimated time: %v", enhancedTime)
+	t.Logf("EC task estimated time: %v", estimatedTime)
 
-	// Enhanced should take longer due to additional processing
-	if enhancedTime <= basicTime {
-		t.Logf("Note: Enhanced EC might take longer due to local processing and smart distribution")
-	}
+	// Test feature capabilities
+	t.Logf("EC implementation features:")
+	t.Logf("  - Local volume data copying with progress tracking")
+	t.Logf("  - Local Reed-Solomon encoding (10+4 shards)")
+	t.Logf("  - Intelligent shard placement with rack awareness")
+	t.Logf("  - Load balancing across available servers")
+	t.Logf("  - Backup server selection for redundancy")
+	t.Logf("  - Detailed step-by-step progress tracking")
+	t.Logf("  - Comprehensive error handling and recovery")
 
-	// Test feature differences
-	t.Logf("Basic EC features:")
-	t.Logf("  - Direct volume server EC generation")
-	t.Logf("  - Simple shard mounting")
-	t.Logf("  - No custom placement logic")
-
-	t.Logf("Enhanced EC features:")
-	t.Logf("  - Local volume data copying")
-	t.Logf("  - Local Reed-Solomon encoding")
-	t.Logf("  - Intelligent shard placement with affinity")
-	t.Logf("  - Rack diversity for data shards")
-	t.Logf("  - Load balancing across servers")
-	t.Logf("  - Backup server selection")
-	t.Logf("  - Detailed progress tracking")
-
-	t.Logf("EC task comparison completed successfully")
+	t.Logf("EC implementation test completed successfully")
 }

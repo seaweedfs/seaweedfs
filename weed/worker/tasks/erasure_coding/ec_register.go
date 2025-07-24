@@ -33,49 +33,20 @@ func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
 		return nil, fmt.Errorf("server is required")
 	}
 
-	task := NewTask(params.Server, params.VolumeID)
+	// Extract additional parameters for comprehensive EC
+	masterClient := "localhost:9333"    // Default master client
+	workDir := "/tmp/seaweedfs_ec_work" // Default work directory
+
+	if mc, ok := params.Parameters["master_client"].(string); ok && mc != "" {
+		masterClient = mc
+	}
+	if wd, ok := params.Parameters["work_dir"].(string); ok && wd != "" {
+		workDir = wd
+	}
+
+	// Create EC task with comprehensive capabilities
+	task := NewTaskWithParams(params.Server, params.VolumeID, masterClient, workDir)
 	task.SetEstimatedDuration(task.EstimateTime(params))
 
 	return task, nil
-}
-
-// Shared detector and scheduler instances
-var (
-	sharedDetector  *EcDetector
-	sharedScheduler *Scheduler
-)
-
-// getSharedInstances returns the shared detector and scheduler instances
-func getSharedInstances() (*EcDetector, *Scheduler) {
-	if sharedDetector == nil {
-		sharedDetector = NewEcDetector()
-	}
-	if sharedScheduler == nil {
-		sharedScheduler = NewScheduler()
-	}
-	return sharedDetector, sharedScheduler
-}
-
-// GetSharedInstances returns the shared detector and scheduler instances (public access)
-func GetSharedInstances() (*EcDetector, *Scheduler) {
-	return getSharedInstances()
-}
-
-// Auto-register this task when the package is imported
-func init() {
-	factory := NewFactory()
-	tasks.AutoRegister(types.TaskTypeErasureCoding, factory)
-
-	// Get shared instances for all registrations
-	detector, scheduler := getSharedInstances()
-
-	// Register with types registry
-	tasks.AutoRegisterTypes(func(registry *types.TaskRegistry) {
-		registry.RegisterTask(detector, scheduler)
-	})
-
-	// Register with UI registry using the same instances
-	tasks.AutoRegisterUI(func(uiRegistry *types.UIRegistry) {
-		RegisterUI(uiRegistry, detector, scheduler)
-	})
 }
