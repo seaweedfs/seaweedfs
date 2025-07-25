@@ -92,7 +92,6 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                 <table class="table table-hover">
                                     <thead>
                                         <tr>
-                                            <th>ID</th>
                                             <th>Type</th>
                                             <th>Priority</th>
                                             <th>Volume</th>
@@ -105,7 +104,6 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "pending" {
                                                 <tr>
-                                                    <td><code>{task.ID}</code></td>
                                                     <td>
                                                         @TaskTypeIcon(task.Type)
                                                         {string(task.Type)}
@@ -149,7 +147,6 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                 <table class="table table-hover">
                                     <thead>
                                         <tr>
-                                            <th>ID</th>
                                             <th>Type</th>
                                             <th>Status</th>
                                             <th>Progress</th>
@@ -162,7 +159,6 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "assigned" || string(task.Status) == "in_progress" {
                                                 <tr>
-                                                    <td><code>{task.ID}</code></td>
                                                     <td>
                                                         @TaskTypeIcon(task.Type)
                                                         {string(task.Type)}
@@ -218,7 +214,6 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                 <table class="table table-hover">
                                     <thead>
                                         <tr>
-                                            <th>ID</th>
                                             <th>Type</th>
                                             <th>Status</th>
                                             <th>Volume</th>
@@ -232,7 +227,6 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                             if string(task.Status) == "completed" || string(task.Status) == "failed" || string(task.Status) == "cancelled" {
                                                 if string(task.Status) == "failed" {
                                                     <tr class="table-danger">
-                                                        <td><code>{task.ID}</code></td>
                                                         <td>
                                                             @TaskTypeIcon(task.Type)
                                                             {string(task.Type)}
@@ -263,7 +257,6 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                                     </tr>
                                                 } else {
                                                     <tr>
-                                                        <td><code>{task.ID}</code></td>
                                                         <td>
                                                             @TaskTypeIcon(task.Type)
                                                             {string(task.Type)}
