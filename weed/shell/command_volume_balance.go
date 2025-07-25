@@ -225,16 +225,6 @@ func capacityByMaxVolumeCount(diskType types.DiskType) CapacityFunc {
 		if !found {
 			return 0
 		}
-		return float64(diskInfo.MaxVolumeCount)
-	}
-}
-
-func capacityByMaxVolumeCountWithEc(diskType types.DiskType) CapacityFunc {
-	return func(info *master_pb.DataNodeInfo) float64 {
-		diskInfo, found := info.DiskInfos[string(diskType)]
-		if !found {
-			return 0
-		}
 		var ecShardCount int
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			ecShardCount += erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIdCount()
@@ -297,7 +287,7 @@ func sortWritableVolumes(volumes []*master_pb.VolumeInformationMessage) {
 func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) (err error) {
 	selectedVolumeCount, volumeMaxCount := 0, float64(0)
 	var nodesWithCapacity []*Node
-	capacityFunc := capacityByMaxVolumeCountWithEc(diskType)
+	capacityFunc := capacityByMaxVolumeCount(diskType)
 	for _, dn := range nodes {
 		selectedVolumeCount += len(dn.selectedVolumes)
 		capacity := capacityFunc(dn.info)
