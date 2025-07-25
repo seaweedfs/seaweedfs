@@ -1,6 +1,6 @@
 # SeaweedFS EC Worker Testing Environment
 
-This Docker Compose setup provides a comprehensive testing environment for SeaweedFS Erasure Coding (EC) workers with real workload simulation.
+This Docker Compose setup provides a comprehensive testing environment for SeaweedFS Erasure Coding (EC) workers using **official SeaweedFS commands**.
 
 ## 📂 Directory Structure
 
@@ -11,29 +11,34 @@ docker/admin_integration/
 ├── Makefile                     # Main management interface
 ├── docker-compose-ec-test.yml   # Docker compose configuration
 ├── EC-TESTING-README.md         # This documentation
-├── Dockerfile.admin             # Admin server image
-├── Dockerfile.worker            # EC worker image
-├── Dockerfile.load              # Load generator image
-├── Dockerfile.monitor           # Monitor service image
-├── admin-entrypoint.sh          # Admin server startup script
-├── worker-entrypoint.sh         # Worker startup script
-├── load-generator.go            # Load generator source code
-├── load-entrypoint.sh           # Load generator startup script
-├── monitor.go                   # Monitor service source code
-└── monitor-entrypoint.sh        # Monitor startup script
+└── run-ec-test.sh              # Quick start script
 ```
 
 ## 🏗️ Architecture
 
-The testing environment includes:
+The testing environment uses **official SeaweedFS commands** and includes:
 
 - **1 Master Server** (port 9333) - Coordinates the cluster with 50MB volume size limit
-- **6 Volume Servers** (ports 8080-8085) - Distributed across 2 data centers and 3 racks for diversity
+- **6 Volume Servers** (ports 8080-8085) - Distributed across 2 data centers and 3 racks for diversity  
 - **1 Filer** (port 8888) - Provides file system interface
-- **1 Admin Server** (port 9900) - Detects volumes needing EC and manages workers
-- **3 EC Workers** - Execute erasure coding tasks with different capabilities
-- **1 Load Generator** - Continuously writes and deletes files to trigger EC
-- **1 Monitor** (port 9999) - Tracks cluster health and EC progress
+- **1 Admin Server** (port 23646) - Detects volumes needing EC and manages workers using official `admin` command
+- **3 EC Workers** - Execute erasure coding tasks using official `worker` command with task-specific working directories
+- **1 Load Generator** - Continuously writes and deletes files using SeaweedFS shell commands
+- **1 Monitor** - Tracks cluster health and EC progress using shell scripts
+
+## ✨ New Features
+
+### **Task-Specific Working Directories**
+Each worker now creates dedicated subdirectories for different task types:
+- `/work/erasure_coding/` - For EC encoding tasks
+- `/work/vacuum/` - For vacuum cleanup tasks  
+- `/work/balance/` - For volume balancing tasks
+
+This provides:
+- **Organization**: Each task type gets isolated working space
+- **Debugging**: Easy to find files/logs related to specific task types
+- **Cleanup**: Can clean up task-specific artifacts easily
+- **Concurrent Safety**: Different task types won't interfere with each other's files
 
 ## 🚀 Quick Start
 
@@ -42,7 +47,7 @@ The testing environment includes:
 - Docker and Docker Compose installed
 - GNU Make installed
 - At least 4GB RAM available for containers
-- Ports 8080-8085, 8888, 9333, 9900, 9999 available
+- Ports 8080-8085, 8888, 9333, 23646 available
 
 ### Start the Environment
 
@@ -58,8 +63,8 @@ make start
 ```
 
 The `make start` command will:
-1. Build all necessary Docker images
-2. Start all services in the correct order
+1. Start all services using official SeaweedFS images
+2. Configure workers with task-specific working directories
 3. Wait for services to be ready
 4. Display monitoring URLs and run health checks
 

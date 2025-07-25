@@ -311,20 +311,18 @@ func (h *MaintenanceHandlers) getMaintenanceQueueData() (*maintenance.Maintenanc
 }
 
 func (h *MaintenanceHandlers) getMaintenanceQueueStats() (*maintenance.QueueStats, error) {
-	// This would integrate with the maintenance queue to get real statistics
-	// For now, return mock data
-	return &maintenance.QueueStats{
-		PendingTasks:   5,
-		RunningTasks:   2,
-		CompletedToday: 15,
-		FailedToday:    1,
-		TotalTasks:     23,
-	}, nil
+	// Use the exported method from AdminServer
+	return h.adminServer.GetMaintenanceQueueStats()
 }
 
 func (h *MaintenanceHandlers) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
-	// This would integrate with the maintenance queue to get real tasks
-	// For now, return mock data
+	// Call the private method logic directly since the public GetMaintenanceTasks is for HTTP handlers
+	if h.adminServer == nil {
+		return []*maintenance.MaintenanceTask{}, nil
+	}
+
+	// We need to access the maintenance manager through reflection or add a proper accessor
+	// For now, return empty tasks until proper accessor is added
 	return []*maintenance.MaintenanceTask{}, nil
 }
 

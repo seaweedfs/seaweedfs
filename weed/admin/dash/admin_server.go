@@ -852,6 +852,15 @@ func (as *AdminServer) CancelMaintenanceTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Task cancelled"})
 }
 
+// cancelMaintenanceTask cancels a pending maintenance task
+func (as *AdminServer) cancelMaintenanceTask(taskID string) error {
+	if as.maintenanceManager == nil {
+		return fmt.Errorf("maintenance manager not initialized")
+	}
+
+	return as.maintenanceManager.CancelTask(taskID)
+}
+
 // GetMaintenanceWorkersAPI returns all maintenance workers
 func (as *AdminServer) GetMaintenanceWorkersAPI(c *gin.Context) {
 	workers, err := as.getMaintenanceWorkers()
@@ -951,17 +960,36 @@ func (as *AdminServer) getMaintenanceQueueData() (*maintenance.MaintenanceQueueD
 	}, nil
 }
 
+// GetMaintenanceQueueStats returns statistics for the maintenance queue (exported for handlers)
+func (as *AdminServer) GetMaintenanceQueueStats() (*maintenance.QueueStats, error) {
+	return as.getMaintenanceQueueStats()
+}
+
 // getMaintenanceQueueStats returns statistics for the maintenance queue
 func (as *AdminServer) getMaintenanceQueueStats() (*maintenance.QueueStats, error) {
-	// This would integrate with the maintenance queue to get real statistics
-	// For now, return mock data
-	return &maintenance.QueueStats{
-		PendingTasks:   5,
-		RunningTasks:   2,
-		CompletedToday: 15,
-		FailedToday:    1,
-		TotalTasks:     23,
-	}, nil
+	if as.maintenanceManager == nil {
+		return &maintenance.QueueStats{
+			PendingTasks:   0,
+			RunningTasks:   0,
+			CompletedToday: 0,
+			FailedToday:    0,
+			TotalTasks:     0,
+		}, nil
+	}
+
+	// Get real statistics from maintenance manager
+	stats := as.maintenanceManager.GetStats()
+
+	// Convert MaintenanceStats to QueueStats
+	queueStats := &maintenance.QueueStats{
+		PendingTasks:   stats.TasksByStatus[maintenance.TaskStatusPending],
+		RunningTasks:   stats.TasksByStatus[maintenance.TaskStatusAssigned] + stats.TasksByStatus[maintenance.TaskStatusInProgress],
+		CompletedToday: stats.CompletedToday,
+		FailedToday:    stats.FailedToday,
+		TotalTasks:     stats.TotalTasks,
+	}
+
+	return queueStats, nil
 }
 
 // getMaintenanceTasks returns all maintenance tasks
@@ -998,15 +1026,6 @@ func (as *AdminServer) getMaintenanceTask(taskID string) (*MaintenanceTask, erro
 	}
 
 	return nil, fmt.Errorf("task %s not found", taskID)
-}
-
-// cancelMaintenanceTask cancels a pending maintenance task
-func (as *AdminServer) cancelMaintenanceTask(taskID string) error {
-	if as.maintenanceManager == nil {
-		return fmt.Errorf("maintenance manager not initialized")
-	}
-
-	return as.maintenanceManager.CancelTask(taskID)
 }
 
 // getMaintenanceWorkers returns all maintenance workers

@@ -464,7 +464,7 @@ func (w *ECWorker) executeECEncode(task *ActiveTask) (bool, error) {
 		Collection: task.Parameters["collection"],
 	}
 
-	generateResp, err := client.VolumeEcShardsGenerate(task.Context, generateReq)
+	_, err = client.VolumeEcShardsGenerate(task.Context, generateReq)
 	if err != nil {
 		return false, fmt.Errorf("EC shard generation failed: %v", err)
 	}
@@ -477,7 +477,7 @@ func (w *ECWorker) executeECEncode(task *ActiveTask) (bool, error) {
 	mountReq := &volume_server_pb.VolumeEcShardsMountRequest{
 		VolumeId:   task.VolumeID,
 		Collection: task.Parameters["collection"],
-		Shards:     generateResp.EcIndexBits, // Use shards from generation
+		ShardIds:   []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}, // All EC shards
 	}
 
 	_, err = client.VolumeEcShardsMount(task.Context, mountReq)
@@ -601,7 +601,7 @@ func (w *ECWorker) executeVacuum(task *ActiveTask) (bool, error) {
 			return false, fmt.Errorf("vacuum compact stream error: %v", err)
 		}
 
-		progress := 0.4 + 0.4*(resp.ProcessedBytes/float64(resp.LoadAvg_1m)) // Rough progress estimate
+		progress := 0.4 + 0.4*(float64(resp.ProcessedBytes)/float64(resp.LoadAvg_1M)) // Rough progress estimate
 		w.sendTaskUpdate(task, float32(progress), "Compacting volume")
 	}
 
@@ -612,7 +612,7 @@ func (w *ECWorker) executeVacuum(task *ActiveTask) (bool, error) {
 		VolumeId: task.VolumeID,
 	}
 
-	commitResp, err := client.VacuumVolumeCommit(task.Context, commitReq)
+	_, err = client.VacuumVolumeCommit(task.Context, commitReq)
 	if err != nil {
 		return false, fmt.Errorf("vacuum commit failed: %v", err)
 	}
@@ -630,8 +630,7 @@ func (w *ECWorker) executeVacuum(task *ActiveTask) (bool, error) {
 		// Non-critical error
 	}
 
-	w.sendTaskUpdate(task, 1.0, fmt.Sprintf("Vacuum completed, reclaimed space: %d bytes",
-		commitResp.MovedBytesCount))
+	w.sendTaskUpdate(task, 1.0, "Vacuum completed successfully")
 
 	return true, nil
 }
