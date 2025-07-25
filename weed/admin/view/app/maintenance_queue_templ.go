@@ -102,21 +102,21 @@ func MaintenanceQueue(data *maintenance.MaintenanceQueueData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			for _, task := range data.Tasks {
-				if task.Status == maintenance.TaskStatusPending {
+				if string(task.Status) == "pending" {
 					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<tr><td><code>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var6 string
-					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(task.ID[:8])
+					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(task.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 108, Col: 74}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 108, Col: 70}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "...</code></td><td>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</code></td><td>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -219,21 +219,21 @@ func MaintenanceQueue(data *maintenance.MaintenanceQueueData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			for _, task := range data.Tasks {
-				if task.Status == maintenance.TaskStatusAssigned || task.Status == maintenance.TaskStatusInProgress {
+				if string(task.Status) == "assigned" || string(task.Status) == "in_progress" {
 					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<tr><td><code>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var12 string
-					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(task.ID[:8])
+					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(task.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 165, Col: 74}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 165, Col: 70}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "...</code></td><td>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "</code></td><td>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -289,15 +289,15 @@ func MaintenanceQueue(data *maintenance.MaintenanceQueueData) templ.Component {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var15 string
-						templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(task.WorkerID[:8])
+						templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(task.WorkerID)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 175, Col: 85}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 175, Col: 81}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "...</small>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "</small>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
@@ -353,22 +353,22 @@ func MaintenanceQueue(data *maintenance.MaintenanceQueueData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			for _, task := range data.Tasks {
-				if task.Status == maintenance.TaskStatusCompleted || task.Status == maintenance.TaskStatusFailed || task.Status == maintenance.TaskStatusCancelled {
-					if task.Status == maintenance.TaskStatusFailed {
+				if string(task.Status) == "completed" || string(task.Status) == "failed" || string(task.Status) == "cancelled" {
+					if string(task.Status) == "failed" {
 						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "<tr class=\"table-danger\"><td><code>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var17 string
-						templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(task.ID[:8])
+						templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(task.ID)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 235, Col: 78}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 235, Col: 74}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "...</code></td><td>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "</code></td><td>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
@@ -416,15 +416,15 @@ func MaintenanceQueue(data *maintenance.MaintenanceQueueData) templ.Component {
 								return templ_7745c5c3_Err
 							}
 							var templ_7745c5c3_Var20 string
-							templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(task.WorkerID[:8])
+							templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(task.WorkerID)
 							if templ_7745c5c3_Err != nil {
-								return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 244, Col: 89}
+								return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 244, Col: 85}
 							}
 							_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 							if templ_7745c5c3_Err != nil {
 								return templ_7745c5c3_Err
 							}
-							templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "...</small>")
+							templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "</small>")
 							if templ_7745c5c3_Err != nil {
 								return templ_7745c5c3_Err
 							}
@@ -484,15 +484,15 @@ func MaintenanceQueue(data *maintenance.MaintenanceQueueData) templ.Component {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var23 string
-						templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(task.ID[:8])
+						templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(task.ID)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 266, Col: 78}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 266, Col: 74}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "...</code></td><td>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "</code></td><td>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
@@ -540,15 +540,15 @@ func MaintenanceQueue(data *maintenance.MaintenanceQueueData) templ.Component {
 								return templ_7745c5c3_Err
 							}
 							var templ_7745c5c3_Var26 string
-							templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(task.WorkerID[:8])
+							templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(task.WorkerID)
 							if templ_7745c5c3_Err != nil {
-								return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 275, Col: 89}
+								return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 275, Col: 85}
 							}
 							_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 							if templ_7745c5c3_Err != nil {
 								return templ_7745c5c3_Err
 							}
-							templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "...</small>")
+							templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</small>")
 							if templ_7745c5c3_Err != nil {
 								return templ_7745c5c3_Err
 							}
@@ -610,7 +610,7 @@ func MaintenanceQueue(data *maintenance.MaintenanceQueueData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "</div></div></div></div></div><script>\n        // Auto-refresh every 10 seconds\n        setInterval(function() {\n            if (!document.hidden) {\n                window.location.reload();\n            }\n        }, 10000);\n\n        function triggerScan() {\n            fetch('/api/maintenance/scan', {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                }\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Maintenance scan triggered successfully');\n                    setTimeout(() => window.location.reload(), 2000);\n                } else {\n                    alert('Failed to trigger scan: ' + (data.error || 'Unknown error'));\n                }\n            })\n            .catch(error => {\n                alert('Error: ' + error.message);\n            });\n        }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "</div></div></div></div></div><script>\n        // Debug output to browser console\n        console.log(\"DEBUG: Maintenance Queue Template loaded\");\n        \n        // Auto-refresh every 10 seconds\n        setInterval(function() {\n            if (!document.hidden) {\n                window.location.reload();\n            }\n        }, 10000);\n\n        window.triggerScan = function() {\n            console.log(\"triggerScan called\");\n            fetch('/api/maintenance/scan', {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                }\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Maintenance scan triggered successfully');\n                    setTimeout(() => window.location.reload(), 2000);\n                } else {\n                    alert('Failed to trigger scan: ' + (data.error || 'Unknown error'));\n                }\n            })\n            .catch(error => {\n                alert('Error: ' + error.message);\n            });\n        };\n\n        window.refreshPage = function() {\n            console.log(\"refreshPage called\");\n            window.location.reload();\n        };\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -809,7 +809,7 @@ func ProgressBar(progress float64, status maintenance.MaintenanceTaskStatus) tem
 			var templ_7745c5c3_Var35 string
 			templ_7745c5c3_Var35, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("width: %.1f%%", progress))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 381, Col: 102}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 390, Col: 102}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 			if templ_7745c5c3_Err != nil {
@@ -822,7 +822,7 @@ func ProgressBar(progress float64, status maintenance.MaintenanceTaskStatus) tem
 			var templ_7745c5c3_Var36 string
 			templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1f%%", progress))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 384, Col: 66}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_queue.templ`, Line: 393, Col: 66}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 			if templ_7745c5c3_Err != nil {

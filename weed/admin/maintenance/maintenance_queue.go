@@ -1,6 +1,8 @@
 package maintenance
 
 import (
+	"crypto/rand"
+	"fmt"
 	"sort"
 	"time"
 
@@ -24,10 +26,16 @@ func (mq *MaintenanceQueue) SetIntegration(integration *MaintenanceIntegration) 
 	glog.V(1).Infof("Maintenance queue configured with integration")
 }
 
-// AddTask adds a new maintenance task to the queue
+// AddTask adds a new maintenance task to the queue with deduplication
 func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 	mq.mutex.Lock()
 	defer mq.mutex.Unlock()
+
+	// Check for duplicate tasks (same type + volume + not completed)
+	if mq.hasDuplicateTask(task) {
+		glog.V(2).Infof("Skipping duplicate task: %s for volume %d (already exists)", task.Type, task.VolumeID)
+		return
+	}
 
 	task.ID = generateTaskID()
 	task.Status = TaskStatusPending
@@ -46,6 +54,21 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 	})
 
 	glog.V(2).Infof("Added maintenance task %s: %s for volume %d", task.ID, task.Type, task.VolumeID)
+}
+
+// hasDuplicateTask checks if a similar task already exists (same type, volume, and not completed)
+func (mq *MaintenanceQueue) hasDuplicateTask(newTask *MaintenanceTask) bool {
+	for _, existingTask := range mq.tasks {
+		if existingTask.Type == newTask.Type &&
+			existingTask.VolumeID == newTask.VolumeID &&
+			existingTask.Server == newTask.Server &&
+			(existingTask.Status == TaskStatusPending ||
+				existingTask.Status == TaskStatusAssigned ||
+				existingTask.Status == TaskStatusInProgress) {
+			return true
+		}
+	}
+	return false
 }
 
 // AddTasksFromResults converts detection results to tasks and adds them to the queue
@@ -311,10 +334,23 @@ func (mq *MaintenanceQueue) GetWorkers() []*MaintenanceWorker {
 func generateTaskID() string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 8)
-	for i := range b {
-		b[i] = charset[i%len(charset)]
+	randBytes := make([]byte, 8)
+
+	// Generate random bytes
+	if _, err := rand.Read(randBytes); err != nil {
+		// Fallback to timestamp-based ID if crypto/rand fails
+		timestamp := time.Now().UnixNano()
+		return fmt.Sprintf("task-%d", timestamp)
 	}
-	return string(b)
+
+	// Convert random bytes to charset
+	for i := range b {
+		b[i] = charset[int(randBytes[i])%len(charset)]
+	}
+
+	// Add timestamp suffix to ensure uniqueness
+	timestamp := time.Now().Unix() % 10000 // last 4 digits of timestamp
+	return fmt.Sprintf("%s-%04d", string(b), timestamp)
 }
 
 // CleanupOldTasks removes old completed and failed tasks

@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/components"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -30,8 +31,17 @@ func NewMaintenanceHandlers(adminServer *dash.AdminServer) *MaintenanceHandlers 
 func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
 	data, err := h.getMaintenanceQueueData()
 	if err != nil {
+		glog.Infof("DEBUG ShowMaintenanceQueue: error getting data: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	glog.Infof("DEBUG ShowMaintenanceQueue: got data with %d tasks", len(data.Tasks))
+	if data.Stats != nil {
+		glog.Infof("DEBUG ShowMaintenanceQueue: stats = {pending: %d, running: %d, completed: %d}",
+			data.Stats.PendingTasks, data.Stats.RunningTasks, data.Stats.CompletedToday)
+	} else {
+		glog.Infof("DEBUG ShowMaintenanceQueue: stats is nil")
 	}
 
 	// Render HTML template
@@ -40,9 +50,12 @@ func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
 	layoutComponent := layout.Layout(c, maintenanceComponent)
 	err = layoutComponent.Render(c.Request.Context(), c.Writer)
 	if err != nil {
+		glog.Infof("DEBUG ShowMaintenanceQueue: render error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
 		return
 	}
+
+	glog.Infof("DEBUG ShowMaintenanceQueue: template rendered successfully")
 }
 
 // ShowMaintenanceWorkers displays the maintenance workers page
@@ -287,27 +300,42 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 // Helper methods that delegate to AdminServer
 
 func (h *MaintenanceHandlers) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
+	glog.Infof("DEBUG getMaintenanceQueueData: starting data assembly")
+
 	tasks, err := h.getMaintenanceTasks()
 	if err != nil {
+		glog.Infof("DEBUG getMaintenanceQueueData: error getting tasks: %v", err)
 		return nil, err
 	}
+	glog.Infof("DEBUG getMaintenanceQueueData: got %d tasks", len(tasks))
 
 	workers, err := h.getMaintenanceWorkers()
 	if err != nil {
+		glog.Infof("DEBUG getMaintenanceQueueData: error getting workers: %v", err)
 		return nil, err
 	}
+	glog.Infof("DEBUG getMaintenanceQueueData: got %d workers", len(workers))
 
 	stats, err := h.getMaintenanceQueueStats()
 	if err != nil {
+		glog.Infof("DEBUG getMaintenanceQueueData: error getting stats: %v", err)
 		return nil, err
 	}
+	if stats != nil {
+		glog.Infof("DEBUG getMaintenanceQueueData: got stats {pending: %d, running: %d}", stats.PendingTasks, stats.RunningTasks)
+	} else {
+		glog.Infof("DEBUG getMaintenanceQueueData: stats is nil")
+	}
 
-	return &maintenance.MaintenanceQueueData{
+	data := &maintenance.MaintenanceQueueData{
 		Tasks:       tasks,
 		Workers:     workers,
 		Stats:       stats,
 		LastUpdated: time.Now(),
-	}, nil
+	}
+
+	glog.Infof("DEBUG getMaintenanceQueueData: assembled data with %d tasks, %d workers", len(data.Tasks), len(data.Workers))
+	return data, nil
 }
 
 func (h *MaintenanceHandlers) getMaintenanceQueueStats() (*maintenance.QueueStats, error) {
@@ -316,14 +344,31 @@ func (h *MaintenanceHandlers) getMaintenanceQueueStats() (*maintenance.QueueStat
 }
 
 func (h *MaintenanceHandlers) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
-	// Call the private method logic directly since the public GetMaintenanceTasks is for HTTP handlers
+	// Call the maintenance manager directly to get all tasks
 	if h.adminServer == nil {
+		glog.Infof("DEBUG getMaintenanceTasks: adminServer is nil")
 		return []*maintenance.MaintenanceTask{}, nil
 	}
 
-	// We need to access the maintenance manager through reflection or add a proper accessor
-	// For now, return empty tasks until proper accessor is added
-	return []*maintenance.MaintenanceTask{}, nil
+	if h.adminServer.GetMaintenanceManager() == nil {
+		glog.Infof("DEBUG getMaintenanceTasks: maintenance manager is nil")
+		return []*maintenance.MaintenanceTask{}, nil
+	}
+
+	// Get ALL tasks using empty parameters - this should match what the API returns
+	allTasks := h.adminServer.GetMaintenanceManager().GetTasks("", "", 0)
+	glog.Infof("DEBUG getMaintenanceTasks: retrieved %d tasks from maintenance manager", len(allTasks))
+
+	for i, task := range allTasks {
+		if task != nil {
+			glog.Infof("DEBUG getMaintenanceTasks: task[%d] = {id: %s, type: %s, status: %s, volume: %d}",
+				i, task.ID, task.Type, task.Status, task.VolumeID)
+		} else {
+			glog.Infof("DEBUG getMaintenanceTasks: task[%d] is nil", i)
+		}
+	}
+
+	return allTasks, nil
 }
 
 func (h *MaintenanceHandlers) getMaintenanceWorkers() ([]*maintenance.MaintenanceWorker, error) {
