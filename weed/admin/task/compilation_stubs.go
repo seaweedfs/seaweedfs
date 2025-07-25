@@ -50,9 +50,3 @@ func (vsm *VolumeStateManager) DetectInconsistencies() []StateInconsistency {
 	// Stub implementation - return empty slice
 	return []StateInconsistency{}
 }
-
-// detectMaintenanceCandidates is a stub for the master synchronizer
-func (ms *MasterSynchronizer) detectMaintenanceCandidates(data interface{}) []*VolumeMaintenanceCandidate {
-	// Stub implementation - return empty slice
-	return []*VolumeMaintenanceCandidate{}
-}

@@ -62,8 +62,19 @@ func (ms *MaintenanceScanner) ScanForMaintenanceTasks() ([]*TaskDetectionResult,
 // getVolumeHealthMetrics collects health information for all volumes
 func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, error) {
 	var metrics []*VolumeHealthMetrics
+	var volumeSizeLimitMB uint64
 
 	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		// First, get volume size limit from master configuration
+		configResp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			glog.Warningf("Failed to get volume size limit from master: %v", err)
+			volumeSizeLimitMB = 30000 // Default to 30GB if we can't get from master
+		} else {
+			volumeSizeLimitMB = uint64(configResp.VolumeSizeLimitMB)
+		}
+
+		// Now get volume list
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
@@ -72,6 +83,8 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 		if resp.TopologyInfo == nil {
 			return nil
 		}
+
+		volumeSizeLimitBytes := volumeSizeLimitMB * 1024 * 1024 // Convert MB to bytes
 
 		for _, dc := range resp.TopologyInfo.DataCenterInfos {
 			for _, rack := range dc.RackInfos {
@@ -94,10 +107,13 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 							// Calculate derived metrics
 							if metric.Size > 0 {
 								metric.GarbageRatio = float64(metric.DeletedBytes) / float64(metric.Size)
-								// Calculate fullness ratio (would need volume size limit)
-								// metric.FullnessRatio = float64(metric.Size) / float64(volumeSizeLimit)
+								// Calculate fullness ratio using actual volume size limit from master
+								metric.FullnessRatio = float64(metric.Size) / float64(volumeSizeLimitBytes)
 							}
 							metric.Age = time.Since(metric.LastModified)
+
+							glog.V(3).Infof("Volume %d: size=%d, limit=%d, fullness=%.2f",
+								metric.VolumeID, metric.Size, volumeSizeLimitBytes, metric.FullnessRatio)
 
 							metrics = append(metrics, metric)
 						}

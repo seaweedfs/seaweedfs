@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // MasterSynchronizer handles periodic synchronization with the master server
@@ -17,6 +18,7 @@ type MasterSynchronizer struct {
 	adminServer        *AdminServer
 	syncInterval       time.Duration
 	stopCh             chan struct{}
+	volumeSizeLimitMB  uint64 // Volume size limit from master in MB
 }
 
 // NewMasterSynchronizer creates a new master synchronizer
@@ -68,6 +70,12 @@ func (ms *MasterSynchronizer) performSync() {
 	if err != nil {
 		glog.Errorf("Failed to get volume list from master: %v", err)
 		return
+	}
+
+	// Update volume size limit from master
+	if volumeData.VolumeSizeLimitMb > 0 {
+		ms.volumeSizeLimitMB = volumeData.VolumeSizeLimitMb
+		glog.V(2).Infof("Updated volume size limit to %d MB from master", ms.volumeSizeLimitMB)
 	}
 
 	// Merge data into volume state manager
@@ -161,9 +169,7 @@ func (ms *MasterSynchronizer) extractVolumesFromTopology(
 				// Initialize server capacity info
 				if serverCapacity[serverID] == nil {
 					serverCapacity[serverID] = &CapacityInfo{
-						Server:     serverID,
-						DataCenter: dcInfo.Id,
-						Rack:       rackInfo.Id,
+						Server: serverID,
 					}
 				}
 
@@ -187,8 +193,8 @@ func (ms *MasterSynchronizer) processDiskInfo(
 
 	// Update capacity information
 	capacity := serverCapacity[serverID]
-	capacity.TotalCapacity += uint64(diskInfo.MaxVolumeCount) * (32 * 1024 * 1024 * 1024) // Assume 32GB per volume
-	capacity.UsedCapacity += uint64(diskInfo.ActiveVolumeCount) * (32 * 1024 * 1024 * 1024)
+	capacity.TotalCapacity += int64(diskInfo.MaxVolumeCount) * (32 * 1024 * 1024 * 1024) // Assume 32GB per volume
+	capacity.UsedCapacity += int64(diskInfo.ActiveVolumeCount) * (32 * 1024 * 1024 * 1024)
 
 	// Process regular volumes
 	for _, volInfo := range diskInfo.VolumeInfos {
@@ -202,7 +208,7 @@ func (ms *MasterSynchronizer) processDiskInfo(
 			ReadOnly:         volInfo.ReadOnly,
 			Server:           serverID,
 			DiskType:         diskType,
-			LastModified:     time.Unix(volInfo.ModifiedAtSecond, 0),
+			ModifiedAtSecond: volInfo.ModifiedAtSecond,
 		}
 	}
 
@@ -217,12 +223,10 @@ func (ms *MasterSynchronizer) processDiskInfo(
 		for shardID := 0; shardID < 14; shardID++ {
 			if (shardInfo.EcIndexBits & (1 << uint(shardID))) != 0 {
 				ecShards[volumeID][shardID] = &ShardInfo{
-					VolumeID: volumeID,
-					ShardID:  shardID,
-					Server:   serverID,
-					Status:   ShardStatusExists,
-					Size:     0, // Size not available in shard info
-					DiskType: shardInfo.DiskType,
+					ShardID: shardID,
+					Server:  serverID,
+					Status:  ShardStatusExists,
+					Size:    0, // Size not available in shard info
 				}
 			}
 		}
@@ -261,23 +265,30 @@ func (ms *MasterSynchronizer) detectMaintenanceCandidates(data *master_pb.Volume
 	return candidates
 }
 
-// checkECEncodingCandidate checks if a volume is a candidate for EC encoding
+// EC encoding criteria - using size limit from master
 func (ms *MasterSynchronizer) checkECEncodingCandidate(volumeID uint32, state *VolumeState) *VolumeMaintenanceCandidate {
 	volume := state.CurrentState
 	if volume == nil {
 		return nil
 	}
 
+	// Skip EC encoding detection if no volume size limit is set from master
+	if ms.volumeSizeLimitMB <= 0 {
+		return nil
+	}
+
 	// EC encoding criteria:
 	// 1. Volume is read-only or large enough
 	// 2. Not already EC encoded
-	// 3. Size threshold met (e.g., > 20GB)
+	// 3. Size threshold met
 
-	const ecSizeThreshold = 20 * 1024 * 1024 * 1024 // 20GB
+	// Convert MB to bytes and use a fraction for EC threshold (e.g., 50% of size limit)
+	ecSizeThreshold := (ms.volumeSizeLimitMB * 1024 * 1024) / 2
 
+	// Check if volume is already EC encoded by checking if we have any EC shards for this volume
+	// For simplicity, assume no EC encoding for now since we don't have direct access to EC shard state
 	isCandidate := (volume.ReadOnly || volume.Size > ecSizeThreshold) &&
-		len(state.ECShardState) == 0 &&
-		volume.Size > 1024*1024*1024 // At least 1GB
+		volume.Size > 1024*1024 // At least 1MB
 
 	if !isCandidate {
 		return nil
@@ -287,8 +298,8 @@ func (ms *MasterSynchronizer) checkECEncodingCandidate(volumeID uint32, state *V
 		VolumeID:   volumeID,
 		Server:     volume.Server,
 		TaskType:   "ec_encode",
-		Priority:   TaskPriorityNormal,
-		Reason:     fmt.Sprintf("Volume size %d bytes exceeds EC threshold", volume.Size),
+		Priority:   types.TaskPriorityNormal,
+		Reason:     fmt.Sprintf("Volume size %d bytes exceeds EC threshold %d", volume.Size, ecSizeThreshold),
 		VolumeInfo: volume,
 	}
 }
@@ -319,7 +330,7 @@ func (ms *MasterSynchronizer) checkVacuumCandidate(volumeID uint32, state *Volum
 		VolumeID: volumeID,
 		Server:   volume.Server,
 		TaskType: "vacuum",
-		Priority: TaskPriorityNormal,
+		Priority: types.TaskPriorityNormal,
 		Reason: fmt.Sprintf("Deleted bytes %d (%.1f%%) exceed vacuum threshold",
 			volume.DeletedByteCount, deletedRatio*100),
 		VolumeInfo: volume,
@@ -328,40 +339,8 @@ func (ms *MasterSynchronizer) checkVacuumCandidate(volumeID uint32, state *Volum
 
 // checkECRebuildCandidate checks if an EC volume needs shard rebuilding
 func (ms *MasterSynchronizer) checkECRebuildCandidate(volumeID uint32, state *VolumeState) *VolumeMaintenanceCandidate {
-	if len(state.ECShardState) == 0 {
-		return nil // Not an EC volume
-	}
-
-	// Check for missing or corrupted shards
-	missingShards := 0
-	corruptedShards := 0
-
-	for shardID := 0; shardID < 14; shardID++ {
-		shardState, exists := state.ECShardState[shardID]
-		if !exists {
-			missingShards++
-		} else if len(shardState.CurrentShards) == 0 {
-			missingShards++
-		} else {
-			// Check for corrupted shards
-			for _, shard := range shardState.CurrentShards {
-				if shard.Status == ShardStatusCorrupted {
-					corruptedShards++
-				}
-			}
-		}
-	}
-
-	// Need rebuild if any shards are missing or corrupted
-	if missingShards > 0 || corruptedShards > 0 {
-		return &VolumeMaintenanceCandidate{
-			VolumeID: volumeID,
-			TaskType: "ec_rebuild",
-			Priority: TaskPriorityHigh, // High priority for data integrity
-			Reason:   fmt.Sprintf("Missing %d shards, corrupted %d shards", missingShards, corruptedShards),
-		}
-	}
-
+	// For now, skip EC rebuild detection as it requires more complex shard state tracking
+	// This would be implemented when the volume state manager provides proper EC shard access
 	return nil
 }
 
@@ -390,7 +369,7 @@ func (ms *MasterSynchronizer) canAssignCandidate(candidate *VolumeMaintenanceCan
 	// Check if server has capacity for the task
 	if candidate.TaskType == "ec_encode" {
 		// EC encoding requires significant temporary space
-		requiredSpace := candidate.VolumeInfo.Size * 2 // Estimate 2x volume size needed
+		requiredSpace := int64(candidate.VolumeInfo.Size * 2) // Estimate 2x volume size needed
 		if !ms.volumeStateManager.CanAssignVolumeToServer(requiredSpace, candidate.Server) {
 			return false
 		}
@@ -414,10 +393,9 @@ func (ms *MasterSynchronizer) createTaskFromCandidate(candidate *VolumeMaintenan
 		Type:      TaskType(candidate.TaskType),
 		VolumeID:  candidate.VolumeID,
 		Priority:  candidate.Priority,
-		Status:    TaskStatusPending,
+		Status:    types.TaskStatusPending,
 		CreatedAt: now,
-		UpdatedAt: now,
-		Parameters: map[string]string{
+		Parameters: map[string]interface{}{
 			"volume_id": fmt.Sprintf("%d", candidate.VolumeID),
 			"server":    candidate.Server,
 			"reason":    candidate.Reason,
