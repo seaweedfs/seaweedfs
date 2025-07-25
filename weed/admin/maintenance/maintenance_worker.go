@@ -7,13 +7,9 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
-
-	// Import task packages to trigger their auto-registration
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 // MaintenanceWorkerService manages maintenance task execution
@@ -396,10 +392,19 @@ func NewMaintenanceWorkerCommand(workerID, address, adminServer string) *Mainten
 
 // Run starts the maintenance worker as a standalone service
 func (mwc *MaintenanceWorkerCommand) Run() error {
-	// Generate worker ID if not provided
+	// Generate or load persistent worker ID if not provided
 	if mwc.workerService.workerID == "" {
-		hostname, _ := os.Hostname()
-		mwc.workerService.workerID = fmt.Sprintf("worker-%s-%d", hostname, time.Now().Unix())
+		// Get current working directory for worker ID persistence
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get working directory: %w", err)
+		}
+
+		workerID, err := worker.GenerateOrLoadWorkerID(wd)
+		if err != nil {
+			return fmt.Errorf("failed to generate or load worker ID: %w", err)
+		}
+		mwc.workerService.workerID = workerID
 	}
 
 	// Start the worker service

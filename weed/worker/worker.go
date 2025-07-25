@@ -1,8 +1,11 @@
 package worker
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,15 +48,73 @@ type AdminClient interface {
 	IsConnected() bool
 }
 
+// GenerateOrLoadWorkerID generates a unique worker ID or loads existing one from working directory
+func GenerateOrLoadWorkerID(workingDir string) (string, error) {
+	const workerIDFile = "worker.id"
+
+	var idFilePath string
+	if workingDir != "" {
+		idFilePath = filepath.Join(workingDir, workerIDFile)
+	} else {
+		// Use current working directory if none specified
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get working directory: %w", err)
+		}
+		idFilePath = filepath.Join(wd, workerIDFile)
+	}
+
+	// Try to read existing worker ID
+	if data, err := os.ReadFile(idFilePath); err == nil {
+		workerID := strings.TrimSpace(string(data))
+		if workerID != "" {
+			glog.Infof("Loaded existing worker ID from %s: %s", idFilePath, workerID)
+			return workerID, nil
+		}
+	}
+
+	// Generate new unique worker ID
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "unknown"
+	}
+
+	// Generate random component for uniqueness
+	randomBytes := make([]byte, 4)
+	var workerID string
+	if _, err := rand.Read(randomBytes); err != nil {
+		// Fallback to timestamp if crypto/rand fails
+		workerID = fmt.Sprintf("worker-%s-%d", hostname, time.Now().Unix())
+		glog.Infof("Generated fallback worker ID: %s", workerID)
+	} else {
+		// Use random bytes + timestamp for uniqueness
+		randomHex := fmt.Sprintf("%x", randomBytes)
+		timestamp := time.Now().Unix()
+		workerID = fmt.Sprintf("worker-%s-%s-%d", hostname, randomHex, timestamp)
+		glog.Infof("Generated new worker ID: %s", workerID)
+	}
+
+	// Save worker ID to file
+	if err := os.WriteFile(idFilePath, []byte(workerID), 0644); err != nil {
+		glog.Warningf("Failed to save worker ID to %s: %v", idFilePath, err)
+	} else {
+		glog.Infof("Saved worker ID to %s", idFilePath)
+	}
+
+	return workerID, nil
+}
+
 // NewWorker creates a new worker instance
 func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 	if config == nil {
 		config = types.DefaultWorkerConfig()
 	}
 
-	// Always auto-generate worker ID
-	hostname, _ := os.Hostname()
-	workerID := fmt.Sprintf("worker-%s-%d", hostname, time.Now().Unix())
+	// Generate or load persistent worker ID
+	workerID, err := GenerateOrLoadWorkerID(config.BaseWorkingDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate or load worker ID: %w", err)
+	}
 
 	// Use the global registry that already has all tasks registered
 	registry := tasks.GetGlobalRegistry()
