@@ -143,7 +143,7 @@ func runWorker(cmd *Command, args []string) bool {
 	// Start the worker
 	err = workerInstance.Start()
 	if err != nil {
-		glog.Fatalf("Failed to start worker: %v", err)
+		glog.Errorf("Failed to start worker: %v", err)
 		return false
 	}
 

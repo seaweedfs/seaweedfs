@@ -50,3 +50,35 @@ func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
 
 	return task, nil
 }
+
+// getSharedInstances returns shared detector and scheduler instances
+func getSharedInstances() (*EcDetector, *Scheduler) {
+	// Create shared instances (singleton pattern)
+	detector := NewEcDetector()
+	scheduler := NewScheduler()
+	return detector, scheduler
+}
+
+// GetSharedInstances returns the shared detector and scheduler instances (public API)
+func GetSharedInstances() (*EcDetector, *Scheduler) {
+	return getSharedInstances()
+}
+
+// Auto-register this task when the package is imported
+func init() {
+	factory := NewFactory()
+	tasks.AutoRegister(types.TaskTypeErasureCoding, factory)
+
+	// Get shared instances for all registrations
+	detector, scheduler := getSharedInstances()
+
+	// Register with types registry
+	tasks.AutoRegisterTypes(func(registry *types.TaskRegistry) {
+		registry.RegisterTask(detector, scheduler)
+	})
+
+	// Register with UI registry using the same instances
+	tasks.AutoRegisterUI(func(uiRegistry *types.UIRegistry) {
+		RegisterUI(uiRegistry, detector, scheduler)
+	})
+}

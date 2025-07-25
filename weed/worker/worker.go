@@ -90,35 +90,28 @@ func (w *Worker) Start() error {
 		return fmt.Errorf("admin client is not set")
 	}
 
-	// Connect to admin server
-	if err := w.adminClient.Connect(); err != nil {
-		return fmt.Errorf("failed to connect to admin server: %w", err)
-	}
-
 	w.running = true
 	w.startTime = time.Now()
 
-	// Register with admin server
-	workerInfo := &types.Worker{
-		ID:            w.id,
-		Capabilities:  w.config.Capabilities,
-		MaxConcurrent: w.config.MaxConcurrent,
-		Status:        "active",
-		CurrentLoad:   0,
-		LastHeartbeat: time.Now(),
+	// Start connection attempt (will retry automatically via reconnection loop)
+	glog.Infof("Worker %s starting, attempting to connect to admin server...", w.id)
+
+	// Try initial connection, but don't fail if it doesn't work immediately
+	if err := w.adminClient.Connect(); err != nil {
+		glog.Warningf("Initial connection to admin server failed, will keep retrying: %v", err)
+		// Don't return error - let the reconnection loop handle it
+	} else {
+		// Connection succeeded, register immediately
+		w.registerWorker()
 	}
 
-	if err := w.adminClient.RegisterWorker(workerInfo); err != nil {
-		w.running = false
-		w.adminClient.Disconnect()
-		return fmt.Errorf("failed to register worker: %w", err)
-	}
-
-	// Start worker loops
+	// Start worker loops regardless of initial connection status
+	// They will handle connection failures gracefully
 	go w.heartbeatLoop()
 	go w.taskRequestLoop()
+	go w.connectionMonitorLoop()
 
-	glog.Infof("Worker %s started", w.id)
+	glog.Infof("Worker %s started (connection attempts will continue in background)", w.id)
 	return nil
 }
 
@@ -388,6 +381,63 @@ func (w *Worker) GetCurrentTasks() map[string]*types.Task {
 		tasks[id] = task
 	}
 	return tasks
+}
+
+// registerWorker registers the worker with the admin server
+func (w *Worker) registerWorker() {
+	workerInfo := &types.Worker{
+		ID:            w.id,
+		Capabilities:  w.config.Capabilities,
+		MaxConcurrent: w.config.MaxConcurrent,
+		Status:        "active",
+		CurrentLoad:   0,
+		LastHeartbeat: time.Now(),
+	}
+
+	if err := w.adminClient.RegisterWorker(workerInfo); err != nil {
+		glog.Warningf("Failed to register worker (will retry on next heartbeat): %v", err)
+	} else {
+		glog.Infof("Worker %s registered successfully with admin server", w.id)
+	}
+}
+
+// connectionMonitorLoop monitors connection status and registers when connected
+func (w *Worker) connectionMonitorLoop() {
+	ticker := time.NewTicker(10 * time.Second) // Check every 10 seconds
+	defer ticker.Stop()
+
+	lastConnected := false
+
+	for {
+		select {
+		case <-w.stopChan:
+			return
+		case <-ticker.C:
+			// Check if we're now connected when we weren't before
+			if w.adminClient != nil {
+				// Note: We can't easily check connection status from the interface
+				// so we'll try to send a heartbeat as a connectivity test
+				err := w.adminClient.SendHeartbeat(w.id, &types.WorkerStatus{
+					WorkerID:      w.id,
+					Status:        "active",
+					Capabilities:  w.config.Capabilities,
+					MaxConcurrent: w.config.MaxConcurrent,
+					CurrentLoad:   len(w.currentTasks),
+					LastHeartbeat: time.Now(),
+				})
+
+				currentlyConnected := (err == nil)
+
+				// If we just became connected, register the worker
+				if currentlyConnected && !lastConnected {
+					glog.Infof("Connection to admin server established, registering worker...")
+					w.registerWorker()
+				}
+
+				lastConnected = currentlyConnected
+			}
+		}
+	}
 }
 
 // GetConfig returns the worker configuration

@@ -128,7 +128,7 @@ services:
 
   worker1:
     image: chrislusf/seaweedfs:local
-    command: "worker -admin=admin:23646 -capabilities=ec,vacuum -maxConcurrent=2"
+    command: "worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
     depends_on:
       - admin
     volumes:
@@ -140,7 +140,7 @@ services:
 
   worker2:
     image: chrislusf/seaweedfs:local
-    command: "worker -admin=admin:23646 -capabilities=ec,vacuum -maxConcurrent=2"
+    command: "worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
     depends_on:
       - admin
     volumes:
@@ -152,7 +152,7 @@ services:
 
   worker3:
     image: chrislusf/seaweedfs:local
-    command: "worker -admin=admin:23646 -capabilities=ec,vacuum -maxConcurrent=2"
+    command: "worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
     depends_on:
       - admin
     volumes:

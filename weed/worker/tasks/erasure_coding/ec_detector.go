@@ -26,11 +26,11 @@ var (
 // NewEcDetector creates a new erasure coding detector with configurable defaults
 func NewEcDetector() *EcDetector {
 	return &EcDetector{
-		enabled:        false, // Disabled by default for safety
-		volumeAgeHours: 24,    // Require 24 hours age by default
-		fullnessRatio:  0.8,   // 80% full by default
-		minSizeMB:      100,   // Minimum 100MB before considering EC
-		scanInterval:   2 * time.Hour,
+		enabled:        true,             // Enabled for testing
+		volumeAgeHours: 0,                // No age requirement for testing (was 24)
+		fullnessRatio:  0.8,              // 80% full by default
+		minSizeMB:      50,               // Minimum 50MB for testing (was 100MB)
+		scanInterval:   30 * time.Second, // Faster scanning for testing
 	}
 }
 
