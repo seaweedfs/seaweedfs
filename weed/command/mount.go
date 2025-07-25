@@ -35,6 +35,7 @@ type MountOptions struct {
 	disableXAttr       *bool
 	extraOptions       []string
 	fuseCommandPid     int
+	ignoreMounted      *bool
 }
 
 var (
@@ -73,6 +74,7 @@ func init() {
 	mountOptions.debugPort = cmdMount.Flag.Int("debug.port", 6061, "http port for debugging")
 	mountOptions.localSocket = cmdMount.Flag.String("localSocket", "", "default to /tmp/seaweedfs-mount-<mount_dir_hash>.sock")
 	mountOptions.disableXAttr = cmdMount.Flag.Bool("disableXAttr", false, "disable xattr")
+	mountOptions.ignoreMounted = cmdMount.Flag.Bool("ignoreMounted", false, "Don't check if the mount point is already mounted, ignore any existing mounts")
 	mountOptions.fuseCommandPid = 0
 
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
