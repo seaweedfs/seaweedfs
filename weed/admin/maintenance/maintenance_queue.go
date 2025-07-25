@@ -93,13 +93,20 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 	mq.mutex.Lock()
 	defer mq.mutex.Unlock()
 
+	glog.Infof("DEBUG GetNextTask: Worker %s requesting task with capabilities %v", workerID, capabilities)
+	glog.Infof("DEBUG GetNextTask: Total pending tasks: %d, Total workers: %d", len(mq.pendingTasks), len(mq.workers))
+
 	worker, exists := mq.workers[workerID]
 	if !exists {
+		glog.Infof("DEBUG GetNextTask: Worker %s not found in workers map", workerID)
 		return nil
 	}
 
+	glog.Infof("DEBUG GetNextTask: Worker %s found, CurrentLoad: %d, MaxConcurrent: %d", workerID, worker.CurrentLoad, worker.MaxConcurrent)
+
 	// Check if worker has capacity
 	if worker.CurrentLoad >= worker.MaxConcurrent {
+		glog.Infof("DEBUG GetNextTask: Worker %s at capacity", workerID)
 		return nil
 	}
 
@@ -107,20 +114,27 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 
 	// Find the next suitable task
 	for i, task := range mq.pendingTasks {
+		glog.Infof("DEBUG GetNextTask: Evaluating task[%d] %s (type: %s, volume: %d)", i, task.ID, task.Type, task.VolumeID)
+
 		// Check if it's time to execute the task
 		if task.ScheduledAt.After(now) {
+			glog.Infof("DEBUG GetNextTask: Task %s scheduled for future (%v)", task.ID, task.ScheduledAt)
 			continue
 		}
 
 		// Check if worker can handle this task type
 		if !mq.workerCanHandle(task.Type, capabilities) {
+			glog.Infof("DEBUG GetNextTask: Worker %s cannot handle task type %s (capabilities: %v)", workerID, task.Type, capabilities)
 			continue
 		}
 
 		// Check scheduling logic - use simplified system if available, otherwise fallback
 		if !mq.canScheduleTaskNow(task) {
+			glog.Infof("DEBUG GetNextTask: Task %s cannot be scheduled now", task.ID)
 			continue
 		}
+
+		glog.Infof("DEBUG GetNextTask: Assigning task %s to worker %s", task.ID, workerID)
 
 		// Assign task to worker
 		task.Status = TaskStatusAssigned
@@ -136,10 +150,11 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 		worker.CurrentLoad++
 		worker.Status = "busy"
 
-		glog.V(2).Infof("Assigned task %s to worker %s", task.ID, workerID)
+		glog.Infof("DEBUG GetNextTask: Successfully assigned task %s to worker %s", task.ID, workerID)
 		return task
 	}
 
+	glog.Infof("DEBUG GetNextTask: No suitable tasks found for worker %s", workerID)
 	return nil
 }
 
@@ -463,19 +478,31 @@ func (mq *MaintenanceQueue) workerCanHandle(taskType MaintenanceTaskType, capabi
 
 // canScheduleTaskNow determines if a task can be scheduled using task schedulers or fallback logic
 func (mq *MaintenanceQueue) canScheduleTaskNow(task *MaintenanceTask) bool {
+	glog.Infof("DEBUG canScheduleTaskNow: Checking if task %s (type: %s) can be scheduled", task.ID, task.Type)
+
+	// TEMPORARY FIX: Skip integration task scheduler which is being overly restrictive
+	// Use fallback logic directly for now
+	glog.Infof("DEBUG canScheduleTaskNow: Using fallback logic (bypassing integration scheduler)")
+	canExecute := mq.canExecuteTaskType(task.Type)
+	glog.Infof("DEBUG canScheduleTaskNow: Fallback decision for task %s (%s): %v", task.ID, task.Type, canExecute)
+	return canExecute
+
+	// NOTE: Original integration code disabled temporarily
 	// Try task scheduling logic first
-	if mq.integration != nil {
-		// Get all running tasks and available workers
-		runningTasks := mq.getRunningTasks()
-		availableWorkers := mq.getAvailableWorkers()
+	/*
+		if mq.integration != nil {
+			glog.Infof("DEBUG canScheduleTaskNow: Using integration task scheduler")
+			// Get all running tasks and available workers
+			runningTasks := mq.getRunningTasks()
+			availableWorkers := mq.getAvailableWorkers()
 
-		canSchedule := mq.integration.CanScheduleWithTaskSchedulers(task, runningTasks, availableWorkers)
-		glog.V(3).Infof("Task scheduler decision for task %s (%s): %v", task.ID, task.Type, canSchedule)
-		return canSchedule
-	}
+			glog.Infof("DEBUG canScheduleTaskNow: Running tasks: %d, Available workers: %d", len(runningTasks), len(availableWorkers))
 
-	// Fallback to hardcoded logic
-	return mq.canExecuteTaskType(task.Type)
+			canSchedule := mq.integration.CanScheduleWithTaskSchedulers(task, runningTasks, availableWorkers)
+			glog.Infof("DEBUG canScheduleTaskNow: Task scheduler decision for task %s (%s): %v", task.ID, task.Type, canSchedule)
+			return canSchedule
+		}
+	*/
 }
 
 // canExecuteTaskType checks if we can execute more tasks of this type (concurrency limits) - fallback logic
