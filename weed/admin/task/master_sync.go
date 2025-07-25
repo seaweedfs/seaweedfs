@@ -287,7 +287,7 @@ func (ms *MasterSynchronizer) checkECEncodingCandidate(volumeID uint32, state *V
 
 	// Check if volume is already EC encoded by checking if we have any EC shards for this volume
 	// For simplicity, assume no EC encoding for now since we don't have direct access to EC shard state
-	isCandidate := (volume.ReadOnly || volume.Size > ecSizeThreshold) &&
+	isCandidate := volume.Size > ecSizeThreshold &&
 		volume.Size > 1024*1024 // At least 1MB
 
 	if !isCandidate {
