@@ -12,6 +12,7 @@ type WorkerConfig struct {
 	MaxConcurrent       int                    `json:"max_concurrent"`
 	HeartbeatInterval   time.Duration          `json:"heartbeat_interval"`
 	TaskRequestInterval time.Duration          `json:"task_request_interval"`
+	BaseWorkingDir      string                 `json:"base_working_dir,omitempty"`
 	CustomParameters    map[string]interface{} `json:"custom_parameters,omitempty"`
 }
 

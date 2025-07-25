@@ -257,11 +257,18 @@ func (w *Worker) executeTask(task *types.Task) {
 
 	glog.Infof("Worker %s executing task %s: %s", w.id, task.ID, task.Type)
 
+	// Determine task-specific working directory
+	var taskWorkingDir string
+	if w.config.BaseWorkingDir != "" {
+		taskWorkingDir = fmt.Sprintf("%s/%s", w.config.BaseWorkingDir, string(task.Type))
+	}
+
 	// Create task instance
 	taskParams := types.TaskParams{
 		VolumeID:   task.VolumeID,
 		Server:     task.Server,
 		Collection: task.Collection,
+		WorkingDir: taskWorkingDir,
 		Parameters: task.Parameters,
 	}
 

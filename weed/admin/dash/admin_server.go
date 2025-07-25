@@ -1265,13 +1265,10 @@ func (as *AdminServer) GetMaintenanceWorkersData() (*MaintenanceWorkersData, err
 }
 
 // StartWorkerGrpcServer starts the worker gRPC server
-func (s *AdminServer) StartWorkerGrpcServer(httpPort int) error {
+func (s *AdminServer) StartWorkerGrpcServer(grpcPort int) error {
 	if s.workerGrpcServer != nil {
 		return fmt.Errorf("worker gRPC server is already running")
 	}
-
-	// Calculate gRPC port (HTTP port + 10000)
-	grpcPort := httpPort + 10000
 
 	s.workerGrpcServer = NewWorkerGrpcServer(s)
 	return s.workerGrpcServer.StartWithTLS(grpcPort)
