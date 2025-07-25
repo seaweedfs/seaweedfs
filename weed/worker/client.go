@@ -115,6 +115,24 @@ func (c *GrpcAdminClient) attemptConnection() error {
 	c.stream = stream
 	c.connected = true
 
+	// Always check for worker info and send registration immediately as the very first message
+	c.mutex.RLock()
+	workerInfo := c.lastWorkerInfo
+	c.mutex.RUnlock()
+
+	if workerInfo != nil {
+		// Send registration synchronously as the very first message
+		if err := c.sendRegistrationSync(workerInfo); err != nil {
+			c.conn.Close()
+			c.connected = false
+			return fmt.Errorf("failed to register worker: %w", err)
+		}
+		glog.Infof("Worker registered successfully with admin server")
+	} else {
+		// No worker info yet - stream will wait for registration
+		glog.V(1).Infof("Connected to admin server, waiting for worker registration info")
+	}
+
 	// Start stream handlers with synchronization
 	outgoingReady := make(chan struct{})
 	incomingReady := make(chan struct{})
@@ -298,19 +316,7 @@ func (c *GrpcAdminClient) reconnect() error {
 		return fmt.Errorf("failed to reconnect: %w", err)
 	}
 
-	// Re-register worker if we have previous registration info
-	c.mutex.RLock()
-	workerInfo := c.lastWorkerInfo
-	c.mutex.RUnlock()
-
-	if workerInfo != nil {
-		glog.Infof("Re-registering worker after reconnection...")
-		if err := c.RegisterWorker(workerInfo); err != nil {
-			glog.Warningf("Failed to re-register worker after reconnection: %v", err)
-			// Don't fail the reconnection because of registration failure
-		}
-	}
-
+	// Registration is now handled in attemptConnection if worker info is available
 	return nil
 }
 
@@ -390,14 +396,16 @@ func (c *GrpcAdminClient) handleIncomingWithReady(ready chan struct{}) {
 
 // RegisterWorker registers the worker with the admin server
 func (c *GrpcAdminClient) RegisterWorker(worker *types.Worker) error {
-	if !c.connected {
-		return fmt.Errorf("not connected to admin server")
-	}
-
 	// Store worker info for re-registration after reconnection
 	c.mutex.Lock()
 	c.lastWorkerInfo = worker
 	c.mutex.Unlock()
+
+	// If not connected, registration will happen when connection is established
+	if !c.connected {
+		glog.V(1).Infof("Not connected yet, worker info stored for registration upon connection")
+		return nil
+	}
 
 	return c.sendRegistration(worker)
 }
@@ -446,6 +454,74 @@ func (c *GrpcAdminClient) sendRegistration(worker *types.Worker) error {
 		case <-timeout.C:
 			return fmt.Errorf("registration timeout")
 		}
+	}
+}
+
+// sendRegistrationSync sends the registration message synchronously
+func (c *GrpcAdminClient) sendRegistrationSync(worker *types.Worker) error {
+	capabilities := make([]string, len(worker.Capabilities))
+	for i, cap := range worker.Capabilities {
+		capabilities[i] = string(cap)
+	}
+
+	msg := &worker_pb.WorkerMessage{
+		WorkerId:  c.workerID,
+		Timestamp: time.Now().Unix(),
+		Message: &worker_pb.WorkerMessage_Registration{
+			Registration: &worker_pb.WorkerRegistration{
+				WorkerId:      c.workerID,
+				Address:       worker.Address,
+				Capabilities:  capabilities,
+				MaxConcurrent: int32(worker.MaxConcurrent),
+				Metadata:      make(map[string]string),
+			},
+		},
+	}
+
+	// Send directly to stream to ensure it's the first message
+	if err := c.stream.Send(msg); err != nil {
+		return fmt.Errorf("failed to send registration message: %w", err)
+	}
+
+	// Create a channel to receive the response
+	responseChan := make(chan *worker_pb.AdminMessage, 1)
+	errChan := make(chan error, 1)
+
+	// Start a goroutine to listen for the response
+	go func() {
+		for {
+			response, err := c.stream.Recv()
+			if err != nil {
+				errChan <- fmt.Errorf("failed to receive registration response: %w", err)
+				return
+			}
+
+			if regResp := response.GetRegistrationResponse(); regResp != nil {
+				responseChan <- response
+				return
+			}
+			// Continue waiting if it's not a registration response
+		}
+	}()
+
+	// Wait for registration response with timeout
+	timeout := time.NewTimer(10 * time.Second)
+	defer timeout.Stop()
+
+	select {
+	case response := <-responseChan:
+		if regResp := response.GetRegistrationResponse(); regResp != nil {
+			if regResp.Success {
+				glog.V(1).Infof("Worker registered successfully: %s", regResp.Message)
+				return nil
+			}
+			return fmt.Errorf("registration failed: %s", regResp.Message)
+		}
+		return fmt.Errorf("unexpected response type")
+	case err := <-errChan:
+		return err
+	case <-timeout.C:
+		return fmt.Errorf("registration timeout")
 	}
 }
 

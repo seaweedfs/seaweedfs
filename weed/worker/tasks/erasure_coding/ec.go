@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Task implements comprehensive erasure coding with local processing and smart distribution
@@ -63,8 +65,9 @@ func NewTask(sourceServer string, volumeID uint32) *Task {
 		BaseTask:     tasks.NewBaseTask(types.TaskTypeErasureCoding),
 		sourceServer: sourceServer,
 		volumeID:     volumeID,
-		masterClient: "localhost:9333",         // Default master client
-		workDir:      "/tmp/seaweedfs_ec_work", // Default work directory
+		masterClient: "localhost:9333",                                         // Default master client
+		workDir:      "/tmp/seaweedfs_ec_work",                                 // Default work directory
+		grpcDialOpt:  grpc.WithTransportCredentials(insecure.NewCredentials()), // Default to insecure
 		dataShards:   10,
 		parityShards: 4,
 		totalShards:  14,
@@ -81,6 +84,7 @@ func NewTaskWithParams(sourceServer string, volumeID uint32, masterClient string
 		volumeID:     volumeID,
 		masterClient: masterClient,
 		workDir:      workDir,
+		grpcDialOpt:  grpc.WithTransportCredentials(insecure.NewCredentials()), // Default to insecure
 		dataShards:   10,
 		parityShards: 4,
 		totalShards:  14,
@@ -89,62 +93,88 @@ func NewTaskWithParams(sourceServer string, volumeID uint32, masterClient string
 	return task
 }
 
-// Execute performs the comprehensive EC operation
+// SetDialOption allows setting a custom gRPC dial option
+func (t *Task) SetDialOption(dialOpt grpc.DialOption) {
+	t.grpcDialOpt = dialOpt
+}
+
+// Execute performs the EC operation using SeaweedFS built-in EC generation
 func (t *Task) Execute(params types.TaskParams) error {
 	glog.Infof("Starting erasure coding for volume %d from server %s", t.volumeID, t.sourceServer)
 
-	// Extract parameters
+	// Extract parameters - use the actual collection from task params, don't default to "default"
 	t.collection = params.Collection
-	if t.collection == "" {
-		t.collection = "default"
-	}
+	// Note: Leave collection empty if not specified, as volumes may have been created with empty collection
 
 	// Override defaults with parameters if provided
 	if mc, ok := params.Parameters["master_client"].(string); ok && mc != "" {
 		t.masterClient = mc
 	}
-	if wd, ok := params.Parameters["work_dir"].(string); ok && wd != "" {
-		t.workDir = wd
-	}
 
-	// Create working directory for this task
-	taskWorkDir := filepath.Join(t.workDir, fmt.Sprintf("ec_%d_%d", t.volumeID, time.Now().Unix()))
-	err := os.MkdirAll(taskWorkDir, 0755)
+	// Use the built-in SeaweedFS EC generation approach
+	ctx := context.Background()
+
+	// Step 1: Connect to volume server
+	grpcAddress := pb.ServerToGrpcAddress(t.sourceServer)
+	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOpt)
 	if err != nil {
-		return fmt.Errorf("failed to create work directory %s: %v", taskWorkDir, err)
+		return fmt.Errorf("failed to connect to volume server %s: %v", t.sourceServer, err)
 	}
-	defer t.cleanup(taskWorkDir)
+	defer conn.Close()
 
-	// Step 1: Copy volume data to local disk
-	if err := t.copyVolumeDataLocally(taskWorkDir); err != nil {
-		return fmt.Errorf("failed to copy volume data: %v", err)
+	client := volume_server_pb.NewVolumeServerClient(conn)
+
+	// Step 2: Generate EC shards on the volume server
+	t.SetProgress(20.0)
+	glog.V(1).Infof("Generating EC shards for volume %d with collection '%s'", t.volumeID, t.collection)
+
+	generateReq := &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   t.volumeID,
+		Collection: t.collection,
 	}
 
-	// Step 2: Mark source volume as read-only
-	if err := t.markVolumeReadOnly(); err != nil {
-		return fmt.Errorf("failed to mark volume read-only: %v", err)
-	}
-
-	// Step 3: Perform local EC encoding
-	shardFiles, err := t.performLocalECEncoding(taskWorkDir)
+	_, err = client.VolumeEcShardsGenerate(ctx, generateReq)
 	if err != nil {
-		return fmt.Errorf("failed to perform EC encoding: %v", err)
+		return fmt.Errorf("failed to generate EC shards: %v", err)
 	}
 
-	// Step 4: Find optimal shard placement
-	placements, err := t.calculateOptimalShardPlacement()
+	t.SetProgress(60.0)
+	glog.V(1).Infof("EC shards generated successfully for volume %d", t.volumeID)
+
+	// Step 3: Mount EC shards
+	glog.V(1).Infof("Mounting EC shards for volume %d", t.volumeID)
+
+	// Mount all EC shards (0-13: 10 data + 4 parity)
+	shardIds := make([]uint32, t.totalShards)
+	for i := 0; i < t.totalShards; i++ {
+		shardIds[i] = uint32(i)
+	}
+
+	mountReq := &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   t.volumeID,
+		Collection: t.collection,
+		ShardIds:   shardIds,
+	}
+
+	_, err = client.VolumeEcShardsMount(ctx, mountReq)
 	if err != nil {
-		return fmt.Errorf("failed to calculate shard placement: %v", err)
+		return fmt.Errorf("failed to mount EC shards: %v", err)
 	}
 
-	// Step 5: Distribute shards to target servers
-	if err := t.distributeShards(shardFiles, placements); err != nil {
-		return fmt.Errorf("failed to distribute shards: %v", err)
+	t.SetProgress(80.0)
+	glog.V(1).Infof("EC shards mounted successfully for volume %d", t.volumeID)
+
+	// Step 4: Mark original volume as read-only
+	glog.V(1).Infof("Marking volume %d as read-only", t.volumeID)
+
+	readOnlyReq := &volume_server_pb.VolumeMarkReadonlyRequest{
+		VolumeId: t.volumeID,
 	}
 
-	// Step 6: Verify and cleanup source volume
-	if err := t.verifyAndCleanupSource(); err != nil {
-		return fmt.Errorf("failed to verify and cleanup: %v", err)
+	_, err = client.VolumeMarkReadonly(ctx, readOnlyReq)
+	if err != nil {
+		glog.Warningf("Failed to mark volume %d read-only: %v", t.volumeID, err)
+		// This is not a critical failure for EC encoding
 	}
 
 	t.SetProgress(100.0)
@@ -160,8 +190,9 @@ func (t *Task) copyVolumeDataLocally(workDir string) error {
 
 	ctx := context.Background()
 
-	// Connect to source volume server
-	conn, err := grpc.Dial(t.sourceServer, grpc.WithInsecure())
+	// Connect to source volume server (convert to gRPC address)
+	grpcAddress := pb.ServerToGrpcAddress(t.sourceServer)
+	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOpt)
 	if err != nil {
 		return fmt.Errorf("failed to connect to source server %s: %v", t.sourceServer, err)
 	}
@@ -254,7 +285,9 @@ func (t *Task) markVolumeReadOnly() error {
 	glog.V(1).Infof("Marking volume %d as read-only", t.volumeID)
 
 	ctx := context.Background()
-	conn, err := grpc.Dial(t.sourceServer, grpc.WithInsecure())
+	// Convert to gRPC address
+	grpcAddress := pb.ServerToGrpcAddress(t.sourceServer)
+	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOpt)
 	if err != nil {
 		return fmt.Errorf("failed to connect to source server: %v", err)
 	}
@@ -405,7 +438,7 @@ func (t *Task) calculateOptimalShardPlacement() ([]ShardPlacement, error) {
 // getAvailableServers retrieves available servers from the master
 func (t *Task) getAvailableServers() ([]*ServerInfo, error) {
 	ctx := context.Background()
-	conn, err := grpc.Dial(t.masterClient, grpc.WithInsecure())
+	conn, err := grpc.NewClient(t.masterClient, t.grpcDialOpt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to master: %v", err)
 	}
@@ -598,7 +631,9 @@ func (t *Task) uploadShardToServer(shardFile string, placement ShardPlacement) e
 	glog.V(2).Infof("Uploading shard %d to server %s", placement.ShardID, placement.ServerAddr)
 
 	ctx := context.Background()
-	conn, err := grpc.Dial(placement.ServerAddr, grpc.WithInsecure())
+	// Convert to gRPC address
+	grpcAddress := pb.ServerToGrpcAddress(placement.ServerAddr)
+	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOpt)
 	if err != nil {
 		return fmt.Errorf("failed to connect to server %s: %v", placement.ServerAddr, err)
 	}
@@ -632,7 +667,9 @@ func (t *Task) verifyAndCleanupSource() error {
 	glog.V(1).Infof("Verifying EC conversion and cleaning up source volume %d", t.volumeID)
 
 	ctx := context.Background()
-	conn, err := grpc.Dial(t.sourceServer, grpc.WithInsecure())
+	// Convert to gRPC address
+	grpcAddress := pb.ServerToGrpcAddress(t.sourceServer)
+	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOpt)
 	if err != nil {
 		return fmt.Errorf("failed to connect to source server: %v", err)
 	}

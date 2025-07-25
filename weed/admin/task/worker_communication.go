@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // WorkerConnection manages the gRPC connection to a single worker
@@ -171,10 +173,9 @@ func (wcm *WorkerCommunicationManager) cleanupInactiveConnections() {
 
 // NewWorkerConnection creates a new worker connection
 func NewWorkerConnection(workerID, address string, adminServer *AdminServer) (*WorkerConnection, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, address, grpc.WithInsecure(), grpc.WithBlock())
+	// Convert address to gRPC address
+	grpcAddress := pb.ServerToGrpcAddress(address)
+	conn, err := grpc.NewClient(grpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to worker at %s: %v", address, err)
 	}

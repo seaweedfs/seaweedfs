@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Task implements vacuum operation to reclaim disk space
@@ -33,7 +35,7 @@ func NewTask(server string, volumeID uint32) *Task {
 	return task
 }
 
-// Execute executes the actual vacuum task using real SeaweedFS operations
+// Execute performs the vacuum operation
 func (t *Task) Execute(params types.TaskParams) error {
 	glog.Infof("Starting vacuum for volume %d on server %s", t.volumeID, t.server)
 
@@ -48,8 +50,14 @@ func (t *Task) Execute(params types.TaskParams) error {
 		}
 	}
 
-	// Connect to volume server
-	conn, err := grpc.Dial(t.server, grpc.WithInsecure())
+	// Convert server address to gRPC address and use proper dial option
+	grpcAddress := pb.ServerToGrpcAddress(t.server)
+	var dialOpt grpc.DialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	if params.GrpcDialOption != nil {
+		dialOpt = params.GrpcDialOption
+	}
+
+	conn, err := grpc.NewClient(grpcAddress, dialOpt)
 	if err != nil {
 		return fmt.Errorf("failed to connect to volume server %s: %v", t.server, err)
 	}

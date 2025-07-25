@@ -46,6 +46,12 @@ func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
 
 	// Create EC task with comprehensive capabilities
 	task := NewTaskWithParams(params.Server, params.VolumeID, masterClient, workDir)
+
+	// Set gRPC dial option if provided
+	if params.GrpcDialOption != nil {
+		task.SetDialOption(params.GrpcDialOption)
+	}
+
 	task.SetEstimatedDuration(task.EstimateTime(params))
 
 	return task, nil

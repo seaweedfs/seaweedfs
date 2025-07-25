@@ -174,7 +174,23 @@ func (w *Worker) Start() error {
 	w.running = true
 	w.startTime = time.Now()
 
-	// Start connection attempt (will retry automatically via reconnection loop)
+	// Prepare worker info for registration
+	workerInfo := &types.Worker{
+		ID:            w.id,
+		Capabilities:  w.config.Capabilities,
+		MaxConcurrent: w.config.MaxConcurrent,
+		Status:        "active",
+		CurrentLoad:   0,
+		LastHeartbeat: time.Now(),
+	}
+
+	// Register worker info with client first (this stores it for use during connection)
+	if err := w.adminClient.RegisterWorker(workerInfo); err != nil {
+		glog.V(1).Infof("Worker info stored for registration: %v", err)
+		// This is expected if not connected yet
+	}
+
+	// Start connection attempt (will register immediately if successful)
 	glog.Infof("Worker %s starting, attempting to connect to admin server...", w.id)
 
 	// Try initial connection, but don't fail if it doesn't work immediately
@@ -182,7 +198,6 @@ func (w *Worker) Start() error {
 		glog.Warningf("Initial connection to admin server failed, will keep retrying: %v", err)
 		// Don't return error - let the reconnection loop handle it
 	}
-	// Note: Registration is handled by connectionMonitorLoop to ensure proper protocol ordering
 
 	// Start worker loops regardless of initial connection status
 	// They will handle connection failures gracefully
@@ -337,11 +352,12 @@ func (w *Worker) executeTask(task *types.Task) {
 
 	// Create task instance
 	taskParams := types.TaskParams{
-		VolumeID:   task.VolumeID,
-		Server:     task.Server,
-		Collection: task.Collection,
-		WorkingDir: taskWorkingDir,
-		Parameters: task.Parameters,
+		VolumeID:       task.VolumeID,
+		Server:         task.Server,
+		Collection:     task.Collection,
+		WorkingDir:     taskWorkingDir,
+		Parameters:     task.Parameters,
+		GrpcDialOption: w.config.GrpcDialOption,
 	}
 
 	taskInstance, err := w.registry.CreateTask(task.Type, taskParams)
@@ -480,65 +496,22 @@ func (w *Worker) registerWorker() {
 	}
 }
 
-// connectionMonitorLoop monitors connection status and registers when connected
+// connectionMonitorLoop monitors connection status
 func (w *Worker) connectionMonitorLoop() {
-	ticker := time.NewTicker(10 * time.Second) // Check every 10 seconds
+	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
 	defer ticker.Stop()
-
-	lastConnected := false
-	registrationCompleted := false
 
 	for {
 		select {
 		case <-w.stopChan:
 			return
 		case <-ticker.C:
-			if w.adminClient != nil {
-				var currentlyConnected bool
-
-				if !registrationCompleted {
-					// Before registration, test connectivity by attempting registration
-					glog.Infof("Connection to admin server established, registering worker...")
-
-					workerInfo := &types.Worker{
-						ID:            w.id,
-						Capabilities:  w.config.Capabilities,
-						MaxConcurrent: w.config.MaxConcurrent,
-						Status:        "active",
-						CurrentLoad:   0,
-						LastHeartbeat: time.Now(),
-					}
-
-					err := w.adminClient.RegisterWorker(workerInfo)
-					if err == nil {
-						currentlyConnected = true
-						registrationCompleted = true
-						glog.Infof("Worker %s registered successfully with admin server", w.id)
-					} else {
-						glog.V(2).Infof("Registration failed, will retry: %v", err)
-						currentlyConnected = false
-					}
-				} else {
-					// After registration, use heartbeat to test connectivity
-					err := w.adminClient.SendHeartbeat(w.id, &types.WorkerStatus{
-						WorkerID:      w.id,
-						Status:        "active",
-						Capabilities:  w.config.Capabilities,
-						MaxConcurrent: w.config.MaxConcurrent,
-						CurrentLoad:   len(w.currentTasks),
-						LastHeartbeat: time.Now(),
-					})
-
-					currentlyConnected = (err == nil)
-
-					// If we lost connection, reset registration status
-					if !currentlyConnected && lastConnected {
-						glog.Warningf("Lost connection to admin server, will re-register on reconnection")
-						registrationCompleted = false
-					}
-				}
-
-				lastConnected = currentlyConnected
+			// Just monitor connection status - registration is handled automatically
+			// by the client's reconnection logic
+			if w.adminClient != nil && w.adminClient.IsConnected() {
+				glog.V(2).Infof("Worker %s connection status: connected", w.id)
+			} else if w.adminClient != nil {
+				glog.V(1).Infof("Worker %s connection status: disconnected, reconnection in progress", w.id)
 			}
 		}
 	}

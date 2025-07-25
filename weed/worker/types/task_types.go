@@ -2,6 +2,8 @@ package types
 
 import (
 	"time"
+
+	"google.golang.org/grpc"
 )
 
 // TaskType represents the type of maintenance task
@@ -57,11 +59,12 @@ type Task struct {
 
 // TaskParams represents parameters for task execution
 type TaskParams struct {
-	VolumeID   uint32                 `json:"volume_id,omitempty"`
-	Server     string                 `json:"server,omitempty"`
-	Collection string                 `json:"collection,omitempty"`
-	WorkingDir string                 `json:"working_dir,omitempty"`
-	Parameters map[string]interface{} `json:"parameters,omitempty"`
+	VolumeID       uint32                 `json:"volume_id,omitempty"`
+	Server         string                 `json:"server,omitempty"`
+	Collection     string                 `json:"collection,omitempty"`
+	WorkingDir     string                 `json:"working_dir,omitempty"`
+	Parameters     map[string]interface{} `json:"parameters,omitempty"`
+	GrpcDialOption grpc.DialOption        `json:"-"` // Not serializable, for runtime use only
 }
 
 // TaskDetectionResult represents the result of scanning for maintenance needs

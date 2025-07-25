@@ -1428,7 +1428,7 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 	}
 
 	// Create gRPC connection
-	conn, err := grpc.Dial(brokerAddress, s.grpcDialOption)
+	conn, err := grpc.NewClient(brokerAddress, s.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to broker: %w", err)
 	}

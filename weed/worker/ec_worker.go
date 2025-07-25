@@ -8,10 +8,13 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"google.golang.org/grpc"
 )
 
 // ECWorker implements maintenance worker with actual EC functionality
@@ -155,10 +158,9 @@ func (w *ECWorker) startGRPCServer() error {
 
 // connectToAdmin establishes connection to admin server
 func (w *ECWorker) connectToAdmin() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, w.adminAddress, grpc.WithInsecure(), grpc.WithBlock())
+	// Convert to gRPC address (HTTP port + 10000)
+	grpcAddress := pb.ServerToGrpcAddress(w.adminAddress)
+	conn, err := grpc.NewClient(grpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return fmt.Errorf("failed to connect to admin at %s: %v", w.adminAddress, err)
 	}
@@ -448,7 +450,9 @@ func (w *ECWorker) executeECEncode(task *ActiveTask) (bool, error) {
 		return false, fmt.Errorf("no volume server address provided")
 	}
 
-	conn, err := grpc.Dial(volumeServerAddress, grpc.WithInsecure())
+	// Convert to gRPC address (HTTP port + 10000)
+	grpcAddress := pb.ServerToGrpcAddress(volumeServerAddress)
+	conn, err := grpc.NewClient(grpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return false, fmt.Errorf("failed to connect to volume server %s: %v", volumeServerAddress, err)
 	}
@@ -510,7 +514,8 @@ func (w *ECWorker) executeECRebuild(task *ActiveTask) (bool, error) {
 	w.sendTaskUpdate(task, 0.1, "Initializing EC rebuild")
 
 	// Connect to volume server
-	conn, err := grpc.Dial(task.Server, grpc.WithInsecure())
+	grpcAddress := pb.ServerToGrpcAddress(task.Server)
+	conn, err := grpc.NewClient(grpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return false, fmt.Errorf("failed to connect to volume server: %v", err)
 	}
@@ -554,7 +559,8 @@ func (w *ECWorker) executeVacuum(task *ActiveTask) (bool, error) {
 	}
 
 	// Connect to volume server
-	conn, err := grpc.Dial(task.Server, grpc.WithInsecure())
+	grpcAddress := pb.ServerToGrpcAddress(task.Server)
+	conn, err := grpc.NewClient(grpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return false, fmt.Errorf("failed to connect to volume server: %v", err)
 	}

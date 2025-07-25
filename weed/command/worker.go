@@ -97,6 +97,9 @@ func runWorker(cmd *Command, args []string) bool {
 		}
 	}
 
+	// Create gRPC dial option using TLS configuration
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
+
 	// Create worker configuration
 	config := &types.WorkerConfig{
 		AdminServer:         *workerAdminServer,
@@ -105,6 +108,7 @@ func runWorker(cmd *Command, args []string) bool {
 		HeartbeatInterval:   *workerHeartbeatInterval,
 		TaskRequestInterval: *workerTaskRequestInterval,
 		BaseWorkingDir:      baseWorkingDir,
+		GrpcDialOption:      grpcDialOption,
 	}
 
 	// Create worker instance
@@ -113,9 +117,6 @@ func runWorker(cmd *Command, args []string) bool {
 		glog.Fatalf("Failed to create worker: %v", err)
 		return false
 	}
-
-	// Create admin client with LoadClientTLS
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 	adminClient, err := worker.CreateAdminClient(*workerAdminServer, workerInstance.ID(), grpcDialOption)
 	if err != nil {
 		glog.Fatalf("Failed to create admin client: %v", err)
