@@ -115,9 +115,16 @@ func (c *GrpcAdminClient) attemptConnection() error {
 	c.stream = stream
 	c.connected = true
 
-	// Start stream handlers
-	go c.handleOutgoing()
-	go c.handleIncoming()
+	// Start stream handlers with synchronization
+	outgoingReady := make(chan struct{})
+	incomingReady := make(chan struct{})
+
+	go c.handleOutgoingWithReady(outgoingReady)
+	go c.handleIncomingWithReady(incomingReady)
+
+	// Wait for both handlers to be ready
+	<-outgoingReady
+	<-incomingReady
 
 	glog.Infof("Connected to admin server at %s", c.adminAddress)
 	return nil
@@ -329,6 +336,15 @@ func (c *GrpcAdminClient) handleOutgoing() {
 	}
 }
 
+// handleOutgoingWithReady processes outgoing messages and signals when ready
+func (c *GrpcAdminClient) handleOutgoingWithReady(ready chan struct{}) {
+	// Signal that this handler is ready to process messages
+	close(ready)
+
+	// Now process messages normally
+	c.handleOutgoing()
+}
+
 // handleIncoming processes incoming messages from admin
 func (c *GrpcAdminClient) handleIncoming() {
 	for {
@@ -361,6 +377,15 @@ func (c *GrpcAdminClient) handleIncoming() {
 			glog.Warningf("Incoming message buffer full, dropping message")
 		}
 	}
+}
+
+// handleIncomingWithReady processes incoming messages and signals when ready
+func (c *GrpcAdminClient) handleIncomingWithReady(ready chan struct{}) {
+	// Signal that this handler is ready to process messages
+	close(ready)
+
+	// Now process messages normally
+	c.handleIncoming()
 }
 
 // RegisterWorker registers the worker with the admin server

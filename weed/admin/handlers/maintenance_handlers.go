@@ -300,31 +300,19 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 // Helper methods that delegate to AdminServer
 
 func (h *MaintenanceHandlers) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
-	glog.Infof("DEBUG getMaintenanceQueueData: starting data assembly")
-
 	tasks, err := h.getMaintenanceTasks()
 	if err != nil {
-		glog.Infof("DEBUG getMaintenanceQueueData: error getting tasks: %v", err)
 		return nil, err
 	}
-	glog.Infof("DEBUG getMaintenanceQueueData: got %d tasks", len(tasks))
 
 	workers, err := h.getMaintenanceWorkers()
 	if err != nil {
-		glog.Infof("DEBUG getMaintenanceQueueData: error getting workers: %v", err)
 		return nil, err
 	}
-	glog.Infof("DEBUG getMaintenanceQueueData: got %d workers", len(workers))
 
 	stats, err := h.getMaintenanceQueueStats()
 	if err != nil {
-		glog.Infof("DEBUG getMaintenanceQueueData: error getting stats: %v", err)
 		return nil, err
-	}
-	if stats != nil {
-		glog.Infof("DEBUG getMaintenanceQueueData: got stats {pending: %d, running: %d}", stats.PendingTasks, stats.RunningTasks)
-	} else {
-		glog.Infof("DEBUG getMaintenanceQueueData: stats is nil")
 	}
 
 	data := &maintenance.MaintenanceQueueData{
@@ -334,7 +322,6 @@ func (h *MaintenanceHandlers) getMaintenanceQueueData() (*maintenance.Maintenanc
 		LastUpdated: time.Now(),
 	}
 
-	glog.Infof("DEBUG getMaintenanceQueueData: assembled data with %d tasks, %d workers", len(data.Tasks), len(data.Workers))
 	return data, nil
 }
 
@@ -346,35 +333,32 @@ func (h *MaintenanceHandlers) getMaintenanceQueueStats() (*maintenance.QueueStat
 func (h *MaintenanceHandlers) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
 	// Call the maintenance manager directly to get all tasks
 	if h.adminServer == nil {
-		glog.Infof("DEBUG getMaintenanceTasks: adminServer is nil")
 		return []*maintenance.MaintenanceTask{}, nil
 	}
 
-	if h.adminServer.GetMaintenanceManager() == nil {
-		glog.Infof("DEBUG getMaintenanceTasks: maintenance manager is nil")
+	manager := h.adminServer.GetMaintenanceManager()
+	if manager == nil {
 		return []*maintenance.MaintenanceTask{}, nil
 	}
 
 	// Get ALL tasks using empty parameters - this should match what the API returns
-	allTasks := h.adminServer.GetMaintenanceManager().GetTasks("", "", 0)
-	glog.Infof("DEBUG getMaintenanceTasks: retrieved %d tasks from maintenance manager", len(allTasks))
-
-	for i, task := range allTasks {
-		if task != nil {
-			glog.Infof("DEBUG getMaintenanceTasks: task[%d] = {id: %s, type: %s, status: %s, volume: %d}",
-				i, task.ID, task.Type, task.Status, task.VolumeID)
-		} else {
-			glog.Infof("DEBUG getMaintenanceTasks: task[%d] is nil", i)
-		}
-	}
-
+	allTasks := manager.GetTasks("", "", 0)
 	return allTasks, nil
 }
 
 func (h *MaintenanceHandlers) getMaintenanceWorkers() ([]*maintenance.MaintenanceWorker, error) {
-	// This would integrate with the maintenance system to get real workers
-	// For now, return mock data
-	return []*maintenance.MaintenanceWorker{}, nil
+	// Get workers from the admin server's maintenance manager
+	if h.adminServer == nil {
+		return []*maintenance.MaintenanceWorker{}, nil
+	}
+
+	if h.adminServer.GetMaintenanceManager() == nil {
+		return []*maintenance.MaintenanceWorker{}, nil
+	}
+
+	// Get workers from the maintenance manager
+	workers := h.adminServer.GetMaintenanceManager().GetWorkers()
+	return workers, nil
 }
 
 func (h *MaintenanceHandlers) getMaintenanceConfig() (*maintenance.MaintenanceConfigData, error) {

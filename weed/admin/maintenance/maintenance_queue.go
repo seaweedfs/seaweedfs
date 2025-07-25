@@ -33,7 +33,8 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 
 	// Check for duplicate tasks (same type + volume + not completed)
 	if mq.hasDuplicateTask(task) {
-		glog.V(2).Infof("Skipping duplicate task: %s for volume %d (already exists)", task.Type, task.VolumeID)
+		glog.V(1).Infof("Task skipped (duplicate): %s for volume %d on %s (already queued or running)",
+			task.Type, task.VolumeID, task.Server)
 		return
 	}
 
@@ -53,7 +54,13 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 		return mq.pendingTasks[i].ScheduledAt.Before(mq.pendingTasks[j].ScheduledAt)
 	})
 
-	glog.V(2).Infof("Added maintenance task %s: %s for volume %d", task.ID, task.Type, task.VolumeID)
+	scheduleInfo := ""
+	if !task.ScheduledAt.IsZero() && time.Until(task.ScheduledAt) > time.Minute {
+		scheduleInfo = fmt.Sprintf(", scheduled for %v", task.ScheduledAt.Format("15:04:05"))
+	}
+
+	glog.Infof("Task queued: %s (%s) volume %d on %s, priority %s%s, reason: %s",
+		task.ID, task.Type, task.VolumeID, task.Server, task.Priority, scheduleInfo, task.Reason)
 }
 
 // hasDuplicateTask checks if a similar task already exists (same type, volume, and not completed)
@@ -90,72 +97,89 @@ func (mq *MaintenanceQueue) AddTasksFromResults(results []*TaskDetectionResult) 
 
 // GetNextTask returns the next available task for a worker
 func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []MaintenanceTaskType) *MaintenanceTask {
-	mq.mutex.Lock()
-	defer mq.mutex.Unlock()
-
-	glog.Infof("DEBUG GetNextTask: Worker %s requesting task with capabilities %v", workerID, capabilities)
-	glog.Infof("DEBUG GetNextTask: Total pending tasks: %d, Total workers: %d", len(mq.pendingTasks), len(mq.workers))
+	// Use read lock for initial checks and search
+	mq.mutex.RLock()
 
 	worker, exists := mq.workers[workerID]
 	if !exists {
-		glog.Infof("DEBUG GetNextTask: Worker %s not found in workers map", workerID)
+		mq.mutex.RUnlock()
+		glog.V(2).Infof("Task assignment failed for worker %s: worker not registered", workerID)
 		return nil
 	}
 
-	glog.Infof("DEBUG GetNextTask: Worker %s found, CurrentLoad: %d, MaxConcurrent: %d", workerID, worker.CurrentLoad, worker.MaxConcurrent)
-
 	// Check if worker has capacity
 	if worker.CurrentLoad >= worker.MaxConcurrent {
-		glog.Infof("DEBUG GetNextTask: Worker %s at capacity", workerID)
+		mq.mutex.RUnlock()
+		glog.V(2).Infof("Task assignment failed for worker %s: at capacity (%d/%d)", workerID, worker.CurrentLoad, worker.MaxConcurrent)
 		return nil
 	}
 
 	now := time.Now()
+	var selectedTask *MaintenanceTask
+	var selectedIndex int = -1
 
-	// Find the next suitable task
+	// Find the next suitable task (using read lock)
 	for i, task := range mq.pendingTasks {
-		glog.Infof("DEBUG GetNextTask: Evaluating task[%d] %s (type: %s, volume: %d)", i, task.ID, task.Type, task.VolumeID)
-
 		// Check if it's time to execute the task
 		if task.ScheduledAt.After(now) {
-			glog.Infof("DEBUG GetNextTask: Task %s scheduled for future (%v)", task.ID, task.ScheduledAt)
+			glog.V(3).Infof("Task %s skipped for worker %s: scheduled for future (%v)", task.ID, workerID, task.ScheduledAt)
 			continue
 		}
 
 		// Check if worker can handle this task type
 		if !mq.workerCanHandle(task.Type, capabilities) {
-			glog.Infof("DEBUG GetNextTask: Worker %s cannot handle task type %s (capabilities: %v)", workerID, task.Type, capabilities)
+			glog.V(3).Infof("Task %s (%s) skipped for worker %s: capability mismatch (worker has: %v)", task.ID, task.Type, workerID, capabilities)
 			continue
 		}
 
-		// Check scheduling logic - use simplified system if available, otherwise fallback
+		// Check if this task type needs a cooldown period
 		if !mq.canScheduleTaskNow(task) {
-			glog.Infof("DEBUG GetNextTask: Task %s cannot be scheduled now", task.ID)
+			glog.V(3).Infof("Task %s (%s) skipped for worker %s: scheduling constraints not met", task.ID, task.Type, workerID)
 			continue
 		}
 
-		glog.Infof("DEBUG GetNextTask: Assigning task %s to worker %s", task.ID, workerID)
-
-		// Assign task to worker
-		task.Status = TaskStatusAssigned
-		task.WorkerID = workerID
-		startTime := now
-		task.StartedAt = &startTime
-
-		// Remove from pending tasks
-		mq.pendingTasks = append(mq.pendingTasks[:i], mq.pendingTasks[i+1:]...)
-
-		// Update worker
-		worker.CurrentTask = task
-		worker.CurrentLoad++
-		worker.Status = "busy"
-
-		glog.Infof("DEBUG GetNextTask: Successfully assigned task %s to worker %s", task.ID, workerID)
-		return task
+		// Found a suitable task
+		selectedTask = task
+		selectedIndex = i
+		break
 	}
 
-	glog.Infof("DEBUG GetNextTask: No suitable tasks found for worker %s", workerID)
-	return nil
+	// Release read lock
+	mq.mutex.RUnlock()
+
+	// If no task found, return nil
+	if selectedTask == nil {
+		glog.V(2).Infof("No suitable tasks available for worker %s (checked %d pending tasks)", workerID, len(mq.pendingTasks))
+		return nil
+	}
+
+	// Now acquire write lock to actually assign the task
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+
+	// Re-check that the task is still available (it might have been assigned to another worker)
+	if selectedIndex >= len(mq.pendingTasks) || mq.pendingTasks[selectedIndex].ID != selectedTask.ID {
+		glog.V(2).Infof("Task %s no longer available for worker %s: assigned to another worker", selectedTask.ID, workerID)
+		return nil
+	}
+
+	// Assign the task
+	selectedTask.Status = TaskStatusAssigned
+	selectedTask.WorkerID = workerID
+	selectedTask.StartedAt = &now
+
+	// Remove from pending tasks
+	mq.pendingTasks = append(mq.pendingTasks[:selectedIndex], mq.pendingTasks[selectedIndex+1:]...)
+
+	// Update worker load
+	if worker, exists := mq.workers[workerID]; exists {
+		worker.CurrentLoad++
+	}
+
+	glog.Infof("Task assigned: %s (%s) → worker %s (volume %d, server %s)",
+		selectedTask.ID, selectedTask.Type, workerID, selectedTask.VolumeID, selectedTask.Server)
+
+	return selectedTask
 }
 
 // CompleteTask marks a task as completed
@@ -165,11 +189,18 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 
 	task, exists := mq.tasks[taskID]
 	if !exists {
+		glog.Warningf("Attempted to complete non-existent task: %s", taskID)
 		return
 	}
 
 	completedTime := time.Now()
 	task.CompletedAt = &completedTime
+
+	// Calculate task duration
+	var duration time.Duration
+	if task.StartedAt != nil {
+		duration = completedTime.Sub(*task.StartedAt)
+	}
 
 	if error != "" {
 		task.Status = TaskStatusFailed
@@ -186,14 +217,17 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 			task.ScheduledAt = time.Now().Add(15 * time.Minute) // Retry delay
 
 			mq.pendingTasks = append(mq.pendingTasks, task)
-			glog.V(2).Infof("Retrying task %s (attempt %d/%d)", taskID, task.RetryCount, task.MaxRetries)
+			glog.Warningf("Task failed, scheduling retry: %s (%s) attempt %d/%d, worker %s, duration %v, error: %s",
+				taskID, task.Type, task.RetryCount, task.MaxRetries, task.WorkerID, duration, error)
 		} else {
-			glog.Errorf("Task %s failed permanently after %d retries: %s", taskID, task.MaxRetries, error)
+			glog.Errorf("Task failed permanently: %s (%s) worker %s, duration %v, after %d retries: %s",
+				taskID, task.Type, task.WorkerID, duration, task.MaxRetries, error)
 		}
 	} else {
 		task.Status = TaskStatusCompleted
 		task.Progress = 100
-		glog.V(2).Infof("Task %s completed successfully", taskID)
+		glog.Infof("Task completed: %s (%s) worker %s, duration %v, volume %d",
+			taskID, task.Type, task.WorkerID, duration, task.VolumeID)
 	}
 
 	// Update worker
@@ -214,8 +248,23 @@ func (mq *MaintenanceQueue) UpdateTaskProgress(taskID string, progress float64) 
 	defer mq.mutex.RUnlock()
 
 	if task, exists := mq.tasks[taskID]; exists {
+		oldProgress := task.Progress
 		task.Progress = progress
 		task.Status = TaskStatusInProgress
+
+		// Log progress at significant milestones or changes
+		if progress == 0 {
+			glog.V(1).Infof("Task started: %s (%s) worker %s, volume %d",
+				taskID, task.Type, task.WorkerID, task.VolumeID)
+		} else if progress >= 100 {
+			glog.V(1).Infof("Task progress: %s (%s) worker %s, %.1f%% complete",
+				taskID, task.Type, task.WorkerID, progress)
+		} else if progress-oldProgress >= 25 { // Log every 25% increment
+			glog.V(1).Infof("Task progress: %s (%s) worker %s, %.1f%% complete",
+				taskID, task.Type, task.WorkerID, progress)
+		}
+	} else {
+		glog.V(2).Infof("Progress update for unknown task: %s (%.1f%%)", taskID, progress)
 	}
 }
 
@@ -224,12 +273,25 @@ func (mq *MaintenanceQueue) RegisterWorker(worker *MaintenanceWorker) {
 	mq.mutex.Lock()
 	defer mq.mutex.Unlock()
 
+	isNewWorker := true
+	if existingWorker, exists := mq.workers[worker.ID]; exists {
+		isNewWorker = false
+		glog.Infof("Worker reconnected: %s at %s (capabilities: %v, max concurrent: %d)",
+			worker.ID, worker.Address, worker.Capabilities, worker.MaxConcurrent)
+
+		// Preserve current load when reconnecting
+		worker.CurrentLoad = existingWorker.CurrentLoad
+	} else {
+		glog.Infof("Worker registered: %s at %s (capabilities: %v, max concurrent: %d)",
+			worker.ID, worker.Address, worker.Capabilities, worker.MaxConcurrent)
+	}
+
 	worker.LastHeartbeat = time.Now()
 	worker.Status = "active"
-	worker.CurrentLoad = 0
+	if isNewWorker {
+		worker.CurrentLoad = 0
+	}
 	mq.workers[worker.ID] = worker
-
-	glog.V(1).Infof("Registered maintenance worker %s at %s", worker.ID, worker.Address)
 }
 
 // UpdateWorkerHeartbeat updates worker heartbeat
@@ -238,7 +300,15 @@ func (mq *MaintenanceQueue) UpdateWorkerHeartbeat(workerID string) {
 	defer mq.mutex.Unlock()
 
 	if worker, exists := mq.workers[workerID]; exists {
+		lastSeen := worker.LastHeartbeat
 		worker.LastHeartbeat = time.Now()
+
+		// Log if worker was offline for a while
+		if time.Since(lastSeen) > 2*time.Minute {
+			glog.Infof("Worker %s heartbeat resumed after %v", workerID, time.Since(lastSeen))
+		}
+	} else {
+		glog.V(2).Infof("Heartbeat from unknown worker: %s", workerID)
 	}
 }
 

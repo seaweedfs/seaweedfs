@@ -18,11 +18,12 @@ type MaintenanceManager struct {
 	running     bool
 	stopChan    chan struct{}
 	// Error handling and backoff
-	errorCount    int
-	lastError     error
-	lastErrorTime time.Time
-	backoffDelay  time.Duration
-	mutex         sync.RWMutex
+	errorCount     int
+	lastError      error
+	lastErrorTime  time.Time
+	backoffDelay   time.Duration
+	mutex          sync.RWMutex
+	scanInProgress bool
 }
 
 // NewMaintenanceManager creates a new maintenance manager
@@ -170,25 +171,48 @@ func (mm *MaintenanceManager) cleanupLoop() {
 
 // performScan executes a maintenance scan with error handling and backoff
 func (mm *MaintenanceManager) performScan() {
-	mm.mutex.Lock()
-	defer mm.mutex.Unlock()
+	defer func() {
+		// Always reset scan in progress flag when done
+		mm.mutex.Lock()
+		mm.scanInProgress = false
+		mm.mutex.Unlock()
+	}()
 
-	glog.V(2).Infof("Starting maintenance scan")
+	glog.Infof("Starting maintenance scan...")
 
 	results, err := mm.scanner.ScanForMaintenanceTasks()
 	if err != nil {
+		mm.mutex.Lock()
 		mm.handleScanError(err)
+		mm.mutex.Unlock()
+		glog.Warningf("Maintenance scan failed: %v", err)
 		return
 	}
 
-	// Scan succeeded, reset error tracking
+	// Scan succeeded, reset error tracking and add tasks
+	mm.mutex.Lock()
 	mm.resetErrorTracking()
 
 	if len(results) > 0 {
+		// Count tasks by type for logging
+		taskCounts := make(map[MaintenanceTaskType]int)
+		for _, result := range results {
+			taskCounts[result.TaskType]++
+		}
+
+		// Release the mutex before calling AddTasksFromResults to avoid holding
+		// the manager mutex while trying to acquire the queue mutex
+		mm.mutex.Unlock()
 		mm.queue.AddTasksFromResults(results)
-		glog.V(1).Infof("Maintenance scan completed: added %d tasks", len(results))
+
+		// Log detailed scan results
+		glog.Infof("Maintenance scan completed: found %d tasks", len(results))
+		for taskType, count := range taskCounts {
+			glog.Infof("  - %s: %d tasks", taskType, count)
+		}
 	} else {
-		glog.V(2).Infof("Maintenance scan completed: no tasks needed")
+		mm.mutex.Unlock()
+		glog.Infof("Maintenance scan completed: no maintenance tasks needed")
 	}
 }
 
@@ -333,6 +357,16 @@ func (mm *MaintenanceManager) TriggerScan() error {
 	if !mm.running {
 		return fmt.Errorf("maintenance manager is not running")
 	}
+
+	// Prevent multiple concurrent scans
+	mm.mutex.Lock()
+	if mm.scanInProgress {
+		mm.mutex.Unlock()
+		glog.V(1).Infof("Scan already in progress, ignoring trigger request")
+		return nil
+	}
+	mm.scanInProgress = true
+	mm.mutex.Unlock()
 
 	go mm.performScan()
 	return nil
