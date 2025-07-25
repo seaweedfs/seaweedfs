@@ -1,11 +1,28 @@
 # SeaweedFS Admin Integration Test Makefile
 # Tests the admin server and worker functionality using official weed commands
 
-.PHONY: help start stop restart logs clean status test admin-ui worker-logs master-logs admin-logs
+.PHONY: help build build-and-restart start stop restart logs clean status test admin-ui worker-logs master-logs admin-logs
 .DEFAULT_GOAL := help
 
 COMPOSE_FILE := docker-compose-ec-test.yml
 PROJECT_NAME := admin_integration
+
+build: ## Build SeaweedFS with latest changes and create Docker image
+	@echo "🔨 Building SeaweedFS with latest changes..."
+	@echo "1️⃣ Generating admin templates..."
+	@cd ../../ && make admin-generate
+	@echo "2️⃣ Building Docker image with latest changes..."
+	@cd ../ && make build
+	@echo "3️⃣ Copying binary for local docker-compose..."
+	@cp ../weed ./weed-local
+	@echo "✅ Build complete! Updated image: chrislusf/seaweedfs:local"
+	@echo "💡 Run 'make restart' to apply changes to running services"
+
+build-and-restart: build ## Build with latest changes and restart services
+	@echo "🔄 Restarting services to apply changes..."
+	@docker-compose -f $(COMPOSE_FILE) restart admin
+	@echo "✅ Services restarted with latest changes!"
+	@echo "🌐 Admin UI: http://localhost:23646/"
 
 help: ## Show this help message
 	@echo "SeaweedFS Admin Integration Test"
