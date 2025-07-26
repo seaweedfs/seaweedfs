@@ -135,6 +135,80 @@ type ClusterVolumesData struct {
 	FilterCollection string `json:"filter_collection"`
 }
 
+// ClusterEcShardsData represents the data for the cluster EC shards page
+type ClusterEcShardsData struct {
+	Username     string            `json:"username"`
+	EcShards     []EcShardWithInfo `json:"ec_shards"`
+	TotalShards  int               `json:"total_shards"`
+	TotalVolumes int               `json:"total_volumes"`
+	LastUpdated  time.Time         `json:"last_updated"`
+
+	// Pagination
+	CurrentPage int `json:"current_page"`
+	TotalPages  int `json:"total_pages"`
+	PageSize    int `json:"page_size"`
+
+	// Sorting
+	SortBy    string `json:"sort_by"`
+	SortOrder string `json:"sort_order"`
+
+	// Statistics
+	DataCenterCount int `json:"datacenter_count"`
+	RackCount       int `json:"rack_count"`
+	CollectionCount int `json:"collection_count"`
+
+	// Conditional display flags
+	ShowDataCenterColumn bool `json:"show_datacenter_column"`
+	ShowRackColumn       bool `json:"show_rack_column"`
+	ShowCollectionColumn bool `json:"show_collection_column"`
+
+	// Single values when only one exists
+	SingleDataCenter string `json:"single_datacenter"`
+	SingleRack       string `json:"single_rack"`
+	SingleCollection string `json:"single_collection"`
+
+	// Filtering
+	FilterCollection string `json:"filter_collection"`
+
+	// EC specific statistics
+	ShardsPerVolume          map[uint32]int `json:"shards_per_volume"`           // VolumeID -> shard count
+	VolumesWithAllShards     int            `json:"volumes_with_all_shards"`     // Volumes with all 14 shards
+	VolumesWithMissingShards int            `json:"volumes_with_missing_shards"` // Volumes missing shards
+}
+
+// EcShardWithInfo represents an EC shard with its topology information
+type EcShardWithInfo struct {
+	VolumeID     uint32 `json:"volume_id"`
+	ShardID      uint32 `json:"shard_id"`
+	Collection   string `json:"collection"`
+	Size         uint64 `json:"size"`
+	Server       string `json:"server"`
+	DataCenter   string `json:"datacenter"`
+	Rack         string `json:"rack"`
+	DiskType     string `json:"disk_type"`
+	ModifiedTime int64  `json:"modified_time"`
+
+	// EC specific fields
+	EcIndexBits   uint32 `json:"ec_index_bits"`  // Bitmap of which shards this server has
+	ShardCount    int    `json:"shard_count"`    // Number of shards this server has for this volume
+	IsComplete    bool   `json:"is_complete"`    // True if this volume has all 14 shards
+	MissingShards []int  `json:"missing_shards"` // List of missing shard IDs
+}
+
+// EcVolumeDetailsData represents the data for the EC volume details page
+type EcVolumeDetailsData struct {
+	Username      string            `json:"username"`
+	VolumeID      uint32            `json:"volume_id"`
+	Collection    string            `json:"collection"`
+	Shards        []EcShardWithInfo `json:"shards"`
+	TotalShards   int               `json:"total_shards"`
+	IsComplete    bool              `json:"is_complete"`
+	MissingShards []int             `json:"missing_shards"`
+	DataCenters   []string          `json:"datacenters"`
+	Servers       []string          `json:"servers"`
+	LastUpdated   time.Time         `json:"last_updated"`
+}
+
 type VolumeDetailsData struct {
 	Volume           VolumeWithTopology   `json:"volume"`
 	Replicas         []VolumeWithTopology `json:"replicas"`

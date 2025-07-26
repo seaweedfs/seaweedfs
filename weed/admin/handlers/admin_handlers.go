@@ -78,6 +78,8 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
 		protected.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
 		protected.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
+		protected.GET("/cluster/ec-shards", h.clusterHandlers.ShowClusterEcShards)
+		protected.GET("/cluster/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
 
 		// Message Queue management routes
 		protected.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
@@ -198,6 +200,8 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		r.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
 		r.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
 		r.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
+		r.GET("/cluster/ec-shards", h.clusterHandlers.ShowClusterEcShards)
+		r.GET("/cluster/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
 
 		// Message Queue management routes
 		r.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
