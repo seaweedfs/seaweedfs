@@ -213,4 +213,29 @@ services:
       - admin
       - filer
     networks:
-      - seaweed_net 
+      - seaweed_net
+
+  vacuum-tester:
+    image: chrislusf/seaweedfs:local
+    entrypoint: ["/bin/sh"]
+    command: >
+      -c "
+      echo 'Installing dependencies for vacuum testing...';
+      apk add --no-cache jq curl go bash;
+      echo 'Vacuum tester ready...';
+      echo 'Use: docker-compose exec vacuum-tester sh';
+      echo 'Available commands: go, weed, curl, jq, bash, sh';
+      sleep infinity
+      "
+    depends_on:
+      - master
+      - admin
+      - filer
+    volumes:
+      - .:/testing
+    working_dir: /testing
+    networks:
+      - seaweed_net
+    environment:
+      - MASTER_HOST=master:9333
+      - ADMIN_HOST=admin:23646 

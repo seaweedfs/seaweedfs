@@ -1,7 +1,7 @@
 # SeaweedFS Admin Integration Test Makefile
 # Tests the admin server and worker functionality using official weed commands
 
-.PHONY: help build build-and-restart restart-workers start stop restart logs clean status test admin-ui worker-logs master-logs admin-logs
+.PHONY: help build build-and-restart restart-workers start stop restart logs clean status test admin-ui worker-logs master-logs admin-logs vacuum-test vacuum-demo vacuum-status vacuum-data vacuum-data-high vacuum-data-low vacuum-continuous vacuum-clean vacuum-help
 .DEFAULT_GOAL := help
 
 COMPOSE_FILE := docker-compose-ec-test.yml
@@ -39,8 +39,24 @@ help: ## Show this help message
 	@echo "================================"
 	@echo "Tests admin server task distribution to workers using official weed commands"
 	@echo ""
-	@echo "Available targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
+	@echo "🏗️  Cluster Management:"
+	@grep -E '^(start|stop|restart|clean|status|build):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@echo ""
+	@echo "🧪 Testing:"
+	@grep -E '^(test|demo|validate|quick-test):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@echo ""
+	@echo "🗑️  Vacuum Testing:"
+	@grep -E '^vacuum-.*:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@echo ""
+	@echo "📜 Monitoring:"
+	@grep -E '^(logs|admin-logs|worker-logs|master-logs|admin-ui):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@echo ""
+	@echo "🚀 Quick Start:"
+	@echo "  make start           # Start cluster"
+	@echo "  make vacuum-test     # Test vacuum tasks"
+	@echo "  make vacuum-help     # Vacuum testing guide"
+	@echo ""
+	@echo "💡 For detailed vacuum testing: make vacuum-help"
 
 start: ## Start the complete SeaweedFS cluster with admin and workers
 	@echo "🚀 Starting SeaweedFS cluster with admin and workers..."
@@ -219,4 +235,112 @@ demo: start ## Start cluster and run demonstration
 	@echo "  • Tasks complete with shard distribution"
 	@echo ""
 	@echo "💡 Use 'make worker-logs' to see worker activity"
-	@echo "💡 Use 'make admin-logs' to see admin task management" 
+	@echo "💡 Use 'make admin-logs' to see admin task management"
+
+# Vacuum Testing Targets
+vacuum-test: ## Create test data with garbage and verify vacuum detection
+	@echo "🧪 SeaweedFS Vacuum Task Testing"
+	@echo "================================"
+	@echo ""
+	@echo "1️⃣ Checking cluster health..."
+	@curl -s http://localhost:9333/cluster/status | jq '.IsLeader' > /dev/null && echo "✅ Master ready" || (echo "❌ Master not ready. Run 'make start' first." && exit 1)
+	@curl -s http://localhost:23646/ | grep -q "Admin" && echo "✅ Admin ready" || (echo "❌ Admin not ready. Run 'make start' first." && exit 1)
+	@echo ""
+	@echo "2️⃣ Creating test data with garbage..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -files=25 -delete=0.5 -size=200
+	@echo ""
+	@echo "3️⃣ Configuration Instructions:"
+	@echo "   Visit: http://localhost:23646/maintenance/config/vacuum"
+	@echo "   Set for testing:"
+	@echo "     • Enable Vacuum Tasks: ✅ Checked"
+	@echo "     • Garbage Threshold: 0.20 (20%)"
+	@echo "     • Scan Interval: [30] [Seconds]"
+	@echo "     • Min Volume Age: [0] [Minutes]"
+	@echo "     • Max Concurrent: 2"
+	@echo ""
+	@echo "4️⃣ Monitor vacuum tasks at: http://localhost:23646/maintenance"
+	@echo ""
+	@echo "💡 Use 'make vacuum-status' to check volume garbage ratios"
+
+vacuum-demo: ## Run automated vacuum testing demonstration
+	@echo "🎭 Vacuum Task Demo"
+	@echo "=================="
+	@echo ""
+	@echo "⚠️  This demo requires user interaction for configuration"
+	@echo "💡 Make sure cluster is running with 'make start'"
+	@echo ""
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester sh -c "chmod +x demo_vacuum_testing.sh && ./demo_vacuum_testing.sh"
+
+vacuum-status: ## Check current volume status and garbage ratios
+	@echo "📊 Current Volume Status"
+	@echo "======================="
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester sh -c "chmod +x check_volumes.sh && ./check_volumes.sh"
+
+vacuum-data: ## Create test data with configurable parameters
+	@echo "📁 Creating vacuum test data..."
+	@echo "Usage: make vacuum-data [FILES=20] [DELETE=0.4] [SIZE=100]"
+	@echo ""
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go \
+		-files=$${FILES:-20} \
+		-delete=$${DELETE:-0.4} \
+		-size=$${SIZE:-100}
+
+vacuum-data-high: ## Create high garbage ratio test data (should trigger vacuum)
+	@echo "📁 Creating high garbage test data (70% garbage)..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -files=30 -delete=0.7 -size=150
+
+vacuum-data-low: ## Create low garbage ratio test data (should NOT trigger vacuum)
+	@echo "📁 Creating low garbage test data (15% garbage)..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -files=30 -delete=0.15 -size=150
+
+vacuum-continuous: ## Generate garbage continuously for testing
+	@echo "🔄 Generating continuous garbage for vacuum testing..."
+	@echo "Creating 5 rounds of test data with 30-second intervals..."
+	@for i in {1..5}; do \
+		echo "Round $$i: Creating garbage..."; \
+		docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -files=10 -delete=0.6 -size=100; \
+		echo "Waiting 30 seconds..."; \
+		sleep 30; \
+	done
+	@echo "✅ Continuous test complete. Check vacuum task activity!"
+
+vacuum-clean: ## Clean up vacuum test data (removes all volumes!)
+	@echo "🧹 Cleaning up vacuum test data..."
+	@echo "⚠️  WARNING: This will delete ALL volumes!"
+	@read -p "Are you sure? (y/N): " confirm && [ "$$confirm" = "y" ] || exit 1
+	@echo "Stopping cluster..."
+	@docker-compose -f $(COMPOSE_FILE) down
+	@echo "Removing volume data..."
+	@rm -rf data/volume*/
+	@echo "Restarting cluster..."
+	@docker-compose -f $(COMPOSE_FILE) up -d
+	@echo "✅ Clean up complete. Fresh volumes ready for testing."
+
+vacuum-help: ## Show vacuum testing help and examples
+	@echo "🧪 Vacuum Testing Commands (Docker-based)"
+	@echo "=========================================="
+	@echo ""
+	@echo "Quick Start:"
+	@echo "  make start         # Start SeaweedFS cluster with vacuum-tester"
+	@echo "  make vacuum-test   # Create test data and instructions"
+	@echo "  make vacuum-status # Check volume status"
+	@echo ""
+	@echo "Data Generation:"
+	@echo "  make vacuum-data-high       # High garbage (should trigger)"
+	@echo "  make vacuum-data-low        # Low garbage (should NOT trigger)" 
+	@echo "  make vacuum-continuous      # Continuous garbage generation"
+	@echo ""
+	@echo "Monitoring:"
+	@echo "  make vacuum-status          # Quick volume status check"
+	@echo "  make vacuum-demo           # Full guided demonstration"
+	@echo ""
+	@echo "Configuration:"
+	@echo "  Visit: http://localhost:23646/maintenance/config/vacuum"
+	@echo "  Monitor: http://localhost:23646/maintenance"
+	@echo ""
+	@echo "Custom Parameters:"
+	@echo "  make vacuum-data FILES=50 DELETE=0.8 SIZE=200"
+	@echo ""
+	@echo "💡 All commands now run inside Docker containers"
+	@echo "Documentation:"
+	@echo "  See: VACUUM_TEST_README.md for complete guide" 
