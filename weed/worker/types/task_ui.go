@@ -6,6 +6,40 @@ import (
 	"time"
 )
 
+// Helper function to convert seconds to the most appropriate interval unit
+func secondsToIntervalValueUnit(totalSeconds int) (int, string) {
+	if totalSeconds == 0 {
+		return 0, "minute"
+	}
+
+	// Check if it's evenly divisible by days
+	if totalSeconds%(24*3600) == 0 {
+		return totalSeconds / (24 * 3600), "day"
+	}
+
+	// Check if it's evenly divisible by hours
+	if totalSeconds%3600 == 0 {
+		return totalSeconds / 3600, "hour"
+	}
+
+	// Default to minutes
+	return totalSeconds / 60, "minute"
+}
+
+// Helper function to convert interval value and unit to seconds
+func IntervalValueUnitToSeconds(value int, unit string) int {
+	switch unit {
+	case "day":
+		return value * 24 * 3600
+	case "hour":
+		return value * 3600
+	case "minute":
+		return value * 60
+	default:
+		return value * 60 // Default to minutes
+	}
+}
+
 // TaskUIProvider defines how tasks provide their configuration UI
 type TaskUIProvider interface {
 	// GetTaskType returns the task type
@@ -100,11 +134,14 @@ type TaskDetailsData struct {
 type FormField struct {
 	Name        string       `json:"name"`
 	Label       string       `json:"label"`
-	Type        string       `json:"type"` // text, number, checkbox, select, duration
+	Type        string       `json:"type"` // text, number, checkbox, select, duration, interval
 	Value       interface{}  `json:"value"`
 	Description string       `json:"description"`
 	Required    bool         `json:"required"`
 	Options     []FormOption `json:"options,omitempty"` // For select fields
+	// Interval-specific fields
+	IntervalValue int    `json:"interval_value,omitempty"` // Numeric value for interval
+	IntervalUnit  string `json:"interval_unit,omitempty"`  // Unit for interval (day, hour, minute)
 }
 
 type FormOption struct {
@@ -190,6 +227,23 @@ func (fb *FormBuilder) AddDurationField(name, label, description string, value t
 	return fb
 }
 
+// AddIntervalField adds an interval field with value and unit dropdown
+func (fb *FormBuilder) AddIntervalField(name, label, description string, totalSeconds int, required bool) *FormBuilder {
+	// Convert seconds to the most appropriate unit
+	value, unit := secondsToIntervalValueUnit(totalSeconds)
+
+	fb.fields = append(fb.fields, FormField{
+		Name:          name,
+		Label:         label,
+		Type:          "interval",
+		Description:   description,
+		Required:      required,
+		IntervalValue: value,
+		IntervalUnit:  unit,
+	})
+	return fb
+}
+
 // Build generates the HTML form fields with Bootstrap styling
 func (fb *FormBuilder) Build() template.HTML {
 	html := ""
@@ -269,6 +323,37 @@ func (fb *FormBuilder) renderField(field FormField) string {
 			html += " required"
 		}
 		html += ">\n"
+
+	case "interval":
+		// Create input group with number input and unit select
+		html += "  <div class=\"input-group\">\n"
+		html += "    <input type=\"number\" class=\"form-control\" id=\"" + field.Name + "_value\" name=\"" + field.Name + "_value\" min=\"0\" value=\"" +
+			fmt.Sprintf("%d", field.IntervalValue) + "\""
+		if field.Required {
+			html += " required"
+		}
+		html += ">\n"
+		html += "    <select class=\"form-select\" id=\"" + field.Name + "_unit\" name=\"" + field.Name + "_unit\" style=\"max-width: 120px;\""
+		if field.Required {
+			html += " required"
+		}
+		html += ">\n"
+
+		// Add unit options
+		units := []struct{ Value, Label string }{
+			{"minute", "Minutes"},
+			{"hour", "Hours"},
+			{"day", "Days"},
+		}
+		for _, unit := range units {
+			selected := ""
+			if unit.Value == field.IntervalUnit {
+				selected = " selected"
+			}
+			html += "      <option value=\"" + unit.Value + "\"" + selected + ">" + unit.Label + "</option>\n"
+		}
+		html += "    </select>\n"
+		html += "  </div>\n"
 	}
 
 	// Description for non-checkbox fields

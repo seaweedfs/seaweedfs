@@ -46,14 +46,12 @@ func (ui *UIProvider) GetIcon() string {
 
 // ErasureCodingConfig represents the erasure coding configuration
 type ErasureCodingConfig struct {
-	Enabled               bool    `json:"enabled"`
-	VolumeAgeHoursSeconds int     `json:"volume_age_hours_seconds"`
-	FullnessRatio         float64 `json:"fullness_ratio"`
-	ScanIntervalSeconds   int     `json:"scan_interval_seconds"`
-	MaxConcurrent         int     `json:"max_concurrent"`
-	ShardCount            int     `json:"shard_count"`
-	ParityCount           int     `json:"parity_count"`
-	CollectionFilter      string  `json:"collection_filter"`
+	Enabled             bool    `json:"enabled"`
+	QuietForSeconds     int     `json:"quiet_for_seconds"`
+	FullnessRatio       float64 `json:"fullness_ratio"`
+	ScanIntervalSeconds int     `json:"scan_interval_seconds"`
+	MaxConcurrent       int     `json:"max_concurrent"`
+	CollectionFilter    string  `json:"collection_filter"`
 }
 
 // Helper functions for duration conversion
@@ -95,19 +93,19 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		config.Enabled,
 	)
 
-	form.AddNumberField(
-		"volume_age_hours_seconds",
-		"Volume Age Threshold",
-		"Only apply erasure coding to volumes older than this duration",
-		float64(config.VolumeAgeHoursSeconds),
+	form.AddIntervalField(
+		"quiet_for_seconds",
+		"Quiet For Duration",
+		"Only apply erasure coding to volumes that have not been modified for this duration",
+		config.QuietForSeconds,
 		true,
 	)
 
-	form.AddNumberField(
+	form.AddIntervalField(
 		"scan_interval_seconds",
 		"Scan Interval",
 		"How often to scan for volumes needing erasure coding",
-		float64(config.ScanIntervalSeconds),
+		config.ScanIntervalSeconds,
 		true,
 	)
 
@@ -120,21 +118,21 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		true,
 	)
 
-	// Erasure Coding Parameters
+	// Detection Parameters
 	form.AddNumberField(
-		"shard_count",
-		"Data Shards",
-		"Number of data shards for erasure coding (recommended: 10)",
-		float64(config.ShardCount),
+		"fullness_ratio",
+		"Fullness Ratio (0.0-1.0)",
+		"Only apply erasure coding to volumes with fullness ratio above this threshold (e.g., 0.90 for 90%)",
+		config.FullnessRatio,
 		true,
 	)
 
-	form.AddNumberField(
-		"parity_count",
-		"Parity Shards",
-		"Number of parity shards for erasure coding (recommended: 4)",
-		float64(config.ParityCount),
-		true,
+	form.AddTextField(
+		"collection_filter",
+		"Collection Filter",
+		"Only apply erasure coding to volumes in these collections (comma-separated, leave empty for all collections)",
+		config.CollectionFilter,
+		false,
 	)
 
 	// Generate organized form sections using Bootstrap components
@@ -168,7 +166,8 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 				<div class="alert alert-info" role="alert">
 					<h6 class="alert-heading">Important Notes:</h6>
 					<p class="mb-2"><strong>Performance:</strong> Erasure coding is CPU and I/O intensive. Consider running during off-peak hours.</p>
-					<p class="mb-0"><strong>Durability:</strong> With ` + fmt.Sprintf("%d+%d", config.ShardCount, config.ParityCount) + ` configuration, can tolerate up to ` + fmt.Sprintf("%d", config.ParityCount) + ` shard failures.</p>
+					<p class="mb-2"><strong>Durability:</strong> With 10+4 configuration, can tolerate up to 4 shard failures.</p>
+					<p class="mb-0"><strong>Configuration:</strong> Use the dropdown to select time units (days, hours, minutes). Fullness ratio should be between 0.0 and 1.0 (e.g., 0.90 for 90%).</p>
 				</div>
 			</div>
 		</div>
@@ -180,27 +179,41 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 
 // ParseConfigForm parses form data into configuration
 func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}, error) {
-	config := &ErasureCodingConfig{}
+	config := ErasureCodingConfig{}
 
 	// Parse enabled
 	config.Enabled = len(formData["enabled"]) > 0
 
-	// Parse volume age hours
-	if values, ok := formData["volume_age_hours_seconds"]; ok && len(values) > 0 {
-		hours, err := strconv.Atoi(values[0])
+	// Parse quiet for duration
+	if values, ok := formData["quiet_for_seconds_value"]; ok && len(values) > 0 {
+		value, err := strconv.Atoi(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid volume age hours: %w", err)
+			return nil, fmt.Errorf("invalid quiet for duration value: %w", err)
 		}
-		config.VolumeAgeHoursSeconds = hours
+
+		unit := "minute" // default
+		if units, ok := formData["quiet_for_seconds_unit"]; ok && len(units) > 0 {
+			unit = units[0]
+		}
+
+		// Convert to seconds using the helper function from types package
+		config.QuietForSeconds = types.IntervalValueUnitToSeconds(value, unit)
 	}
 
 	// Parse scan interval
-	if values, ok := formData["scan_interval_seconds"]; ok && len(values) > 0 {
-		interval, err := strconv.Atoi(values[0])
+	if values, ok := formData["scan_interval_seconds_value"]; ok && len(values) > 0 {
+		value, err := strconv.Atoi(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid scan interval: %w", err)
+			return nil, fmt.Errorf("invalid scan interval value: %w", err)
 		}
-		config.ScanIntervalSeconds = interval
+
+		unit := "minute" // default
+		if units, ok := formData["scan_interval_seconds_unit"]; ok && len(units) > 0 {
+			unit = units[0]
+		}
+
+		// Convert to seconds
+		config.ScanIntervalSeconds = types.IntervalValueUnitToSeconds(value, unit)
 	}
 
 	// Parse max concurrent
@@ -215,28 +228,21 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 		config.MaxConcurrent = maxConcurrent
 	}
 
-	// Parse shard count
-	if values, ok := formData["shard_count"]; ok && len(values) > 0 {
-		shardCount, err := strconv.Atoi(values[0])
+	// Parse fullness ratio
+	if values, ok := formData["fullness_ratio"]; ok && len(values) > 0 {
+		fullnessRatio, err := strconv.ParseFloat(values[0], 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid shard count: %w", err)
+			return nil, fmt.Errorf("invalid fullness ratio: %w", err)
 		}
-		if shardCount < 1 {
-			return nil, fmt.Errorf("shard count must be at least 1")
+		if fullnessRatio < 0 || fullnessRatio > 1 {
+			return nil, fmt.Errorf("fullness ratio must be between 0.0 and 1.0")
 		}
-		config.ShardCount = shardCount
+		config.FullnessRatio = fullnessRatio
 	}
 
-	// Parse parity count
-	if values, ok := formData["parity_count"]; ok && len(values) > 0 {
-		parityCount, err := strconv.Atoi(values[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid parity count: %w", err)
-		}
-		if parityCount < 1 {
-			return nil, fmt.Errorf("parity count must be at least 1")
-		}
-		config.ParityCount = parityCount
+	// Parse collection filter
+	if values, ok := formData["collection_filter"]; ok && len(values) > 0 {
+		config.CollectionFilter = values[0]
 	}
 
 	return config, nil
@@ -257,7 +263,9 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 	// Apply to detector
 	if ui.detector != nil {
 		ui.detector.SetEnabled(ecConfig.Enabled)
-		ui.detector.SetVolumeAgeHours(ecConfig.VolumeAgeHoursSeconds)
+		ui.detector.SetQuietForSeconds(ecConfig.QuietForSeconds)
+		ui.detector.SetFullnessRatio(ecConfig.FullnessRatio)
+		ui.detector.SetCollectionFilter(ecConfig.CollectionFilter)
 		ui.detector.SetScanInterval(secondsToDuration(ecConfig.ScanIntervalSeconds))
 	}
 
@@ -267,8 +275,8 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 		ui.scheduler.SetMaxConcurrent(ecConfig.MaxConcurrent)
 	}
 
-	glog.V(1).Infof("Applied erasure coding configuration: enabled=%v, age_threshold=%v, max_concurrent=%d, shards=%d+%d",
-		ecConfig.Enabled, ecConfig.VolumeAgeHoursSeconds, ecConfig.MaxConcurrent, ecConfig.ShardCount, ecConfig.ParityCount)
+	glog.V(1).Infof("Applied erasure coding configuration: enabled=%v, quiet_for=%v seconds, max_concurrent=%d, fullness_ratio=%f, collection_filter=%s, shards=10+4",
+		ecConfig.Enabled, ecConfig.QuietForSeconds, ecConfig.MaxConcurrent, ecConfig.FullnessRatio, ecConfig.CollectionFilter)
 
 	return nil
 }
@@ -277,18 +285,20 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 func (ui *UIProvider) getCurrentECConfig() ErasureCodingConfig {
 	config := ErasureCodingConfig{
 		// Default values (fallback if detectors/schedulers are nil)
-		Enabled:               true,
-		VolumeAgeHoursSeconds: 24 * 3600, // 24 hours in seconds
-		ScanIntervalSeconds:   2 * 3600,  // 2 hours in seconds
-		MaxConcurrent:         1,
-		ShardCount:            10,
-		ParityCount:           4,
+		Enabled:             true,
+		QuietForSeconds:     24 * 3600, // Default to 24 hours in seconds
+		ScanIntervalSeconds: 2 * 3600,  // 2 hours in seconds
+		MaxConcurrent:       1,
+		FullnessRatio:       0.90, // Default fullness ratio
+		CollectionFilter:    "",
 	}
 
 	// Get current values from detector
 	if ui.detector != nil {
 		config.Enabled = ui.detector.IsEnabled()
-		config.VolumeAgeHoursSeconds = ui.detector.GetVolumeAgeHours()
+		config.QuietForSeconds = ui.detector.GetQuietForSeconds()
+		config.FullnessRatio = ui.detector.GetFullnessRatio()
+		config.CollectionFilter = ui.detector.GetCollectionFilter()
 		config.ScanIntervalSeconds = durationToSeconds(ui.detector.ScanInterval())
 	}
 

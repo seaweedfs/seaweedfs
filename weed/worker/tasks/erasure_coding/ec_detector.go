@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -10,11 +11,12 @@ import (
 
 // EcDetector implements erasure coding task detection
 type EcDetector struct {
-	enabled        bool
-	volumeAgeHours int
-	fullnessRatio  float64
-	minSizeMB      int // Minimum volume size in MB before considering EC
-	scanInterval   time.Duration
+	enabled          bool
+	quietForSeconds  int
+	fullnessRatio    float64
+	minSizeMB        int // Minimum volume size in MB before considering EC
+	scanInterval     time.Duration
+	collectionFilter string
 }
 
 // Compile-time interface assertions
@@ -26,11 +28,12 @@ var (
 // NewEcDetector creates a new erasure coding detector with configurable defaults
 func NewEcDetector() *EcDetector {
 	return &EcDetector{
-		enabled:        true,             // Enabled for testing
-		volumeAgeHours: 0,                // No age requirement for testing (was 24)
-		fullnessRatio:  0.8,              // 80% full by default
-		minSizeMB:      50,               // Minimum 50MB for testing (was 100MB)
-		scanInterval:   30 * time.Second, // Faster scanning for testing
+		enabled:          true,             // Enabled for testing
+		quietForSeconds:  0,                // No quiet requirement for testing (was 24)
+		fullnessRatio:    0.90,             // 90% full by default
+		minSizeMB:        50,               // Minimum 50MB for testing (was 100MB)
+		scanInterval:     30 * time.Second, // Faster scanning for testing
+		collectionFilter: "",               // No collection filter by default
 	}
 }
 
@@ -48,11 +51,11 @@ func (d *EcDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, cl
 
 	var results []*types.TaskDetectionResult
 	now := time.Now()
-	ageThreshold := time.Duration(d.volumeAgeHours) * time.Hour
+	quietThreshold := time.Duration(d.quietForSeconds) * time.Second
 	minSizeBytes := uint64(d.minSizeMB) * 1024 * 1024
 
-	glog.V(2).Infof("EC detector scanning %d volumes with thresholds: age=%dh, fullness=%.2f, minSize=%dMB",
-		len(volumeMetrics), d.volumeAgeHours, d.fullnessRatio, d.minSizeMB)
+	glog.V(2).Infof("EC detector scanning %d volumes with thresholds: quietFor=%ds, fullness=%.2f, minSize=%dMB",
+		len(volumeMetrics), d.quietForSeconds, d.fullnessRatio, d.minSizeMB)
 
 	for _, metric := range volumeMetrics {
 		// Skip if already EC volume
@@ -65,8 +68,21 @@ func (d *EcDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, cl
 			continue
 		}
 
-		// Check age and fullness criteria
-		if metric.Age >= ageThreshold && metric.FullnessRatio >= d.fullnessRatio {
+		// Check collection filter if specified
+		if d.collectionFilter != "" {
+			// Parse comma-separated collections
+			allowedCollections := make(map[string]bool)
+			for _, collection := range strings.Split(d.collectionFilter, ",") {
+				allowedCollections[strings.TrimSpace(collection)] = true
+			}
+			// Skip if volume's collection is not in the allowed list
+			if !allowedCollections[metric.Collection] {
+				continue
+			}
+		}
+
+		// Check quiet duration and fullness criteria
+		if metric.Age >= quietThreshold && metric.FullnessRatio >= d.fullnessRatio {
 			// Note: Removed read-only requirement for testing
 			// In production, you might want to enable this:
 			// if !metric.IsReadOnly {
@@ -79,11 +95,11 @@ func (d *EcDetector) ScanForTasks(volumeMetrics []*types.VolumeHealthMetrics, cl
 				Server:     metric.Server,
 				Collection: metric.Collection,
 				Priority:   types.TaskPriorityLow, // EC is not urgent
-				Reason: fmt.Sprintf("Volume meets EC criteria: age=%.1fh (>%dh), fullness=%.1f%% (>%.1f%%), size=%.1fMB (>%dMB)",
-					metric.Age.Hours(), d.volumeAgeHours, metric.FullnessRatio*100, d.fullnessRatio*100,
+				Reason: fmt.Sprintf("Volume meets EC criteria: quiet for %.1fs (>%ds), fullness=%.1f%% (>%.1f%%), size=%.1fMB (>%dMB)",
+					metric.Age.Seconds(), d.quietForSeconds, metric.FullnessRatio*100, d.fullnessRatio*100,
 					float64(metric.Size)/(1024*1024), d.minSizeMB),
 				Parameters: map[string]interface{}{
-					"age_hours":      int(metric.Age.Hours()),
+					"age_seconds":    int(metric.Age.Seconds()),
 					"fullness_ratio": metric.FullnessRatio,
 					"size_mb":        int(metric.Size / (1024 * 1024)),
 				},
@@ -117,8 +133,8 @@ func (d *EcDetector) Configure(config map[string]interface{}) error {
 		d.enabled = enabled
 	}
 
-	if ageHours, ok := config["volume_age_hours"].(float64); ok {
-		d.volumeAgeHours = int(ageHours)
+	if ageSeconds, ok := config["quiet_for_seconds"].(float64); ok {
+		d.quietForSeconds = int(ageSeconds)
 	}
 
 	if fullnessRatio, ok := config["fullness_ratio"].(float64); ok {
@@ -129,8 +145,12 @@ func (d *EcDetector) Configure(config map[string]interface{}) error {
 		d.minSizeMB = int(minSizeMB)
 	}
 
-	glog.V(1).Infof("EC detector configured: enabled=%v, age=%dh, fullness=%.2f, minSize=%dMB",
-		d.enabled, d.volumeAgeHours, d.fullnessRatio, d.minSizeMB)
+	if collectionFilter, ok := config["collection_filter"].(string); ok {
+		d.collectionFilter = collectionFilter
+	}
+
+	glog.V(1).Infof("EC detector configured: enabled=%v, quietFor=%ds, fullness=%.2f, minSize=%dMB, collection_filter='%s'",
+		d.enabled, d.quietForSeconds, d.fullnessRatio, d.minSizeMB, d.collectionFilter)
 
 	return nil
 }
@@ -141,12 +161,24 @@ func (d *EcDetector) SetEnabled(enabled bool) {
 	d.enabled = enabled
 }
 
+func (d *EcDetector) SetVolumeAgeSeconds(seconds int) {
+	d.quietForSeconds = seconds
+}
+
 func (d *EcDetector) SetVolumeAgeHours(hours int) {
-	d.volumeAgeHours = hours
+	d.quietForSeconds = hours * 3600 // Convert hours to seconds
+}
+
+func (d *EcDetector) SetQuietForSeconds(seconds int) {
+	d.quietForSeconds = seconds
 }
 
 func (d *EcDetector) SetFullnessRatio(ratio float64) {
 	d.fullnessRatio = ratio
+}
+
+func (d *EcDetector) SetCollectionFilter(filter string) {
+	d.collectionFilter = filter
 }
 
 func (d *EcDetector) SetScanInterval(interval time.Duration) {
@@ -180,14 +212,29 @@ func (d *EcDetector) ConfigureFromPolicy(policy interface{}) {
 	}
 }
 
-// GetVolumeAgeHours returns the current volume age threshold in hours
+// GetVolumeAgeSeconds returns the current volume age threshold in seconds (legacy method)
+func (d *EcDetector) GetVolumeAgeSeconds() int {
+	return d.quietForSeconds
+}
+
+// GetVolumeAgeHours returns the current volume age threshold in hours (legacy method)
 func (d *EcDetector) GetVolumeAgeHours() int {
-	return d.volumeAgeHours
+	return d.quietForSeconds / 3600 // Convert seconds to hours
+}
+
+// GetQuietForSeconds returns the current quiet duration threshold in seconds
+func (d *EcDetector) GetQuietForSeconds() int {
+	return d.quietForSeconds
 }
 
 // GetFullnessRatio returns the current fullness ratio threshold
 func (d *EcDetector) GetFullnessRatio() float64 {
 	return d.fullnessRatio
+}
+
+// GetCollectionFilter returns the current collection filter
+func (d *EcDetector) GetCollectionFilter() string {
+	return d.collectionFilter
 }
 
 // GetScanInterval returns the scan interval

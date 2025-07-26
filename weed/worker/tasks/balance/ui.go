@@ -104,7 +104,7 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		true,
 	)
 
-	form.AddDurationField("scan_interval", "Scan Interval", "How often to scan for imbalanced volumes", secondsToDuration(config.ScanIntervalSeconds), true)
+	form.AddIntervalField("scan_interval", "Scan Interval", "How often to scan for imbalanced volumes", config.ScanIntervalSeconds, true)
 
 	// Scheduling Settings
 	form.AddNumberField(
@@ -212,12 +212,19 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	}
 
 	// Parse scan interval
-	if values, ok := formData["scan_interval"]; ok && len(values) > 0 {
-		duration, err := time.ParseDuration(values[0])
+	if values, ok := formData["scan_interval_value"]; ok && len(values) > 0 {
+		value, err := strconv.Atoi(values[0])
 		if err != nil {
-			return nil, fmt.Errorf("invalid scan interval: %w", err)
+			return nil, fmt.Errorf("invalid scan interval value: %w", err)
 		}
-		config.ScanIntervalSeconds = int(duration.Seconds())
+
+		unit := "minute" // default
+		if units, ok := formData["scan_interval_unit"]; ok && len(units) > 0 {
+			unit = units[0]
+		}
+
+		// Convert to seconds
+		config.ScanIntervalSeconds = types.IntervalValueUnitToSeconds(value, unit)
 	}
 
 	// Parse max concurrent

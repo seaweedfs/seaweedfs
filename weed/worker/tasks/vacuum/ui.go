@@ -101,19 +101,19 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		true,
 	)
 
-	form.AddDurationField(
+	form.AddIntervalField(
 		"scan_interval",
 		"Scan Interval",
 		"How often to scan for volumes needing vacuum",
-		secondsToDuration(config.ScanIntervalSeconds),
+		config.ScanIntervalSeconds,
 		true,
 	)
 
-	form.AddDurationField(
+	form.AddIntervalField(
 		"min_volume_age",
 		"Minimum Volume Age",
 		"Only vacuum volumes older than this duration",
-		secondsToDuration(config.MinVolumeAgeSeconds),
+		config.MinVolumeAgeSeconds,
 		true,
 	)
 
@@ -189,21 +189,35 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	}
 
 	// Parse scan interval
-	if intervalStr := formData["scan_interval"]; len(intervalStr) > 0 {
-		if interval, err := time.ParseDuration(intervalStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid scan interval: %w", err)
-		} else {
-			config.ScanIntervalSeconds = durationToSeconds(interval)
+	if values, ok := formData["scan_interval_value"]; ok && len(values) > 0 {
+		value, err := strconv.Atoi(values[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid scan interval value: %w", err)
 		}
+
+		unit := "minute" // default
+		if units, ok := formData["scan_interval_unit"]; ok && len(units) > 0 {
+			unit = units[0]
+		}
+
+		// Convert to seconds
+		config.ScanIntervalSeconds = types.IntervalValueUnitToSeconds(value, unit)
 	}
 
 	// Parse min volume age
-	if ageStr := formData["min_volume_age"]; len(ageStr) > 0 {
-		if age, err := time.ParseDuration(ageStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid min volume age: %w", err)
-		} else {
-			config.MinVolumeAgeSeconds = durationToSeconds(age)
+	if values, ok := formData["min_volume_age_value"]; ok && len(values) > 0 {
+		value, err := strconv.Atoi(values[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid min volume age value: %w", err)
 		}
+
+		unit := "minute" // default
+		if units, ok := formData["min_volume_age_unit"]; ok && len(units) > 0 {
+			unit = units[0]
+		}
+
+		// Convert to seconds
+		config.MinVolumeAgeSeconds = types.IntervalValueUnitToSeconds(value, unit)
 	}
 
 	// Parse max concurrent

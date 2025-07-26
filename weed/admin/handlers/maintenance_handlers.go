@@ -8,7 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
-	"github.com/seaweedfs/seaweedfs/weed/admin/view/components"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
@@ -124,75 +123,28 @@ func (h *MaintenanceHandlers) ShowTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Try to get templ UI provider first - temporarily disabled
-	// templUIProvider := getTemplUIProvider(taskType)
-	var configSections []components.ConfigSectionData
-
-	// Temporarily disabled templ UI provider
-	// if templUIProvider != nil {
-	//	// Use the new templ-based UI provider
-	//	currentConfig := templUIProvider.GetCurrentConfig()
-	//	sections, err := templUIProvider.RenderConfigSections(currentConfig)
-	//	if err != nil {
-	//		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render configuration sections: " + err.Error()})
-	//		return
-	//	}
-	//	configSections = sections
-	// } else {
-	// Fallback to basic configuration for providers that haven't been migrated yet
-	configSections = []components.ConfigSectionData{
-		{
-			Title:       "Configuration Settings",
-			Icon:        "fas fa-cogs",
-			Description: "Configure task detection and scheduling parameters",
-			Fields: []interface{}{
-				components.CheckboxFieldData{
-					FormFieldData: components.FormFieldData{
-						Name:        "enabled",
-						Label:       "Enable Task",
-						Description: "Whether this task type should be enabled",
-					},
-					Checked: true,
-				},
-				components.NumberFieldData{
-					FormFieldData: components.FormFieldData{
-						Name:        "max_concurrent",
-						Label:       "Max Concurrent Tasks",
-						Description: "Maximum number of concurrent tasks",
-						Required:    true,
-					},
-					Value: 2,
-					Step:  "1",
-					Min:   floatPtr(1),
-				},
-				components.DurationFieldData{
-					FormFieldData: components.FormFieldData{
-						Name:        "scan_interval",
-						Label:       "Scan Interval",
-						Description: "How often to scan for tasks",
-						Required:    true,
-					},
-					Value: "30m",
-				},
-			},
-		},
+	// Get current configuration and render form using the actual UI provider
+	currentConfig := provider.GetCurrentConfig()
+	formHTML, err := provider.RenderConfigForm(currentConfig)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render configuration form: " + err.Error()})
+		return
 	}
-	// } // End of disabled templ UI provider else block
 
-	// Create task configuration data using templ components
-	configData := &app.TaskConfigTemplData{
+	// Create task configuration data using the actual form HTML
+	configData := &maintenance.TaskConfigData{
 		TaskType:       taskType,
 		TaskName:       provider.GetDisplayName(),
 		TaskIcon:       provider.GetIcon(),
 		Description:    provider.GetDescription(),
-		ConfigSections: configSections,
+		ConfigFormHTML: formHTML,
 	}
 
-	// Render HTML template using templ components
+	// Render HTML template
 	c.Header("Content-Type", "text/html")
-	taskConfigComponent := app.TaskConfigTempl(configData)
+	taskConfigComponent := app.TaskConfig(configData)
 	layoutComponent := layout.Layout(c, taskConfigComponent)
-	err := layoutComponent.Render(c.Request.Context(), c.Writer)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
 		return
