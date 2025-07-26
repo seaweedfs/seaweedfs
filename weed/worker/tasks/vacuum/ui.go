@@ -95,25 +95,25 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 
 	form.AddNumberField(
 		"garbage_threshold",
-		"Garbage Threshold (%)",
-		"Trigger vacuum when garbage ratio exceeds this percentage (0.0-1.0)",
-		config.GarbageThreshold,
+		"Garbage Percentage Threshold",
+		"Trigger vacuum when garbage ratio exceeds this percentage (0-100)",
+		config.GarbageThreshold*100, // Convert 0.0-1.0 to 0-100 for display
 		true,
 	)
 
-	form.AddIntervalField(
+	form.AddDurationField(
 		"scan_interval",
 		"Scan Interval",
 		"How often to scan for volumes needing vacuum",
-		config.ScanIntervalSeconds,
+		secondsToDuration(config.ScanIntervalSeconds),
 		true,
 	)
 
-	form.AddIntervalField(
+	form.AddDurationField(
 		"min_volume_age",
 		"Minimum Volume Age",
 		"Only vacuum volumes older than this duration",
-		config.MinVolumeAgeSeconds,
+		secondsToDuration(config.MinVolumeAgeSeconds),
 		true,
 	)
 
@@ -157,7 +157,7 @@ function resetForm() {
 	if (confirm('Reset all vacuum settings to defaults?')) {
 		// Reset to default values
 		document.querySelector('input[name="enabled"]').checked = true;
-		document.querySelector('input[name="garbage_threshold"]').value = '0.3';
+		document.querySelector('input[name="garbage_threshold"]').value = '30';
 		document.querySelector('input[name="scan_interval"]').value = '30m';
 		document.querySelector('input[name="min_volume_age"]').value = '1h';
 		document.querySelector('input[name="max_concurrent"]').value = '2';
@@ -177,47 +177,33 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	// Parse enabled checkbox
 	config.Enabled = len(formData["enabled"]) > 0 && formData["enabled"][0] == "on"
 
-	// Parse garbage threshold
+	// Parse garbage threshold (convert from 0-100 to 0.0-1.0)
 	if thresholdStr := formData["garbage_threshold"]; len(thresholdStr) > 0 {
 		if threshold, err := strconv.ParseFloat(thresholdStr[0], 64); err != nil {
-			return nil, fmt.Errorf("invalid garbage threshold: %w", err)
-		} else if threshold < 0 || threshold > 1 {
-			return nil, fmt.Errorf("garbage threshold must be between 0.0 and 1.0")
+			return nil, fmt.Errorf("invalid garbage percentage threshold: %w", err)
+		} else if threshold < 0 || threshold > 100 {
+			return nil, fmt.Errorf("garbage percentage threshold must be between 0 and 100")
 		} else {
-			config.GarbageThreshold = threshold
+			config.GarbageThreshold = threshold / 100.0 // Convert percentage to decimal
 		}
 	}
 
 	// Parse scan interval
-	if values, ok := formData["scan_interval_value"]; ok && len(values) > 0 {
-		value, err := strconv.Atoi(values[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid scan interval value: %w", err)
+	if intervalStr := formData["scan_interval"]; len(intervalStr) > 0 {
+		if interval, err := time.ParseDuration(intervalStr[0]); err != nil {
+			return nil, fmt.Errorf("invalid scan interval: %w", err)
+		} else {
+			config.ScanIntervalSeconds = durationToSeconds(interval)
 		}
-
-		unit := "minute" // default
-		if units, ok := formData["scan_interval_unit"]; ok && len(units) > 0 {
-			unit = units[0]
-		}
-
-		// Convert to seconds
-		config.ScanIntervalSeconds = types.IntervalValueUnitToSeconds(value, unit)
 	}
 
 	// Parse min volume age
-	if values, ok := formData["min_volume_age_value"]; ok && len(values) > 0 {
-		value, err := strconv.Atoi(values[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid min volume age value: %w", err)
+	if ageStr := formData["min_volume_age"]; len(ageStr) > 0 {
+		if age, err := time.ParseDuration(ageStr[0]); err != nil {
+			return nil, fmt.Errorf("invalid min volume age: %w", err)
+		} else {
+			config.MinVolumeAgeSeconds = durationToSeconds(age)
 		}
-
-		unit := "minute" // default
-		if units, ok := formData["min_volume_age_unit"]; ok && len(units) > 0 {
-			unit = units[0]
-		}
-
-		// Convert to seconds
-		config.MinVolumeAgeSeconds = types.IntervalValueUnitToSeconds(value, unit)
 	}
 
 	// Parse max concurrent

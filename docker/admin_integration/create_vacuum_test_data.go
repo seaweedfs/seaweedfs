@@ -245,7 +245,7 @@ func printTestingInstructions() {
 	fmt.Println("1. Configure Vacuum for Testing:")
 	fmt.Println("   Visit: http://localhost:23646/maintenance/config/vacuum")
 	fmt.Println("   Set:")
-	fmt.Printf("   - Garbage Threshold: 0.20 (20%% - lower than default)\n")
+	fmt.Printf("   - Garbage Percentage Threshold: 20 (20%% - lower than default 30)\n")
 	fmt.Printf("   - Scan Interval: [30] [Seconds] (faster than default)\n")
 	fmt.Printf("   - Min Volume Age: [0] [Minutes] (no age requirement)\n")
 	fmt.Printf("   - Max Concurrent: 2\n")
@@ -258,7 +258,8 @@ func printTestingInstructions() {
 	fmt.Println()
 
 	fmt.Println("3. Manual Vacuum (Optional):")
-	fmt.Println("   curl -X POST 'http://localhost:9333/vol/vacuum?garbageThreshold=0.01'")
+	fmt.Println("   curl -X POST 'http://localhost:9333/vol/vacuum?garbageThreshold=0.20'")
+	fmt.Println("   (Note: Master API still uses 0.0-1.0 decimal format)")
 	fmt.Println()
 
 	fmt.Println("4. Check Logs:")

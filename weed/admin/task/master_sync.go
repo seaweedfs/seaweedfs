@@ -3,11 +3,13 @@ package task
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -311,11 +313,17 @@ func (ms *MasterSynchronizer) checkVacuumCandidate(volumeID uint32, state *Volum
 		return nil
 	}
 
+	// Get the current garbage threshold from the vacuum detector
+	vacuumDetector, _ := vacuum.GetSharedInstances()
+	var vacuumThresholdPercent float64 = 0.3 // Default fallback
+	if vacuumDetector != nil {
+		vacuumThresholdPercent = vacuumDetector.GetGarbageThreshold()
+	}
+
 	// Vacuum criteria:
-	// 1. Significant deleted bytes (> 30% of volume size or > 1GB)
+	// 1. Significant deleted bytes (> configured threshold or > 1GB)
 	// 2. Not currently being written to heavily
 
-	const vacuumThresholdPercent = 0.3
 	const vacuumMinBytes = 1024 * 1024 * 1024 // 1GB
 
 	deletedRatio := float64(volume.DeletedByteCount) / float64(volume.Size)
@@ -331,8 +339,8 @@ func (ms *MasterSynchronizer) checkVacuumCandidate(volumeID uint32, state *Volum
 		Server:   volume.Server,
 		TaskType: "vacuum",
 		Priority: types.TaskPriorityNormal,
-		Reason: fmt.Sprintf("Deleted bytes %d (%.1f%%) exceed vacuum threshold",
-			volume.DeletedByteCount, deletedRatio*100),
+		Reason: fmt.Sprintf("Deleted bytes %d (%.1f%%) exceed vacuum threshold (%.1f%%)",
+			volume.DeletedByteCount, deletedRatio*100, vacuumThresholdPercent*100),
 		VolumeInfo: volume,
 	}
 }
@@ -408,7 +416,13 @@ func (ms *MasterSynchronizer) createTaskFromCandidate(candidate *VolumeMaintenan
 		task.Parameters["replication"] = "001" // Default replication for EC
 		task.Parameters["collection"] = candidate.VolumeInfo.Collection
 	case "vacuum":
-		task.Parameters["garbage_threshold"] = "0.3" // 30% threshold
+		// Get the current garbage threshold from the vacuum detector
+		vacuumDetector, _ := vacuum.GetSharedInstances()
+		var garbageThreshold float64 = 0.3 // Default fallback
+		if vacuumDetector != nil {
+			garbageThreshold = vacuumDetector.GetGarbageThreshold()
+		}
+		task.Parameters["garbage_threshold"] = strconv.FormatFloat(garbageThreshold, 'f', -1, 64)
 	case "ec_rebuild":
 		// Add info about which shards need rebuilding
 	}
