@@ -411,7 +411,7 @@ func EcVolumeDetails(data dash.EcVolumeDetailsData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "</a></th><th class=\"text-dark\">Disk Type</th><th class=\"text-dark\">Actions</th></tr></thead> <tbody>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "</a></th><th class=\"text-dark\">Disk Type</th><th class=\"text-dark\">Shard Size</th><th class=\"text-dark\">Actions</th></tr></thead> <tbody>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -423,7 +423,7 @@ func EcVolumeDetails(data dash.EcVolumeDetailsData) templ.Component {
 				var templ_7745c5c3_Var16 string
 				templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%02d", shard.ShardID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 242, Col: 110}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 243, Col: 110}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 				if templ_7745c5c3_Err != nil {
@@ -436,7 +436,7 @@ func EcVolumeDetails(data dash.EcVolumeDetailsData) templ.Component {
 				var templ_7745c5c3_Var17 templ.SafeURL
 				templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL("/cluster/volume-servers/" + shard.Server))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 245, Col: 106}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 246, Col: 106}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 				if templ_7745c5c3_Err != nil {
@@ -449,7 +449,7 @@ func EcVolumeDetails(data dash.EcVolumeDetailsData) templ.Component {
 				var templ_7745c5c3_Var18 string
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(shard.Server)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 246, Col: 81}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 247, Col: 81}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
@@ -462,7 +462,7 @@ func EcVolumeDetails(data dash.EcVolumeDetailsData) templ.Component {
 				var templ_7745c5c3_Var19 string
 				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(shard.DataCenter)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 250, Col: 103}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 251, Col: 103}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
@@ -475,7 +475,7 @@ func EcVolumeDetails(data dash.EcVolumeDetailsData) templ.Component {
 				var templ_7745c5c3_Var20 string
 				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(shard.Rack)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 253, Col: 99}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 254, Col: 99}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 				if templ_7745c5c3_Err != nil {
@@ -488,46 +488,73 @@ func EcVolumeDetails(data dash.EcVolumeDetailsData) templ.Component {
 				var templ_7745c5c3_Var21 string
 				templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(shard.DiskType)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 256, Col: 83}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 257, Col: 83}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</span></td><td><a href=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</span></td><td><span class=\"text-success\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var22 templ.SafeURL
-				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", shard.Server)))
+				var templ_7745c5c3_Var22 string
+				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(bytesToHumanReadableUint64(shard.Size))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 259, Col: 121}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 260, Col: 110}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "\" target=\"_blank\" class=\"btn btn-sm btn-primary\"><i class=\"fas fa-external-link-alt me-1\"></i>Volume Server</a></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "</span></td><td><a href=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var23 templ.SafeURL
+				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", shard.Server)))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/ec_volume_details.templ`, Line: 263, Col: 121}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "\" target=\"_blank\" class=\"btn btn-sm btn-primary\"><i class=\"fas fa-external-link-alt me-1\"></i>Volume Server</a></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "</tbody></table></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "</tbody></table></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "<div class=\"text-center py-4\"><i class=\"fas fa-exclamation-triangle fa-3x text-warning mb-3\"></i><h5>No EC shards found</h5><p class=\"text-muted\">This volume may not be EC encoded yet.</p></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "<div class=\"text-center py-4\"><i class=\"fas fa-exclamation-triangle fa-3x text-warning mb-3\"></i><h5>No EC shards found</h5><p class=\"text-muted\">This volume may not be EC encoded yet.</p></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "</div></div><script>\n        // Sorting functionality\n        function sortBy(field) {\n            const currentSort = new URLSearchParams(window.location.search).get('sort_by');\n            const currentOrder = new URLSearchParams(window.location.search).get('sort_order') || 'asc';\n            \n            let newOrder = 'asc';\n            if (currentSort === field && currentOrder === 'asc') {\n                newOrder = 'desc';\n            }\n            \n            const url = new URL(window.location);\n            url.searchParams.set('sort_by', field);\n            url.searchParams.set('sort_order', newOrder);\n            window.location.href = url.toString();\n        }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, "</div></div><script>\n        // Sorting functionality\n        function sortBy(field) {\n            const currentSort = new URLSearchParams(window.location.search).get('sort_by');\n            const currentOrder = new URLSearchParams(window.location.search).get('sort_order') || 'asc';\n            \n            let newOrder = 'asc';\n            if (currentSort === field && currentOrder === 'asc') {\n                newOrder = 'desc';\n            }\n            \n            const url = new URL(window.location);\n            url.searchParams.set('sort_by', field);\n            url.searchParams.set('sort_order', newOrder);\n            window.location.href = url.toString();\n        }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		return nil
 	})
+}
+
+// Helper function to convert bytes to human readable format (uint64 version)
+func bytesToHumanReadableUint64(bytes uint64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%dB", bytes)
+	}
+	div, exp := uint64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
 var _ = templruntime.GeneratedTemplate

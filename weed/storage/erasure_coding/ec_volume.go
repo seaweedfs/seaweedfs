@@ -196,6 +196,21 @@ func (ev *EcVolume) ShardIdList() (shardIds []ShardId) {
 	return
 }
 
+type ShardInfo struct {
+	ShardId ShardId
+	Size    int64
+}
+
+func (ev *EcVolume) ShardDetails() (shards []ShardInfo) {
+	for _, s := range ev.Shards {
+		shards = append(shards, ShardInfo{
+			ShardId: s.ShardId,
+			Size:    s.Size(),
+		})
+	}
+	return
+}
+
 func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.VolumeEcShardInformationMessage) {
 	prevVolumeId := needle.VolumeId(math.MaxUint32)
 	var m *master_pb.VolumeEcShardInformationMessage

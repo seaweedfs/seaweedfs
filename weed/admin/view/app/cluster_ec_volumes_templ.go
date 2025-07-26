@@ -309,7 +309,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "</a></th><th class=\"text-dark\">Shard Locations</th><th><a href=\"#\" onclick=\"sortBy('completeness')\" class=\"text-dark text-decoration-none\">Status ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "</a></th><th class=\"text-dark\">Shard Size</th><th class=\"text-dark\">Shard Locations</th><th><a href=\"#\" onclick=\"sortBy('completeness')\" class=\"text-dark text-decoration-none\">Status ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -353,7 +353,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.VolumeID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 217, Col: 75}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 218, Col: 75}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -376,7 +376,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 					var templ_7745c5c3_Var12 string
 					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(volume.Collection)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 223, Col: 101}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 224, Col: 101}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 					if templ_7745c5c3_Err != nil {
@@ -404,13 +404,21 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/14", volume.TotalShards))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 233, Col: 104}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 234, Col: 104}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "</span></td><td><div class=\"shard-locations\" style=\"max-width: 400px;\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "</span></td><td>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = displayShardSizes(volume.ShardSizes).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</td><td><div class=\"shard-locations\" style=\"max-width: 400px;\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -418,261 +426,261 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</div></td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "</div></td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if volume.IsComplete {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "<span class=\"badge bg-success\"><i class=\"fas fa-check me-1\"></i>Complete</span>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "<span class=\"badge bg-success\"><i class=\"fas fa-check me-1\"></i>Complete</span>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "<span class=\"badge bg-warning\"><i class=\"fas fa-exclamation-triangle me-1\"></i> Missing ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "<span class=\"badge bg-warning\"><i class=\"fas fa-exclamation-triangle me-1\"></i> Missing ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var14 string
 				templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(volume.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 248, Col: 93}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 252, Col: 93}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, " shards</span> ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, " shards</span> ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				if len(volume.MissingShards) > 0 {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "<br><small class=\"text-muted\">Missing: ")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "<br><small class=\"text-muted\">Missing: ")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var15 string
 					templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(formatMissingShards(volume.MissingShards))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 253, Col: 95}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 257, Col: 95}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "</small>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "</small>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "</td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "</td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if data.ShowDataCenterColumn {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "<td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "<td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				for i, dc := range volume.DataCenters {
 					if i > 0 {
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "<span>, </span>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, "<span>, </span>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, " <span class=\"badge bg-primary text-white\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, " <span class=\"badge bg-primary text-white\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var16 string
 					templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(dc)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 264, Col: 85}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 268, Col: 85}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 66, "</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 66, "</td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 67, "</td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 67, "<td><div class=\"btn-group\" role=\"group\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"showVolumeDetails(event)\" data-volume-id=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 68, "<td><div class=\"btn-group\" role=\"group\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"showVolumeDetails(event)\" data-volume-id=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.VolumeID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 272, Col: 95}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 276, Col: 95}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 68, "\" title=\"View EC volume details\"><i class=\"fas fa-info-circle\"></i></button> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 69, "\" title=\"View EC volume details\"><i class=\"fas fa-info-circle\"></i></button> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if !volume.IsComplete {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 69, "<button type=\"button\" class=\"btn btn-sm btn-outline-warning\" onclick=\"repairVolume(event)\" data-volume-id=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "<button type=\"button\" class=\"btn btn-sm btn-outline-warning\" onclick=\"repairVolume(event)\" data-volume-id=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var18 string
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.VolumeID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 279, Col: 99}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 283, Col: 99}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "\" title=\"Repair missing shards\"><i class=\"fas fa-wrench\"></i></button>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 71, "\" title=\"Repair missing shards\"><i class=\"fas fa-wrench\"></i></button>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 71, "</div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 72, "</div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 72, "</tbody></table></div><!-- Pagination -->")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "</tbody></table></div><!-- Pagination -->")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if data.TotalPages > 1 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "<nav aria-label=\"EC Volumes pagination\"><ul class=\"pagination justify-content-center\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 74, "<nav aria-label=\"EC Volumes pagination\"><ul class=\"pagination justify-content-center\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if data.Page > 1 {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 74, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"1\">First</a></li><li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 75, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"1\">First</a></li><li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var19 string
 				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page-1))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 301, Col: 126}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 305, Col: 126}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 75, "\">Previous</a></li>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 76, "\">Previous</a></li>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
 			for i := 1; i <= data.TotalPages; i++ {
 				if i == data.Page {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 76, "<li class=\"page-item active\"><span class=\"page-link\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 77, "<li class=\"page-item active\"><span class=\"page-link\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var20 string
 					templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 308, Col: 77}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 312, Col: 77}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 77, "</span></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 78, "</span></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else if i <= 3 || i > data.TotalPages-3 || (i >= data.Page-2 && i <= data.Page+2) {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 78, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 79, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var21 string
 					templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 312, Col: 120}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 316, Col: 120}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 79, "\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 80, "\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var22 string
 					templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 312, Col: 144}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 316, Col: 144}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 80, "</a></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 81, "</a></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else if i == 4 && data.Page > 6 {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 81, "<li class=\"page-item disabled\"><span class=\"page-link\">...</span></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 82, "<li class=\"page-item disabled\"><span class=\"page-link\">...</span></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else if i == data.TotalPages-3 && data.Page < data.TotalPages-5 {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 82, "<li class=\"page-item disabled\"><span class=\"page-link\">...</span></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 83, "<li class=\"page-item disabled\"><span class=\"page-link\">...</span></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
 			}
 			if data.Page < data.TotalPages {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 83, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 84, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var23 string
 				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page+1))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 327, Col: 126}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 331, Col: 126}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 84, "\">Next</a></li><li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 85, "\">Next</a></li><li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var24 string
 				templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalPages))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 330, Col: 130}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 334, Col: 130}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 85, "\">Last</a></li>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 86, "\">Last</a></li>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 86, "</ul></nav>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 87, "</ul></nav>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 87, "</div><script src=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js\"></script><script>\n        // Sorting functionality\n        function sortBy(field) {\n            const currentSort = new URLSearchParams(window.location.search).get('sort_by');\n            const currentOrder = new URLSearchParams(window.location.search).get('sort_order') || 'asc';\n            \n            let newOrder = 'asc';\n            if (currentSort === field && currentOrder === 'asc') {\n                newOrder = 'desc';\n            }\n            \n            const url = new URL(window.location);\n            url.searchParams.set('sort_by', field);\n            url.searchParams.set('sort_order', newOrder);\n            url.searchParams.set('page', '1'); // Reset to first page\n            window.location.href = url.toString();\n        }\n\n        // Pagination functionality\n        function goToPage(event) {\n            event.preventDefault();\n            const page = event.target.closest('a').getAttribute('data-page');\n            const url = new URL(window.location);\n            url.searchParams.set('page', page);\n            window.location.href = url.toString();\n        }\n\n        // Page size functionality\n        function changePageSize(newPageSize) {\n            const url = new URL(window.location);\n            url.searchParams.set('page_size', newPageSize);\n            url.searchParams.set('page', '1'); // Reset to first page when changing page size\n            window.location.href = url.toString();\n        }\n\n        // Volume details\n        function showVolumeDetails(event) {\n            const volumeId = event.target.closest('button').getAttribute('data-volume-id');\n            window.location.href = `/cluster/ec-volumes/${volumeId}`;\n        }\n\n        // Repair volume\n        function repairVolume(event) {\n            const volumeId = event.target.closest('button').getAttribute('data-volume-id');\n            if (confirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`)) {\n                // TODO: Implement repair functionality\n                alert('Repair functionality will be implemented soon.');\n            }\n        }\n    </script></body></html>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 88, "</div><script src=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js\"></script><script>\n        // Sorting functionality\n        function sortBy(field) {\n            const currentSort = new URLSearchParams(window.location.search).get('sort_by');\n            const currentOrder = new URLSearchParams(window.location.search).get('sort_order') || 'asc';\n            \n            let newOrder = 'asc';\n            if (currentSort === field && currentOrder === 'asc') {\n                newOrder = 'desc';\n            }\n            \n            const url = new URL(window.location);\n            url.searchParams.set('sort_by', field);\n            url.searchParams.set('sort_order', newOrder);\n            url.searchParams.set('page', '1'); // Reset to first page\n            window.location.href = url.toString();\n        }\n\n        // Pagination functionality\n        function goToPage(event) {\n            event.preventDefault();\n            const page = event.target.closest('a').getAttribute('data-page');\n            const url = new URL(window.location);\n            url.searchParams.set('page', page);\n            window.location.href = url.toString();\n        }\n\n        // Page size functionality\n        function changePageSize(newPageSize) {\n            const url = new URL(window.location);\n            url.searchParams.set('page_size', newPageSize);\n            url.searchParams.set('page', '1'); // Reset to first page when changing page size\n            window.location.href = url.toString();\n        }\n\n        // Volume details\n        function showVolumeDetails(event) {\n            const volumeId = event.target.closest('button').getAttribute('data-volume-id');\n            window.location.href = `/cluster/ec-volumes/${volumeId}`;\n        }\n\n        // Repair volume\n        function repairVolume(event) {\n            const volumeId = event.target.closest('button').getAttribute('data-volume-id');\n            if (confirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`)) {\n                // TODO: Implement repair functionality\n                alert('Repair functionality will be implemented soon.');\n            }\n        }\n    </script></body></html>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -703,52 +711,52 @@ func displayShardLocationsHTML(shardLocations map[int]string) templ.Component {
 		}
 		ctx = templ.ClearChildren(ctx)
 		if len(shardLocations) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 88, "<span class=\"text-muted\">No shards</span>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 89, "<span class=\"text-muted\">No shards</span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
 			for i, serverInfo := range groupShardsByServer(shardLocations) {
 				if i > 0 {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 89, "<br>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 90, "<br>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 90, " <strong><a href=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 91, " <strong><a href=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var26 templ.SafeURL
 				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL("/cluster/volume-servers/" + serverInfo.Server))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 403, Col: 71}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 407, Col: 71}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 91, "\" class=\"text-primary text-decoration-none\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 92, "\" class=\"text-primary text-decoration-none\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var27 string
 				templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(serverInfo.Server)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 404, Col: 24}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 408, Col: 24}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 92, "</a>:</strong> ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 93, "</a>:</strong> ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var28 string
 				templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(serverInfo.ShardRanges)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 406, Col: 37}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 410, Col: 37}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 				if templ_7745c5c3_Err != nil {
@@ -760,7 +768,107 @@ func displayShardLocationsHTML(shardLocations map[int]string) templ.Component {
 	})
 }
 
-// ServerShardInfo represents server and its shard ranges
+// displayShardSizes renders shard sizes in a compact format
+func displayShardSizes(shardSizes map[int]int64) templ.Component {
+	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
+			return templ_7745c5c3_CtxErr
+		}
+		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+		if !templ_7745c5c3_IsBuffer {
+			defer func() {
+				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err == nil {
+					templ_7745c5c3_Err = templ_7745c5c3_BufErr
+				}
+			}()
+		}
+		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Var29 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var29 == nil {
+			templ_7745c5c3_Var29 = templ.NopComponent
+		}
+		ctx = templ.ClearChildren(ctx)
+		if len(shardSizes) == 0 {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 94, "<span class=\"text-muted\">-</span>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		} else {
+			templ_7745c5c3_Err = renderShardSizesContent(shardSizes).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		return nil
+	})
+}
+
+// renderShardSizesContent renders the content of shard sizes
+func renderShardSizesContent(shardSizes map[int]int64) templ.Component {
+	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
+			return templ_7745c5c3_CtxErr
+		}
+		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+		if !templ_7745c5c3_IsBuffer {
+			defer func() {
+				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err == nil {
+					templ_7745c5c3_Err = templ_7745c5c3_BufErr
+				}
+			}()
+		}
+		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Var30 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var30 == nil {
+			templ_7745c5c3_Var30 = templ.NopComponent
+		}
+		ctx = templ.ClearChildren(ctx)
+		if areAllShardSizesSame(shardSizes) {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 95, " <span class=\"text-success\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var31 string
+			templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(getCommonShardSize(shardSizes))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 428, Col: 60}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 96, "</span>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		} else {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 97, " <div class=\"shard-sizes\" style=\"max-width: 300px;\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var32 string
+			templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(formatIndividualShardSizes(shardSizes))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_volumes.templ`, Line: 432, Col: 43}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 98, "</div>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		return nil
+	})
+}
+
+// ServerShardInfo represents server and its shard ranges with sizes
 type ServerShardInfo struct {
 	Server      string
 	ShardRanges string
@@ -791,6 +899,49 @@ func groupShardsByServer(shardLocations map[int]string) []ServerShardInfo {
 
 		// Format shard ranges compactly
 		shardRanges := formatShardRanges(shards)
+		serverInfos = append(serverInfos, ServerShardInfo{
+			Server:      server,
+			ShardRanges: shardRanges,
+		})
+	}
+
+	// Sort by server name
+	for i := 0; i < len(serverInfos); i++ {
+		for j := i + 1; j < len(serverInfos); j++ {
+			if serverInfos[i].Server > serverInfos[j].Server {
+				serverInfos[i], serverInfos[j] = serverInfos[j], serverInfos[i]
+			}
+		}
+	}
+
+	return serverInfos
+}
+
+// groupShardsByServerWithSizes groups shards by server and formats ranges with sizes
+func groupShardsByServerWithSizes(shardLocations map[int]string, shardSizes map[int]int64) []ServerShardInfo {
+	if len(shardLocations) == 0 {
+		return []ServerShardInfo{}
+	}
+
+	// Group shards by server
+	serverShards := make(map[string][]int)
+	for shardId, server := range shardLocations {
+		serverShards[server] = append(serverShards[server], shardId)
+	}
+
+	var serverInfos []ServerShardInfo
+	for server, shards := range serverShards {
+		// Sort shards for each server
+		for i := 0; i < len(shards); i++ {
+			for j := i + 1; j < len(shards); j++ {
+				if shards[i] > shards[j] {
+					shards[i], shards[j] = shards[j], shards[i]
+				}
+			}
+		}
+
+		// Format shard ranges compactly with sizes
+		shardRanges := formatShardRangesWithSizes(shards, shardSizes)
 		serverInfos = append(serverInfos, ServerShardInfo{
 			Server:      server,
 			ShardRanges: shardRanges,
@@ -843,6 +994,86 @@ func formatShardRanges(shards []int) string {
 	return strings.Join(ranges, ",")
 }
 
+// Helper function to format shard ranges with sizes (e.g., "0(1.2MB),1-3(2.5MB),7(800KB)")
+func formatShardRangesWithSizes(shards []int, shardSizes map[int]int64) string {
+	if len(shards) == 0 {
+		return ""
+	}
+
+	var ranges []string
+	start := shards[0]
+	end := shards[0]
+	var totalSize int64
+
+	for i := 1; i < len(shards); i++ {
+		if shards[i] == end+1 {
+			end = shards[i]
+			totalSize += shardSizes[shards[i]]
+		} else {
+			// Add current range with size
+			if start == end {
+				size := shardSizes[start]
+				if size > 0 {
+					ranges = append(ranges, fmt.Sprintf("%d(%s)", start, bytesToHumanReadable(size)))
+				} else {
+					ranges = append(ranges, fmt.Sprintf("%d", start))
+				}
+			} else {
+				// Calculate total size for the range
+				rangeSize := shardSizes[start]
+				for j := start + 1; j <= end; j++ {
+					rangeSize += shardSizes[j]
+				}
+				if rangeSize > 0 {
+					ranges = append(ranges, fmt.Sprintf("%d-%d(%s)", start, end, bytesToHumanReadable(rangeSize)))
+				} else {
+					ranges = append(ranges, fmt.Sprintf("%d-%d", start, end))
+				}
+			}
+			start = shards[i]
+			end = shards[i]
+			totalSize = shardSizes[shards[i]]
+		}
+	}
+
+	// Add the last range
+	if start == end {
+		size := shardSizes[start]
+		if size > 0 {
+			ranges = append(ranges, fmt.Sprintf("%d(%s)", start, bytesToHumanReadable(size)))
+		} else {
+			ranges = append(ranges, fmt.Sprintf("%d", start))
+		}
+	} else {
+		// Calculate total size for the range
+		rangeSize := shardSizes[start]
+		for j := start + 1; j <= end; j++ {
+			rangeSize += shardSizes[j]
+		}
+		if rangeSize > 0 {
+			ranges = append(ranges, fmt.Sprintf("%d-%d(%s)", start, end, bytesToHumanReadable(rangeSize)))
+		} else {
+			ranges = append(ranges, fmt.Sprintf("%d-%d", start, end))
+		}
+	}
+
+	return strings.Join(ranges, ",")
+}
+
+// Helper function to convert bytes to human readable format
+func bytesToHumanReadable(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%dB", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
 // Helper function to format missing shards
 func formatMissingShards(missingShards []int) string {
 	if len(missingShards) == 0 {
@@ -855,6 +1086,75 @@ func formatMissingShards(missingShards []int) string {
 	}
 
 	return strings.Join(shardStrs, ", ")
+}
+
+// Helper function to check if all shard sizes are the same
+func areAllShardSizesSame(shardSizes map[int]int64) bool {
+	if len(shardSizes) <= 1 {
+		return true
+	}
+
+	var firstSize int64 = -1
+	for _, size := range shardSizes {
+		if firstSize == -1 {
+			firstSize = size
+		} else if size != firstSize {
+			return false
+		}
+	}
+	return true
+}
+
+// Helper function to get the common shard size (when all shards are the same size)
+func getCommonShardSize(shardSizes map[int]int64) string {
+	for _, size := range shardSizes {
+		return bytesToHumanReadable(size)
+	}
+	return "-"
+}
+
+// Helper function to format individual shard sizes
+func formatIndividualShardSizes(shardSizes map[int]int64) string {
+	if len(shardSizes) == 0 {
+		return ""
+	}
+
+	// Group shards by size for more compact display
+	sizeGroups := make(map[int64][]int)
+	for shardId, size := range shardSizes {
+		sizeGroups[size] = append(sizeGroups[size], shardId)
+	}
+
+	// If there are only 1-2 different sizes, show them grouped
+	if len(sizeGroups) <= 3 {
+		var groupStrs []string
+		for size, shardIds := range sizeGroups {
+			// Sort shard IDs
+			for i := 0; i < len(shardIds); i++ {
+				for j := i + 1; j < len(shardIds); j++ {
+					if shardIds[i] > shardIds[j] {
+						shardIds[i], shardIds[j] = shardIds[j], shardIds[i]
+					}
+				}
+			}
+
+			var idRanges []string
+			if len(shardIds) <= 4 {
+				// Show individual IDs if few shards
+				for _, id := range shardIds {
+					idRanges = append(idRanges, fmt.Sprintf("%d", id))
+				}
+			} else {
+				// Show count if many shards
+				idRanges = append(idRanges, fmt.Sprintf("%d shards", len(shardIds)))
+			}
+			groupStrs = append(groupStrs, fmt.Sprintf("%s: %s", strings.Join(idRanges, ","), bytesToHumanReadable(size)))
+		}
+		return strings.Join(groupStrs, " | ")
+	}
+
+	// If too many different sizes, show summary
+	return fmt.Sprintf("%d different sizes", len(sizeGroups))
 }
 
 var _ = templruntime.GeneratedTemplate

@@ -232,6 +232,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                     </a>
                                 </th>
                                 <th class="text-dark">Disk Type</th>
+                                <th class="text-dark">Shard Size</th>
                                 <th class="text-dark">Actions</th>
                             </tr>
                         </thead>
@@ -254,6 +255,9 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         </td>
                                         <td>
                                             <span class="text-dark">{shard.DiskType}</span>
+                                        </td>
+                                        <td>
+                                            <span class="text-success">{bytesToHumanReadableUint64(shard.Size)}</span>
                                         </td>
                                         <td>
                                             <a href={ templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", shard.Server)) } target="_blank" class="btn btn-sm btn-primary">
@@ -292,4 +296,18 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             window.location.href = url.toString();
         }
     </script>
+}
+
+// Helper function to convert bytes to human readable format (uint64 version)
+func bytesToHumanReadableUint64(bytes uint64) string {
+    const unit = 1024
+    if bytes < unit {
+        return fmt.Sprintf("%dB", bytes)
+    }
+    div, exp := uint64(unit), 0
+    for n := bytes / unit; n >= unit; n /= unit {
+        div *= unit
+        exp++
+    }
+    return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 } 

@@ -89,6 +89,8 @@ service VolumeServer {
     }
     rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {
     }
+    rpc VolumeEcShardsInfo (VolumeEcShardsInfoRequest) returns (VolumeEcShardsInfoResponse) {
+    }
 
     // tiered storage
     rpc VolumeTierMoveDatToRemote (VolumeTierMoveDatToRemoteRequest) returns (stream VolumeTierMoveDatToRemoteResponse) {
@@ -452,6 +454,19 @@ message VolumeEcShardsToVolumeRequest {
     string collection = 2;
 }
 message VolumeEcShardsToVolumeResponse {
+}
+
+message VolumeEcShardsInfoRequest {
+    uint32 volume_id = 1;
+}
+message VolumeEcShardsInfoResponse {
+    repeated EcShardInfo ec_shard_infos = 1;
+}
+
+message EcShardInfo {
+    uint32 shard_id = 1;
+    int64 size = 2;
+    string collection = 3;
 }
 
 message ReadVolumeFileStatusRequest {

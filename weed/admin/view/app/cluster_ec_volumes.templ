@@ -189,6 +189,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                                 }
                             </a>
                         </th>
+                        <th class="text-dark">Shard Size</th>
                         <th class="text-dark">Shard Locations</th>
                         <th>
                             <a href="#" onclick="sortBy('completeness')" class="text-dark text-decoration-none">
@@ -231,6 +232,9 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             }
                             <td>
                                 <span class="badge bg-primary">{fmt.Sprintf("%d/14", volume.TotalShards)}</span>
+                            </td>
+                            <td>
+                                @displayShardSizes(volume.ShardSizes)
                             </td>
                             <td>
                                 <div class="shard-locations" style="max-width: 400px;">
@@ -408,7 +412,29 @@ templ displayShardLocationsHTML(shardLocations map[int]string) {
 	}
 }
 
-// ServerShardInfo represents server and its shard ranges
+// displayShardSizes renders shard sizes in a compact format
+templ displayShardSizes(shardSizes map[int]int64) {
+	if len(shardSizes) == 0 {
+		<span class="text-muted">-</span>
+	} else {
+		@renderShardSizesContent(shardSizes)
+	}
+}
+
+// renderShardSizesContent renders the content of shard sizes
+templ renderShardSizesContent(shardSizes map[int]int64) {
+	if areAllShardSizesSame(shardSizes) {
+		// All shards have the same size, show just the common size
+		<span class="text-success">{getCommonShardSize(shardSizes)}</span>
+	} else {
+		// Shards have different sizes, show individual sizes
+		<div class="shard-sizes" style="max-width: 300px;">
+			{ formatIndividualShardSizes(shardSizes) }
+		</div>
+	}
+}
+
+// ServerShardInfo represents server and its shard ranges with sizes
 type ServerShardInfo struct {
 	Server      string
 	ShardRanges string
@@ -439,6 +465,49 @@ func groupShardsByServer(shardLocations map[int]string) []ServerShardInfo {
 		
 		// Format shard ranges compactly
 		shardRanges := formatShardRanges(shards)
+		serverInfos = append(serverInfos, ServerShardInfo{
+			Server:      server,
+			ShardRanges: shardRanges,
+		})
+	}
+
+	// Sort by server name
+	for i := 0; i < len(serverInfos); i++ {
+		for j := i + 1; j < len(serverInfos); j++ {
+			if serverInfos[i].Server > serverInfos[j].Server {
+				serverInfos[i], serverInfos[j] = serverInfos[j], serverInfos[i]
+			}
+		}
+	}
+
+	return serverInfos
+}
+
+// groupShardsByServerWithSizes groups shards by server and formats ranges with sizes
+func groupShardsByServerWithSizes(shardLocations map[int]string, shardSizes map[int]int64) []ServerShardInfo {
+	if len(shardLocations) == 0 {
+		return []ServerShardInfo{}
+	}
+
+	// Group shards by server
+	serverShards := make(map[string][]int)
+	for shardId, server := range shardLocations {
+		serverShards[server] = append(serverShards[server], shardId)
+	}
+
+	var serverInfos []ServerShardInfo
+	for server, shards := range serverShards {
+		// Sort shards for each server
+		for i := 0; i < len(shards); i++ {
+			for j := i + 1; j < len(shards); j++ {
+				if shards[i] > shards[j] {
+					shards[i], shards[j] = shards[j], shards[i]
+				}
+			}
+		}
+		
+		// Format shard ranges compactly with sizes
+		shardRanges := formatShardRangesWithSizes(shards, shardSizes)
 		serverInfos = append(serverInfos, ServerShardInfo{
 			Server:      server,
 			ShardRanges: shardRanges,
@@ -491,6 +560,86 @@ func formatShardRanges(shards []int) string {
 	return strings.Join(ranges, ",")
 }
 
+// Helper function to format shard ranges with sizes (e.g., "0(1.2MB),1-3(2.5MB),7(800KB)")
+func formatShardRangesWithSizes(shards []int, shardSizes map[int]int64) string {
+	if len(shards) == 0 {
+		return ""
+	}
+
+	var ranges []string
+	start := shards[0]
+	end := shards[0]
+	var totalSize int64
+
+	for i := 1; i < len(shards); i++ {
+		if shards[i] == end+1 {
+			end = shards[i]
+			totalSize += shardSizes[shards[i]]
+		} else {
+			// Add current range with size
+			if start == end {
+				size := shardSizes[start]
+				if size > 0 {
+					ranges = append(ranges, fmt.Sprintf("%d(%s)", start, bytesToHumanReadable(size)))
+				} else {
+					ranges = append(ranges, fmt.Sprintf("%d", start))
+				}
+			} else {
+				// Calculate total size for the range
+				rangeSize := shardSizes[start]
+				for j := start + 1; j <= end; j++ {
+					rangeSize += shardSizes[j]
+				}
+				if rangeSize > 0 {
+					ranges = append(ranges, fmt.Sprintf("%d-%d(%s)", start, end, bytesToHumanReadable(rangeSize)))
+				} else {
+					ranges = append(ranges, fmt.Sprintf("%d-%d", start, end))
+				}
+			}
+			start = shards[i]
+			end = shards[i]
+			totalSize = shardSizes[shards[i]]
+		}
+	}
+
+	// Add the last range
+	if start == end {
+		size := shardSizes[start]
+		if size > 0 {
+			ranges = append(ranges, fmt.Sprintf("%d(%s)", start, bytesToHumanReadable(size)))
+		} else {
+			ranges = append(ranges, fmt.Sprintf("%d", start))
+		}
+	} else {
+		// Calculate total size for the range
+		rangeSize := shardSizes[start]
+		for j := start + 1; j <= end; j++ {
+			rangeSize += shardSizes[j]
+		}
+		if rangeSize > 0 {
+			ranges = append(ranges, fmt.Sprintf("%d-%d(%s)", start, end, bytesToHumanReadable(rangeSize)))
+		} else {
+			ranges = append(ranges, fmt.Sprintf("%d-%d", start, end))
+		}
+	}
+
+	return strings.Join(ranges, ",")
+}
+
+// Helper function to convert bytes to human readable format
+func bytesToHumanReadable(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%dB", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
 // Helper function to format missing shards
 func formatMissingShards(missingShards []int) string {
 	if len(missingShards) == 0 {
@@ -503,4 +652,73 @@ func formatMissingShards(missingShards []int) string {
 	}
 	
 	return strings.Join(shardStrs, ", ")
+}
+
+// Helper function to check if all shard sizes are the same
+func areAllShardSizesSame(shardSizes map[int]int64) bool {
+	if len(shardSizes) <= 1 {
+		return true
+	}
+	
+	var firstSize int64 = -1
+	for _, size := range shardSizes {
+		if firstSize == -1 {
+			firstSize = size
+		} else if size != firstSize {
+			return false
+		}
+	}
+	return true
+}
+
+// Helper function to get the common shard size (when all shards are the same size)
+func getCommonShardSize(shardSizes map[int]int64) string {
+	for _, size := range shardSizes {
+		return bytesToHumanReadable(size)
+	}
+	return "-"
+}
+
+// Helper function to format individual shard sizes
+func formatIndividualShardSizes(shardSizes map[int]int64) string {
+	if len(shardSizes) == 0 {
+		return ""
+	}
+	
+	// Group shards by size for more compact display
+	sizeGroups := make(map[int64][]int)
+	for shardId, size := range shardSizes {
+		sizeGroups[size] = append(sizeGroups[size], shardId)
+	}
+	
+	// If there are only 1-2 different sizes, show them grouped
+	if len(sizeGroups) <= 3 {
+		var groupStrs []string
+		for size, shardIds := range sizeGroups {
+			// Sort shard IDs
+			for i := 0; i < len(shardIds); i++ {
+				for j := i + 1; j < len(shardIds); j++ {
+					if shardIds[i] > shardIds[j] {
+						shardIds[i], shardIds[j] = shardIds[j], shardIds[i]
+					}
+				}
+			}
+			
+			var idRanges []string
+			if len(shardIds) <= 4 {
+				// Show individual IDs if few shards
+				for _, id := range shardIds {
+					idRanges = append(idRanges, fmt.Sprintf("%d", id))
+				}
+			} else {
+				// Show count if many shards
+				idRanges = append(idRanges, fmt.Sprintf("%d shards", len(shardIds)))
+			}
+			groupStrs = append(groupStrs, fmt.Sprintf("%s: %s", strings.Join(idRanges, ","), bytesToHumanReadable(size)))
+		}
+		return strings.Join(groupStrs, " | ")
+	}
+	
+	// If too many different sizes, show summary
+	return fmt.Sprintf("%d different sizes", len(sizeGroups))
 } 

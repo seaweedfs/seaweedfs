@@ -467,3 +467,30 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 
 	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil
 }
+
+func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
+	glog.V(0).Infof("VolumeEcShardsInfo: volume %d", req.VolumeId)
+
+	var ecShardInfos []*volume_server_pb.EcShardInfo
+
+	// Find the EC volume
+	for _, location := range vs.store.Locations {
+		if v, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
+			// Get shard details from the EC volume
+			shardDetails := v.ShardDetails()
+			for _, shardDetail := range shardDetails {
+				ecShardInfo := &volume_server_pb.EcShardInfo{
+					ShardId:    uint32(shardDetail.ShardId),
+					Size:       shardDetail.Size,
+					Collection: v.Collection,
+				}
+				ecShardInfos = append(ecShardInfos, ecShardInfo)
+			}
+			break
+		}
+	}
+
+	return &volume_server_pb.VolumeEcShardsInfoResponse{
+		EcShardInfos: ecShardInfos,
+	}, nil
+}

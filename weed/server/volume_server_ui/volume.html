@@ -175,8 +175,8 @@
             <tr>
                 <th>Id</th>
                 <th>Collection</th>
-                <th>Shard Size</th>
-                <th>Shards</th>
+                <th>Total Size</th>
+                <th>Shard Details</th>
                 <th>CreatedAt</th>
             </tr>
             </thead>
@@ -185,8 +185,14 @@
             <tr>
                 <td><code>{{ .VolumeId }}</code></td>
                 <td>{{ .Collection }}</td>
-                <td>{{ bytesToHumanReadable .ShardSize }}</td>
-                <td>{{ .ShardIdList }}</td>
+                <td>{{ bytesToHumanReadable .Size }}</td>
+                <td>
+                    {{ range .ShardDetails }}
+                        <span class="label label-info" style="margin-right: 5px;">
+                            {{ .ShardId }}: {{ bytesToHumanReadable .Size }}
+                        </span>
+                    {{ end }}
+                </td>
                 <td>{{ .CreatedAt.Format "2006-01-02 15:04" }}</td>
             </tr>
             {{ end }}

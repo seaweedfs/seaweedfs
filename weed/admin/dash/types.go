@@ -465,6 +465,7 @@ type EcVolumeWithShards struct {
 	IsComplete     bool           `json:"is_complete"`
 	MissingShards  []int          `json:"missing_shards"`
 	ShardLocations map[int]string `json:"shard_locations"` // shardId -> server
+	ShardSizes     map[int]int64  `json:"shard_sizes"`     // shardId -> size in bytes
 	DataCenters    []string       `json:"data_centers"`
 	Servers        []string       `json:"servers"`
 	ModifiedTime   int64          `json:"modified_time"`
