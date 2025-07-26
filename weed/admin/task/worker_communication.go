@@ -337,6 +337,16 @@ func (wc *WorkerConnection) sendTaskAssignment(task *types.Task) error {
 		}
 	}
 
+	// Add master_client parameter for tasks that need it (especially EC tasks)
+	if wc.adminServer.masterClient != nil {
+		if currentMaster := wc.adminServer.masterClient.GetMaster(context.Background()); currentMaster != "" {
+			parameters["master_client"] = string(currentMaster)
+			glog.V(2).Infof("Added master_client parameter to task %s: %s", task.ID, currentMaster)
+		} else {
+			glog.Warningf("No master address available for task %s", task.ID)
+		}
+	}
+
 	assignment := &worker_pb.TaskAssignment{
 		TaskId:      task.ID,
 		TaskType:    string(task.Type),

@@ -333,6 +333,21 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 	if task != nil {
 		glog.Infof("DEBUG handleTaskRequest: Assigning task %s (type: %s) to worker %s", task.ID, task.Type, conn.workerID)
 
+		// Add master client address to task parameters
+		taskParams := make(map[string]interface{})
+		// Copy existing parameters
+		for k, v := range task.Parameters {
+			taskParams[k] = v
+		}
+
+		// Add master_client parameter for tasks that need it (especially EC tasks)
+		if currentMaster := s.adminServer.masterClient.GetMaster(context.Background()); currentMaster != "" {
+			taskParams["master_client"] = string(currentMaster)
+			glog.V(2).Infof("Added master_client parameter to task %s: %s", task.ID, currentMaster)
+		} else {
+			glog.Warningf("No master address available for task %s", task.ID)
+		}
+
 		// Send task assignment
 		assignment := &worker_pb.AdminMessage{
 			Timestamp: time.Now().Unix(),
@@ -344,7 +359,7 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 						VolumeId:   task.VolumeID,
 						Server:     task.Server,
 						Collection: task.Collection,
-						Parameters: convertTaskParameters(task.Parameters),
+						Parameters: convertTaskParameters(taskParams),
 					},
 					Priority:    int32(task.Priority),
 					CreatedTime: time.Now().Unix(),
