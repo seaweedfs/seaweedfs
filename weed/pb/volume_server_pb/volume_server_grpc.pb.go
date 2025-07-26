@@ -38,6 +38,7 @@ const (
 	VolumeServer_VolumeCopy_FullMethodName                  = "/volume_server_pb.VolumeServer/VolumeCopy"
 	VolumeServer_ReadVolumeFileStatus_FullMethodName        = "/volume_server_pb.VolumeServer/ReadVolumeFileStatus"
 	VolumeServer_CopyFile_FullMethodName                    = "/volume_server_pb.VolumeServer/CopyFile"
+	VolumeServer_ReceiveFile_FullMethodName                 = "/volume_server_pb.VolumeServer/ReceiveFile"
 	VolumeServer_ReadNeedleBlob_FullMethodName              = "/volume_server_pb.VolumeServer/ReadNeedleBlob"
 	VolumeServer_ReadNeedleMeta_FullMethodName              = "/volume_server_pb.VolumeServer/ReadNeedleMeta"
 	VolumeServer_WriteNeedleBlob_FullMethodName             = "/volume_server_pb.VolumeServer/WriteNeedleBlob"
@@ -88,6 +89,7 @@ type VolumeServerClient interface {
 	VolumeCopy(ctx context.Context, in *VolumeCopyRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeCopyResponse], error)
 	ReadVolumeFileStatus(ctx context.Context, in *ReadVolumeFileStatusRequest, opts ...grpc.CallOption) (*ReadVolumeFileStatusResponse, error)
 	CopyFile(ctx context.Context, in *CopyFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CopyFileResponse], error)
+	ReceiveFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReceiveFileRequest, ReceiveFileResponse], error)
 	ReadNeedleBlob(ctx context.Context, in *ReadNeedleBlobRequest, opts ...grpc.CallOption) (*ReadNeedleBlobResponse, error)
 	ReadNeedleMeta(ctx context.Context, in *ReadNeedleMetaRequest, opts ...grpc.CallOption) (*ReadNeedleMetaResponse, error)
 	WriteNeedleBlob(ctx context.Context, in *WriteNeedleBlobRequest, opts ...grpc.CallOption) (*WriteNeedleBlobResponse, error)
@@ -351,6 +353,19 @@ func (c *volumeServerClient) CopyFile(ctx context.Context, in *CopyFileRequest, 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type VolumeServer_CopyFileClient = grpc.ServerStreamingClient[CopyFileResponse]
 
+func (c *volumeServerClient) ReceiveFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReceiveFileRequest, ReceiveFileResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[4], VolumeServer_ReceiveFile_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ReceiveFileRequest, ReceiveFileResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type VolumeServer_ReceiveFileClient = grpc.ClientStreamingClient[ReceiveFileRequest, ReceiveFileResponse]
+
 func (c *volumeServerClient) ReadNeedleBlob(ctx context.Context, in *ReadNeedleBlobRequest, opts ...grpc.CallOption) (*ReadNeedleBlobResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReadNeedleBlobResponse)
@@ -383,7 +398,7 @@ func (c *volumeServerClient) WriteNeedleBlob(ctx context.Context, in *WriteNeedl
 
 func (c *volumeServerClient) ReadAllNeedles(ctx context.Context, in *ReadAllNeedlesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadAllNeedlesResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[4], VolumeServer_ReadAllNeedles_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[5], VolumeServer_ReadAllNeedles_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +417,7 @@ type VolumeServer_ReadAllNeedlesClient = grpc.ServerStreamingClient[ReadAllNeedl
 
 func (c *volumeServerClient) VolumeTailSender(ctx context.Context, in *VolumeTailSenderRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTailSenderResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[5], VolumeServer_VolumeTailSender_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[6], VolumeServer_VolumeTailSender_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +506,7 @@ func (c *volumeServerClient) VolumeEcShardsUnmount(ctx context.Context, in *Volu
 
 func (c *volumeServerClient) VolumeEcShardRead(ctx context.Context, in *VolumeEcShardReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeEcShardReadResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[6], VolumeServer_VolumeEcShardRead_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[7], VolumeServer_VolumeEcShardRead_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -530,7 +545,7 @@ func (c *volumeServerClient) VolumeEcShardsToVolume(ctx context.Context, in *Vol
 
 func (c *volumeServerClient) VolumeTierMoveDatToRemote(ctx context.Context, in *VolumeTierMoveDatToRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatToRemoteResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[7], VolumeServer_VolumeTierMoveDatToRemote_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[8], VolumeServer_VolumeTierMoveDatToRemote_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -549,7 +564,7 @@ type VolumeServer_VolumeTierMoveDatToRemoteClient = grpc.ServerStreamingClient[V
 
 func (c *volumeServerClient) VolumeTierMoveDatFromRemote(ctx context.Context, in *VolumeTierMoveDatFromRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatFromRemoteResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[8], VolumeServer_VolumeTierMoveDatFromRemote_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[9], VolumeServer_VolumeTierMoveDatFromRemote_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -598,7 +613,7 @@ func (c *volumeServerClient) FetchAndWriteNeedle(ctx context.Context, in *FetchA
 
 func (c *volumeServerClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[QueriedStripe], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[9], VolumeServer_Query_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[10], VolumeServer_Query_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -660,6 +675,7 @@ type VolumeServerServer interface {
 	VolumeCopy(*VolumeCopyRequest, grpc.ServerStreamingServer[VolumeCopyResponse]) error
 	ReadVolumeFileStatus(context.Context, *ReadVolumeFileStatusRequest) (*ReadVolumeFileStatusResponse, error)
 	CopyFile(*CopyFileRequest, grpc.ServerStreamingServer[CopyFileResponse]) error
+	ReceiveFile(grpc.ClientStreamingServer[ReceiveFileRequest, ReceiveFileResponse]) error
 	ReadNeedleBlob(context.Context, *ReadNeedleBlobRequest) (*ReadNeedleBlobResponse, error)
 	ReadNeedleMeta(context.Context, *ReadNeedleMetaRequest) (*ReadNeedleMetaResponse, error)
 	WriteNeedleBlob(context.Context, *WriteNeedleBlobRequest) (*WriteNeedleBlobResponse, error)
@@ -753,6 +769,9 @@ func (UnimplementedVolumeServerServer) ReadVolumeFileStatus(context.Context, *Re
 }
 func (UnimplementedVolumeServerServer) CopyFile(*CopyFileRequest, grpc.ServerStreamingServer[CopyFileResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method CopyFile not implemented")
+}
+func (UnimplementedVolumeServerServer) ReceiveFile(grpc.ClientStreamingServer[ReceiveFileRequest, ReceiveFileResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method ReceiveFile not implemented")
 }
 func (UnimplementedVolumeServerServer) ReadNeedleBlob(context.Context, *ReadNeedleBlobRequest) (*ReadNeedleBlobResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReadNeedleBlob not implemented")
@@ -1157,6 +1176,13 @@ func _VolumeServer_CopyFile_Handler(srv interface{}, stream grpc.ServerStream) e
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type VolumeServer_CopyFileServer = grpc.ServerStreamingServer[CopyFileResponse]
+
+func _VolumeServer_ReceiveFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VolumeServerServer).ReceiveFile(&grpc.GenericServerStream[ReceiveFileRequest, ReceiveFileResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type VolumeServer_ReceiveFileServer = grpc.ClientStreamingServer[ReceiveFileRequest, ReceiveFileResponse]
 
 func _VolumeServer_ReadNeedleBlob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReadNeedleBlobRequest)
@@ -1686,6 +1712,11 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "CopyFile",
 			Handler:       _VolumeServer_CopyFile_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "ReceiveFile",
+			Handler:       _VolumeServer_ReceiveFile_Handler,
+			ClientStreams: true,
 		},
 		{
 			StreamName:    "ReadAllNeedles",

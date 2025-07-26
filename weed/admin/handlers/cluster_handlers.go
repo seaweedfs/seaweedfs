@@ -161,31 +161,19 @@ func (h *ClusterHandlers) ShowClusterCollections(c *gin.Context) {
 	}
 }
 
-// ShowClusterEcShards renders the cluster EC shards page
+// ShowClusterEcShards handles the cluster EC volumes page (grouped by volume)
 func (h *ClusterHandlers) ShowClusterEcShards(c *gin.Context) {
-	// Get pagination and sorting parameters from query string
-	page := 1
-	if p := c.Query("page"); p != "" {
-		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
-			page = parsed
-		}
-	}
+	// Parse query parameters
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	sortBy := c.DefaultQuery("sort_by", "volume_id")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+	collection := c.DefaultQuery("collection", "")
 
-	pageSize := 100
-	if ps := c.Query("pageSize"); ps != "" {
-		if parsed, err := strconv.Atoi(ps); err == nil && parsed > 0 && parsed <= 1000 {
-			pageSize = parsed
-		}
-	}
-
-	sortBy := c.DefaultQuery("sortBy", "volume_id")
-	sortOrder := c.DefaultQuery("sortOrder", "asc")
-	collection := c.Query("collection") // Optional collection filter
-
-	// Get cluster EC shards data
-	ecShardsData, err := h.adminServer.GetClusterEcShards(page, pageSize, sortBy, sortOrder, collection)
+	// Get data from admin server
+	data, err := h.adminServer.GetClusterEcVolumes(page, pageSize, sortBy, sortOrder, collection)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get cluster EC shards: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -194,15 +182,15 @@ func (h *ClusterHandlers) ShowClusterEcShards(c *gin.Context) {
 	if username == "" {
 		username = "admin"
 	}
-	ecShardsData.Username = username
+	data.Username = username
 
-	// Render HTML template
+	// Render template
 	c.Header("Content-Type", "text/html")
-	ecShardsComponent := app.ClusterEcShards(*ecShardsData)
-	layoutComponent := layout.Layout(c, ecShardsComponent)
+	ecVolumesComponent := app.ClusterEcVolumes(*data)
+	layoutComponent := layout.Layout(c, ecVolumesComponent)
 	err = layoutComponent.Render(c.Request.Context(), c.Writer)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 }
@@ -222,8 +210,12 @@ func (h *ClusterHandlers) ShowEcVolumeDetails(c *gin.Context) {
 		return
 	}
 
+	// Parse sorting parameters
+	sortBy := c.DefaultQuery("sort_by", "shard_id")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+
 	// Get EC volume details
-	ecVolumeDetails, err := h.adminServer.GetEcVolumeDetails(uint32(volumeID))
+	ecVolumeDetails, err := h.adminServer.GetEcVolumeDetails(uint32(volumeID), sortBy, sortOrder)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get EC volume details: " + err.Error()})
 		return

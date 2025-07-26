@@ -450,3 +450,48 @@ type MaintenanceWorkersData struct {
 }
 
 // Maintenance system types are now in weed/admin/maintenance package
+
+// EcVolumeWithShards represents an EC volume with its shard distribution
+type EcVolumeWithShards struct {
+	VolumeID       uint32         `json:"volume_id"`
+	Collection     string         `json:"collection"`
+	TotalShards    int            `json:"total_shards"`
+	IsComplete     bool           `json:"is_complete"`
+	MissingShards  []int          `json:"missing_shards"`
+	ShardLocations map[int]string `json:"shard_locations"` // shardId -> server
+	DataCenters    []string       `json:"data_centers"`
+	Servers        []string       `json:"servers"`
+	ModifiedTime   int64          `json:"modified_time"`
+}
+
+// ClusterEcVolumesData represents the response for clustered EC volumes view
+type ClusterEcVolumesData struct {
+	EcVolumes    []EcVolumeWithShards `json:"ec_volumes"`
+	TotalVolumes int                  `json:"total_volumes"`
+	LastUpdated  time.Time            `json:"last_updated"`
+
+	// Pagination
+	Page       int `json:"page"`
+	PageSize   int `json:"page_size"`
+	TotalPages int `json:"total_pages"`
+
+	// Sorting
+	SortBy    string `json:"sort_by"`
+	SortOrder string `json:"sort_order"`
+
+	// Filtering
+	Collection string `json:"collection"`
+
+	// Conditional display flags
+	ShowDataCenterColumn bool `json:"show_datacenter_column"`
+	ShowRackColumn       bool `json:"show_rack_column"`
+	ShowCollectionColumn bool `json:"show_collection_column"`
+
+	// Statistics
+	CompleteVolumes   int `json:"complete_volumes"`
+	IncompleteVolumes int `json:"incomplete_volumes"`
+	TotalShards       int `json:"total_shards"`
+
+	// User context
+	Username string `json:"username"`
+}

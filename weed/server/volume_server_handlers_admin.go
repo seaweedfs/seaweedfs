@@ -1,10 +1,11 @@
 package weed_server
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/topology"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"path/filepath"
+
+	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"

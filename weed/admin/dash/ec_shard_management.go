@@ -27,7 +27,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 	}
 
 	var ecShards []EcShardWithInfo
-	shardsPerVolume := make(map[uint32]int)
+	volumeShardsMap := make(map[uint32]map[int]bool) // volumeId -> set of shards present
 	volumesWithAllShards := 0
 	volumesWithMissingShards := 0
 
@@ -45,15 +45,22 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 						for _, diskInfo := range node.DiskInfos {
 							// Process EC shard information
 							for _, ecShardInfo := range diskInfo.EcShardInfos {
-								// Count shards per volume
-								shardsPerVolume[ecShardInfo.Id] += getShardCount(ecShardInfo.EcIndexBits)
+								volumeId := ecShardInfo.Id
+
+								// Initialize volume shards map if needed
+								if volumeShardsMap[volumeId] == nil {
+									volumeShardsMap[volumeId] = make(map[int]bool)
+								}
 
 								// Create individual shard entries for each shard this server has
 								shardBits := ecShardInfo.EcIndexBits
 								for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
 									if (shardBits & (1 << uint(shardId))) != 0 {
+										// Mark this shard as present for this volume
+										volumeShardsMap[volumeId][shardId] = true
+
 										ecShard := EcShardWithInfo{
-											VolumeID:     ecShardInfo.Id,
+											VolumeID:     volumeId,
 											ShardID:      uint32(shardId),
 											Collection:   ecShardInfo.Collection,
 											Size:         0, // EC shards don't have individual size in the API response
@@ -82,24 +89,37 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 		return nil, err
 	}
 
-	// Calculate completeness statistics
-	for volumeId, shardCount := range shardsPerVolume {
-		if shardCount == erasure_coding.TotalShardsCount {
+	// Calculate volume-level completeness (across all servers)
+	volumeCompleteness := make(map[uint32]bool)
+	volumeMissingShards := make(map[uint32][]int)
+
+	for volumeId, shardsPresent := range volumeShardsMap {
+		var missingShards []int
+		shardCount := len(shardsPresent)
+
+		// Find which shards are missing for this volume across ALL servers
+		for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+			if !shardsPresent[shardId] {
+				missingShards = append(missingShards, shardId)
+			}
+		}
+
+		isComplete := (shardCount == erasure_coding.TotalShardsCount)
+		volumeCompleteness[volumeId] = isComplete
+		volumeMissingShards[volumeId] = missingShards
+
+		if isComplete {
 			volumesWithAllShards++
 		} else {
 			volumesWithMissingShards++
 		}
+	}
 
-		// Update completeness info for each shard
-		for i := range ecShards {
-			if ecShards[i].VolumeID == volumeId {
-				ecShards[i].IsComplete = (shardCount == erasure_coding.TotalShardsCount)
-				if !ecShards[i].IsComplete {
-					// Calculate missing shards
-					ecShards[i].MissingShards = getMissingShards(ecShards[i].EcIndexBits)
-				}
-			}
-		}
+	// Update completeness info for each shard based on volume-level completeness
+	for i := range ecShards {
+		volumeId := ecShards[i].VolumeID
+		ecShards[i].IsComplete = volumeCompleteness[volumeId]
+		ecShards[i].MissingShards = volumeMissingShards[volumeId]
 	}
 
 	// Filter by collection if specified
@@ -149,7 +169,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 	data := &ClusterEcShardsData{
 		EcShards:     paginatedShards,
 		TotalShards:  totalShards,
-		TotalVolumes: len(shardsPerVolume),
+		TotalVolumes: len(volumeShardsMap),
 		LastUpdated:  time.Now(),
 
 		// Pagination
@@ -175,9 +195,14 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 		FilterCollection: collection,
 
 		// EC specific statistics
-		ShardsPerVolume:          shardsPerVolume,
+		ShardsPerVolume:          make(map[uint32]int), // This will be recalculated below
 		VolumesWithAllShards:     volumesWithAllShards,
 		VolumesWithMissingShards: volumesWithMissingShards,
+	}
+
+	// Recalculate ShardsPerVolume for the response
+	for volumeId, shardsPresent := range volumeShardsMap {
+		data.ShardsPerVolume[volumeId] = len(shardsPresent)
 	}
 
 	// Set single values when only one exists
@@ -201,6 +226,238 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 	}
 
 	return data, nil
+}
+
+// GetClusterEcVolumes retrieves cluster EC volumes data grouped by volume ID with shard locations
+func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string, sortOrder string, collection string) (*ClusterEcVolumesData, error) {
+	// Set defaults
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 1000 {
+		pageSize = 100
+	}
+	if sortBy == "" {
+		sortBy = "volume_id"
+	}
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
+
+	volumeData := make(map[uint32]*EcVolumeWithShards)
+	totalShards := 0
+
+	// Get detailed EC shard information via gRPC
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							// Process EC shard information
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								volumeId := ecShardInfo.Id
+
+								// Initialize volume data if needed
+								if volumeData[volumeId] == nil {
+									volumeData[volumeId] = &EcVolumeWithShards{
+										VolumeID:       volumeId,
+										Collection:     ecShardInfo.Collection,
+										TotalShards:    0,
+										IsComplete:     false,
+										MissingShards:  []int{},
+										ShardLocations: make(map[int]string),
+										DataCenters:    []string{},
+										Servers:        []string{},
+									}
+								}
+
+								volume := volumeData[volumeId]
+
+								// Track data centers and servers
+								dcExists := false
+								for _, existingDc := range volume.DataCenters {
+									if existingDc == dc.Id {
+										dcExists = true
+										break
+									}
+								}
+								if !dcExists {
+									volume.DataCenters = append(volume.DataCenters, dc.Id)
+								}
+
+								serverExists := false
+								for _, existingServer := range volume.Servers {
+									if existingServer == node.Id {
+										serverExists = true
+										break
+									}
+								}
+								if !serverExists {
+									volume.Servers = append(volume.Servers, node.Id)
+								}
+
+								// Process each shard this server has for this volume
+								shardBits := ecShardInfo.EcIndexBits
+								for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+									if (shardBits & (1 << uint(shardId))) != 0 {
+										// Record shard location
+										volume.ShardLocations[shardId] = node.Id
+										totalShards++
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate completeness for each volume
+	completeVolumes := 0
+	incompleteVolumes := 0
+
+	for _, volume := range volumeData {
+		volume.TotalShards = len(volume.ShardLocations)
+
+		// Find missing shards
+		var missingShards []int
+		for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+			if _, exists := volume.ShardLocations[shardId]; !exists {
+				missingShards = append(missingShards, shardId)
+			}
+		}
+
+		volume.MissingShards = missingShards
+		volume.IsComplete = (len(missingShards) == 0)
+
+		if volume.IsComplete {
+			completeVolumes++
+		} else {
+			incompleteVolumes++
+		}
+	}
+
+	// Convert map to slice
+	var ecVolumes []EcVolumeWithShards
+	for _, volume := range volumeData {
+		// Filter by collection if specified
+		if collection == "" || volume.Collection == collection {
+			ecVolumes = append(ecVolumes, *volume)
+		}
+	}
+
+	// Sort the results
+	sortEcVolumes(ecVolumes, sortBy, sortOrder)
+
+	// Calculate statistics for conditional display
+	dataCenters := make(map[string]bool)
+	collections := make(map[string]bool)
+
+	for _, volume := range ecVolumes {
+		for _, dc := range volume.DataCenters {
+			dataCenters[dc] = true
+		}
+		if volume.Collection != "" {
+			collections[volume.Collection] = true
+		}
+	}
+
+	// Pagination
+	totalVolumes := len(ecVolumes)
+	totalPages := (totalVolumes + pageSize - 1) / pageSize
+	startIndex := (page - 1) * pageSize
+	endIndex := startIndex + pageSize
+	if endIndex > totalVolumes {
+		endIndex = totalVolumes
+	}
+
+	if startIndex >= totalVolumes {
+		startIndex = 0
+		endIndex = 0
+	}
+
+	paginatedVolumes := ecVolumes[startIndex:endIndex]
+
+	// Build response
+	data := &ClusterEcVolumesData{
+		EcVolumes:    paginatedVolumes,
+		TotalVolumes: totalVolumes,
+		LastUpdated:  time.Now(),
+
+		// Pagination
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+
+		// Sorting
+		SortBy:    sortBy,
+		SortOrder: sortOrder,
+
+		// Filtering
+		Collection: collection,
+
+		// Conditional display flags
+		ShowDataCenterColumn: len(dataCenters) > 1,
+		ShowRackColumn:       false, // We don't track racks in this view for simplicity
+		ShowCollectionColumn: len(collections) > 1,
+
+		// Statistics
+		CompleteVolumes:   completeVolumes,
+		IncompleteVolumes: incompleteVolumes,
+		TotalShards:       totalShards,
+	}
+
+	return data, nil
+}
+
+// sortEcVolumes sorts EC volumes based on the specified field and order
+func sortEcVolumes(volumes []EcVolumeWithShards, sortBy string, sortOrder string) {
+	sort.Slice(volumes, func(i, j int) bool {
+		var less bool
+		switch sortBy {
+		case "volume_id":
+			less = volumes[i].VolumeID < volumes[j].VolumeID
+		case "collection":
+			if volumes[i].Collection == volumes[j].Collection {
+				less = volumes[i].VolumeID < volumes[j].VolumeID
+			} else {
+				less = volumes[i].Collection < volumes[j].Collection
+			}
+		case "total_shards":
+			if volumes[i].TotalShards == volumes[j].TotalShards {
+				less = volumes[i].VolumeID < volumes[j].VolumeID
+			} else {
+				less = volumes[i].TotalShards < volumes[j].TotalShards
+			}
+		case "completeness":
+			// Complete volumes first, then by volume ID
+			if volumes[i].IsComplete == volumes[j].IsComplete {
+				less = volumes[i].VolumeID < volumes[j].VolumeID
+			} else {
+				less = volumes[i].IsComplete && !volumes[j].IsComplete
+			}
+		default:
+			less = volumes[i].VolumeID < volumes[j].VolumeID
+		}
+
+		if sortOrder == "desc" {
+			return !less
+		}
+		return less
+	})
 }
 
 // getShardCount returns the number of shards represented by the bitmap
@@ -230,44 +487,28 @@ func sortEcShards(shards []EcShardWithInfo, sortBy string, sortOrder string) {
 	sort.Slice(shards, func(i, j int) bool {
 		var less bool
 		switch sortBy {
-		case "volume_id":
-			if shards[i].VolumeID == shards[j].VolumeID {
-				less = shards[i].ShardID < shards[j].ShardID
-			} else {
-				less = shards[i].VolumeID < shards[j].VolumeID
-			}
 		case "shard_id":
-			if shards[i].ShardID == shards[j].ShardID {
-				less = shards[i].VolumeID < shards[j].VolumeID
-			} else {
-				less = shards[i].ShardID < shards[j].ShardID
-			}
-		case "collection":
-			if shards[i].Collection == shards[j].Collection {
-				less = shards[i].VolumeID < shards[j].VolumeID
-			} else {
-				less = shards[i].Collection < shards[j].Collection
-			}
+			less = shards[i].ShardID < shards[j].ShardID
 		case "server":
 			if shards[i].Server == shards[j].Server {
-				less = shards[i].VolumeID < shards[j].VolumeID
+				less = shards[i].ShardID < shards[j].ShardID // Secondary sort by shard ID
 			} else {
 				less = shards[i].Server < shards[j].Server
 			}
-		case "datacenter":
+		case "data_center":
 			if shards[i].DataCenter == shards[j].DataCenter {
-				less = shards[i].VolumeID < shards[j].VolumeID
+				less = shards[i].ShardID < shards[j].ShardID // Secondary sort by shard ID
 			} else {
 				less = shards[i].DataCenter < shards[j].DataCenter
 			}
 		case "rack":
 			if shards[i].Rack == shards[j].Rack {
-				less = shards[i].VolumeID < shards[j].VolumeID
+				less = shards[i].ShardID < shards[j].ShardID // Secondary sort by shard ID
 			} else {
 				less = shards[i].Rack < shards[j].Rack
 			}
 		default:
-			less = shards[i].VolumeID < shards[j].VolumeID
+			less = shards[i].ShardID < shards[j].ShardID
 		}
 
 		if sortOrder == "desc" {
@@ -278,7 +519,15 @@ func sortEcShards(shards []EcShardWithInfo, sortBy string, sortOrder string) {
 }
 
 // GetEcVolumeDetails retrieves detailed information about a specific EC volume
-func (s *AdminServer) GetEcVolumeDetails(volumeID uint32) (*EcVolumeDetailsData, error) {
+func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrder string) (*EcVolumeDetailsData, error) {
+	// Set defaults
+	if sortBy == "" {
+		sortBy = "shard_id"
+	}
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
+
 	var shards []EcShardWithInfo
 	var collection string
 	dataCenters := make(map[string]bool)
@@ -364,10 +613,8 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32) (*EcVolumeDetailsData,
 		shards[i].MissingShards = missingShards
 	}
 
-	// Sort shards by ID
-	sort.Slice(shards, func(i, j int) bool {
-		return shards[i].ShardID < shards[j].ShardID
-	})
+	// Sort shards based on parameters
+	sortEcShards(shards, sortBy, sortOrder)
 
 	// Convert maps to slices
 	var dcList []string

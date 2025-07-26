@@ -402,3 +402,120 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 
 	return nil
 }
+
+// ReceiveFile receives a file stream from client and writes it to storage
+func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_ReceiveFileServer) error {
+	var fileInfo *volume_server_pb.ReceiveFileInfo
+	var targetFile *os.File
+	var filePath string
+	var bytesWritten uint64
+
+	defer func() {
+		if targetFile != nil {
+			targetFile.Close()
+		}
+	}()
+
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			// Stream completed successfully
+			if targetFile != nil {
+				targetFile.Sync()
+				glog.V(1).Infof("Successfully received file %s (%d bytes)", filePath, bytesWritten)
+			}
+			return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+				BytesWritten: bytesWritten,
+			})
+		}
+		if err != nil {
+			// Clean up on error
+			if targetFile != nil {
+				targetFile.Close()
+				os.Remove(filePath)
+			}
+			glog.Errorf("Failed to receive stream: %v", err)
+			return fmt.Errorf("failed to receive stream: %v", err)
+		}
+
+		switch data := req.Data.(type) {
+		case *volume_server_pb.ReceiveFileRequest_Info:
+			// First message contains file info
+			fileInfo = data.Info
+			glog.V(1).Infof("ReceiveFile: volume %d, ext %s, collection %s, shard %d, size %d",
+				fileInfo.VolumeId, fileInfo.Ext, fileInfo.Collection, fileInfo.ShardId, fileInfo.FileSize)
+
+			// Create file path based on file info
+			if fileInfo.IsEcVolume {
+				// Find storage location for EC shard
+				var targetLocation *storage.DiskLocation
+				for _, location := range vs.store.Locations {
+					if location.DiskType == types.HardDriveType {
+						targetLocation = location
+						break
+					}
+				}
+				if targetLocation == nil && len(vs.store.Locations) > 0 {
+					targetLocation = vs.store.Locations[0] // Fall back to first available location
+				}
+				if targetLocation == nil {
+					glog.Errorf("ReceiveFile: no storage location available")
+					return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+						Error: "no storage location available",
+					})
+				}
+
+				// Create EC shard file path
+				baseFileName := erasure_coding.EcShardBaseFileName(fileInfo.Collection, int(fileInfo.VolumeId))
+				filePath = util.Join(targetLocation.Directory, baseFileName+fileInfo.Ext)
+			} else {
+				// Regular volume file
+				v := vs.store.GetVolume(needle.VolumeId(fileInfo.VolumeId))
+				if v == nil {
+					glog.Errorf("ReceiveFile: volume %d not found", fileInfo.VolumeId)
+					return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+						Error: fmt.Sprintf("volume %d not found", fileInfo.VolumeId),
+					})
+				}
+				filePath = v.FileName(fileInfo.Ext)
+			}
+
+			// Create target file
+			targetFile, err = os.Create(filePath)
+			if err != nil {
+				glog.Errorf("ReceiveFile: failed to create file %s: %v", filePath, err)
+				return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+					Error: fmt.Sprintf("failed to create file: %v", err),
+				})
+			}
+			glog.V(1).Infof("ReceiveFile: created target file %s", filePath)
+
+		case *volume_server_pb.ReceiveFileRequest_FileContent:
+			// Subsequent messages contain file content
+			if targetFile == nil {
+				glog.Errorf("ReceiveFile: file info must be sent first")
+				return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+					Error: "file info must be sent first",
+				})
+			}
+
+			n, err := targetFile.Write(data.FileContent)
+			if err != nil {
+				targetFile.Close()
+				os.Remove(filePath)
+				glog.Errorf("ReceiveFile: failed to write to file %s: %v", filePath, err)
+				return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+					Error: fmt.Sprintf("failed to write file: %v", err),
+				})
+			}
+			bytesWritten += uint64(n)
+			glog.V(2).Infof("ReceiveFile: wrote %d bytes to %s (total: %d)", n, filePath, bytesWritten)
+
+		default:
+			glog.Errorf("ReceiveFile: unknown message type")
+			return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+				Error: "unknown message type",
+			})
+		}
+	}
+}

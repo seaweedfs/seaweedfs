@@ -198,7 +198,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             </a>
                         </th>
                     }
-                    <th class="text-dark">Status</th>
+                    <th class="text-dark">Volume & Shard Status</th>
                     <th class="text-dark">Actions</th>
                 </tr>
             </thead>
@@ -238,14 +238,18 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                         <td>
                             if shard.IsComplete {
                                 <span class="badge bg-success">
-                                    <i class="fas fa-check me-1"></i>Complete
+                                    <i class="fas fa-check me-1"></i>Volume Complete
                                 </span>
                             } else {
                                 <span class="badge bg-warning">
                                     <i class="fas fa-exclamation-triangle me-1"></i>
-                                    Missing {fmt.Sprintf("%d", len(shard.MissingShards))} shards
+                                    Volume Missing {fmt.Sprintf("%d", len(shard.MissingShards))} shards
                                 </span>
                             }
+                            <br/>
+                            <small class="text-muted">
+                                <i class="fas fa-database me-1"></i>Shard {fmt.Sprintf("%d", shard.ShardID)} present
+                            </small>
                         </td>
                         <td>
                             <div class="btn-group" role="group">

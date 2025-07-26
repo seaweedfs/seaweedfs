@@ -5,24 +5,24 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 
-	"bytes"
+	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -106,7 +106,7 @@ func (t *Task) SetDialOption(dialOpt grpc.DialOption) {
 
 // Execute performs the EC operation following command_ec_encode.go pattern but with local processing
 func (t *Task) Execute(params types.TaskParams) error {
-	glog.Infof("Starting erasure coding for volume %d from server %s (download → ec → distribute)", t.volumeID, t.sourceServer)
+	glog.V(1).Infof("Starting erasure coding for volume %d from server %s (download → ec → distribute)", t.volumeID, t.sourceServer)
 
 	// Extract parameters - use the actual collection from task params
 	t.collection = params.Collection
@@ -127,121 +127,129 @@ func (t *Task) Execute(params types.TaskParams) error {
 	if err := os.MkdirAll(taskWorkDir, 0755); err != nil {
 		return fmt.Errorf("failed to create task working directory %s: %v", taskWorkDir, err)
 	}
-	glog.V(1).Infof("Created task working directory: %s", taskWorkDir)
+	glog.V(1).Infof("WORKFLOW: Created working directory: %s", taskWorkDir)
 
-	// Defer cleanup of working directory
+	// Ensure cleanup of working directory
 	defer func() {
 		if err := os.RemoveAll(taskWorkDir); err != nil {
-			glog.Warningf("Failed to cleanup task working directory %s: %v", taskWorkDir, err)
+			glog.Warningf("Failed to cleanup working directory %s: %v", taskWorkDir, err)
 		} else {
-			glog.V(1).Infof("Cleaned up task working directory: %s", taskWorkDir)
+			glog.V(1).Infof("WORKFLOW: Cleaned up working directory: %s", taskWorkDir)
 		}
 	}()
 
+	// Step 1: Collect volume locations from master
+	glog.V(1).Infof("WORKFLOW STEP 1: Collecting volume locations from master")
 	volumeId := needle.VolumeId(t.volumeID)
-
-	// Step 0: Collect volume locations BEFORE EC encoding starts (following command_ec_encode.go pattern)
-	t.SetProgress(5.0)
-	glog.V(1).Infof("Collecting volume %d replica locations before EC encoding", t.volumeID)
 	volumeLocations, err := t.collectVolumeLocations(volumeId)
 	if err != nil {
 		return fmt.Errorf("failed to collect volume locations before EC encoding: %v", err)
 	}
-	glog.V(1).Infof("Found volume %d on %d servers: %v", t.volumeID, len(volumeLocations), volumeLocations)
+	glog.V(1).Infof("WORKFLOW: Found volume %d on %d servers: %v", t.volumeID, len(volumeLocations), volumeLocations)
 
-	// Step 1: Mark volume as readonly on all replicas (following command_ec_encode.go)
-	t.SetProgress(10.0)
-	glog.V(1).Infof("Marking volume %d as readonly on all replicas", t.volumeID)
-	err = t.markVolumeReadonlyOnAllReplicas(volumeLocations)
+	// Step 2: Mark volume readonly on all servers
+	glog.V(1).Infof("WORKFLOW STEP 2: Marking volume %d readonly on all replica servers", t.volumeID)
+	err = t.markVolumeReadonlyOnAllReplicas(volumeId, volumeLocations)
 	if err != nil {
-		return fmt.Errorf("failed to mark volume as readonly: %v", err)
+		return fmt.Errorf("failed to mark volume readonly: %v", err)
 	}
+	glog.V(1).Infof("WORKFLOW: Volume %d marked readonly on all replicas", t.volumeID)
 
-	// Step 2: Copy volume to local worker for processing (use task-specific directory)
-	t.SetProgress(20.0)
-	glog.V(1).Infof("Downloading volume %d files to worker for local EC processing", t.volumeID)
+	// Step 3: Copy volume data to local worker
+	glog.V(1).Infof("WORKFLOW STEP 3: Downloading volume %d data to worker", t.volumeID)
 	err = t.copyVolumeDataLocally(taskWorkDir)
 	if err != nil {
 		return fmt.Errorf("failed to copy volume data locally: %v", err)
 	}
+	glog.V(1).Infof("WORKFLOW: Volume %d data downloaded successfully", t.volumeID)
 
-	// Step 3: Generate EC shards locally on worker
-	t.SetProgress(40.0)
-	glog.V(1).Infof("Generating EC shards locally for volume %d", t.volumeID)
+	// Step 4: Perform local EC encoding
+	glog.V(1).Infof("WORKFLOW STEP 4: Performing local EC encoding for volume %d", t.volumeID)
 	shardFiles, err := t.performLocalECEncoding(taskWorkDir)
 	if err != nil {
 		return fmt.Errorf("failed to generate EC shards locally: %v", err)
 	}
+	glog.V(1).Infof("WORKFLOW: Generated %d EC shards for volume %d", len(shardFiles), t.volumeID)
 
-	// Step 4: Distribute shards across multiple servers (following command_ec_encode.go balance logic)
-	t.SetProgress(60.0)
-	glog.V(1).Infof("Distributing EC shards across multiple servers for volume %d", t.volumeID)
-	err = t.distributeEcShardsAcrossServers(shardFiles)
+	// Step 5: Distribute shards across servers
+	glog.V(1).Infof("WORKFLOW STEP 5: Distributing EC shards across cluster")
+	err = t.distributeEcShardsAcrossServers(shardFiles, taskWorkDir)
 	if err != nil {
 		return fmt.Errorf("failed to distribute EC shards: %v", err)
 	}
+	glog.V(1).Infof("WORKFLOW: EC shards distributed and mounted successfully")
 
-	// Step 5: Delete original volume from ALL replica locations (following command_ec_encode.go pattern)
-	t.SetProgress(90.0)
-	glog.V(1).Infof("Deleting original volume %d from all replica locations", t.volumeID)
+	// Step 6: Delete original volume from ALL replica locations (following command_ec_encode.go pattern)
+	glog.V(1).Infof("WORKFLOW STEP 6: Deleting original volume %d from all replica servers", t.volumeID)
 	err = t.deleteVolumeFromAllLocations(volumeId, volumeLocations)
 	if err != nil {
 		glog.Warningf("Failed to delete original volume %d from all locations: %v (may need manual cleanup)", t.volumeID, err)
 		// This is not a critical failure - the EC encoding itself succeeded
+	} else {
+		glog.V(1).Infof("WORKFLOW: Original volume %d deleted from all replicas", t.volumeID)
 	}
 
-	// Step 6: Cleanup local files
-	t.SetProgress(95.0)
-	t.cleanup(taskWorkDir)
-
+	// Step 7: Final success
 	t.SetProgress(100.0)
-	glog.Infof("Successfully completed erasure coding with distributed shards for volume %d", t.volumeID)
+	glog.V(1).Infof("WORKFLOW COMPLETE: Successfully completed erasure coding for volume %d", t.volumeID)
 	return nil
 }
 
-// copyVolumeDataLocally copies the volume data from source server to local disk
+// copyVolumeDataLocally downloads .dat and .idx files from source server to local working directory
 func (t *Task) copyVolumeDataLocally(workDir string) error {
-	t.currentStep = "copying_volume_data"
-	t.SetProgress(5.0)
-	glog.V(1).Infof("Copying volume %d data from %s to local disk", t.volumeID, t.sourceServer)
+	t.currentStep = "copying"
+	t.SetProgress(10.0)
+	glog.V(1).Infof("Copying volume %d data from server %s to local directory %s", t.volumeID, t.sourceServer, workDir)
 
-	ctx := context.Background()
-
-	// Connect to source volume server (convert to gRPC address)
-	grpcAddress := pb.ServerToGrpcAddress(t.sourceServer)
+	// Connect to source volume server
+	grpcAddress := pb.ServerToGrpcAddress(string(t.sourceServer))
 	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOpt)
 	if err != nil {
+		glog.Errorf("COPY ERROR: Failed to connect to source server %s: %v", t.sourceServer, err)
 		return fmt.Errorf("failed to connect to source server %s: %v", t.sourceServer, err)
 	}
 	defer conn.Close()
+	glog.V(1).Infof("COPY GRPC: Connected to source server %s", t.sourceServer)
 
 	client := volume_server_pb.NewVolumeServerClient(conn)
-
-	// Get volume info first
-	statusResp, err := client.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
-		VolumeId: t.volumeID,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to get volume status: %v", err)
-	}
-
-	glog.V(1).Infof("Volume %d size: %d bytes, file count: %d",
-		t.volumeID, statusResp.VolumeSize, statusResp.FileCount)
+	ctx := context.Background()
 
 	// Copy .dat file
 	datFile := filepath.Join(workDir, fmt.Sprintf("%d.dat", t.volumeID))
-	if err := t.copyVolumeFile(client, ctx, t.volumeID, ".dat", datFile, statusResp.VolumeSize); err != nil {
+	glog.V(1).Infof("COPY START: Downloading .dat file for volume %d to %s", t.volumeID, datFile)
+	err = t.copyVolumeFile(client, ctx, t.volumeID, ".dat", datFile, 0)
+	if err != nil {
+		glog.Errorf("COPY ERROR: Failed to copy .dat file: %v", err)
 		return fmt.Errorf("failed to copy .dat file: %v", err)
+	}
+
+	// Verify .dat file was copied
+	if datInfo, err := os.Stat(datFile); err != nil {
+		glog.Errorf("COPY ERROR: .dat file not found after copy: %v", err)
+		return fmt.Errorf(".dat file not found after copy: %v", err)
+	} else {
+		glog.V(1).Infof("COPY SUCCESS: .dat file copied successfully (%d bytes)", datInfo.Size())
 	}
 
 	// Copy .idx file
 	idxFile := filepath.Join(workDir, fmt.Sprintf("%d.idx", t.volumeID))
-	if err := t.copyVolumeFile(client, ctx, t.volumeID, ".idx", idxFile, 0); err != nil {
+	glog.V(1).Infof("COPY START: Downloading .idx file for volume %d to %s", t.volumeID, idxFile)
+	err = t.copyVolumeFile(client, ctx, t.volumeID, ".idx", idxFile, 0)
+	if err != nil {
+		glog.Errorf("COPY ERROR: Failed to copy .idx file: %v", err)
 		return fmt.Errorf("failed to copy .idx file: %v", err)
 	}
 
+	// Verify .idx file was copied
+	if idxInfo, err := os.Stat(idxFile); err != nil {
+		glog.Errorf("COPY ERROR: .idx file not found after copy: %v", err)
+		return fmt.Errorf(".idx file not found after copy: %v", err)
+	} else {
+		glog.V(1).Infof("COPY SUCCESS: .idx file copied successfully (%d bytes)", idxInfo.Size())
+	}
+
 	t.SetProgress(15.0)
-	glog.V(1).Infof("Successfully copied volume %d files to %s", t.volumeID, workDir)
+	glog.V(1).Infof("COPY COMPLETED: Successfully copied volume %d files (.dat and .idx) to %s", t.volumeID, workDir)
 	return nil
 }
 
@@ -249,7 +257,7 @@ func (t *Task) copyVolumeDataLocally(workDir string) error {
 func (t *Task) copyVolumeFile(client volume_server_pb.VolumeServerClient, ctx context.Context,
 	volumeID uint32, extension string, localPath string, expectedSize uint64) error {
 
-	glog.V(2).Infof("Starting to copy volume %d%s from source server", volumeID, extension)
+	glog.V(2).Infof("FILE COPY START: Copying volume %d%s from source server", volumeID, extension)
 
 	// Stream volume file data using CopyFile API with proper parameters (following shell implementation)
 	stream, err := client.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
@@ -262,48 +270,53 @@ func (t *Task) copyVolumeFile(client volume_server_pb.VolumeServerClient, ctx co
 		IgnoreSourceFileNotFound: false, // Fail if source file not found
 	})
 	if err != nil {
+		glog.Errorf("FILE COPY ERROR: Failed to start file copy stream for %s: %v", extension, err)
 		return fmt.Errorf("failed to start file copy stream: %v", err)
 	}
+	glog.V(2).Infof("FILE COPY GRPC: Created copy stream for %s", extension)
 
 	// Create local file
 	file, err := os.Create(localPath)
 	if err != nil {
+		glog.Errorf("FILE COPY ERROR: Failed to create local file %s: %v", localPath, err)
 		return fmt.Errorf("failed to create local file %s: %v", localPath, err)
 	}
 	defer file.Close()
+	glog.V(2).Infof("FILE COPY LOCAL: Created local file %s", localPath)
 
 	// Copy data with progress tracking
 	var totalBytes int64
+	chunkCount := 0
 	for {
 		resp, err := stream.Recv()
 		if err == io.EOF {
+			glog.V(2).Infof("FILE COPY COMPLETE: Finished streaming %s (%d bytes in %d chunks)", extension, totalBytes, chunkCount)
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("failed to receive file data: %v", err)
+			glog.Errorf("FILE COPY ERROR: Failed to receive data for %s: %v", extension, err)
+			return fmt.Errorf("failed to receive stream data: %v", err)
 		}
 
 		if len(resp.FileContent) > 0 {
-			written, err := file.Write(resp.FileContent)
+			n, err := file.Write(resp.FileContent)
 			if err != nil {
+				glog.Errorf("FILE COPY ERROR: Failed to write to local file %s: %v", localPath, err)
 				return fmt.Errorf("failed to write to local file: %v", err)
 			}
-			totalBytes += int64(written)
-		}
-
-		// Update progress for large files
-		if expectedSize > 0 && totalBytes > 0 {
-			progress := float64(totalBytes) / float64(expectedSize) * 10.0 // 10% of total progress
-			t.SetProgress(5.0 + progress)
+			totalBytes += int64(n)
+			chunkCount++
+			glog.V(3).Infof("FILE COPY CHUNK: %s chunk %d written (%d bytes, total: %d)", extension, chunkCount, n, totalBytes)
 		}
 	}
 
-	if totalBytes == 0 {
-		glog.Warningf("Volume %d%s appears to be empty (0 bytes copied)", volumeID, extension)
-	} else {
-		glog.V(2).Infof("Successfully copied %d bytes to %s", totalBytes, localPath)
+	// Sync to disk
+	err = file.Sync()
+	if err != nil {
+		glog.Warningf("FILE COPY WARNING: Failed to sync %s to disk: %v", localPath, err)
 	}
 
+	glog.V(2).Infof("FILE COPY SUCCESS: Successfully copied %s (%d bytes total)", extension, totalBytes)
 	return nil
 }
 
@@ -370,16 +383,45 @@ func (t *Task) performLocalECEncoding(workDir string) ([]string, error) {
 	glog.V(1).Infof("Starting EC encoding with base filename: %s", baseFileName)
 
 	// Generate EC shards using SeaweedFS erasure coding library
+	glog.V(1).Infof("Starting EC shard generation for volume %d", t.volumeID)
 	err = erasure_coding.WriteEcFiles(baseFileName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write EC files: %v", err)
 	}
+	glog.V(1).Infof("Completed EC shard generation for volume %d", t.volumeID)
 
 	// Generate .ecx file from .idx file
+	glog.V(1).Infof("Creating .ecx index file for volume %d", t.volumeID)
 	err = erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx")
 	if err != nil {
 		return nil, fmt.Errorf("failed to write .ecx file: %v", err)
 	}
+	glog.V(1).Infof("Successfully created .ecx index file for volume %d", t.volumeID)
+
+	// Create .ecj file (EC journal file) - initially empty for new EC volumes
+	ecjFile := baseFileName + ".ecj"
+	glog.V(1).Infof("Creating .ecj journal file: %s", ecjFile)
+	ecjFileHandle, err := os.Create(ecjFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create .ecj file: %v", err)
+	}
+	ecjFileHandle.Close()
+	glog.V(1).Infof("Successfully created .ecj journal file: %s", ecjFile)
+
+	// Create .vif file (volume info file) with basic volume information
+	vifFile := baseFileName + ".vif"
+	glog.V(1).Infof("Creating .vif volume info file: %s", vifFile)
+	volumeInfo := &volume_server_pb.VolumeInfo{
+		Version:     3,              // needle.Version3
+		DatFileSize: datInfo.Size(), // int64
+	}
+
+	// Save volume info to .vif file using the standard SeaweedFS function
+	err = volume_info.SaveVolumeInfo(vifFile, volumeInfo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create .vif file: %v", err)
+	}
+	glog.V(1).Infof("Successfully created .vif volume info file: %s", vifFile)
 
 	// Prepare list of generated shard files
 	shardFiles := make([]string, t.totalShards)
@@ -387,12 +429,24 @@ func (t *Task) performLocalECEncoding(workDir string) ([]string, error) {
 		shardFiles[i] = filepath.Join(workDir, fmt.Sprintf("%d.ec%02d", t.volumeID, i))
 	}
 
-	// Verify that shards were created
+	// Verify that ALL shards were created and log each one
+	glog.V(1).Infof("Verifying all %d EC shards were created for volume %d", t.totalShards, t.volumeID)
 	for i, shardFile := range shardFiles {
 		if info, err := os.Stat(shardFile); err != nil {
-			glog.Warningf("Shard %d file %s not found: %v", i, shardFile, err)
+			glog.Errorf("MISSING SHARD: Shard %d file %s not found: %v", i, shardFile, err)
+			return nil, fmt.Errorf("shard %d was not created: %v", i, err)
 		} else {
-			glog.V(2).Infof("Created shard %d: %s (%d bytes)", i, shardFile, info.Size())
+			glog.V(1).Infof("SHARD CREATED: Shard %d: %s (%d bytes)", i, shardFile, info.Size())
+		}
+	}
+
+	// Verify auxiliary files were created
+	auxFiles := []string{baseFileName + ".ecx", baseFileName + ".ecj", baseFileName + ".vif"}
+	for _, auxFile := range auxFiles {
+		if info, err := os.Stat(auxFile); err != nil {
+			glog.Errorf("MISSING AUX FILE: %s not found: %v", auxFile, err)
+		} else {
+			glog.V(1).Infof("AUX FILE CREATED: %s (%d bytes)", auxFile, info.Size())
 		}
 	}
 
@@ -816,7 +870,7 @@ func (t *Task) collectVolumeLocations(volumeId needle.VolumeId) ([]pb.ServerAddr
 }
 
 // markVolumeReadonlyOnAllReplicas marks volume as readonly on all replicas (following command_ec_encode.go pattern)
-func (t *Task) markVolumeReadonlyOnAllReplicas(locations []pb.ServerAddress) error {
+func (t *Task) markVolumeReadonlyOnAllReplicas(volumeId needle.VolumeId, locations []pb.ServerAddress) error {
 	// Use parallel processing like command_ec_encode.go
 	var wg sync.WaitGroup
 	errorChan := make(chan error, len(locations))
@@ -836,10 +890,10 @@ func (t *Task) markVolumeReadonlyOnAllReplicas(locations []pb.ServerAddress) err
 
 			client := volume_server_pb.NewVolumeServerClient(conn)
 			_, err = client.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{
-				VolumeId: t.volumeID,
+				VolumeId: uint32(volumeId),
 			})
 			if err != nil {
-				errorChan <- fmt.Errorf("failed to mark volume %d readonly on %s: %v", t.volumeID, addr, err)
+				errorChan <- fmt.Errorf("failed to mark volume %d readonly on %s: %v", volumeId, addr, err)
 			}
 		}(location)
 	}
@@ -857,80 +911,268 @@ func (t *Task) markVolumeReadonlyOnAllReplicas(locations []pb.ServerAddress) err
 	return nil
 }
 
-// distributeEcShardsAcrossServers distributes EC shards following command_ec_encode.go balance logic
-func (t *Task) distributeEcShardsAcrossServers(shardFiles []string) error {
-	// Get available servers from master
-	grpcAddress := pb.ServerToGrpcAddress(t.masterClient)
-	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOpt)
-	if err != nil {
-		return fmt.Errorf("failed to connect to master %s: %v", t.masterClient, err)
-	}
-	defer conn.Close()
+// distributeEcShardsAcrossServers distributes EC shards across volume servers
+func (t *Task) distributeEcShardsAcrossServers(shardFiles []string, taskWorkDir string) error {
+	t.currentStep = "distributing"
+	t.SetProgress(70.0)
+	glog.V(1).Infof("Distributing %d EC shards across servers", len(shardFiles))
 
-	client := master_pb.NewSeaweedClient(conn)
-	topologyResp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-	if err != nil {
-		return fmt.Errorf("failed to get topology: %v", err)
-	}
+	// Get volume servers from topology
+	var volumeServers []pb.ServerAddress
+	err := operation.WithMasterServerClient(false, pb.ServerAddress(t.masterClient), t.grpcDialOpt, func(masterClient master_pb.SeaweedClient) error {
+		topologyResp, err := masterClient.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
 
-	// Collect available servers
-	var availableServers []pb.ServerAddress
-	for _, dc := range topologyResp.TopologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for _, dataNode := range rack.DataNodeInfos {
-				// Check if server has available space for EC shards
-				for _, diskInfo := range dataNode.DiskInfos {
-					if diskInfo.FreeVolumeCount > 0 {
-						availableServers = append(availableServers, pb.ServerAddress(dataNode.Id))
-						break
+		// Extract unique volume server addresses
+		serverSet := make(map[string]bool)
+		for _, dc := range topologyResp.TopologyInfo.DataCenterInfos {
+			for _, rack := range dc.RackInfos {
+				for _, node := range rack.DataNodeInfos {
+					serverAddr := pb.NewServerAddressFromDataNode(node)
+					serverKey := string(serverAddr)
+					if !serverSet[serverKey] {
+						serverSet[serverKey] = true
+						volumeServers = append(volumeServers, serverAddr)
 					}
 				}
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get volume servers: %v", err)
 	}
 
-	if len(availableServers) < 4 {
-		return fmt.Errorf("insufficient servers for EC distribution: need at least 4, found %d", len(availableServers))
+	if len(volumeServers) == 0 {
+		return fmt.Errorf("no volume servers available for EC distribution")
 	}
 
-	// Distribute shards across servers using round-robin
+	// Distribute shards in round-robin fashion
+	shardTargets := make(map[int]pb.ServerAddress)
+	targetServers := make(map[string]bool) // Track unique target servers
+	for i, shardFile := range shardFiles {
+		targetServer := volumeServers[i%len(volumeServers)]
+		shardTargets[i] = targetServer
+		targetServers[string(targetServer)] = true
+		glog.V(1).Infof("Shard %d (%s) will go to server %s", i, shardFile, targetServer)
+	}
+
+	// Upload auxiliary files (.ecx, .ecj, .vif) to ALL servers that will receive shards
+	// These files are needed for EC volume mounting on each server
+	glog.V(1).Infof("Uploading auxiliary files to %d target servers", len(targetServers))
+	for serverAddr := range targetServers {
+		targetServer := pb.ServerAddress(serverAddr)
+		glog.V(1).Infof("Starting auxiliary file upload to server: %s", targetServer)
+		err = t.uploadAuxiliaryFiles(taskWorkDir, targetServer)
+		if err != nil {
+			return fmt.Errorf("failed to upload auxiliary files to %s: %v", targetServer, err)
+		}
+		glog.V(1).Infof("Completed auxiliary file upload to server: %s", targetServer)
+	}
+
+	// Upload all shards to their target servers
+	glog.V(1).Infof("Starting shard upload phase - uploading %d shards to %d servers", len(shardFiles), len(targetServers))
 	var wg sync.WaitGroup
 	errorChan := make(chan error, len(shardFiles))
 
 	for i, shardFile := range shardFiles {
 		wg.Add(1)
-		go func(shardIndex int, shardPath string) {
+		go func(shardId int, shardFile string, targetServer pb.ServerAddress) {
 			defer wg.Done()
-
-			// Round-robin distribution
-			targetServer := availableServers[shardIndex%len(availableServers)]
-
-			// Upload shard to target server
-			err := t.uploadShardToTargetServer(shardPath, targetServer, uint32(shardIndex))
-			if err != nil {
-				errorChan <- fmt.Errorf("failed to upload shard %d to %s: %v", shardIndex, targetServer, err)
-				return
+			glog.V(1).Infof("SHARD UPLOAD START: Uploading shard %d (%s) to server %s", shardId, shardFile, targetServer)
+			if err := t.uploadShardToTargetServer(shardFile, targetServer, uint32(shardId)); err != nil {
+				glog.Errorf("SHARD UPLOAD FAILED: Shard %d to %s failed: %v", shardId, targetServer, err)
+				errorChan <- fmt.Errorf("failed to upload shard %d to %s: %v", shardId, targetServer, err)
+			} else {
+				glog.V(1).Infof("SHARD UPLOAD SUCCESS: Shard %d successfully uploaded to %s", shardId, targetServer)
 			}
-
-			// Mount shard on target server
-			err = t.mountShardOnServer(targetServer, uint32(shardIndex))
-			if err != nil {
-				errorChan <- fmt.Errorf("failed to mount shard %d on %s: %v", shardIndex, targetServer, err)
-			}
-		}(i, shardFile)
+		}(i, shardFile, shardTargets[i])
 	}
 
 	wg.Wait()
 	close(errorChan)
 
-	// Check for errors
+	// Check for upload errors
 	for err := range errorChan {
+		return err // Return first error encountered
+	}
+	glog.V(1).Infof("All %d shards uploaded successfully", len(shardFiles))
+
+	// Mount all shards on their respective servers
+	glog.V(1).Infof("Starting shard mounting phase - mounting %d shards", len(shardTargets))
+	for shardId, targetServer := range shardTargets {
+		glog.V(1).Infof("SHARD MOUNT START: Mounting shard %d on server %s", shardId, targetServer)
+		err = t.mountShardOnServer(targetServer, uint32(shardId))
 		if err != nil {
-			return err
+			glog.Errorf("SHARD MOUNT FAILED: Shard %d on %s failed: %v", shardId, targetServer, err)
+			return fmt.Errorf("failed to mount shard %d on %s: %v", shardId, targetServer, err)
 		}
+		glog.V(1).Infof("SHARD MOUNT SUCCESS: Shard %d successfully mounted on %s", shardId, targetServer)
 	}
 
-	glog.Infof("Successfully distributed %d EC shards across %d servers", len(shardFiles), len(availableServers))
+	t.SetProgress(90.0)
+	glog.V(1).Infof("Successfully distributed and mounted all EC shards")
+
+	// Log final distribution summary for debugging
+	glog.V(1).Infof("EC DISTRIBUTION SUMMARY for volume %d:", t.volumeID)
+	glog.V(1).Infof("  - Total shards created: %d", len(shardFiles))
+	glog.V(1).Infof("  - Target servers: %d", len(targetServers))
+	glog.V(1).Infof("  - Shard distribution:")
+	for shardId, targetServer := range shardTargets {
+		glog.V(1).Infof("    Shard %d → %s", shardId, targetServer)
+	}
+	glog.V(1).Infof("  - Auxiliary files (.ecx, .ecj, .vif) uploaded to all %d servers", len(targetServers))
+	glog.V(1).Infof("EC ENCODING COMPLETED for volume %d", t.volumeID)
+
+	return nil
+}
+
+// uploadAuxiliaryFiles uploads the .ecx, .ecj, and .vif files needed for EC volume mounting
+func (t *Task) uploadAuxiliaryFiles(workDir string, targetServer pb.ServerAddress) error {
+	baseFileName := filepath.Join(workDir, fmt.Sprintf("%d", t.volumeID))
+
+	// List of auxiliary files to upload
+	auxFiles := []struct {
+		ext  string
+		desc string
+	}{
+		{".ecx", "index file"},
+		{".ecj", "journal file"},
+		{".vif", "volume info file"},
+	}
+
+	glog.V(1).Infof("Uploading auxiliary files for volume %d to server %s", t.volumeID, targetServer)
+
+	for _, auxFile := range auxFiles {
+		filePath := baseFileName + auxFile.ext
+
+		// Check if file exists (some may be optional)
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			glog.V(1).Infof("Auxiliary file %s does not exist, skipping", filePath)
+			continue
+		}
+
+		// Upload the auxiliary file
+		err := t.uploadAuxiliaryFile(filePath, targetServer, auxFile.ext)
+		if err != nil {
+			return fmt.Errorf("failed to upload %s: %v", auxFile.desc, err)
+		}
+		glog.V(1).Infof("Successfully uploaded %s (%s) for volume %d to %s", auxFile.desc, auxFile.ext, t.volumeID, targetServer)
+	}
+
+	glog.V(1).Infof("Completed uploading auxiliary files for volume %d to %s", t.volumeID, targetServer)
+	return nil
+}
+
+// uploadAuxiliaryFile uploads a single auxiliary file (.ecx, .ecj, .vif) to the target server
+func (t *Task) uploadAuxiliaryFile(filePath string, targetServer pb.ServerAddress, ext string) error {
+	glog.V(1).Infof("AUX UPLOAD START: Uploading auxiliary file %s to %s", ext, targetServer)
+
+	// Open the auxiliary file
+	file, err := os.Open(filePath)
+	if err != nil {
+		glog.Errorf("AUX UPLOAD ERROR: Failed to open auxiliary file %s: %v", filePath, err)
+		return fmt.Errorf("failed to open auxiliary file %s: %v", filePath, err)
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		glog.Errorf("AUX UPLOAD ERROR: Failed to stat auxiliary file %s: %v", filePath, err)
+		return fmt.Errorf("failed to stat auxiliary file: %v", err)
+	}
+
+	glog.V(1).Infof("AUX UPLOAD DETAILS: File %s size: %d bytes", filePath, fileInfo.Size())
+
+	// Connect to target volume server
+	grpcAddress := pb.ServerToGrpcAddress(string(targetServer))
+	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOpt)
+	if err != nil {
+		glog.Errorf("AUX UPLOAD ERROR: Failed to connect to %s: %v", targetServer, err)
+		return fmt.Errorf("failed to connect to %s: %v", targetServer, err)
+	}
+	defer conn.Close()
+	glog.V(2).Infof("AUX UPLOAD GRPC: Connected to %s for %s", targetServer, ext)
+
+	client := volume_server_pb.NewVolumeServerClient(conn)
+	ctx := context.Background()
+
+	// Create streaming client for auxiliary file upload
+	stream, err := client.ReceiveFile(ctx)
+	if err != nil {
+		glog.Errorf("AUX UPLOAD ERROR: Failed to create receive stream for %s: %v", ext, err)
+		return fmt.Errorf("failed to create receive stream: %v", err)
+	}
+	glog.V(2).Infof("AUX UPLOAD GRPC: Created stream for %s", ext)
+
+	// Send file info first
+	err = stream.Send(&volume_server_pb.ReceiveFileRequest{
+		Data: &volume_server_pb.ReceiveFileRequest_Info{
+			Info: &volume_server_pb.ReceiveFileInfo{
+				VolumeId:   t.volumeID,
+				Ext:        ext,
+				Collection: t.collection,
+				IsEcVolume: true,
+				ShardId:    0, // Not applicable for auxiliary files
+				FileSize:   uint64(fileInfo.Size()),
+			},
+		},
+	})
+	if err != nil {
+		glog.Errorf("AUX UPLOAD ERROR: Failed to send auxiliary file info for %s: %v", ext, err)
+		return fmt.Errorf("failed to send auxiliary file info: %v", err)
+	}
+	glog.V(2).Infof("AUX UPLOAD GRPC: Sent file info for %s", ext)
+
+	// Stream file content in chunks
+	buffer := make([]byte, 64*1024) // 64KB chunks
+	totalSent := int64(0)
+	chunkCount := 0
+	for {
+		n, err := file.Read(buffer)
+		if err != nil && err != io.EOF {
+			glog.Errorf("AUX UPLOAD ERROR: Failed to read auxiliary file %s: %v", filePath, err)
+			return fmt.Errorf("failed to read auxiliary file: %v", err)
+		}
+
+		// Send data if we read any
+		if n > 0 {
+			err = stream.Send(&volume_server_pb.ReceiveFileRequest{
+				Data: &volume_server_pb.ReceiveFileRequest_FileContent{
+					FileContent: buffer[:n],
+				},
+			})
+			if err != nil {
+				glog.Errorf("AUX UPLOAD ERROR: Failed to send chunk %d for %s: %v", chunkCount, ext, err)
+				return fmt.Errorf("failed to send auxiliary file chunk: %v", err)
+			}
+			totalSent += int64(n)
+			chunkCount++
+			glog.V(3).Infof("AUX UPLOAD CHUNK: %s chunk %d sent (%d bytes, total: %d)", ext, chunkCount, n, totalSent)
+		}
+
+		// Break if we reached EOF
+		if err == io.EOF {
+			break
+		}
+	}
+	glog.V(2).Infof("AUX UPLOAD GRPC: Completed streaming %s (%d bytes in %d chunks)", ext, totalSent, chunkCount)
+
+	// Close stream and get response
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		glog.Errorf("AUX UPLOAD ERROR: Failed to close stream for %s: %v", ext, err)
+		return fmt.Errorf("failed to close auxiliary file stream: %v", err)
+	}
+
+	if resp.Error != "" {
+		glog.Errorf("AUX UPLOAD ERROR: Server error uploading %s: %s", ext, resp.Error)
+		return fmt.Errorf("server error uploading auxiliary file: %s", resp.Error)
+	}
+
+	glog.V(1).Infof("AUX UPLOAD SUCCESS: %s (%d bytes) successfully uploaded to %s", ext, resp.BytesWritten, targetServer)
 	return nil
 }
 
@@ -993,84 +1235,156 @@ func (t *Task) deleteVolumeFromAllLocations(volumeId needle.VolumeId, locations 
 	return nil
 }
 
-// uploadShardToTargetServer uploads a shard file to target server using HTTP upload
+// uploadShardToTargetServer streams shard data to target server using gRPC ReceiveFile
 func (t *Task) uploadShardToTargetServer(shardFile string, targetServer pb.ServerAddress, shardId uint32) error {
-	glog.V(1).Infof("Uploading shard file %s (shard %d) to server %s", shardFile, shardId, targetServer)
+	glog.V(1).Infof("UPLOAD START: Streaming shard %d to server %s via gRPC", shardId, targetServer)
 
-	// Read the shard file content
-	shardData, err := os.ReadFile(shardFile)
+	// Read the shard file
+	file, err := os.Open(shardFile)
 	if err != nil {
-		return fmt.Errorf("shard file %s not found: %v", shardFile, err)
+		glog.Errorf("UPLOAD ERROR: Failed to open shard file %s: %v", shardFile, err)
+		return fmt.Errorf("failed to open shard file %s: %v", shardFile, err)
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		glog.Errorf("UPLOAD ERROR: Failed to stat shard file %s: %v", shardFile, err)
+		return fmt.Errorf("failed to stat shard file: %v", err)
 	}
 
-	if len(shardData) == 0 {
+	if fileInfo.Size() == 0 {
+		glog.Errorf("UPLOAD ERROR: Shard file %s is empty", shardFile)
 		return fmt.Errorf("shard file %s is empty", shardFile)
 	}
 
-	// Create the target EC shard filename
-	shardFilename := fmt.Sprintf("%d.ec%02d", t.volumeID, shardId)
+	glog.V(1).Infof("UPLOAD DETAILS: Shard %d file %s size: %d bytes", shardId, shardFile, fileInfo.Size())
 
-	// Upload to volume server using HTTP POST
-	// Use the volume server's upload endpoint for EC shards
-	uploadUrl := fmt.Sprintf("http://%s/admin/assign?volumeId=%d&type=ec", targetServer, t.volumeID)
-
-	// Create multipart form data for the shard upload
-	req, err := http.NewRequest("PUT", uploadUrl, bytes.NewReader(shardData))
+	// Connect to target volume server
+	grpcAddress := pb.ServerToGrpcAddress(string(targetServer))
+	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOpt)
 	if err != nil {
-		return fmt.Errorf("failed to create upload request: %v", err)
+		glog.Errorf("UPLOAD ERROR: Failed to connect to %s: %v", targetServer, err)
+		return fmt.Errorf("failed to connect to %s: %v", targetServer, err)
 	}
+	defer conn.Close()
+	glog.V(2).Infof("UPLOAD GRPC: Connected to %s for shard %d", targetServer, shardId)
 
-	// Set headers
-	req.Header.Set("Content-Type", "application/octet-stream")
-	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(shardData)))
-	req.Header.Set("X-Shard-Id", fmt.Sprintf("%d", shardId))
-	req.Header.Set("X-Volume-Id", fmt.Sprintf("%d", t.volumeID))
-	req.Header.Set("X-File-Name", shardFilename)
-	if t.collection != "" {
-		req.Header.Set("X-Collection", t.collection)
-	}
+	client := volume_server_pb.NewVolumeServerClient(conn)
+	ctx := context.Background()
 
-	// Execute the upload
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	// Create streaming client
+	stream, err := client.ReceiveFile(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to upload shard: %v", err)
+		glog.Errorf("UPLOAD ERROR: Failed to create receive stream for shard %d: %v", shardId, err)
+		return fmt.Errorf("failed to create receive stream: %v", err)
 	}
-	defer resp.Body.Close()
+	glog.V(2).Infof("UPLOAD GRPC: Created stream for shard %d to %s", shardId, targetServer)
 
-	// Check response
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		glog.Warningf("Upload failed with status %d: %s", resp.StatusCode, string(body))
-		// For now, don't fail on upload errors to test the flow
-		glog.V(1).Infof("Shard upload not supported by volume server, continuing...")
-	} else {
-		glog.V(1).Infof("Successfully uploaded shard %d (%d bytes) to server %s", shardId, len(shardData), targetServer)
+	// Send file info first
+	err = stream.Send(&volume_server_pb.ReceiveFileRequest{
+		Data: &volume_server_pb.ReceiveFileRequest_Info{
+			Info: &volume_server_pb.ReceiveFileInfo{
+				VolumeId:   t.volumeID,
+				Ext:        fmt.Sprintf(".ec%02d", shardId),
+				Collection: t.collection,
+				IsEcVolume: true,
+				ShardId:    shardId,
+				FileSize:   uint64(fileInfo.Size()),
+			},
+		},
+	})
+	if err != nil {
+		glog.Errorf("UPLOAD ERROR: Failed to send file info for shard %d: %v", shardId, err)
+		return fmt.Errorf("failed to send file info: %v", err)
+	}
+	glog.V(2).Infof("UPLOAD GRPC: Sent file info for shard %d", shardId)
+
+	// Stream file content in chunks
+	buffer := make([]byte, 64*1024) // 64KB chunks
+	totalSent := int64(0)
+	chunkCount := 0
+	for {
+		n, err := file.Read(buffer)
+		if err != nil && err != io.EOF {
+			glog.Errorf("UPLOAD ERROR: Failed to read shard file %s: %v", shardFile, err)
+			return fmt.Errorf("failed to read file: %v", err)
+		}
+
+		// Send data if we read any
+		if n > 0 {
+			err = stream.Send(&volume_server_pb.ReceiveFileRequest{
+				Data: &volume_server_pb.ReceiveFileRequest_FileContent{
+					FileContent: buffer[:n],
+				},
+			})
+			if err != nil {
+				glog.Errorf("UPLOAD ERROR: Failed to send chunk %d for shard %d: %v", chunkCount, shardId, err)
+				return fmt.Errorf("failed to send file chunk: %v", err)
+			}
+			totalSent += int64(n)
+			chunkCount++
+			glog.V(3).Infof("UPLOAD CHUNK: Shard %d chunk %d sent (%d bytes, total: %d)", shardId, chunkCount, n, totalSent)
+		}
+
+		// Break if we reached EOF
+		if err == io.EOF {
+			break
+		}
+	}
+	glog.V(2).Infof("UPLOAD GRPC: Completed streaming shard %d (%d bytes in %d chunks)", shardId, totalSent, chunkCount)
+
+	// Close stream and get response
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		glog.Errorf("UPLOAD ERROR: Failed to close stream for shard %d: %v", shardId, err)
+		return fmt.Errorf("failed to close stream: %v", err)
 	}
 
+	if resp.Error != "" {
+		glog.Errorf("UPLOAD ERROR: Server error for shard %d: %s", shardId, resp.Error)
+		return fmt.Errorf("server error: %s", resp.Error)
+	}
+
+	glog.V(1).Infof("UPLOAD SUCCESS: Shard %d (%d bytes) successfully uploaded to %s", shardId, resp.BytesWritten, targetServer)
 	return nil
+}
+
+// uploadShardDataDirectly is no longer needed - kept for compatibility
+func (t *Task) uploadShardDataDirectly(file *os.File, targetServer pb.ServerAddress, shardId uint32, fileSize int64) error {
+	// This method is deprecated in favor of gRPC streaming
+	return fmt.Errorf("uploadShardDataDirectly is deprecated - use gRPC ReceiveFile instead")
 }
 
 // mountShardOnServer mounts an EC shard on target server
 func (t *Task) mountShardOnServer(targetServer pb.ServerAddress, shardId uint32) error {
+	glog.V(1).Infof("MOUNT START: Mounting shard %d on server %s", shardId, targetServer)
+
+	// Connect to target server
 	grpcAddress := pb.ServerToGrpcAddress(string(targetServer))
 	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOpt)
 	if err != nil {
+		glog.Errorf("MOUNT ERROR: Failed to connect to %s for shard %d: %v", targetServer, shardId, err)
 		return fmt.Errorf("failed to connect to %s: %v", targetServer, err)
 	}
 	defer conn.Close()
+	glog.V(2).Infof("MOUNT GRPC: Connected to %s for shard %d", targetServer, shardId)
 
 	client := volume_server_pb.NewVolumeServerClient(conn)
-	_, err = client.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
+	ctx := context.Background()
+
+	// Mount the shard
+	_, err = client.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
 		VolumeId:   t.volumeID,
 		Collection: t.collection,
 		ShardIds:   []uint32{shardId},
 	})
 	if err != nil {
+		glog.Errorf("MOUNT ERROR: Failed to mount shard %d on %s: %v", shardId, targetServer, err)
 		return fmt.Errorf("failed to mount shard %d: %v", shardId, err)
 	}
 
-	glog.V(1).Infof("Successfully mounted shard %d on server %s", shardId, targetServer)
+	glog.V(1).Infof("MOUNT SUCCESS: Shard %d successfully mounted on %s", shardId, targetServer)
 	return nil
 }
 

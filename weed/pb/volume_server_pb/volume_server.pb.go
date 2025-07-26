@@ -1966,6 +1966,224 @@ func (x *CopyFileResponse) GetModifiedTsNs() int64 {
 	return 0
 }
 
+type ReceiveFileRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Data:
+	//
+	//	*ReceiveFileRequest_Info
+	//	*ReceiveFileRequest_FileContent
+	Data          isReceiveFileRequest_Data `protobuf_oneof:"data"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReceiveFileRequest) Reset() {
+	*x = ReceiveFileRequest{}
+	mi := &file_volume_server_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReceiveFileRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReceiveFileRequest) ProtoMessage() {}
+
+func (x *ReceiveFileRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReceiveFileRequest.ProtoReflect.Descriptor instead.
+func (*ReceiveFileRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *ReceiveFileRequest) GetData() isReceiveFileRequest_Data {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *ReceiveFileRequest) GetInfo() *ReceiveFileInfo {
+	if x != nil {
+		if x, ok := x.Data.(*ReceiveFileRequest_Info); ok {
+			return x.Info
+		}
+	}
+	return nil
+}
+
+func (x *ReceiveFileRequest) GetFileContent() []byte {
+	if x != nil {
+		if x, ok := x.Data.(*ReceiveFileRequest_FileContent); ok {
+			return x.FileContent
+		}
+	}
+	return nil
+}
+
+type isReceiveFileRequest_Data interface {
+	isReceiveFileRequest_Data()
+}
+
+type ReceiveFileRequest_Info struct {
+	Info *ReceiveFileInfo `protobuf:"bytes,1,opt,name=info,proto3,oneof"`
+}
+
+type ReceiveFileRequest_FileContent struct {
+	FileContent []byte `protobuf:"bytes,2,opt,name=file_content,json=fileContent,proto3,oneof"`
+}
+
+func (*ReceiveFileRequest_Info) isReceiveFileRequest_Data() {}
+
+func (*ReceiveFileRequest_FileContent) isReceiveFileRequest_Data() {}
+
+type ReceiveFileInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Ext           string                 `protobuf:"bytes,2,opt,name=ext,proto3" json:"ext,omitempty"`
+	Collection    string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
+	IsEcVolume    bool                   `protobuf:"varint,4,opt,name=is_ec_volume,json=isEcVolume,proto3" json:"is_ec_volume,omitempty"`
+	ShardId       uint32                 `protobuf:"varint,5,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
+	FileSize      uint64                 `protobuf:"varint,6,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReceiveFileInfo) Reset() {
+	*x = ReceiveFileInfo{}
+	mi := &file_volume_server_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReceiveFileInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReceiveFileInfo) ProtoMessage() {}
+
+func (x *ReceiveFileInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReceiveFileInfo.ProtoReflect.Descriptor instead.
+func (*ReceiveFileInfo) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *ReceiveFileInfo) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *ReceiveFileInfo) GetExt() string {
+	if x != nil {
+		return x.Ext
+	}
+	return ""
+}
+
+func (x *ReceiveFileInfo) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *ReceiveFileInfo) GetIsEcVolume() bool {
+	if x != nil {
+		return x.IsEcVolume
+	}
+	return false
+}
+
+func (x *ReceiveFileInfo) GetShardId() uint32 {
+	if x != nil {
+		return x.ShardId
+	}
+	return 0
+}
+
+func (x *ReceiveFileInfo) GetFileSize() uint64 {
+	if x != nil {
+		return x.FileSize
+	}
+	return 0
+}
+
+type ReceiveFileResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BytesWritten  uint64                 `protobuf:"varint,1,opt,name=bytes_written,json=bytesWritten,proto3" json:"bytes_written,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReceiveFileResponse) Reset() {
+	*x = ReceiveFileResponse{}
+	mi := &file_volume_server_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReceiveFileResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReceiveFileResponse) ProtoMessage() {}
+
+func (x *ReceiveFileResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReceiveFileResponse.ProtoReflect.Descriptor instead.
+func (*ReceiveFileResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *ReceiveFileResponse) GetBytesWritten() uint64 {
+	if x != nil {
+		return x.BytesWritten
+	}
+	return 0
+}
+
+func (x *ReceiveFileResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type ReadNeedleBlobRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
@@ -1977,7 +2195,7 @@ type ReadNeedleBlobRequest struct {
 
 func (x *ReadNeedleBlobRequest) Reset() {
 	*x = ReadNeedleBlobRequest{}
-	mi := &file_volume_server_proto_msgTypes[38]
+	mi := &file_volume_server_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1989,7 +2207,7 @@ func (x *ReadNeedleBlobRequest) String() string {
 func (*ReadNeedleBlobRequest) ProtoMessage() {}
 
 func (x *ReadNeedleBlobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[38]
+	mi := &file_volume_server_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2002,7 +2220,7 @@ func (x *ReadNeedleBlobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadNeedleBlobRequest.ProtoReflect.Descriptor instead.
 func (*ReadNeedleBlobRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{38}
+	return file_volume_server_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ReadNeedleBlobRequest) GetVolumeId() uint32 {
@@ -2035,7 +2253,7 @@ type ReadNeedleBlobResponse struct {
 
 func (x *ReadNeedleBlobResponse) Reset() {
 	*x = ReadNeedleBlobResponse{}
-	mi := &file_volume_server_proto_msgTypes[39]
+	mi := &file_volume_server_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2047,7 +2265,7 @@ func (x *ReadNeedleBlobResponse) String() string {
 func (*ReadNeedleBlobResponse) ProtoMessage() {}
 
 func (x *ReadNeedleBlobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[39]
+	mi := &file_volume_server_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2060,7 +2278,7 @@ func (x *ReadNeedleBlobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadNeedleBlobResponse.ProtoReflect.Descriptor instead.
 func (*ReadNeedleBlobResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{39}
+	return file_volume_server_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ReadNeedleBlobResponse) GetNeedleBlob() []byte {
@@ -2082,7 +2300,7 @@ type ReadNeedleMetaRequest struct {
 
 func (x *ReadNeedleMetaRequest) Reset() {
 	*x = ReadNeedleMetaRequest{}
-	mi := &file_volume_server_proto_msgTypes[40]
+	mi := &file_volume_server_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2094,7 +2312,7 @@ func (x *ReadNeedleMetaRequest) String() string {
 func (*ReadNeedleMetaRequest) ProtoMessage() {}
 
 func (x *ReadNeedleMetaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[40]
+	mi := &file_volume_server_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2107,7 +2325,7 @@ func (x *ReadNeedleMetaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadNeedleMetaRequest.ProtoReflect.Descriptor instead.
 func (*ReadNeedleMetaRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{40}
+	return file_volume_server_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ReadNeedleMetaRequest) GetVolumeId() uint32 {
@@ -2151,7 +2369,7 @@ type ReadNeedleMetaResponse struct {
 
 func (x *ReadNeedleMetaResponse) Reset() {
 	*x = ReadNeedleMetaResponse{}
-	mi := &file_volume_server_proto_msgTypes[41]
+	mi := &file_volume_server_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2163,7 +2381,7 @@ func (x *ReadNeedleMetaResponse) String() string {
 func (*ReadNeedleMetaResponse) ProtoMessage() {}
 
 func (x *ReadNeedleMetaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[41]
+	mi := &file_volume_server_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2176,7 +2394,7 @@ func (x *ReadNeedleMetaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadNeedleMetaResponse.ProtoReflect.Descriptor instead.
 func (*ReadNeedleMetaResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{41}
+	return file_volume_server_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ReadNeedleMetaResponse) GetCookie() uint32 {
@@ -2226,7 +2444,7 @@ type WriteNeedleBlobRequest struct {
 
 func (x *WriteNeedleBlobRequest) Reset() {
 	*x = WriteNeedleBlobRequest{}
-	mi := &file_volume_server_proto_msgTypes[42]
+	mi := &file_volume_server_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2238,7 +2456,7 @@ func (x *WriteNeedleBlobRequest) String() string {
 func (*WriteNeedleBlobRequest) ProtoMessage() {}
 
 func (x *WriteNeedleBlobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[42]
+	mi := &file_volume_server_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2251,7 +2469,7 @@ func (x *WriteNeedleBlobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteNeedleBlobRequest.ProtoReflect.Descriptor instead.
 func (*WriteNeedleBlobRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{42}
+	return file_volume_server_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *WriteNeedleBlobRequest) GetVolumeId() uint32 {
@@ -2290,7 +2508,7 @@ type WriteNeedleBlobResponse struct {
 
 func (x *WriteNeedleBlobResponse) Reset() {
 	*x = WriteNeedleBlobResponse{}
-	mi := &file_volume_server_proto_msgTypes[43]
+	mi := &file_volume_server_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2302,7 +2520,7 @@ func (x *WriteNeedleBlobResponse) String() string {
 func (*WriteNeedleBlobResponse) ProtoMessage() {}
 
 func (x *WriteNeedleBlobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[43]
+	mi := &file_volume_server_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2315,7 +2533,7 @@ func (x *WriteNeedleBlobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteNeedleBlobResponse.ProtoReflect.Descriptor instead.
 func (*WriteNeedleBlobResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{43}
+	return file_volume_server_proto_rawDescGZIP(), []int{46}
 }
 
 type ReadAllNeedlesRequest struct {
@@ -2327,7 +2545,7 @@ type ReadAllNeedlesRequest struct {
 
 func (x *ReadAllNeedlesRequest) Reset() {
 	*x = ReadAllNeedlesRequest{}
-	mi := &file_volume_server_proto_msgTypes[44]
+	mi := &file_volume_server_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2339,7 +2557,7 @@ func (x *ReadAllNeedlesRequest) String() string {
 func (*ReadAllNeedlesRequest) ProtoMessage() {}
 
 func (x *ReadAllNeedlesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[44]
+	mi := &file_volume_server_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2352,7 +2570,7 @@ func (x *ReadAllNeedlesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadAllNeedlesRequest.ProtoReflect.Descriptor instead.
 func (*ReadAllNeedlesRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{44}
+	return file_volume_server_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *ReadAllNeedlesRequest) GetVolumeIds() []uint32 {
@@ -2379,7 +2597,7 @@ type ReadAllNeedlesResponse struct {
 
 func (x *ReadAllNeedlesResponse) Reset() {
 	*x = ReadAllNeedlesResponse{}
-	mi := &file_volume_server_proto_msgTypes[45]
+	mi := &file_volume_server_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2391,7 +2609,7 @@ func (x *ReadAllNeedlesResponse) String() string {
 func (*ReadAllNeedlesResponse) ProtoMessage() {}
 
 func (x *ReadAllNeedlesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[45]
+	mi := &file_volume_server_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2404,7 +2622,7 @@ func (x *ReadAllNeedlesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadAllNeedlesResponse.ProtoReflect.Descriptor instead.
 func (*ReadAllNeedlesResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{45}
+	return file_volume_server_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *ReadAllNeedlesResponse) GetVolumeId() uint32 {
@@ -2481,7 +2699,7 @@ type VolumeTailSenderRequest struct {
 
 func (x *VolumeTailSenderRequest) Reset() {
 	*x = VolumeTailSenderRequest{}
-	mi := &file_volume_server_proto_msgTypes[46]
+	mi := &file_volume_server_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2493,7 +2711,7 @@ func (x *VolumeTailSenderRequest) String() string {
 func (*VolumeTailSenderRequest) ProtoMessage() {}
 
 func (x *VolumeTailSenderRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[46]
+	mi := &file_volume_server_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2506,7 +2724,7 @@ func (x *VolumeTailSenderRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeTailSenderRequest.ProtoReflect.Descriptor instead.
 func (*VolumeTailSenderRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{46}
+	return file_volume_server_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *VolumeTailSenderRequest) GetVolumeId() uint32 {
@@ -2542,7 +2760,7 @@ type VolumeTailSenderResponse struct {
 
 func (x *VolumeTailSenderResponse) Reset() {
 	*x = VolumeTailSenderResponse{}
-	mi := &file_volume_server_proto_msgTypes[47]
+	mi := &file_volume_server_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2554,7 +2772,7 @@ func (x *VolumeTailSenderResponse) String() string {
 func (*VolumeTailSenderResponse) ProtoMessage() {}
 
 func (x *VolumeTailSenderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[47]
+	mi := &file_volume_server_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2567,7 +2785,7 @@ func (x *VolumeTailSenderResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeTailSenderResponse.ProtoReflect.Descriptor instead.
 func (*VolumeTailSenderResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{47}
+	return file_volume_server_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *VolumeTailSenderResponse) GetNeedleHeader() []byte {
@@ -2610,7 +2828,7 @@ type VolumeTailReceiverRequest struct {
 
 func (x *VolumeTailReceiverRequest) Reset() {
 	*x = VolumeTailReceiverRequest{}
-	mi := &file_volume_server_proto_msgTypes[48]
+	mi := &file_volume_server_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2622,7 +2840,7 @@ func (x *VolumeTailReceiverRequest) String() string {
 func (*VolumeTailReceiverRequest) ProtoMessage() {}
 
 func (x *VolumeTailReceiverRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[48]
+	mi := &file_volume_server_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2635,7 +2853,7 @@ func (x *VolumeTailReceiverRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeTailReceiverRequest.ProtoReflect.Descriptor instead.
 func (*VolumeTailReceiverRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{48}
+	return file_volume_server_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *VolumeTailReceiverRequest) GetVolumeId() uint32 {
@@ -2674,7 +2892,7 @@ type VolumeTailReceiverResponse struct {
 
 func (x *VolumeTailReceiverResponse) Reset() {
 	*x = VolumeTailReceiverResponse{}
-	mi := &file_volume_server_proto_msgTypes[49]
+	mi := &file_volume_server_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2686,7 +2904,7 @@ func (x *VolumeTailReceiverResponse) String() string {
 func (*VolumeTailReceiverResponse) ProtoMessage() {}
 
 func (x *VolumeTailReceiverResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[49]
+	mi := &file_volume_server_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2699,7 +2917,7 @@ func (x *VolumeTailReceiverResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeTailReceiverResponse.ProtoReflect.Descriptor instead.
 func (*VolumeTailReceiverResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{49}
+	return file_volume_server_proto_rawDescGZIP(), []int{52}
 }
 
 type VolumeEcShardsGenerateRequest struct {
@@ -2712,7 +2930,7 @@ type VolumeEcShardsGenerateRequest struct {
 
 func (x *VolumeEcShardsGenerateRequest) Reset() {
 	*x = VolumeEcShardsGenerateRequest{}
-	mi := &file_volume_server_proto_msgTypes[50]
+	mi := &file_volume_server_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2724,7 +2942,7 @@ func (x *VolumeEcShardsGenerateRequest) String() string {
 func (*VolumeEcShardsGenerateRequest) ProtoMessage() {}
 
 func (x *VolumeEcShardsGenerateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[50]
+	mi := &file_volume_server_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2737,7 +2955,7 @@ func (x *VolumeEcShardsGenerateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsGenerateRequest.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsGenerateRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{50}
+	return file_volume_server_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *VolumeEcShardsGenerateRequest) GetVolumeId() uint32 {
@@ -2762,7 +2980,7 @@ type VolumeEcShardsGenerateResponse struct {
 
 func (x *VolumeEcShardsGenerateResponse) Reset() {
 	*x = VolumeEcShardsGenerateResponse{}
-	mi := &file_volume_server_proto_msgTypes[51]
+	mi := &file_volume_server_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2774,7 +2992,7 @@ func (x *VolumeEcShardsGenerateResponse) String() string {
 func (*VolumeEcShardsGenerateResponse) ProtoMessage() {}
 
 func (x *VolumeEcShardsGenerateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[51]
+	mi := &file_volume_server_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2787,7 +3005,7 @@ func (x *VolumeEcShardsGenerateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsGenerateResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsGenerateResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{51}
+	return file_volume_server_proto_rawDescGZIP(), []int{54}
 }
 
 type VolumeEcShardsRebuildRequest struct {
@@ -2800,7 +3018,7 @@ type VolumeEcShardsRebuildRequest struct {
 
 func (x *VolumeEcShardsRebuildRequest) Reset() {
 	*x = VolumeEcShardsRebuildRequest{}
-	mi := &file_volume_server_proto_msgTypes[52]
+	mi := &file_volume_server_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2812,7 +3030,7 @@ func (x *VolumeEcShardsRebuildRequest) String() string {
 func (*VolumeEcShardsRebuildRequest) ProtoMessage() {}
 
 func (x *VolumeEcShardsRebuildRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[52]
+	mi := &file_volume_server_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2825,7 +3043,7 @@ func (x *VolumeEcShardsRebuildRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsRebuildRequest.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsRebuildRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{52}
+	return file_volume_server_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *VolumeEcShardsRebuildRequest) GetVolumeId() uint32 {
@@ -2851,7 +3069,7 @@ type VolumeEcShardsRebuildResponse struct {
 
 func (x *VolumeEcShardsRebuildResponse) Reset() {
 	*x = VolumeEcShardsRebuildResponse{}
-	mi := &file_volume_server_proto_msgTypes[53]
+	mi := &file_volume_server_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2863,7 +3081,7 @@ func (x *VolumeEcShardsRebuildResponse) String() string {
 func (*VolumeEcShardsRebuildResponse) ProtoMessage() {}
 
 func (x *VolumeEcShardsRebuildResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[53]
+	mi := &file_volume_server_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2876,7 +3094,7 @@ func (x *VolumeEcShardsRebuildResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsRebuildResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsRebuildResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{53}
+	return file_volume_server_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *VolumeEcShardsRebuildResponse) GetRebuiltShardIds() []uint32 {
@@ -2901,7 +3119,7 @@ type VolumeEcShardsCopyRequest struct {
 
 func (x *VolumeEcShardsCopyRequest) Reset() {
 	*x = VolumeEcShardsCopyRequest{}
-	mi := &file_volume_server_proto_msgTypes[54]
+	mi := &file_volume_server_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2913,7 +3131,7 @@ func (x *VolumeEcShardsCopyRequest) String() string {
 func (*VolumeEcShardsCopyRequest) ProtoMessage() {}
 
 func (x *VolumeEcShardsCopyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[54]
+	mi := &file_volume_server_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2926,7 +3144,7 @@ func (x *VolumeEcShardsCopyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsCopyRequest.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsCopyRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{54}
+	return file_volume_server_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *VolumeEcShardsCopyRequest) GetVolumeId() uint32 {
@@ -2986,7 +3204,7 @@ type VolumeEcShardsCopyResponse struct {
 
 func (x *VolumeEcShardsCopyResponse) Reset() {
 	*x = VolumeEcShardsCopyResponse{}
-	mi := &file_volume_server_proto_msgTypes[55]
+	mi := &file_volume_server_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2998,7 +3216,7 @@ func (x *VolumeEcShardsCopyResponse) String() string {
 func (*VolumeEcShardsCopyResponse) ProtoMessage() {}
 
 func (x *VolumeEcShardsCopyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[55]
+	mi := &file_volume_server_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3011,7 +3229,7 @@ func (x *VolumeEcShardsCopyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsCopyResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsCopyResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{55}
+	return file_volume_server_proto_rawDescGZIP(), []int{58}
 }
 
 type VolumeEcShardsDeleteRequest struct {
@@ -3025,7 +3243,7 @@ type VolumeEcShardsDeleteRequest struct {
 
 func (x *VolumeEcShardsDeleteRequest) Reset() {
 	*x = VolumeEcShardsDeleteRequest{}
-	mi := &file_volume_server_proto_msgTypes[56]
+	mi := &file_volume_server_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3037,7 +3255,7 @@ func (x *VolumeEcShardsDeleteRequest) String() string {
 func (*VolumeEcShardsDeleteRequest) ProtoMessage() {}
 
 func (x *VolumeEcShardsDeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[56]
+	mi := &file_volume_server_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3050,7 +3268,7 @@ func (x *VolumeEcShardsDeleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsDeleteRequest.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsDeleteRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{56}
+	return file_volume_server_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *VolumeEcShardsDeleteRequest) GetVolumeId() uint32 {
@@ -3082,7 +3300,7 @@ type VolumeEcShardsDeleteResponse struct {
 
 func (x *VolumeEcShardsDeleteResponse) Reset() {
 	*x = VolumeEcShardsDeleteResponse{}
-	mi := &file_volume_server_proto_msgTypes[57]
+	mi := &file_volume_server_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3094,7 +3312,7 @@ func (x *VolumeEcShardsDeleteResponse) String() string {
 func (*VolumeEcShardsDeleteResponse) ProtoMessage() {}
 
 func (x *VolumeEcShardsDeleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[57]
+	mi := &file_volume_server_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3107,7 +3325,7 @@ func (x *VolumeEcShardsDeleteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsDeleteResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsDeleteResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{57}
+	return file_volume_server_proto_rawDescGZIP(), []int{60}
 }
 
 type VolumeEcShardsMountRequest struct {
@@ -3121,7 +3339,7 @@ type VolumeEcShardsMountRequest struct {
 
 func (x *VolumeEcShardsMountRequest) Reset() {
 	*x = VolumeEcShardsMountRequest{}
-	mi := &file_volume_server_proto_msgTypes[58]
+	mi := &file_volume_server_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3133,7 +3351,7 @@ func (x *VolumeEcShardsMountRequest) String() string {
 func (*VolumeEcShardsMountRequest) ProtoMessage() {}
 
 func (x *VolumeEcShardsMountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[58]
+	mi := &file_volume_server_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3146,7 +3364,7 @@ func (x *VolumeEcShardsMountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsMountRequest.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsMountRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{58}
+	return file_volume_server_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *VolumeEcShardsMountRequest) GetVolumeId() uint32 {
@@ -3178,7 +3396,7 @@ type VolumeEcShardsMountResponse struct {
 
 func (x *VolumeEcShardsMountResponse) Reset() {
 	*x = VolumeEcShardsMountResponse{}
-	mi := &file_volume_server_proto_msgTypes[59]
+	mi := &file_volume_server_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3190,7 +3408,7 @@ func (x *VolumeEcShardsMountResponse) String() string {
 func (*VolumeEcShardsMountResponse) ProtoMessage() {}
 
 func (x *VolumeEcShardsMountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[59]
+	mi := &file_volume_server_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3203,7 +3421,7 @@ func (x *VolumeEcShardsMountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsMountResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsMountResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{59}
+	return file_volume_server_proto_rawDescGZIP(), []int{62}
 }
 
 type VolumeEcShardsUnmountRequest struct {
@@ -3216,7 +3434,7 @@ type VolumeEcShardsUnmountRequest struct {
 
 func (x *VolumeEcShardsUnmountRequest) Reset() {
 	*x = VolumeEcShardsUnmountRequest{}
-	mi := &file_volume_server_proto_msgTypes[60]
+	mi := &file_volume_server_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3228,7 +3446,7 @@ func (x *VolumeEcShardsUnmountRequest) String() string {
 func (*VolumeEcShardsUnmountRequest) ProtoMessage() {}
 
 func (x *VolumeEcShardsUnmountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[60]
+	mi := &file_volume_server_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3241,7 +3459,7 @@ func (x *VolumeEcShardsUnmountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsUnmountRequest.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsUnmountRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{60}
+	return file_volume_server_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *VolumeEcShardsUnmountRequest) GetVolumeId() uint32 {
@@ -3266,7 +3484,7 @@ type VolumeEcShardsUnmountResponse struct {
 
 func (x *VolumeEcShardsUnmountResponse) Reset() {
 	*x = VolumeEcShardsUnmountResponse{}
-	mi := &file_volume_server_proto_msgTypes[61]
+	mi := &file_volume_server_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3278,7 +3496,7 @@ func (x *VolumeEcShardsUnmountResponse) String() string {
 func (*VolumeEcShardsUnmountResponse) ProtoMessage() {}
 
 func (x *VolumeEcShardsUnmountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[61]
+	mi := &file_volume_server_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3291,7 +3509,7 @@ func (x *VolumeEcShardsUnmountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsUnmountResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsUnmountResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{61}
+	return file_volume_server_proto_rawDescGZIP(), []int{64}
 }
 
 type VolumeEcShardReadRequest struct {
@@ -3307,7 +3525,7 @@ type VolumeEcShardReadRequest struct {
 
 func (x *VolumeEcShardReadRequest) Reset() {
 	*x = VolumeEcShardReadRequest{}
-	mi := &file_volume_server_proto_msgTypes[62]
+	mi := &file_volume_server_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3319,7 +3537,7 @@ func (x *VolumeEcShardReadRequest) String() string {
 func (*VolumeEcShardReadRequest) ProtoMessage() {}
 
 func (x *VolumeEcShardReadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[62]
+	mi := &file_volume_server_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3332,7 +3550,7 @@ func (x *VolumeEcShardReadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardReadRequest.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardReadRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{62}
+	return file_volume_server_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *VolumeEcShardReadRequest) GetVolumeId() uint32 {
@@ -3380,7 +3598,7 @@ type VolumeEcShardReadResponse struct {
 
 func (x *VolumeEcShardReadResponse) Reset() {
 	*x = VolumeEcShardReadResponse{}
-	mi := &file_volume_server_proto_msgTypes[63]
+	mi := &file_volume_server_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3392,7 +3610,7 @@ func (x *VolumeEcShardReadResponse) String() string {
 func (*VolumeEcShardReadResponse) ProtoMessage() {}
 
 func (x *VolumeEcShardReadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[63]
+	mi := &file_volume_server_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3405,7 +3623,7 @@ func (x *VolumeEcShardReadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardReadResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardReadResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{63}
+	return file_volume_server_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *VolumeEcShardReadResponse) GetData() []byte {
@@ -3434,7 +3652,7 @@ type VolumeEcBlobDeleteRequest struct {
 
 func (x *VolumeEcBlobDeleteRequest) Reset() {
 	*x = VolumeEcBlobDeleteRequest{}
-	mi := &file_volume_server_proto_msgTypes[64]
+	mi := &file_volume_server_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3446,7 +3664,7 @@ func (x *VolumeEcBlobDeleteRequest) String() string {
 func (*VolumeEcBlobDeleteRequest) ProtoMessage() {}
 
 func (x *VolumeEcBlobDeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[64]
+	mi := &file_volume_server_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3459,7 +3677,7 @@ func (x *VolumeEcBlobDeleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcBlobDeleteRequest.ProtoReflect.Descriptor instead.
 func (*VolumeEcBlobDeleteRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{64}
+	return file_volume_server_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *VolumeEcBlobDeleteRequest) GetVolumeId() uint32 {
@@ -3498,7 +3716,7 @@ type VolumeEcBlobDeleteResponse struct {
 
 func (x *VolumeEcBlobDeleteResponse) Reset() {
 	*x = VolumeEcBlobDeleteResponse{}
-	mi := &file_volume_server_proto_msgTypes[65]
+	mi := &file_volume_server_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3510,7 +3728,7 @@ func (x *VolumeEcBlobDeleteResponse) String() string {
 func (*VolumeEcBlobDeleteResponse) ProtoMessage() {}
 
 func (x *VolumeEcBlobDeleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[65]
+	mi := &file_volume_server_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3523,7 +3741,7 @@ func (x *VolumeEcBlobDeleteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcBlobDeleteResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcBlobDeleteResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{65}
+	return file_volume_server_proto_rawDescGZIP(), []int{68}
 }
 
 type VolumeEcShardsToVolumeRequest struct {
@@ -3536,7 +3754,7 @@ type VolumeEcShardsToVolumeRequest struct {
 
 func (x *VolumeEcShardsToVolumeRequest) Reset() {
 	*x = VolumeEcShardsToVolumeRequest{}
-	mi := &file_volume_server_proto_msgTypes[66]
+	mi := &file_volume_server_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3548,7 +3766,7 @@ func (x *VolumeEcShardsToVolumeRequest) String() string {
 func (*VolumeEcShardsToVolumeRequest) ProtoMessage() {}
 
 func (x *VolumeEcShardsToVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[66]
+	mi := &file_volume_server_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3561,7 +3779,7 @@ func (x *VolumeEcShardsToVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsToVolumeRequest.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsToVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{66}
+	return file_volume_server_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *VolumeEcShardsToVolumeRequest) GetVolumeId() uint32 {
@@ -3586,7 +3804,7 @@ type VolumeEcShardsToVolumeResponse struct {
 
 func (x *VolumeEcShardsToVolumeResponse) Reset() {
 	*x = VolumeEcShardsToVolumeResponse{}
-	mi := &file_volume_server_proto_msgTypes[67]
+	mi := &file_volume_server_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3598,7 +3816,7 @@ func (x *VolumeEcShardsToVolumeResponse) String() string {
 func (*VolumeEcShardsToVolumeResponse) ProtoMessage() {}
 
 func (x *VolumeEcShardsToVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[67]
+	mi := &file_volume_server_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3611,7 +3829,7 @@ func (x *VolumeEcShardsToVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardsToVolumeResponse.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardsToVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{67}
+	return file_volume_server_proto_rawDescGZIP(), []int{70}
 }
 
 type ReadVolumeFileStatusRequest struct {
@@ -3623,7 +3841,7 @@ type ReadVolumeFileStatusRequest struct {
 
 func (x *ReadVolumeFileStatusRequest) Reset() {
 	*x = ReadVolumeFileStatusRequest{}
-	mi := &file_volume_server_proto_msgTypes[68]
+	mi := &file_volume_server_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3635,7 +3853,7 @@ func (x *ReadVolumeFileStatusRequest) String() string {
 func (*ReadVolumeFileStatusRequest) ProtoMessage() {}
 
 func (x *ReadVolumeFileStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[68]
+	mi := &file_volume_server_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3648,7 +3866,7 @@ func (x *ReadVolumeFileStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadVolumeFileStatusRequest.ProtoReflect.Descriptor instead.
 func (*ReadVolumeFileStatusRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{68}
+	return file_volume_server_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *ReadVolumeFileStatusRequest) GetVolumeId() uint32 {
@@ -3677,7 +3895,7 @@ type ReadVolumeFileStatusResponse struct {
 
 func (x *ReadVolumeFileStatusResponse) Reset() {
 	*x = ReadVolumeFileStatusResponse{}
-	mi := &file_volume_server_proto_msgTypes[69]
+	mi := &file_volume_server_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3689,7 +3907,7 @@ func (x *ReadVolumeFileStatusResponse) String() string {
 func (*ReadVolumeFileStatusResponse) ProtoMessage() {}
 
 func (x *ReadVolumeFileStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[69]
+	mi := &file_volume_server_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3702,7 +3920,7 @@ func (x *ReadVolumeFileStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadVolumeFileStatusResponse.ProtoReflect.Descriptor instead.
 func (*ReadVolumeFileStatusResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{69}
+	return file_volume_server_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *ReadVolumeFileStatusResponse) GetVolumeId() uint32 {
@@ -3797,7 +4015,7 @@ type DiskStatus struct {
 
 func (x *DiskStatus) Reset() {
 	*x = DiskStatus{}
-	mi := &file_volume_server_proto_msgTypes[70]
+	mi := &file_volume_server_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3809,7 +4027,7 @@ func (x *DiskStatus) String() string {
 func (*DiskStatus) ProtoMessage() {}
 
 func (x *DiskStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[70]
+	mi := &file_volume_server_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3822,7 +4040,7 @@ func (x *DiskStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiskStatus.ProtoReflect.Descriptor instead.
 func (*DiskStatus) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{70}
+	return file_volume_server_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *DiskStatus) GetDir() string {
@@ -3889,7 +4107,7 @@ type MemStatus struct {
 
 func (x *MemStatus) Reset() {
 	*x = MemStatus{}
-	mi := &file_volume_server_proto_msgTypes[71]
+	mi := &file_volume_server_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3901,7 +4119,7 @@ func (x *MemStatus) String() string {
 func (*MemStatus) ProtoMessage() {}
 
 func (x *MemStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[71]
+	mi := &file_volume_server_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3914,7 +4132,7 @@ func (x *MemStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemStatus.ProtoReflect.Descriptor instead.
 func (*MemStatus) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{71}
+	return file_volume_server_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *MemStatus) GetGoroutines() int32 {
@@ -3982,7 +4200,7 @@ type RemoteFile struct {
 
 func (x *RemoteFile) Reset() {
 	*x = RemoteFile{}
-	mi := &file_volume_server_proto_msgTypes[72]
+	mi := &file_volume_server_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3994,7 +4212,7 @@ func (x *RemoteFile) String() string {
 func (*RemoteFile) ProtoMessage() {}
 
 func (x *RemoteFile) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[72]
+	mi := &file_volume_server_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4007,7 +4225,7 @@ func (x *RemoteFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoteFile.ProtoReflect.Descriptor instead.
 func (*RemoteFile) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{72}
+	return file_volume_server_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *RemoteFile) GetBackendType() string {
@@ -4074,7 +4292,7 @@ type VolumeInfo struct {
 
 func (x *VolumeInfo) Reset() {
 	*x = VolumeInfo{}
-	mi := &file_volume_server_proto_msgTypes[73]
+	mi := &file_volume_server_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4086,7 +4304,7 @@ func (x *VolumeInfo) String() string {
 func (*VolumeInfo) ProtoMessage() {}
 
 func (x *VolumeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[73]
+	mi := &file_volume_server_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4099,7 +4317,7 @@ func (x *VolumeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeInfo.ProtoReflect.Descriptor instead.
 func (*VolumeInfo) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{73}
+	return file_volume_server_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *VolumeInfo) GetFiles() []*RemoteFile {
@@ -4166,7 +4384,7 @@ type OldVersionVolumeInfo struct {
 
 func (x *OldVersionVolumeInfo) Reset() {
 	*x = OldVersionVolumeInfo{}
-	mi := &file_volume_server_proto_msgTypes[74]
+	mi := &file_volume_server_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4178,7 +4396,7 @@ func (x *OldVersionVolumeInfo) String() string {
 func (*OldVersionVolumeInfo) ProtoMessage() {}
 
 func (x *OldVersionVolumeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[74]
+	mi := &file_volume_server_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4191,7 +4409,7 @@ func (x *OldVersionVolumeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OldVersionVolumeInfo.ProtoReflect.Descriptor instead.
 func (*OldVersionVolumeInfo) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{74}
+	return file_volume_server_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *OldVersionVolumeInfo) GetFiles() []*RemoteFile {
@@ -4256,7 +4474,7 @@ type VolumeTierMoveDatToRemoteRequest struct {
 
 func (x *VolumeTierMoveDatToRemoteRequest) Reset() {
 	*x = VolumeTierMoveDatToRemoteRequest{}
-	mi := &file_volume_server_proto_msgTypes[75]
+	mi := &file_volume_server_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4268,7 +4486,7 @@ func (x *VolumeTierMoveDatToRemoteRequest) String() string {
 func (*VolumeTierMoveDatToRemoteRequest) ProtoMessage() {}
 
 func (x *VolumeTierMoveDatToRemoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[75]
+	mi := &file_volume_server_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4281,7 +4499,7 @@ func (x *VolumeTierMoveDatToRemoteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeTierMoveDatToRemoteRequest.ProtoReflect.Descriptor instead.
 func (*VolumeTierMoveDatToRemoteRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{75}
+	return file_volume_server_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *VolumeTierMoveDatToRemoteRequest) GetVolumeId() uint32 {
@@ -4322,7 +4540,7 @@ type VolumeTierMoveDatToRemoteResponse struct {
 
 func (x *VolumeTierMoveDatToRemoteResponse) Reset() {
 	*x = VolumeTierMoveDatToRemoteResponse{}
-	mi := &file_volume_server_proto_msgTypes[76]
+	mi := &file_volume_server_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4334,7 +4552,7 @@ func (x *VolumeTierMoveDatToRemoteResponse) String() string {
 func (*VolumeTierMoveDatToRemoteResponse) ProtoMessage() {}
 
 func (x *VolumeTierMoveDatToRemoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[76]
+	mi := &file_volume_server_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4347,7 +4565,7 @@ func (x *VolumeTierMoveDatToRemoteResponse) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use VolumeTierMoveDatToRemoteResponse.ProtoReflect.Descriptor instead.
 func (*VolumeTierMoveDatToRemoteResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{76}
+	return file_volume_server_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *VolumeTierMoveDatToRemoteResponse) GetProcessed() int64 {
@@ -4375,7 +4593,7 @@ type VolumeTierMoveDatFromRemoteRequest struct {
 
 func (x *VolumeTierMoveDatFromRemoteRequest) Reset() {
 	*x = VolumeTierMoveDatFromRemoteRequest{}
-	mi := &file_volume_server_proto_msgTypes[77]
+	mi := &file_volume_server_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4387,7 +4605,7 @@ func (x *VolumeTierMoveDatFromRemoteRequest) String() string {
 func (*VolumeTierMoveDatFromRemoteRequest) ProtoMessage() {}
 
 func (x *VolumeTierMoveDatFromRemoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[77]
+	mi := &file_volume_server_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4400,7 +4618,7 @@ func (x *VolumeTierMoveDatFromRemoteRequest) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use VolumeTierMoveDatFromRemoteRequest.ProtoReflect.Descriptor instead.
 func (*VolumeTierMoveDatFromRemoteRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{77}
+	return file_volume_server_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *VolumeTierMoveDatFromRemoteRequest) GetVolumeId() uint32 {
@@ -4434,7 +4652,7 @@ type VolumeTierMoveDatFromRemoteResponse struct {
 
 func (x *VolumeTierMoveDatFromRemoteResponse) Reset() {
 	*x = VolumeTierMoveDatFromRemoteResponse{}
-	mi := &file_volume_server_proto_msgTypes[78]
+	mi := &file_volume_server_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4446,7 +4664,7 @@ func (x *VolumeTierMoveDatFromRemoteResponse) String() string {
 func (*VolumeTierMoveDatFromRemoteResponse) ProtoMessage() {}
 
 func (x *VolumeTierMoveDatFromRemoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[78]
+	mi := &file_volume_server_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4459,7 +4677,7 @@ func (x *VolumeTierMoveDatFromRemoteResponse) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use VolumeTierMoveDatFromRemoteResponse.ProtoReflect.Descriptor instead.
 func (*VolumeTierMoveDatFromRemoteResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78}
+	return file_volume_server_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *VolumeTierMoveDatFromRemoteResponse) GetProcessed() int64 {
@@ -4484,7 +4702,7 @@ type VolumeServerStatusRequest struct {
 
 func (x *VolumeServerStatusRequest) Reset() {
 	*x = VolumeServerStatusRequest{}
-	mi := &file_volume_server_proto_msgTypes[79]
+	mi := &file_volume_server_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4496,7 +4714,7 @@ func (x *VolumeServerStatusRequest) String() string {
 func (*VolumeServerStatusRequest) ProtoMessage() {}
 
 func (x *VolumeServerStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[79]
+	mi := &file_volume_server_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4509,7 +4727,7 @@ func (x *VolumeServerStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeServerStatusRequest.ProtoReflect.Descriptor instead.
 func (*VolumeServerStatusRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{79}
+	return file_volume_server_proto_rawDescGZIP(), []int{82}
 }
 
 type VolumeServerStatusResponse struct {
@@ -4525,7 +4743,7 @@ type VolumeServerStatusResponse struct {
 
 func (x *VolumeServerStatusResponse) Reset() {
 	*x = VolumeServerStatusResponse{}
-	mi := &file_volume_server_proto_msgTypes[80]
+	mi := &file_volume_server_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4537,7 +4755,7 @@ func (x *VolumeServerStatusResponse) String() string {
 func (*VolumeServerStatusResponse) ProtoMessage() {}
 
 func (x *VolumeServerStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[80]
+	mi := &file_volume_server_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4550,7 +4768,7 @@ func (x *VolumeServerStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeServerStatusResponse.ProtoReflect.Descriptor instead.
 func (*VolumeServerStatusResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{80}
+	return file_volume_server_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *VolumeServerStatusResponse) GetDiskStatuses() []*DiskStatus {
@@ -4596,7 +4814,7 @@ type VolumeServerLeaveRequest struct {
 
 func (x *VolumeServerLeaveRequest) Reset() {
 	*x = VolumeServerLeaveRequest{}
-	mi := &file_volume_server_proto_msgTypes[81]
+	mi := &file_volume_server_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4608,7 +4826,7 @@ func (x *VolumeServerLeaveRequest) String() string {
 func (*VolumeServerLeaveRequest) ProtoMessage() {}
 
 func (x *VolumeServerLeaveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[81]
+	mi := &file_volume_server_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4621,7 +4839,7 @@ func (x *VolumeServerLeaveRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeServerLeaveRequest.ProtoReflect.Descriptor instead.
 func (*VolumeServerLeaveRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{81}
+	return file_volume_server_proto_rawDescGZIP(), []int{84}
 }
 
 type VolumeServerLeaveResponse struct {
@@ -4632,7 +4850,7 @@ type VolumeServerLeaveResponse struct {
 
 func (x *VolumeServerLeaveResponse) Reset() {
 	*x = VolumeServerLeaveResponse{}
-	mi := &file_volume_server_proto_msgTypes[82]
+	mi := &file_volume_server_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4644,7 +4862,7 @@ func (x *VolumeServerLeaveResponse) String() string {
 func (*VolumeServerLeaveResponse) ProtoMessage() {}
 
 func (x *VolumeServerLeaveResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[82]
+	mi := &file_volume_server_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4657,7 +4875,7 @@ func (x *VolumeServerLeaveResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeServerLeaveResponse.ProtoReflect.Descriptor instead.
 func (*VolumeServerLeaveResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{82}
+	return file_volume_server_proto_rawDescGZIP(), []int{85}
 }
 
 // remote storage
@@ -4679,7 +4897,7 @@ type FetchAndWriteNeedleRequest struct {
 
 func (x *FetchAndWriteNeedleRequest) Reset() {
 	*x = FetchAndWriteNeedleRequest{}
-	mi := &file_volume_server_proto_msgTypes[83]
+	mi := &file_volume_server_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4691,7 +4909,7 @@ func (x *FetchAndWriteNeedleRequest) String() string {
 func (*FetchAndWriteNeedleRequest) ProtoMessage() {}
 
 func (x *FetchAndWriteNeedleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[83]
+	mi := &file_volume_server_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4704,7 +4922,7 @@ func (x *FetchAndWriteNeedleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchAndWriteNeedleRequest.ProtoReflect.Descriptor instead.
 func (*FetchAndWriteNeedleRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{83}
+	return file_volume_server_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *FetchAndWriteNeedleRequest) GetVolumeId() uint32 {
@@ -4779,7 +4997,7 @@ type FetchAndWriteNeedleResponse struct {
 
 func (x *FetchAndWriteNeedleResponse) Reset() {
 	*x = FetchAndWriteNeedleResponse{}
-	mi := &file_volume_server_proto_msgTypes[84]
+	mi := &file_volume_server_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4791,7 +5009,7 @@ func (x *FetchAndWriteNeedleResponse) String() string {
 func (*FetchAndWriteNeedleResponse) ProtoMessage() {}
 
 func (x *FetchAndWriteNeedleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[84]
+	mi := &file_volume_server_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4804,7 +5022,7 @@ func (x *FetchAndWriteNeedleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchAndWriteNeedleResponse.ProtoReflect.Descriptor instead.
 func (*FetchAndWriteNeedleResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{84}
+	return file_volume_server_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *FetchAndWriteNeedleResponse) GetETag() string {
@@ -4828,7 +5046,7 @@ type QueryRequest struct {
 
 func (x *QueryRequest) Reset() {
 	*x = QueryRequest{}
-	mi := &file_volume_server_proto_msgTypes[85]
+	mi := &file_volume_server_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4840,7 +5058,7 @@ func (x *QueryRequest) String() string {
 func (*QueryRequest) ProtoMessage() {}
 
 func (x *QueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[85]
+	mi := &file_volume_server_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4853,7 +5071,7 @@ func (x *QueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest.ProtoReflect.Descriptor instead.
 func (*QueryRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{85}
+	return file_volume_server_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *QueryRequest) GetSelections() []string {
@@ -4900,7 +5118,7 @@ type QueriedStripe struct {
 
 func (x *QueriedStripe) Reset() {
 	*x = QueriedStripe{}
-	mi := &file_volume_server_proto_msgTypes[86]
+	mi := &file_volume_server_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4912,7 +5130,7 @@ func (x *QueriedStripe) String() string {
 func (*QueriedStripe) ProtoMessage() {}
 
 func (x *QueriedStripe) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[86]
+	mi := &file_volume_server_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4925,7 +5143,7 @@ func (x *QueriedStripe) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueriedStripe.ProtoReflect.Descriptor instead.
 func (*QueriedStripe) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{86}
+	return file_volume_server_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *QueriedStripe) GetRecords() []byte {
@@ -4945,7 +5163,7 @@ type VolumeNeedleStatusRequest struct {
 
 func (x *VolumeNeedleStatusRequest) Reset() {
 	*x = VolumeNeedleStatusRequest{}
-	mi := &file_volume_server_proto_msgTypes[87]
+	mi := &file_volume_server_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4957,7 +5175,7 @@ func (x *VolumeNeedleStatusRequest) String() string {
 func (*VolumeNeedleStatusRequest) ProtoMessage() {}
 
 func (x *VolumeNeedleStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[87]
+	mi := &file_volume_server_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4970,7 +5188,7 @@ func (x *VolumeNeedleStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeNeedleStatusRequest.ProtoReflect.Descriptor instead.
 func (*VolumeNeedleStatusRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{87}
+	return file_volume_server_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *VolumeNeedleStatusRequest) GetVolumeId() uint32 {
@@ -5001,7 +5219,7 @@ type VolumeNeedleStatusResponse struct {
 
 func (x *VolumeNeedleStatusResponse) Reset() {
 	*x = VolumeNeedleStatusResponse{}
-	mi := &file_volume_server_proto_msgTypes[88]
+	mi := &file_volume_server_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5013,7 +5231,7 @@ func (x *VolumeNeedleStatusResponse) String() string {
 func (*VolumeNeedleStatusResponse) ProtoMessage() {}
 
 func (x *VolumeNeedleStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[88]
+	mi := &file_volume_server_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5026,7 +5244,7 @@ func (x *VolumeNeedleStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeNeedleStatusResponse.ProtoReflect.Descriptor instead.
 func (*VolumeNeedleStatusResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{88}
+	return file_volume_server_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *VolumeNeedleStatusResponse) GetNeedleId() uint64 {
@@ -5081,7 +5299,7 @@ type PingRequest struct {
 
 func (x *PingRequest) Reset() {
 	*x = PingRequest{}
-	mi := &file_volume_server_proto_msgTypes[89]
+	mi := &file_volume_server_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5093,7 +5311,7 @@ func (x *PingRequest) String() string {
 func (*PingRequest) ProtoMessage() {}
 
 func (x *PingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[89]
+	mi := &file_volume_server_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5106,7 +5324,7 @@ func (x *PingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
 func (*PingRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{89}
+	return file_volume_server_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *PingRequest) GetTarget() string {
@@ -5134,7 +5352,7 @@ type PingResponse struct {
 
 func (x *PingResponse) Reset() {
 	*x = PingResponse{}
-	mi := &file_volume_server_proto_msgTypes[90]
+	mi := &file_volume_server_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5146,7 +5364,7 @@ func (x *PingResponse) String() string {
 func (*PingResponse) ProtoMessage() {}
 
 func (x *PingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[90]
+	mi := &file_volume_server_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5159,7 +5377,7 @@ func (x *PingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
 func (*PingResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{90}
+	return file_volume_server_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *PingResponse) GetStartTimeNs() int64 {
@@ -5194,7 +5412,7 @@ type FetchAndWriteNeedleRequest_Replica struct {
 
 func (x *FetchAndWriteNeedleRequest_Replica) Reset() {
 	*x = FetchAndWriteNeedleRequest_Replica{}
-	mi := &file_volume_server_proto_msgTypes[91]
+	mi := &file_volume_server_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5206,7 +5424,7 @@ func (x *FetchAndWriteNeedleRequest_Replica) String() string {
 func (*FetchAndWriteNeedleRequest_Replica) ProtoMessage() {}
 
 func (x *FetchAndWriteNeedleRequest_Replica) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[91]
+	mi := &file_volume_server_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5219,7 +5437,7 @@ func (x *FetchAndWriteNeedleRequest_Replica) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use FetchAndWriteNeedleRequest_Replica.ProtoReflect.Descriptor instead.
 func (*FetchAndWriteNeedleRequest_Replica) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{83, 0}
+	return file_volume_server_proto_rawDescGZIP(), []int{86, 0}
 }
 
 func (x *FetchAndWriteNeedleRequest_Replica) GetUrl() string {
@@ -5254,7 +5472,7 @@ type QueryRequest_Filter struct {
 
 func (x *QueryRequest_Filter) Reset() {
 	*x = QueryRequest_Filter{}
-	mi := &file_volume_server_proto_msgTypes[92]
+	mi := &file_volume_server_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5266,7 +5484,7 @@ func (x *QueryRequest_Filter) String() string {
 func (*QueryRequest_Filter) ProtoMessage() {}
 
 func (x *QueryRequest_Filter) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[92]
+	mi := &file_volume_server_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5279,7 +5497,7 @@ func (x *QueryRequest_Filter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest_Filter.ProtoReflect.Descriptor instead.
 func (*QueryRequest_Filter) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{85, 0}
+	return file_volume_server_proto_rawDescGZIP(), []int{88, 0}
 }
 
 func (x *QueryRequest_Filter) GetField() string {
@@ -5316,7 +5534,7 @@ type QueryRequest_InputSerialization struct {
 
 func (x *QueryRequest_InputSerialization) Reset() {
 	*x = QueryRequest_InputSerialization{}
-	mi := &file_volume_server_proto_msgTypes[93]
+	mi := &file_volume_server_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5328,7 +5546,7 @@ func (x *QueryRequest_InputSerialization) String() string {
 func (*QueryRequest_InputSerialization) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[93]
+	mi := &file_volume_server_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5341,7 +5559,7 @@ func (x *QueryRequest_InputSerialization) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest_InputSerialization.ProtoReflect.Descriptor instead.
 func (*QueryRequest_InputSerialization) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{85, 1}
+	return file_volume_server_proto_rawDescGZIP(), []int{88, 1}
 }
 
 func (x *QueryRequest_InputSerialization) GetCompressionType() string {
@@ -5382,7 +5600,7 @@ type QueryRequest_OutputSerialization struct {
 
 func (x *QueryRequest_OutputSerialization) Reset() {
 	*x = QueryRequest_OutputSerialization{}
-	mi := &file_volume_server_proto_msgTypes[94]
+	mi := &file_volume_server_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5394,7 +5612,7 @@ func (x *QueryRequest_OutputSerialization) String() string {
 func (*QueryRequest_OutputSerialization) ProtoMessage() {}
 
 func (x *QueryRequest_OutputSerialization) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[94]
+	mi := &file_volume_server_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5407,7 +5625,7 @@ func (x *QueryRequest_OutputSerialization) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest_OutputSerialization.ProtoReflect.Descriptor instead.
 func (*QueryRequest_OutputSerialization) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{85, 2}
+	return file_volume_server_proto_rawDescGZIP(), []int{88, 2}
 }
 
 func (x *QueryRequest_OutputSerialization) GetCsvOutput() *QueryRequest_OutputSerialization_CSVOutput {
@@ -5440,7 +5658,7 @@ type QueryRequest_InputSerialization_CSVInput struct {
 
 func (x *QueryRequest_InputSerialization_CSVInput) Reset() {
 	*x = QueryRequest_InputSerialization_CSVInput{}
-	mi := &file_volume_server_proto_msgTypes[95]
+	mi := &file_volume_server_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5452,7 +5670,7 @@ func (x *QueryRequest_InputSerialization_CSVInput) String() string {
 func (*QueryRequest_InputSerialization_CSVInput) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization_CSVInput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[95]
+	mi := &file_volume_server_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5465,7 +5683,7 @@ func (x *QueryRequest_InputSerialization_CSVInput) ProtoReflect() protoreflect.M
 
 // Deprecated: Use QueryRequest_InputSerialization_CSVInput.ProtoReflect.Descriptor instead.
 func (*QueryRequest_InputSerialization_CSVInput) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{85, 1, 0}
+	return file_volume_server_proto_rawDescGZIP(), []int{88, 1, 0}
 }
 
 func (x *QueryRequest_InputSerialization_CSVInput) GetFileHeaderInfo() string {
@@ -5526,7 +5744,7 @@ type QueryRequest_InputSerialization_JSONInput struct {
 
 func (x *QueryRequest_InputSerialization_JSONInput) Reset() {
 	*x = QueryRequest_InputSerialization_JSONInput{}
-	mi := &file_volume_server_proto_msgTypes[96]
+	mi := &file_volume_server_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5538,7 +5756,7 @@ func (x *QueryRequest_InputSerialization_JSONInput) String() string {
 func (*QueryRequest_InputSerialization_JSONInput) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization_JSONInput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[96]
+	mi := &file_volume_server_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5551,7 +5769,7 @@ func (x *QueryRequest_InputSerialization_JSONInput) ProtoReflect() protoreflect.
 
 // Deprecated: Use QueryRequest_InputSerialization_JSONInput.ProtoReflect.Descriptor instead.
 func (*QueryRequest_InputSerialization_JSONInput) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{85, 1, 1}
+	return file_volume_server_proto_rawDescGZIP(), []int{88, 1, 1}
 }
 
 func (x *QueryRequest_InputSerialization_JSONInput) GetType() string {
@@ -5569,7 +5787,7 @@ type QueryRequest_InputSerialization_ParquetInput struct {
 
 func (x *QueryRequest_InputSerialization_ParquetInput) Reset() {
 	*x = QueryRequest_InputSerialization_ParquetInput{}
-	mi := &file_volume_server_proto_msgTypes[97]
+	mi := &file_volume_server_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5581,7 +5799,7 @@ func (x *QueryRequest_InputSerialization_ParquetInput) String() string {
 func (*QueryRequest_InputSerialization_ParquetInput) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization_ParquetInput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[97]
+	mi := &file_volume_server_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5594,7 +5812,7 @@ func (x *QueryRequest_InputSerialization_ParquetInput) ProtoReflect() protorefle
 
 // Deprecated: Use QueryRequest_InputSerialization_ParquetInput.ProtoReflect.Descriptor instead.
 func (*QueryRequest_InputSerialization_ParquetInput) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{85, 1, 2}
+	return file_volume_server_proto_rawDescGZIP(), []int{88, 1, 2}
 }
 
 type QueryRequest_OutputSerialization_CSVOutput struct {
@@ -5610,7 +5828,7 @@ type QueryRequest_OutputSerialization_CSVOutput struct {
 
 func (x *QueryRequest_OutputSerialization_CSVOutput) Reset() {
 	*x = QueryRequest_OutputSerialization_CSVOutput{}
-	mi := &file_volume_server_proto_msgTypes[98]
+	mi := &file_volume_server_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5622,7 +5840,7 @@ func (x *QueryRequest_OutputSerialization_CSVOutput) String() string {
 func (*QueryRequest_OutputSerialization_CSVOutput) ProtoMessage() {}
 
 func (x *QueryRequest_OutputSerialization_CSVOutput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[98]
+	mi := &file_volume_server_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5635,7 +5853,7 @@ func (x *QueryRequest_OutputSerialization_CSVOutput) ProtoReflect() protoreflect
 
 // Deprecated: Use QueryRequest_OutputSerialization_CSVOutput.ProtoReflect.Descriptor instead.
 func (*QueryRequest_OutputSerialization_CSVOutput) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{85, 2, 0}
+	return file_volume_server_proto_rawDescGZIP(), []int{88, 2, 0}
 }
 
 func (x *QueryRequest_OutputSerialization_CSVOutput) GetQuoteFields() string {
@@ -5682,7 +5900,7 @@ type QueryRequest_OutputSerialization_JSONOutput struct {
 
 func (x *QueryRequest_OutputSerialization_JSONOutput) Reset() {
 	*x = QueryRequest_OutputSerialization_JSONOutput{}
-	mi := &file_volume_server_proto_msgTypes[99]
+	mi := &file_volume_server_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5694,7 +5912,7 @@ func (x *QueryRequest_OutputSerialization_JSONOutput) String() string {
 func (*QueryRequest_OutputSerialization_JSONOutput) ProtoMessage() {}
 
 func (x *QueryRequest_OutputSerialization_JSONOutput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[99]
+	mi := &file_volume_server_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5707,7 +5925,7 @@ func (x *QueryRequest_OutputSerialization_JSONOutput) ProtoReflect() protoreflec
 
 // Deprecated: Use QueryRequest_OutputSerialization_JSONOutput.ProtoReflect.Descriptor instead.
 func (*QueryRequest_OutputSerialization_JSONOutput) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{85, 2, 1}
+	return file_volume_server_proto_rawDescGZIP(), []int{88, 2, 1}
 }
 
 func (x *QueryRequest_OutputSerialization_JSONOutput) GetRecordDelimiter() string {
@@ -5850,7 +6068,24 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x1cignore_source_file_not_found\x18\a \x01(\bR\x18ignoreSourceFileNotFound\"[\n" +
 	"\x10CopyFileResponse\x12!\n" +
 	"\ffile_content\x18\x01 \x01(\fR\vfileContent\x12$\n" +
-	"\x0emodified_ts_ns\x18\x02 \x01(\x03R\fmodifiedTsNs\"`\n" +
+	"\x0emodified_ts_ns\x18\x02 \x01(\x03R\fmodifiedTsNs\"z\n" +
+	"\x12ReceiveFileRequest\x127\n" +
+	"\x04info\x18\x01 \x01(\v2!.volume_server_pb.ReceiveFileInfoH\x00R\x04info\x12#\n" +
+	"\ffile_content\x18\x02 \x01(\fH\x00R\vfileContentB\x06\n" +
+	"\x04data\"\xba\x01\n" +
+	"\x0fReceiveFileInfo\x12\x1b\n" +
+	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x10\n" +
+	"\x03ext\x18\x02 \x01(\tR\x03ext\x12\x1e\n" +
+	"\n" +
+	"collection\x18\x03 \x01(\tR\n" +
+	"collection\x12 \n" +
+	"\fis_ec_volume\x18\x04 \x01(\bR\n" +
+	"isEcVolume\x12\x19\n" +
+	"\bshard_id\x18\x05 \x01(\rR\ashardId\x12\x1b\n" +
+	"\tfile_size\x18\x06 \x01(\x04R\bfileSize\"P\n" +
+	"\x13ReceiveFileResponse\x12#\n" +
+	"\rbytes_written\x18\x01 \x01(\x04R\fbytesWritten\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"`\n" +
 	"\x15ReadNeedleBlobRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x16\n" +
 	"\x06offset\x18\x03 \x01(\x03R\x06offset\x12\x12\n" +
@@ -6149,7 +6384,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rstart_time_ns\x18\x01 \x01(\x03R\vstartTimeNs\x12$\n" +
 	"\x0eremote_time_ns\x18\x02 \x01(\x03R\fremoteTimeNs\x12 \n" +
 	"\fstop_time_ns\x18\x03 \x01(\x03R\n" +
-	"stopTimeNs2\xbc$\n" +
+	"stopTimeNs2\x9c%\n" +
 	"\fVolumeServer\x12\\\n" +
 	"\vBatchDelete\x12$.volume_server_pb.BatchDeleteRequest\x1a%.volume_server_pb.BatchDeleteResponse\"\x00\x12n\n" +
 	"\x11VacuumVolumeCheck\x12*.volume_server_pb.VacuumVolumeCheckRequest\x1a+.volume_server_pb.VacuumVolumeCheckResponse\"\x00\x12v\n" +
@@ -6170,7 +6405,8 @@ const file_volume_server_proto_rawDesc = "" +
 	"\n" +
 	"VolumeCopy\x12#.volume_server_pb.VolumeCopyRequest\x1a$.volume_server_pb.VolumeCopyResponse\"\x000\x01\x12w\n" +
 	"\x14ReadVolumeFileStatus\x12-.volume_server_pb.ReadVolumeFileStatusRequest\x1a..volume_server_pb.ReadVolumeFileStatusResponse\"\x00\x12U\n" +
-	"\bCopyFile\x12!.volume_server_pb.CopyFileRequest\x1a\".volume_server_pb.CopyFileResponse\"\x000\x01\x12e\n" +
+	"\bCopyFile\x12!.volume_server_pb.CopyFileRequest\x1a\".volume_server_pb.CopyFileResponse\"\x000\x01\x12^\n" +
+	"\vReceiveFile\x12$.volume_server_pb.ReceiveFileRequest\x1a%.volume_server_pb.ReceiveFileResponse\"\x00(\x01\x12e\n" +
 	"\x0eReadNeedleBlob\x12'.volume_server_pb.ReadNeedleBlobRequest\x1a(.volume_server_pb.ReadNeedleBlobResponse\"\x00\x12e\n" +
 	"\x0eReadNeedleMeta\x12'.volume_server_pb.ReadNeedleMetaRequest\x1a(.volume_server_pb.ReadNeedleMetaResponse\"\x00\x12h\n" +
 	"\x0fWriteNeedleBlob\x12(.volume_server_pb.WriteNeedleBlobRequest\x1a).volume_server_pb.WriteNeedleBlobResponse\"\x00\x12g\n" +
@@ -6207,7 +6443,7 @@ func file_volume_server_proto_rawDescGZIP() []byte {
 	return file_volume_server_proto_rawDescData
 }
 
-var file_volume_server_proto_msgTypes = make([]protoimpl.MessageInfo, 100)
+var file_volume_server_proto_msgTypes = make([]protoimpl.MessageInfo, 103)
 var file_volume_server_proto_goTypes = []any{
 	(*BatchDeleteRequest)(nil),                           // 0: volume_server_pb.BatchDeleteRequest
 	(*BatchDeleteResponse)(nil),                          // 1: volume_server_pb.BatchDeleteResponse
@@ -6247,178 +6483,184 @@ var file_volume_server_proto_goTypes = []any{
 	(*VolumeCopyResponse)(nil),                           // 35: volume_server_pb.VolumeCopyResponse
 	(*CopyFileRequest)(nil),                              // 36: volume_server_pb.CopyFileRequest
 	(*CopyFileResponse)(nil),                             // 37: volume_server_pb.CopyFileResponse
-	(*ReadNeedleBlobRequest)(nil),                        // 38: volume_server_pb.ReadNeedleBlobRequest
-	(*ReadNeedleBlobResponse)(nil),                       // 39: volume_server_pb.ReadNeedleBlobResponse
-	(*ReadNeedleMetaRequest)(nil),                        // 40: volume_server_pb.ReadNeedleMetaRequest
-	(*ReadNeedleMetaResponse)(nil),                       // 41: volume_server_pb.ReadNeedleMetaResponse
-	(*WriteNeedleBlobRequest)(nil),                       // 42: volume_server_pb.WriteNeedleBlobRequest
-	(*WriteNeedleBlobResponse)(nil),                      // 43: volume_server_pb.WriteNeedleBlobResponse
-	(*ReadAllNeedlesRequest)(nil),                        // 44: volume_server_pb.ReadAllNeedlesRequest
-	(*ReadAllNeedlesResponse)(nil),                       // 45: volume_server_pb.ReadAllNeedlesResponse
-	(*VolumeTailSenderRequest)(nil),                      // 46: volume_server_pb.VolumeTailSenderRequest
-	(*VolumeTailSenderResponse)(nil),                     // 47: volume_server_pb.VolumeTailSenderResponse
-	(*VolumeTailReceiverRequest)(nil),                    // 48: volume_server_pb.VolumeTailReceiverRequest
-	(*VolumeTailReceiverResponse)(nil),                   // 49: volume_server_pb.VolumeTailReceiverResponse
-	(*VolumeEcShardsGenerateRequest)(nil),                // 50: volume_server_pb.VolumeEcShardsGenerateRequest
-	(*VolumeEcShardsGenerateResponse)(nil),               // 51: volume_server_pb.VolumeEcShardsGenerateResponse
-	(*VolumeEcShardsRebuildRequest)(nil),                 // 52: volume_server_pb.VolumeEcShardsRebuildRequest
-	(*VolumeEcShardsRebuildResponse)(nil),                // 53: volume_server_pb.VolumeEcShardsRebuildResponse
-	(*VolumeEcShardsCopyRequest)(nil),                    // 54: volume_server_pb.VolumeEcShardsCopyRequest
-	(*VolumeEcShardsCopyResponse)(nil),                   // 55: volume_server_pb.VolumeEcShardsCopyResponse
-	(*VolumeEcShardsDeleteRequest)(nil),                  // 56: volume_server_pb.VolumeEcShardsDeleteRequest
-	(*VolumeEcShardsDeleteResponse)(nil),                 // 57: volume_server_pb.VolumeEcShardsDeleteResponse
-	(*VolumeEcShardsMountRequest)(nil),                   // 58: volume_server_pb.VolumeEcShardsMountRequest
-	(*VolumeEcShardsMountResponse)(nil),                  // 59: volume_server_pb.VolumeEcShardsMountResponse
-	(*VolumeEcShardsUnmountRequest)(nil),                 // 60: volume_server_pb.VolumeEcShardsUnmountRequest
-	(*VolumeEcShardsUnmountResponse)(nil),                // 61: volume_server_pb.VolumeEcShardsUnmountResponse
-	(*VolumeEcShardReadRequest)(nil),                     // 62: volume_server_pb.VolumeEcShardReadRequest
-	(*VolumeEcShardReadResponse)(nil),                    // 63: volume_server_pb.VolumeEcShardReadResponse
-	(*VolumeEcBlobDeleteRequest)(nil),                    // 64: volume_server_pb.VolumeEcBlobDeleteRequest
-	(*VolumeEcBlobDeleteResponse)(nil),                   // 65: volume_server_pb.VolumeEcBlobDeleteResponse
-	(*VolumeEcShardsToVolumeRequest)(nil),                // 66: volume_server_pb.VolumeEcShardsToVolumeRequest
-	(*VolumeEcShardsToVolumeResponse)(nil),               // 67: volume_server_pb.VolumeEcShardsToVolumeResponse
-	(*ReadVolumeFileStatusRequest)(nil),                  // 68: volume_server_pb.ReadVolumeFileStatusRequest
-	(*ReadVolumeFileStatusResponse)(nil),                 // 69: volume_server_pb.ReadVolumeFileStatusResponse
-	(*DiskStatus)(nil),                                   // 70: volume_server_pb.DiskStatus
-	(*MemStatus)(nil),                                    // 71: volume_server_pb.MemStatus
-	(*RemoteFile)(nil),                                   // 72: volume_server_pb.RemoteFile
-	(*VolumeInfo)(nil),                                   // 73: volume_server_pb.VolumeInfo
-	(*OldVersionVolumeInfo)(nil),                         // 74: volume_server_pb.OldVersionVolumeInfo
-	(*VolumeTierMoveDatToRemoteRequest)(nil),             // 75: volume_server_pb.VolumeTierMoveDatToRemoteRequest
-	(*VolumeTierMoveDatToRemoteResponse)(nil),            // 76: volume_server_pb.VolumeTierMoveDatToRemoteResponse
-	(*VolumeTierMoveDatFromRemoteRequest)(nil),           // 77: volume_server_pb.VolumeTierMoveDatFromRemoteRequest
-	(*VolumeTierMoveDatFromRemoteResponse)(nil),          // 78: volume_server_pb.VolumeTierMoveDatFromRemoteResponse
-	(*VolumeServerStatusRequest)(nil),                    // 79: volume_server_pb.VolumeServerStatusRequest
-	(*VolumeServerStatusResponse)(nil),                   // 80: volume_server_pb.VolumeServerStatusResponse
-	(*VolumeServerLeaveRequest)(nil),                     // 81: volume_server_pb.VolumeServerLeaveRequest
-	(*VolumeServerLeaveResponse)(nil),                    // 82: volume_server_pb.VolumeServerLeaveResponse
-	(*FetchAndWriteNeedleRequest)(nil),                   // 83: volume_server_pb.FetchAndWriteNeedleRequest
-	(*FetchAndWriteNeedleResponse)(nil),                  // 84: volume_server_pb.FetchAndWriteNeedleResponse
-	(*QueryRequest)(nil),                                 // 85: volume_server_pb.QueryRequest
-	(*QueriedStripe)(nil),                                // 86: volume_server_pb.QueriedStripe
-	(*VolumeNeedleStatusRequest)(nil),                    // 87: volume_server_pb.VolumeNeedleStatusRequest
-	(*VolumeNeedleStatusResponse)(nil),                   // 88: volume_server_pb.VolumeNeedleStatusResponse
-	(*PingRequest)(nil),                                  // 89: volume_server_pb.PingRequest
-	(*PingResponse)(nil),                                 // 90: volume_server_pb.PingResponse
-	(*FetchAndWriteNeedleRequest_Replica)(nil),           // 91: volume_server_pb.FetchAndWriteNeedleRequest.Replica
-	(*QueryRequest_Filter)(nil),                          // 92: volume_server_pb.QueryRequest.Filter
-	(*QueryRequest_InputSerialization)(nil),              // 93: volume_server_pb.QueryRequest.InputSerialization
-	(*QueryRequest_OutputSerialization)(nil),             // 94: volume_server_pb.QueryRequest.OutputSerialization
-	(*QueryRequest_InputSerialization_CSVInput)(nil),     // 95: volume_server_pb.QueryRequest.InputSerialization.CSVInput
-	(*QueryRequest_InputSerialization_JSONInput)(nil),    // 96: volume_server_pb.QueryRequest.InputSerialization.JSONInput
-	(*QueryRequest_InputSerialization_ParquetInput)(nil), // 97: volume_server_pb.QueryRequest.InputSerialization.ParquetInput
-	(*QueryRequest_OutputSerialization_CSVOutput)(nil),   // 98: volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
-	(*QueryRequest_OutputSerialization_JSONOutput)(nil),  // 99: volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
-	(*remote_pb.RemoteConf)(nil),                         // 100: remote_pb.RemoteConf
-	(*remote_pb.RemoteStorageLocation)(nil),              // 101: remote_pb.RemoteStorageLocation
+	(*ReceiveFileRequest)(nil),                           // 38: volume_server_pb.ReceiveFileRequest
+	(*ReceiveFileInfo)(nil),                              // 39: volume_server_pb.ReceiveFileInfo
+	(*ReceiveFileResponse)(nil),                          // 40: volume_server_pb.ReceiveFileResponse
+	(*ReadNeedleBlobRequest)(nil),                        // 41: volume_server_pb.ReadNeedleBlobRequest
+	(*ReadNeedleBlobResponse)(nil),                       // 42: volume_server_pb.ReadNeedleBlobResponse
+	(*ReadNeedleMetaRequest)(nil),                        // 43: volume_server_pb.ReadNeedleMetaRequest
+	(*ReadNeedleMetaResponse)(nil),                       // 44: volume_server_pb.ReadNeedleMetaResponse
+	(*WriteNeedleBlobRequest)(nil),                       // 45: volume_server_pb.WriteNeedleBlobRequest
+	(*WriteNeedleBlobResponse)(nil),                      // 46: volume_server_pb.WriteNeedleBlobResponse
+	(*ReadAllNeedlesRequest)(nil),                        // 47: volume_server_pb.ReadAllNeedlesRequest
+	(*ReadAllNeedlesResponse)(nil),                       // 48: volume_server_pb.ReadAllNeedlesResponse
+	(*VolumeTailSenderRequest)(nil),                      // 49: volume_server_pb.VolumeTailSenderRequest
+	(*VolumeTailSenderResponse)(nil),                     // 50: volume_server_pb.VolumeTailSenderResponse
+	(*VolumeTailReceiverRequest)(nil),                    // 51: volume_server_pb.VolumeTailReceiverRequest
+	(*VolumeTailReceiverResponse)(nil),                   // 52: volume_server_pb.VolumeTailReceiverResponse
+	(*VolumeEcShardsGenerateRequest)(nil),                // 53: volume_server_pb.VolumeEcShardsGenerateRequest
+	(*VolumeEcShardsGenerateResponse)(nil),               // 54: volume_server_pb.VolumeEcShardsGenerateResponse
+	(*VolumeEcShardsRebuildRequest)(nil),                 // 55: volume_server_pb.VolumeEcShardsRebuildRequest
+	(*VolumeEcShardsRebuildResponse)(nil),                // 56: volume_server_pb.VolumeEcShardsRebuildResponse
+	(*VolumeEcShardsCopyRequest)(nil),                    // 57: volume_server_pb.VolumeEcShardsCopyRequest
+	(*VolumeEcShardsCopyResponse)(nil),                   // 58: volume_server_pb.VolumeEcShardsCopyResponse
+	(*VolumeEcShardsDeleteRequest)(nil),                  // 59: volume_server_pb.VolumeEcShardsDeleteRequest
+	(*VolumeEcShardsDeleteResponse)(nil),                 // 60: volume_server_pb.VolumeEcShardsDeleteResponse
+	(*VolumeEcShardsMountRequest)(nil),                   // 61: volume_server_pb.VolumeEcShardsMountRequest
+	(*VolumeEcShardsMountResponse)(nil),                  // 62: volume_server_pb.VolumeEcShardsMountResponse
+	(*VolumeEcShardsUnmountRequest)(nil),                 // 63: volume_server_pb.VolumeEcShardsUnmountRequest
+	(*VolumeEcShardsUnmountResponse)(nil),                // 64: volume_server_pb.VolumeEcShardsUnmountResponse
+	(*VolumeEcShardReadRequest)(nil),                     // 65: volume_server_pb.VolumeEcShardReadRequest
+	(*VolumeEcShardReadResponse)(nil),                    // 66: volume_server_pb.VolumeEcShardReadResponse
+	(*VolumeEcBlobDeleteRequest)(nil),                    // 67: volume_server_pb.VolumeEcBlobDeleteRequest
+	(*VolumeEcBlobDeleteResponse)(nil),                   // 68: volume_server_pb.VolumeEcBlobDeleteResponse
+	(*VolumeEcShardsToVolumeRequest)(nil),                // 69: volume_server_pb.VolumeEcShardsToVolumeRequest
+	(*VolumeEcShardsToVolumeResponse)(nil),               // 70: volume_server_pb.VolumeEcShardsToVolumeResponse
+	(*ReadVolumeFileStatusRequest)(nil),                  // 71: volume_server_pb.ReadVolumeFileStatusRequest
+	(*ReadVolumeFileStatusResponse)(nil),                 // 72: volume_server_pb.ReadVolumeFileStatusResponse
+	(*DiskStatus)(nil),                                   // 73: volume_server_pb.DiskStatus
+	(*MemStatus)(nil),                                    // 74: volume_server_pb.MemStatus
+	(*RemoteFile)(nil),                                   // 75: volume_server_pb.RemoteFile
+	(*VolumeInfo)(nil),                                   // 76: volume_server_pb.VolumeInfo
+	(*OldVersionVolumeInfo)(nil),                         // 77: volume_server_pb.OldVersionVolumeInfo
+	(*VolumeTierMoveDatToRemoteRequest)(nil),             // 78: volume_server_pb.VolumeTierMoveDatToRemoteRequest
+	(*VolumeTierMoveDatToRemoteResponse)(nil),            // 79: volume_server_pb.VolumeTierMoveDatToRemoteResponse
+	(*VolumeTierMoveDatFromRemoteRequest)(nil),           // 80: volume_server_pb.VolumeTierMoveDatFromRemoteRequest
+	(*VolumeTierMoveDatFromRemoteResponse)(nil),          // 81: volume_server_pb.VolumeTierMoveDatFromRemoteResponse
+	(*VolumeServerStatusRequest)(nil),                    // 82: volume_server_pb.VolumeServerStatusRequest
+	(*VolumeServerStatusResponse)(nil),                   // 83: volume_server_pb.VolumeServerStatusResponse
+	(*VolumeServerLeaveRequest)(nil),                     // 84: volume_server_pb.VolumeServerLeaveRequest
+	(*VolumeServerLeaveResponse)(nil),                    // 85: volume_server_pb.VolumeServerLeaveResponse
+	(*FetchAndWriteNeedleRequest)(nil),                   // 86: volume_server_pb.FetchAndWriteNeedleRequest
+	(*FetchAndWriteNeedleResponse)(nil),                  // 87: volume_server_pb.FetchAndWriteNeedleResponse
+	(*QueryRequest)(nil),                                 // 88: volume_server_pb.QueryRequest
+	(*QueriedStripe)(nil),                                // 89: volume_server_pb.QueriedStripe
+	(*VolumeNeedleStatusRequest)(nil),                    // 90: volume_server_pb.VolumeNeedleStatusRequest
+	(*VolumeNeedleStatusResponse)(nil),                   // 91: volume_server_pb.VolumeNeedleStatusResponse
+	(*PingRequest)(nil),                                  // 92: volume_server_pb.PingRequest
+	(*PingResponse)(nil),                                 // 93: volume_server_pb.PingResponse
+	(*FetchAndWriteNeedleRequest_Replica)(nil),           // 94: volume_server_pb.FetchAndWriteNeedleRequest.Replica
+	(*QueryRequest_Filter)(nil),                          // 95: volume_server_pb.QueryRequest.Filter
+	(*QueryRequest_InputSerialization)(nil),              // 96: volume_server_pb.QueryRequest.InputSerialization
+	(*QueryRequest_OutputSerialization)(nil),             // 97: volume_server_pb.QueryRequest.OutputSerialization
+	(*QueryRequest_InputSerialization_CSVInput)(nil),     // 98: volume_server_pb.QueryRequest.InputSerialization.CSVInput
+	(*QueryRequest_InputSerialization_JSONInput)(nil),    // 99: volume_server_pb.QueryRequest.InputSerialization.JSONInput
+	(*QueryRequest_InputSerialization_ParquetInput)(nil), // 100: volume_server_pb.QueryRequest.InputSerialization.ParquetInput
+	(*QueryRequest_OutputSerialization_CSVOutput)(nil),   // 101: volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
+	(*QueryRequest_OutputSerialization_JSONOutput)(nil),  // 102: volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
+	(*remote_pb.RemoteConf)(nil),                         // 103: remote_pb.RemoteConf
+	(*remote_pb.RemoteStorageLocation)(nil),              // 104: remote_pb.RemoteStorageLocation
 }
 var file_volume_server_proto_depIdxs = []int32{
 	2,   // 0: volume_server_pb.BatchDeleteResponse.results:type_name -> volume_server_pb.DeleteResult
-	73,  // 1: volume_server_pb.ReadVolumeFileStatusResponse.volume_info:type_name -> volume_server_pb.VolumeInfo
-	72,  // 2: volume_server_pb.VolumeInfo.files:type_name -> volume_server_pb.RemoteFile
-	72,  // 3: volume_server_pb.OldVersionVolumeInfo.files:type_name -> volume_server_pb.RemoteFile
-	70,  // 4: volume_server_pb.VolumeServerStatusResponse.disk_statuses:type_name -> volume_server_pb.DiskStatus
-	71,  // 5: volume_server_pb.VolumeServerStatusResponse.memory_status:type_name -> volume_server_pb.MemStatus
-	91,  // 6: volume_server_pb.FetchAndWriteNeedleRequest.replicas:type_name -> volume_server_pb.FetchAndWriteNeedleRequest.Replica
-	100, // 7: volume_server_pb.FetchAndWriteNeedleRequest.remote_conf:type_name -> remote_pb.RemoteConf
-	101, // 8: volume_server_pb.FetchAndWriteNeedleRequest.remote_location:type_name -> remote_pb.RemoteStorageLocation
-	92,  // 9: volume_server_pb.QueryRequest.filter:type_name -> volume_server_pb.QueryRequest.Filter
-	93,  // 10: volume_server_pb.QueryRequest.input_serialization:type_name -> volume_server_pb.QueryRequest.InputSerialization
-	94,  // 11: volume_server_pb.QueryRequest.output_serialization:type_name -> volume_server_pb.QueryRequest.OutputSerialization
-	95,  // 12: volume_server_pb.QueryRequest.InputSerialization.csv_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.CSVInput
-	96,  // 13: volume_server_pb.QueryRequest.InputSerialization.json_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.JSONInput
-	97,  // 14: volume_server_pb.QueryRequest.InputSerialization.parquet_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.ParquetInput
-	98,  // 15: volume_server_pb.QueryRequest.OutputSerialization.csv_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
-	99,  // 16: volume_server_pb.QueryRequest.OutputSerialization.json_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
-	0,   // 17: volume_server_pb.VolumeServer.BatchDelete:input_type -> volume_server_pb.BatchDeleteRequest
-	4,   // 18: volume_server_pb.VolumeServer.VacuumVolumeCheck:input_type -> volume_server_pb.VacuumVolumeCheckRequest
-	6,   // 19: volume_server_pb.VolumeServer.VacuumVolumeCompact:input_type -> volume_server_pb.VacuumVolumeCompactRequest
-	8,   // 20: volume_server_pb.VolumeServer.VacuumVolumeCommit:input_type -> volume_server_pb.VacuumVolumeCommitRequest
-	10,  // 21: volume_server_pb.VolumeServer.VacuumVolumeCleanup:input_type -> volume_server_pb.VacuumVolumeCleanupRequest
-	12,  // 22: volume_server_pb.VolumeServer.DeleteCollection:input_type -> volume_server_pb.DeleteCollectionRequest
-	14,  // 23: volume_server_pb.VolumeServer.AllocateVolume:input_type -> volume_server_pb.AllocateVolumeRequest
-	16,  // 24: volume_server_pb.VolumeServer.VolumeSyncStatus:input_type -> volume_server_pb.VolumeSyncStatusRequest
-	18,  // 25: volume_server_pb.VolumeServer.VolumeIncrementalCopy:input_type -> volume_server_pb.VolumeIncrementalCopyRequest
-	20,  // 26: volume_server_pb.VolumeServer.VolumeMount:input_type -> volume_server_pb.VolumeMountRequest
-	22,  // 27: volume_server_pb.VolumeServer.VolumeUnmount:input_type -> volume_server_pb.VolumeUnmountRequest
-	24,  // 28: volume_server_pb.VolumeServer.VolumeDelete:input_type -> volume_server_pb.VolumeDeleteRequest
-	26,  // 29: volume_server_pb.VolumeServer.VolumeMarkReadonly:input_type -> volume_server_pb.VolumeMarkReadonlyRequest
-	28,  // 30: volume_server_pb.VolumeServer.VolumeMarkWritable:input_type -> volume_server_pb.VolumeMarkWritableRequest
-	30,  // 31: volume_server_pb.VolumeServer.VolumeConfigure:input_type -> volume_server_pb.VolumeConfigureRequest
-	32,  // 32: volume_server_pb.VolumeServer.VolumeStatus:input_type -> volume_server_pb.VolumeStatusRequest
-	34,  // 33: volume_server_pb.VolumeServer.VolumeCopy:input_type -> volume_server_pb.VolumeCopyRequest
-	68,  // 34: volume_server_pb.VolumeServer.ReadVolumeFileStatus:input_type -> volume_server_pb.ReadVolumeFileStatusRequest
-	36,  // 35: volume_server_pb.VolumeServer.CopyFile:input_type -> volume_server_pb.CopyFileRequest
-	38,  // 36: volume_server_pb.VolumeServer.ReadNeedleBlob:input_type -> volume_server_pb.ReadNeedleBlobRequest
-	40,  // 37: volume_server_pb.VolumeServer.ReadNeedleMeta:input_type -> volume_server_pb.ReadNeedleMetaRequest
-	42,  // 38: volume_server_pb.VolumeServer.WriteNeedleBlob:input_type -> volume_server_pb.WriteNeedleBlobRequest
-	44,  // 39: volume_server_pb.VolumeServer.ReadAllNeedles:input_type -> volume_server_pb.ReadAllNeedlesRequest
-	46,  // 40: volume_server_pb.VolumeServer.VolumeTailSender:input_type -> volume_server_pb.VolumeTailSenderRequest
-	48,  // 41: volume_server_pb.VolumeServer.VolumeTailReceiver:input_type -> volume_server_pb.VolumeTailReceiverRequest
-	50,  // 42: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:input_type -> volume_server_pb.VolumeEcShardsGenerateRequest
-	52,  // 43: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:input_type -> volume_server_pb.VolumeEcShardsRebuildRequest
-	54,  // 44: volume_server_pb.VolumeServer.VolumeEcShardsCopy:input_type -> volume_server_pb.VolumeEcShardsCopyRequest
-	56,  // 45: volume_server_pb.VolumeServer.VolumeEcShardsDelete:input_type -> volume_server_pb.VolumeEcShardsDeleteRequest
-	58,  // 46: volume_server_pb.VolumeServer.VolumeEcShardsMount:input_type -> volume_server_pb.VolumeEcShardsMountRequest
-	60,  // 47: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:input_type -> volume_server_pb.VolumeEcShardsUnmountRequest
-	62,  // 48: volume_server_pb.VolumeServer.VolumeEcShardRead:input_type -> volume_server_pb.VolumeEcShardReadRequest
-	64,  // 49: volume_server_pb.VolumeServer.VolumeEcBlobDelete:input_type -> volume_server_pb.VolumeEcBlobDeleteRequest
-	66,  // 50: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:input_type -> volume_server_pb.VolumeEcShardsToVolumeRequest
-	75,  // 51: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:input_type -> volume_server_pb.VolumeTierMoveDatToRemoteRequest
-	77,  // 52: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:input_type -> volume_server_pb.VolumeTierMoveDatFromRemoteRequest
-	79,  // 53: volume_server_pb.VolumeServer.VolumeServerStatus:input_type -> volume_server_pb.VolumeServerStatusRequest
-	81,  // 54: volume_server_pb.VolumeServer.VolumeServerLeave:input_type -> volume_server_pb.VolumeServerLeaveRequest
-	83,  // 55: volume_server_pb.VolumeServer.FetchAndWriteNeedle:input_type -> volume_server_pb.FetchAndWriteNeedleRequest
-	85,  // 56: volume_server_pb.VolumeServer.Query:input_type -> volume_server_pb.QueryRequest
-	87,  // 57: volume_server_pb.VolumeServer.VolumeNeedleStatus:input_type -> volume_server_pb.VolumeNeedleStatusRequest
-	89,  // 58: volume_server_pb.VolumeServer.Ping:input_type -> volume_server_pb.PingRequest
-	1,   // 59: volume_server_pb.VolumeServer.BatchDelete:output_type -> volume_server_pb.BatchDeleteResponse
-	5,   // 60: volume_server_pb.VolumeServer.VacuumVolumeCheck:output_type -> volume_server_pb.VacuumVolumeCheckResponse
-	7,   // 61: volume_server_pb.VolumeServer.VacuumVolumeCompact:output_type -> volume_server_pb.VacuumVolumeCompactResponse
-	9,   // 62: volume_server_pb.VolumeServer.VacuumVolumeCommit:output_type -> volume_server_pb.VacuumVolumeCommitResponse
-	11,  // 63: volume_server_pb.VolumeServer.VacuumVolumeCleanup:output_type -> volume_server_pb.VacuumVolumeCleanupResponse
-	13,  // 64: volume_server_pb.VolumeServer.DeleteCollection:output_type -> volume_server_pb.DeleteCollectionResponse
-	15,  // 65: volume_server_pb.VolumeServer.AllocateVolume:output_type -> volume_server_pb.AllocateVolumeResponse
-	17,  // 66: volume_server_pb.VolumeServer.VolumeSyncStatus:output_type -> volume_server_pb.VolumeSyncStatusResponse
-	19,  // 67: volume_server_pb.VolumeServer.VolumeIncrementalCopy:output_type -> volume_server_pb.VolumeIncrementalCopyResponse
-	21,  // 68: volume_server_pb.VolumeServer.VolumeMount:output_type -> volume_server_pb.VolumeMountResponse
-	23,  // 69: volume_server_pb.VolumeServer.VolumeUnmount:output_type -> volume_server_pb.VolumeUnmountResponse
-	25,  // 70: volume_server_pb.VolumeServer.VolumeDelete:output_type -> volume_server_pb.VolumeDeleteResponse
-	27,  // 71: volume_server_pb.VolumeServer.VolumeMarkReadonly:output_type -> volume_server_pb.VolumeMarkReadonlyResponse
-	29,  // 72: volume_server_pb.VolumeServer.VolumeMarkWritable:output_type -> volume_server_pb.VolumeMarkWritableResponse
-	31,  // 73: volume_server_pb.VolumeServer.VolumeConfigure:output_type -> volume_server_pb.VolumeConfigureResponse
-	33,  // 74: volume_server_pb.VolumeServer.VolumeStatus:output_type -> volume_server_pb.VolumeStatusResponse
-	35,  // 75: volume_server_pb.VolumeServer.VolumeCopy:output_type -> volume_server_pb.VolumeCopyResponse
-	69,  // 76: volume_server_pb.VolumeServer.ReadVolumeFileStatus:output_type -> volume_server_pb.ReadVolumeFileStatusResponse
-	37,  // 77: volume_server_pb.VolumeServer.CopyFile:output_type -> volume_server_pb.CopyFileResponse
-	39,  // 78: volume_server_pb.VolumeServer.ReadNeedleBlob:output_type -> volume_server_pb.ReadNeedleBlobResponse
-	41,  // 79: volume_server_pb.VolumeServer.ReadNeedleMeta:output_type -> volume_server_pb.ReadNeedleMetaResponse
-	43,  // 80: volume_server_pb.VolumeServer.WriteNeedleBlob:output_type -> volume_server_pb.WriteNeedleBlobResponse
-	45,  // 81: volume_server_pb.VolumeServer.ReadAllNeedles:output_type -> volume_server_pb.ReadAllNeedlesResponse
-	47,  // 82: volume_server_pb.VolumeServer.VolumeTailSender:output_type -> volume_server_pb.VolumeTailSenderResponse
-	49,  // 83: volume_server_pb.VolumeServer.VolumeTailReceiver:output_type -> volume_server_pb.VolumeTailReceiverResponse
-	51,  // 84: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:output_type -> volume_server_pb.VolumeEcShardsGenerateResponse
-	53,  // 85: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:output_type -> volume_server_pb.VolumeEcShardsRebuildResponse
-	55,  // 86: volume_server_pb.VolumeServer.VolumeEcShardsCopy:output_type -> volume_server_pb.VolumeEcShardsCopyResponse
-	57,  // 87: volume_server_pb.VolumeServer.VolumeEcShardsDelete:output_type -> volume_server_pb.VolumeEcShardsDeleteResponse
-	59,  // 88: volume_server_pb.VolumeServer.VolumeEcShardsMount:output_type -> volume_server_pb.VolumeEcShardsMountResponse
-	61,  // 89: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:output_type -> volume_server_pb.VolumeEcShardsUnmountResponse
-	63,  // 90: volume_server_pb.VolumeServer.VolumeEcShardRead:output_type -> volume_server_pb.VolumeEcShardReadResponse
-	65,  // 91: volume_server_pb.VolumeServer.VolumeEcBlobDelete:output_type -> volume_server_pb.VolumeEcBlobDeleteResponse
-	67,  // 92: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:output_type -> volume_server_pb.VolumeEcShardsToVolumeResponse
-	76,  // 93: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:output_type -> volume_server_pb.VolumeTierMoveDatToRemoteResponse
-	78,  // 94: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:output_type -> volume_server_pb.VolumeTierMoveDatFromRemoteResponse
-	80,  // 95: volume_server_pb.VolumeServer.VolumeServerStatus:output_type -> volume_server_pb.VolumeServerStatusResponse
-	82,  // 96: volume_server_pb.VolumeServer.VolumeServerLeave:output_type -> volume_server_pb.VolumeServerLeaveResponse
-	84,  // 97: volume_server_pb.VolumeServer.FetchAndWriteNeedle:output_type -> volume_server_pb.FetchAndWriteNeedleResponse
-	86,  // 98: volume_server_pb.VolumeServer.Query:output_type -> volume_server_pb.QueriedStripe
-	88,  // 99: volume_server_pb.VolumeServer.VolumeNeedleStatus:output_type -> volume_server_pb.VolumeNeedleStatusResponse
-	90,  // 100: volume_server_pb.VolumeServer.Ping:output_type -> volume_server_pb.PingResponse
-	59,  // [59:101] is the sub-list for method output_type
-	17,  // [17:59] is the sub-list for method input_type
-	17,  // [17:17] is the sub-list for extension type_name
-	17,  // [17:17] is the sub-list for extension extendee
-	0,   // [0:17] is the sub-list for field type_name
+	39,  // 1: volume_server_pb.ReceiveFileRequest.info:type_name -> volume_server_pb.ReceiveFileInfo
+	76,  // 2: volume_server_pb.ReadVolumeFileStatusResponse.volume_info:type_name -> volume_server_pb.VolumeInfo
+	75,  // 3: volume_server_pb.VolumeInfo.files:type_name -> volume_server_pb.RemoteFile
+	75,  // 4: volume_server_pb.OldVersionVolumeInfo.files:type_name -> volume_server_pb.RemoteFile
+	73,  // 5: volume_server_pb.VolumeServerStatusResponse.disk_statuses:type_name -> volume_server_pb.DiskStatus
+	74,  // 6: volume_server_pb.VolumeServerStatusResponse.memory_status:type_name -> volume_server_pb.MemStatus
+	94,  // 7: volume_server_pb.FetchAndWriteNeedleRequest.replicas:type_name -> volume_server_pb.FetchAndWriteNeedleRequest.Replica
+	103, // 8: volume_server_pb.FetchAndWriteNeedleRequest.remote_conf:type_name -> remote_pb.RemoteConf
+	104, // 9: volume_server_pb.FetchAndWriteNeedleRequest.remote_location:type_name -> remote_pb.RemoteStorageLocation
+	95,  // 10: volume_server_pb.QueryRequest.filter:type_name -> volume_server_pb.QueryRequest.Filter
+	96,  // 11: volume_server_pb.QueryRequest.input_serialization:type_name -> volume_server_pb.QueryRequest.InputSerialization
+	97,  // 12: volume_server_pb.QueryRequest.output_serialization:type_name -> volume_server_pb.QueryRequest.OutputSerialization
+	98,  // 13: volume_server_pb.QueryRequest.InputSerialization.csv_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.CSVInput
+	99,  // 14: volume_server_pb.QueryRequest.InputSerialization.json_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.JSONInput
+	100, // 15: volume_server_pb.QueryRequest.InputSerialization.parquet_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.ParquetInput
+	101, // 16: volume_server_pb.QueryRequest.OutputSerialization.csv_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
+	102, // 17: volume_server_pb.QueryRequest.OutputSerialization.json_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
+	0,   // 18: volume_server_pb.VolumeServer.BatchDelete:input_type -> volume_server_pb.BatchDeleteRequest
+	4,   // 19: volume_server_pb.VolumeServer.VacuumVolumeCheck:input_type -> volume_server_pb.VacuumVolumeCheckRequest
+	6,   // 20: volume_server_pb.VolumeServer.VacuumVolumeCompact:input_type -> volume_server_pb.VacuumVolumeCompactRequest
+	8,   // 21: volume_server_pb.VolumeServer.VacuumVolumeCommit:input_type -> volume_server_pb.VacuumVolumeCommitRequest
+	10,  // 22: volume_server_pb.VolumeServer.VacuumVolumeCleanup:input_type -> volume_server_pb.VacuumVolumeCleanupRequest
+	12,  // 23: volume_server_pb.VolumeServer.DeleteCollection:input_type -> volume_server_pb.DeleteCollectionRequest
+	14,  // 24: volume_server_pb.VolumeServer.AllocateVolume:input_type -> volume_server_pb.AllocateVolumeRequest
+	16,  // 25: volume_server_pb.VolumeServer.VolumeSyncStatus:input_type -> volume_server_pb.VolumeSyncStatusRequest
+	18,  // 26: volume_server_pb.VolumeServer.VolumeIncrementalCopy:input_type -> volume_server_pb.VolumeIncrementalCopyRequest
+	20,  // 27: volume_server_pb.VolumeServer.VolumeMount:input_type -> volume_server_pb.VolumeMountRequest
+	22,  // 28: volume_server_pb.VolumeServer.VolumeUnmount:input_type -> volume_server_pb.VolumeUnmountRequest
+	24,  // 29: volume_server_pb.VolumeServer.VolumeDelete:input_type -> volume_server_pb.VolumeDeleteRequest
+	26,  // 30: volume_server_pb.VolumeServer.VolumeMarkReadonly:input_type -> volume_server_pb.VolumeMarkReadonlyRequest
+	28,  // 31: volume_server_pb.VolumeServer.VolumeMarkWritable:input_type -> volume_server_pb.VolumeMarkWritableRequest
+	30,  // 32: volume_server_pb.VolumeServer.VolumeConfigure:input_type -> volume_server_pb.VolumeConfigureRequest
+	32,  // 33: volume_server_pb.VolumeServer.VolumeStatus:input_type -> volume_server_pb.VolumeStatusRequest
+	34,  // 34: volume_server_pb.VolumeServer.VolumeCopy:input_type -> volume_server_pb.VolumeCopyRequest
+	71,  // 35: volume_server_pb.VolumeServer.ReadVolumeFileStatus:input_type -> volume_server_pb.ReadVolumeFileStatusRequest
+	36,  // 36: volume_server_pb.VolumeServer.CopyFile:input_type -> volume_server_pb.CopyFileRequest
+	38,  // 37: volume_server_pb.VolumeServer.ReceiveFile:input_type -> volume_server_pb.ReceiveFileRequest
+	41,  // 38: volume_server_pb.VolumeServer.ReadNeedleBlob:input_type -> volume_server_pb.ReadNeedleBlobRequest
+	43,  // 39: volume_server_pb.VolumeServer.ReadNeedleMeta:input_type -> volume_server_pb.ReadNeedleMetaRequest
+	45,  // 40: volume_server_pb.VolumeServer.WriteNeedleBlob:input_type -> volume_server_pb.WriteNeedleBlobRequest
+	47,  // 41: volume_server_pb.VolumeServer.ReadAllNeedles:input_type -> volume_server_pb.ReadAllNeedlesRequest
+	49,  // 42: volume_server_pb.VolumeServer.VolumeTailSender:input_type -> volume_server_pb.VolumeTailSenderRequest
+	51,  // 43: volume_server_pb.VolumeServer.VolumeTailReceiver:input_type -> volume_server_pb.VolumeTailReceiverRequest
+	53,  // 44: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:input_type -> volume_server_pb.VolumeEcShardsGenerateRequest
+	55,  // 45: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:input_type -> volume_server_pb.VolumeEcShardsRebuildRequest
+	57,  // 46: volume_server_pb.VolumeServer.VolumeEcShardsCopy:input_type -> volume_server_pb.VolumeEcShardsCopyRequest
+	59,  // 47: volume_server_pb.VolumeServer.VolumeEcShardsDelete:input_type -> volume_server_pb.VolumeEcShardsDeleteRequest
+	61,  // 48: volume_server_pb.VolumeServer.VolumeEcShardsMount:input_type -> volume_server_pb.VolumeEcShardsMountRequest
+	63,  // 49: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:input_type -> volume_server_pb.VolumeEcShardsUnmountRequest
+	65,  // 50: volume_server_pb.VolumeServer.VolumeEcShardRead:input_type -> volume_server_pb.VolumeEcShardReadRequest
+	67,  // 51: volume_server_pb.VolumeServer.VolumeEcBlobDelete:input_type -> volume_server_pb.VolumeEcBlobDeleteRequest
+	69,  // 52: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:input_type -> volume_server_pb.VolumeEcShardsToVolumeRequest
+	78,  // 53: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:input_type -> volume_server_pb.VolumeTierMoveDatToRemoteRequest
+	80,  // 54: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:input_type -> volume_server_pb.VolumeTierMoveDatFromRemoteRequest
+	82,  // 55: volume_server_pb.VolumeServer.VolumeServerStatus:input_type -> volume_server_pb.VolumeServerStatusRequest
+	84,  // 56: volume_server_pb.VolumeServer.VolumeServerLeave:input_type -> volume_server_pb.VolumeServerLeaveRequest
+	86,  // 57: volume_server_pb.VolumeServer.FetchAndWriteNeedle:input_type -> volume_server_pb.FetchAndWriteNeedleRequest
+	88,  // 58: volume_server_pb.VolumeServer.Query:input_type -> volume_server_pb.QueryRequest
+	90,  // 59: volume_server_pb.VolumeServer.VolumeNeedleStatus:input_type -> volume_server_pb.VolumeNeedleStatusRequest
+	92,  // 60: volume_server_pb.VolumeServer.Ping:input_type -> volume_server_pb.PingRequest
+	1,   // 61: volume_server_pb.VolumeServer.BatchDelete:output_type -> volume_server_pb.BatchDeleteResponse
+	5,   // 62: volume_server_pb.VolumeServer.VacuumVolumeCheck:output_type -> volume_server_pb.VacuumVolumeCheckResponse
+	7,   // 63: volume_server_pb.VolumeServer.VacuumVolumeCompact:output_type -> volume_server_pb.VacuumVolumeCompactResponse
+	9,   // 64: volume_server_pb.VolumeServer.VacuumVolumeCommit:output_type -> volume_server_pb.VacuumVolumeCommitResponse
+	11,  // 65: volume_server_pb.VolumeServer.VacuumVolumeCleanup:output_type -> volume_server_pb.VacuumVolumeCleanupResponse
+	13,  // 66: volume_server_pb.VolumeServer.DeleteCollection:output_type -> volume_server_pb.DeleteCollectionResponse
+	15,  // 67: volume_server_pb.VolumeServer.AllocateVolume:output_type -> volume_server_pb.AllocateVolumeResponse
+	17,  // 68: volume_server_pb.VolumeServer.VolumeSyncStatus:output_type -> volume_server_pb.VolumeSyncStatusResponse
+	19,  // 69: volume_server_pb.VolumeServer.VolumeIncrementalCopy:output_type -> volume_server_pb.VolumeIncrementalCopyResponse
+	21,  // 70: volume_server_pb.VolumeServer.VolumeMount:output_type -> volume_server_pb.VolumeMountResponse
+	23,  // 71: volume_server_pb.VolumeServer.VolumeUnmount:output_type -> volume_server_pb.VolumeUnmountResponse
+	25,  // 72: volume_server_pb.VolumeServer.VolumeDelete:output_type -> volume_server_pb.VolumeDeleteResponse
+	27,  // 73: volume_server_pb.VolumeServer.VolumeMarkReadonly:output_type -> volume_server_pb.VolumeMarkReadonlyResponse
+	29,  // 74: volume_server_pb.VolumeServer.VolumeMarkWritable:output_type -> volume_server_pb.VolumeMarkWritableResponse
+	31,  // 75: volume_server_pb.VolumeServer.VolumeConfigure:output_type -> volume_server_pb.VolumeConfigureResponse
+	33,  // 76: volume_server_pb.VolumeServer.VolumeStatus:output_type -> volume_server_pb.VolumeStatusResponse
+	35,  // 77: volume_server_pb.VolumeServer.VolumeCopy:output_type -> volume_server_pb.VolumeCopyResponse
+	72,  // 78: volume_server_pb.VolumeServer.ReadVolumeFileStatus:output_type -> volume_server_pb.ReadVolumeFileStatusResponse
+	37,  // 79: volume_server_pb.VolumeServer.CopyFile:output_type -> volume_server_pb.CopyFileResponse
+	40,  // 80: volume_server_pb.VolumeServer.ReceiveFile:output_type -> volume_server_pb.ReceiveFileResponse
+	42,  // 81: volume_server_pb.VolumeServer.ReadNeedleBlob:output_type -> volume_server_pb.ReadNeedleBlobResponse
+	44,  // 82: volume_server_pb.VolumeServer.ReadNeedleMeta:output_type -> volume_server_pb.ReadNeedleMetaResponse
+	46,  // 83: volume_server_pb.VolumeServer.WriteNeedleBlob:output_type -> volume_server_pb.WriteNeedleBlobResponse
+	48,  // 84: volume_server_pb.VolumeServer.ReadAllNeedles:output_type -> volume_server_pb.ReadAllNeedlesResponse
+	50,  // 85: volume_server_pb.VolumeServer.VolumeTailSender:output_type -> volume_server_pb.VolumeTailSenderResponse
+	52,  // 86: volume_server_pb.VolumeServer.VolumeTailReceiver:output_type -> volume_server_pb.VolumeTailReceiverResponse
+	54,  // 87: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:output_type -> volume_server_pb.VolumeEcShardsGenerateResponse
+	56,  // 88: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:output_type -> volume_server_pb.VolumeEcShardsRebuildResponse
+	58,  // 89: volume_server_pb.VolumeServer.VolumeEcShardsCopy:output_type -> volume_server_pb.VolumeEcShardsCopyResponse
+	60,  // 90: volume_server_pb.VolumeServer.VolumeEcShardsDelete:output_type -> volume_server_pb.VolumeEcShardsDeleteResponse
+	62,  // 91: volume_server_pb.VolumeServer.VolumeEcShardsMount:output_type -> volume_server_pb.VolumeEcShardsMountResponse
+	64,  // 92: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:output_type -> volume_server_pb.VolumeEcShardsUnmountResponse
+	66,  // 93: volume_server_pb.VolumeServer.VolumeEcShardRead:output_type -> volume_server_pb.VolumeEcShardReadResponse
+	68,  // 94: volume_server_pb.VolumeServer.VolumeEcBlobDelete:output_type -> volume_server_pb.VolumeEcBlobDeleteResponse
+	70,  // 95: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:output_type -> volume_server_pb.VolumeEcShardsToVolumeResponse
+	79,  // 96: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:output_type -> volume_server_pb.VolumeTierMoveDatToRemoteResponse
+	81,  // 97: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:output_type -> volume_server_pb.VolumeTierMoveDatFromRemoteResponse
+	83,  // 98: volume_server_pb.VolumeServer.VolumeServerStatus:output_type -> volume_server_pb.VolumeServerStatusResponse
+	85,  // 99: volume_server_pb.VolumeServer.VolumeServerLeave:output_type -> volume_server_pb.VolumeServerLeaveResponse
+	87,  // 100: volume_server_pb.VolumeServer.FetchAndWriteNeedle:output_type -> volume_server_pb.FetchAndWriteNeedleResponse
+	89,  // 101: volume_server_pb.VolumeServer.Query:output_type -> volume_server_pb.QueriedStripe
+	91,  // 102: volume_server_pb.VolumeServer.VolumeNeedleStatus:output_type -> volume_server_pb.VolumeNeedleStatusResponse
+	93,  // 103: volume_server_pb.VolumeServer.Ping:output_type -> volume_server_pb.PingResponse
+	61,  // [61:104] is the sub-list for method output_type
+	18,  // [18:61] is the sub-list for method input_type
+	18,  // [18:18] is the sub-list for extension type_name
+	18,  // [18:18] is the sub-list for extension extendee
+	0,   // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_volume_server_proto_init() }
@@ -6426,13 +6668,17 @@ func file_volume_server_proto_init() {
 	if File_volume_server_proto != nil {
 		return
 	}
+	file_volume_server_proto_msgTypes[38].OneofWrappers = []any{
+		(*ReceiveFileRequest_Info)(nil),
+		(*ReceiveFileRequest_FileContent)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_volume_server_proto_rawDesc), len(file_volume_server_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   100,
+			NumMessages:   103,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
