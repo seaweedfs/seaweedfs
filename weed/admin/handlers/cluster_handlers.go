@@ -161,6 +161,45 @@ func (h *ClusterHandlers) ShowClusterCollections(c *gin.Context) {
 	}
 }
 
+// ShowCollectionDetails renders the collection detail page
+func (h *ClusterHandlers) ShowCollectionDetails(c *gin.Context) {
+	collectionName := c.Param("name")
+	if collectionName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Collection name is required"})
+		return
+	}
+
+	// Parse query parameters
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "25"))
+	sortBy := c.DefaultQuery("sort_by", "volume_id")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+
+	// Get collection details data (volumes and EC volumes)
+	collectionDetailsData, err := h.adminServer.GetCollectionDetails(collectionName, page, pageSize, sortBy, sortOrder)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get collection details: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	collectionDetailsData.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	collectionDetailsComponent := app.CollectionDetails(*collectionDetailsData)
+	layoutComponent := layout.Layout(c, collectionDetailsComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
 // ShowClusterEcShards handles the cluster EC volumes page (grouped by volume)
 func (h *ClusterHandlers) ShowClusterEcShards(c *gin.Context) {
 	// Parse query parameters

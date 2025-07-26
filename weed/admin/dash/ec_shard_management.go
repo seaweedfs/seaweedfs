@@ -189,7 +189,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 		// Conditional display flags
 		ShowDataCenterColumn: len(dataCenters) > 1,
 		ShowRackColumn:       len(racks) > 1,
-		ShowCollectionColumn: len(collections) > 1,
+		ShowCollectionColumn: len(collections) > 1 || collection != "",
 
 		// Filtering
 		FilterCollection: collection,
@@ -412,7 +412,7 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 		// Conditional display flags
 		ShowDataCenterColumn: len(dataCenters) > 1,
 		ShowRackColumn:       false, // We don't track racks in this view for simplicity
-		ShowCollectionColumn: len(collections) > 1,
+		ShowCollectionColumn: len(collections) > 1 || collection != "",
 
 		// Statistics
 		CompleteVolumes:   completeVolumes,
@@ -636,6 +636,8 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 		DataCenters:   dcList,
 		Servers:       serverList,
 		LastUpdated:   time.Now(),
+		SortBy:        sortBy,
+		SortOrder:     sortOrder,
 	}
 
 	return data, nil

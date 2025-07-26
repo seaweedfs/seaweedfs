@@ -13,9 +13,15 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
             </h1>
             if data.FilterCollection != "" {
                 <div class="d-flex align-items-center mt-2">
-                    <span class="badge bg-info me-2">
-                        <i class="fas fa-filter me-1"></i>Collection: {data.FilterCollection}
-                    </span>
+                    if data.FilterCollection == "default" {
+                        <span class="badge bg-secondary text-white me-2">
+                            <i class="fas fa-filter me-1"></i>Collection: default
+                        </span>
+                    } else {
+                        <span class="badge bg-info text-white me-2">
+                            <i class="fas fa-filter me-1"></i>Collection: {data.FilterCollection}
+                        </span>
+                    }
                     <a href="/cluster/ec-shards" class="btn btn-sm btn-outline-secondary">
                         <i class="fas fa-times me-1"></i>Clear Filter
                     </a>
@@ -215,10 +221,12 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             <td>
                                 if shard.Collection != "" {
                                     <a href="/cluster/ec-shards?collection={shard.Collection}" class="text-decoration-none">
-                                        <span class="badge bg-info">{shard.Collection}</span>
+                                        <span class="badge bg-info text-white">{shard.Collection}</span>
                                     </a>
                                 } else {
-                                    <span class="text-muted">default</span>
+                                    <a href="/cluster/ec-shards?collection=default" class="text-decoration-none">
+                                        <span class="badge bg-secondary text-white">default</span>
+                                    </a>
                                 }
                             </td>
                         }

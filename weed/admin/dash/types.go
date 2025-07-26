@@ -207,6 +207,10 @@ type EcVolumeDetailsData struct {
 	DataCenters   []string          `json:"datacenters"`
 	Servers       []string          `json:"servers"`
 	LastUpdated   time.Time         `json:"last_updated"`
+
+	// Sorting
+	SortBy    string `json:"sort_by"`
+	SortOrder string `json:"sort_order"`
 }
 
 type VolumeDetailsData struct {
@@ -219,12 +223,13 @@ type VolumeDetailsData struct {
 
 // Collection management structures
 type CollectionInfo struct {
-	Name        string   `json:"name"`
-	DataCenter  string   `json:"datacenter"`
-	VolumeCount int      `json:"volume_count"`
-	FileCount   int64    `json:"file_count"`
-	TotalSize   int64    `json:"total_size"`
-	DiskTypes   []string `json:"disk_types"`
+	Name          string   `json:"name"`
+	DataCenter    string   `json:"datacenter"`
+	VolumeCount   int      `json:"volume_count"`
+	EcVolumeCount int      `json:"ec_volume_count"`
+	FileCount     int64    `json:"file_count"`
+	TotalSize     int64    `json:"total_size"`
+	DiskTypes     []string `json:"disk_types"`
 }
 
 type ClusterCollectionsData struct {
@@ -232,6 +237,7 @@ type ClusterCollectionsData struct {
 	Collections      []CollectionInfo `json:"collections"`
 	TotalCollections int              `json:"total_collections"`
 	TotalVolumes     int              `json:"total_volumes"`
+	TotalEcVolumes   int              `json:"total_ec_volumes"`
 	TotalFiles       int64            `json:"total_files"`
 	TotalSize        int64            `json:"total_size"`
 	LastUpdated      time.Time        `json:"last_updated"`
@@ -494,4 +500,28 @@ type ClusterEcVolumesData struct {
 
 	// User context
 	Username string `json:"username"`
+}
+
+// Collection detail page structures
+type CollectionDetailsData struct {
+	Username       string               `json:"username"`
+	CollectionName string               `json:"collection_name"`
+	RegularVolumes []VolumeWithTopology `json:"regular_volumes"`
+	EcVolumes      []EcVolumeWithShards `json:"ec_volumes"`
+	TotalVolumes   int                  `json:"total_volumes"`
+	TotalEcVolumes int                  `json:"total_ec_volumes"`
+	TotalFiles     int64                `json:"total_files"`
+	TotalSize      int64                `json:"total_size"`
+	DataCenters    []string             `json:"data_centers"`
+	DiskTypes      []string             `json:"disk_types"`
+	LastUpdated    time.Time            `json:"last_updated"`
+
+	// Pagination
+	Page       int `json:"page"`
+	PageSize   int `json:"page_size"`
+	TotalPages int `json:"total_pages"`
+
+	// Sorting
+	SortBy    string `json:"sort_by"`
+	SortOrder string `json:"sort_order"`
 }

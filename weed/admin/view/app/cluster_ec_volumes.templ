@@ -95,6 +95,14 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
             </div>
         </div>
 
+        <!-- EC Storage Information Note -->
+        <div class="alert alert-info mb-4" role="alert">
+            <i class="fas fa-info-circle me-2"></i>
+            <strong>EC Storage Note:</strong> 
+            EC volumes use erasure coding (10+4) which stores data across 14 shards with redundancy. 
+            Physical storage is approximately 1.4x the original logical data size due to 4 parity shards.
+        </div>
+
         <!-- Volumes Table -->
         <div class="d-flex justify-content-between align-items-center mb-3">
             <div class="d-flex align-items-center">
@@ -123,7 +131,11 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
             
             if data.Collection != "" {
                 <div>
-                    <span class="badge bg-info">Collection: {data.Collection}</span>
+                    if data.Collection == "default" {
+                        <span class="badge bg-secondary text-white">Collection: default</span>
+                    } else {
+                        <span class="badge bg-info text-white">Collection: {data.Collection}</span>
+                    }
                     <a href="/cluster/ec-shards" class="btn btn-sm btn-outline-secondary ms-2">Clear Filter</a>
                 </div>
             }
@@ -207,9 +219,13 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             if data.ShowCollectionColumn {
                                 <td>
                                     if volume.Collection != "" {
-                                        <span class="badge bg-outline-info">{volume.Collection}</span>
+                                        <a href="/cluster/ec-shards?collection={volume.Collection}" class="text-decoration-none">
+                                            <span class="badge bg-info text-white">{volume.Collection}</span>
+                                        </a>
                                     } else {
-                                        <span class="text-muted">default</span>
+                                        <a href="/cluster/ec-shards?collection=default" class="text-decoration-none">
+                                            <span class="badge bg-secondary text-white">default</span>
+                                        </a>
                                     }
                                 </td>
                             }

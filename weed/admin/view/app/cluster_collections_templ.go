@@ -34,7 +34,7 @@ func ClusterCollections(data dash.ClusterCollectionsData) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"fas fa-layer-group me-2\"></i>Cluster Collections</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"exportCollections()\"><i class=\"fas fa-download me-1\"></i>Export</button></div></div></div><div id=\"collections-content\"><!-- Summary Cards --><div class=\"row mb-4\"><div class=\"col-xl-3 col-md-6 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Total Collections</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"fas fa-layer-group me-2\"></i>Cluster Collections</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"exportCollections()\"><i class=\"fas fa-download me-1\"></i>Export</button></div></div></div><div id=\"collections-content\"><!-- Summary Cards --><div class=\"row mb-4\"><div class=\"col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Total Collections</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -47,7 +47,7 @@ func ClusterCollections(data dash.ClusterCollectionsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div></div><div class=\"col-auto\"><i class=\"fas fa-layer-group fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-3 col-md-6 mb-4\"><div class=\"card border-left-info shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-info text-uppercase mb-1\">Total Volumes</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div></div><div class=\"col-auto\"><i class=\"fas fa-layer-group fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-info shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-info text-uppercase mb-1\">Regular Volumes</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -60,284 +60,350 @@ func ClusterCollections(data dash.ClusterCollectionsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</div></div><div class=\"col-auto\"><i class=\"fas fa-database fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-3 col-md-6 mb-4\"><div class=\"card border-left-warning shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-warning text-uppercase mb-1\">Total Files</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</div></div><div class=\"col-auto\"><i class=\"fas fa-database fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-success shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-success text-uppercase mb-1\">EC Volumes</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var4 string
-		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalFiles))
+		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalEcVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 74, Col: 71}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 74, Col: 75}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div></div><div class=\"col-auto\"><i class=\"fas fa-file fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-3 col-md-6 mb-4\"><div class=\"card border-left-secondary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-secondary text-uppercase mb-1\">Total Storage Size</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div></div><div class=\"col-auto\"><i class=\"fas fa-th-large fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-warning shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-warning text-uppercase mb-1\">Total Files</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var5 string
-		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(data.TotalSize))
+		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalFiles))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 94, Col: 64}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 94, Col: 71}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</div></div><div class=\"col-auto\"><i class=\"fas fa-hdd fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Collections Table --><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-layer-group me-2\"></i>Collection Details</h6></div><div class=\"card-body\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</div></div><div class=\"col-auto\"><i class=\"fas fa-file fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-secondary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-secondary text-uppercase mb-1\">Total Storage Size (Logical)</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var6 string
+		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(data.TotalSize))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 114, Col: 64}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</div></div><div class=\"col-auto\"><i class=\"fas fa-hdd fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Collections Table --><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-layer-group me-2\"></i>Collection Details</h6></div><div class=\"card-body\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if len(data.Collections) > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<div class=\"table-responsive\"><table class=\"table table-hover\" id=\"collectionsTable\"><thead><tr><th>Collection Name</th><th>Volumes</th><th>Files</th><th>Size</th><th>Disk Types</th><th>Actions</th></tr></thead> <tbody>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"table-responsive\"><table class=\"table table-hover\" id=\"collectionsTable\"><thead><tr><th>Collection Name</th><th>Regular Volumes</th><th>EC Volumes</th><th>Files</th><th>Size (Logical)</th><th>Disk Types</th><th>Actions</th></tr></thead> <tbody>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			for _, collection := range data.Collections {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<tr><td><a href=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<tr><td><a href=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var6 templ.SafeURL
-				templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", collection.Name)))
+				var templ_7745c5c3_Var7 templ.SafeURL
+				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/cluster/collections/%s", collection.Name)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 131, Col: 130}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\" class=\"text-decoration-none\"><strong>")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var7 string
-				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(collection.Name)
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 132, Col: 68}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 152, Col: 123}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</strong></a></td><td><a href=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" class=\"text-decoration-none\"><strong>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var8 templ.SafeURL
-				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", collection.Name)))
+				var templ_7745c5c3_Var8 string
+				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(collection.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 136, Col: 130}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 153, Col: 68}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "\" class=\"text-decoration-none\"><div class=\"d-flex align-items-center\"><i class=\"fas fa-database me-2 text-muted\"></i> ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</strong></a></td><td><a href=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var9 string
-				templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.VolumeCount))
+				var templ_7745c5c3_Var9 templ.SafeURL
+				templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", collection.Name)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 139, Col: 90}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 157, Col: 130}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</div></a></td><td><div class=\"d-flex align-items-center\"><i class=\"fas fa-file me-2 text-muted\"></i> ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\" class=\"text-decoration-none\"><div class=\"d-flex align-items-center\"><i class=\"fas fa-database me-2 text-muted\"></i> ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var10 string
-				templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.FileCount))
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 146, Col: 88}
+				if collection.VolumeCount > 0 {
+					var templ_7745c5c3_Var10 string
+					templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.VolumeCount))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 161, Col: 94}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				} else {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<span class=\"text-muted\">0</span>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</div></a></td><td><a href=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</div></td><td><div class=\"d-flex align-items-center\"><i class=\"fas fa-hdd me-2 text-muted\"></i> ")
+				var templ_7745c5c3_Var11 templ.SafeURL
+				templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/cluster/ec-shards?collection=%s", collection.Name)))
 				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var11 string
-				templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(collection.TotalSize))
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 152, Col: 82}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 169, Col: 132}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</div></td><td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "\" class=\"text-decoration-none\"><div class=\"d-flex align-items-center\"><i class=\"fas fa-th-large me-2 text-muted\"></i> ")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				if collection.EcVolumeCount > 0 {
+					var templ_7745c5c3_Var12 string
+					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.EcVolumeCount))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 173, Col: 96}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				} else {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<span class=\"text-muted\">0</span>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "</div></a></td><td><div class=\"d-flex align-items-center\"><i class=\"fas fa-file me-2 text-muted\"></i> ")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var13 string
+				templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.FileCount))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 183, Col: 88}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</div></td><td><div class=\"d-flex align-items-center\"><i class=\"fas fa-hdd me-2 text-muted\"></i> ")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var14 string
+				templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(collection.TotalSize))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 189, Col: 82}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</div></td><td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				for i, diskType := range collection.DiskTypes {
 					if i > 0 {
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<span class=\"me-1\"></span>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<span class=\"me-1\"></span>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, " ")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, " ")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					var templ_7745c5c3_Var12 = []any{fmt.Sprintf("badge bg-%s me-1", getDiskTypeColor(diskType))}
-					templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var12...)
+					var templ_7745c5c3_Var15 = []any{fmt.Sprintf("badge bg-%s me-1", getDiskTypeColor(diskType))}
+					templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var15...)
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<span class=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<span class=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					var templ_7745c5c3_Var13 string
-					templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var12).String())
+					var templ_7745c5c3_Var16 string
+					templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var15).String())
 					if templ_7745c5c3_Err != nil {
 						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 1, Col: 0}
 					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					var templ_7745c5c3_Var14 string
-					templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(diskType)
+					var templ_7745c5c3_Var17 string
+					templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(diskType)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 160, Col: 131}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 197, Col: 131}
 					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</span> ")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</span> ")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
 				if len(collection.DiskTypes) == 0 {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<span class=\"text-muted\">Unknown</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "<span class=\"text-muted\">Unknown</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</td><td><button type=\"button\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\" data-action=\"view-details\" data-name=\"")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var15 string
-				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(collection.Name)
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 171, Col: 78}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\" data-datacenter=\"")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var16 string
-				templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(collection.DataCenter)
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 172, Col: 90}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\" data-volume-count=\"")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var17 string
-				templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.VolumeCount))
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 173, Col: 112}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\" data-file-count=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "</td><td><button type=\"button\" class=\"btn btn-outline-primary btn-sm\" title=\"View Details\" data-action=\"view-details\" data-name=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var18 string
-				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.FileCount))
+				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(collection.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 174, Col: 108}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 208, Col: 78}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "\" data-total-size=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "\" data-datacenter=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var19 string
-				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.TotalSize))
+				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(collection.DataCenter)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 175, Col: 108}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 209, Col: 90}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\" data-disk-types=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "\" data-volume-count=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var20 string
-				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(formatDiskTypes(collection.DiskTypes))
+				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.VolumeCount))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 176, Col: 106}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 210, Col: 112}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "\"><i class=\"fas fa-eye\"></i></button></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "\" data-ec-volume-count=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var21 string
+				templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.EcVolumeCount))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 211, Col: 117}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "\" data-file-count=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var22 string
+				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.FileCount))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 212, Col: 108}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "\" data-total-size=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var23 string
+				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", collection.TotalSize))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 213, Col: 108}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "\" data-disk-types=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var24 string
+				templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(formatDiskTypes(collection.DiskTypes))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 214, Col: 106}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "\"><i class=\"fas fa-eye\"></i></button></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "</tbody></table></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "</tbody></table></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "<div class=\"text-center py-5\"><i class=\"fas fa-layer-group fa-3x text-muted mb-3\"></i><h5 class=\"text-muted\">No Collections Found</h5><p class=\"text-muted\">No collections are currently configured in the cluster.</p></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "<div class=\"text-center py-5\"><i class=\"fas fa-layer-group fa-3x text-muted mb-3\"></i><h5 class=\"text-muted\">No Collections Found</h5><p class=\"text-muted\">No collections are currently configured in the cluster.</p></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "</div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "</div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var21 string
-		templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
+		var templ_7745c5c3_Var25 string
+		templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 200, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_collections.templ`, Line: 238, Col: 81}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</small></div></div></div><!-- JavaScript for cluster collections functionality --><script>\n    document.addEventListener('DOMContentLoaded', function() {\n        // Handle collection action buttons\n        document.addEventListener('click', function(e) {\n            const button = e.target.closest('[data-action]');\n            if (!button) return;\n            \n            const action = button.getAttribute('data-action');\n            \n            switch(action) {\n                case 'view-details':\n                    const collectionData = {\n                        name: button.getAttribute('data-name'),\n                        datacenter: button.getAttribute('data-datacenter'),\n                        volumeCount: parseInt(button.getAttribute('data-volume-count')),\n                        fileCount: parseInt(button.getAttribute('data-file-count')),\n                        totalSize: parseInt(button.getAttribute('data-total-size')),\n                        diskTypes: button.getAttribute('data-disk-types')\n                    };\n                    showCollectionDetails(collectionData);\n                    break;\n            }\n        });\n    });\n    \n    function showCollectionDetails(collection) {\n        const modalHtml = '<div class=\"modal fade\" id=\"collectionDetailsModal\" tabindex=\"-1\">' +\n            '<div class=\"modal-dialog modal-lg\">' +\n            '<div class=\"modal-content\">' +\n            '<div class=\"modal-header\">' +\n            '<h5 class=\"modal-title\"><i class=\"fas fa-layer-group me-2\"></i>Collection Details: ' + collection.name + '</h5>' +\n            '<button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button>' +\n            '</div>' +\n            '<div class=\"modal-body\">' +\n            '<div class=\"row\">' +\n            '<div class=\"col-md-6\">' +\n            '<h6 class=\"text-primary\"><i class=\"fas fa-info-circle me-1\"></i>Basic Information</h6>' +\n            '<table class=\"table table-sm\">' +\n            '<tr><td><strong>Collection Name:</strong></td><td><code>' + collection.name + '</code></td></tr>' +\n            '<tr><td><strong>Data Center:</strong></td><td>' +\n            (collection.datacenter ? '<span class=\"badge bg-light text-dark\">' + collection.datacenter + '</span>' : '<span class=\"text-muted\">N/A</span>') +\n            '</td></tr>' +\n            '<tr><td><strong>Disk Types:</strong></td><td>' +\n            (collection.diskTypes ? collection.diskTypes.split(', ').map(type => \n                '<span class=\"badge bg-' + getDiskTypeBadgeColor(type) + ' me-1\">' + type + '</span>'\n            ).join('') : '<span class=\"text-muted\">Unknown</span>') +\n            '</td></tr>' +\n            '</table>' +\n            '</div>' +\n            '<div class=\"col-md-6\">' +\n            '<h6 class=\"text-primary\"><i class=\"fas fa-chart-bar me-1\"></i>Storage Statistics</h6>' +\n            '<table class=\"table table-sm\">' +\n            '<tr><td><strong>Total Volumes:</strong></td><td>' +\n            '<div class=\"d-flex align-items-center\">' +\n            '<i class=\"fas fa-database me-2 text-muted\"></i>' +\n            '<span>' + collection.volumeCount.toLocaleString() + '</span>' +\n            '</div>' +\n            '</td></tr>' +\n            '<tr><td><strong>Total Files:</strong></td><td>' +\n            '<div class=\"d-flex align-items-center\">' +\n            '<i class=\"fas fa-file me-2 text-muted\"></i>' +\n            '<span>' + collection.fileCount.toLocaleString() + '</span>' +\n            '</div>' +\n            '</td></tr>' +\n            '<tr><td><strong>Total Size:</strong></td><td>' +\n            '<div class=\"d-flex align-items-center\">' +\n            '<i class=\"fas fa-hdd me-2 text-muted\"></i>' +\n            '<span>' + formatBytes(collection.totalSize) + '</span>' +\n            '</div>' +\n            '</td></tr>' +\n            '</table>' +\n            '</div>' +\n            '</div>' +\n            '<div class=\"row mt-3\">' +\n            '<div class=\"col-12\">' +\n            '<h6 class=\"text-primary\"><i class=\"fas fa-link me-1\"></i>Quick Actions</h6>' +\n            '<div class=\"d-grid gap-2 d-md-flex\">' +\n            '<a href=\"/cluster/volumes?collection=' + encodeURIComponent(collection.name) + '\" class=\"btn btn-outline-primary\">' +\n            '<i class=\"fas fa-database me-1\"></i>View Volumes' +\n            '</a>' +\n            '<a href=\"/files?collection=' + encodeURIComponent(collection.name) + '\" class=\"btn btn-outline-info\">' +\n            '<i class=\"fas fa-folder me-1\"></i>Browse Files' +\n            '</a>' +\n            '</div>' +\n            '</div>' +\n            '</div>' +\n            '</div>' +\n            '<div class=\"modal-footer\">' +\n            '<button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button>' +\n            '</div>' +\n            '</div>' +\n            '</div>' +\n            '</div>';\n        \n        // Remove existing modal if present\n        const existingModal = document.getElementById('collectionDetailsModal');\n        if (existingModal) {\n            existingModal.remove();\n        }\n        \n        // Add modal to body and show\n        document.body.insertAdjacentHTML('beforeend', modalHtml);\n        const modal = new bootstrap.Modal(document.getElementById('collectionDetailsModal'));\n        modal.show();\n        \n        // Remove modal when hidden\n        document.getElementById('collectionDetailsModal').addEventListener('hidden.bs.modal', function() {\n            this.remove();\n        });\n    }\n    \n    function getDiskTypeBadgeColor(diskType) {\n        switch(diskType.toLowerCase()) {\n            case 'ssd':\n                return 'primary';\n            case 'hdd':\n            case '':\n                return 'secondary';\n            default:\n                return 'info';\n        }\n    }\n    \n    function formatBytes(bytes) {\n        if (bytes === 0) return '0 Bytes';\n        const k = 1024;\n        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];\n        const i = Math.floor(Math.log(bytes) / Math.log(k));\n        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];\n    }\n    \n    function exportCollections() {\n        // Simple CSV export of collections list\n        const rows = Array.from(document.querySelectorAll('#collectionsTable tbody tr')).map(row => {\n            const cells = row.querySelectorAll('td');\n            if (cells.length > 1) {\n                return {\n                    name: cells[0].textContent.trim(),\n                    volumes: cells[1].textContent.trim(),\n                    files: cells[2].textContent.trim(),\n                    size: cells[3].textContent.trim(),\n                    diskTypes: cells[4].textContent.trim()\n                };\n            }\n            return null;\n        }).filter(row => row !== null);\n        \n        const csvContent = \"data:text/csv;charset=utf-8,\" + \n            \"Collection Name,Volumes,Files,Size,Disk Types\\n\" +\n            rows.map(r => '\"' + r.name + '\",\"' + r.volumes + '\",\"' + r.files + '\",\"' + r.size + '\",\"' + r.diskTypes + '\"').join(\"\\n\");\n        \n        const encodedUri = encodeURI(csvContent);\n        const link = document.createElement(\"a\");\n        link.setAttribute(\"href\", encodedUri);\n        link.setAttribute(\"download\", \"collections.csv\");\n        document.body.appendChild(link);\n        link.click();\n        document.body.removeChild(link);\n    }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "</small></div></div></div><!-- JavaScript for cluster collections functionality --><script>\n    document.addEventListener('DOMContentLoaded', function() {\n        // Handle collection action buttons\n        document.addEventListener('click', function(e) {\n            const button = e.target.closest('[data-action]');\n            if (!button) return;\n            \n            const action = button.getAttribute('data-action');\n            \n            switch(action) {\n                case 'view-details':\n                    const collectionData = {\n                        name: button.getAttribute('data-name'),\n                        datacenter: button.getAttribute('data-datacenter'),\n                        volumeCount: parseInt(button.getAttribute('data-volume-count')),\n                        ecVolumeCount: parseInt(button.getAttribute('data-ec-volume-count')),\n                        fileCount: parseInt(button.getAttribute('data-file-count')),\n                        totalSize: parseInt(button.getAttribute('data-total-size')),\n                        diskTypes: button.getAttribute('data-disk-types')\n                    };\n                    showCollectionDetails(collectionData);\n                    break;\n            }\n        });\n    });\n    \n    function showCollectionDetails(collection) {\n        const modalHtml = '<div class=\"modal fade\" id=\"collectionDetailsModal\" tabindex=\"-1\">' +\n            '<div class=\"modal-dialog modal-lg\">' +\n            '<div class=\"modal-content\">' +\n            '<div class=\"modal-header\">' +\n            '<h5 class=\"modal-title\"><i class=\"fas fa-layer-group me-2\"></i>Collection Details: ' + collection.name + '</h5>' +\n            '<button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button>' +\n            '</div>' +\n            '<div class=\"modal-body\">' +\n            '<div class=\"row\">' +\n            '<div class=\"col-md-6\">' +\n            '<h6 class=\"text-primary\"><i class=\"fas fa-info-circle me-1\"></i>Basic Information</h6>' +\n            '<table class=\"table table-sm\">' +\n            '<tr><td><strong>Collection Name:</strong></td><td><code>' + collection.name + '</code></td></tr>' +\n            '<tr><td><strong>Data Center:</strong></td><td>' +\n            (collection.datacenter ? '<span class=\"badge bg-light text-dark\">' + collection.datacenter + '</span>' : '<span class=\"text-muted\">N/A</span>') +\n            '</td></tr>' +\n            '<tr><td><strong>Disk Types:</strong></td><td>' +\n            (collection.diskTypes ? collection.diskTypes.split(', ').map(type => \n                '<span class=\"badge bg-' + getDiskTypeBadgeColor(type) + ' me-1\">' + type + '</span>'\n            ).join('') : '<span class=\"text-muted\">Unknown</span>') +\n            '</td></tr>' +\n            '</table>' +\n            '</div>' +\n            '<div class=\"col-md-6\">' +\n            '<h6 class=\"text-primary\"><i class=\"fas fa-chart-bar me-1\"></i>Storage Statistics</h6>' +\n            '<table class=\"table table-sm\">' +\n            '<tr><td><strong>Regular Volumes:</strong></td><td>' +\n            '<div class=\"d-flex align-items-center\">' +\n            '<i class=\"fas fa-database me-2 text-muted\"></i>' +\n            '<span>' + collection.volumeCount.toLocaleString() + '</span>' +\n            '</div>' +\n            '</td></tr>' +\n            '<tr><td><strong>EC Volumes:</strong></td><td>' +\n            '<div class=\"d-flex align-items-center\">' +\n            '<i class=\"fas fa-th-large me-2 text-muted\"></i>' +\n            '<span>' + collection.ecVolumeCount.toLocaleString() + '</span>' +\n            '</div>' +\n            '</td></tr>' +\n            '<tr><td><strong>Total Files:</strong></td><td>' +\n            '<div class=\"d-flex align-items-center\">' +\n            '<i class=\"fas fa-file me-2 text-muted\"></i>' +\n            '<span>' + collection.fileCount.toLocaleString() + '</span>' +\n            '</div>' +\n            '</td></tr>' +\n            '<tr><td><strong>Total Size (Logical):</strong></td><td>' +\n            '<div class=\"d-flex align-items-center\">' +\n            '<i class=\"fas fa-hdd me-2 text-muted\"></i>' +\n            '<span>' + formatBytes(collection.totalSize) + '</span>' +\n            '</div>' +\n            '</td></tr>' +\n            '</table>' +\n            '</div>' +\n            '</div>' +\n            '<div class=\"row mt-3\">' +\n            '<div class=\"col-12\">' +\n            '<h6 class=\"text-primary\"><i class=\"fas fa-link me-1\"></i>Quick Actions</h6>' +\n            '<div class=\"d-grid gap-2 d-md-flex\">' +\n            '<a href=\"/cluster/volumes?collection=' + encodeURIComponent(collection.name) + '\" class=\"btn btn-outline-primary\">' +\n            '<i class=\"fas fa-database me-1\"></i>View Volumes' +\n            '</a>' +\n            '<a href=\"/cluster/ec-shards?collection=' + encodeURIComponent(collection.name) + '\" class=\"btn btn-outline-secondary\">' +\n            '<i class=\"fas fa-th-large me-1\"></i>View EC Volumes' +\n            '</a>' +\n            '<a href=\"/files?collection=' + encodeURIComponent(collection.name) + '\" class=\"btn btn-outline-info\">' +\n            '<i class=\"fas fa-folder me-1\"></i>Browse Files' +\n            '</a>' +\n            '</div>' +\n            '</div>' +\n            '</div>' +\n            '</div>' +\n            '</div>' +\n            '<div class=\"modal-footer\">' +\n            '<button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button>' +\n            '</div>' +\n            '</div>' +\n            '</div>' +\n            '</div>';\n        \n        // Remove existing modal if present\n        const existingModal = document.getElementById('collectionDetailsModal');\n        if (existingModal) {\n            existingModal.remove();\n        }\n        \n        // Add modal to body and show\n        document.body.insertAdjacentHTML('beforeend', modalHtml);\n        const modal = new bootstrap.Modal(document.getElementById('collectionDetailsModal'));\n        modal.show();\n        \n        // Remove modal when hidden\n        document.getElementById('collectionDetailsModal').addEventListener('hidden.bs.modal', function() {\n            this.remove();\n        });\n    }\n    \n    function getDiskTypeBadgeColor(diskType) {\n        switch(diskType.toLowerCase()) {\n            case 'ssd':\n                return 'primary';\n            case 'hdd':\n            case '':\n                return 'secondary';\n            default:\n                return 'info';\n        }\n    }\n    \n    function formatBytes(bytes) {\n        if (bytes === 0) return '0 Bytes';\n        const k = 1024;\n        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];\n        const i = Math.floor(Math.log(bytes) / Math.log(k));\n        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];\n    }\n    \n    function exportCollections() {\n        // Simple CSV export of collections list\n        const rows = Array.from(document.querySelectorAll('#collectionsTable tbody tr')).map(row => {\n            const cells = row.querySelectorAll('td');\n            if (cells.length > 1) {\n                return {\n                    name: cells[0].textContent.trim(),\n                    volumes: cells[1].textContent.trim(),\n                    files: cells[2].textContent.trim(),\n                    size: cells[3].textContent.trim(),\n                    diskTypes: cells[4].textContent.trim()\n                };\n            }\n            return null;\n        }).filter(row => row !== null);\n        \n        const csvContent = \"data:text/csv;charset=utf-8,\" + \n            \"Collection Name,Volumes,Files,Size,Disk Types\\n\" +\n            rows.map(r => '\"' + r.name + '\",\"' + r.volumes + '\",\"' + r.files + '\",\"' + r.size + '\",\"' + r.diskTypes + '\"').join(\"\\n\");\n        \n        const encodedUri = encodeURI(csvContent);\n        const link = document.createElement(\"a\");\n        link.setAttribute(\"href\", encodedUri);\n        link.setAttribute(\"download\", \"collections.csv\");\n        document.body.appendChild(link);\n        link.click();\n        document.body.removeChild(link);\n    }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

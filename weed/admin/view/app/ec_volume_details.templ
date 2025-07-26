@@ -175,12 +175,64 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                     <table class="table table-striped table-hover">
                         <thead>
                             <tr>
-                                <th>Shard ID</th>
-                                <th>Server</th>
-                                <th>Data Center</th>
-                                <th>Rack</th>
-                                <th>Disk Type</th>
-                                <th>Actions</th>
+                                <th>
+                                    <a href="#" onclick="sortBy('shard_id')" class="text-dark text-decoration-none">
+                                        Shard ID
+                                        if data.SortBy == "shard_id" {
+                                            if data.SortOrder == "asc" {
+                                                <i class="fas fa-sort-up ms-1"></i>
+                                            } else {
+                                                <i class="fas fa-sort-down ms-1"></i>
+                                            }
+                                        } else {
+                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                        }
+                                    </a>
+                                </th>
+                                <th>
+                                    <a href="#" onclick="sortBy('server')" class="text-dark text-decoration-none">
+                                        Server
+                                        if data.SortBy == "server" {
+                                            if data.SortOrder == "asc" {
+                                                <i class="fas fa-sort-up ms-1"></i>
+                                            } else {
+                                                <i class="fas fa-sort-down ms-1"></i>
+                                            }
+                                        } else {
+                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                        }
+                                    </a>
+                                </th>
+                                <th>
+                                    <a href="#" onclick="sortBy('data_center')" class="text-dark text-decoration-none">
+                                        Data Center
+                                        if data.SortBy == "data_center" {
+                                            if data.SortOrder == "asc" {
+                                                <i class="fas fa-sort-up ms-1"></i>
+                                            } else {
+                                                <i class="fas fa-sort-down ms-1"></i>
+                                            }
+                                        } else {
+                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                        }
+                                    </a>
+                                </th>
+                                <th>
+                                    <a href="#" onclick="sortBy('rack')" class="text-dark text-decoration-none">
+                                        Rack
+                                        if data.SortBy == "rack" {
+                                            if data.SortOrder == "asc" {
+                                                <i class="fas fa-sort-up ms-1"></i>
+                                            } else {
+                                                <i class="fas fa-sort-down ms-1"></i>
+                                            }
+                                        } else {
+                                            <i class="fas fa-sort ms-1 text-muted"></i>
+                                        }
+                                    </a>
+                                </th>
+                                <th class="text-dark">Disk Type</th>
+                                <th class="text-dark">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -190,7 +242,9 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                             <span class="badge bg-primary">{fmt.Sprintf("%02d", shard.ShardID)}</span>
                                         </td>
                                         <td>
-                                            <code class="small text-dark">{shard.Server}</code>
+                                            <a href={ templ.URL("/cluster/volume-servers/" + shard.Server) } class="text-primary text-decoration-none">
+                                                <code class="small">{shard.Server}</code>
+                                            </a>
                                         </td>
                                         <td>
                                             <span class="badge bg-primary text-white">{shard.DataCenter}</span>
@@ -220,4 +274,22 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             }
         </div>
     </div>
+    
+    <script>
+        // Sorting functionality
+        function sortBy(field) {
+            const currentSort = new URLSearchParams(window.location.search).get('sort_by');
+            const currentOrder = new URLSearchParams(window.location.search).get('sort_order') || 'asc';
+            
+            let newOrder = 'asc';
+            if (currentSort === field && currentOrder === 'asc') {
+                newOrder = 'desc';
+            }
+            
+            const url = new URL(window.location);
+            url.searchParams.set('sort_by', field);
+            url.searchParams.set('sort_order', newOrder);
+            window.location.href = url.toString();
+        }
+    </script>
 } 
