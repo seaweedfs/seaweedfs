@@ -200,8 +200,8 @@ func (t *Task) Cancel() error {
 	return t.BaseTask.Cancel()
 }
 
-// VacuumConfigV2 extends BaseConfig with vacuum-specific settings
-type VacuumConfigV2 struct {
+// VacuumConfig extends BaseConfig with vacuum-specific settings
+type VacuumConfig struct {
 	base.BaseConfig
 	GarbageThreshold    float64 `json:"garbage_threshold"`
 	MinVolumeAgeSeconds int     `json:"min_volume_age_seconds"`
@@ -214,7 +214,7 @@ func vacuumDetection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.Cl
 		return nil, nil
 	}
 
-	vacuumConfig := config.(*VacuumConfigV2)
+	vacuumConfig := config.(*VacuumConfig)
 	var results []*types.TaskDetectionResult
 	minVolumeAge := time.Duration(vacuumConfig.MinVolumeAgeSeconds) * time.Second
 
@@ -248,7 +248,7 @@ func vacuumDetection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.Cl
 
 // vacuumScheduling implements the scheduling logic for vacuum tasks
 func vacuumScheduling(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker, config base.TaskConfig) bool {
-	vacuumConfig := config.(*VacuumConfigV2)
+	vacuumConfig := config.(*VacuumConfig)
 
 	// Count running vacuum tasks
 	runningVacuumCount := 0
@@ -277,20 +277,34 @@ func vacuumScheduling(task *types.Task, runningTasks []*types.Task, availableWor
 	return false
 }
 
-// createVacuumTask creates a vacuum task instance
+// createVacuumTask creates a new vacuum task instance
 func createVacuumTask(params types.TaskParams) (types.TaskInterface, error) {
-	// Validate parameters
-	if params.VolumeID == 0 {
-		return nil, fmt.Errorf("volume_id is required")
-	}
-	if params.Server == "" {
-		return nil, fmt.Errorf("server is required")
+	// Extract configuration from params
+	var config *VacuumConfig
+	if configData, ok := params.Parameters["config"]; ok {
+		if configMap, ok := configData.(map[string]interface{}); ok {
+			config = &VacuumConfig{}
+			if err := config.FromMap(configMap); err != nil {
+				return nil, fmt.Errorf("failed to parse vacuum config: %v", err)
+			}
+		}
 	}
 
-	// Use existing vacuum task implementation
-	task := NewTask(params.Server, params.VolumeID)
-	task.SetEstimatedDuration(task.EstimateTime(params))
-	return task, nil
+	if config == nil {
+		config = &VacuumConfig{
+			BaseConfig: base.BaseConfig{
+				Enabled:             true,
+				ScanIntervalSeconds: 2 * 60 * 60, // 2 hours
+				MaxConcurrent:       2,
+			},
+			GarbageThreshold:    0.3,              // 30%
+			MinVolumeAgeSeconds: 24 * 60 * 60,     // 24 hours
+			MinIntervalSeconds:  7 * 24 * 60 * 60, // 7 days
+		}
+	}
+
+	// Create and return the vacuum task using existing Task type
+	return NewTask(params.Server, params.VolumeID), nil
 }
 
 // getVacuumConfigSpec returns the configuration schema for vacuum tasks
@@ -308,22 +322,6 @@ func getVacuumConfigSpec() base.ConfigSpec {
 				HelpText:     "Toggle this to enable or disable automatic vacuum task generation",
 				InputType:    "checkbox",
 				CSSClasses:   "form-check-input",
-			},
-			{
-				Name:         "garbage_threshold",
-				JSONName:     "garbage_threshold",
-				Type:         config.FieldTypeFloat,
-				DefaultValue: 0.3,
-				MinValue:     0.0,
-				MaxValue:     1.0,
-				Required:     true,
-				DisplayName:  "Garbage Percentage Threshold",
-				Description:  "Trigger vacuum when garbage ratio exceeds this percentage",
-				HelpText:     "Volumes with more deleted content than this threshold will be vacuumed",
-				Placeholder:  "0.30 (30%)",
-				Unit:         config.UnitNone,
-				InputType:    "number",
-				CSSClasses:   "form-control",
 			},
 			{
 				Name:         "scan_interval_seconds",
@@ -354,6 +352,22 @@ func getVacuumConfigSpec() base.ConfigSpec {
 				HelpText:     "Limits the number of vacuum operations running at the same time to control system load",
 				Placeholder:  "2 (default)",
 				Unit:         config.UnitCount,
+				InputType:    "number",
+				CSSClasses:   "form-control",
+			},
+			{
+				Name:         "garbage_threshold",
+				JSONName:     "garbage_threshold",
+				Type:         config.FieldTypeFloat,
+				DefaultValue: 0.3,
+				MinValue:     0.0,
+				MaxValue:     1.0,
+				Required:     true,
+				DisplayName:  "Garbage Percentage Threshold",
+				Description:  "Trigger vacuum when garbage ratio exceeds this percentage",
+				HelpText:     "Volumes with more deleted content than this threshold will be vacuumed",
+				Placeholder:  "0.30 (30%)",
+				Unit:         config.UnitNone,
 				InputType:    "number",
 				CSSClasses:   "form-control",
 			},
@@ -393,10 +407,10 @@ func getVacuumConfigSpec() base.ConfigSpec {
 	}
 }
 
-// initVacuumV2 registers the refactored vacuum task (replaces the old registration)
-func initVacuumV2() {
+// initVacuum registers the refactored vacuum task (replaces the old registration)
+func initVacuum() {
 	// Create configuration instance
-	config := &VacuumConfigV2{
+	config := &VacuumConfig{
 		BaseConfig: base.BaseConfig{
 			Enabled:             true,
 			ScanIntervalSeconds: 2 * 60 * 60, // 2 hours

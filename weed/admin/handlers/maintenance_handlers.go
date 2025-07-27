@@ -192,11 +192,11 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 	var config interface{}
 	switch taskType {
 	case types.TaskTypeVacuum:
-		config = &vacuum.VacuumConfigV2{}
+		config = &vacuum.VacuumConfig{}
 	case types.TaskTypeBalance:
-		config = &balance.BalanceConfigV2{}
+		config = &balance.BalanceConfig{}
 	case types.TaskTypeErasureCoding:
-		config = &erasure_coding.ErasureCodingConfigV2{}
+		config = &erasure_coding.ErasureCodingConfig{}
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported task type: " + taskTypeName})
 		return

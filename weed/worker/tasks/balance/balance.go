@@ -83,8 +83,8 @@ func (t *Task) EstimateTime(params types.TaskParams) time.Duration {
 	return baseTime
 }
 
-// BalanceConfigV2 extends BaseConfig with balance-specific settings
-type BalanceConfigV2 struct {
+// BalanceConfig extends BaseConfig with balance-specific settings
+type BalanceConfig struct {
 	base.BaseConfig
 	ImbalanceThreshold float64 `json:"imbalance_threshold"`
 	MinServerCount     int     `json:"min_server_count"`
@@ -96,7 +96,7 @@ func balanceDetection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.C
 		return nil, nil
 	}
 
-	balanceConfig := config.(*BalanceConfigV2)
+	balanceConfig := config.(*BalanceConfig)
 
 	// Skip if cluster is too small
 	minVolumeCount := 10
@@ -166,7 +166,7 @@ func balanceDetection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.C
 
 // balanceScheduling implements the scheduling logic for balance tasks
 func balanceScheduling(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker, config base.TaskConfig) bool {
-	balanceConfig := config.(*BalanceConfigV2)
+	balanceConfig := config.(*BalanceConfig)
 
 	// Count running balance tasks
 	runningBalanceCount := 0
@@ -195,19 +195,33 @@ func balanceScheduling(task *types.Task, runningTasks []*types.Task, availableWo
 	return availableWorkerCount > 0
 }
 
-// createBalanceTask creates a balance task instance
+// createBalanceTask creates a new balance task instance
 func createBalanceTask(params types.TaskParams) (types.TaskInterface, error) {
-	// Validate parameters
-	if params.VolumeID == 0 {
-		return nil, fmt.Errorf("volume_id is required")
-	}
-	if params.Server == "" {
-		return nil, fmt.Errorf("server is required")
+	// Extract configuration from params
+	var config *BalanceConfig
+	if configData, ok := params.Parameters["config"]; ok {
+		if configMap, ok := configData.(map[string]interface{}); ok {
+			config = &BalanceConfig{}
+			if err := config.FromMap(configMap); err != nil {
+				return nil, fmt.Errorf("failed to parse balance config: %v", err)
+			}
+		}
 	}
 
-	task := NewTask(params.Server, params.VolumeID, params.Collection)
-	task.SetEstimatedDuration(task.EstimateTime(params))
-	return task, nil
+	if config == nil {
+		config = &BalanceConfig{
+			BaseConfig: base.BaseConfig{
+				Enabled:             true,
+				ScanIntervalSeconds: 30 * 60, // 30 minutes
+				MaxConcurrent:       1,
+			},
+			ImbalanceThreshold: 0.2, // 20%
+			MinServerCount:     2,
+		}
+	}
+
+	// Create and return the balance task using existing Task type
+	return NewTask(params.Server, params.VolumeID, params.Collection), nil
 }
 
 // getBalanceConfigSpec returns the configuration schema for balance tasks
@@ -222,35 +236,23 @@ func getBalanceConfigSpec() base.ConfigSpec {
 				Required:     false,
 				DisplayName:  "Enable Balance Tasks",
 				Description:  "Whether balance tasks should be automatically created",
+				HelpText:     "Toggle this to enable or disable automatic balance task generation",
 				InputType:    "checkbox",
 				CSSClasses:   "form-check-input",
-			},
-			{
-				Name:         "imbalance_threshold",
-				JSONName:     "imbalance_threshold",
-				Type:         config.FieldTypeFloat,
-				DefaultValue: 0.1, // 10%
-				MinValue:     0.01,
-				MaxValue:     0.5,
-				Required:     true,
-				DisplayName:  "Imbalance Threshold",
-				Description:  "Trigger balance when storage imbalance exceeds this ratio",
-				Placeholder:  "0.10 (10%)",
-				Unit:         config.UnitNone,
-				InputType:    "number",
-				CSSClasses:   "form-control",
 			},
 			{
 				Name:         "scan_interval_seconds",
 				JSONName:     "scan_interval_seconds",
 				Type:         config.FieldTypeInterval,
-				DefaultValue: 6 * 60 * 60,  // 6 hours
-				MinValue:     1 * 60 * 60,  // 1 hour
-				MaxValue:     24 * 60 * 60, // 24 hours
+				DefaultValue: 30 * 60,
+				MinValue:     5 * 60,
+				MaxValue:     2 * 60 * 60,
 				Required:     true,
 				DisplayName:  "Scan Interval",
-				Description:  "How often to scan for imbalanced volumes",
-				Unit:         config.UnitHours,
+				Description:  "How often to scan for volume distribution imbalances",
+				HelpText:     "The system will check for volume distribution imbalances at this interval",
+				Placeholder:  "30",
+				Unit:         config.UnitMinutes,
 				InputType:    "interval",
 				CSSClasses:   "form-control",
 			},
@@ -258,13 +260,31 @@ func getBalanceConfigSpec() base.ConfigSpec {
 				Name:         "max_concurrent",
 				JSONName:     "max_concurrent",
 				Type:         config.FieldTypeInt,
-				DefaultValue: 2,
+				DefaultValue: 1,
 				MinValue:     1,
-				MaxValue:     5,
+				MaxValue:     3,
 				Required:     true,
 				DisplayName:  "Max Concurrent Tasks",
 				Description:  "Maximum number of balance tasks that can run simultaneously",
+				HelpText:     "Limits the number of balance operations running at the same time",
+				Placeholder:  "1 (default)",
 				Unit:         config.UnitCount,
+				InputType:    "number",
+				CSSClasses:   "form-control",
+			},
+			{
+				Name:         "imbalance_threshold",
+				JSONName:     "imbalance_threshold",
+				Type:         config.FieldTypeFloat,
+				DefaultValue: 0.2,
+				MinValue:     0.05,
+				MaxValue:     0.5,
+				Required:     true,
+				DisplayName:  "Imbalance Threshold",
+				Description:  "Minimum imbalance ratio to trigger balancing",
+				HelpText:     "Volume distribution imbalances above this threshold will trigger balancing",
+				Placeholder:  "0.20 (20%)",
+				Unit:         config.UnitNone,
 				InputType:    "number",
 				CSSClasses:   "form-control",
 			},
@@ -272,12 +292,14 @@ func getBalanceConfigSpec() base.ConfigSpec {
 				Name:         "min_server_count",
 				JSONName:     "min_server_count",
 				Type:         config.FieldTypeInt,
-				DefaultValue: 3,
+				DefaultValue: 2,
 				MinValue:     2,
-				MaxValue:     20,
+				MaxValue:     10,
 				Required:     true,
 				DisplayName:  "Minimum Server Count",
-				Description:  "Only balance when at least this many servers are available",
+				Description:  "Minimum number of servers required for balancing",
+				HelpText:     "Balancing will only occur if there are at least this many servers",
+				Placeholder:  "2 (default)",
 				Unit:         config.UnitCount,
 				InputType:    "number",
 				CSSClasses:   "form-control",
@@ -286,17 +308,17 @@ func getBalanceConfigSpec() base.ConfigSpec {
 	}
 }
 
-// initBalanceV2 registers the refactored balance task
-func initBalanceV2() {
+// initBalance registers the refactored balance task
+func initBalance() {
 	// Create configuration instance
-	config := &BalanceConfigV2{
+	config := &BalanceConfig{
 		BaseConfig: base.BaseConfig{
-			Enabled:             false,       // Conservative default
-			ScanIntervalSeconds: 6 * 60 * 60, // 6 hours
-			MaxConcurrent:       2,
+			Enabled:             true,
+			ScanIntervalSeconds: 30 * 60, // 30 minutes
+			MaxConcurrent:       1,
 		},
-		ImbalanceThreshold: 0.1, // 10%
-		MinServerCount:     3,
+		ImbalanceThreshold: 0.2, // 20%
+		MinServerCount:     2,
 	}
 
 	// Create complete task definition
@@ -304,18 +326,18 @@ func initBalanceV2() {
 		Type:         types.TaskTypeBalance,
 		Name:         "balance",
 		DisplayName:  "Volume Balance",
-		Description:  "Redistributes volumes across volume servers to optimize storage utilization",
-		Icon:         "fas fa-balance-scale text-secondary",
-		Capabilities: []string{"balance", "storage", "optimization"},
+		Description:  "Balances volume distribution across servers",
+		Icon:         "fas fa-balance-scale text-warning",
+		Capabilities: []string{"balance", "distribution"},
 
 		Config:         config,
 		ConfigSpec:     getBalanceConfigSpec(),
 		CreateTask:     createBalanceTask,
 		DetectionFunc:  balanceDetection,
-		ScanInterval:   6 * time.Hour,
+		ScanInterval:   30 * time.Minute,
 		SchedulingFunc: balanceScheduling,
-		MaxConcurrent:  2,
-		RepeatInterval: 12 * time.Hour,
+		MaxConcurrent:  1,
+		RepeatInterval: 2 * time.Hour,
 	}
 
 	// Register everything with a single function call!

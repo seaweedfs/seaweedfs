@@ -1020,8 +1020,8 @@ func (t *Task) mountShardOnServer(targetServer pb.ServerAddress, shardId uint32)
 	return nil
 }
 
-// ErasureCodingConfigV2 extends BaseConfig with erasure coding specific settings
-type ErasureCodingConfigV2 struct {
+// ErasureCodingConfig extends BaseConfig with erasure coding specific settings
+type ErasureCodingConfig struct {
 	base.BaseConfig
 	QuietForSeconds  int     `json:"quiet_for_seconds"`
 	FullnessRatio    float64 `json:"fullness_ratio"`
@@ -1034,7 +1034,7 @@ func ecDetection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.Cluste
 		return nil, nil
 	}
 
-	ecConfig := config.(*ErasureCodingConfigV2)
+	ecConfig := config.(*ErasureCodingConfig)
 	var results []*types.TaskDetectionResult
 	now := time.Now()
 	quietThreshold := time.Duration(ecConfig.QuietForSeconds) * time.Second
@@ -1091,7 +1091,7 @@ func ecDetection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.Cluste
 
 // ecScheduling implements the scheduling logic for erasure coding tasks
 func ecScheduling(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker, config base.TaskConfig) bool {
-	ecConfig := config.(*ErasureCodingConfigV2)
+	ecConfig := config.(*ErasureCodingConfig)
 
 	// Check if we have available workers
 	if len(availableWorkers) == 0 {
@@ -1123,37 +1123,34 @@ func ecScheduling(task *types.Task, runningTasks []*types.Task, availableWorkers
 	return false
 }
 
-// createErasureCodingTask creates an erasure coding task instance
+// createErasureCodingTask creates a new erasure coding task instance
 func createErasureCodingTask(params types.TaskParams) (types.TaskInterface, error) {
-	// Validate parameters
-	if params.VolumeID == 0 {
-		return nil, fmt.Errorf("volume_id is required")
-	}
-	if params.Server == "" {
-		return nil, fmt.Errorf("server is required")
-	}
-
-	// Extract additional parameters for comprehensive EC
-	masterClient := "localhost:9333"    // Default master client
-	workDir := "/tmp/seaweedfs_ec_work" // Default work directory
-
-	if mc, ok := params.Parameters["master_client"].(string); ok && mc != "" {
-		masterClient = mc
-	}
-	if wd, ok := params.Parameters["work_dir"].(string); ok && wd != "" {
-		workDir = wd
+	// Extract configuration from params
+	var config *ErasureCodingConfig
+	if configData, ok := params.Parameters["config"]; ok {
+		if configMap, ok := configData.(map[string]interface{}); ok {
+			config = &ErasureCodingConfig{}
+			if err := config.FromMap(configMap); err != nil {
+				return nil, fmt.Errorf("failed to parse erasure coding config: %v", err)
+			}
+		}
 	}
 
-	// Create EC task with comprehensive capabilities
-	task := NewTaskWithParams(params.Server, params.VolumeID, masterClient, workDir)
-
-	// Set gRPC dial option if provided
-	if params.GrpcDialOption != nil {
-		task.SetDialOption(params.GrpcDialOption)
+	if config == nil {
+		config = &ErasureCodingConfig{
+			BaseConfig: base.BaseConfig{
+				Enabled:             true,
+				ScanIntervalSeconds: 60 * 60, // 1 hour
+				MaxConcurrent:       1,
+			},
+			QuietForSeconds:  300, // 5 minutes
+			FullnessRatio:    0.8, // 80%
+			CollectionFilter: "",
+		}
 	}
 
-	task.SetEstimatedDuration(task.EstimateTime(params))
-	return task, nil
+	// Create and return the erasure coding task using existing Task type
+	return NewTask(params.Server, params.VolumeID), nil
 }
 
 // getErasureCodingConfigSpec returns the configuration schema for erasure coding tasks
@@ -1168,33 +1165,22 @@ func getErasureCodingConfigSpec() base.ConfigSpec {
 				Required:     false,
 				DisplayName:  "Enable Erasure Coding Tasks",
 				Description:  "Whether erasure coding tasks should be automatically created",
+				HelpText:     "Toggle this to enable or disable automatic erasure coding task generation",
 				InputType:    "checkbox",
 				CSSClasses:   "form-check-input",
-			},
-			{
-				Name:         "quiet_for_seconds",
-				JSONName:     "quiet_for_seconds",
-				Type:         config.FieldTypeInterval,
-				DefaultValue: 7 * 24 * 60 * 60,  // 7 days
-				MinValue:     1 * 24 * 60 * 60,  // 1 day
-				MaxValue:     30 * 24 * 60 * 60, // 30 days
-				Required:     true,
-				DisplayName:  "Quiet For Duration",
-				Description:  "Only apply erasure coding to volumes that have not been modified for this duration",
-				Unit:         config.UnitDays,
-				InputType:    "interval",
-				CSSClasses:   "form-control",
 			},
 			{
 				Name:         "scan_interval_seconds",
 				JSONName:     "scan_interval_seconds",
 				Type:         config.FieldTypeInterval,
-				DefaultValue: 12 * 60 * 60, // 12 hours
-				MinValue:     2 * 60 * 60,  // 2 hours
-				MaxValue:     24 * 60 * 60, // 24 hours
+				DefaultValue: 60 * 60,
+				MinValue:     10 * 60,
+				MaxValue:     24 * 60 * 60,
 				Required:     true,
 				DisplayName:  "Scan Interval",
 				Description:  "How often to scan for volumes needing erasure coding",
+				HelpText:     "The system will check for volumes that need erasure coding at this interval",
+				Placeholder:  "1",
 				Unit:         config.UnitHours,
 				InputType:    "interval",
 				CSSClasses:   "form-control",
@@ -1205,25 +1191,44 @@ func getErasureCodingConfigSpec() base.ConfigSpec {
 				Type:         config.FieldTypeInt,
 				DefaultValue: 1,
 				MinValue:     1,
-				MaxValue:     3,
+				MaxValue:     5,
 				Required:     true,
 				DisplayName:  "Max Concurrent Tasks",
 				Description:  "Maximum number of erasure coding tasks that can run simultaneously",
+				HelpText:     "Limits the number of erasure coding operations running at the same time",
+				Placeholder:  "1 (default)",
 				Unit:         config.UnitCount,
 				InputType:    "number",
+				CSSClasses:   "form-control",
+			},
+			{
+				Name:         "quiet_for_seconds",
+				JSONName:     "quiet_for_seconds",
+				Type:         config.FieldTypeInterval,
+				DefaultValue: 300,
+				MinValue:     60,
+				MaxValue:     3600,
+				Required:     true,
+				DisplayName:  "Quiet Period",
+				Description:  "Minimum time volume must be quiet before erasure coding",
+				HelpText:     "Volume must not be modified for this duration before erasure coding",
+				Placeholder:  "5",
+				Unit:         config.UnitMinutes,
+				InputType:    "interval",
 				CSSClasses:   "form-control",
 			},
 			{
 				Name:         "fullness_ratio",
 				JSONName:     "fullness_ratio",
 				Type:         config.FieldTypeFloat,
-				DefaultValue: 0.9, // 90%
-				MinValue:     0.5,
+				DefaultValue: 0.8,
+				MinValue:     0.1,
 				MaxValue:     1.0,
 				Required:     true,
 				DisplayName:  "Fullness Ratio",
-				Description:  "Only apply erasure coding to volumes with fullness ratio above this threshold",
-				Placeholder:  "0.90 (90%)",
+				Description:  "Minimum fullness ratio to trigger erasure coding",
+				HelpText:     "Only volumes with this fullness ratio or higher will be erasure coded",
+				Placeholder:  "0.80 (80%)",
 				Unit:         config.UnitNone,
 				InputType:    "number",
 				CSSClasses:   "form-control",
@@ -1235,8 +1240,9 @@ func getErasureCodingConfigSpec() base.ConfigSpec {
 				DefaultValue: "",
 				Required:     false,
 				DisplayName:  "Collection Filter",
-				Description:  "Only apply erasure coding to volumes in these collections (comma-separated, leave empty for all)",
-				Placeholder:  "collection1,collection2",
+				Description:  "Only process volumes from specific collections",
+				HelpText:     "Leave empty to process all collections, or specify collection name",
+				Placeholder:  "my_collection",
 				InputType:    "text",
 				CSSClasses:   "form-control",
 			},
@@ -1244,18 +1250,18 @@ func getErasureCodingConfigSpec() base.ConfigSpec {
 	}
 }
 
-// initErasureCodingV2 registers the refactored erasure coding task
-func initErasureCodingV2() {
+// initErasureCoding registers the refactored erasure coding task
+func initErasureCoding() {
 	// Create configuration instance
-	config := &ErasureCodingConfigV2{
+	config := &ErasureCodingConfig{
 		BaseConfig: base.BaseConfig{
-			Enabled:             false,        // Conservative default - enable via configuration
-			ScanIntervalSeconds: 12 * 60 * 60, // 12 hours
-			MaxConcurrent:       1,            // Conservative default
+			Enabled:             true,
+			ScanIntervalSeconds: 60 * 60, // 1 hour
+			MaxConcurrent:       1,
 		},
-		QuietForSeconds:  7 * 24 * 60 * 60, // 7 days quiet period
-		FullnessRatio:    0.90,             // 90% full threshold
-		CollectionFilter: "",               // No collection filter by default
+		QuietForSeconds:  300, // 5 minutes
+		FullnessRatio:    0.8, // 80%
+		CollectionFilter: "",
 	}
 
 	// Create complete task definition
@@ -1263,15 +1269,15 @@ func initErasureCodingV2() {
 		Type:         types.TaskTypeErasureCoding,
 		Name:         "erasure_coding",
 		DisplayName:  "Erasure Coding",
-		Description:  "Converts volumes to erasure coded format for improved data durability",
-		Icon:         "fas fa-shield-alt text-info",
-		Capabilities: []string{"erasure_coding", "storage", "durability"},
+		Description:  "Applies erasure coding to volumes for data protection",
+		Icon:         "fas fa-shield-alt text-success",
+		Capabilities: []string{"erasure_coding", "data_protection"},
 
 		Config:         config,
 		ConfigSpec:     getErasureCodingConfigSpec(),
 		CreateTask:     createErasureCodingTask,
 		DetectionFunc:  ecDetection,
-		ScanInterval:   12 * time.Hour,
+		ScanInterval:   1 * time.Hour,
 		SchedulingFunc: ecScheduling,
 		MaxConcurrent:  1,
 		RepeatInterval: 24 * time.Hour,

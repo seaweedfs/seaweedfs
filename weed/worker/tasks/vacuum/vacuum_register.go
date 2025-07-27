@@ -3,5 +3,5 @@ package vacuum
 // Auto-register this task when the package is imported
 func init() {
 	// Use new architecture instead of old registration
-	initVacuumV2()
+	initVacuum()
 }
