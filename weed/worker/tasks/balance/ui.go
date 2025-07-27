@@ -8,40 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// UIProvider provides the UI for balance task configuration
-type UIProvider struct {
-	detector  *BalanceDetector
-	scheduler *BalanceScheduler
-}
-
-// NewUIProvider creates a new balance UI provider
-func NewUIProvider(detector *BalanceDetector, scheduler *BalanceScheduler) *UIProvider {
-	return &UIProvider{
-		detector:  detector,
-		scheduler: scheduler,
-	}
-}
-
-// GetTaskType returns the task type
-func (ui *UIProvider) GetTaskType() types.TaskType {
-	return types.TaskTypeBalance
-}
-
-// GetDisplayName returns the human-readable name
-func (ui *UIProvider) GetDisplayName() string {
-	return "Volume Balance"
-}
-
-// GetDescription returns a description of what this task does
-func (ui *UIProvider) GetDescription() string {
-	return "Redistributes volumes across volume servers to optimize storage utilization and performance"
-}
-
-// GetIcon returns the icon CSS class for this task type
-func (ui *UIProvider) GetIcon() string {
-	return "fas fa-balance-scale text-secondary"
-}
-
 // BalanceConfig represents the balance configuration matching the schema
 type BalanceConfig struct {
 	Enabled             bool    `json:"enabled"`
@@ -51,8 +17,22 @@ type BalanceConfig struct {
 	MinServerCount      int     `json:"min_server_count"`
 }
 
-// GetCurrentConfig returns the current configuration
-func (ui *UIProvider) GetCurrentConfig() interface{} {
+// BalanceUILogic contains the business logic for balance UI operations
+type BalanceUILogic struct {
+	detector  *BalanceDetector
+	scheduler *BalanceScheduler
+}
+
+// NewBalanceUILogic creates new balance UI logic
+func NewBalanceUILogic(detector *BalanceDetector, scheduler *BalanceScheduler) *BalanceUILogic {
+	return &BalanceUILogic{
+		detector:  detector,
+		scheduler: scheduler,
+	}
+}
+
+// GetCurrentConfig returns the current balance configuration
+func (logic *BalanceUILogic) GetCurrentConfig() interface{} {
 	config := &BalanceConfig{
 		// Default values from schema (matching task_config_schema.go)
 		Enabled:             true,
@@ -63,55 +43,40 @@ func (ui *UIProvider) GetCurrentConfig() interface{} {
 	}
 
 	// Get current values from detector
-	if ui.detector != nil {
-		config.Enabled = ui.detector.IsEnabled()
-		config.ImbalanceThreshold = ui.detector.GetThreshold()
-		config.ScanIntervalSeconds = int(ui.detector.ScanInterval().Seconds())
+	if logic.detector != nil {
+		config.Enabled = logic.detector.IsEnabled()
+		config.ImbalanceThreshold = logic.detector.GetThreshold()
+		config.ScanIntervalSeconds = int(logic.detector.ScanInterval().Seconds())
 	}
 
 	// Get current values from scheduler
-	if ui.scheduler != nil {
-		config.MaxConcurrent = ui.scheduler.GetMaxConcurrent()
-		config.MinServerCount = ui.scheduler.GetMinServerCount()
+	if logic.scheduler != nil {
+		config.MaxConcurrent = logic.scheduler.GetMaxConcurrent()
+		config.MinServerCount = logic.scheduler.GetMinServerCount()
 	}
 
 	return config
 }
 
-// ApplyConfig applies the new configuration
-func (ui *UIProvider) ApplyConfig(config interface{}) error {
+// ApplyConfig applies the balance configuration
+func (logic *BalanceUILogic) ApplyConfig(config interface{}) error {
 	balanceConfig, ok := config.(*BalanceConfig)
 	if !ok {
-		// Try to get the configuration from the schema-based system
-		schema := tasks.GetBalanceTaskConfigSchema()
-		if schema != nil {
-			// Apply defaults to ensure we have a complete config
-			if err := schema.ApplyDefaults(config); err != nil {
-				return err
-			}
-
-			// Use reflection to convert to BalanceConfig - simplified approach
-			if bc, ok := config.(*BalanceConfig); ok {
-				balanceConfig = bc
-			} else {
-				glog.Warningf("Config type conversion failed, using current config")
-				balanceConfig = ui.GetCurrentConfig().(*BalanceConfig)
-			}
-		}
+		return nil // Will be handled by base provider fallback
 	}
 
 	// Apply to detector
-	if ui.detector != nil {
-		ui.detector.SetEnabled(balanceConfig.Enabled)
-		ui.detector.SetThreshold(balanceConfig.ImbalanceThreshold)
-		ui.detector.SetMinCheckInterval(time.Duration(balanceConfig.ScanIntervalSeconds) * time.Second)
+	if logic.detector != nil {
+		logic.detector.SetEnabled(balanceConfig.Enabled)
+		logic.detector.SetThreshold(balanceConfig.ImbalanceThreshold)
+		logic.detector.SetMinCheckInterval(time.Duration(balanceConfig.ScanIntervalSeconds) * time.Second)
 	}
 
 	// Apply to scheduler
-	if ui.scheduler != nil {
-		ui.scheduler.SetEnabled(balanceConfig.Enabled)
-		ui.scheduler.SetMaxConcurrent(balanceConfig.MaxConcurrent)
-		ui.scheduler.SetMinServerCount(balanceConfig.MinServerCount)
+	if logic.scheduler != nil {
+		logic.scheduler.SetEnabled(balanceConfig.Enabled)
+		logic.scheduler.SetMaxConcurrent(balanceConfig.MaxConcurrent)
+		logic.scheduler.SetMinServerCount(balanceConfig.MinServerCount)
 	}
 
 	glog.V(1).Infof("Applied balance configuration: enabled=%v, threshold=%.1f%%, max_concurrent=%d, min_servers=%d",
@@ -123,10 +88,18 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 
 // RegisterUI registers the balance UI provider with the UI registry
 func RegisterUI(uiRegistry *types.UIRegistry, detector *BalanceDetector, scheduler *BalanceScheduler) {
-	uiProvider := NewUIProvider(detector, scheduler)
-	uiRegistry.RegisterUI(uiProvider)
+	logic := NewBalanceUILogic(detector, scheduler)
 
-	glog.V(1).Infof("✅ Registered balance task UI provider")
+	tasks.CommonRegisterUI(
+		types.TaskTypeBalance,
+		"Volume Balance",
+		uiRegistry,
+		detector,
+		scheduler,
+		tasks.GetBalanceTaskConfigSchema,
+		logic.GetCurrentConfig,
+		logic.ApplyConfig,
+	)
 }
 
 // DefaultBalanceConfig returns default balance configuration

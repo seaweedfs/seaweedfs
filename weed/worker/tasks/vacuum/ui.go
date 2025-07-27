@@ -8,40 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// UIProvider provides the UI for vacuum task configuration
-type UIProvider struct {
-	detector  *VacuumDetector
-	scheduler *VacuumScheduler
-}
-
-// NewUIProvider creates a new vacuum UI provider
-func NewUIProvider(detector *VacuumDetector, scheduler *VacuumScheduler) *UIProvider {
-	return &UIProvider{
-		detector:  detector,
-		scheduler: scheduler,
-	}
-}
-
-// GetTaskType returns the task type
-func (ui *UIProvider) GetTaskType() types.TaskType {
-	return types.TaskTypeVacuum
-}
-
-// GetDisplayName returns the human-readable name
-func (ui *UIProvider) GetDisplayName() string {
-	return "Volume Vacuum"
-}
-
-// GetDescription returns a description of what this task does
-func (ui *UIProvider) GetDescription() string {
-	return "Reclaims disk space by removing deleted files from volumes"
-}
-
-// GetIcon returns the icon CSS class for this task type
-func (ui *UIProvider) GetIcon() string {
-	return "fas fa-broom text-primary"
-}
-
 // VacuumConfig represents the vacuum configuration matching the schema
 type VacuumConfig struct {
 	Enabled             bool    `json:"enabled"`
@@ -52,8 +18,22 @@ type VacuumConfig struct {
 	MinIntervalSeconds  int     `json:"min_interval_seconds"`
 }
 
-// GetCurrentConfig returns the current configuration
-func (ui *UIProvider) GetCurrentConfig() interface{} {
+// VacuumUILogic contains the business logic for vacuum UI operations
+type VacuumUILogic struct {
+	detector  *VacuumDetector
+	scheduler *VacuumScheduler
+}
+
+// NewVacuumUILogic creates new vacuum UI logic
+func NewVacuumUILogic(detector *VacuumDetector, scheduler *VacuumScheduler) *VacuumUILogic {
+	return &VacuumUILogic{
+		detector:  detector,
+		scheduler: scheduler,
+	}
+}
+
+// GetCurrentConfig returns the current vacuum configuration
+func (logic *VacuumUILogic) GetCurrentConfig() interface{} {
 	config := &VacuumConfig{
 		// Default values from schema (matching task_config_schema.go)
 		Enabled:             true,
@@ -65,57 +45,42 @@ func (ui *UIProvider) GetCurrentConfig() interface{} {
 	}
 
 	// Get current values from detector
-	if ui.detector != nil {
-		config.Enabled = ui.detector.IsEnabled()
-		config.GarbageThreshold = ui.detector.GetGarbageThreshold()
-		config.ScanIntervalSeconds = int(ui.detector.ScanInterval().Seconds())
-		config.MinVolumeAgeSeconds = int(ui.detector.GetMinVolumeAge().Seconds())
+	if logic.detector != nil {
+		config.Enabled = logic.detector.IsEnabled()
+		config.GarbageThreshold = logic.detector.GetGarbageThreshold()
+		config.ScanIntervalSeconds = int(logic.detector.ScanInterval().Seconds())
+		config.MinVolumeAgeSeconds = int(logic.detector.GetMinVolumeAge().Seconds())
 	}
 
 	// Get current values from scheduler
-	if ui.scheduler != nil {
-		config.MaxConcurrent = ui.scheduler.GetMaxConcurrent()
-		config.MinIntervalSeconds = int(ui.scheduler.GetMinInterval().Seconds())
+	if logic.scheduler != nil {
+		config.MaxConcurrent = logic.scheduler.GetMaxConcurrent()
+		config.MinIntervalSeconds = int(logic.scheduler.GetMinInterval().Seconds())
 	}
 
 	return config
 }
 
-// ApplyConfig applies the new configuration
-func (ui *UIProvider) ApplyConfig(config interface{}) error {
+// ApplyConfig applies the vacuum configuration
+func (logic *VacuumUILogic) ApplyConfig(config interface{}) error {
 	vacuumConfig, ok := config.(*VacuumConfig)
 	if !ok {
-		// Try to get the configuration from the schema-based system
-		schema := tasks.GetVacuumTaskConfigSchema()
-		if schema != nil {
-			// Apply defaults to ensure we have a complete config
-			if err := schema.ApplyDefaults(config); err != nil {
-				return err
-			}
-
-			// Use reflection to convert to VacuumConfig - simplified approach
-			if vc, ok := config.(*VacuumConfig); ok {
-				vacuumConfig = vc
-			} else {
-				glog.Warningf("Config type conversion failed, using current config")
-				vacuumConfig = ui.GetCurrentConfig().(*VacuumConfig)
-			}
-		}
+		return nil // Will be handled by base provider fallback
 	}
 
 	// Apply to detector
-	if ui.detector != nil {
-		ui.detector.SetEnabled(vacuumConfig.Enabled)
-		ui.detector.SetGarbageThreshold(vacuumConfig.GarbageThreshold)
-		ui.detector.SetScanInterval(time.Duration(vacuumConfig.ScanIntervalSeconds) * time.Second)
-		ui.detector.SetMinVolumeAge(time.Duration(vacuumConfig.MinVolumeAgeSeconds) * time.Second)
+	if logic.detector != nil {
+		logic.detector.SetEnabled(vacuumConfig.Enabled)
+		logic.detector.SetGarbageThreshold(vacuumConfig.GarbageThreshold)
+		logic.detector.SetScanInterval(time.Duration(vacuumConfig.ScanIntervalSeconds) * time.Second)
+		logic.detector.SetMinVolumeAge(time.Duration(vacuumConfig.MinVolumeAgeSeconds) * time.Second)
 	}
 
 	// Apply to scheduler
-	if ui.scheduler != nil {
-		ui.scheduler.SetEnabled(vacuumConfig.Enabled)
-		ui.scheduler.SetMaxConcurrent(vacuumConfig.MaxConcurrent)
-		ui.scheduler.SetMinInterval(time.Duration(vacuumConfig.MinIntervalSeconds) * time.Second)
+	if logic.scheduler != nil {
+		logic.scheduler.SetEnabled(vacuumConfig.Enabled)
+		logic.scheduler.SetMaxConcurrent(vacuumConfig.MaxConcurrent)
+		logic.scheduler.SetMinInterval(time.Duration(vacuumConfig.MinIntervalSeconds) * time.Second)
 	}
 
 	glog.V(1).Infof("Applied vacuum configuration: enabled=%v, threshold=%.1f%%, scan_interval=%ds, max_concurrent=%d",
@@ -126,22 +91,21 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 
 // RegisterUI registers the vacuum UI provider with the UI registry
 func RegisterUI(uiRegistry *types.UIRegistry, detector *VacuumDetector, scheduler *VacuumScheduler) {
-	uiProvider := NewUIProvider(detector, scheduler)
-	uiRegistry.RegisterUI(uiProvider)
+	logic := NewVacuumUILogic(detector, scheduler)
 
-	glog.V(1).Infof("✅ Registered vacuum task UI provider")
+	tasks.CommonRegisterUI(
+		types.TaskTypeVacuum,
+		"Volume Vacuum",
+		uiRegistry,
+		detector,
+		scheduler,
+		tasks.GetVacuumTaskConfigSchema,
+		logic.GetCurrentConfig,
+		logic.ApplyConfig,
+	)
 }
 
 // GetUIProvider returns the UI provider for external use
-func GetUIProvider(uiRegistry *types.UIRegistry) *UIProvider {
-	provider := uiRegistry.GetProvider(types.TaskTypeVacuum)
-	if provider == nil {
-		return nil
-	}
-
-	if vacuumProvider, ok := provider.(*UIProvider); ok {
-		return vacuumProvider
-	}
-
-	return nil
+func GetUIProvider(uiRegistry *types.UIRegistry) types.TaskUIProvider {
+	return uiRegistry.GetProvider(types.TaskTypeVacuum)
 }

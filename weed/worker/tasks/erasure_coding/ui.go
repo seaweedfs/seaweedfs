@@ -8,40 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// UIProvider provides the UI for erasure coding task configuration
-type UIProvider struct {
-	detector  *EcDetector
-	scheduler *Scheduler
-}
-
-// NewUIProvider creates a new erasure coding UI provider
-func NewUIProvider(detector *EcDetector, scheduler *Scheduler) *UIProvider {
-	return &UIProvider{
-		detector:  detector,
-		scheduler: scheduler,
-	}
-}
-
-// GetTaskType returns the task type
-func (ui *UIProvider) GetTaskType() types.TaskType {
-	return types.TaskTypeErasureCoding
-}
-
-// GetDisplayName returns the human-readable name
-func (ui *UIProvider) GetDisplayName() string {
-	return "Erasure Coding"
-}
-
-// GetDescription returns a description of what this task does
-func (ui *UIProvider) GetDescription() string {
-	return "Converts volumes to erasure coded format for improved data durability and fault tolerance"
-}
-
-// GetIcon returns the icon CSS class for this task type
-func (ui *UIProvider) GetIcon() string {
-	return "fas fa-shield-alt text-info"
-}
-
 // ErasureCodingConfig represents the erasure coding configuration matching the schema
 type ErasureCodingConfig struct {
 	Enabled             bool    `json:"enabled"`
@@ -52,8 +18,22 @@ type ErasureCodingConfig struct {
 	CollectionFilter    string  `json:"collection_filter"`
 }
 
-// GetCurrentConfig returns the current configuration
-func (ui *UIProvider) GetCurrentConfig() interface{} {
+// ErasureCodingUILogic contains the business logic for erasure coding UI operations
+type ErasureCodingUILogic struct {
+	detector  *EcDetector
+	scheduler *Scheduler
+}
+
+// NewErasureCodingUILogic creates new erasure coding UI logic
+func NewErasureCodingUILogic(detector *EcDetector, scheduler *Scheduler) *ErasureCodingUILogic {
+	return &ErasureCodingUILogic{
+		detector:  detector,
+		scheduler: scheduler,
+	}
+}
+
+// GetCurrentConfig returns the current erasure coding configuration
+func (logic *ErasureCodingUILogic) GetCurrentConfig() interface{} {
 	config := ErasureCodingConfig{
 		// Default values from schema (matching task_config_schema.go)
 		Enabled:             true,
@@ -65,57 +45,42 @@ func (ui *UIProvider) GetCurrentConfig() interface{} {
 	}
 
 	// Get current values from detector
-	if ui.detector != nil {
-		config.Enabled = ui.detector.IsEnabled()
-		config.QuietForSeconds = ui.detector.GetQuietForSeconds()
-		config.FullnessRatio = ui.detector.GetFullnessRatio()
-		config.CollectionFilter = ui.detector.GetCollectionFilter()
-		config.ScanIntervalSeconds = int(ui.detector.ScanInterval().Seconds())
+	if logic.detector != nil {
+		config.Enabled = logic.detector.IsEnabled()
+		config.QuietForSeconds = logic.detector.GetQuietForSeconds()
+		config.FullnessRatio = logic.detector.GetFullnessRatio()
+		config.CollectionFilter = logic.detector.GetCollectionFilter()
+		config.ScanIntervalSeconds = int(logic.detector.ScanInterval().Seconds())
 	}
 
 	// Get current values from scheduler
-	if ui.scheduler != nil {
-		config.MaxConcurrent = ui.scheduler.GetMaxConcurrent()
+	if logic.scheduler != nil {
+		config.MaxConcurrent = logic.scheduler.GetMaxConcurrent()
 	}
 
 	return config
 }
 
-// ApplyConfig applies the new configuration
-func (ui *UIProvider) ApplyConfig(config interface{}) error {
+// ApplyConfig applies the erasure coding configuration
+func (logic *ErasureCodingUILogic) ApplyConfig(config interface{}) error {
 	ecConfig, ok := config.(ErasureCodingConfig)
 	if !ok {
-		// Try to get the configuration from the schema-based system
-		schema := tasks.GetErasureCodingTaskConfigSchema()
-		if schema != nil {
-			// Apply defaults to ensure we have a complete config
-			if err := schema.ApplyDefaults(config); err != nil {
-				return err
-			}
-
-			// Use reflection to convert to ErasureCodingConfig - simplified approach
-			if ec, ok := config.(ErasureCodingConfig); ok {
-				ecConfig = ec
-			} else {
-				glog.Warningf("Config type conversion failed, using current config")
-				ecConfig = ui.GetCurrentConfig().(ErasureCodingConfig)
-			}
-		}
+		return nil // Will be handled by base provider fallback
 	}
 
 	// Apply to detector
-	if ui.detector != nil {
-		ui.detector.SetEnabled(ecConfig.Enabled)
-		ui.detector.SetQuietForSeconds(ecConfig.QuietForSeconds)
-		ui.detector.SetFullnessRatio(ecConfig.FullnessRatio)
-		ui.detector.SetCollectionFilter(ecConfig.CollectionFilter)
-		ui.detector.SetScanInterval(time.Duration(ecConfig.ScanIntervalSeconds) * time.Second)
+	if logic.detector != nil {
+		logic.detector.SetEnabled(ecConfig.Enabled)
+		logic.detector.SetQuietForSeconds(ecConfig.QuietForSeconds)
+		logic.detector.SetFullnessRatio(ecConfig.FullnessRatio)
+		logic.detector.SetCollectionFilter(ecConfig.CollectionFilter)
+		logic.detector.SetScanInterval(time.Duration(ecConfig.ScanIntervalSeconds) * time.Second)
 	}
 
 	// Apply to scheduler
-	if ui.scheduler != nil {
-		ui.scheduler.SetEnabled(ecConfig.Enabled)
-		ui.scheduler.SetMaxConcurrent(ecConfig.MaxConcurrent)
+	if logic.scheduler != nil {
+		logic.scheduler.SetEnabled(ecConfig.Enabled)
+		logic.scheduler.SetMaxConcurrent(ecConfig.MaxConcurrent)
 	}
 
 	glog.V(1).Infof("Applied erasure coding configuration: enabled=%v, quiet_for=%v seconds, max_concurrent=%d, fullness_ratio=%f, collection_filter=%s",
@@ -126,8 +91,16 @@ func (ui *UIProvider) ApplyConfig(config interface{}) error {
 
 // RegisterUI registers the erasure coding UI provider with the UI registry
 func RegisterUI(uiRegistry *types.UIRegistry, detector *EcDetector, scheduler *Scheduler) {
-	uiProvider := NewUIProvider(detector, scheduler)
-	uiRegistry.RegisterUI(uiProvider)
+	logic := NewErasureCodingUILogic(detector, scheduler)
 
-	glog.V(1).Infof("✅ Registered erasure coding task UI provider")
+	tasks.CommonRegisterUI(
+		types.TaskTypeErasureCoding,
+		"Erasure Coding",
+		uiRegistry,
+		detector,
+		scheduler,
+		tasks.GetErasureCodingTaskConfigSchema,
+		logic.GetCurrentConfig,
+		logic.ApplyConfig,
+	)
 }
