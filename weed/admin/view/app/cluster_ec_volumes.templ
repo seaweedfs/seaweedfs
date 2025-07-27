@@ -237,27 +237,10 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                                 @displayShardSizes(volume.ShardSizes)
                             </td>
                             <td>
-                                <div class="shard-locations" style="max-width: 400px;">
-                                    @displayShardLocationsHTML(volume.ShardLocations)
-                                </div>
+                                @displayVolumeDistribution(volume)
                             </td>
                             <td>
-                                if volume.IsComplete {
-                                    <span class="badge bg-success">
-                                        <i class="fas fa-check me-1"></i>Complete
-                                    </span>
-                                } else {
-                                    <span class="badge bg-warning">
-                                        <i class="fas fa-exclamation-triangle me-1"></i>
-                                        Missing {fmt.Sprintf("%d", len(volume.MissingShards))} shards
-                                    </span>
-                                    if len(volume.MissingShards) > 0 {
-                                        <br/>
-                                        <small class="text-muted">
-                                            Missing: {formatMissingShards(volume.MissingShards)}
-                                        </small>
-                                    }
-                                }
+                                @displayEcVolumeStatus(volume)
                             </td>
                             if data.ShowDataCenterColumn {
                                 <td>
@@ -721,4 +704,63 @@ func formatIndividualShardSizes(shardSizes map[int]int64) string {
 	
 	// If too many different sizes, show summary
 	return fmt.Sprintf("%d different sizes", len(sizeGroups))
+}
+
+// displayVolumeDistribution shows the distribution summary for a volume
+templ displayVolumeDistribution(volume dash.EcVolumeWithShards) {
+    <div class="small">
+        <i class="fas fa-sitemap me-1"></i>
+        { calculateVolumeDistributionSummary(volume) }
+    </div>
+}
+
+// displayEcVolumeStatus shows an improved status display for EC volumes
+templ displayEcVolumeStatus(volume dash.EcVolumeWithShards) {
+    if volume.IsComplete {
+        <span class="badge bg-success"><i class="fas fa-check me-1"></i>Complete</span>
+    } else {
+        if len(volume.MissingShards) > 10 {
+            <span class="badge bg-danger"><i class="fas fa-skull me-1"></i>Critical ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
+        } else if len(volume.MissingShards) > 6 {
+            <span class="badge bg-warning"><i class="fas fa-exclamation-triangle me-1"></i>Degraded ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
+        } else if len(volume.MissingShards) > 2 {
+            <span class="badge bg-warning"><i class="fas fa-info-circle me-1"></i>Incomplete ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
+        } else {
+            <span class="badge bg-info"><i class="fas fa-info-circle me-1"></i>Minor Issues ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
+        }
+    }
+}
+
+// calculateVolumeDistributionSummary calculates and formats the distribution summary for a volume
+func calculateVolumeDistributionSummary(volume dash.EcVolumeWithShards) string {
+    dataCenters := make(map[string]bool)
+    servers := make(map[string]bool)
+    
+    // Count unique servers from shard locations
+    for _, server := range volume.ShardLocations {
+        servers[server] = true
+    }
+    
+    // Use the DataCenters field if available
+    for _, dc := range volume.DataCenters {
+        dataCenters[dc] = true
+    }
+    
+    // Use the Servers field if available
+    for _, server := range volume.Servers {
+        servers[server] = true
+    }
+    
+    // If we don't have rack information, estimate it from servers
+    // This is a simple approximation - in practice you'd want better rack detection
+    rackCount := len(servers) // Assuming each server might be in a different rack
+    if len(dataCenters) > 0 {
+        // More conservative estimate if we have DC info
+        rackCount = (len(servers) + len(dataCenters) - 1) / len(dataCenters)
+        if rackCount == 0 {
+            rackCount = 1
+        }
+    }
+    
+    return fmt.Sprintf("%d DCs, %d racks, %d servers", len(dataCenters), rackCount, len(servers))
 } 

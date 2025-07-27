@@ -200,11 +200,11 @@ func (h *ClusterHandlers) ShowCollectionDetails(c *gin.Context) {
 	}
 }
 
-// ShowClusterEcShards handles the cluster EC volumes page (grouped by volume)
+// ShowClusterEcShards handles the cluster EC shards page (individual shards view)
 func (h *ClusterHandlers) ShowClusterEcShards(c *gin.Context) {
 	// Parse query parameters
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "100"))
 	sortBy := c.DefaultQuery("sort_by", "volume_id")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 	collection := c.DefaultQuery("collection", "")

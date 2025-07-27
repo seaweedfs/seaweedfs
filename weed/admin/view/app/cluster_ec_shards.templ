@@ -80,9 +80,9 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h6 class="card-title">Complete Volumes</h6>
+                            <h6 class="card-title">Healthy Volumes</h6>
                             <h4 class="mb-0">{fmt.Sprintf("%d", data.VolumesWithAllShards)}</h4>
-                            <small>All 14 shards</small>
+                            <small>Complete (14/14 shards)</small>
                         </div>
                         <div class="align-self-center">
                             <i class="fas fa-check-circle fa-2x"></i>
@@ -96,9 +96,9 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h6 class="card-title">Incomplete Volumes</h6>
+                            <h6 class="card-title">Degraded Volumes</h6>
                             <h4 class="mb-0">{fmt.Sprintf("%d", data.VolumesWithMissingShards)}</h4>
-                            <small>Missing shards</small>
+                            <small>Incomplete/Critical</small>
                         </div>
                         <div class="align-self-center">
                             <i class="fas fa-exclamation-triangle fa-2x"></i>
@@ -128,20 +128,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             }
                         </a>
                     </th>
-                    <th>
-                        <a href="#" onclick="sortBy('shard_id')" class="text-dark text-decoration-none">
-                            Shard ID
-                            if data.SortBy == "shard_id" {
-                                if data.SortOrder == "asc" {
-                                    <i class="fas fa-sort-up ms-1"></i>
-                                } else {
-                                    <i class="fas fa-sort-down ms-1"></i>
-                                }
-                            } else {
-                                <i class="fas fa-sort ms-1 text-muted"></i>
-                            }
-                        </a>
-                    </th>
+
                     if data.ShowCollectionColumn {
                         <th>
                             <a href="#" onclick="sortBy('collection')" class="text-dark text-decoration-none">
@@ -204,7 +191,8 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             </a>
                         </th>
                     }
-                    <th class="text-dark">Volume & Shard Status</th>
+                    <th class="text-dark">Distribution</th>
+                    <th class="text-dark">Status</th>
                     <th class="text-dark">Actions</th>
                 </tr>
             </thead>
@@ -213,9 +201,6 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                     <tr>
                         <td>
                             <span class="fw-bold">{fmt.Sprintf("%d", shard.VolumeID)}</span>
-                        </td>
-                        <td>
-                            <span class="badge bg-secondary">{fmt.Sprintf("%02d", shard.ShardID)}</span>
                         </td>
                         if data.ShowCollectionColumn {
                             <td>
@@ -244,20 +229,10 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             </td>
                         }
                         <td>
-                            if shard.IsComplete {
-                                <span class="badge bg-success">
-                                    <i class="fas fa-check me-1"></i>Volume Complete
-                                </span>
-                            } else {
-                                <span class="badge bg-warning">
-                                    <i class="fas fa-exclamation-triangle me-1"></i>
-                                    Volume Missing {fmt.Sprintf("%d", len(shard.MissingShards))} shards
-                                </span>
-                            }
-                            <br/>
-                            <small class="text-muted">
-                                <i class="fas fa-database me-1"></i>Shard {fmt.Sprintf("%d", shard.ShardID)} present
-                            </small>
+                            @displayShardDistribution(shard, data.EcShards)
+                        </td>
+                        <td>
+                            @displayVolumeStatus(shard)
                         </td>
                         <td>
                             <div class="btn-group" role="group">
@@ -347,6 +322,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
         </nav>
     }
 
+
     <!-- JavaScript -->
     <script>
         function sortBy(field) {
@@ -433,4 +409,47 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
             }
         }
     </script>
-} 
+}
+
+// displayShardDistribution shows the distribution summary for a volume's shards
+templ displayShardDistribution(shard dash.EcShardWithInfo, allShards []dash.EcShardWithInfo) {
+    <div class="small">
+        <i class="fas fa-sitemap me-1"></i>
+        { calculateDistributionSummary(shard.VolumeID, allShards) }
+    </div>
+}
+
+// displayVolumeStatus shows an improved status display
+templ displayVolumeStatus(shard dash.EcShardWithInfo) {
+    if shard.IsComplete {
+        <span class="badge bg-success"><i class="fas fa-check me-1"></i>Complete</span>
+    } else {
+        if len(shard.MissingShards) > 10 {
+            <span class="badge bg-danger"><i class="fas fa-skull me-1"></i>Critical ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+        } else if len(shard.MissingShards) > 6 {
+            <span class="badge bg-warning"><i class="fas fa-exclamation-triangle me-1"></i>Degraded ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+        } else if len(shard.MissingShards) > 2 {
+            <span class="badge bg-warning"><i class="fas fa-info-circle me-1"></i>Incomplete ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+        } else {
+            <span class="badge bg-info"><i class="fas fa-info-circle me-1"></i>Minor Issues ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+        }
+    }
+}
+
+// calculateDistributionSummary calculates and formats the distribution summary
+func calculateDistributionSummary(volumeID uint32, allShards []dash.EcShardWithInfo) string {
+    dataCenters := make(map[string]bool)
+    racks := make(map[string]bool)
+    servers := make(map[string]bool)
+    
+    for _, s := range allShards {
+        if s.VolumeID == volumeID {
+            dataCenters[s.DataCenter] = true
+            racks[s.Rack] = true
+            servers[s.Server] = true
+        }
+    }
+    
+    return fmt.Sprintf("%d DCs, %d racks, %d servers", len(dataCenters), len(racks), len(servers))
+}
+
