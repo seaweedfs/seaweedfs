@@ -60,7 +60,7 @@ type AdminServer struct {
 // Type definitions moved to types.go
 
 func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) *AdminServer {
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
 	masterClient := wdclient.NewMasterClient(
