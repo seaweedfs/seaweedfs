@@ -101,19 +101,19 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		true,
 	)
 
-	form.AddDurationField(
-		"scan_interval",
+	form.AddIntervalField(
+		"scan_interval_seconds",
 		"Scan Interval",
 		"How often to scan for volumes needing vacuum",
-		secondsToDuration(config.ScanIntervalSeconds),
+		config.ScanIntervalSeconds,
 		true,
 	)
 
-	form.AddDurationField(
-		"min_volume_age",
+	form.AddIntervalField(
+		"min_volume_age_seconds",
 		"Minimum Volume Age",
 		"Only vacuum volumes older than this duration",
-		secondsToDuration(config.MinVolumeAgeSeconds),
+		config.MinVolumeAgeSeconds,
 		true,
 	)
 
@@ -126,11 +126,11 @@ func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML
 		true,
 	)
 
-	form.AddDurationField(
-		"min_interval",
+	form.AddIntervalField(
+		"min_interval_seconds",
 		"Minimum Interval",
 		"Minimum time between vacuum operations on the same volume",
-		secondsToDuration(config.MinIntervalSeconds),
+		config.MinIntervalSeconds,
 		true,
 	)
 
@@ -158,10 +158,13 @@ function resetForm() {
 		// Reset to default values
 		document.querySelector('input[name="enabled"]').checked = true;
 		document.querySelector('input[name="garbage_threshold"]').value = '30';
-		document.querySelector('input[name="scan_interval"]').value = '30m';
-		document.querySelector('input[name="min_volume_age"]').value = '1h';
+		document.querySelector('input[name="scan_interval_seconds_value"]').value = '30';
+		document.querySelector('select[name="scan_interval_seconds_unit"]').value = 'minute';
+		document.querySelector('input[name="min_volume_age_seconds_value"]').value = '1';
+		document.querySelector('select[name="min_volume_age_seconds_unit"]').value = 'hour';
 		document.querySelector('input[name="max_concurrent"]').value = '2';
-		document.querySelector('input[name="min_interval"]').value = '6h';
+		document.querySelector('input[name="min_interval_seconds_value"]').value = '6';
+		document.querySelector('select[name="min_interval_seconds_unit"]').value = 'hour';
 	}
 }
 </script>
@@ -189,21 +192,35 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	}
 
 	// Parse scan interval
-	if intervalStr := formData["scan_interval"]; len(intervalStr) > 0 {
-		if interval, err := time.ParseDuration(intervalStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid scan interval: %w", err)
-		} else {
-			config.ScanIntervalSeconds = durationToSeconds(interval)
+	if values, ok := formData["scan_interval_seconds_value"]; ok && len(values) > 0 {
+		value, err := strconv.Atoi(values[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid scan interval value: %w", err)
 		}
+
+		unit := "minute" // default
+		if units, ok := formData["scan_interval_seconds_unit"]; ok && len(units) > 0 {
+			unit = units[0]
+		}
+
+		// Convert to seconds using the helper function from types package
+		config.ScanIntervalSeconds = types.IntervalValueUnitToSeconds(value, unit)
 	}
 
 	// Parse min volume age
-	if ageStr := formData["min_volume_age"]; len(ageStr) > 0 {
-		if age, err := time.ParseDuration(ageStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid min volume age: %w", err)
-		} else {
-			config.MinVolumeAgeSeconds = durationToSeconds(age)
+	if values, ok := formData["min_volume_age_seconds_value"]; ok && len(values) > 0 {
+		value, err := strconv.Atoi(values[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid min volume age value: %w", err)
 		}
+
+		unit := "minute" // default
+		if units, ok := formData["min_volume_age_seconds_unit"]; ok && len(units) > 0 {
+			unit = units[0]
+		}
+
+		// Convert to seconds
+		config.MinVolumeAgeSeconds = types.IntervalValueUnitToSeconds(value, unit)
 	}
 
 	// Parse max concurrent
@@ -218,12 +235,19 @@ func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}
 	}
 
 	// Parse min interval
-	if intervalStr := formData["min_interval"]; len(intervalStr) > 0 {
-		if interval, err := time.ParseDuration(intervalStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid min interval: %w", err)
-		} else {
-			config.MinIntervalSeconds = durationToSeconds(interval)
+	if values, ok := formData["min_interval_seconds_value"]; ok && len(values) > 0 {
+		value, err := strconv.Atoi(values[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid min interval value: %w", err)
 		}
+
+		unit := "minute" // default
+		if units, ok := formData["min_interval_seconds_unit"]; ok && len(units) > 0 {
+			unit = units[0]
+		}
+
+		// Convert to seconds
+		config.MinIntervalSeconds = types.IntervalValueUnitToSeconds(value, unit)
 	}
 
 	return config, nil
