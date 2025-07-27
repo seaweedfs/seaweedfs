@@ -197,8 +197,9 @@ func (ms *MasterSynchronizer) processDiskInfo(
 
 	// Update capacity information
 	capacity := serverCapacity[serverID]
-	capacity.TotalCapacity += int64(diskInfo.MaxVolumeCount) * (32 * 1024 * 1024 * 1024) // Assume 32GB per volume
-	capacity.UsedCapacity += int64(diskInfo.ActiveVolumeCount) * (32 * 1024 * 1024 * 1024)
+	volumeSizeBytes := int64(ms.volumeSizeLimitMB) * 1024 * 1024 // Convert MB to bytes
+	capacity.TotalCapacity += int64(diskInfo.MaxVolumeCount) * volumeSizeBytes
+	capacity.UsedCapacity += int64(diskInfo.ActiveVolumeCount) * volumeSizeBytes
 
 	// Process regular volumes
 	for _, volInfo := range diskInfo.VolumeInfos {
