@@ -99,7 +99,7 @@ func RegisterUI(uiRegistry *types.UIRegistry, detector *VacuumDetector, schedule
 		uiRegistry,
 		detector,
 		scheduler,
-		tasks.GetVacuumTaskConfigSchema,
+		GetConfigSchema,
 		logic.GetCurrentConfig,
 		logic.ApplyConfig,
 	)

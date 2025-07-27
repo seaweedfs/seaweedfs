@@ -96,7 +96,7 @@ func RegisterUI(uiRegistry *types.UIRegistry, detector *BalanceDetector, schedul
 		uiRegistry,
 		detector,
 		scheduler,
-		tasks.GetBalanceTaskConfigSchema,
+		GetConfigSchema,
 		logic.GetCurrentConfig,
 		logic.ApplyConfig,
 	)

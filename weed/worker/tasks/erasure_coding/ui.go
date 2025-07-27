@@ -99,7 +99,7 @@ func RegisterUI(uiRegistry *types.UIRegistry, detector *EcDetector, scheduler *S
 		uiRegistry,
 		detector,
 		scheduler,
-		tasks.GetErasureCodingTaskConfigSchema,
+		GetConfigSchema,
 		logic.GetCurrentConfig,
 		logic.ApplyConfig,
 	)
