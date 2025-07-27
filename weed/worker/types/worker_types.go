@@ -108,4 +108,13 @@ type TaskInterface interface {
 	EstimateTime(params TaskParams) time.Duration
 	GetProgress() float64
 	Cancel() error
+
+	// Logging methods for task-specific log files
+	InitializeTaskLogging(workingDir, taskID string) error
+	CloseTaskLogging()
+	LogInfo(format string, args ...interface{})
+	LogError(format string, args ...interface{})
+	LogDebug(format string, args ...interface{})
+	LogWarning(format string, args ...interface{})
+	GetLogFilePath() string
 }

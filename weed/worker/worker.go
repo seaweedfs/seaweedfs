@@ -366,15 +366,29 @@ func (w *Worker) executeTask(task *types.Task) {
 		return
 	}
 
+	// Initialize task logging
+	if err := taskInstance.InitializeTaskLogging(taskWorkingDir, task.ID); err != nil {
+		glog.Warningf("Failed to initialize task logging for %s: %v", task.ID, err)
+	} else {
+		// Ensure logging is closed when task completes
+		defer taskInstance.CloseTaskLogging()
+		taskInstance.LogInfo("Worker %s starting execution of task %s (type: %s)", w.id, task.ID, task.Type)
+		if task.VolumeID != 0 {
+			taskInstance.LogInfo("Task parameters: VolumeID=%d, Server=%s, Collection=%s", task.VolumeID, task.Server, task.Collection)
+		}
+	}
+
 	// Execute task
 	err = taskInstance.Execute(taskParams)
 
 	// Report completion
 	if err != nil {
+		taskInstance.LogError("Task execution failed: %v", err)
 		w.completeTask(task.ID, false, err.Error())
 		w.tasksFailed++
 		glog.Errorf("Worker %s failed to execute task %s: %v", w.id, task.ID, err)
 	} else {
+		taskInstance.LogInfo("Task completed successfully")
 		w.completeTask(task.ID, true, "")
 		w.tasksCompleted++
 		glog.Infof("Worker %s completed task %s successfully", w.id, task.ID)

@@ -30,6 +30,7 @@ func NewTask(server string, volumeID uint32, collection string) *Task {
 
 // Execute executes the balance task
 func (t *Task) Execute(params types.TaskParams) error {
+	t.LogInfo("Starting balance task for volume %d on server %s (collection: %s)", t.volumeID, t.server, t.collection)
 	glog.Infof("Starting balance task for volume %d on server %s (collection: %s)", t.volumeID, t.server, t.collection)
 
 	// Simulate balance operation with progress updates
@@ -45,18 +46,23 @@ func (t *Task) Execute(params types.TaskParams) error {
 		{"Verifying balance", 1 * time.Second, 100},
 	}
 
-	for _, step := range steps {
+	for i, step := range steps {
 		if t.IsCancelled() {
+			t.LogWarning("Balance task cancelled at step %d: %s", i+1, step.name)
 			return fmt.Errorf("balance task cancelled")
 		}
 
+		t.LogInfo("Starting step %d/%d: %s", i+1, len(steps), step.name)
 		glog.V(1).Infof("Balance task step: %s", step.name)
 		t.SetProgress(step.progress)
 
 		// Simulate work
 		time.Sleep(step.duration)
+
+		t.LogDebug("Completed step %d/%d: %s (progress: %.1f%%)", i+1, len(steps), step.name, step.progress)
 	}
 
+	t.LogInfo("Balance task completed successfully for volume %d on server %s", t.volumeID, t.server)
 	glog.Infof("Balance task completed for volume %d on server %s", t.volumeID, t.server)
 	return nil
 }
