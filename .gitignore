@@ -113,3 +113,5 @@ test/s3/retention/weed-test.log
 /test/s3/versioning/test-volume-data
 test/s3/versioning/weed-test.log
 /docker/admin_integration/data
+docker/agent_pub_record
+docker/admin_integration/weed-local
