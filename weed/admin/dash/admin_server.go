@@ -1131,55 +1131,17 @@ func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigDat
 	if err != nil {
 		glog.Errorf("Failed to load maintenance configuration: %v", err)
 		// Fallback to default configuration
-		config = DefaultMaintenanceConfig()
-	}
-
-	// Ensure policy is properly initialized and fix zero values with meaningful defaults
-	defaultConfig := maintenance.DefaultMaintenanceConfig()
-	configUpdated := false
-
-	if config.Policy == nil {
-		config.Policy = defaultConfig.Policy
-		configUpdated = true
-		glog.V(1).Infof("Initialized null policy with defaults")
+		config = maintenance.DefaultMaintenanceConfig()
 	}
 
 	// Apply schema defaults for any zero values
+	configUpdated := false
 	schema := maintenance.GetMaintenanceConfigSchema()
 	if err := schema.ApplyDefaults(config); err == nil {
 		configUpdated = true
 		glog.V(1).Infof("Applied schema defaults to configuration")
 	} else {
-		glog.V(1).Infof("Schema defaults failed, using fallback: %v", err)
-		// Fallback to using the default config for zero values
-		if config.ScanIntervalSeconds == 0 {
-			config.ScanIntervalSeconds = defaultConfig.ScanIntervalSeconds
-			configUpdated = true
-		}
-		if config.WorkerTimeoutSeconds == 0 {
-			config.WorkerTimeoutSeconds = defaultConfig.WorkerTimeoutSeconds
-			configUpdated = true
-		}
-		if config.TaskTimeoutSeconds == 0 {
-			config.TaskTimeoutSeconds = defaultConfig.TaskTimeoutSeconds
-			configUpdated = true
-		}
-		if config.RetryDelaySeconds == 0 {
-			config.RetryDelaySeconds = defaultConfig.RetryDelaySeconds
-			configUpdated = true
-		}
-		if config.MaxRetries == 0 {
-			config.MaxRetries = defaultConfig.MaxRetries
-			configUpdated = true
-		}
-		if config.CleanupIntervalSeconds == 0 {
-			config.CleanupIntervalSeconds = defaultConfig.CleanupIntervalSeconds
-			configUpdated = true
-		}
-		if config.TaskRetentionSeconds == 0 {
-			config.TaskRetentionSeconds = defaultConfig.TaskRetentionSeconds
-			configUpdated = true
-		}
+		glog.Errorf("Failed to apply schema defaults: %v", err)
 	}
 
 	// Save the corrected configuration if any updates were made
@@ -1233,32 +1195,7 @@ func (as *AdminServer) updateMaintenanceConfig(config *maintenance.MaintenanceCo
 	// Apply schema defaults
 	if err := schema.ApplyDefaults(config); err != nil {
 		glog.Errorf("Failed to apply schema defaults: %v", err)
-		// Fallback to manual default application
-		defaultConfig := maintenance.DefaultMaintenanceConfig()
-		if config.Policy == nil {
-			config.Policy = defaultConfig.Policy
-		}
-		if config.ScanIntervalSeconds == 0 {
-			config.ScanIntervalSeconds = defaultConfig.ScanIntervalSeconds
-		}
-		if config.WorkerTimeoutSeconds == 0 {
-			config.WorkerTimeoutSeconds = defaultConfig.WorkerTimeoutSeconds
-		}
-		if config.TaskTimeoutSeconds == 0 {
-			config.TaskTimeoutSeconds = defaultConfig.TaskTimeoutSeconds
-		}
-		if config.RetryDelaySeconds == 0 {
-			config.RetryDelaySeconds = defaultConfig.RetryDelaySeconds
-		}
-		if config.MaxRetries == 0 {
-			config.MaxRetries = defaultConfig.MaxRetries
-		}
-		if config.CleanupIntervalSeconds == 0 {
-			config.CleanupIntervalSeconds = defaultConfig.CleanupIntervalSeconds
-		}
-		if config.TaskRetentionSeconds == 0 {
-			config.TaskRetentionSeconds = defaultConfig.TaskRetentionSeconds
-		}
+		return fmt.Errorf("failed to apply schema defaults: %w", err)
 	}
 
 	// Validate configuration using schema
