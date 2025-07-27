@@ -344,34 +344,54 @@ func (ms *MasterSynchronizer) checkVacuumCandidate(volumeID uint32, state *Volum
 		return nil
 	}
 
-	// Get the current garbage threshold from the vacuum detector
+	// Get the current configuration from the vacuum detector
 	vacuumDetector, _ := vacuum.GetSharedInstances()
-	var vacuumThresholdPercent float64 = 0.3 // Default fallback
-	if vacuumDetector != nil {
-		vacuumThresholdPercent = vacuumDetector.GetGarbageThreshold()
+	if vacuumDetector == nil || !vacuumDetector.IsEnabled() {
+		return nil
 	}
 
+	// Get configuration values from the detector
+	garbageThreshold := vacuumDetector.GetGarbageThreshold()
+	minVolumeAge := vacuumDetector.GetMinVolumeAge()
+
 	// Vacuum criteria:
-	// 1. Significant deleted bytes (> configured threshold or > 1GB)
-	// 2. Not currently being written to heavily
+	// 1. Volume meets garbage threshold
+	// 2. Volume is old enough (respects minimum age)
+	// 3. Volume has sufficient size
 
-	const vacuumMinBytes = 1024 * 1024 * 1024 // 1GB
-
-	deletedRatio := float64(volume.DeletedByteCount) / float64(volume.Size)
-	isCandidate := (deletedRatio > vacuumThresholdPercent || volume.DeletedByteCount > vacuumMinBytes) &&
-		volume.Size > 0
-
-	if !isCandidate {
+	// Check minimum volume size (avoid vacuum on tiny volumes)
+	if volume.Size == 0 {
 		return nil
+	}
+
+	// Check garbage ratio
+	deletedRatio := float64(volume.DeletedByteCount) / float64(volume.Size)
+	if deletedRatio < garbageThreshold {
+		return nil
+	}
+
+	// Check minimum volume age using volume's last modification time
+	now := time.Now()
+	lastModified := time.Unix(volume.ModifiedAtSecond, 0)
+	volumeAge := now.Sub(lastModified)
+
+	if volumeAge < minVolumeAge {
+		return nil // Volume is too new for vacuum
+	}
+
+	// Determine priority based on garbage ratio
+	priority := types.TaskPriorityNormal
+	if deletedRatio > 0.6 { // High garbage ratio gets higher priority
+		priority = types.TaskPriorityHigh
 	}
 
 	return &VolumeMaintenanceCandidate{
 		VolumeID: volumeID,
 		Server:   volume.Server,
 		TaskType: "vacuum",
-		Priority: types.TaskPriorityNormal,
-		Reason: fmt.Sprintf("Deleted bytes %d (%.1f%%) exceed vacuum threshold (%.1f%%)",
-			volume.DeletedByteCount, deletedRatio*100, vacuumThresholdPercent*100),
+		Priority: priority,
+		Reason: fmt.Sprintf("Volume meets vacuum criteria: garbage=%.1f%% (>%.1f%%), age=%s (>%s)",
+			deletedRatio*100, garbageThreshold*100, volumeAge.Truncate(time.Second), minVolumeAge.Truncate(time.Second)),
 		VolumeInfo: volume,
 	}
 }
