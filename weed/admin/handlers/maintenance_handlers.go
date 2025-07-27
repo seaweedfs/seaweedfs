@@ -110,20 +110,20 @@ func (h *MaintenanceHandlers) ShowMaintenanceConfig(c *gin.Context) {
 func (h *MaintenanceHandlers) ShowTaskConfig(c *gin.Context) {
 	taskTypeName := c.Param("taskType")
 
-	// Get the task type
-	taskType := maintenance.GetMaintenanceTaskType(taskTypeName)
-	if taskType == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Task type not found"})
+	// Get the schema for this task type
+	schema := tasks.GetTaskConfigSchema(taskTypeName)
+	if schema == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task type not found or no schema available"})
 		return
 	}
 
-	// Get the UI provider for this task type
+	// Get the UI provider for current configuration
 	uiRegistry := tasks.GetGlobalUIRegistry()
 	typesRegistry := tasks.GetGlobalTypesRegistry()
 
 	var provider types.TaskUIProvider
 	for workerTaskType := range typesRegistry.GetAllDetectors() {
-		if string(workerTaskType) == string(taskType) {
+		if string(workerTaskType) == taskTypeName {
 			provider = uiRegistry.GetProvider(workerTaskType)
 			break
 		}
@@ -134,28 +134,27 @@ func (h *MaintenanceHandlers) ShowTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Get current configuration and render form using the actual UI provider
+	// Get current configuration
 	currentConfig := provider.GetCurrentConfig()
-	formHTML, err := provider.RenderConfigForm(currentConfig)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render configuration form: " + err.Error()})
-		return
+
+	// Apply schema defaults to ensure all fields have values
+	if err := schema.ApplyDefaults(currentConfig); err != nil {
+		glog.Errorf("Failed to apply schema defaults for %s: %v", taskTypeName, err)
 	}
 
-	// Create task configuration data using the actual form HTML
+	// Create task configuration data
 	configData := &maintenance.TaskConfigData{
-		TaskType:       taskType,
-		TaskName:       provider.GetDisplayName(),
-		TaskIcon:       provider.GetIcon(),
-		Description:    provider.GetDescription(),
-		ConfigFormHTML: formHTML,
+		TaskType:    maintenance.MaintenanceTaskType(taskTypeName),
+		TaskName:    schema.DisplayName,
+		TaskIcon:    schema.Icon,
+		Description: schema.Description,
 	}
 
-	// Render HTML template
+	// Render HTML template using schema-based approach
 	c.Header("Content-Type", "text/html")
-	taskConfigComponent := app.TaskConfig(configData)
+	taskConfigComponent := app.TaskConfigSchema(configData, schema, currentConfig)
 	layoutComponent := layout.Layout(c, taskConfigComponent)
-	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	err := layoutComponent.Render(c.Request.Context(), c.Writer)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
 		return

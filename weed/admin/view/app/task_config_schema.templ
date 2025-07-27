@@ -5,22 +5,23 @@ import (
     "reflect"
     "strings"
     "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+    "github.com/seaweedfs/seaweedfs/weed/worker/tasks"
     "github.com/seaweedfs/seaweedfs/weed/admin/config"
 )
 
-templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *maintenance.MaintenanceConfigSchema) {
+templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfigSchema, config interface{}) {
     <div class="container-fluid">
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center">
                     <h2 class="mb-0">
-                        <i class="fas fa-cogs me-2"></i>
-                        Maintenance Configuration
+                        <i class={schema.Icon + " me-2"}></i>
+                        {schema.DisplayName} Configuration
                     </h2>
                     <div class="btn-group">
-                        <a href="/maintenance/tasks" class="btn btn-outline-primary">
-                            <i class="fas fa-tasks me-1"></i>
-                            View Tasks
+                        <a href="/maintenance/config" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left me-1"></i>
+                            Back to System Config
                         </a>
                     </div>
                 </div>
@@ -31,17 +32,18 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="mb-0">System Settings</h5>
+                        <h5 class="mb-0">{schema.DisplayName} Settings</h5>
+                        <p class="mb-0 text-muted">{schema.Description}</p>
                     </div>
                     <div class="card-body">
-                        <form id="maintenanceConfigForm">
-                            <!-- Dynamically render all schema fields in order -->
+                        <form id="taskConfigForm" method="POST">
+                            <!-- Dynamically render all schema fields in defined order -->
                             for _, field := range schema.Fields {
-                                @ConfigField(field, getMaintenanceFieldValue(data.Config, field.JSONName))
+                                @TaskConfigField(field, getTaskFieldValue(config, field.JSONName))
                             }
 
                             <div class="d-flex gap-2">
-                                <button type="button" class="btn btn-primary" onclick="saveConfiguration()">
+                                <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save me-1"></i>
                                     Save Configuration
                                 </button>
@@ -56,47 +58,35 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
             </div>
         </div>
 
-        <!-- Task Configuration Cards -->
+        <!-- Performance Notes Card -->
         <div class="row mt-4">
-            <div class="col-md-4">
+            <div class="col-12">
                 <div class="card">
                     <div class="card-header">
                         <h5 class="mb-0">
-                            <i class="fas fa-broom me-2"></i>
-                            Volume Vacuum
+                            <i class="fas fa-info-circle me-2"></i>
+                            Important Notes
                         </h5>
                     </div>
                     <div class="card-body">
-                        <p class="card-text">Reclaims disk space by removing deleted files from volumes.</p>
-                        <a href="/maintenance/config/vacuum" class="btn btn-primary">Configure</a>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">
-                            <i class="fas fa-balance-scale me-2"></i>
-                            Volume Balance
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <p class="card-text">Redistributes volumes across servers to optimize storage utilization.</p>
-                        <a href="/maintenance/config/balance" class="btn btn-primary">Configure</a>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">
-                            <i class="fas fa-shield-alt me-2"></i>
-                            Erasure Coding
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <p class="card-text">Converts volumes to erasure coded format for improved durability.</p>
-                        <a href="/maintenance/config/erasure_coding" class="btn btn-primary">Configure</a>
+                        <div class="alert alert-info" role="alert">
+                            if schema.TaskName == "vacuum" {
+                                <h6 class="alert-heading">Vacuum Operations:</h6>
+                                <p class="mb-2"><strong>Performance:</strong> Vacuum operations are I/O intensive and may impact cluster performance.</p>
+                                <p class="mb-2"><strong>Safety:</strong> Only volumes meeting age and garbage thresholds will be processed.</p>
+                                <p class="mb-0"><strong>Recommendation:</strong> Monitor cluster load and adjust concurrent limits accordingly.</p>
+                            } else if schema.TaskName == "balance" {
+                                <h6 class="alert-heading">Balance Operations:</h6>
+                                <p class="mb-2"><strong>Performance:</strong> Volume balancing involves data movement and can impact cluster performance.</p>
+                                <p class="mb-2"><strong>Safety:</strong> Requires adequate server count to ensure data safety during moves.</p>
+                                <p class="mb-0"><strong>Recommendation:</strong> Run during off-peak hours to minimize impact on production workloads.</p>
+                            } else if schema.TaskName == "erasure_coding" {
+                                <h6 class="alert-heading">Erasure Coding Operations:</h6>
+                                <p class="mb-2"><strong>Performance:</strong> Erasure coding is CPU and I/O intensive. Consider running during off-peak hours.</p>
+                                <p class="mb-2"><strong>Durability:</strong> With 10+4 configuration, can tolerate up to 4 shard failures.</p>
+                                <p class="mb-0"><strong>Configuration:</strong> Fullness ratio should be between 0.5 and 1.0 (e.g., 0.90 for 90%).</p>
+                            }
+                        </div>
                     </div>
                 </div>
             </div>
@@ -104,101 +94,63 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
     </div>
 
     <script>
-        function saveConfiguration() {
-            const form = document.getElementById('maintenanceConfigForm');
-            const formData = new FormData(form);
-            
-            // Convert form data to JSON, handling interval fields specially
-            const config = {};
-            
-            for (let [key, value] of formData.entries()) {
-                if (key.endsWith('_value')) {
-                    // This is an interval value part
-                    const baseKey = key.replace('_value', '');
-                    const unitKey = baseKey + '_unit';
-                    const unitValue = formData.get(unitKey);
-                    
-                    if (unitValue) {
-                        // Convert to seconds based on unit
-                        const numValue = parseInt(value) || 0;
-                        let seconds = numValue;
-                        switch(unitValue) {
-                            case 'minutes':
-                                seconds = numValue * 60;
-                                break;
-                            case 'hours':
-                                seconds = numValue * 3600;
-                                break;
-                            case 'days':
-                                seconds = numValue * 24 * 3600;
-                                break;
-                        }
-                        config[baseKey] = seconds;
-                    }
-                } else if (key.endsWith('_unit')) {
-                    // Skip unit keys - they're handled with their corresponding value
-                    continue;
-                } else {
-                    // Regular field
-                    if (form.querySelector(`[name="${key}"]`).type === 'checkbox') {
-                        config[key] = form.querySelector(`[name="${key}"]`).checked;
-                    } else {
-                        const numValue = parseFloat(value);
-                        config[key] = isNaN(numValue) ? value : numValue;
-                    }
-                }
-            }
-
-            fetch('/maintenance/config', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(config)
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alert('Configuration saved successfully!');
-                    location.reload();
-                } else {
-                    alert('Error saving configuration: ' + (data.error || 'Unknown error'));
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Error saving configuration: ' + error.message);
-            });
-        }
-
         function resetToDefaults() {
             if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {
-                fetch('/maintenance/config/defaults', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
+                // Reset form fields to their default values
+                const form = document.getElementById('taskConfigForm');
+                const schemaFields = window.taskConfigSchema ? window.taskConfigSchema.fields : {};
+                
+                Object.keys(schemaFields).forEach(fieldName => {
+                    const field = schemaFields[fieldName];
+                    const element = document.getElementById(fieldName);
+                    
+                    if (element && field.default_value !== undefined) {
+                        if (field.input_type === 'checkbox') {
+                            element.checked = field.default_value;
+                        } else if (field.input_type === 'interval') {
+                            // Handle interval fields with value and unit
+                            const valueElement = document.getElementById(fieldName + '_value');
+                            const unitElement = document.getElementById(fieldName + '_unit');
+                            if (valueElement && unitElement && field.default_value) {
+                                const defaultSeconds = field.default_value;
+                                const { value, unit } = convertSecondsToTaskIntervalValueUnit(defaultSeconds);
+                                valueElement.value = value;
+                                unitElement.value = unit;
+                            }
+                        } else {
+                            element.value = field.default_value;
+                        }
                     }
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        alert('Configuration reset to defaults!');
-                        location.reload();
-                    } else {
-                        alert('Error resetting configuration: ' + (data.error || 'Unknown error'));
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('Error resetting configuration: ' + error.message);
                 });
             }
         }
+
+        function convertSecondsToTaskIntervalValueUnit(totalSeconds) {
+            if (totalSeconds === 0) {
+                return { value: 0, unit: 'minutes' };
+            }
+
+            // Check if it's evenly divisible by days
+            if (totalSeconds % (24 * 3600) === 0) {
+                return { value: totalSeconds / (24 * 3600), unit: 'days' };
+            }
+
+            // Check if it's evenly divisible by hours
+            if (totalSeconds % 3600 === 0) {
+                return { value: totalSeconds / 3600, unit: 'hours' };
+            }
+
+            // Default to minutes
+            return { value: totalSeconds / 60, unit: 'minutes' };
+        }
+
+        // Store schema data for JavaScript access
+        window.taskConfigSchema = @taskSchemaToTaskJSON(schema);
     </script>
 }
 
-// ConfigField renders a single configuration field based on schema
-templ ConfigField(field *config.Field, value interface{}) {
+// TaskConfigField renders a single task configuration field based on schema
+templ TaskConfigField(field *config.Field, value interface{}) {
     if field.InputType == "interval" {
         <!-- Interval field with number input + unit dropdown -->
         <div class="mb-3">
@@ -214,7 +166,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     class="form-control" 
                     id={ field.JSONName + "_value" } 
                     name={ field.JSONName + "_value" } 
-                    value={ fmt.Sprintf("%.0f", convertSecondsToDisplayValue(value, field)) }
+                    value={ fmt.Sprintf("%.0f", convertTaskSecondsToDisplayValue(value, field)) }
                     step="1"
                     min="1"
                     if field.Required {
@@ -232,7 +184,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                 >
                     <option 
                         value="minutes"
-                        if getDisplayUnit(value, field) == "minutes" {
+                        if getTaskDisplayUnit(value, field) == "minutes" {
                             selected
                         }
                     >
@@ -240,7 +192,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     </option>
                     <option 
                         value="hours"
-                        if getDisplayUnit(value, field) == "hours" {
+                        if getTaskDisplayUnit(value, field) == "hours" {
                             selected
                         }
                     >
@@ -248,7 +200,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     </option>
                     <option 
                         value="days"
-                        if getDisplayUnit(value, field) == "days" {
+                        if getTaskDisplayUnit(value, field) == "days" {
                             selected
                         }
                     >
@@ -269,7 +221,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     type="checkbox" 
                     id={ field.JSONName }
                     name={ field.JSONName }
-                    if getBoolValue(value) {
+                    if getTaskBoolValue(value) {
                         checked
                     }
                 />
@@ -277,6 +229,30 @@ templ ConfigField(field *config.Field, value interface{}) {
                     <strong>{ field.DisplayName }</strong>
                 </label>
             </div>
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    } else if field.InputType == "text" {
+        <!-- Text field -->
+        <div class="mb-3">
+            <label for={ field.JSONName } class="form-label">
+                { field.DisplayName }
+                if field.Required {
+                    <span class="text-danger">*</span>
+                }
+            </label>
+            <input 
+                type="text" 
+                class="form-control" 
+                id={ field.JSONName }
+                name={ field.JSONName }
+                value={ fmt.Sprintf("%v", value) }
+                placeholder={ field.Placeholder }
+                if field.Required {
+                    required
+                }
+            />
             if field.Description != "" {
                 <div class="form-text text-muted">{ field.Description }</div>
             }
@@ -303,7 +279,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                 if field.MaxValue != nil {
                     max={ fmt.Sprintf("%v", field.MaxValue) }
                 }
-                step={ getNumberStep(field) }
+                step={ getTaskNumberStep(field) }
                 if field.Required {
                     required
                 }
@@ -316,14 +292,14 @@ templ ConfigField(field *config.Field, value interface{}) {
 }
 
 // Helper functions for the template
-func getBoolValue(value interface{}) bool {
+func getTaskBoolValue(value interface{}) bool {
     if boolVal, ok := value.(bool); ok {
         return boolVal
     }
     return false
 }
 
-func convertSecondsToDisplayValue(value interface{}, field *config.Field) float64 {
+func convertTaskSecondsToDisplayValue(value interface{}, field *config.Field) float64 {
     if intVal, ok := value.(int); ok {
         if intVal == 0 {
             return 0
@@ -345,7 +321,7 @@ func convertSecondsToDisplayValue(value interface{}, field *config.Field) float6
     return 0
 }
 
-func getDisplayUnit(value interface{}, field *config.Field) string {
+func getTaskDisplayUnit(value interface{}, field *config.Field) string {
     if intVal, ok := value.(int); ok {
         if intVal == 0 {
             return "minutes"
@@ -367,14 +343,14 @@ func getDisplayUnit(value interface{}, field *config.Field) string {
     return "minutes"
 }
 
-func getNumberStep(field *config.Field) string {
+func getTaskNumberStep(field *config.Field) string {
     if field.Type == config.FieldTypeFloat {
         return "0.01"
     }
     return "1"
 }
 
-func getMaintenanceFieldValue(config *maintenance.MaintenanceConfig, fieldName string) interface{} {
+func getTaskFieldValue(config interface{}, fieldName string) interface{} {
     if config == nil {
         return nil
     }
@@ -411,15 +387,10 @@ func getMaintenanceFieldValue(config *maintenance.MaintenanceConfig, fieldName s
         }
     }
     
-    // Handle nested Policy fields
-    if config.Policy != nil && fieldName == "global_max_concurrent" {
-        return config.Policy.GlobalMaxConcurrent
-    }
-    
     return nil
 }
 
 // Helper function to convert schema to JSON for JavaScript
-templ schemaToJSON(schema *maintenance.MaintenanceConfigSchema) {
+templ taskSchemaToTaskJSON(schema *tasks.TaskConfigSchema) {
     {`{}`}
 } 

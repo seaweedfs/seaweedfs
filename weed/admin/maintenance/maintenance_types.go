@@ -306,7 +306,7 @@ func DefaultMaintenanceConfig() *MaintenanceConfig {
 
 	// Apply policy defaults from schema
 	if config.Policy != nil {
-		if globalMaxField, exists := schema.Fields["global_max_concurrent"]; exists {
+		if globalMaxField := schema.GetFieldByName("global_max_concurrent"); globalMaxField != nil {
 			if defaultVal, ok := globalMaxField.DefaultValue.(int); ok {
 				config.Policy.GlobalMaxConcurrent = defaultVal
 			}
