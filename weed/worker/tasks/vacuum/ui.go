@@ -1,6 +1,7 @@
 package vacuum
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -65,7 +66,7 @@ func (logic *VacuumUILogic) GetCurrentConfig() interface{} {
 func (logic *VacuumUILogic) ApplyConfig(config interface{}) error {
 	vacuumConfig, ok := config.(*VacuumConfig)
 	if !ok {
-		return nil // Will be handled by base provider fallback
+		return fmt.Errorf("invalid configuration type for vacuum")
 	}
 
 	// Apply to detector

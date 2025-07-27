@@ -25,14 +25,14 @@ var (
 	_ types.PolicyConfigurableDetector = (*EcDetector)(nil)
 )
 
-// NewEcDetector creates a new erasure coding detector with configurable defaults
+// NewEcDetector creates a new erasure coding detector with production defaults
 func NewEcDetector() *EcDetector {
 	return &EcDetector{
-		enabled:          true,             // Enabled for testing
-		quietForSeconds:  0,                // No quiet requirement for testing (was 24)
-		fullnessRatio:    0.90,             // 90% full by default
-		minSizeMB:        50,               // Minimum 50MB for testing (was 100MB)
-		scanInterval:     30 * time.Second, // Faster scanning for testing
+		enabled:          false,            // Conservative default - enable via configuration
+		quietForSeconds:  7 * 24 * 60 * 60, // 7 days quiet period
+		fullnessRatio:    0.90,             // 90% full threshold
+		minSizeMB:        100,              // Minimum 100MB volume size
+		scanInterval:     12 * time.Hour,   // Scan every 12 hours
 		collectionFilter: "",               // No collection filter by default
 	}
 }
@@ -155,37 +155,50 @@ func (d *EcDetector) Configure(config map[string]interface{}) error {
 	return nil
 }
 
-// Legacy compatibility methods for existing code
-
+// SetEnabled sets whether the detector is enabled
 func (d *EcDetector) SetEnabled(enabled bool) {
 	d.enabled = enabled
 }
 
-func (d *EcDetector) SetVolumeAgeSeconds(seconds int) {
-	d.quietForSeconds = seconds
-}
-
-func (d *EcDetector) SetVolumeAgeHours(hours int) {
-	d.quietForSeconds = hours * 3600 // Convert hours to seconds
-}
-
+// SetQuietForSeconds sets the quiet duration threshold in seconds
 func (d *EcDetector) SetQuietForSeconds(seconds int) {
 	d.quietForSeconds = seconds
 }
 
+// SetFullnessRatio sets the fullness ratio threshold
 func (d *EcDetector) SetFullnessRatio(ratio float64) {
 	d.fullnessRatio = ratio
 }
 
+// SetCollectionFilter sets the collection filter
 func (d *EcDetector) SetCollectionFilter(filter string) {
 	d.collectionFilter = filter
 }
 
+// SetScanInterval sets the scan interval
 func (d *EcDetector) SetScanInterval(interval time.Duration) {
 	d.scanInterval = interval
 }
 
-// PolicyConfigurableDetector interface implementation
+// GetQuietForSeconds returns the current quiet duration threshold in seconds
+func (d *EcDetector) GetQuietForSeconds() int {
+	return d.quietForSeconds
+}
+
+// GetFullnessRatio returns the current fullness ratio threshold
+func (d *EcDetector) GetFullnessRatio() float64 {
+	return d.fullnessRatio
+}
+
+// GetCollectionFilter returns the current collection filter
+func (d *EcDetector) GetCollectionFilter() string {
+	return d.collectionFilter
+}
+
+// GetScanInterval returns the scan interval
+func (d *EcDetector) GetScanInterval() time.Duration {
+	return d.scanInterval
+}
 
 // ConfigureFromPolicy configures the detector from maintenance policy
 func (d *EcDetector) ConfigureFromPolicy(policy interface{}) {
@@ -210,34 +223,4 @@ func (d *EcDetector) ConfigureFromPolicy(policy interface{}) {
 	} else {
 		glog.Warningf("ConfigureFromPolicy received unknown policy type: %T", policy)
 	}
-}
-
-// GetVolumeAgeSeconds returns the current volume age threshold in seconds (legacy method)
-func (d *EcDetector) GetVolumeAgeSeconds() int {
-	return d.quietForSeconds
-}
-
-// GetVolumeAgeHours returns the current volume age threshold in hours (legacy method)
-func (d *EcDetector) GetVolumeAgeHours() int {
-	return d.quietForSeconds / 3600 // Convert seconds to hours
-}
-
-// GetQuietForSeconds returns the current quiet duration threshold in seconds
-func (d *EcDetector) GetQuietForSeconds() int {
-	return d.quietForSeconds
-}
-
-// GetFullnessRatio returns the current fullness ratio threshold
-func (d *EcDetector) GetFullnessRatio() float64 {
-	return d.fullnessRatio
-}
-
-// GetCollectionFilter returns the current collection filter
-func (d *EcDetector) GetCollectionFilter() string {
-	return d.collectionFilter
-}
-
-// GetScanInterval returns the scan interval
-func (d *EcDetector) GetScanInterval() time.Duration {
-	return d.scanInterval
 }

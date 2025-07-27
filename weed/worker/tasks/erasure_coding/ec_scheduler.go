@@ -79,25 +79,6 @@ func (s *Scheduler) GetPriority(task *types.Task) types.TaskPriority {
 	return types.TaskPriorityLow // EC is not urgent
 }
 
-// WasTaskRecentlyCompleted checks if a similar task was recently completed
-func (s *Scheduler) WasTaskRecentlyCompleted(task *types.Task, completedTasks []*types.Task, now time.Time) bool {
-	// Don't repeat EC for 24 hours
-	interval := 24 * time.Hour
-	cutoff := now.Add(-interval)
-
-	for _, completedTask := range completedTasks {
-		if completedTask.Type == types.TaskTypeErasureCoding &&
-			completedTask.VolumeID == task.VolumeID &&
-			completedTask.Server == task.Server &&
-			completedTask.Status == types.TaskStatusCompleted &&
-			completedTask.CompletedAt != nil &&
-			completedTask.CompletedAt.After(cutoff) {
-			return true
-		}
-	}
-	return false
-}
-
 // IsEnabled returns whether this task type is enabled
 func (s *Scheduler) IsEnabled() bool {
 	return s.enabled

@@ -1,6 +1,7 @@
 package erasure_coding
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -65,7 +66,7 @@ func (logic *ErasureCodingUILogic) GetCurrentConfig() interface{} {
 func (logic *ErasureCodingUILogic) ApplyConfig(config interface{}) error {
 	ecConfig, ok := config.(ErasureCodingConfig)
 	if !ok {
-		return nil // Will be handled by base provider fallback
+		return fmt.Errorf("invalid configuration type for erasure coding")
 	}
 
 	// Apply to detector

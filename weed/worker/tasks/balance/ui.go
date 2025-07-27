@@ -1,6 +1,7 @@
 package balance
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -62,7 +63,7 @@ func (logic *BalanceUILogic) GetCurrentConfig() interface{} {
 func (logic *BalanceUILogic) ApplyConfig(config interface{}) error {
 	balanceConfig, ok := config.(*BalanceConfig)
 	if !ok {
-		return nil // Will be handled by base provider fallback
+		return fmt.Errorf("invalid configuration type for balance")
 	}
 
 	// Apply to detector
