@@ -1134,6 +1134,55 @@ func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigDat
 		config = DefaultMaintenanceConfig()
 	}
 
+	// Ensure policy is properly initialized and fix zero values with meaningful defaults
+	defaultConfig := DefaultMaintenanceConfig()
+	configUpdated := false
+
+	if config.Policy == nil {
+		config.Policy = defaultConfig.Policy
+		configUpdated = true
+		glog.V(1).Infof("Initialized null policy with defaults")
+	}
+
+	// Replace zero values with meaningful defaults
+	if config.ScanIntervalSeconds == 0 {
+		config.ScanIntervalSeconds = defaultConfig.ScanIntervalSeconds
+		configUpdated = true
+	}
+	if config.WorkerTimeoutSeconds == 0 {
+		config.WorkerTimeoutSeconds = defaultConfig.WorkerTimeoutSeconds
+		configUpdated = true
+	}
+	if config.TaskTimeoutSeconds == 0 {
+		config.TaskTimeoutSeconds = defaultConfig.TaskTimeoutSeconds
+		configUpdated = true
+	}
+	if config.RetryDelaySeconds == 0 {
+		config.RetryDelaySeconds = defaultConfig.RetryDelaySeconds
+		configUpdated = true
+	}
+	if config.MaxRetries == 0 {
+		config.MaxRetries = defaultConfig.MaxRetries
+		configUpdated = true
+	}
+	if config.CleanupIntervalSeconds == 0 {
+		config.CleanupIntervalSeconds = defaultConfig.CleanupIntervalSeconds
+		configUpdated = true
+	}
+	if config.TaskRetentionSeconds == 0 {
+		config.TaskRetentionSeconds = defaultConfig.TaskRetentionSeconds
+		configUpdated = true
+	}
+
+	// Save the corrected configuration if any updates were made
+	if configUpdated {
+		if saveErr := as.configPersistence.SaveMaintenanceConfig(config); saveErr != nil {
+			glog.Errorf("Failed to save corrected configuration: %v", saveErr)
+		} else {
+			glog.V(1).Infof("Updated configuration with meaningful defaults and saved to persistent storage")
+		}
+	}
+
 	// Get system stats from maintenance manager if available
 	var systemStats *MaintenanceStats
 	if as.maintenanceManager != nil {
@@ -1170,6 +1219,36 @@ func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigDat
 
 // updateMaintenanceConfig updates maintenance configuration
 func (as *AdminServer) updateMaintenanceConfig(config *maintenance.MaintenanceConfig) error {
+	// Apply meaningful defaults for zero values before saving
+	defaultConfig := DefaultMaintenanceConfig()
+
+	if config.Policy == nil {
+		config.Policy = defaultConfig.Policy
+	}
+
+	// Replace zero values with meaningful defaults
+	if config.ScanIntervalSeconds == 0 {
+		config.ScanIntervalSeconds = defaultConfig.ScanIntervalSeconds
+	}
+	if config.WorkerTimeoutSeconds == 0 {
+		config.WorkerTimeoutSeconds = defaultConfig.WorkerTimeoutSeconds
+	}
+	if config.TaskTimeoutSeconds == 0 {
+		config.TaskTimeoutSeconds = defaultConfig.TaskTimeoutSeconds
+	}
+	if config.RetryDelaySeconds == 0 {
+		config.RetryDelaySeconds = defaultConfig.RetryDelaySeconds
+	}
+	if config.MaxRetries == 0 {
+		config.MaxRetries = defaultConfig.MaxRetries
+	}
+	if config.CleanupIntervalSeconds == 0 {
+		config.CleanupIntervalSeconds = defaultConfig.CleanupIntervalSeconds
+	}
+	if config.TaskRetentionSeconds == 0 {
+		config.TaskRetentionSeconds = defaultConfig.TaskRetentionSeconds
+	}
+
 	// Save configuration to persistent storage
 	if err := as.configPersistence.SaveMaintenanceConfig(config); err != nil {
 		return fmt.Errorf("failed to save maintenance configuration: %w", err)

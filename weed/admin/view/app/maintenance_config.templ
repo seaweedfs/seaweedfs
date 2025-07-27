@@ -150,7 +150,7 @@ templ MaintenanceConfig(data *maintenance.MaintenanceConfigData) {
                                             <i class={menuItem.Icon + " me-2"}></i>
                                             {menuItem.DisplayName}
                                         </h6>
-                                        if data.Config.Policy.IsTaskEnabled(menuItem.TaskType) {
+                                        if menuItem.IsEnabled {
                                             <span class="badge bg-success">Enabled</span>
                                         } else {
                                             <span class="badge bg-secondary">Disabled</span>
@@ -248,26 +248,6 @@ templ MaintenanceConfig(data *maintenance.MaintenanceConfigData) {
                 .catch(error => {
                     alert('Error: ' + error.message);
                 });
-        }
-
-            fetch('/api/maintenance/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(config)
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alert('Configuration saved successfully');
-                } else {
-                    alert('Failed to save configuration: ' + (data.error || 'Unknown error'));
-                }
-            })
-            .catch(error => {
-                alert('Error: ' + error.message);
-            });
         }
 
         function resetToDefaults() {

@@ -137,9 +137,10 @@ func (mp *MaintenancePolicy) GetTaskPolicy(taskType MaintenanceTaskType) *TaskPo
 
 	policy, exists := mp.TaskPolicies[taskType]
 	if !exists {
-		// Create generic default policy using global settings - no hardcoded fallbacks
+		// Create default policy - enabled by default for registered task types
+		// This provides a better user experience where available tasks are enabled by default
 		policy = &TaskPolicy{
-			Enabled:        false,                    // Conservative default - require explicit enabling
+			Enabled:        true,                     // Default to enabled for registered task types
 			MaxConcurrent:  1,                        // Conservative default concurrency
 			RepeatInterval: mp.DefaultRepeatInterval, // Use configured default, 0 if not set
 			CheckInterval:  mp.DefaultCheckInterval,  // Use configured default, 0 if not set
