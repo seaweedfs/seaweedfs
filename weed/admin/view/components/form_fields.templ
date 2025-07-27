@@ -303,4 +303,73 @@ func convertSecondsToValue(seconds int, unit string) float64 {
 	default:
 		return float64(seconds / 60) // Default to minutes
 	}
+}
+
+// IntervalFieldData represents interval input field data with separate value and unit
+type IntervalFieldData struct {
+    FormFieldData
+    Seconds int // The interval value in seconds
+}
+
+// IntervalField renders a Bootstrap interval input with number + unit dropdown (like task config)
+templ IntervalField(data IntervalFieldData) {
+	<div class="mb-3">
+		<label for={ data.Name } class="form-label">
+			{ data.Label }
+			if data.Required {
+				<span class="text-danger">*</span>
+			}
+		</label>
+		<div class="input-group">
+			<input 
+				type="number" 
+				class="form-control" 
+				id={ data.Name + "_value" } 
+				name={ data.Name + "_value" } 
+				value={ fmt.Sprintf("%.0f", convertSecondsToValue(data.Seconds, convertSecondsToUnit(data.Seconds))) }
+				step="1"
+				min="1"
+				if data.Required {
+					required
+				}
+			/>
+			<select 
+				class="form-select" 
+				id={ data.Name + "_unit" } 
+				name={ data.Name + "_unit" }
+				style="max-width: 120px;"
+				if data.Required {
+					required
+				}
+			>
+				<option 
+					value="minutes"
+					if convertSecondsToUnit(data.Seconds) == "minutes" {
+						selected
+					}
+				>
+					Minutes
+				</option>
+				<option 
+					value="hours"
+					if convertSecondsToUnit(data.Seconds) == "hours" {
+						selected
+					}
+				>
+					Hours
+				</option>
+				<option 
+					value="days"
+					if convertSecondsToUnit(data.Seconds) == "days" {
+						selected
+					}
+				>
+					Days
+				</option>
+			</select>
+		</div>
+		if data.Description != "" {
+			<div class="form-text text-muted">{ data.Description }</div>
+		}
+	</div>
 } 

@@ -1,0 +1,389 @@
+package app
+
+import (
+    "fmt"
+    "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+)
+
+templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *maintenance.MaintenanceConfigSchema) {
+    <div class="container-fluid">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2 class="mb-0">
+                        <i class="fas fa-cog me-2"></i>
+                        Maintenance Configuration (SCHEMA_TEMPLATE)
+                    </h2>
+                    <div class="btn-group">
+                        <a href="/maintenance" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left me-1"></i>
+                            Back to Queue
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">System Settings</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="maintenanceConfigForm">
+                            <!-- Dynamically render all schema fields -->
+                            @ConfigField(schema.Fields["enabled"], data.Config.Enabled)
+                            @ConfigField(schema.Fields["scan_interval_seconds"], data.Config.ScanIntervalSeconds)
+                            @ConfigField(schema.Fields["worker_timeout_seconds"], data.Config.WorkerTimeoutSeconds)
+                            @ConfigField(schema.Fields["task_timeout_seconds"], data.Config.TaskTimeoutSeconds)
+                            @ConfigField(schema.Fields["retry_delay_seconds"], data.Config.RetryDelaySeconds)
+                            @ConfigField(schema.Fields["max_retries"], data.Config.MaxRetries)
+                            @ConfigField(schema.Fields["cleanup_interval_seconds"], data.Config.CleanupIntervalSeconds)
+                            @ConfigField(schema.Fields["task_retention_seconds"], data.Config.TaskRetentionSeconds)
+                            if data.Config.Policy != nil {
+                                @ConfigField(schema.Fields["global_max_concurrent"], data.Config.Policy.GlobalMaxConcurrent)
+                            }
+
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-primary" onclick="saveConfiguration()">
+                                    <i class="fas fa-save me-1"></i>
+                                    Save Configuration
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="resetToDefaults()">
+                                    <i class="fas fa-undo me-1"></i>
+                                    Reset to Defaults
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Individual Task Configuration Menu -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-cogs me-2"></i>
+                            Task Configuration
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-3">Configure specific settings for each maintenance task type.</p>
+                        <div class="list-group">
+                            for _, menuItem := range data.MenuItems {
+                                <a href={templ.SafeURL(menuItem.Path)} class="list-group-item list-group-item-action">
+                                    <div class="d-flex w-100 justify-content-between">
+                                        <h6 class="mb-1">
+                                            <i class={menuItem.Icon + " me-2"}></i>
+                                            {menuItem.DisplayName}
+                                        </h6>
+                                        if menuItem.IsEnabled {
+                                            <span class="badge bg-success">Enabled</span>
+                                        } else {
+                                            <span class="badge bg-secondary">Disabled</span>
+                                        }
+                                    </div>
+                                    <p class="mb-1 small text-muted">{menuItem.Description}</p>
+                                </a>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistics Overview -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">System Statistics</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Last Scan</h6>
+                                    <p class="mb-0">{data.LastScanTime.Format("2006-01-02 15:04:05")}</p>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Next Scan</h6>
+                                    <p class="mb-0">{data.NextScanTime.Format("2006-01-02 15:04:05")}</p>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Total Tasks</h6>
+                                    <p class="mb-0">{fmt.Sprintf("%d", data.SystemStats.TotalTasks)}</p>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Active Workers</h6>
+                                    <p class="mb-0">{fmt.Sprintf("%d", data.SystemStats.ActiveWorkers)}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function saveConfiguration() {
+            const form = document.getElementById('maintenanceConfigForm');
+            const formData = new FormData(form);
+            const config = {};
+
+            // Convert FormData to config object with proper type conversion
+            for (const [key, value] of formData.entries()) {
+                const field = getSchemaField(key);
+                if (field) {
+                    config[key] = convertFieldValue(field, value);
+                }
+            }
+
+            // Send the configuration
+            fetch('/api/maintenance/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(config)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Configuration saved successfully');
+                    location.reload(); // Reload to show updated values
+                } else {
+                    alert('Failed to save configuration: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                alert('Error: ' + error.message);
+            });
+        }
+
+        function resetToDefaults() {
+            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {
+                // Get schema defaults and apply them
+                const schema = window.maintenanceConfigSchema || {};
+                Object.keys(schema.fields || {}).forEach(fieldName => {
+                    const field = schema.fields[fieldName];
+                    const element = document.getElementById(fieldName);
+                    if (element && field.default_value !== undefined) {
+                        if (field.input_type === 'checkbox') {
+                            element.checked = field.default_value;
+                        } else {
+                            element.value = field.GetDisplayValue ? field.GetDisplayValue(field.default_value) : field.default_value;
+                        }
+                    }
+                });
+            }
+        }
+
+        function getSchemaField(fieldName) {
+            const schema = window.maintenanceConfigSchema || {};
+            return schema.fields && schema.fields[fieldName];
+        }
+
+        function convertFieldValue(field, value) {
+            switch (field.type) {
+                case 'bool':
+                    return value === 'on' || value === 'true';
+                case 'int':
+                    const intVal = parseInt(value);
+                    return field.ParseDisplayValue ? field.ParseDisplayValue(intVal) : intVal;
+                case 'float':
+                    return parseFloat(value);
+                default:
+                    return value;
+            }
+        }
+
+        // Store schema data for JavaScript access
+        window.maintenanceConfigSchema = @schemaToJSON(schema);
+    </script>
+}
+
+// ConfigField renders a single configuration field based on schema
+templ ConfigField(field *maintenance.ConfigField, value interface{}) {
+    if field.InputType == "interval" {
+        <!-- Interval field with number input + unit dropdown -->
+        <div class="mb-3">
+            <label for={ field.JSONName } class="form-label">
+                { field.DisplayName }
+                if field.Required {
+                    <span class="text-danger">*</span>
+                }
+            </label>
+            <div class="input-group">
+                <input 
+                    type="number" 
+                    class="form-control" 
+                    id={ field.JSONName + "_value" } 
+                    name={ field.JSONName + "_value" } 
+                    value={ fmt.Sprintf("%.0f", convertSecondsToDisplayValue(value, field)) }
+                    step="1"
+                    min="1"
+                    if field.Required {
+                        required
+                    }
+                />
+                <select 
+                    class="form-select" 
+                    id={ field.JSONName + "_unit" } 
+                    name={ field.JSONName + "_unit" }
+                    style="max-width: 120px;"
+                    if field.Required {
+                        required
+                    }
+                >
+                    <option 
+                        value="minutes"
+                        if getDisplayUnit(value, field) == "minutes" {
+                            selected
+                        }
+                    >
+                        Minutes
+                    </option>
+                    <option 
+                        value="hours"
+                        if getDisplayUnit(value, field) == "hours" {
+                            selected
+                        }
+                    >
+                        Hours
+                    </option>
+                    <option 
+                        value="days"
+                        if getDisplayUnit(value, field) == "days" {
+                            selected
+                        }
+                    >
+                        Days
+                    </option>
+                </select>
+            </div>
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    } else if field.InputType == "checkbox" {
+        <!-- Checkbox field -->
+        <div class="mb-3">
+            <div class="form-check form-switch">
+                <input 
+                    class="form-check-input"
+                    type="checkbox" 
+                    id={ field.JSONName }
+                    name={ field.JSONName }
+                    if getBoolValue(value) {
+                        checked
+                    }
+                />
+                <label class="form-check-label" for={ field.JSONName }>
+                    <strong>{ field.DisplayName }</strong>
+                </label>
+            </div>
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    } else {
+        <!-- Number field -->
+        <div class="mb-3">
+            <label for={ field.JSONName } class="form-label">
+                { field.DisplayName }
+                if field.Required {
+                    <span class="text-danger">*</span>
+                }
+            </label>
+            <input 
+                type="number" 
+                class="form-control" 
+                id={ field.JSONName }
+                name={ field.JSONName }
+                value={ fmt.Sprintf("%v", value) }
+                placeholder={ field.Placeholder }
+                if field.MinValue != nil {
+                    min={ fmt.Sprintf("%v", field.MinValue) }
+                }
+                if field.MaxValue != nil {
+                    max={ fmt.Sprintf("%v", field.MaxValue) }
+                }
+                if field.Required {
+                    required
+                }
+            />
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    }
+}
+
+// Helper functions for the template
+func getBoolValue(value interface{}) bool {
+    if boolVal, ok := value.(bool); ok {
+        return boolVal
+    }
+    return false
+}
+
+func convertSecondsToDisplayValue(value interface{}, field *maintenance.ConfigField) float64 {
+    if intVal, ok := value.(int); ok {
+        if intVal == 0 {
+            return 0
+        }
+        
+        // Check if it's evenly divisible by days
+        if intVal%(24*3600) == 0 {
+            return float64(intVal / (24 * 3600))
+        }
+        
+        // Check if it's evenly divisible by hours
+        if intVal%3600 == 0 {
+            return float64(intVal / 3600)
+        }
+        
+        // Default to minutes
+        return float64(intVal / 60)
+    }
+    return 0
+}
+
+func getDisplayUnit(value interface{}, field *maintenance.ConfigField) string {
+    if intVal, ok := value.(int); ok {
+        if intVal == 0 {
+            return "minutes"
+        }
+        
+        // Check if it's evenly divisible by days
+        if intVal%(24*3600) == 0 {
+            return "days"
+        }
+        
+        // Check if it's evenly divisible by hours
+        if intVal%3600 == 0 {
+            return "hours"
+        }
+        
+        // Default to minutes
+        return "minutes"
+    }
+    return "minutes"
+}
+
+// Helper function to convert schema to JSON for JavaScript
+templ schemaToJSON(schema *maintenance.MaintenanceConfigSchema) {
+    {`{}`}
+} 

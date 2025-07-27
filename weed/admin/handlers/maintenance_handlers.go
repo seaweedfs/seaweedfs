@@ -78,21 +78,32 @@ func (h *MaintenanceHandlers) ShowMaintenanceWorkers(c *gin.Context) {
 
 // ShowMaintenanceConfig displays the maintenance configuration page
 func (h *MaintenanceHandlers) ShowMaintenanceConfig(c *gin.Context) {
+	// DEBUG: Log that this method is being called
+	glog.Infof("DEBUG: MaintenanceHandlers.ShowMaintenanceConfig called")
+
 	config, err := h.getMaintenanceConfig()
 	if err != nil {
+		glog.Errorf("DEBUG: Error getting maintenance config: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Render HTML template
+	// Get the schema for dynamic form rendering
+	schema := maintenance.GetMaintenanceConfigSchema()
+	glog.Infof("DEBUG: Got schema with %d fields", len(schema.Fields))
+
+	// Render HTML template using schema-driven approach
 	c.Header("Content-Type", "text/html")
-	configComponent := app.MaintenanceConfig(config)
+	configComponent := app.MaintenanceConfigSchema(config, schema)
 	layoutComponent := layout.Layout(c, configComponent)
+	glog.Infof("DEBUG: About to render MaintenanceConfigSchema template")
 	err = layoutComponent.Render(c.Request.Context(), c.Writer)
 	if err != nil {
+		glog.Errorf("DEBUG: Template render error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
 		return
 	}
+	glog.Infof("DEBUG: MaintenanceConfigSchema template rendered successfully")
 }
 
 // ShowTaskConfig displays the configuration page for a specific task type

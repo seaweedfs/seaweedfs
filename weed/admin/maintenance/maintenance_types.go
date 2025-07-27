@@ -283,21 +283,37 @@ type MaintenanceConfig struct {
 
 // Default configuration values
 func DefaultMaintenanceConfig() *MaintenanceConfig {
-	return &MaintenanceConfig{
-		Enabled:                false,       // Disabled by default for safety
-		ScanIntervalSeconds:    30 * 60,     // 30 minutes
-		WorkerTimeoutSeconds:   5 * 60,      // 5 minutes
-		TaskTimeoutSeconds:     2 * 60 * 60, // 2 hours
-		RetryDelaySeconds:      15 * 60,     // 15 minutes
-		MaxRetries:             3,
-		CleanupIntervalSeconds: 24 * 60 * 60,     // 24 hours
-		TaskRetentionSeconds:   7 * 24 * 60 * 60, // 7 days
+	config := &MaintenanceConfig{
 		Policy: &MaintenancePolicy{
-			GlobalMaxConcurrent:   4,
 			DefaultRepeatInterval: 6,
 			DefaultCheckInterval:  12,
 		},
 	}
+
+	// Apply defaults from schema
+	schema := GetMaintenanceConfigSchema()
+	if err := schema.ApplyDefaults(config); err != nil {
+		// Fallback to hardcoded defaults if schema fails
+		config.Enabled = false
+		config.ScanIntervalSeconds = 30 * 60    // 30 minutes
+		config.WorkerTimeoutSeconds = 5 * 60    // 5 minutes
+		config.TaskTimeoutSeconds = 2 * 60 * 60 // 2 hours
+		config.RetryDelaySeconds = 15 * 60      // 15 minutes
+		config.MaxRetries = 3
+		config.CleanupIntervalSeconds = 24 * 60 * 60   // 24 hours
+		config.TaskRetentionSeconds = 7 * 24 * 60 * 60 // 7 days
+	}
+
+	// Apply policy defaults from schema
+	if config.Policy != nil {
+		if globalMaxField, exists := schema.Fields["global_max_concurrent"]; exists {
+			if defaultVal, ok := globalMaxField.DefaultValue.(int); ok {
+				config.Policy.GlobalMaxConcurrent = defaultVal
+			}
+		}
+	}
+
+	return config
 }
 
 // MaintenanceQueueData represents data for the queue visualization UI
