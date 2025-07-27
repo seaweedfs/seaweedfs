@@ -1,12 +1,10 @@
 package balance
 
 import (
-	"fmt"
-	"html/template"
-	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -44,285 +42,24 @@ func (ui *UIProvider) GetIcon() string {
 	return "fas fa-balance-scale text-secondary"
 }
 
-// BalanceConfig represents the balance configuration
+// BalanceConfig represents the balance configuration matching the schema
 type BalanceConfig struct {
 	Enabled             bool    `json:"enabled"`
 	ImbalanceThreshold  float64 `json:"imbalance_threshold"`
 	ScanIntervalSeconds int     `json:"scan_interval_seconds"`
 	MaxConcurrent       int     `json:"max_concurrent"`
 	MinServerCount      int     `json:"min_server_count"`
-	MoveDuringOffHours  bool    `json:"move_during_off_hours"`
-	OffHoursStart       string  `json:"off_hours_start"`
-	OffHoursEnd         string  `json:"off_hours_end"`
-	MinIntervalSeconds  int     `json:"min_interval_seconds"`
-}
-
-// Helper functions for duration conversion
-func secondsToDuration(seconds int) time.Duration {
-	return time.Duration(seconds) * time.Second
-}
-
-func durationToSeconds(d time.Duration) int {
-	return int(d.Seconds())
-}
-
-// formatDurationForUser formats seconds as a user-friendly duration string
-func formatDurationForUser(seconds int) string {
-	d := secondsToDuration(seconds)
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", seconds)
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%.0fm", d.Minutes())
-	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("%.1fh", d.Hours())
-	}
-	return fmt.Sprintf("%.1fd", d.Hours()/24)
-}
-
-// RenderConfigForm renders the configuration form HTML
-func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML, error) {
-	config := ui.getCurrentBalanceConfig()
-
-	// Build form using the FormBuilder helper
-	form := types.NewFormBuilder()
-
-	// Detection Settings
-	form.AddCheckboxField(
-		"enabled",
-		"Enable Balance Tasks",
-		"Whether balance tasks should be automatically created",
-		config.Enabled,
-	)
-
-	form.AddNumberField(
-		"imbalance_threshold",
-		"Imbalance Threshold (%)",
-		"Trigger balance when storage imbalance exceeds this percentage (0.0-1.0)",
-		config.ImbalanceThreshold,
-		true,
-	)
-
-	form.AddIntervalField("scan_interval", "Scan Interval", "How often to scan for imbalanced volumes", config.ScanIntervalSeconds, true)
-
-	// Scheduling Settings
-	form.AddNumberField(
-		"max_concurrent",
-		"Max Concurrent Tasks",
-		"Maximum number of balance tasks that can run simultaneously",
-		float64(config.MaxConcurrent),
-		true,
-	)
-
-	form.AddNumberField(
-		"min_server_count",
-		"Minimum Server Count",
-		"Only balance when at least this many servers are available",
-		float64(config.MinServerCount),
-		true,
-	)
-
-	// Timing Settings
-	form.AddCheckboxField(
-		"move_during_off_hours",
-		"Restrict to Off-Hours",
-		"Only perform balance operations during off-peak hours",
-		config.MoveDuringOffHours,
-	)
-
-	form.AddTextField(
-		"off_hours_start",
-		"Off-Hours Start Time",
-		"Start time for off-hours window (e.g., 23:00)",
-		config.OffHoursStart,
-		false,
-	)
-
-	form.AddTextField(
-		"off_hours_end",
-		"Off-Hours End Time",
-		"End time for off-hours window (e.g., 06:00)",
-		config.OffHoursEnd,
-		false,
-	)
-
-	// Timing constraints
-	form.AddDurationField("min_interval", "Min Interval", "Minimum time between balance operations", secondsToDuration(config.MinIntervalSeconds), true)
-
-	// Generate organized form sections using Bootstrap components
-	html := `
-<div class="row">
-	<div class="col-12">
-		<div class="card mb-4">
-			<div class="card-header">
-				<h5 class="mb-0">
-					<i class="fas fa-balance-scale me-2"></i>
-					Balance Configuration
-				</h5>
-			</div>
-			<div class="card-body">
-` + string(form.Build()) + `
-			</div>
-		</div>
-	</div>
-</div>
-
-<div class="row">
-	<div class="col-12">
-		<div class="card mb-3">
-			<div class="card-header">
-				<h5 class="mb-0">
-					<i class="fas fa-exclamation-triangle me-2"></i>
-					Performance Considerations
-				</h5>
-			</div>
-			<div class="card-body">
-				<div class="alert alert-warning" role="alert">
-					<h6 class="alert-heading">Important Considerations:</h6>
-					<p class="mb-2"><strong>Performance:</strong> Volume balancing involves data movement and can impact cluster performance.</p>
-					<p class="mb-2"><strong>Recommendation:</strong> Enable off-hours restriction to minimize impact on production workloads.</p>
-					<p class="mb-0"><strong>Safety:</strong> Requires at least ` + fmt.Sprintf("%d", config.MinServerCount) + ` servers to ensure data safety during moves.</p>
-				</div>
-			</div>
-		</div>
-	</div>
-</div>`
-
-	return template.HTML(html), nil
-}
-
-// ParseConfigForm parses form data into configuration
-func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}, error) {
-	config := &BalanceConfig{}
-
-	// Parse enabled
-	config.Enabled = len(formData["enabled"]) > 0
-
-	// Parse imbalance threshold
-	if values, ok := formData["imbalance_threshold"]; ok && len(values) > 0 {
-		threshold, err := strconv.ParseFloat(values[0], 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid imbalance threshold: %w", err)
-		}
-		if threshold < 0 || threshold > 1 {
-			return nil, fmt.Errorf("imbalance threshold must be between 0.0 and 1.0")
-		}
-		config.ImbalanceThreshold = threshold
-	}
-
-	// Parse scan interval
-	if values, ok := formData["scan_interval_value"]; ok && len(values) > 0 {
-		value, err := strconv.Atoi(values[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid scan interval value: %w", err)
-		}
-
-		unit := "minute" // default
-		if units, ok := formData["scan_interval_unit"]; ok && len(units) > 0 {
-			unit = units[0]
-		}
-
-		// Convert to seconds
-		config.ScanIntervalSeconds = types.IntervalValueUnitToSeconds(value, unit)
-	}
-
-	// Parse max concurrent
-	if values, ok := formData["max_concurrent"]; ok && len(values) > 0 {
-		maxConcurrent, err := strconv.Atoi(values[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid max concurrent: %w", err)
-		}
-		if maxConcurrent < 1 {
-			return nil, fmt.Errorf("max concurrent must be at least 1")
-		}
-		config.MaxConcurrent = maxConcurrent
-	}
-
-	// Parse min server count
-	if values, ok := formData["min_server_count"]; ok && len(values) > 0 {
-		minServerCount, err := strconv.Atoi(values[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid min server count: %w", err)
-		}
-		if minServerCount < 2 {
-			return nil, fmt.Errorf("min server count must be at least 2")
-		}
-		config.MinServerCount = minServerCount
-	}
-
-	// Parse off-hours settings
-	config.MoveDuringOffHours = len(formData["move_during_off_hours"]) > 0
-
-	if values, ok := formData["off_hours_start"]; ok && len(values) > 0 {
-		config.OffHoursStart = values[0]
-	}
-
-	if values, ok := formData["off_hours_end"]; ok && len(values) > 0 {
-		config.OffHoursEnd = values[0]
-	}
-
-	// Parse min interval
-	if values, ok := formData["min_interval"]; ok && len(values) > 0 {
-		duration, err := time.ParseDuration(values[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid min interval: %w", err)
-		}
-		config.MinIntervalSeconds = int(duration.Seconds())
-	}
-
-	return config, nil
 }
 
 // GetCurrentConfig returns the current configuration
 func (ui *UIProvider) GetCurrentConfig() interface{} {
-	return ui.getCurrentBalanceConfig()
-}
-
-// ApplyConfig applies the new configuration
-func (ui *UIProvider) ApplyConfig(config interface{}) error {
-	balanceConfig, ok := config.(*BalanceConfig)
-	if !ok {
-		return fmt.Errorf("invalid config type, expected *BalanceConfig")
-	}
-
-	// Apply to detector
-	if ui.detector != nil {
-		ui.detector.SetEnabled(balanceConfig.Enabled)
-		ui.detector.SetThreshold(balanceConfig.ImbalanceThreshold)
-		ui.detector.SetMinCheckInterval(secondsToDuration(balanceConfig.ScanIntervalSeconds))
-	}
-
-	// Apply to scheduler
-	if ui.scheduler != nil {
-		ui.scheduler.SetEnabled(balanceConfig.Enabled)
-		ui.scheduler.SetMaxConcurrent(balanceConfig.MaxConcurrent)
-		ui.scheduler.SetMinServerCount(balanceConfig.MinServerCount)
-		ui.scheduler.SetMoveDuringOffHours(balanceConfig.MoveDuringOffHours)
-		ui.scheduler.SetOffHoursStart(balanceConfig.OffHoursStart)
-		ui.scheduler.SetOffHoursEnd(balanceConfig.OffHoursEnd)
-	}
-
-	glog.V(1).Infof("Applied balance configuration: enabled=%v, threshold=%.1f%%, max_concurrent=%d, min_servers=%d, off_hours=%v",
-		balanceConfig.Enabled, balanceConfig.ImbalanceThreshold*100, balanceConfig.MaxConcurrent,
-		balanceConfig.MinServerCount, balanceConfig.MoveDuringOffHours)
-
-	return nil
-}
-
-// getCurrentBalanceConfig gets the current configuration from detector and scheduler
-func (ui *UIProvider) getCurrentBalanceConfig() *BalanceConfig {
 	config := &BalanceConfig{
-		// Default values (fallback if detectors/schedulers are nil)
+		// Default values from schema (matching task_config_schema.go)
 		Enabled:             true,
-		ImbalanceThreshold:  0.1, // 10% imbalance
-		ScanIntervalSeconds: durationToSeconds(4 * time.Hour),
-		MaxConcurrent:       1,
+		ImbalanceThreshold:  0.1,         // 10%
+		ScanIntervalSeconds: 6 * 60 * 60, // 6 hours
+		MaxConcurrent:       2,
 		MinServerCount:      3,
-		MoveDuringOffHours:  true,
-		OffHoursStart:       "23:00",
-		OffHoursEnd:         "06:00",
-		MinIntervalSeconds:  durationToSeconds(1 * time.Hour),
 	}
 
 	// Get current values from detector
@@ -336,12 +73,52 @@ func (ui *UIProvider) getCurrentBalanceConfig() *BalanceConfig {
 	if ui.scheduler != nil {
 		config.MaxConcurrent = ui.scheduler.GetMaxConcurrent()
 		config.MinServerCount = ui.scheduler.GetMinServerCount()
-		config.MoveDuringOffHours = ui.scheduler.GetMoveDuringOffHours()
-		config.OffHoursStart = ui.scheduler.GetOffHoursStart()
-		config.OffHoursEnd = ui.scheduler.GetOffHoursEnd()
 	}
 
 	return config
+}
+
+// ApplyConfig applies the new configuration
+func (ui *UIProvider) ApplyConfig(config interface{}) error {
+	balanceConfig, ok := config.(*BalanceConfig)
+	if !ok {
+		// Try to get the configuration from the schema-based system
+		schema := tasks.GetBalanceTaskConfigSchema()
+		if schema != nil {
+			// Apply defaults to ensure we have a complete config
+			if err := schema.ApplyDefaults(config); err != nil {
+				return err
+			}
+
+			// Use reflection to convert to BalanceConfig - simplified approach
+			if bc, ok := config.(*BalanceConfig); ok {
+				balanceConfig = bc
+			} else {
+				glog.Warningf("Config type conversion failed, using current config")
+				balanceConfig = ui.GetCurrentConfig().(*BalanceConfig)
+			}
+		}
+	}
+
+	// Apply to detector
+	if ui.detector != nil {
+		ui.detector.SetEnabled(balanceConfig.Enabled)
+		ui.detector.SetThreshold(balanceConfig.ImbalanceThreshold)
+		ui.detector.SetMinCheckInterval(time.Duration(balanceConfig.ScanIntervalSeconds) * time.Second)
+	}
+
+	// Apply to scheduler
+	if ui.scheduler != nil {
+		ui.scheduler.SetEnabled(balanceConfig.Enabled)
+		ui.scheduler.SetMaxConcurrent(balanceConfig.MaxConcurrent)
+		ui.scheduler.SetMinServerCount(balanceConfig.MinServerCount)
+	}
+
+	glog.V(1).Infof("Applied balance configuration: enabled=%v, threshold=%.1f%%, max_concurrent=%d, min_servers=%d",
+		balanceConfig.Enabled, balanceConfig.ImbalanceThreshold*100, balanceConfig.MaxConcurrent,
+		balanceConfig.MinServerCount)
+
+	return nil
 }
 
 // RegisterUI registers the balance UI provider with the UI registry
@@ -356,13 +133,9 @@ func RegisterUI(uiRegistry *types.UIRegistry, detector *BalanceDetector, schedul
 func DefaultBalanceConfig() *BalanceConfig {
 	return &BalanceConfig{
 		Enabled:             false,
-		ImbalanceThreshold:  0.3,
-		ScanIntervalSeconds: durationToSeconds(4 * time.Hour),
-		MaxConcurrent:       1,
+		ImbalanceThreshold:  0.1,         // 10%
+		ScanIntervalSeconds: 6 * 60 * 60, // 6 hours
+		MaxConcurrent:       2,
 		MinServerCount:      3,
-		MoveDuringOffHours:  false,
-		OffHoursStart:       "22:00",
-		OffHoursEnd:         "06:00",
-		MinIntervalSeconds:  durationToSeconds(1 * time.Hour),
 	}
 }

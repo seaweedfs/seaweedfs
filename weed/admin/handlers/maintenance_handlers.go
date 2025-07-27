@@ -1,16 +1,24 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"reflect"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/seaweedfs/seaweedfs/weed/admin/config"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -161,19 +169,10 @@ func (h *MaintenanceHandlers) ShowTaskConfig(c *gin.Context) {
 	}
 }
 
-// UpdateTaskConfig updates configuration for a specific task type
+// UpdateTaskConfig updates task configuration from form
 func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 	taskTypeName := c.Param("taskType")
-
-	// Get the task type
-	taskType := maintenance.GetMaintenanceTaskType(taskTypeName)
-	if taskType == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Task type not found"})
-		return
-	}
-
-	// Try to get templ UI provider first - temporarily disabled
-	// templUIProvider := getTemplUIProvider(taskType)
+	taskType := types.TaskType(taskTypeName)
 
 	// Parse form data
 	err := c.Request.ParseForm()
@@ -182,31 +181,51 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Convert form data to map
-	formData := make(map[string][]string)
-	for key, values := range c.Request.PostForm {
-		formData[key] = values
+	// Get the task configuration schema
+	schema := tasks.GetTaskConfigSchema(taskTypeName)
+	if schema == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Schema not found for task type: " + taskTypeName})
+		return
 	}
 
+	// Create a new config instance based on task type and apply schema defaults
 	var config interface{}
+	switch taskType {
+	case types.TaskTypeVacuum:
+		config = &vacuum.VacuumConfig{}
+	case types.TaskTypeBalance:
+		config = &balance.BalanceConfig{}
+	case types.TaskTypeErasureCoding:
+		config = &erasure_coding.ErasureCodingConfig{}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported task type: " + taskTypeName})
+		return
+	}
 
-	// Temporarily disabled templ UI provider
-	// if templUIProvider != nil {
-	//	// Use the new templ-based UI provider
-	//	config, err = templUIProvider.ParseConfigForm(formData)
-	//	if err != nil {
-	//		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
-	//		return
-	//	}
-	//	// Apply configuration using templ provider
-	//	err = templUIProvider.ApplyConfig(config)
-	//	if err != nil {
-	//		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply configuration: " + err.Error()})
-	//		return
-	//	}
-	// } else {
-	// Fallback to old UI provider for tasks that haven't been migrated yet
-	// Fallback to old UI provider for tasks that haven't been migrated yet
+	// Apply schema defaults first
+	if err := schema.ApplyDefaults(config); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply defaults: " + err.Error()})
+		return
+	}
+
+	// Parse form data using schema-based approach
+	err = h.parseTaskConfigFromForm(c.Request.PostForm, schema, config)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
+		return
+	}
+
+	// Validate the configuration
+	if validationErrors := schema.ValidateConfig(config); len(validationErrors) > 0 {
+		errorMessages := make([]string, len(validationErrors))
+		for i, err := range validationErrors {
+			errorMessages[i] = err.Error()
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Configuration validation failed", "details": errorMessages})
+		return
+	}
+
+	// Apply configuration using UIProvider
 	uiRegistry := tasks.GetGlobalUIRegistry()
 	typesRegistry := tasks.GetGlobalTypesRegistry()
 
@@ -223,23 +242,121 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Parse configuration from form using old provider
-	config, err = provider.ParseConfigForm(formData)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
-		return
-	}
-
-	// Apply configuration using old provider
+	// Apply configuration using provider
 	err = provider.ApplyConfig(config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply configuration: " + err.Error()})
 		return
 	}
-	// } // End of disabled templ UI provider else block
 
 	// Redirect back to task configuration page
 	c.Redirect(http.StatusSeeOther, "/maintenance/config/"+taskTypeName)
+}
+
+// parseTaskConfigFromForm parses form data using schema definitions
+func (h *MaintenanceHandlers) parseTaskConfigFromForm(formData map[string][]string, schema *tasks.TaskConfigSchema, config interface{}) error {
+	configValue := reflect.ValueOf(config)
+	if configValue.Kind() == reflect.Ptr {
+		configValue = configValue.Elem()
+	}
+
+	if configValue.Kind() != reflect.Struct {
+		return fmt.Errorf("config must be a struct or pointer to struct")
+	}
+
+	configType := configValue.Type()
+
+	for i := 0; i < configValue.NumField(); i++ {
+		field := configValue.Field(i)
+		fieldType := configType.Field(i)
+
+		// Get JSON tag name
+		jsonTag := fieldType.Tag.Get("json")
+		if jsonTag == "" {
+			continue
+		}
+
+		// Remove options like ",omitempty"
+		if commaIdx := strings.Index(jsonTag, ","); commaIdx > 0 {
+			jsonTag = jsonTag[:commaIdx]
+		}
+
+		// Find corresponding schema field
+		schemaField := schema.GetFieldByName(jsonTag)
+		if schemaField == nil {
+			continue
+		}
+
+		// Parse value based on field type
+		if err := h.parseFieldFromForm(formData, schemaField, field); err != nil {
+			return fmt.Errorf("error parsing field %s: %w", schemaField.DisplayName, err)
+		}
+	}
+
+	return nil
+}
+
+// parseFieldFromForm parses a single field value from form data
+func (h *MaintenanceHandlers) parseFieldFromForm(formData map[string][]string, schemaField *config.Field, fieldValue reflect.Value) error {
+	if !fieldValue.CanSet() {
+		return nil
+	}
+
+	switch schemaField.Type {
+	case config.FieldTypeBool:
+		// Checkbox fields - present means true, absent means false
+		_, exists := formData[schemaField.JSONName]
+		fieldValue.SetBool(exists)
+
+	case config.FieldTypeInt:
+		if values, ok := formData[schemaField.JSONName]; ok && len(values) > 0 {
+			if intVal, err := strconv.Atoi(values[0]); err != nil {
+				return fmt.Errorf("invalid integer value: %s", values[0])
+			} else {
+				fieldValue.SetInt(int64(intVal))
+			}
+		}
+
+	case config.FieldTypeFloat:
+		if values, ok := formData[schemaField.JSONName]; ok && len(values) > 0 {
+			if floatVal, err := strconv.ParseFloat(values[0], 64); err != nil {
+				return fmt.Errorf("invalid float value: %s", values[0])
+			} else {
+				fieldValue.SetFloat(floatVal)
+			}
+		}
+
+	case config.FieldTypeString:
+		if values, ok := formData[schemaField.JSONName]; ok && len(values) > 0 {
+			fieldValue.SetString(values[0])
+		}
+
+	case config.FieldTypeInterval:
+		// Parse interval fields with value + unit
+		valueKey := schemaField.JSONName + "_value"
+		unitKey := schemaField.JSONName + "_unit"
+
+		if valueStrs, ok := formData[valueKey]; ok && len(valueStrs) > 0 {
+			value, err := strconv.Atoi(valueStrs[0])
+			if err != nil {
+				return fmt.Errorf("invalid interval value: %s", valueStrs[0])
+			}
+
+			unit := "minutes" // default
+			if unitStrs, ok := formData[unitKey]; ok && len(unitStrs) > 0 {
+				unit = unitStrs[0]
+			}
+
+			// Convert to seconds
+			seconds := config.IntervalValueUnitToSeconds(value, unit)
+			fieldValue.SetInt(int64(seconds))
+		}
+
+	default:
+		return fmt.Errorf("unsupported field type: %s", schemaField.Type)
+	}
+
+	return nil
 }
 
 // UpdateMaintenanceConfig updates maintenance configuration from form

@@ -1,12 +1,10 @@
 package vacuum
 
 import (
-	"fmt"
-	"html/template"
-	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -44,7 +42,7 @@ func (ui *UIProvider) GetIcon() string {
 	return "fas fa-broom text-primary"
 }
 
-// VacuumConfig represents the vacuum configuration
+// VacuumConfig represents the vacuum configuration matching the schema
 type VacuumConfig struct {
 	Enabled             bool    `json:"enabled"`
 	GarbageThreshold    float64 `json:"garbage_threshold"`
@@ -54,265 +52,76 @@ type VacuumConfig struct {
 	MinIntervalSeconds  int     `json:"min_interval_seconds"`
 }
 
-// Helper functions for duration conversion
-func secondsToDuration(seconds int) time.Duration {
-	return time.Duration(seconds) * time.Second
-}
-
-func durationToSeconds(d time.Duration) int {
-	return int(d.Seconds())
-}
-
-// formatDurationForUser formats seconds as a user-friendly duration string
-func formatDurationForUser(seconds int) string {
-	d := secondsToDuration(seconds)
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", seconds)
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%.0fm", d.Minutes())
-	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("%.1fh", d.Hours())
-	}
-	return fmt.Sprintf("%.1fd", d.Hours()/24)
-}
-
-// RenderConfigForm renders the configuration form HTML
-func (ui *UIProvider) RenderConfigForm(currentConfig interface{}) (template.HTML, error) {
-	config := ui.getCurrentVacuumConfig()
-
-	// Build form using the FormBuilder helper
-	form := types.NewFormBuilder()
-
-	// Detection Settings
-	form.AddCheckboxField(
-		"enabled",
-		"Enable Vacuum Tasks",
-		"Whether vacuum tasks should be automatically created",
-		config.Enabled,
-	)
-
-	form.AddNumberField(
-		"garbage_threshold",
-		"Garbage Percentage Threshold",
-		"Trigger vacuum when garbage ratio exceeds this percentage (0-100)",
-		config.GarbageThreshold*100, // Convert 0.0-1.0 to 0-100 for display
-		true,
-	)
-
-	form.AddIntervalField(
-		"scan_interval_seconds",
-		"Scan Interval",
-		"How often to scan for volumes needing vacuum",
-		config.ScanIntervalSeconds,
-		true,
-	)
-
-	form.AddIntervalField(
-		"min_volume_age_seconds",
-		"Minimum Volume Age",
-		"Only vacuum volumes older than this duration",
-		config.MinVolumeAgeSeconds,
-		true,
-	)
-
-	// Scheduling Settings
-	form.AddNumberField(
-		"max_concurrent",
-		"Max Concurrent Tasks",
-		"Maximum number of vacuum tasks that can run simultaneously",
-		float64(config.MaxConcurrent),
-		true,
-	)
-
-	form.AddIntervalField(
-		"min_interval_seconds",
-		"Minimum Interval",
-		"Minimum time between vacuum operations on the same volume",
-		config.MinIntervalSeconds,
-		true,
-	)
-
-	// Generate organized form sections using Bootstrap components
-	html := `
-<div class="row">
-	<div class="col-12">
-		<div class="card mb-4">
-			<div class="card-header">
-				<h5 class="mb-0">
-					<i class="fas fa-search me-2"></i>
-					Detection Settings
-				</h5>
-			</div>
-			<div class="card-body">
-` + string(form.Build()) + `
-			</div>
-		</div>
-	</div>
-</div>
-
-<script>
-function resetForm() {
-	if (confirm('Reset all vacuum settings to defaults?')) {
-		// Reset to default values
-		document.querySelector('input[name="enabled"]').checked = true;
-		document.querySelector('input[name="garbage_threshold"]').value = '30';
-		document.querySelector('input[name="scan_interval_seconds_value"]').value = '30';
-		document.querySelector('select[name="scan_interval_seconds_unit"]').value = 'minute';
-		document.querySelector('input[name="min_volume_age_seconds_value"]').value = '1';
-		document.querySelector('select[name="min_volume_age_seconds_unit"]').value = 'hour';
-		document.querySelector('input[name="max_concurrent"]').value = '2';
-		document.querySelector('input[name="min_interval_seconds_value"]').value = '6';
-		document.querySelector('select[name="min_interval_seconds_unit"]').value = 'hour';
-	}
-}
-</script>
-`
-
-	return template.HTML(html), nil
-}
-
-// ParseConfigForm parses form data into configuration
-func (ui *UIProvider) ParseConfigForm(formData map[string][]string) (interface{}, error) {
-	config := &VacuumConfig{}
-
-	// Parse enabled checkbox
-	config.Enabled = len(formData["enabled"]) > 0 && formData["enabled"][0] == "on"
-
-	// Parse garbage threshold (convert from 0-100 to 0.0-1.0)
-	if thresholdStr := formData["garbage_threshold"]; len(thresholdStr) > 0 {
-		if threshold, err := strconv.ParseFloat(thresholdStr[0], 64); err != nil {
-			return nil, fmt.Errorf("invalid garbage percentage threshold: %w", err)
-		} else if threshold < 0 || threshold > 100 {
-			return nil, fmt.Errorf("garbage percentage threshold must be between 0 and 100")
-		} else {
-			config.GarbageThreshold = threshold / 100.0 // Convert percentage to decimal
-		}
-	}
-
-	// Parse scan interval
-	if values, ok := formData["scan_interval_seconds_value"]; ok && len(values) > 0 {
-		value, err := strconv.Atoi(values[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid scan interval value: %w", err)
-		}
-
-		unit := "minute" // default
-		if units, ok := formData["scan_interval_seconds_unit"]; ok && len(units) > 0 {
-			unit = units[0]
-		}
-
-		// Convert to seconds using the helper function from types package
-		config.ScanIntervalSeconds = types.IntervalValueUnitToSeconds(value, unit)
-	}
-
-	// Parse min volume age
-	if values, ok := formData["min_volume_age_seconds_value"]; ok && len(values) > 0 {
-		value, err := strconv.Atoi(values[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid min volume age value: %w", err)
-		}
-
-		unit := "minute" // default
-		if units, ok := formData["min_volume_age_seconds_unit"]; ok && len(units) > 0 {
-			unit = units[0]
-		}
-
-		// Convert to seconds
-		config.MinVolumeAgeSeconds = types.IntervalValueUnitToSeconds(value, unit)
-	}
-
-	// Parse max concurrent
-	if concurrentStr := formData["max_concurrent"]; len(concurrentStr) > 0 {
-		if concurrent, err := strconv.Atoi(concurrentStr[0]); err != nil {
-			return nil, fmt.Errorf("invalid max concurrent: %w", err)
-		} else if concurrent < 1 {
-			return nil, fmt.Errorf("max concurrent must be at least 1")
-		} else {
-			config.MaxConcurrent = concurrent
-		}
-	}
-
-	// Parse min interval
-	if values, ok := formData["min_interval_seconds_value"]; ok && len(values) > 0 {
-		value, err := strconv.Atoi(values[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid min interval value: %w", err)
-		}
-
-		unit := "minute" // default
-		if units, ok := formData["min_interval_seconds_unit"]; ok && len(units) > 0 {
-			unit = units[0]
-		}
-
-		// Convert to seconds
-		config.MinIntervalSeconds = types.IntervalValueUnitToSeconds(value, unit)
-	}
-
-	return config, nil
-}
-
 // GetCurrentConfig returns the current configuration
 func (ui *UIProvider) GetCurrentConfig() interface{} {
-	return ui.getCurrentVacuumConfig()
-}
-
-// ApplyConfig applies the new configuration
-func (ui *UIProvider) ApplyConfig(config interface{}) error {
-	vacuumConfig, ok := config.(*VacuumConfig)
-	if !ok {
-		return fmt.Errorf("invalid config type, expected *VacuumConfig")
-	}
-
-	// Apply to detector
-	if ui.detector != nil {
-		ui.detector.SetEnabled(vacuumConfig.Enabled)
-		ui.detector.SetGarbageThreshold(vacuumConfig.GarbageThreshold)
-		ui.detector.SetScanInterval(secondsToDuration(vacuumConfig.ScanIntervalSeconds))
-		ui.detector.SetMinVolumeAge(secondsToDuration(vacuumConfig.MinVolumeAgeSeconds))
-	}
-
-	// Apply to scheduler
-	if ui.scheduler != nil {
-		ui.scheduler.SetEnabled(vacuumConfig.Enabled)
-		ui.scheduler.SetMaxConcurrent(vacuumConfig.MaxConcurrent)
-		ui.scheduler.SetMinInterval(secondsToDuration(vacuumConfig.MinIntervalSeconds))
-	}
-
-	glog.V(1).Infof("Applied vacuum configuration: enabled=%v, threshold=%.1f%%, scan_interval=%s, max_concurrent=%d",
-		vacuumConfig.Enabled, vacuumConfig.GarbageThreshold*100, formatDurationForUser(vacuumConfig.ScanIntervalSeconds), vacuumConfig.MaxConcurrent)
-
-	return nil
-}
-
-// getCurrentVacuumConfig gets the current configuration from detector and scheduler
-func (ui *UIProvider) getCurrentVacuumConfig() *VacuumConfig {
 	config := &VacuumConfig{
-		// Default values (fallback if detectors/schedulers are nil)
+		// Default values from schema (matching task_config_schema.go)
 		Enabled:             true,
-		GarbageThreshold:    0.3,
-		ScanIntervalSeconds: 30 * 60,
-		MinVolumeAgeSeconds: 1 * 60 * 60,
+		GarbageThreshold:    0.3,         // 30%
+		ScanIntervalSeconds: 2 * 60 * 60, // 2 hours
 		MaxConcurrent:       2,
-		MinIntervalSeconds:  6 * 60 * 60,
+		MinVolumeAgeSeconds: 24 * 60 * 60,     // 24 hours
+		MinIntervalSeconds:  7 * 24 * 60 * 60, // 7 days
 	}
 
 	// Get current values from detector
 	if ui.detector != nil {
 		config.Enabled = ui.detector.IsEnabled()
 		config.GarbageThreshold = ui.detector.GetGarbageThreshold()
-		config.ScanIntervalSeconds = durationToSeconds(ui.detector.ScanInterval())
-		config.MinVolumeAgeSeconds = durationToSeconds(ui.detector.GetMinVolumeAge())
+		config.ScanIntervalSeconds = int(ui.detector.ScanInterval().Seconds())
+		config.MinVolumeAgeSeconds = int(ui.detector.GetMinVolumeAge().Seconds())
 	}
 
 	// Get current values from scheduler
 	if ui.scheduler != nil {
 		config.MaxConcurrent = ui.scheduler.GetMaxConcurrent()
-		config.MinIntervalSeconds = durationToSeconds(ui.scheduler.GetMinInterval())
+		config.MinIntervalSeconds = int(ui.scheduler.GetMinInterval().Seconds())
 	}
 
 	return config
+}
+
+// ApplyConfig applies the new configuration
+func (ui *UIProvider) ApplyConfig(config interface{}) error {
+	vacuumConfig, ok := config.(*VacuumConfig)
+	if !ok {
+		// Try to get the configuration from the schema-based system
+		schema := tasks.GetVacuumTaskConfigSchema()
+		if schema != nil {
+			// Apply defaults to ensure we have a complete config
+			if err := schema.ApplyDefaults(config); err != nil {
+				return err
+			}
+
+			// Use reflection to convert to VacuumConfig - simplified approach
+			if vc, ok := config.(*VacuumConfig); ok {
+				vacuumConfig = vc
+			} else {
+				glog.Warningf("Config type conversion failed, using current config")
+				vacuumConfig = ui.GetCurrentConfig().(*VacuumConfig)
+			}
+		}
+	}
+
+	// Apply to detector
+	if ui.detector != nil {
+		ui.detector.SetEnabled(vacuumConfig.Enabled)
+		ui.detector.SetGarbageThreshold(vacuumConfig.GarbageThreshold)
+		ui.detector.SetScanInterval(time.Duration(vacuumConfig.ScanIntervalSeconds) * time.Second)
+		ui.detector.SetMinVolumeAge(time.Duration(vacuumConfig.MinVolumeAgeSeconds) * time.Second)
+	}
+
+	// Apply to scheduler
+	if ui.scheduler != nil {
+		ui.scheduler.SetEnabled(vacuumConfig.Enabled)
+		ui.scheduler.SetMaxConcurrent(vacuumConfig.MaxConcurrent)
+		ui.scheduler.SetMinInterval(time.Duration(vacuumConfig.MinIntervalSeconds) * time.Second)
+	}
+
+	glog.V(1).Infof("Applied vacuum configuration: enabled=%v, threshold=%.1f%%, scan_interval=%ds, max_concurrent=%d",
+		vacuumConfig.Enabled, vacuumConfig.GarbageThreshold*100, vacuumConfig.ScanIntervalSeconds, vacuumConfig.MaxConcurrent)
+
+	return nil
 }
 
 // RegisterUI registers the vacuum UI provider with the UI registry
@@ -323,7 +132,7 @@ func RegisterUI(uiRegistry *types.UIRegistry, detector *VacuumDetector, schedule
 	glog.V(1).Infof("✅ Registered vacuum task UI provider")
 }
 
-// Example: How to get the UI provider for external use
+// GetUIProvider returns the UI provider for external use
 func GetUIProvider(uiRegistry *types.UIRegistry) *UIProvider {
 	provider := uiRegistry.GetProvider(types.TaskTypeVacuum)
 	if provider == nil {
