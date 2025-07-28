@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 
@@ -119,25 +120,21 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 	}
 
 	var existingLocations []wdclient.Location
-	for _, dc := range topoInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for _, dn := range rack.DataNodeInfos {
-				for _, disk := range dn.DiskInfos {
-					for _, vi := range disk.VolumeInfos {
-						if needle.VolumeId(vi.Id) == vid && (collection == "" || vi.Collection == collection) {
-							fmt.Printf("find volume %d from Url:%s, GrpcPort:%d, DC:%s\n", vid, dn.Id, dn.GrpcPort, dc.Id)
-							existingLocations = append(existingLocations, wdclient.Location{
-								Url:        dn.Id,
-								PublicUrl:  dn.Id,
-								GrpcPort:   int(dn.GrpcPort),
-								DataCenter: dc.Id,
-							})
-						}
-					}
+	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		for _, disk := range dn.DiskInfos {
+			for _, vi := range disk.VolumeInfos {
+				if needle.VolumeId(vi.Id) == vid && (collection == "" || vi.Collection == collection) {
+					fmt.Printf("find volume %d from Url:%s, GrpcPort:%d, DC:%s\n", vid, dn.Id, dn.GrpcPort, string(dc))
+					existingLocations = append(existingLocations, wdclient.Location{
+						Url:        dn.Id,
+						PublicUrl:  dn.Id,
+						GrpcPort:   int(dn.GrpcPort),
+						DataCenter: string(dc),
+					})
 				}
 			}
 		}
-	}
+	})
 
 	if len(existingLocations) == 0 {
 		if collection == "" {
