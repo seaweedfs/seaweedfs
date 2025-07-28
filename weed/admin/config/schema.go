@@ -252,6 +252,18 @@ func (s *Schema) ApplyDefaults(config interface{}) error {
 		field := configValue.Field(i)
 		fieldType := configType.Field(i)
 
+		// Handle embedded structs recursively (before JSON tag check)
+		if field.Kind() == reflect.Struct && fieldType.Anonymous {
+			if !field.CanAddr() {
+				return fmt.Errorf("embedded struct %s is not addressable - config must be a pointer", fieldType.Name)
+			}
+			err := s.ApplyDefaults(field.Addr().Interface())
+			if err != nil {
+				return fmt.Errorf("failed to apply defaults to embedded struct %s: %v", fieldType.Name, err)
+			}
+			continue
+		}
+
 		// Get JSON tag name
 		jsonTag := fieldType.Tag.Get("json")
 		if jsonTag == "" {

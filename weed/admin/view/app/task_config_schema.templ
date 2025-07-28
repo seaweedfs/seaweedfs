@@ -371,6 +371,14 @@ func getTaskFieldValue(config interface{}, fieldName string) interface{} {
         field := configValue.Field(i)
         fieldType := configType.Field(i)
         
+        // Handle embedded structs recursively (before JSON tag check)
+        if field.Kind() == reflect.Struct && fieldType.Anonymous {
+            if value := getTaskFieldValue(field.Interface(), fieldName); value != nil {
+                return value
+            }
+            continue
+        }
+        
         // Get JSON tag name
         jsonTag := fieldType.Tag.Get("json")
         if jsonTag == "" {

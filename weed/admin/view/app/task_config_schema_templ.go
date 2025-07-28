@@ -820,6 +820,14 @@ func getTaskFieldValue(config interface{}, fieldName string) interface{} {
 		field := configValue.Field(i)
 		fieldType := configType.Field(i)
 
+		// Handle embedded structs recursively (before JSON tag check)
+		if field.Kind() == reflect.Struct && fieldType.Anonymous {
+			if value := getTaskFieldValue(field.Interface(), fieldName); value != nil {
+				return value
+			}
+			continue
+		}
+
 		// Get JSON tag name
 		jsonTag := fieldType.Tag.Get("json")
 		if jsonTag == "" {
@@ -864,7 +872,7 @@ func taskSchemaToTaskJSON(schema *tasks.TaskConfigSchema) templ.Component {
 		var templ_7745c5c3_Var39 string
 		templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(`{}`)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_config_schema.templ`, Line: 395, Col: 9}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_config_schema.templ`, Line: 403, Col: 9}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 		if templ_7745c5c3_Err != nil {

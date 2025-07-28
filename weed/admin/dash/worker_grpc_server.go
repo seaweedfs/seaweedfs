@@ -319,7 +319,7 @@ func (s *WorkerGrpcServer) handleHeartbeat(conn *WorkerConnection, heartbeat *wo
 
 // handleTaskRequest processes task requests from workers
 func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *worker_pb.TaskRequest) {
-	glog.Infof("DEBUG handleTaskRequest: Worker %s requesting tasks with capabilities %v", conn.workerID, conn.capabilities)
+	// glog.Infof("DEBUG handleTaskRequest: Worker %s requesting tasks with capabilities %v", conn.workerID, conn.capabilities)
 
 	if s.adminServer.maintenanceManager == nil {
 		glog.Infof("DEBUG handleTaskRequest: maintenance manager is nil")
@@ -328,7 +328,7 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 
 	// Get next task from maintenance manager
 	task := s.adminServer.maintenanceManager.GetNextTask(conn.workerID, conn.capabilities)
-	glog.Infof("DEBUG handleTaskRequest: GetNextTask returned task: %v", task != nil)
+	// glog.Infof("DEBUG handleTaskRequest: GetNextTask returned task: %v", task != nil)
 
 	if task != nil {
 		glog.Infof("DEBUG handleTaskRequest: Assigning task %s (type: %s) to worker %s", task.ID, task.Type, conn.workerID)
@@ -374,7 +374,7 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 			glog.Warningf("Failed to send task assignment to worker %s", conn.workerID)
 		}
 	} else {
-		glog.Infof("DEBUG handleTaskRequest: No tasks available for worker %s", conn.workerID)
+		// glog.Infof("DEBUG handleTaskRequest: No tasks available for worker %s", conn.workerID)
 	}
 }
 

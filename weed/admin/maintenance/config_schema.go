@@ -48,7 +48,7 @@ func GetMaintenanceConfigSchema() *MaintenanceConfigSchema {
 					Name:         "enabled",
 					JSONName:     "enabled",
 					Type:         config.FieldTypeBool,
-					DefaultValue: false,
+					DefaultValue: true,
 					Required:     false,
 					DisplayName:  "Enable Maintenance System",
 					Description:  "When enabled, the system will automatically scan for and execute maintenance tasks",

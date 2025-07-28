@@ -335,6 +335,21 @@ func (mm *MaintenanceManager) GetStats() *MaintenanceStats {
 	return stats
 }
 
+// ReloadTaskConfigurations reloads task configurations from the current policy
+func (mm *MaintenanceManager) ReloadTaskConfigurations() error {
+	mm.mutex.Lock()
+	defer mm.mutex.Unlock()
+
+	// Trigger configuration reload in the integration layer
+	if mm.scanner != nil && mm.scanner.integration != nil {
+		mm.scanner.integration.ConfigureTasksFromPolicy()
+		glog.V(1).Infof("Task configurations reloaded from policy")
+		return nil
+	}
+
+	return fmt.Errorf("integration not available for configuration reload")
+}
+
 // GetErrorState returns the current error state for monitoring
 func (mm *MaintenanceManager) GetErrorState() (errorCount int, lastError error, backoffDelay time.Duration) {
 	mm.mutex.RLock()

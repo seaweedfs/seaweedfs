@@ -294,7 +294,7 @@ func DefaultMaintenanceConfig() *MaintenanceConfig {
 	schema := GetMaintenanceConfigSchema()
 	if err := schema.ApplyDefaults(config); err != nil {
 		// Fallback to hardcoded defaults if schema fails
-		config.Enabled = false
+		config.Enabled = true
 		config.ScanIntervalSeconds = 30 * 60    // 30 minutes
 		config.WorkerTimeoutSeconds = 5 * 60    // 5 minutes
 		config.TaskTimeoutSeconds = 2 * 60 * 60 // 2 hours

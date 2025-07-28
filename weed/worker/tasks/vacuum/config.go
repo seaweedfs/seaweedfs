@@ -27,6 +27,16 @@ func NewDefaultConfig() *Config {
 	}
 }
 
+// FromMap loads config from map using reflection for vacuum.Config
+func (c *Config) FromMap(data map[string]interface{}) error {
+	return base.MapToStruct(data, c)
+}
+
+// ToMap converts config to map using reflection for vacuum.Config
+func (c *Config) ToMap() map[string]interface{} {
+	return base.StructToMap(c)
+}
+
 // GetConfigSpec returns the configuration schema for vacuum tasks
 func GetConfigSpec() base.ConfigSpec {
 	return base.ConfigSpec{

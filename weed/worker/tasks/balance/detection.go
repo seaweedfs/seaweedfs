@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -17,8 +18,9 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	balanceConfig := config.(*Config)
 
 	// Skip if cluster is too small
-	minVolumeCount := 10
+	minVolumeCount := 2 // More reasonable for small clusters
 	if len(metrics) < minVolumeCount {
+		glog.Infof("BALANCE: No tasks created - cluster too small (%d volumes, need ≥%d)", len(metrics), minVolumeCount)
 		return nil, nil
 	}
 
@@ -29,6 +31,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	}
 
 	if len(serverVolumeCounts) < balanceConfig.MinServerCount {
+		glog.Infof("BALANCE: No tasks created - too few servers (%d servers, need ≥%d)", len(serverVolumeCounts), balanceConfig.MinServerCount)
 		return nil, nil
 	}
 
@@ -55,6 +58,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	// Check if imbalance exceeds threshold
 	imbalanceRatio := float64(maxVolumes-minVolumes) / avgVolumesPerServer
 	if imbalanceRatio <= balanceConfig.ImbalanceThreshold {
+		glog.Infof("BALANCE: No tasks created - cluster well balanced. Imbalance=%.1f%% (threshold=%.1f%%). Max=%d volumes on %s, Min=%d on %s, Avg=%.1f",
+			imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100, maxVolumes, maxServer, minVolumes, minServer, avgVolumesPerServer)
 		return nil, nil
 	}
 

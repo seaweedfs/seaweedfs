@@ -135,10 +135,24 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 			glog.Errorf("Failed to load maintenance configuration: %v", err)
 			maintenanceConfig = maintenance.DefaultMaintenanceConfig()
 		}
-		glog.V(1).Infof("Maintenance system initialized with persistent configuration")
+
+		// Apply new defaults to handle schema changes (like enabling by default)
+		schema := maintenance.GetMaintenanceConfigSchema()
+		if err := schema.ApplyDefaults(maintenanceConfig); err != nil {
+			glog.Warningf("Failed to apply schema defaults to loaded config: %v", err)
+		}
+
+		// Force enable maintenance system for new default behavior
+		// This handles the case where old configs had Enabled=false as default
+		if !maintenanceConfig.Enabled {
+			glog.V(1).Infof("Enabling maintenance system (new default behavior)")
+			maintenanceConfig.Enabled = true
+		}
+
+		glog.V(1).Infof("Maintenance system initialized with persistent configuration (enabled: %v)", maintenanceConfig.Enabled)
 	} else {
 		maintenanceConfig = maintenance.DefaultMaintenanceConfig()
-		glog.V(1).Infof("No data directory configured, maintenance system will run in memory-only mode")
+		glog.V(1).Infof("No data directory configured, maintenance system will run in memory-only mode (enabled: %v)", maintenanceConfig.Enabled)
 	}
 
 	// Always initialize maintenance manager
@@ -147,6 +161,8 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 	// Start maintenance manager if enabled
 	if maintenanceConfig.Enabled {
 		go func() {
+			// Give master client a bit of time to connect before starting scans
+			time.Sleep(2 * time.Second)
 			if err := server.StartMaintenanceManager(); err != nil {
 				glog.Errorf("Failed to start maintenance manager: %v", err)
 			}
@@ -1237,7 +1253,14 @@ func (as *AdminServer) triggerMaintenanceScan() error {
 		return fmt.Errorf("maintenance manager not initialized")
 	}
 
-	return as.maintenanceManager.TriggerScan()
+	glog.V(1).Infof("Triggering maintenance scan")
+	err := as.maintenanceManager.TriggerScan()
+	if err != nil {
+		glog.Errorf("Failed to trigger maintenance scan: %v", err)
+		return err
+	}
+	glog.V(1).Infof("Maintenance scan triggered successfully")
+	return nil
 }
 
 // TriggerTopicRetentionPurgeAPI triggers topic retention purge via HTTP API

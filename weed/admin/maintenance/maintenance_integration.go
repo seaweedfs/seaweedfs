@@ -96,7 +96,7 @@ func (s *MaintenanceIntegration) registerAllTasks() {
 	s.buildTaskTypeMappings()
 
 	// Configure tasks from policy
-	s.configureTasksFromPolicy()
+	s.ConfigureTasksFromPolicy()
 
 	registeredTaskTypes := make([]string, 0, len(s.taskTypeMap))
 	for _, maintenanceTaskType := range s.taskTypeMap {
@@ -105,8 +105,8 @@ func (s *MaintenanceIntegration) registerAllTasks() {
 	glog.V(1).Infof("Registered tasks: %v", registeredTaskTypes)
 }
 
-// configureTasksFromPolicy dynamically configures all registered tasks based on the maintenance policy
-func (s *MaintenanceIntegration) configureTasksFromPolicy() {
+// ConfigureTasksFromPolicy dynamically configures all registered tasks based on the maintenance policy
+func (s *MaintenanceIntegration) ConfigureTasksFromPolicy() {
 	if s.maintenancePolicy == nil {
 		return
 	}

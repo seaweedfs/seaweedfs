@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -19,16 +20,25 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	var results []*types.TaskDetectionResult
 	now := time.Now()
 	quietThreshold := time.Duration(ecConfig.QuietForSeconds) * time.Second
-	minSizeBytes := uint64(100) * 1024 * 1024 // 100MB minimum
+	minSizeBytes := uint64(ecConfig.MinSizeMB) * 1024 * 1024 // Configurable minimum
+
+	debugCount := 0
+	skippedAlreadyEC := 0
+	skippedTooSmall := 0
+	skippedCollectionFilter := 0
+	skippedQuietTime := 0
+	skippedFullness := 0
 
 	for _, metric := range metrics {
 		// Skip if already EC volume
 		if metric.IsECVolume {
+			skippedAlreadyEC++
 			continue
 		}
 
 		// Check minimum size requirement
 		if metric.Size < minSizeBytes {
+			skippedTooSmall++
 			continue
 		}
 
@@ -41,6 +51,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			}
 			// Skip if volume's collection is not in the allowed list
 			if !allowedCollections[metric.Collection] {
+				skippedCollectionFilter++
 				continue
 			}
 		}
@@ -64,6 +75,35 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				ScheduleAt: now,
 			}
 			results = append(results, result)
+		} else {
+			// Count debug reasons
+			if debugCount < 5 { // Limit to avoid spam
+				if metric.Age < quietThreshold {
+					skippedQuietTime++
+				}
+				if metric.FullnessRatio < ecConfig.FullnessRatio {
+					skippedFullness++
+				}
+			}
+			debugCount++
+		}
+	}
+
+	// Log debug summary if no tasks were created
+	if len(results) == 0 && len(metrics) > 0 {
+		totalVolumes := len(metrics)
+		glog.Infof("ERASURE CODING: No tasks created for %d volumes. QuietTime=%s, FullnessRatio=%.1f%%, MinSize=%dMB. Skipped: %d (already EC), %d (too small), %d (collection filter), %d (not quiet), %d (not full)",
+			totalVolumes, quietThreshold, ecConfig.FullnessRatio*100, ecConfig.MinSizeMB, skippedAlreadyEC, skippedTooSmall, skippedCollectionFilter, skippedQuietTime, skippedFullness)
+
+		// Show details for first few volumes
+		for i, metric := range metrics {
+			if i >= 3 || metric.IsECVolume { // Limit to first 3 non-EC volumes
+				continue
+			}
+			sizeMB := float64(metric.Size) / (1024 * 1024)
+			glog.Infof("ERASURE CODING: Volume %d: size=%.1fMB (need ≥%dMB), age=%s (need ≥%s), fullness=%.1f%% (need ≥%.1f%%)",
+				metric.VolumeID, sizeMB, ecConfig.MinSizeMB, metric.Age.Truncate(time.Minute), quietThreshold.Truncate(time.Minute),
+				metric.FullnessRatio*100, ecConfig.FullnessRatio*100)
 		}
 	}
 

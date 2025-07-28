@@ -89,12 +89,22 @@ func StructToMap(obj interface{}) map[string]interface{} {
 	}
 
 	typ := val.Type()
+
 	for i := 0; i < val.NumField(); i++ {
 		field := val.Field(i)
 		fieldType := typ.Field(i)
 
 		// Skip unexported fields
 		if !field.CanInterface() {
+			continue
+		}
+
+		// Handle embedded structs recursively (before JSON tag check)
+		if field.Kind() == reflect.Struct && fieldType.Anonymous {
+			embeddedMap := StructToMap(field.Interface())
+			for k, v := range embeddedMap {
+				result[k] = v
+			}
 			continue
 		}
 
@@ -109,17 +119,8 @@ func StructToMap(obj interface{}) map[string]interface{} {
 			jsonTag = jsonTag[:commaIdx]
 		}
 
-		// Handle embedded structs recursively
-		if field.Kind() == reflect.Struct && fieldType.Anonymous {
-			embeddedMap := StructToMap(field.Interface())
-			for k, v := range embeddedMap {
-				result[k] = v
-			}
-		} else {
-			result[jsonTag] = field.Interface()
-		}
+		result[jsonTag] = field.Interface()
 	}
-
 	return result
 }
 
@@ -144,6 +145,15 @@ func MapToStruct(data map[string]interface{}, obj interface{}) error {
 			continue
 		}
 
+		// Handle embedded structs recursively (before JSON tag check)
+		if field.Kind() == reflect.Struct && fieldType.Anonymous {
+			err := MapToStruct(data, field.Addr().Interface())
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
 		// Get JSON tag name
 		jsonTag := fieldType.Tag.Get("json")
 		if jsonTag == "" || jsonTag == "-" {
@@ -155,13 +165,7 @@ func MapToStruct(data map[string]interface{}, obj interface{}) error {
 			jsonTag = jsonTag[:commaIdx]
 		}
 
-		// Handle embedded structs recursively
-		if field.Kind() == reflect.Struct && fieldType.Anonymous {
-			err := MapToStruct(data, field.Addr().Interface())
-			if err != nil {
-				return err
-			}
-		} else if value, exists := data[jsonTag]; exists {
+		if value, exists := data[jsonTag]; exists {
 			err := setFieldValue(field, value)
 			if err != nil {
 				return fmt.Errorf("failed to set field %s: %v", jsonTag, err)

@@ -64,6 +64,7 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 	var metrics []*VolumeHealthMetrics
 	var volumeSizeLimitMB uint64
 
+	glog.V(1).Infof("Collecting volume health metrics from master")
 	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		// First, get volume size limit from master configuration
 		configResp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
@@ -126,8 +127,11 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 	})
 
 	if err != nil {
+		glog.Errorf("Failed to get volume health metrics: %v", err)
 		return nil, err
 	}
+
+	glog.V(1).Infof("Successfully collected metrics for %d volumes", len(metrics))
 
 	// Count actual replicas and identify EC volumes
 	ms.enrichVolumeMetrics(metrics)

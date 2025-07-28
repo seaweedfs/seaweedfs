@@ -65,9 +65,21 @@ func (ui *GenericUIProvider) GetCurrentConfig() interface{} {
 
 // ApplyConfig applies configuration
 func (ui *GenericUIProvider) ApplyConfig(config interface{}) error {
+	// Handle map[string]interface{} input
 	if configMap, ok := config.(map[string]interface{}); ok {
 		return ui.taskDef.Config.FromMap(configMap)
 	}
+
+	// Handle struct input by converting to map first
+	if config != nil {
+		configMap := StructToMap(config)
+		err := ui.taskDef.Config.FromMap(configMap)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
 	return fmt.Errorf("invalid config format for %s", ui.taskDef.Type)
 }
 

@@ -108,3 +108,13 @@ func GetConfigSpec() base.ConfigSpec {
 		},
 	}
 }
+
+// FromMap loads config from map using reflection for balance.Config
+func (c *Config) FromMap(data map[string]interface{}) error {
+	return base.MapToStruct(data, c)
+}
+
+// ToMap converts config to map using reflection for balance.Config
+func (c *Config) ToMap() map[string]interface{} {
+	return base.StructToMap(c)
+}

@@ -11,6 +11,7 @@ type Config struct {
 	QuietForSeconds  int     `json:"quiet_for_seconds"`
 	FullnessRatio    float64 `json:"fullness_ratio"`
 	CollectionFilter string  `json:"collection_filter"`
+	MinSizeMB        int     `json:"min_size_mb"`
 }
 
 // NewDefaultConfig creates a new default erasure coding configuration
@@ -24,6 +25,7 @@ func NewDefaultConfig() *Config {
 		QuietForSeconds:  300, // 5 minutes
 		FullnessRatio:    0.8, // 80%
 		CollectionFilter: "",
+		MinSizeMB:        30, // 30MB (more reasonable than 100MB)
 	}
 }
 
@@ -120,6 +122,32 @@ func GetConfigSpec() base.ConfigSpec {
 				InputType:    "text",
 				CSSClasses:   "form-control",
 			},
+			{
+				Name:         "min_size_mb",
+				JSONName:     "min_size_mb",
+				Type:         config.FieldTypeInt,
+				DefaultValue: 30,
+				MinValue:     1,
+				MaxValue:     1000,
+				Required:     true,
+				DisplayName:  "Minimum Size (MB)",
+				Description:  "Minimum volume size to consider for erasure coding",
+				HelpText:     "Only volumes larger than this size will be considered for erasure coding",
+				Placeholder:  "30",
+				Unit:         config.UnitNone,
+				InputType:    "number",
+				CSSClasses:   "form-control",
+			},
 		},
 	}
+}
+
+// FromMap loads config from map using reflection for erasure_coding.Config
+func (c *Config) FromMap(data map[string]interface{}) error {
+	return base.MapToStruct(data, c)
+}
+
+// ToMap converts config to map using reflection for erasure_coding.Config
+func (c *Config) ToMap() map[string]interface{} {
+	return base.StructToMap(c)
 }

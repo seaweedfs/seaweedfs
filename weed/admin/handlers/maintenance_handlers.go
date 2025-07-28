@@ -208,7 +208,35 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Parse form data using schema-based approach
+	// First, get the current configuration to preserve existing values
+	currentUIRegistry := tasks.GetGlobalUIRegistry()
+	currentTypesRegistry := tasks.GetGlobalTypesRegistry()
+
+	var currentProvider types.TaskUIProvider
+	for workerTaskType := range currentTypesRegistry.GetAllDetectors() {
+		if string(workerTaskType) == string(taskType) {
+			currentProvider = currentUIRegistry.GetProvider(workerTaskType)
+			break
+		}
+	}
+
+	if currentProvider != nil {
+		// Copy current config values to the new config
+		currentConfig := currentProvider.GetCurrentConfig()
+		if currentConfigMap, ok := currentConfig.(interface{ ToMap() map[string]interface{} }); ok {
+			currentMap := currentConfigMap.ToMap()
+			// Apply current values first
+			if configInterface, ok := config.(interface {
+				FromMap(map[string]interface{}) error
+			}); ok {
+				if err := configInterface.FromMap(currentMap); err != nil {
+					glog.Warningf("Failed to load current config for %s: %v", taskTypeName, err)
+				}
+			}
+		}
+	}
+
+	// Parse form data using schema-based approach (this will override with new values)
 	err = h.parseTaskConfigFromForm(c.Request.PostForm, schema, config)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
@@ -249,6 +277,18 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		return
 	}
 
+	// Trigger a configuration reload in the maintenance manager
+	if h.adminServer != nil {
+		if manager := h.adminServer.GetMaintenanceManager(); manager != nil {
+			err = manager.ReloadTaskConfigurations()
+			if err != nil {
+				glog.Warningf("Failed to reload task configurations: %v", err)
+			} else {
+				glog.V(1).Infof("Successfully reloaded task configurations after updating %s", taskTypeName)
+			}
+		}
+	}
+
 	// Redirect back to task configuration page
 	c.Redirect(http.StatusSeeOther, "/maintenance/config/"+taskTypeName)
 }
@@ -269,6 +309,15 @@ func (h *MaintenanceHandlers) parseTaskConfigFromForm(formData map[string][]stri
 	for i := 0; i < configValue.NumField(); i++ {
 		field := configValue.Field(i)
 		fieldType := configType.Field(i)
+
+		// Handle embedded structs recursively
+		if fieldType.Anonymous && field.Kind() == reflect.Struct {
+			err := h.parseTaskConfigFromForm(formData, schema, field.Addr().Interface())
+			if err != nil {
+				return fmt.Errorf("error parsing embedded struct %s: %w", fieldType.Name, err)
+			}
+			continue
+		}
 
 		// Get JSON tag name
 		jsonTag := fieldType.Tag.Get("json")
