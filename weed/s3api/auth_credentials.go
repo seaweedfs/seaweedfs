@@ -445,9 +445,13 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	prefix := s3_constants.GetPrefix(r)
 
-	if object == "/" && prefix != "" {
-		// Using the aws cli with s3, and s3api, and with boto3, the object is always set to "/"
-		// but the prefix is set to the actual object key
+	// For List operations, use prefix for permission checking if available
+	if action == s3_constants.ACTION_LIST && object == "" && prefix != "" {
+		// List operation with prefix - check permission for the prefix path
+		object = prefix
+	} else if (object == "/" || object == "") && prefix != "" {
+		// Using the aws cli with s3, and s3api, and with boto3, the object is often set to "/" or empty
+		// but the prefix is set to the actual object key for permission checking
 		object = prefix
 	}
 

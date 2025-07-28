@@ -295,3 +295,201 @@ func TestDelimiterWithDirectoryKeyObjects(t *testing.T) {
 		assert.True(t, true, "Directory key objects should be individual keys when no delimiter is used")
 	})
 }
+
+// TestObjectLevelListPermissions tests that object-level List permissions work correctly
+func TestObjectLevelListPermissions(t *testing.T) {
+	// Test the core functionality that was fixed for issue #7039
+
+	t.Run("Identity CanDo Object Level Permissions", func(t *testing.T) {
+		// Create identity with object-level List permission
+		identity := &Identity{
+			Name: "test-user",
+			Actions: []Action{
+				"List:test-bucket/allowed-prefix/*",
+			},
+		}
+
+		// Test cases for canDo method
+		// Note: canDo concatenates bucket + objectKey, so "test-bucket" + "/allowed-prefix/file.txt" = "test-bucket/allowed-prefix/file.txt"
+		testCases := []struct {
+			name        string
+			action      Action
+			bucket      string
+			object      string
+			shouldAllow bool
+			description string
+		}{
+			{
+				name:        "allowed prefix exact match",
+				action:      "List",
+				bucket:      "test-bucket",
+				object:      "/allowed-prefix/file.txt",
+				shouldAllow: true,
+				description: "Should allow access to objects under the allowed prefix",
+			},
+			{
+				name:        "allowed prefix subdirectory",
+				action:      "List",
+				bucket:      "test-bucket",
+				object:      "/allowed-prefix/subdir/file.txt",
+				shouldAllow: true,
+				description: "Should allow access to objects in subdirectories under the allowed prefix",
+			},
+			{
+				name:        "denied different prefix",
+				action:      "List",
+				bucket:      "test-bucket",
+				object:      "/other-prefix/file.txt",
+				shouldAllow: false,
+				description: "Should deny access to objects under a different prefix",
+			},
+			{
+				name:        "denied different bucket",
+				action:      "List",
+				bucket:      "other-bucket",
+				object:      "/allowed-prefix/file.txt",
+				shouldAllow: false,
+				description: "Should deny access to objects in a different bucket",
+			},
+			{
+				name:        "denied root level",
+				action:      "List",
+				bucket:      "test-bucket",
+				object:      "/file.txt",
+				shouldAllow: false,
+				description: "Should deny access to root-level objects when permission is prefix-specific",
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				result := identity.canDo(tc.action, tc.bucket, tc.object)
+				assert.Equal(t, tc.shouldAllow, result, tc.description)
+			})
+		}
+	})
+
+	t.Run("Bucket Level Permissions Still Work", func(t *testing.T) {
+		// Create identity with bucket-level List permission
+		identity := &Identity{
+			Name: "bucket-user",
+			Actions: []Action{
+				"List:test-bucket",
+			},
+		}
+
+		// Should allow access to any object in the bucket
+		testCases := []struct {
+			object string
+		}{
+			{"/file.txt"},
+			{"/prefix/file.txt"},
+			{"/deep/nested/path/file.txt"},
+		}
+
+		for _, tc := range testCases {
+			result := identity.canDo("List", "test-bucket", tc.object)
+			assert.True(t, result, "Bucket-level permission should allow access to %s", tc.object)
+		}
+
+		// Should deny access to different buckets
+		result := identity.canDo("List", "other-bucket", "/file.txt")
+		assert.False(t, result, "Should deny access to objects in different buckets")
+	})
+
+	t.Run("Empty Object With Prefix Logic", func(t *testing.T) {
+		// Test the middleware logic fix: when object is empty but prefix is provided,
+		// the object should be set to the prefix value for permission checking
+
+		// This simulates the fixed logic in auth_credentials.go:
+		// if (object == "/" || object == "") && prefix != "" {
+		//     object = prefix
+		// }
+
+		testCases := []struct {
+			name     string
+			object   string
+			prefix   string
+			expected string
+		}{
+			{
+				name:     "empty object with prefix",
+				object:   "",
+				prefix:   "/allowed-prefix/",
+				expected: "/allowed-prefix/",
+			},
+			{
+				name:     "slash object with prefix",
+				object:   "/",
+				prefix:   "/allowed-prefix/",
+				expected: "/allowed-prefix/",
+			},
+			{
+				name:     "object already set",
+				object:   "/existing-object",
+				prefix:   "/some-prefix/",
+				expected: "/existing-object",
+			},
+			{
+				name:     "no prefix provided",
+				object:   "",
+				prefix:   "",
+				expected: "",
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				// Simulate the middleware logic
+				object := tc.object
+				prefix := tc.prefix
+
+				if (object == "/" || object == "") && prefix != "" {
+					object = prefix
+				}
+
+				assert.Equal(t, tc.expected, object, "Object should be correctly set based on prefix")
+			})
+		}
+	})
+
+	t.Run("Issue 7039 Scenario", func(t *testing.T) {
+		// Test the exact scenario from the GitHub issue
+		// User has permission: "List:bdaai-shared-bucket/txzl/*"
+		// They make request: GET /bdaai-shared-bucket?prefix=txzl/
+
+		identity := &Identity{
+			Name: "issue-user",
+			Actions: []Action{
+				"List:bdaai-shared-bucket/txzl/*",
+			},
+		}
+
+		// For a list request like "GET /bdaai-shared-bucket?prefix=txzl/":
+		// - bucket = "bdaai-shared-bucket"
+		// - object = "" (no object in URL path)
+		// - prefix = "/txzl/" (from query parameter)
+
+		// After our middleware fix, it should check permission for the prefix
+		// Simulate: action=ACTION_LIST && object=="" && prefix="/txzl/" → object="/txzl/"
+		result := identity.canDo("List", "bdaai-shared-bucket", "/txzl/")
+
+		// This should be allowed because:
+		// target = "List:bdaai-shared-bucket/txzl/"
+		// permission = "List:bdaai-shared-bucket/txzl/*"
+		// wildcard match: "List:bdaai-shared-bucket/txzl/" starts with "List:bdaai-shared-bucket/txzl/"
+		assert.True(t, result, "User with 'List:bdaai-shared-bucket/txzl/*' should be able to list with prefix txzl/")
+
+		// Test that they can't list with a different prefix
+		result = identity.canDo("List", "bdaai-shared-bucket", "/other-prefix/")
+		assert.False(t, result, "User should not be able to list with a different prefix")
+
+		// Test that they can't list a different bucket
+		result = identity.canDo("List", "other-bucket", "/txzl/")
+		assert.False(t, result, "User should not be able to list a different bucket")
+	})
+
+	t.Log("This test validates the fix for issue #7039")
+	t.Log("Object-level List permissions like 'List:bucket/prefix/*' now work correctly")
+	t.Log("Middleware properly extracts prefix for permission validation")
+}

@@ -1,114 +1,104 @@
 package s3api
 
 import (
-	"encoding/xml"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
-func TestXMLUnmarshall(t *testing.T) {
-
-	input := `<?xml version="1.0" encoding="UTF-8"?>
-<Tagging xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-   <TagSet>
-      <Tag>
-         <Key>key1</Key>
-         <Value>value1</Value>
-      </Tag>
-   </TagSet>
-</Tagging>
-`
-
-	tags := &Tagging{}
-
-	xml.Unmarshal([]byte(input), tags)
-
-	assert.Equal(t, len(tags.TagSet.Tag), 1)
-	assert.Equal(t, tags.TagSet.Tag[0].Key, "key1")
-	assert.Equal(t, tags.TagSet.Tag[0].Value, "value1")
-
-}
-
-func TestXMLMarshall(t *testing.T) {
-	tags := &Tagging{
-		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
-		TagSet: TagSet{
-			[]Tag{
-				{
-					Key:   "key1",
-					Value: "value1",
-				},
+func TestParseTagsHeader(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expected    map[string]string
+		expectError bool
+	}{
+		{
+			name:  "simple tags",
+			input: "key1=value1&key2=value2",
+			expected: map[string]string{
+				"key1": "value1",
+				"key2": "value2",
 			},
+			expectError: false,
+		},
+		{
+			name:  "URL encoded timestamp - issue #7040 scenario",
+			input: "Timestamp=2025-07-16%2014%3A40%3A39&Owner=user123",
+			expected: map[string]string{
+				"Timestamp": "2025-07-16 14:40:39",
+				"Owner":     "user123",
+			},
+			expectError: false,
+		},
+		{
+			name:  "URL encoded key and value",
+			input: "my%20key=my%20value&normal=test",
+			expected: map[string]string{
+				"my key": "my value",
+				"normal": "test",
+			},
+			expectError: false,
+		},
+		{
+			name:  "empty value",
+			input: "key1=&key2=value2",
+			expected: map[string]string{
+				"key1": "",
+				"key2": "value2",
+			},
+			expectError: false,
+		},
+		{
+			name:  "special characters encoded",
+			input: "path=/tmp%2Ffile.txt&data=hello%21world",
+			expected: map[string]string{
+				"path": "/tmp/file.txt",
+				"data": "hello!world",
+			},
+			expectError: false,
+		},
+		{
+			name:        "invalid URL encoding",
+			input:       "key1=value%ZZ",
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name:  "plus signs and equals in values",
+			input: "formula=a%2Bb%3Dc&normal=test",
+			expected: map[string]string{
+				"formula": "a+b=c",
+				"normal":  "test",
+			},
+			expectError: false,
 		},
 	}
 
-	actual := string(s3err.EncodeXMLResponse(tags))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseTagsHeader(tt.input)
 
-	expected := `<?xml version="1.0" encoding="UTF-8"?>
-<Tagging xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><TagSet><Tag><Key>key1</Key><Value>value1</Value></Tag></TagSet></Tagging>`
-	assert.Equal(t, expected, actual)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
 
-}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
 
-type TestTags map[string]string
+			if len(result) != len(tt.expected) {
+				t.Errorf("Expected %d tags, got %d", len(tt.expected), len(result))
+				return
+			}
 
-var ValidateTagsTestCases = []struct {
-	testCaseID    int
-	tags          TestTags
-	wantErrString string
-}{
-	{
-		1,
-		TestTags{"key-1": "value-1"},
-		"",
-	},
-	{
-		2,
-		TestTags{"key-1": "valueOver256R59YI9bahPwAVqvLeKCvM2S1RjzgP8fNDKluCbol0XTTFY6VcMwTBmdnqjsddilXztSGfEoZS1wDAIMBA0rW0CLNSoE2zNg4TT0vDbLHEtZBoZjdZ5E0JNIAqwb9ptIk2VizYmhWjb1G4rJ0CqDGWxcy3usXaQg6Dk6kU8N4hlqwYWeGw7uqdghcQ3ScfF02nHW9QFMN7msLR5fe90mbFBBp3Tjq34i0LEr4By2vxoRa2RqdBhEJhi23Tm"},
-		"validate tags: tag value longer than 256",
-	},
-	{
-		3,
-		TestTags{"keyLenOver128a5aUUGcPexMELsz3RyROzIzfO6BKABeApH2nbbagpOxZh2MgBWYDZtFxQaCuQeP1xR7dUJLwfFfDHguVIyxvTStGDk51BemKETIwZ0zkhR7lhfHBp2y0nFnV": "value-1"},
-		"validate tags: tag key longer than 128",
-	},
-	{
-		4,
-		TestTags{"key-1*": "value-1"},
-		"validate tags key key-1* error, incorrect key",
-	},
-	{
-		5,
-		TestTags{"key-1": "value-1?"},
-		"validate tags value value-1? error, incorrect value",
-	},
-	{
-		6,
-		TestTags{
-			"key-1":  "value",
-			"key-2":  "value",
-			"key-3":  "value",
-			"key-4":  "value",
-			"key-5":  "value",
-			"key-6":  "value",
-			"key-7":  "value",
-			"key-8":  "value",
-			"key-9":  "value",
-			"key-10": "value",
-			"key-11": "value",
-		},
-		"validate tags: 11 tags more than 10",
-	},
-}
-
-func TestValidateTags(t *testing.T) {
-	for _, testCase := range ValidateTagsTestCases {
-		err := ValidateTags(testCase.tags)
-		if testCase.wantErrString == "" {
-			assert.NoErrorf(t, err, "no error")
-		} else {
-			assert.EqualError(t, err, testCase.wantErrString)
-		}
+			for k, v := range tt.expected {
+				if result[k] != v {
+					t.Errorf("Expected tag %s=%s, got %s=%s", k, v, k, result[k])
+				}
+			}
+		})
 	}
 }

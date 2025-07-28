@@ -196,7 +196,19 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 
 	case "List":
 		s3Actions = []string{"s3:ListBucket", "s3:ListBucketVersions"}
-		resources = []string{fmt.Sprintf("arn:aws:s3:::%s", resourcePattern)}
+		if strings.HasSuffix(resourcePattern, "/*") {
+			// Object-level list access - extract bucket from "bucket/prefix/*" pattern
+			patternWithoutWildcard := strings.TrimSuffix(resourcePattern, "/*")
+			parts := strings.SplitN(patternWithoutWildcard, "/", 2)
+			bucket := parts[0]
+			resources = []string{
+				fmt.Sprintf("arn:aws:s3:::%s", bucket),
+				fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+			}
+		} else {
+			// Bucket-level list access
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", resourcePattern)}
+		}
 
 	case "Tagging":
 		s3Actions = []string{"s3:GetObjectTagging", "s3:PutObjectTagging", "s3:DeleteObjectTagging"}
