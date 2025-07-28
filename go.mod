@@ -100,7 +100,7 @@ require (
 	gocloud.dev/pubsub/natspubsub v0.42.0
 	gocloud.dev/pubsub/rabbitpubsub v0.43.0
 	golang.org/x/crypto v0.40.0
-	golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476
+	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
 	golang.org/x/image v0.29.0
 	golang.org/x/net v0.42.0
 	golang.org/x/oauth2 v0.30.0 // indirect
@@ -116,7 +116,7 @@ require (
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/mathutil v1.7.1
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.38.0
+	modernc.org/sqlite v1.38.1
 	modernc.org/strutil v1.2.1
 )
 
@@ -397,7 +397,7 @@ require (
 	gopkg.in/validator.v2 v2.0.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.65.10 // indirect
+	modernc.org/libc v1.66.3 // indirect
 	moul.io/http2curl/v2 v2.3.0 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
 	storj.io/common v0.0.0-20250605163628-70ca83b6228e // indirect
