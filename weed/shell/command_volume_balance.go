@@ -225,7 +225,11 @@ func capacityByMaxVolumeCount(diskType types.DiskType) CapacityFunc {
 		if !found {
 			return 0
 		}
-		return float64(diskInfo.MaxVolumeCount)
+		var ecShardCount int
+		for _, ecShardInfo := range diskInfo.EcShardInfos {
+			ecShardCount += erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIdCount()
+		}
+		return float64(diskInfo.MaxVolumeCount) - float64(ecShardCount)/erasure_coding.DataShardsCount
 	}
 }
 
