@@ -126,25 +126,31 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 		}
 	}
 
-	// Initialize maintenance system with persistent configuration
+	// Initialize maintenance system - always initialize even without persistent storage
+	var maintenanceConfig *maintenance.MaintenanceConfig
 	if server.configPersistence.IsConfigured() {
-		maintenanceConfig, err := server.configPersistence.LoadMaintenanceConfig()
+		var err error
+		maintenanceConfig, err = server.configPersistence.LoadMaintenanceConfig()
 		if err != nil {
 			glog.Errorf("Failed to load maintenance configuration: %v", err)
 			maintenanceConfig = maintenance.DefaultMaintenanceConfig()
 		}
-		server.InitMaintenanceManager(maintenanceConfig)
-
-		// Start maintenance manager if enabled
-		if maintenanceConfig.Enabled {
-			go func() {
-				if err := server.StartMaintenanceManager(); err != nil {
-					glog.Errorf("Failed to start maintenance manager: %v", err)
-				}
-			}()
-		}
+		glog.V(1).Infof("Maintenance system initialized with persistent configuration")
 	} else {
+		maintenanceConfig = maintenance.DefaultMaintenanceConfig()
 		glog.V(1).Infof("No data directory configured, maintenance system will run in memory-only mode")
+	}
+
+	// Always initialize maintenance manager
+	server.InitMaintenanceManager(maintenanceConfig)
+
+	// Start maintenance manager if enabled
+	if maintenanceConfig.Enabled {
+		go func() {
+			if err := server.StartMaintenanceManager(); err != nil {
+				glog.Errorf("Failed to start maintenance manager: %v", err)
+			}
+		}()
 	}
 
 	return server
