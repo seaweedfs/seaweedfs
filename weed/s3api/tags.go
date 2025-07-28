@@ -3,10 +3,12 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type Tag struct {
@@ -53,9 +55,23 @@ func parseTagsHeader(tags string) (map[string]string, error) {
 	for _, v := range util.StringSplit(tags, "&") {
 		tag := strings.Split(v, "=")
 		if len(tag) == 2 {
-			parsedTags[tag[0]] = tag[1]
+			// URL decode both key and value
+			decodedKey, err := url.QueryUnescape(tag[0])
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode tag key '%s': %w", tag[0], err)
+			}
+			decodedValue, err := url.QueryUnescape(tag[1])
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode tag value '%s': %w", tag[1], err)
+			}
+			parsedTags[decodedKey] = decodedValue
 		} else if len(tag) == 1 {
-			parsedTags[tag[0]] = ""
+			// URL decode key for empty value tags
+			decodedKey, err := url.QueryUnescape(tag[0])
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode tag key '%s': %w", tag[0], err)
+			}
+			parsedTags[decodedKey] = ""
 		}
 	}
 	return parsedTags, nil
