@@ -47,7 +47,7 @@ func MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *ma
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div class=\"d-flex gap-2\"><button type=\"button\" class=\"btn btn-primary\" onclick=\"saveConfiguration()\"><i class=\"fas fa-save me-1\"></i> Save Configuration</button> <button type=\"button\" class=\"btn btn-secondary\" onclick=\"resetToDefaults()\"><i class=\"fas fa-undo me-1\"></i> Reset to Defaults</button></div></form></div></div></div></div><!-- Task Configuration Cards --><div class=\"row mt-4\"><div class=\"col-md-4\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-broom me-2\"></i> Volume Vacuum</h5></div><div class=\"card-body\"><p class=\"card-text\">Reclaims disk space by removing deleted files from volumes.</p><a href=\"/maintenance/config/vacuum\" class=\"btn btn-primary\">Configure</a></div></div></div><div class=\"col-md-4\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-balance-scale me-2\"></i> Volume Balance</h5></div><div class=\"card-body\"><p class=\"card-text\">Redistributes volumes across servers to optimize storage utilization.</p><a href=\"/maintenance/config/balance\" class=\"btn btn-primary\">Configure</a></div></div></div><div class=\"col-md-4\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-shield-alt me-2\"></i> Erasure Coding</h5></div><div class=\"card-body\"><p class=\"card-text\">Converts volumes to erasure coded format for improved durability.</p><a href=\"/maintenance/config/erasure_coding\" class=\"btn btn-primary\">Configure</a></div></div></div></div></div><script>\n        function saveConfiguration() {\n            const form = document.getElementById('maintenanceConfigForm');\n            const formData = new FormData(form);\n            \n            // Convert form data to JSON, handling interval fields specially\n            const config = {};\n            \n            for (let [key, value] of formData.entries()) {\n                if (key.endsWith('_value')) {\n                    // This is an interval value part\n                    const baseKey = key.replace('_value', '');\n                    const unitKey = baseKey + '_unit';\n                    const unitValue = formData.get(unitKey);\n                    \n                    if (unitValue) {\n                        // Convert to seconds based on unit\n                        const numValue = parseInt(value) || 0;\n                        let seconds = numValue;\n                        switch(unitValue) {\n                            case 'minutes':\n                                seconds = numValue * 60;\n                                break;\n                            case 'hours':\n                                seconds = numValue * 3600;\n                                break;\n                            case 'days':\n                                seconds = numValue * 24 * 3600;\n                                break;\n                        }\n                        config[baseKey] = seconds;\n                    }\n                } else if (key.endsWith('_unit')) {\n                    // Skip unit keys - they're handled with their corresponding value\n                    continue;\n                } else {\n                    // Regular field\n                    if (form.querySelector(`[name=\"${key}\"]`).type === 'checkbox') {\n                        config[key] = form.querySelector(`[name=\"${key}\"]`).checked;\n                    } else {\n                        const numValue = parseFloat(value);\n                        config[key] = isNaN(numValue) ? value : numValue;\n                    }\n                }\n            }\n\n            fetch('/maintenance/config', {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n                body: JSON.stringify(config)\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Configuration saved successfully!');\n                    location.reload();\n                } else {\n                    alert('Error saving configuration: ' + (data.error || 'Unknown error'));\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                alert('Error saving configuration: ' + error.message);\n            });\n        }\n\n        function resetToDefaults() {\n            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {\n                fetch('/maintenance/config/defaults', {\n                    method: 'POST',\n                    headers: {\n                        'Content-Type': 'application/json',\n                    }\n                })\n                .then(response => response.json())\n                .then(data => {\n                    if (data.success) {\n                        alert('Configuration reset to defaults!');\n                        location.reload();\n                    } else {\n                        alert('Error resetting configuration: ' + (data.error || 'Unknown error'));\n                    }\n                })\n                .catch(error => {\n                    console.error('Error:', error);\n                    alert('Error resetting configuration: ' + error.message);\n                });\n            }\n        }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div class=\"d-flex gap-2\"><button type=\"button\" class=\"btn btn-primary\" onclick=\"saveConfiguration()\"><i class=\"fas fa-save me-1\"></i> Save Configuration</button> <button type=\"button\" class=\"btn btn-secondary\" onclick=\"resetToDefaults()\"><i class=\"fas fa-undo me-1\"></i> Reset to Defaults</button></div></form></div></div></div></div><!-- Task Configuration Cards --><div class=\"row mt-4\"><div class=\"col-md-4\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-broom me-2\"></i> Volume Vacuum</h5></div><div class=\"card-body\"><p class=\"card-text\">Reclaims disk space by removing deleted files from volumes.</p><a href=\"/maintenance/config/vacuum\" class=\"btn btn-primary\">Configure</a></div></div></div><div class=\"col-md-4\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-balance-scale me-2\"></i> Volume Balance</h5></div><div class=\"card-body\"><p class=\"card-text\">Redistributes volumes across servers to optimize storage utilization.</p><a href=\"/maintenance/config/balance\" class=\"btn btn-primary\">Configure</a></div></div></div><div class=\"col-md-4\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-shield-alt me-2\"></i> Erasure Coding</h5></div><div class=\"card-body\"><p class=\"card-text\">Converts volumes to erasure coded format for improved durability.</p><a href=\"/maintenance/config/erasure_coding\" class=\"btn btn-primary\">Configure</a></div></div></div></div></div><script>\n        function saveConfiguration() {\n            const form = document.getElementById('maintenanceConfigForm');\n            const formData = new FormData(form);\n            \n            // Convert form data to JSON, handling interval fields specially\n            const config = {};\n            \n            for (let [key, value] of formData.entries()) {\n                if (key.endsWith('_value')) {\n                    // This is an interval value part\n                    const baseKey = key.replace('_value', '');\n                    const unitKey = baseKey + '_unit';\n                    const unitValue = formData.get(unitKey);\n                    \n                    if (unitValue) {\n                        // Convert to seconds based on unit\n                        const numValue = parseInt(value) || 0;\n                        let seconds = numValue;\n                        switch(unitValue) {\n                            case 'minutes':\n                                seconds = numValue * 60;\n                                break;\n                            case 'hours':\n                                seconds = numValue * 3600;\n                                break;\n                            case 'days':\n                                seconds = numValue * 24 * 3600;\n                                break;\n                        }\n                        config[baseKey] = seconds;\n                    }\n                } else if (key.endsWith('_unit')) {\n                    // Skip unit keys - they're handled with their corresponding value\n                    continue;\n                } else {\n                    // Regular field\n                    if (form.querySelector(`[name=\"${key}\"]`).type === 'checkbox') {\n                        config[key] = form.querySelector(`[name=\"${key}\"]`).checked;\n                    } else {\n                        const numValue = parseFloat(value);\n                        config[key] = isNaN(numValue) ? value : numValue;\n                    }\n                }\n            }\n\n            fetch('/api/maintenance/config', {\n                method: 'PUT',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n                body: JSON.stringify(config)\n            })\n            .then(response => {\n                if (response.status === 401) {\n                    alert('Authentication required. Please log in first.');\n                    window.location.href = '/login';\n                    return;\n                }\n                return response.json();\n            })\n            .then(data => {\n                if (!data) return; // Skip if redirected to login\n                if (data.success) {\n                    alert('Configuration saved successfully!');\n                    location.reload();\n                } else {\n                    alert('Error saving configuration: ' + (data.error || 'Unknown error'));\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                alert('Error saving configuration: ' + error.message);\n            });\n        }\n\n        function resetToDefaults() {\n            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {\n                fetch('/maintenance/config/defaults', {\n                    method: 'POST',\n                    headers: {\n                        'Content-Type': 'application/json',\n                    }\n                })\n                .then(response => response.json())\n                .then(data => {\n                    if (data.success) {\n                        alert('Configuration reset to defaults!');\n                        location.reload();\n                    } else {\n                        alert('Error resetting configuration: ' + (data.error || 'Unknown error'));\n                    }\n                })\n                .catch(error => {\n                    console.error('Error:', error);\n                    alert('Error resetting configuration: ' + error.message);\n                });\n            }\n        }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -85,7 +85,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 205, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 213, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -98,7 +98,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(field.DisplayName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 206, Col: 35}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 214, Col: 35}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -121,7 +121,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName + "_value")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 215, Col: 50}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 223, Col: 50}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -134,7 +134,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var6 string
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName + "_value")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 216, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 224, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
@@ -147,7 +147,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f", convertSecondsToDisplayValue(value, field)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 217, Col: 91}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 225, Col: 91}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -170,7 +170,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName + "_unit")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 226, Col: 49}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 234, Col: 49}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -183,7 +183,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName + "_unit")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 227, Col: 51}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 235, Col: 51}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -241,7 +241,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				var templ_7745c5c3_Var10 string
 				templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(field.Description)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 260, Col: 69}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 268, Col: 69}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 				if templ_7745c5c3_Err != nil {
@@ -264,7 +264,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 270, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 278, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -277,7 +277,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 271, Col: 41}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 279, Col: 41}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -300,7 +300,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 276, Col: 68}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 284, Col: 68}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -313,7 +313,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(field.DisplayName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 277, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 285, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -331,7 +331,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				var templ_7745c5c3_Var15 string
 				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(field.Description)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 281, Col: 69}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 289, Col: 69}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 				if templ_7745c5c3_Err != nil {
@@ -354,7 +354,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 287, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 295, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -367,7 +367,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(field.DisplayName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 288, Col: 35}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 296, Col: 35}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -390,7 +390,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 296, Col: 35}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 304, Col: 35}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 			if templ_7745c5c3_Err != nil {
@@ -403,7 +403,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var19 string
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 297, Col: 37}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 305, Col: 37}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
@@ -416,7 +416,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var20 string
 			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%v", value))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 298, Col: 48}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 306, Col: 48}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 			if templ_7745c5c3_Err != nil {
@@ -429,7 +429,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var21 string
 			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(field.Placeholder)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 299, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 307, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 			if templ_7745c5c3_Err != nil {
@@ -447,7 +447,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				var templ_7745c5c3_Var22 string
 				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%v", field.MinValue))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 301, Col: 59}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 309, Col: 59}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 				if templ_7745c5c3_Err != nil {
@@ -466,7 +466,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				var templ_7745c5c3_Var23 string
 				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%v", field.MaxValue))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 304, Col: 59}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 312, Col: 59}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 				if templ_7745c5c3_Err != nil {
@@ -484,7 +484,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var24 string
 			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(getNumberStep(field))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 306, Col: 43}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 314, Col: 43}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 			if templ_7745c5c3_Err != nil {
@@ -512,7 +512,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				var templ_7745c5c3_Var25 string
 				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(field.Description)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 312, Col: 69}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 320, Col: 69}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 				if templ_7745c5c3_Err != nil {
@@ -661,7 +661,7 @@ func schemaToJSON(schema *maintenance.MaintenanceConfigSchema) templ.Component {
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(`{}`)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 424, Col: 9}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 432, Col: 9}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 		if templ_7745c5c3_Err != nil {

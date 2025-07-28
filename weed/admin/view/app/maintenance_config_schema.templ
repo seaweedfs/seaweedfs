@@ -149,15 +149,23 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
                 }
             }
 
-            fetch('/maintenance/config', {
-                method: 'POST',
+            fetch('/api/maintenance/config', {
+                method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(config)
             })
-            .then(response => response.json())
+            .then(response => {
+                if (response.status === 401) {
+                    alert('Authentication required. Please log in first.');
+                    window.location.href = '/login';
+                    return;
+                }
+                return response.json();
+            })
             .then(data => {
+                if (!data) return; // Skip if redirected to login
                 if (data.success) {
                     alert('Configuration saved successfully!');
                     location.reload();

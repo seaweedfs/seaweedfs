@@ -930,7 +930,7 @@ func (as *AdminServer) GetMaintenanceConfigAPI(c *gin.Context) {
 
 // UpdateMaintenanceConfigAPI updates maintenance configuration via API
 func (as *AdminServer) UpdateMaintenanceConfigAPI(c *gin.Context) {
-	var config MaintenanceConfig
+	var config maintenance.MaintenanceConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1156,24 +1156,9 @@ func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigDat
 		config = maintenance.DefaultMaintenanceConfig()
 	}
 
-	// Apply schema defaults for any zero values
-	configUpdated := false
-	schema := maintenance.GetMaintenanceConfigSchema()
-	if err := schema.ApplyDefaults(config); err == nil {
-		configUpdated = true
-		glog.V(1).Infof("Applied schema defaults to configuration")
-	} else {
-		glog.Errorf("Failed to apply schema defaults: %v", err)
-	}
-
-	// Save the corrected configuration if any updates were made
-	if configUpdated {
-		if saveErr := as.configPersistence.SaveMaintenanceConfig(config); saveErr != nil {
-			glog.Errorf("Failed to save corrected configuration: %v", saveErr)
-		} else {
-			glog.V(1).Infof("Updated configuration with meaningful defaults and saved to persistent storage")
-		}
-	}
+	// Note: Do NOT apply schema defaults to existing config as it overrides saved values
+	// Only apply defaults when creating new configs or handling fallback cases
+	// The schema defaults should only be used in the UI for new installations
 
 	// Get system stats from maintenance manager if available
 	var systemStats *MaintenanceStats
@@ -1211,14 +1196,11 @@ func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigDat
 
 // updateMaintenanceConfig updates maintenance configuration
 func (as *AdminServer) updateMaintenanceConfig(config *maintenance.MaintenanceConfig) error {
-	// Apply meaningful defaults for zero values before saving using schema
-	schema := maintenance.GetMaintenanceConfigSchema()
+	// Note: Do NOT apply schema defaults to user-submitted config as it overrides their intended values
+	// Schema defaults should only be used for new installations or missing fields, not user choices
 
-	// Apply schema defaults
-	if err := schema.ApplyDefaults(config); err != nil {
-		glog.Errorf("Failed to apply schema defaults: %v", err)
-		return fmt.Errorf("failed to apply schema defaults: %w", err)
-	}
+	// Get schema for validation only
+	schema := maintenance.GetMaintenanceConfigSchema()
 
 	// Validate configuration using schema
 	if validationErrors := schema.ValidateConfig(config); len(validationErrors) > 0 {

@@ -1,6 +1,8 @@
 package app
 
 import (
+    "encoding/base64"
+    "encoding/json"
     "fmt"
     "reflect"
     "strings"
@@ -8,6 +10,30 @@ import (
     "github.com/seaweedfs/seaweedfs/weed/worker/tasks"
     "github.com/seaweedfs/seaweedfs/weed/admin/config"
 )
+
+// Helper function to convert task schema to JSON string
+func taskSchemaToJSON(schema *tasks.TaskConfigSchema) string {
+    if schema == nil {
+        return "{}"
+    }
+    
+    data := map[string]interface{}{
+        "fields": schema.Fields,
+    }
+    
+    jsonBytes, err := json.Marshal(data)
+    if err != nil {
+        return "{}"
+    }
+    
+    return string(jsonBytes)
+}
+
+// Helper function to base64 encode the JSON to avoid HTML escaping issues
+func taskSchemaToBase64JSON(schema *tasks.TaskConfigSchema) string {
+    jsonStr := taskSchemaToJSON(schema)
+    return base64.StdEncoding.EncodeToString([]byte(jsonStr))
+}
 
 templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfigSchema, config interface{}) {
     <div class="container-fluid">
@@ -28,12 +54,16 @@ templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfi
             </div>
         </div>
 
+        <!-- Configuration Card -->
         <div class="row">
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="mb-0">{schema.DisplayName} Settings</h5>
-                        <p class="mb-0 text-muted">{schema.Description}</p>
+                        <h5 class="mb-0">
+                            <i class="fas fa-cogs me-2"></i>
+                            Task Configuration
+                        </h5>
+                        <p class="mb-0 text-muted small">{schema.Description}</p>
                     </div>
                     <div class="card-body">
                         <form id="taskConfigForm" method="POST">
@@ -41,7 +71,7 @@ templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfi
                             for _, field := range schema.Fields {
                                 @TaskConfigField(field, getTaskFieldValue(config, field.JSONName))
                             }
-
+                            
                             <div class="d-flex gap-2">
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save me-1"></i>
@@ -144,8 +174,17 @@ templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfi
             return { value: totalSeconds / 60, unit: 'minutes' };
         }
 
-        // Store schema data for JavaScript access
-        window.taskConfigSchema = @taskSchemaToTaskJSON(schema);
+        // Store schema data for JavaScript access (moved to after div is created)
+    </script>
+    
+    <!-- Hidden element to store schema data -->
+    <div data-task-schema={ taskSchemaToBase64JSON(schema) } style="display: none;"></div>
+    
+    <script>
+        // Load schema data now that the div exists
+        const base64Data = document.querySelector('[data-task-schema]').getAttribute('data-task-schema');
+        const jsonStr = atob(base64Data);
+        window.taskConfigSchema = JSON.parse(jsonStr);
     </script>
 }
 
@@ -216,11 +255,12 @@ templ TaskConfigField(field *config.Field, value interface{}) {
         <!-- Checkbox field -->
         <div class="mb-3">
             <div class="form-check form-switch">
-                <input 
+                                        <input 
                     class="form-check-input"
                     type="checkbox" 
                     id={ field.JSONName }
                     name={ field.JSONName }
+                    value="on"
                     if getTaskBoolValue(value) {
                         checked
                     }
@@ -390,15 +430,23 @@ func getTaskFieldValue(config interface{}, fieldName string) interface{} {
             jsonTag = jsonTag[:commaIdx]
         }
         
+        // Check if this is the field we're looking for
         if jsonTag == fieldName {
-            return field.Interface()
+            result := field.Interface()
+            // Debug logging for enabled field only
+            if fieldName == "enabled" {
+                fmt.Printf("DEBUG getTaskFieldValue: found enabled field = %v\n", result)
+            }
+            return result
         }
+    }
+    
+    // Debug logging when enabled field is not found
+    if fieldName == "enabled" {
+        fmt.Printf("DEBUG getTaskFieldValue: enabled field NOT FOUND in config type %T\n", config)
     }
     
     return nil
 }
 
-// Helper function to convert schema to JSON for JavaScript
-templ taskSchemaToTaskJSON(schema *tasks.TaskConfigSchema) {
-    {`{}`}
-} 
+ 

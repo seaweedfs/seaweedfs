@@ -70,7 +70,7 @@ func TestParseTaskConfigFromForm_WithEmbeddedStruct(t *testing.T) {
 	t.Run("Vacuum Config", func(t *testing.T) {
 		// Simulate form data
 		formData := url.Values{
-			"enabled":                      {""},      // unchecked checkbox
+			// "enabled" field omitted to simulate unchecked checkbox
 			"scan_interval_seconds_value":  {"4"},     // interval field
 			"scan_interval_seconds_unit":   {"hours"}, // interval unit
 			"max_concurrent":               {"3"},     // number field

@@ -96,7 +96,8 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
 
 		// API routes for AJAX calls
-		api := protected.Group("/api")
+		api := r.Group("/api")
+		api.Use(dash.RequireAuthAPI()) // Use API-specific auth middleware
 		{
 			api.GET("/cluster/topology", h.clusterHandlers.GetClusterTopology)
 			api.GET("/cluster/masters", h.clusterHandlers.GetMasters)
