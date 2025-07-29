@@ -6,7 +6,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
@@ -36,14 +35,21 @@ func NewTask(server string, volumeID uint32) *Task {
 
 // Execute performs the vacuum operation
 func (t *Task) Execute(params types.TaskParams) error {
-	glog.Infof("Starting vacuum for volume %d on server %s", t.volumeID, t.server)
+	// Use BaseTask.ExecuteTask to handle logging initialization
+	return t.ExecuteTask(context.Background(), params, t.executeImpl)
+}
 
-	ctx := context.Background()
+// executeImpl is the actual vacuum implementation with new logging
+func (t *Task) executeImpl(ctx context.Context, params types.TaskParams) error {
+	t.LogInfo("Starting vacuum for volume %d on server %s", t.volumeID, t.server)
 
 	// Parse garbage threshold from typed parameters
 	if params.TypedParams != nil {
 		if vacuumParams := params.TypedParams.GetVacuumParams(); vacuumParams != nil {
 			t.garbageThreshold = vacuumParams.GarbageThreshold
+			t.LogWithFields("INFO", "Using garbage threshold from parameters", map[string]interface{}{
+				"threshold": t.garbageThreshold,
+			})
 		}
 	}
 
@@ -56,6 +62,7 @@ func (t *Task) Execute(params types.TaskParams) error {
 
 	conn, err := grpc.NewClient(grpcAddress, dialOpt)
 	if err != nil {
+		t.LogError("Failed to connect to volume server %s: %v", t.server, err)
 		return fmt.Errorf("failed to connect to volume server %s: %v", t.server, err)
 	}
 	defer conn.Close()
@@ -64,32 +71,40 @@ func (t *Task) Execute(params types.TaskParams) error {
 
 	// Step 1: Check vacuum eligibility
 	t.SetProgress(10.0)
-	glog.V(1).Infof("Checking vacuum eligibility for volume %d", t.volumeID)
+	t.LogDebug("Checking vacuum eligibility for volume %d", t.volumeID)
 
 	checkResp, err := client.VacuumVolumeCheck(ctx, &volume_server_pb.VacuumVolumeCheckRequest{
 		VolumeId: t.volumeID,
 	})
 	if err != nil {
+		t.LogError("Vacuum check failed for volume %d: %v", t.volumeID, err)
 		return fmt.Errorf("vacuum check failed for volume %d: %v", t.volumeID, err)
 	}
 
 	// Check if garbage ratio meets threshold
 	if checkResp.GarbageRatio < t.garbageThreshold {
+		t.LogWarning("Volume %d garbage ratio %.2f%% is below threshold %.2f%%, skipping vacuum",
+			t.volumeID, checkResp.GarbageRatio*100, t.garbageThreshold*100)
 		return fmt.Errorf("volume %d garbage ratio %.2f%% is below threshold %.2f%%, skipping vacuum",
 			t.volumeID, checkResp.GarbageRatio*100, t.garbageThreshold*100)
 	}
 
-	glog.V(1).Infof("Volume %d has %.2f%% garbage, proceeding with vacuum",
-		t.volumeID, checkResp.GarbageRatio*100)
+	t.LogWithFields("INFO", "Volume eligible for vacuum", map[string]interface{}{
+		"volume_id":       t.volumeID,
+		"garbage_ratio":   checkResp.GarbageRatio,
+		"threshold":       t.garbageThreshold,
+		"garbage_percent": checkResp.GarbageRatio * 100,
+	})
 
 	// Step 2: Compact volume
 	t.SetProgress(30.0)
-	glog.V(1).Infof("Starting compact for volume %d", t.volumeID)
+	t.LogInfo("Starting compact for volume %d", t.volumeID)
 
 	compactStream, err := client.VacuumVolumeCompact(ctx, &volume_server_pb.VacuumVolumeCompactRequest{
 		VolumeId: t.volumeID,
 	})
 	if err != nil {
+		t.LogError("Vacuum compact failed for volume %d: %v", t.volumeID, err)
 		return fmt.Errorf("vacuum compact failed for volume %d: %v", t.volumeID, err)
 	}
 
@@ -103,6 +118,7 @@ func (t *Task) Execute(params types.TaskParams) error {
 			if err == io.EOF {
 				break
 			}
+			t.LogError("Vacuum compact stream error for volume %d: %v", t.volumeID, err)
 			return fmt.Errorf("vacuum compact stream error for volume %d: %v", t.volumeID, err)
 		}
 
@@ -121,37 +137,47 @@ func (t *Task) Execute(params types.TaskParams) error {
 			t.SetProgress(progress)
 		}
 
-		glog.V(2).Infof("Volume %d compact progress: %d bytes processed", t.volumeID, processedBytes)
+		t.LogWithFields("DEBUG", "Volume compact progress", map[string]interface{}{
+			"volume_id":        t.volumeID,
+			"processed_bytes":  processedBytes,
+			"total_bytes":      totalBytes,
+			"compact_progress": fmt.Sprintf("%.1f%%", (float64(processedBytes)/float64(totalBytes))*100),
+		})
 	}
 
 	// Step 3: Commit vacuum changes
 	t.SetProgress(80.0)
-	glog.V(1).Infof("Committing vacuum for volume %d", t.volumeID)
+	t.LogInfo("Committing vacuum for volume %d", t.volumeID)
 
 	commitResp, err := client.VacuumVolumeCommit(ctx, &volume_server_pb.VacuumVolumeCommitRequest{
 		VolumeId: t.volumeID,
 	})
 	if err != nil {
+		t.LogError("Vacuum commit failed for volume %d: %v", t.volumeID, err)
 		return fmt.Errorf("vacuum commit failed for volume %d: %v", t.volumeID, err)
 	}
 
 	// Step 4: Cleanup temporary files
 	t.SetProgress(90.0)
-	glog.V(1).Infof("Cleaning up vacuum files for volume %d", t.volumeID)
+	t.LogInfo("Cleaning up vacuum files for volume %d", t.volumeID)
 
 	_, err = client.VacuumVolumeCleanup(ctx, &volume_server_pb.VacuumVolumeCleanupRequest{
 		VolumeId: t.volumeID,
 	})
 	if err != nil {
 		// Log warning but don't fail the task
-		glog.Warningf("Vacuum cleanup warning for volume %d: %v", t.volumeID, err)
+		t.LogWarning("Vacuum cleanup warning for volume %d: %v", t.volumeID, err)
 	}
 
 	t.SetProgress(100.0)
 
 	newVolumeSize := commitResp.VolumeSize
-	glog.Infof("Successfully completed vacuum for volume %d on server %s, new volume size: %d bytes",
-		t.volumeID, t.server, newVolumeSize)
+	t.LogWithFields("INFO", "Successfully completed vacuum", map[string]interface{}{
+		"volume_id":         t.volumeID,
+		"server":            t.server,
+		"new_volume_size":   newVolumeSize,
+		"garbage_reclaimed": true,
+	})
 
 	return nil
 }

@@ -89,7 +89,17 @@ func (t *Task) SetDialOption(dialOpt grpc.DialOption) {
 
 // Execute performs the EC operation following command_ec_encode.go pattern but with local processing
 func (t *Task) Execute(params types.TaskParams) error {
-	glog.V(1).Infof("Starting erasure coding for volume %d from server %s (download → ec → distribute)", t.volumeID, t.sourceServer)
+	// Use BaseTask.ExecuteTask to handle logging initialization
+	return t.ExecuteTask(context.Background(), params, t.executeImpl)
+}
+
+// executeImpl is the actual EC implementation with new logging
+func (t *Task) executeImpl(ctx context.Context, params types.TaskParams) error {
+	t.LogWithFields("INFO", "Starting erasure coding task", map[string]interface{}{
+		"volume_id":     t.volumeID,
+		"source_server": t.sourceServer,
+		"workflow":      "download → ec → distribute",
+	})
 
 	// Store task parameters for use in destination planning
 	t.taskParams = params
@@ -106,6 +116,10 @@ func (t *Task) Execute(params types.TaskParams) error {
 			if ecParams.WorkingDir != "" {
 				t.workDir = ecParams.WorkingDir
 			}
+			t.LogWithFields("INFO", "Using typed parameters", map[string]interface{}{
+				"master_client": t.masterClient,
+				"working_dir":   t.workDir,
+			})
 		}
 	}
 
@@ -115,73 +129,79 @@ func (t *Task) Execute(params types.TaskParams) error {
 
 	// Create the task-specific working directory
 	if err := os.MkdirAll(taskWorkDir, 0755); err != nil {
+		t.LogError("Failed to create task working directory %s: %v", taskWorkDir, err)
 		return fmt.Errorf("failed to create task working directory %s: %v", taskWorkDir, err)
 	}
-	glog.V(1).Infof("WORKFLOW: Created working directory: %s", taskWorkDir)
+	t.LogInfo("Created working directory: %s", taskWorkDir)
 
 	// Ensure cleanup of working directory
 	defer func() {
 		if err := os.RemoveAll(taskWorkDir); err != nil {
-			glog.Warningf("Failed to cleanup working directory %s: %v", taskWorkDir, err)
+			t.LogWarning("Failed to cleanup working directory %s: %v", taskWorkDir, err)
 		} else {
-			glog.V(1).Infof("WORKFLOW: Cleaned up working directory: %s", taskWorkDir)
+			t.LogInfo("Cleaned up working directory: %s", taskWorkDir)
 		}
 	}()
 
 	// Step 1: Collect volume locations from master
-	glog.V(1).Infof("WORKFLOW STEP 1: Collecting volume locations from master")
+	t.LogInfo("WORKFLOW STEP 1: Collecting volume locations from master")
 	volumeId := needle.VolumeId(t.volumeID)
 	volumeLocations, err := t.collectVolumeLocations(volumeId)
 	if err != nil {
+		t.LogError("Failed to collect volume locations before EC encoding: %v", err)
 		return fmt.Errorf("failed to collect volume locations before EC encoding: %v", err)
 	}
-	glog.V(1).Infof("WORKFLOW: Found volume %d on %d servers: %v", t.volumeID, len(volumeLocations), volumeLocations)
+	t.LogWithFields("INFO", "Found volume locations", map[string]interface{}{
+		"volume_id":    t.volumeID,
+		"server_count": len(volumeLocations),
+		"servers":      volumeLocations,
+	})
 
 	// Step 2: Mark volume readonly on all servers
-	glog.V(1).Infof("WORKFLOW STEP 2: Marking volume %d readonly on all replica servers", t.volumeID)
+	t.LogInfo("WORKFLOW STEP 2: Marking volume %d readonly on all replica servers", t.volumeID)
 	err = t.markVolumeReadonlyOnAllReplicas(volumeId, volumeLocations)
 	if err != nil {
 		return fmt.Errorf("failed to mark volume readonly: %v", err)
 	}
-	glog.V(1).Infof("WORKFLOW: Volume %d marked readonly on all replicas", t.volumeID)
+	t.LogInfo("Volume %d marked readonly on all replicas", t.volumeID)
 
 	// Step 3: Copy volume data to local worker
-	glog.V(1).Infof("WORKFLOW STEP 3: Downloading volume %d data to worker", t.volumeID)
+	t.LogInfo("WORKFLOW STEP 3: Downloading volume %d data to worker", t.volumeID)
 	err = t.copyVolumeDataLocally(taskWorkDir)
 	if err != nil {
 		return fmt.Errorf("failed to copy volume data locally: %v", err)
 	}
-	glog.V(1).Infof("WORKFLOW: Volume %d data downloaded successfully", t.volumeID)
+	t.LogInfo("Volume %d data downloaded successfully", t.volumeID)
 
 	// Step 4: Perform local EC encoding
-	glog.V(1).Infof("WORKFLOW STEP 4: Performing local EC encoding for volume %d", t.volumeID)
+	t.LogInfo("WORKFLOW STEP 4: Performing local EC encoding for volume %d", t.volumeID)
 	shardFiles, err := t.performLocalECEncoding(taskWorkDir)
 	if err != nil {
 		return fmt.Errorf("failed to generate EC shards locally: %v", err)
 	}
-	glog.V(1).Infof("WORKFLOW: Generated %d EC shards for volume %d", len(shardFiles), t.volumeID)
+	t.LogInfo("Generated %d EC shards for volume %d", len(shardFiles), t.volumeID)
 
 	// Step 5: Distribute shards across servers
-	glog.V(1).Infof("WORKFLOW STEP 5: Distributing EC shards across cluster")
+	t.LogInfo("WORKFLOW STEP 5: Distributing EC shards across cluster")
 	err = t.distributeEcShardsAcrossServers(shardFiles, taskWorkDir)
 	if err != nil {
 		return fmt.Errorf("failed to distribute EC shards: %v", err)
 	}
-	glog.V(1).Infof("WORKFLOW: EC shards distributed and mounted successfully")
+	t.LogInfo("EC shards distributed and mounted successfully")
 
 	// Step 6: Delete original volume from ALL replica locations (following command_ec_encode.go pattern)
-	glog.V(1).Infof("WORKFLOW STEP 6: Deleting original volume %d from all replica servers", t.volumeID)
+	t.LogInfo("WORKFLOW STEP 6: Deleting original volume %d from all replica servers", t.volumeID)
 	err = t.deleteVolumeFromAllLocations(volumeId, volumeLocations)
 	if err != nil {
-		glog.Warningf("Failed to delete original volume %d from all locations: %v (may need manual cleanup)", t.volumeID, err)
+		t.LogWarning("Failed to delete original volume %d from all locations: %v (may need manual cleanup)", t.volumeID, err)
 		// This is not a critical failure - the EC encoding itself succeeded
 	} else {
-		glog.V(1).Infof("WORKFLOW: Original volume %d deleted from all replicas", t.volumeID)
+		t.LogInfo("Original volume %d deleted from all replicas", t.volumeID)
 	}
 
 	// Step 7: Final success
 	t.SetProgress(100.0)
-	glog.V(1).Infof("WORKFLOW COMPLETE: Successfully completed erasure coding for volume %d", t.volumeID)
+	t.LogInfo("WORKFLOW COMPLETE: Successfully completed erasure coding for volume %d", t.volumeID)
 	return nil
 }
 

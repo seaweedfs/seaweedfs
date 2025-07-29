@@ -792,6 +792,12 @@ func (c *GrpcAdminClient) waitForConnection(timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for connection")
 }
 
+// GetIncomingChannel returns the incoming message channel for message processing
+// This allows the worker to process admin messages directly
+func (c *GrpcAdminClient) GetIncomingChannel() <-chan *worker_pb.AdminMessage {
+	return c.incoming
+}
+
 // MockAdminClient provides a mock implementation for testing
 type MockAdminClient struct {
 	workerID  string

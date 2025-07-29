@@ -34,6 +34,7 @@ type WorkerMessage struct {
 	//	*WorkerMessage_TaskUpdate
 	//	*WorkerMessage_TaskComplete
 	//	*WorkerMessage_Shutdown
+	//	*WorkerMessage_TaskLogResponse
 	Message       isWorkerMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -144,6 +145,15 @@ func (x *WorkerMessage) GetShutdown() *WorkerShutdown {
 	return nil
 }
 
+func (x *WorkerMessage) GetTaskLogResponse() *TaskLogResponse {
+	if x != nil {
+		if x, ok := x.Message.(*WorkerMessage_TaskLogResponse); ok {
+			return x.TaskLogResponse
+		}
+	}
+	return nil
+}
+
 type isWorkerMessage_Message interface {
 	isWorkerMessage_Message()
 }
@@ -172,6 +182,10 @@ type WorkerMessage_Shutdown struct {
 	Shutdown *WorkerShutdown `protobuf:"bytes,8,opt,name=shutdown,proto3,oneof"`
 }
 
+type WorkerMessage_TaskLogResponse struct {
+	TaskLogResponse *TaskLogResponse `protobuf:"bytes,9,opt,name=task_log_response,json=taskLogResponse,proto3,oneof"`
+}
+
 func (*WorkerMessage_Registration) isWorkerMessage_Message() {}
 
 func (*WorkerMessage_Heartbeat) isWorkerMessage_Message() {}
@@ -183,6 +197,8 @@ func (*WorkerMessage_TaskUpdate) isWorkerMessage_Message() {}
 func (*WorkerMessage_TaskComplete) isWorkerMessage_Message() {}
 
 func (*WorkerMessage_Shutdown) isWorkerMessage_Message() {}
+
+func (*WorkerMessage_TaskLogResponse) isWorkerMessage_Message() {}
 
 // AdminMessage represents messages from admin to worker
 type AdminMessage struct {
@@ -196,6 +212,7 @@ type AdminMessage struct {
 	//	*AdminMessage_TaskAssignment
 	//	*AdminMessage_TaskCancellation
 	//	*AdminMessage_AdminShutdown
+	//	*AdminMessage_TaskLogRequest
 	Message       isAdminMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -297,6 +314,15 @@ func (x *AdminMessage) GetAdminShutdown() *AdminShutdown {
 	return nil
 }
 
+func (x *AdminMessage) GetTaskLogRequest() *TaskLogRequest {
+	if x != nil {
+		if x, ok := x.Message.(*AdminMessage_TaskLogRequest); ok {
+			return x.TaskLogRequest
+		}
+	}
+	return nil
+}
+
 type isAdminMessage_Message interface {
 	isAdminMessage_Message()
 }
@@ -321,6 +347,10 @@ type AdminMessage_AdminShutdown struct {
 	AdminShutdown *AdminShutdown `protobuf:"bytes,7,opt,name=admin_shutdown,json=adminShutdown,proto3,oneof"`
 }
 
+type AdminMessage_TaskLogRequest struct {
+	TaskLogRequest *TaskLogRequest `protobuf:"bytes,8,opt,name=task_log_request,json=taskLogRequest,proto3,oneof"`
+}
+
 func (*AdminMessage_RegistrationResponse) isAdminMessage_Message() {}
 
 func (*AdminMessage_HeartbeatResponse) isAdminMessage_Message() {}
@@ -330,6 +360,8 @@ func (*AdminMessage_TaskAssignment) isAdminMessage_Message() {}
 func (*AdminMessage_TaskCancellation) isAdminMessage_Message() {}
 
 func (*AdminMessage_AdminShutdown) isAdminMessage_Message() {}
+
+func (*AdminMessage_TaskLogRequest) isAdminMessage_Message() {}
 
 // WorkerRegistration message when worker connects
 type WorkerRegistration struct {
@@ -1667,6 +1699,418 @@ func (x *AdminShutdown) GetGracefulShutdownSeconds() int32 {
 	return 0
 }
 
+// TaskLogRequest requests logs for a specific task
+type TaskLogRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	TaskId          string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	WorkerId        string                 `protobuf:"bytes,2,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	IncludeMetadata bool                   `protobuf:"varint,3,opt,name=include_metadata,json=includeMetadata,proto3" json:"include_metadata,omitempty"` // Include task metadata
+	MaxEntries      int32                  `protobuf:"varint,4,opt,name=max_entries,json=maxEntries,proto3" json:"max_entries,omitempty"`                // Maximum number of log entries (0 = all)
+	LogLevel        string                 `protobuf:"bytes,5,opt,name=log_level,json=logLevel,proto3" json:"log_level,omitempty"`                       // Filter by log level (INFO, WARNING, ERROR, DEBUG)
+	StartTime       int64                  `protobuf:"varint,6,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`                   // Unix timestamp for start time filter
+	EndTime         int64                  `protobuf:"varint,7,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`                         // Unix timestamp for end time filter
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *TaskLogRequest) Reset() {
+	*x = TaskLogRequest{}
+	mi := &file_worker_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskLogRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskLogRequest) ProtoMessage() {}
+
+func (x *TaskLogRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskLogRequest.ProtoReflect.Descriptor instead.
+func (*TaskLogRequest) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *TaskLogRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskLogRequest) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *TaskLogRequest) GetIncludeMetadata() bool {
+	if x != nil {
+		return x.IncludeMetadata
+	}
+	return false
+}
+
+func (x *TaskLogRequest) GetMaxEntries() int32 {
+	if x != nil {
+		return x.MaxEntries
+	}
+	return 0
+}
+
+func (x *TaskLogRequest) GetLogLevel() string {
+	if x != nil {
+		return x.LogLevel
+	}
+	return ""
+}
+
+func (x *TaskLogRequest) GetStartTime() int64 {
+	if x != nil {
+		return x.StartTime
+	}
+	return 0
+}
+
+func (x *TaskLogRequest) GetEndTime() int64 {
+	if x != nil {
+		return x.EndTime
+	}
+	return 0
+}
+
+// TaskLogResponse returns task logs and metadata
+type TaskLogResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	WorkerId      string                 `protobuf:"bytes,2,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	Success       bool                   `protobuf:"varint,3,opt,name=success,proto3" json:"success,omitempty"`
+	ErrorMessage  string                 `protobuf:"bytes,4,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	Metadata      *TaskLogMetadata       `protobuf:"bytes,5,opt,name=metadata,proto3" json:"metadata,omitempty"`
+	LogEntries    []*TaskLogEntry        `protobuf:"bytes,6,rep,name=log_entries,json=logEntries,proto3" json:"log_entries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskLogResponse) Reset() {
+	*x = TaskLogResponse{}
+	mi := &file_worker_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskLogResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskLogResponse) ProtoMessage() {}
+
+func (x *TaskLogResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskLogResponse.ProtoReflect.Descriptor instead.
+func (*TaskLogResponse) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *TaskLogResponse) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskLogResponse) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *TaskLogResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *TaskLogResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *TaskLogResponse) GetMetadata() *TaskLogMetadata {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *TaskLogResponse) GetLogEntries() []*TaskLogEntry {
+	if x != nil {
+		return x.LogEntries
+	}
+	return nil
+}
+
+// TaskLogMetadata contains metadata about task execution
+type TaskLogMetadata struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	TaskType      string                 `protobuf:"bytes,2,opt,name=task_type,json=taskType,proto3" json:"task_type,omitempty"`
+	WorkerId      string                 `protobuf:"bytes,3,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	StartTime     int64                  `protobuf:"varint,4,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
+	EndTime       int64                  `protobuf:"varint,5,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`
+	DurationMs    int64                  `protobuf:"varint,6,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	Status        string                 `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
+	Progress      float32                `protobuf:"fixed32,8,opt,name=progress,proto3" json:"progress,omitempty"`
+	VolumeId      uint32                 `protobuf:"varint,9,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Server        string                 `protobuf:"bytes,10,opt,name=server,proto3" json:"server,omitempty"`
+	Collection    string                 `protobuf:"bytes,11,opt,name=collection,proto3" json:"collection,omitempty"`
+	LogFilePath   string                 `protobuf:"bytes,12,opt,name=log_file_path,json=logFilePath,proto3" json:"log_file_path,omitempty"`
+	CreatedAt     int64                  `protobuf:"varint,13,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	CustomData    map[string]string      `protobuf:"bytes,14,rep,name=custom_data,json=customData,proto3" json:"custom_data,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskLogMetadata) Reset() {
+	*x = TaskLogMetadata{}
+	mi := &file_worker_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskLogMetadata) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskLogMetadata) ProtoMessage() {}
+
+func (x *TaskLogMetadata) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskLogMetadata.ProtoReflect.Descriptor instead.
+func (*TaskLogMetadata) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *TaskLogMetadata) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskLogMetadata) GetTaskType() string {
+	if x != nil {
+		return x.TaskType
+	}
+	return ""
+}
+
+func (x *TaskLogMetadata) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *TaskLogMetadata) GetStartTime() int64 {
+	if x != nil {
+		return x.StartTime
+	}
+	return 0
+}
+
+func (x *TaskLogMetadata) GetEndTime() int64 {
+	if x != nil {
+		return x.EndTime
+	}
+	return 0
+}
+
+func (x *TaskLogMetadata) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *TaskLogMetadata) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *TaskLogMetadata) GetProgress() float32 {
+	if x != nil {
+		return x.Progress
+	}
+	return 0
+}
+
+func (x *TaskLogMetadata) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *TaskLogMetadata) GetServer() string {
+	if x != nil {
+		return x.Server
+	}
+	return ""
+}
+
+func (x *TaskLogMetadata) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *TaskLogMetadata) GetLogFilePath() string {
+	if x != nil {
+		return x.LogFilePath
+	}
+	return ""
+}
+
+func (x *TaskLogMetadata) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *TaskLogMetadata) GetCustomData() map[string]string {
+	if x != nil {
+		return x.CustomData
+	}
+	return nil
+}
+
+// TaskLogEntry represents a single log entry
+type TaskLogEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp     int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Level         string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
+	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	Fields        map[string]string      `protobuf:"bytes,4,rep,name=fields,proto3" json:"fields,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Progress      float32                `protobuf:"fixed32,5,opt,name=progress,proto3" json:"progress,omitempty"`
+	Status        string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskLogEntry) Reset() {
+	*x = TaskLogEntry{}
+	mi := &file_worker_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskLogEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskLogEntry) ProtoMessage() {}
+
+func (x *TaskLogEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskLogEntry.ProtoReflect.Descriptor instead.
+func (*TaskLogEntry) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *TaskLogEntry) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *TaskLogEntry) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *TaskLogEntry) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *TaskLogEntry) GetFields() map[string]string {
+	if x != nil {
+		return x.Fields
+	}
+	return nil
+}
+
+func (x *TaskLogEntry) GetProgress() float32 {
+	if x != nil {
+		return x.Progress
+	}
+	return 0
+}
+
+func (x *TaskLogEntry) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
 // MaintenanceConfig holds configuration for the maintenance system
 type MaintenanceConfig struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
@@ -1685,7 +2129,7 @@ type MaintenanceConfig struct {
 
 func (x *MaintenanceConfig) Reset() {
 	*x = MaintenanceConfig{}
-	mi := &file_worker_proto_msgTypes[18]
+	mi := &file_worker_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1697,7 +2141,7 @@ func (x *MaintenanceConfig) String() string {
 func (*MaintenanceConfig) ProtoMessage() {}
 
 func (x *MaintenanceConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[18]
+	mi := &file_worker_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1710,7 +2154,7 @@ func (x *MaintenanceConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MaintenanceConfig.ProtoReflect.Descriptor instead.
 func (*MaintenanceConfig) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{18}
+	return file_worker_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *MaintenanceConfig) GetEnabled() bool {
@@ -1789,7 +2233,7 @@ type MaintenancePolicy struct {
 
 func (x *MaintenancePolicy) Reset() {
 	*x = MaintenancePolicy{}
-	mi := &file_worker_proto_msgTypes[19]
+	mi := &file_worker_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1801,7 +2245,7 @@ func (x *MaintenancePolicy) String() string {
 func (*MaintenancePolicy) ProtoMessage() {}
 
 func (x *MaintenancePolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[19]
+	mi := &file_worker_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1814,7 +2258,7 @@ func (x *MaintenancePolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MaintenancePolicy.ProtoReflect.Descriptor instead.
 func (*MaintenancePolicy) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{19}
+	return file_worker_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *MaintenancePolicy) GetTaskPolicies() map[string]*TaskPolicy {
@@ -1867,7 +2311,7 @@ type TaskPolicy struct {
 
 func (x *TaskPolicy) Reset() {
 	*x = TaskPolicy{}
-	mi := &file_worker_proto_msgTypes[20]
+	mi := &file_worker_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1879,7 +2323,7 @@ func (x *TaskPolicy) String() string {
 func (*TaskPolicy) ProtoMessage() {}
 
 func (x *TaskPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[20]
+	mi := &file_worker_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1892,7 +2336,7 @@ func (x *TaskPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskPolicy.ProtoReflect.Descriptor instead.
 func (*TaskPolicy) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{20}
+	return file_worker_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *TaskPolicy) GetEnabled() bool {
@@ -2006,7 +2450,7 @@ type VacuumTaskConfig struct {
 
 func (x *VacuumTaskConfig) Reset() {
 	*x = VacuumTaskConfig{}
-	mi := &file_worker_proto_msgTypes[21]
+	mi := &file_worker_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2018,7 +2462,7 @@ func (x *VacuumTaskConfig) String() string {
 func (*VacuumTaskConfig) ProtoMessage() {}
 
 func (x *VacuumTaskConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[21]
+	mi := &file_worker_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2031,7 +2475,7 @@ func (x *VacuumTaskConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumTaskConfig.ProtoReflect.Descriptor instead.
 func (*VacuumTaskConfig) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{21}
+	return file_worker_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *VacuumTaskConfig) GetGarbageThreshold() float64 {
@@ -2068,7 +2512,7 @@ type ErasureCodingTaskConfig struct {
 
 func (x *ErasureCodingTaskConfig) Reset() {
 	*x = ErasureCodingTaskConfig{}
-	mi := &file_worker_proto_msgTypes[22]
+	mi := &file_worker_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2080,7 +2524,7 @@ func (x *ErasureCodingTaskConfig) String() string {
 func (*ErasureCodingTaskConfig) ProtoMessage() {}
 
 func (x *ErasureCodingTaskConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[22]
+	mi := &file_worker_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2093,7 +2537,7 @@ func (x *ErasureCodingTaskConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErasureCodingTaskConfig.ProtoReflect.Descriptor instead.
 func (*ErasureCodingTaskConfig) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{22}
+	return file_worker_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ErasureCodingTaskConfig) GetFullnessRatio() float64 {
@@ -2135,7 +2579,7 @@ type BalanceTaskConfig struct {
 
 func (x *BalanceTaskConfig) Reset() {
 	*x = BalanceTaskConfig{}
-	mi := &file_worker_proto_msgTypes[23]
+	mi := &file_worker_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2147,7 +2591,7 @@ func (x *BalanceTaskConfig) String() string {
 func (*BalanceTaskConfig) ProtoMessage() {}
 
 func (x *BalanceTaskConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[23]
+	mi := &file_worker_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2160,7 +2604,7 @@ func (x *BalanceTaskConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BalanceTaskConfig.ProtoReflect.Descriptor instead.
 func (*BalanceTaskConfig) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{23}
+	return file_worker_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *BalanceTaskConfig) GetImbalanceThreshold() float64 {
@@ -2187,7 +2631,7 @@ type ReplicationTaskConfig struct {
 
 func (x *ReplicationTaskConfig) Reset() {
 	*x = ReplicationTaskConfig{}
-	mi := &file_worker_proto_msgTypes[24]
+	mi := &file_worker_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2199,7 +2643,7 @@ func (x *ReplicationTaskConfig) String() string {
 func (*ReplicationTaskConfig) ProtoMessage() {}
 
 func (x *ReplicationTaskConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[24]
+	mi := &file_worker_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2212,7 +2656,7 @@ func (x *ReplicationTaskConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplicationTaskConfig.ProtoReflect.Descriptor instead.
 func (*ReplicationTaskConfig) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{24}
+	return file_worker_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ReplicationTaskConfig) GetTargetReplicaCount() int32 {
@@ -2226,7 +2670,7 @@ var File_worker_proto protoreflect.FileDescriptor
 
 const file_worker_proto_rawDesc = "" +
 	"\n" +
-	"\fworker.proto\x12\tworker_pb\"\xc6\x03\n" +
+	"\fworker.proto\x12\tworker_pb\"\x90\x04\n" +
 	"\rWorkerMessage\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\x12C\n" +
@@ -2236,8 +2680,9 @@ const file_worker_proto_rawDesc = "" +
 	"\vtask_update\x18\x06 \x01(\v2\x15.worker_pb.TaskUpdateH\x00R\n" +
 	"taskUpdate\x12>\n" +
 	"\rtask_complete\x18\a \x01(\v2\x17.worker_pb.TaskCompleteH\x00R\ftaskComplete\x127\n" +
-	"\bshutdown\x18\b \x01(\v2\x19.worker_pb.WorkerShutdownH\x00R\bshutdownB\t\n" +
-	"\amessage\"\xce\x03\n" +
+	"\bshutdown\x18\b \x01(\v2\x19.worker_pb.WorkerShutdownH\x00R\bshutdown\x12H\n" +
+	"\x11task_log_response\x18\t \x01(\v2\x1a.worker_pb.TaskLogResponseH\x00R\x0ftaskLogResponseB\t\n" +
+	"\amessage\"\x95\x04\n" +
 	"\fAdminMessage\x12\x19\n" +
 	"\badmin_id\x18\x01 \x01(\tR\aadminId\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\x12V\n" +
@@ -2245,7 +2690,8 @@ const file_worker_proto_rawDesc = "" +
 	"\x12heartbeat_response\x18\x04 \x01(\v2\x1c.worker_pb.HeartbeatResponseH\x00R\x11heartbeatResponse\x12D\n" +
 	"\x0ftask_assignment\x18\x05 \x01(\v2\x19.worker_pb.TaskAssignmentH\x00R\x0etaskAssignment\x12J\n" +
 	"\x11task_cancellation\x18\x06 \x01(\v2\x1b.worker_pb.TaskCancellationH\x00R\x10taskCancellation\x12A\n" +
-	"\x0eadmin_shutdown\x18\a \x01(\v2\x18.worker_pb.AdminShutdownH\x00R\radminShutdownB\t\n" +
+	"\x0eadmin_shutdown\x18\a \x01(\v2\x18.worker_pb.AdminShutdownH\x00R\radminShutdown\x12E\n" +
+	"\x10task_log_request\x18\b \x01(\v2\x19.worker_pb.TaskLogRequestH\x00R\x0etaskLogRequestB\t\n" +
 	"\amessage\"\x9c\x02\n" +
 	"\x12WorkerRegistration\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12\x18\n" +
@@ -2374,7 +2820,60 @@ const file_worker_proto_rawDesc = "" +
 	"\x10pending_task_ids\x18\x03 \x03(\tR\x0ependingTaskIds\"c\n" +
 	"\rAdminShutdown\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x12:\n" +
-	"\x19graceful_shutdown_seconds\x18\x02 \x01(\x05R\x17gracefulShutdownSeconds\"\xc0\x03\n" +
+	"\x19graceful_shutdown_seconds\x18\x02 \x01(\x05R\x17gracefulShutdownSeconds\"\xe9\x01\n" +
+	"\x0eTaskLogRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1b\n" +
+	"\tworker_id\x18\x02 \x01(\tR\bworkerId\x12)\n" +
+	"\x10include_metadata\x18\x03 \x01(\bR\x0fincludeMetadata\x12\x1f\n" +
+	"\vmax_entries\x18\x04 \x01(\x05R\n" +
+	"maxEntries\x12\x1b\n" +
+	"\tlog_level\x18\x05 \x01(\tR\blogLevel\x12\x1d\n" +
+	"\n" +
+	"start_time\x18\x06 \x01(\x03R\tstartTime\x12\x19\n" +
+	"\bend_time\x18\a \x01(\x03R\aendTime\"\xf8\x01\n" +
+	"\x0fTaskLogResponse\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1b\n" +
+	"\tworker_id\x18\x02 \x01(\tR\bworkerId\x12\x18\n" +
+	"\asuccess\x18\x03 \x01(\bR\asuccess\x12#\n" +
+	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\x126\n" +
+	"\bmetadata\x18\x05 \x01(\v2\x1a.worker_pb.TaskLogMetadataR\bmetadata\x128\n" +
+	"\vlog_entries\x18\x06 \x03(\v2\x17.worker_pb.TaskLogEntryR\n" +
+	"logEntries\"\x97\x04\n" +
+	"\x0fTaskLogMetadata\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1b\n" +
+	"\ttask_type\x18\x02 \x01(\tR\btaskType\x12\x1b\n" +
+	"\tworker_id\x18\x03 \x01(\tR\bworkerId\x12\x1d\n" +
+	"\n" +
+	"start_time\x18\x04 \x01(\x03R\tstartTime\x12\x19\n" +
+	"\bend_time\x18\x05 \x01(\x03R\aendTime\x12\x1f\n" +
+	"\vduration_ms\x18\x06 \x01(\x03R\n" +
+	"durationMs\x12\x16\n" +
+	"\x06status\x18\a \x01(\tR\x06status\x12\x1a\n" +
+	"\bprogress\x18\b \x01(\x02R\bprogress\x12\x1b\n" +
+	"\tvolume_id\x18\t \x01(\rR\bvolumeId\x12\x16\n" +
+	"\x06server\x18\n" +
+	" \x01(\tR\x06server\x12\x1e\n" +
+	"\n" +
+	"collection\x18\v \x01(\tR\n" +
+	"collection\x12\"\n" +
+	"\rlog_file_path\x18\f \x01(\tR\vlogFilePath\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\r \x01(\x03R\tcreatedAt\x12K\n" +
+	"\vcustom_data\x18\x0e \x03(\v2*.worker_pb.TaskLogMetadata.CustomDataEntryR\n" +
+	"customData\x1a=\n" +
+	"\x0fCustomDataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x88\x02\n" +
+	"\fTaskLogEntry\x12\x1c\n" +
+	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x12\x14\n" +
+	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\x12;\n" +
+	"\x06fields\x18\x04 \x03(\v2#.worker_pb.TaskLogEntry.FieldsEntryR\x06fields\x12\x1a\n" +
+	"\bprogress\x18\x05 \x01(\x02R\bprogress\x12\x16\n" +
+	"\x06status\x18\x06 \x01(\tR\x06status\x1a9\n" +
+	"\vFieldsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc0\x03\n" +
 	"\x11MaintenanceConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x122\n" +
 	"\x15scan_interval_seconds\x18\x02 \x01(\x05R\x13scanIntervalSeconds\x124\n" +
@@ -2434,7 +2933,7 @@ func file_worker_proto_rawDescGZIP() []byte {
 	return file_worker_proto_rawDescData
 }
 
-var file_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_worker_proto_goTypes = []any{
 	(*WorkerMessage)(nil),           // 0: worker_pb.WorkerMessage
 	(*AdminMessage)(nil),            // 1: worker_pb.AdminMessage
@@ -2454,18 +2953,24 @@ var file_worker_proto_goTypes = []any{
 	(*TaskCancellation)(nil),        // 15: worker_pb.TaskCancellation
 	(*WorkerShutdown)(nil),          // 16: worker_pb.WorkerShutdown
 	(*AdminShutdown)(nil),           // 17: worker_pb.AdminShutdown
-	(*MaintenanceConfig)(nil),       // 18: worker_pb.MaintenanceConfig
-	(*MaintenancePolicy)(nil),       // 19: worker_pb.MaintenancePolicy
-	(*TaskPolicy)(nil),              // 20: worker_pb.TaskPolicy
-	(*VacuumTaskConfig)(nil),        // 21: worker_pb.VacuumTaskConfig
-	(*ErasureCodingTaskConfig)(nil), // 22: worker_pb.ErasureCodingTaskConfig
-	(*BalanceTaskConfig)(nil),       // 23: worker_pb.BalanceTaskConfig
-	(*ReplicationTaskConfig)(nil),   // 24: worker_pb.ReplicationTaskConfig
-	nil,                             // 25: worker_pb.WorkerRegistration.MetadataEntry
-	nil,                             // 26: worker_pb.TaskAssignment.MetadataEntry
-	nil,                             // 27: worker_pb.TaskUpdate.MetadataEntry
-	nil,                             // 28: worker_pb.TaskComplete.ResultMetadataEntry
-	nil,                             // 29: worker_pb.MaintenancePolicy.TaskPoliciesEntry
+	(*TaskLogRequest)(nil),          // 18: worker_pb.TaskLogRequest
+	(*TaskLogResponse)(nil),         // 19: worker_pb.TaskLogResponse
+	(*TaskLogMetadata)(nil),         // 20: worker_pb.TaskLogMetadata
+	(*TaskLogEntry)(nil),            // 21: worker_pb.TaskLogEntry
+	(*MaintenanceConfig)(nil),       // 22: worker_pb.MaintenanceConfig
+	(*MaintenancePolicy)(nil),       // 23: worker_pb.MaintenancePolicy
+	(*TaskPolicy)(nil),              // 24: worker_pb.TaskPolicy
+	(*VacuumTaskConfig)(nil),        // 25: worker_pb.VacuumTaskConfig
+	(*ErasureCodingTaskConfig)(nil), // 26: worker_pb.ErasureCodingTaskConfig
+	(*BalanceTaskConfig)(nil),       // 27: worker_pb.BalanceTaskConfig
+	(*ReplicationTaskConfig)(nil),   // 28: worker_pb.ReplicationTaskConfig
+	nil,                             // 29: worker_pb.WorkerRegistration.MetadataEntry
+	nil,                             // 30: worker_pb.TaskAssignment.MetadataEntry
+	nil,                             // 31: worker_pb.TaskUpdate.MetadataEntry
+	nil,                             // 32: worker_pb.TaskComplete.ResultMetadataEntry
+	nil,                             // 33: worker_pb.TaskLogMetadata.CustomDataEntry
+	nil,                             // 34: worker_pb.TaskLogEntry.FieldsEntry
+	nil,                             // 35: worker_pb.MaintenancePolicy.TaskPoliciesEntry
 }
 var file_worker_proto_depIdxs = []int32{
 	2,  // 0: worker_pb.WorkerMessage.registration:type_name -> worker_pb.WorkerRegistration
@@ -2474,34 +2979,40 @@ var file_worker_proto_depIdxs = []int32{
 	13, // 3: worker_pb.WorkerMessage.task_update:type_name -> worker_pb.TaskUpdate
 	14, // 4: worker_pb.WorkerMessage.task_complete:type_name -> worker_pb.TaskComplete
 	16, // 5: worker_pb.WorkerMessage.shutdown:type_name -> worker_pb.WorkerShutdown
-	3,  // 6: worker_pb.AdminMessage.registration_response:type_name -> worker_pb.RegistrationResponse
-	5,  // 7: worker_pb.AdminMessage.heartbeat_response:type_name -> worker_pb.HeartbeatResponse
-	7,  // 8: worker_pb.AdminMessage.task_assignment:type_name -> worker_pb.TaskAssignment
-	15, // 9: worker_pb.AdminMessage.task_cancellation:type_name -> worker_pb.TaskCancellation
-	17, // 10: worker_pb.AdminMessage.admin_shutdown:type_name -> worker_pb.AdminShutdown
-	25, // 11: worker_pb.WorkerRegistration.metadata:type_name -> worker_pb.WorkerRegistration.MetadataEntry
-	8,  // 12: worker_pb.TaskAssignment.params:type_name -> worker_pb.TaskParams
-	26, // 13: worker_pb.TaskAssignment.metadata:type_name -> worker_pb.TaskAssignment.MetadataEntry
-	9,  // 14: worker_pb.TaskParams.vacuum_params:type_name -> worker_pb.VacuumTaskParams
-	10, // 15: worker_pb.TaskParams.erasure_coding_params:type_name -> worker_pb.ErasureCodingTaskParams
-	11, // 16: worker_pb.TaskParams.balance_params:type_name -> worker_pb.BalanceTaskParams
-	12, // 17: worker_pb.TaskParams.replication_params:type_name -> worker_pb.ReplicationTaskParams
-	27, // 18: worker_pb.TaskUpdate.metadata:type_name -> worker_pb.TaskUpdate.MetadataEntry
-	28, // 19: worker_pb.TaskComplete.result_metadata:type_name -> worker_pb.TaskComplete.ResultMetadataEntry
-	19, // 20: worker_pb.MaintenanceConfig.policy:type_name -> worker_pb.MaintenancePolicy
-	29, // 21: worker_pb.MaintenancePolicy.task_policies:type_name -> worker_pb.MaintenancePolicy.TaskPoliciesEntry
-	21, // 22: worker_pb.TaskPolicy.vacuum_config:type_name -> worker_pb.VacuumTaskConfig
-	22, // 23: worker_pb.TaskPolicy.erasure_coding_config:type_name -> worker_pb.ErasureCodingTaskConfig
-	23, // 24: worker_pb.TaskPolicy.balance_config:type_name -> worker_pb.BalanceTaskConfig
-	24, // 25: worker_pb.TaskPolicy.replication_config:type_name -> worker_pb.ReplicationTaskConfig
-	20, // 26: worker_pb.MaintenancePolicy.TaskPoliciesEntry.value:type_name -> worker_pb.TaskPolicy
-	0,  // 27: worker_pb.WorkerService.WorkerStream:input_type -> worker_pb.WorkerMessage
-	1,  // 28: worker_pb.WorkerService.WorkerStream:output_type -> worker_pb.AdminMessage
-	28, // [28:29] is the sub-list for method output_type
-	27, // [27:28] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	19, // 6: worker_pb.WorkerMessage.task_log_response:type_name -> worker_pb.TaskLogResponse
+	3,  // 7: worker_pb.AdminMessage.registration_response:type_name -> worker_pb.RegistrationResponse
+	5,  // 8: worker_pb.AdminMessage.heartbeat_response:type_name -> worker_pb.HeartbeatResponse
+	7,  // 9: worker_pb.AdminMessage.task_assignment:type_name -> worker_pb.TaskAssignment
+	15, // 10: worker_pb.AdminMessage.task_cancellation:type_name -> worker_pb.TaskCancellation
+	17, // 11: worker_pb.AdminMessage.admin_shutdown:type_name -> worker_pb.AdminShutdown
+	18, // 12: worker_pb.AdminMessage.task_log_request:type_name -> worker_pb.TaskLogRequest
+	29, // 13: worker_pb.WorkerRegistration.metadata:type_name -> worker_pb.WorkerRegistration.MetadataEntry
+	8,  // 14: worker_pb.TaskAssignment.params:type_name -> worker_pb.TaskParams
+	30, // 15: worker_pb.TaskAssignment.metadata:type_name -> worker_pb.TaskAssignment.MetadataEntry
+	9,  // 16: worker_pb.TaskParams.vacuum_params:type_name -> worker_pb.VacuumTaskParams
+	10, // 17: worker_pb.TaskParams.erasure_coding_params:type_name -> worker_pb.ErasureCodingTaskParams
+	11, // 18: worker_pb.TaskParams.balance_params:type_name -> worker_pb.BalanceTaskParams
+	12, // 19: worker_pb.TaskParams.replication_params:type_name -> worker_pb.ReplicationTaskParams
+	31, // 20: worker_pb.TaskUpdate.metadata:type_name -> worker_pb.TaskUpdate.MetadataEntry
+	32, // 21: worker_pb.TaskComplete.result_metadata:type_name -> worker_pb.TaskComplete.ResultMetadataEntry
+	20, // 22: worker_pb.TaskLogResponse.metadata:type_name -> worker_pb.TaskLogMetadata
+	21, // 23: worker_pb.TaskLogResponse.log_entries:type_name -> worker_pb.TaskLogEntry
+	33, // 24: worker_pb.TaskLogMetadata.custom_data:type_name -> worker_pb.TaskLogMetadata.CustomDataEntry
+	34, // 25: worker_pb.TaskLogEntry.fields:type_name -> worker_pb.TaskLogEntry.FieldsEntry
+	23, // 26: worker_pb.MaintenanceConfig.policy:type_name -> worker_pb.MaintenancePolicy
+	35, // 27: worker_pb.MaintenancePolicy.task_policies:type_name -> worker_pb.MaintenancePolicy.TaskPoliciesEntry
+	25, // 28: worker_pb.TaskPolicy.vacuum_config:type_name -> worker_pb.VacuumTaskConfig
+	26, // 29: worker_pb.TaskPolicy.erasure_coding_config:type_name -> worker_pb.ErasureCodingTaskConfig
+	27, // 30: worker_pb.TaskPolicy.balance_config:type_name -> worker_pb.BalanceTaskConfig
+	28, // 31: worker_pb.TaskPolicy.replication_config:type_name -> worker_pb.ReplicationTaskConfig
+	24, // 32: worker_pb.MaintenancePolicy.TaskPoliciesEntry.value:type_name -> worker_pb.TaskPolicy
+	0,  // 33: worker_pb.WorkerService.WorkerStream:input_type -> worker_pb.WorkerMessage
+	1,  // 34: worker_pb.WorkerService.WorkerStream:output_type -> worker_pb.AdminMessage
+	34, // [34:35] is the sub-list for method output_type
+	33, // [33:34] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_worker_proto_init() }
@@ -2516,6 +3027,7 @@ func file_worker_proto_init() {
 		(*WorkerMessage_TaskUpdate)(nil),
 		(*WorkerMessage_TaskComplete)(nil),
 		(*WorkerMessage_Shutdown)(nil),
+		(*WorkerMessage_TaskLogResponse)(nil),
 	}
 	file_worker_proto_msgTypes[1].OneofWrappers = []any{
 		(*AdminMessage_RegistrationResponse)(nil),
@@ -2523,6 +3035,7 @@ func file_worker_proto_init() {
 		(*AdminMessage_TaskAssignment)(nil),
 		(*AdminMessage_TaskCancellation)(nil),
 		(*AdminMessage_AdminShutdown)(nil),
+		(*AdminMessage_TaskLogRequest)(nil),
 	}
 	file_worker_proto_msgTypes[8].OneofWrappers = []any{
 		(*TaskParams_VacuumParams)(nil),
@@ -2530,7 +3043,7 @@ func file_worker_proto_init() {
 		(*TaskParams_BalanceParams)(nil),
 		(*TaskParams_ReplicationParams)(nil),
 	}
-	file_worker_proto_msgTypes[20].OneofWrappers = []any{
+	file_worker_proto_msgTypes[24].OneofWrappers = []any{
 		(*TaskPolicy_VacuumConfig)(nil),
 		(*TaskPolicy_ErasureCodingConfig)(nil),
 		(*TaskPolicy_BalanceConfig)(nil),
@@ -2542,7 +3055,7 @@ func file_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_proto_rawDesc), len(file_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   30,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

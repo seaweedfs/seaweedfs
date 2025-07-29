@@ -1,6 +1,7 @@
 package balance
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -33,17 +34,30 @@ func NewTask(server string, volumeID uint32, collection string) *Task {
 
 // Execute executes the balance task
 func (t *Task) Execute(params types.TaskParams) error {
+	// Use BaseTask.ExecuteTask to handle logging initialization
+	return t.ExecuteTask(context.Background(), params, t.executeImpl)
+}
+
+// executeImpl is the actual balance implementation with new logging
+func (t *Task) executeImpl(ctx context.Context, params types.TaskParams) error {
 	// Store task parameters for accessing planned destinations
 	t.taskParams = params
 
 	// Get planned destination
 	destNode := t.getPlannedDestination()
 	if destNode != "" {
-		glog.Infof("Starting balance task for volume %d: %s -> %s (collection: %s)",
-			t.volumeID, t.server, destNode, t.collection)
+		t.LogWithFields("INFO", "Starting balance task with planned destination", map[string]interface{}{
+			"volume_id":   t.volumeID,
+			"source":      t.server,
+			"destination": destNode,
+			"collection":  t.collection,
+		})
 	} else {
-		glog.Infof("Starting balance task for volume %d on server %s (collection: %s) - no specific destination planned",
-			t.volumeID, t.server, t.collection)
+		t.LogWithFields("INFO", "Starting balance task without specific destination", map[string]interface{}{
+			"volume_id":  t.volumeID,
+			"server":     t.server,
+			"collection": t.collection,
+		})
 	}
 
 	// Simulate balance operation with progress updates
@@ -60,18 +74,36 @@ func (t *Task) Execute(params types.TaskParams) error {
 	}
 
 	for _, step := range steps {
+		select {
+		case <-ctx.Done():
+			t.LogWarning("Balance task cancelled during step: %s", step.name)
+			return ctx.Err()
+		default:
+		}
+
 		if t.IsCancelled() {
+			t.LogWarning("Balance task cancelled by request during step: %s", step.name)
 			return fmt.Errorf("balance task cancelled")
 		}
 
-		glog.V(1).Infof("Balance task step: %s", step.name)
+		t.LogWithFields("INFO", "Executing balance step", map[string]interface{}{
+			"step":      step.name,
+			"progress":  step.progress,
+			"duration":  step.duration.String(),
+			"volume_id": t.volumeID,
+		})
 		t.SetProgress(step.progress)
 
 		// Simulate work
 		time.Sleep(step.duration)
 	}
 
-	glog.Infof("Balance task completed for volume %d on server %s", t.volumeID, t.server)
+	t.LogWithFields("INFO", "Balance task completed successfully", map[string]interface{}{
+		"volume_id":      t.volumeID,
+		"server":         t.server,
+		"collection":     t.collection,
+		"final_progress": 100.0,
+	})
 	return nil
 }
 

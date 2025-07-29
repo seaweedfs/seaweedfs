@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 
@@ -35,6 +36,7 @@ type Worker struct {
 	tasksFailed     int
 	heartbeatTicker *time.Ticker
 	requestTicker   *time.Ticker
+	taskLogHandler  *tasks.TaskLogHandler
 }
 
 // AdminClient defines the interface for communicating with the admin server
@@ -139,13 +141,21 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 	// Use the global registry that already has all tasks registered
 	registry := tasks.GetGlobalRegistry()
 
+	// Initialize task log handler
+	logDir := "/tmp/seaweedfs/task_logs"
+	if config.BaseWorkingDir != "" {
+		logDir = filepath.Join(config.BaseWorkingDir, "task_logs")
+	}
+	taskLogHandler := tasks.NewTaskLogHandler(logDir)
+
 	worker := &Worker{
-		id:           workerID,
-		config:       config,
-		registry:     registry,
-		currentTasks: make(map[string]*types.Task),
-		stopChan:     make(chan struct{}),
-		startTime:    time.Now(),
+		id:             workerID,
+		config:         config,
+		registry:       registry,
+		currentTasks:   make(map[string]*types.Task),
+		stopChan:       make(chan struct{}),
+		startTime:      time.Now(),
+		taskLogHandler: taskLogHandler,
 	}
 
 	glog.V(1).Infof("Worker created with %d registered task types", len(registry.GetSupportedTypes()))
@@ -204,6 +214,7 @@ func (w *Worker) Start() error {
 	go w.heartbeatLoop()
 	go w.taskRequestLoop()
 	go w.connectionMonitorLoop()
+	go w.messageProcessingLoop()
 
 	glog.Infof("Worker %s started (connection attempts will continue in background)", w.id)
 	return nil
@@ -361,6 +372,22 @@ func (w *Worker) executeTask(task *types.Task) {
 			// Fall back to legacy task execution if typed task not available
 			glog.V(1).Infof("Typed task not available for %s, falling back to legacy execution: %v", task.Type, err)
 		} else {
+			// Initialize logging for typed tasks if they support it
+			if loggerProvider, ok := typedTaskInstance.(tasks.LoggerProvider); ok {
+				taskParams := types.TaskParams{
+					VolumeID:       task.VolumeID,
+					Server:         task.Server,
+					Collection:     task.Collection,
+					WorkingDir:     taskWorkingDir,
+					TypedParams:    task.TypedParams,
+					GrpcDialOption: w.config.GrpcDialOption,
+				}
+
+				if err := loggerProvider.InitializeTaskLogger(task.ID, w.id, taskParams); err != nil {
+					glog.Warningf("Failed to initialize task logger for %s: %v", task.ID, err)
+				}
+			}
+
 			// Set progress callback
 			typedTaskInstance.SetProgressCallback(func(progress float64) {
 				// Report progress updates
@@ -399,6 +426,13 @@ func (w *Worker) executeTask(task *types.Task) {
 	if err != nil {
 		w.completeTask(task.ID, false, fmt.Sprintf("failed to create task: %v", err))
 		return
+	}
+
+	// Initialize logging for legacy tasks if they support it
+	if loggerProvider, ok := taskInstance.(tasks.LoggerProvider); ok {
+		if err := loggerProvider.InitializeTaskLogger(task.ID, w.id, taskParams); err != nil {
+			glog.Warningf("Failed to initialize task logger for %s: %v", task.ID, err)
+		}
 	}
 
 	// Execute task
@@ -575,5 +609,109 @@ func (w *Worker) GetPerformanceMetrics() *types.WorkerPerformance {
 		AverageTaskTime: 0, // Would need to track this
 		Uptime:          uptime,
 		SuccessRate:     successRate,
+	}
+}
+
+// messageProcessingLoop processes incoming admin messages
+func (w *Worker) messageProcessingLoop() {
+	glog.V(1).Infof("Worker %s message processing loop started", w.id)
+
+	// Get access to the incoming message channel from gRPC client
+	grpcClient, ok := w.adminClient.(*GrpcAdminClient)
+	if !ok {
+		glog.V(1).Infof("Admin client is not gRPC client, message processing not available")
+		return
+	}
+
+	incomingChan := grpcClient.GetIncomingChannel()
+
+	for {
+		select {
+		case <-w.stopChan:
+			glog.V(1).Infof("Worker %s message processing loop stopping", w.id)
+			return
+		case message := <-incomingChan:
+			w.processAdminMessage(message)
+		}
+	}
+}
+
+// processAdminMessage processes different types of admin messages
+func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
+	glog.V(2).Infof("Worker %s received admin message: %T", w.id, message.Message)
+
+	switch msg := message.Message.(type) {
+	case *worker_pb.AdminMessage_TaskLogRequest:
+		w.handleTaskLogRequest(msg.TaskLogRequest)
+	case *worker_pb.AdminMessage_TaskAssignment:
+		// Task assignments are already handled by the task request loop
+		glog.V(2).Infof("Task assignment message received (handled elsewhere)")
+	case *worker_pb.AdminMessage_TaskCancellation:
+		w.handleTaskCancellation(msg.TaskCancellation)
+	case *worker_pb.AdminMessage_AdminShutdown:
+		w.handleAdminShutdown(msg.AdminShutdown)
+	default:
+		glog.V(1).Infof("Worker %s received unknown admin message type: %T", w.id, message.Message)
+	}
+}
+
+// handleTaskLogRequest processes task log requests from admin server
+func (w *Worker) handleTaskLogRequest(request *worker_pb.TaskLogRequest) {
+	glog.V(1).Infof("Worker %s handling task log request for task %s", w.id, request.TaskId)
+
+	// Use the task log handler to process the request
+	response := w.taskLogHandler.HandleLogRequest(request)
+
+	// Send response back to admin server
+	responseMsg := &worker_pb.WorkerMessage{
+		WorkerId:  w.id,
+		Timestamp: time.Now().Unix(),
+		Message: &worker_pb.WorkerMessage_TaskLogResponse{
+			TaskLogResponse: response,
+		},
+	}
+
+	grpcClient, ok := w.adminClient.(*GrpcAdminClient)
+	if !ok {
+		glog.Errorf("Cannot send task log response: admin client is not gRPC client")
+		return
+	}
+
+	select {
+	case grpcClient.outgoing <- responseMsg:
+		glog.V(1).Infof("Task log response sent for task %s", request.TaskId)
+	case <-time.After(5 * time.Second):
+		glog.Errorf("Failed to send task log response for task %s: timeout", request.TaskId)
+	}
+}
+
+// handleTaskCancellation processes task cancellation requests
+func (w *Worker) handleTaskCancellation(cancellation *worker_pb.TaskCancellation) {
+	glog.Infof("Worker %s received task cancellation for task %s", w.id, cancellation.TaskId)
+
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	if task, exists := w.currentTasks[cancellation.TaskId]; exists {
+		// TODO: Implement task cancellation logic
+		glog.Infof("Cancelling task %s", task.ID)
+	} else {
+		glog.Warningf("Cannot cancel task %s: task not found", cancellation.TaskId)
+	}
+}
+
+// handleAdminShutdown processes admin shutdown notifications
+func (w *Worker) handleAdminShutdown(shutdown *worker_pb.AdminShutdown) {
+	glog.Infof("Worker %s received admin shutdown notification: %s", w.id, shutdown.Reason)
+
+	gracefulSeconds := shutdown.GracefulShutdownSeconds
+	if gracefulSeconds > 0 {
+		glog.Infof("Graceful shutdown in %d seconds", gracefulSeconds)
+		time.AfterFunc(time.Duration(gracefulSeconds)*time.Second, func() {
+			w.Stop()
+		})
+	} else {
+		// Immediate shutdown
+		go w.Stop()
 	}
 }
