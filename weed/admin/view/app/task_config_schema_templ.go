@@ -838,18 +838,8 @@ func getTaskFieldValue(config interface{}, fieldName string) interface{} {
 
 		// Check if this is the field we're looking for
 		if jsonTag == fieldName {
-			result := field.Interface()
-			// Debug logging for enabled field only
-			if fieldName == "enabled" {
-				fmt.Printf("DEBUG getTaskFieldValue: found enabled field = %v\n", result)
-			}
-			return result
+			return field.Interface()
 		}
-	}
-
-	// Debug logging when enabled field is not found
-	if fieldName == "enabled" {
-		fmt.Printf("DEBUG getTaskFieldValue: enabled field NOT FOUND in config type %T\n", config)
 	}
 
 	return nil

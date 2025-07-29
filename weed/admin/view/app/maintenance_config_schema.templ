@@ -2,8 +2,6 @@ package app
 
 import (
     "fmt"
-    "reflect"
-    "strings"
     "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
     "github.com/seaweedfs/seaweedfs/weed/admin/config"
     "github.com/seaweedfs/seaweedfs/weed/admin/view/components"
@@ -38,7 +36,7 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
                         <form id="maintenanceConfigForm">
                             <!-- Dynamically render all schema fields in order -->
                             for _, field := range schema.Fields {
-                                @ConfigField(field, getMaintenanceFieldValue(data.Config, field.JSONName))
+                                @ConfigField(field, data.Config)
                             }
 
                             <div class="d-flex gap-2">
@@ -206,8 +204,8 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
     </script>
 }
 
-// ConfigField renders a single configuration field based on schema
-templ ConfigField(field *config.Field, value interface{}) {
+// ConfigField renders a single configuration field based on schema with typed value lookup
+templ ConfigField(field *config.Field, config *maintenance.MaintenanceConfig) {
     if field.InputType == "interval" {
         <!-- Interval field with number input + unit dropdown -->
         <div class="mb-3">
@@ -223,7 +221,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     class="form-control" 
                     id={ field.JSONName + "_value" } 
                     name={ field.JSONName + "_value" } 
-                    value={ fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getInt32Value(value))) }
+                    value={ fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getMaintenanceInt32Field(config, field.JSONName))) }
                     step="1"
                     min="1"
                     if field.Required {
@@ -241,7 +239,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                 >
                     <option 
                         value="minutes"
-                        if components.GetInt32DisplayUnit(getInt32Value(value)) == "minutes" {
+                        if components.GetInt32DisplayUnit(getMaintenanceInt32Field(config, field.JSONName)) == "minutes" {
                             selected
                         }
                     >
@@ -249,7 +247,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     </option>
                     <option 
                         value="hours"
-                        if components.GetInt32DisplayUnit(getInt32Value(value)) == "hours" {
+                        if components.GetInt32DisplayUnit(getMaintenanceInt32Field(config, field.JSONName)) == "hours" {
                             selected
                         }
                     >
@@ -257,7 +255,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     </option>
                     <option 
                         value="days"
-                        if components.GetInt32DisplayUnit(getInt32Value(value)) == "days" {
+                        if components.GetInt32DisplayUnit(getMaintenanceInt32Field(config, field.JSONName)) == "days" {
                             selected
                         }
                     >
@@ -278,7 +276,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     type="checkbox" 
                     id={ field.JSONName }
                     name={ field.JSONName }
-                    if getBoolValue(value) {
+                    if getMaintenanceBoolField(config, field.JSONName) {
                         checked
                     }
                 />
@@ -304,7 +302,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                 class="form-control" 
                 id={ field.JSONName }
                 name={ field.JSONName }
-                value={ fmt.Sprintf("%v", value) }
+                value={ fmt.Sprintf("%d", getMaintenanceInt32Field(config, field.JSONName)) }
                 placeholder={ field.Placeholder }
                 if field.MinValue != nil {
                     min={ fmt.Sprintf("%v", field.MinValue) }
@@ -324,27 +322,7 @@ templ ConfigField(field *config.Field, value interface{}) {
     }
 }
 
-// Helper functions for the template
-func getBoolValue(value interface{}) bool {
-    if boolVal, ok := value.(bool); ok {
-        return boolVal
-    }
-    return false
-}
-
-// Helper function to safely convert interface{} to int32 for protobuf fields
-func getInt32Value(value interface{}) int32 {
-    switch v := value.(type) {
-    case int32:
-        return v
-    case int:
-        return int32(v)
-    case int64:
-        return int32(v)
-    default:
-        return 0
-    }
-}
+// Helper functions for form field types
 
 func getNumberStep(field *config.Field) string {
     if field.Type == config.FieldTypeFloat {
@@ -353,49 +331,48 @@ func getNumberStep(field *config.Field) string {
     return "1"
 }
 
-func getMaintenanceFieldValue(config *maintenance.MaintenanceConfig, fieldName string) interface{} {
+// Typed field getters for MaintenanceConfig - no interface{} needed
+func getMaintenanceInt32Field(config *maintenance.MaintenanceConfig, fieldName string) int32 {
     if config == nil {
-        return nil
+        return 0
     }
     
-    // Use reflection to get the field value from the config struct
-    configValue := reflect.ValueOf(config)
-    if configValue.Kind() == reflect.Ptr {
-        configValue = configValue.Elem()
-    }
-    
-    if configValue.Kind() != reflect.Struct {
-        return nil
-    }
-    
-    configType := configValue.Type()
-    
-    for i := 0; i < configValue.NumField(); i++ {
-        field := configValue.Field(i)
-        fieldType := configType.Field(i)
-        
-        // Get JSON tag name
-        jsonTag := fieldType.Tag.Get("json")
-        if jsonTag == "" {
-            continue
+    switch fieldName {
+    case "scan_interval_seconds":
+        return config.ScanIntervalSeconds
+    case "worker_timeout_seconds":
+        return config.WorkerTimeoutSeconds
+    case "task_timeout_seconds":
+        return config.TaskTimeoutSeconds
+    case "retry_delay_seconds":
+        return config.RetryDelaySeconds
+    case "max_retries":
+        return config.MaxRetries
+    case "cleanup_interval_seconds":
+        return config.CleanupIntervalSeconds
+    case "task_retention_seconds":
+        return config.TaskRetentionSeconds
+    case "global_max_concurrent":
+        if config.Policy != nil {
+            return config.Policy.GlobalMaxConcurrent
         }
-        
-        // Remove options like ",omitempty"
-        if commaIdx := strings.Index(jsonTag, ","); commaIdx > 0 {
-            jsonTag = jsonTag[:commaIdx]
-        }
-        
-        if jsonTag == fieldName {
-            return field.Interface()
-        }
+        return 0
+    default:
+        return 0
+    }
+}
+
+func getMaintenanceBoolField(config *maintenance.MaintenanceConfig, fieldName string) bool {
+    if config == nil {
+        return false
     }
     
-    // Handle nested Policy fields
-    if config.Policy != nil && fieldName == "global_max_concurrent" {
-        return config.Policy.GlobalMaxConcurrent
+    switch fieldName {
+    case "enabled":
+        return config.Enabled
+    default:
+        return false
     }
-    
-    return nil
 }
 
 // Helper function to convert schema to JSON for JavaScript

@@ -13,8 +13,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/config"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/components"
-	"reflect"
-	"strings"
 )
 
 func MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *maintenance.MaintenanceConfigSchema) templ.Component {
@@ -43,7 +41,7 @@ func MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *ma
 			return templ_7745c5c3_Err
 		}
 		for _, field := range schema.Fields {
-			templ_7745c5c3_Err = ConfigField(field, getMaintenanceFieldValue(data.Config, field.JSONName)).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = ConfigField(field, data.Config).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -56,8 +54,8 @@ func MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *ma
 	})
 }
 
-// ConfigField renders a single configuration field based on schema
-func ConfigField(field *config.Field, value interface{}) templ.Component {
+// ConfigField renders a single configuration field based on schema with typed value lookup
+func ConfigField(field *config.Field, config *maintenance.MaintenanceConfig) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -86,7 +84,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 214, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 212, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -99,7 +97,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(field.DisplayName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 215, Col: 35}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 213, Col: 35}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -122,7 +120,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName + "_value")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 224, Col: 50}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 222, Col: 50}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -135,7 +133,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var6 string
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName + "_value")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 225, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 223, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
@@ -146,9 +144,9 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var7 string
-			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getInt32Value(value))))
+			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getMaintenanceInt32Field(config, field.JSONName))))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 226, Col: 115}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 224, Col: 143}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -171,7 +169,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName + "_unit")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 235, Col: 49}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 233, Col: 49}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -184,7 +182,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName + "_unit")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 236, Col: 51}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 234, Col: 51}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -204,7 +202,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if components.GetInt32DisplayUnit(getInt32Value(value)) == "minutes" {
+			if components.GetInt32DisplayUnit(getMaintenanceInt32Field(config, field.JSONName)) == "minutes" {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -214,7 +212,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if components.GetInt32DisplayUnit(getInt32Value(value)) == "hours" {
+			if components.GetInt32DisplayUnit(getMaintenanceInt32Field(config, field.JSONName)) == "hours" {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -224,7 +222,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if components.GetInt32DisplayUnit(getInt32Value(value)) == "days" {
+			if components.GetInt32DisplayUnit(getMaintenanceInt32Field(config, field.JSONName)) == "days" {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -242,7 +240,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				var templ_7745c5c3_Var10 string
 				templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(field.Description)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 269, Col: 69}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 267, Col: 69}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 				if templ_7745c5c3_Err != nil {
@@ -265,7 +263,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 279, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 277, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -278,7 +276,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 280, Col: 41}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 278, Col: 41}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -288,7 +286,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if getBoolValue(value) {
+			if getMaintenanceBoolField(config, field.JSONName) {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, " checked")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -301,7 +299,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 285, Col: 68}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 283, Col: 68}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -314,7 +312,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(field.DisplayName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 286, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 284, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -332,7 +330,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				var templ_7745c5c3_Var15 string
 				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(field.Description)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 290, Col: 69}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 288, Col: 69}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 				if templ_7745c5c3_Err != nil {
@@ -355,7 +353,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 296, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 294, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -368,7 +366,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(field.DisplayName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 297, Col: 35}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 295, Col: 35}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -391,7 +389,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 305, Col: 35}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 303, Col: 35}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 			if templ_7745c5c3_Err != nil {
@@ -404,7 +402,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var19 string
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(field.JSONName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 306, Col: 37}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 304, Col: 37}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
@@ -415,9 +413,9 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var20 string
-			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%v", value))
+			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", getMaintenanceInt32Field(config, field.JSONName)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 307, Col: 48}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 305, Col: 91}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 			if templ_7745c5c3_Err != nil {
@@ -430,7 +428,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var21 string
 			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(field.Placeholder)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 308, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 306, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 			if templ_7745c5c3_Err != nil {
@@ -448,7 +446,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				var templ_7745c5c3_Var22 string
 				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%v", field.MinValue))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 310, Col: 59}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 308, Col: 59}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 				if templ_7745c5c3_Err != nil {
@@ -467,7 +465,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				var templ_7745c5c3_Var23 string
 				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%v", field.MaxValue))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 313, Col: 59}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 311, Col: 59}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 				if templ_7745c5c3_Err != nil {
@@ -485,7 +483,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 			var templ_7745c5c3_Var24 string
 			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(getNumberStep(field))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 315, Col: 43}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 313, Col: 43}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 			if templ_7745c5c3_Err != nil {
@@ -513,7 +511,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 				var templ_7745c5c3_Var25 string
 				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(field.Description)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 321, Col: 69}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 319, Col: 69}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 				if templ_7745c5c3_Err != nil {
@@ -533,27 +531,7 @@ func ConfigField(field *config.Field, value interface{}) templ.Component {
 	})
 }
 
-// Helper functions for the template
-func getBoolValue(value interface{}) bool {
-	if boolVal, ok := value.(bool); ok {
-		return boolVal
-	}
-	return false
-}
-
-// Helper function to safely convert interface{} to int32 for protobuf fields
-func getInt32Value(value interface{}) int32 {
-	switch v := value.(type) {
-	case int32:
-		return v
-	case int:
-		return int32(v)
-	case int64:
-		return int32(v)
-	default:
-		return 0
-	}
-}
+// Helper functions for form field types
 
 func getNumberStep(field *config.Field) string {
 	if field.Type == config.FieldTypeFloat {
@@ -562,49 +540,48 @@ func getNumberStep(field *config.Field) string {
 	return "1"
 }
 
-func getMaintenanceFieldValue(config *maintenance.MaintenanceConfig, fieldName string) interface{} {
+// Typed field getters for MaintenanceConfig - no interface{} needed
+func getMaintenanceInt32Field(config *maintenance.MaintenanceConfig, fieldName string) int32 {
 	if config == nil {
-		return nil
+		return 0
 	}
 
-	// Use reflection to get the field value from the config struct
-	configValue := reflect.ValueOf(config)
-	if configValue.Kind() == reflect.Ptr {
-		configValue = configValue.Elem()
-	}
-
-	if configValue.Kind() != reflect.Struct {
-		return nil
-	}
-
-	configType := configValue.Type()
-
-	for i := 0; i < configValue.NumField(); i++ {
-		field := configValue.Field(i)
-		fieldType := configType.Field(i)
-
-		// Get JSON tag name
-		jsonTag := fieldType.Tag.Get("json")
-		if jsonTag == "" {
-			continue
+	switch fieldName {
+	case "scan_interval_seconds":
+		return config.ScanIntervalSeconds
+	case "worker_timeout_seconds":
+		return config.WorkerTimeoutSeconds
+	case "task_timeout_seconds":
+		return config.TaskTimeoutSeconds
+	case "retry_delay_seconds":
+		return config.RetryDelaySeconds
+	case "max_retries":
+		return config.MaxRetries
+	case "cleanup_interval_seconds":
+		return config.CleanupIntervalSeconds
+	case "task_retention_seconds":
+		return config.TaskRetentionSeconds
+	case "global_max_concurrent":
+		if config.Policy != nil {
+			return config.Policy.GlobalMaxConcurrent
 		}
+		return 0
+	default:
+		return 0
+	}
+}
 
-		// Remove options like ",omitempty"
-		if commaIdx := strings.Index(jsonTag, ","); commaIdx > 0 {
-			jsonTag = jsonTag[:commaIdx]
-		}
-
-		if jsonTag == fieldName {
-			return field.Interface()
-		}
+func getMaintenanceBoolField(config *maintenance.MaintenanceConfig, fieldName string) bool {
+	if config == nil {
+		return false
 	}
 
-	// Handle nested Policy fields
-	if config.Policy != nil && fieldName == "global_max_concurrent" {
-		return config.Policy.GlobalMaxConcurrent
+	switch fieldName {
+	case "enabled":
+		return config.Enabled
+	default:
+		return false
 	}
-
-	return nil
 }
 
 // Helper function to convert schema to JSON for JavaScript
@@ -632,7 +609,7 @@ func schemaToJSON(schema *maintenance.MaintenanceConfigSchema) templ.Component {
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(`{}`)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 403, Col: 9}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 380, Col: 9}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 		if templ_7745c5c3_Err != nil {

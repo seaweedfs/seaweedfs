@@ -208,36 +208,7 @@ func GetReplicationTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskTyp
 	return policy.GetReplicationConfig()
 }
 
-// GetTaskConfig returns a configuration value for a task type (legacy method - use typed getters above)
-// Deprecated: Use GetVacuumTaskConfig, GetErasureCodingTaskConfig, GetBalanceTaskConfig, or GetReplicationTaskConfig instead
-func GetTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, key string) (interface{}, bool) {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy == nil {
-		return nil, false
-	}
-
-	// Return typed configuration based on task type and key
-	switch taskType {
-	case MaintenanceTaskType("vacuum"):
-		if vacuumConfig := policy.GetVacuumConfig(); vacuumConfig != nil {
-			return getVacuumConfigField(vacuumConfig, key)
-		}
-	case MaintenanceTaskType("erasure_coding"):
-		if ecConfig := policy.GetErasureCodingConfig(); ecConfig != nil {
-			return getErasureCodingConfigField(ecConfig, key)
-		}
-	case MaintenanceTaskType("balance"):
-		if balanceConfig := policy.GetBalanceConfig(); balanceConfig != nil {
-			return getBalanceConfigField(balanceConfig, key)
-		}
-	case MaintenanceTaskType("replication"):
-		if replicationConfig := policy.GetReplicationConfig(); replicationConfig != nil {
-			return getReplicationConfigField(replicationConfig, key)
-		}
-	}
-
-	return nil, false
-}
+// Note: GetTaskConfig was removed - use typed getters: GetVacuumTaskConfig, GetErasureCodingTaskConfig, GetBalanceTaskConfig, or GetReplicationTaskConfig
 
 // SetVacuumTaskConfig sets the vacuum task configuration
 func SetVacuumTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.VacuumTaskConfig) {
@@ -280,11 +251,7 @@ func SetReplicationTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskTyp
 }
 
 // SetTaskConfig sets a configuration value for a task type (legacy method - use typed setters above)
-// Deprecated: Use SetVacuumTaskConfig, SetErasureCodingTaskConfig, SetBalanceTaskConfig, or SetReplicationTaskConfig instead
-func SetTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, key string, value interface{}) {
-	// This is more complex with protobuf - would need to implement specific setters
-	// For now, users should use the typed configuration methods instead
-}
+// Note: SetTaskConfig was removed - use typed setters: SetVacuumTaskConfig, SetErasureCodingTaskConfig, SetBalanceTaskConfig, or SetReplicationTaskConfig
 
 // MaintenanceWorker represents a worker instance
 type MaintenanceWorker struct {
