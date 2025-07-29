@@ -312,8 +312,17 @@ func (l *FileTaskLogger) writeLogEntry(entry TaskLogEntry) {
 
 	// Also log to console and stderr if enabled
 	if l.config.EnableConsole {
-		// Log to glog for backward compatibility
-		glog.Infof("[TASK-%s] %s: %s", l.taskID, entry.Level, entry.Message)
+		// Log to glog with proper call depth to show actual source location
+		// We need depth 4 to skip: writeLogEntry -> log -> Info/Warning/Error -> LogWarning/LogInfo/LogError -> actual caller
+		formattedMsg := fmt.Sprintf("[TASK-%s] %s: %s", l.taskID, entry.Level, entry.Message)
+		switch entry.Level {
+		case "ERROR":
+			glog.ErrorDepth(4, formattedMsg)
+		case "WARNING":
+			glog.WarningDepth(4, formattedMsg)
+		default: // INFO, DEBUG, etc.
+			glog.InfoDepth(4, formattedMsg)
+		}
 		// Also log to stderr for immediate visibility
 		fmt.Fprintf(os.Stderr, "[TASK-%s] %s: %s\n", l.taskID, entry.Level, entry.Message)
 	}
