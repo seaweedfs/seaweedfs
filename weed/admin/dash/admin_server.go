@@ -22,12 +22,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 )
 
 type AdminServer struct {
@@ -185,22 +183,9 @@ func (s *AdminServer) loadTaskConfigurationsFromPersistence() {
 		return
 	}
 
-	// Load vacuum task configuration
-	if err := vacuum.UpdateConfigFromPersistence(s.configPersistence); err != nil {
-		glog.Warningf("Failed to load vacuum configuration from persistence: %v", err)
-	}
-
-	// Load erasure coding task configuration
-	if err := erasure_coding.UpdateConfigFromPersistence(s.configPersistence); err != nil {
-		glog.Warningf("Failed to load erasure coding configuration from persistence: %v", err)
-	}
-
-	// Load balance task configuration
-	if err := balance.UpdateConfigFromPersistence(s.configPersistence); err != nil {
-		glog.Warningf("Failed to load balance configuration from persistence: %v", err)
-	}
-
-	glog.V(1).Infof("Task configurations loaded from persistence")
+	// Load task configurations dynamically using the config update registry
+	configUpdateRegistry := tasks.GetGlobalConfigUpdateRegistry()
+	configUpdateRegistry.UpdateAllConfigs(s.configPersistence)
 }
 
 // GetCredentialManager returns the credential manager

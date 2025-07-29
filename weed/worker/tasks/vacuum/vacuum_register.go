@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -15,6 +16,9 @@ var globalTaskDef *base.TaskDefinition
 // Auto-register this task when the package is imported
 func init() {
 	RegisterVacuumTask()
+
+	// Register config updater
+	tasks.AutoRegisterConfigUpdater(types.TaskTypeVacuum, UpdateConfigFromPersistence)
 }
 
 // RegisterVacuumTask registers the vacuum task with the new architecture
