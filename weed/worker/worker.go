@@ -625,7 +625,7 @@ func (w *Worker) connectionMonitorLoop() {
 				lastConnectionStatus = currentConnectionStatus
 			} else {
 				if currentConnectionStatus {
-					glog.V(2).Infof("✅ CONNECTION OK: Worker %s connection status: connected", w.id)
+					glog.V(3).Infof("✅ CONNECTION OK: Worker %s connection status: connected", w.id)
 				} else {
 					glog.V(1).Infof("🔌 CONNECTION DOWN: Worker %s connection status: disconnected, reconnection in progress", w.id)
 				}
