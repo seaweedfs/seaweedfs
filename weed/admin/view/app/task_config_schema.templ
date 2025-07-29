@@ -70,7 +70,7 @@ templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfi
                         <form id="taskConfigForm" method="POST">
                             <!-- Dynamically render all schema fields in defined order -->
                             for _, field := range schema.Fields {
-                                @TaskConfigField(field, getTaskFieldValue(config, field.JSONName))
+                                @TaskConfigField(field, config)
                             }
                             
                             <div class="d-flex gap-2">
@@ -189,8 +189,8 @@ templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfi
     </script>
 }
 
-// TaskConfigField renders a single task configuration field based on schema
-templ TaskConfigField(field *config.Field, value interface{}) {
+// TaskConfigField renders a single task configuration field based on schema with typed field lookup
+templ TaskConfigField(field *config.Field, config interface{}) {
     if field.InputType == "interval" {
         <!-- Interval field with number input + unit dropdown -->
         <div class="mb-3">
@@ -206,7 +206,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                     class="form-control" 
                     id={ field.JSONName + "_value" } 
                     name={ field.JSONName + "_value" } 
-                    value={ fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getTaskInt32Value(value))) }
+                    value={ fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getTaskConfigInt32Field(config, field.JSONName))) }
                     step="1"
                     min="1"
                     if field.Required {
@@ -224,7 +224,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                 >
                     <option 
                         value="minutes"
-                        if components.GetInt32DisplayUnit(getTaskInt32Value(value)) == "minutes" {
+                        if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "minutes" {
                             selected
                         }
                     >
@@ -232,7 +232,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                     </option>
                     <option 
                         value="hours"
-                        if components.GetInt32DisplayUnit(getTaskInt32Value(value)) == "hours" {
+                        if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "hours" {
                             selected
                         }
                     >
@@ -240,7 +240,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                     </option>
                     <option 
                         value="days"
-                        if components.GetInt32DisplayUnit(getTaskInt32Value(value)) == "days" {
+                        if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "days" {
                             selected
                         }
                     >
@@ -262,7 +262,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                     id={ field.JSONName }
                     name={ field.JSONName }
                     value="on"
-                    if getTaskBoolValue(value) {
+                    if getTaskConfigBoolField(config, field.JSONName) {
                         checked
                     }
                 />
@@ -288,7 +288,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                 class="form-control" 
                 id={ field.JSONName }
                 name={ field.JSONName }
-                value={ fmt.Sprintf("%v", value) }
+                value={ getTaskConfigStringField(config, field.JSONName) }
                 placeholder={ field.Placeholder }
                 if field.Required {
                     required
@@ -312,7 +312,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                 class="form-control" 
                 id={ field.JSONName }
                 name={ field.JSONName }
-                value={ fmt.Sprintf("%v", value) }
+                value={ fmt.Sprintf("%.6g", getTaskConfigFloatField(config, field.JSONName)) }
                 placeholder={ field.Placeholder }
                 if field.MinValue != nil {
                     min={ fmt.Sprintf("%v", field.MinValue) }
@@ -332,26 +332,99 @@ templ TaskConfigField(field *config.Field, value interface{}) {
     }
 }
 
-// Helper functions for the template
-func getTaskBoolValue(value interface{}) bool {
-    if boolVal, ok := value.(bool); ok {
-        return boolVal
+// Typed field getters for task configs - avoiding interface{} where possible
+func getTaskConfigBoolField(config interface{}, fieldName string) bool {
+    switch fieldName {
+    case "enabled":
+        // Use reflection only for the common 'enabled' field in BaseConfig
+        if value := getTaskFieldValue(config, fieldName); value != nil {
+            if boolVal, ok := value.(bool); ok {
+                return boolVal
+            }
+        }
+        return false
+    default:
+        // For other boolean fields, use reflection
+        if value := getTaskFieldValue(config, fieldName); value != nil {
+            if boolVal, ok := value.(bool); ok {
+                return boolVal
+            }
+        }
+        return false
     }
-    return false
 }
 
-// Helper function to safely convert interface{} to int32 for protobuf fields
-func getTaskInt32Value(value interface{}) int32 {
-    switch v := value.(type) {
-    case int32:
-        return v
-    case int:
-        return int32(v)
-    case int64:
-        return int32(v)
+func getTaskConfigInt32Field(config interface{}, fieldName string) int32 {
+    switch fieldName {
+    case "scan_interval_seconds", "max_concurrent":
+        // Common fields that should be int/int32
+        if value := getTaskFieldValue(config, fieldName); value != nil {
+            switch v := value.(type) {
+            case int32:
+                return v
+            case int:
+                return int32(v)
+            case int64:
+                return int32(v)
+            }
+        }
+        return 0
     default:
+        // For other int fields, use reflection
+        if value := getTaskFieldValue(config, fieldName); value != nil {
+            switch v := value.(type) {
+            case int32:
+                return v
+            case int:
+                return int32(v)
+            case int64:
+                return int32(v)
+            case float64:
+                return int32(v)
+            }
+        }
         return 0
     }
+}
+
+func getTaskConfigFloatField(config interface{}, fieldName string) float64 {
+    if value := getTaskFieldValue(config, fieldName); value != nil {
+        switch v := value.(type) {
+        case float64:
+            return v
+        case float32:
+            return float64(v)
+        case int:
+            return float64(v)
+        case int32:
+            return float64(v)
+        case int64:
+            return float64(v)
+        }
+    }
+    return 0.0
+}
+
+func getTaskConfigStringField(config interface{}, fieldName string) string {
+    if value := getTaskFieldValue(config, fieldName); value != nil {
+        if strVal, ok := value.(string); ok {
+            return strVal
+        }
+        // Convert numbers to strings for form display
+        switch v := value.(type) {
+        case int:
+            return fmt.Sprintf("%d", v)
+        case int32:
+            return fmt.Sprintf("%d", v)
+        case int64:
+            return fmt.Sprintf("%d", v)
+        case float64:
+            return fmt.Sprintf("%.6g", v)
+        case float32:
+            return fmt.Sprintf("%.6g", v)
+        }
+    }
+    return ""
 }
 
 func getTaskNumberStep(field *config.Field) string {

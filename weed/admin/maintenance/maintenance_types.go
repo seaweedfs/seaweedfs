@@ -583,46 +583,5 @@ func BuildMaintenanceMenuItems() []*MaintenanceMenuItem {
 
 // Helper functions to extract configuration fields
 
-func getVacuumConfigField(config *worker_pb.VacuumTaskConfig, key string) (interface{}, bool) {
-	switch key {
-	case "garbage_threshold":
-		return config.GarbageThreshold, true
-	case "min_volume_age_hours":
-		return config.MinVolumeAgeHours, true
-	case "min_interval_seconds":
-		return config.MinIntervalSeconds, true
-	}
-	return nil, false
-}
-
-func getErasureCodingConfigField(config *worker_pb.ErasureCodingTaskConfig, key string) (interface{}, bool) {
-	switch key {
-	case "fullness_ratio":
-		return config.FullnessRatio, true
-	case "quiet_for_seconds":
-		return config.QuietForSeconds, true
-	case "min_volume_size_mb":
-		return config.MinVolumeSizeMb, true
-	case "collection_filter":
-		return config.CollectionFilter, true
-	}
-	return nil, false
-}
-
-func getBalanceConfigField(config *worker_pb.BalanceTaskConfig, key string) (interface{}, bool) {
-	switch key {
-	case "imbalance_threshold":
-		return config.ImbalanceThreshold, true
-	case "min_server_count":
-		return config.MinServerCount, true
-	}
-	return nil, false
-}
-
-func getReplicationConfigField(config *worker_pb.ReplicationTaskConfig, key string) (interface{}, bool) {
-	switch key {
-	case "target_replica_count":
-		return config.TargetReplicaCount, true
-	}
-	return nil, false
-}
+// Note: Removed getVacuumConfigField, getErasureCodingConfigField, getBalanceConfigField, getReplicationConfigField
+// These were orphaned after removing GetTaskConfig - use typed getters instead

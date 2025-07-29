@@ -118,7 +118,7 @@ func TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfig
 			return templ_7745c5c3_Err
 		}
 		for _, field := range schema.Fields {
-			templ_7745c5c3_Err = TaskConfigField(field, getTaskFieldValue(config, field.JSONName)).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = TaskConfigField(field, config).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -164,8 +164,8 @@ func TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfig
 	})
 }
 
-// TaskConfigField renders a single task configuration field based on schema
-func TaskConfigField(field *config.Field, value interface{}) templ.Component {
+// TaskConfigField renders a single task configuration field based on schema with typed field lookup
+func TaskConfigField(field *config.Field, config interface{}) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -254,9 +254,9 @@ func TaskConfigField(field *config.Field, value interface{}) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var12 string
-			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getTaskInt32Value(value))))
+			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getTaskConfigInt32Field(config, field.JSONName))))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_config_schema.templ`, Line: 209, Col: 119}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_config_schema.templ`, Line: 209, Col: 142}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -312,7 +312,7 @@ func TaskConfigField(field *config.Field, value interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if components.GetInt32DisplayUnit(getTaskInt32Value(value)) == "minutes" {
+			if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "minutes" {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -322,7 +322,7 @@ func TaskConfigField(field *config.Field, value interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if components.GetInt32DisplayUnit(getTaskInt32Value(value)) == "hours" {
+			if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "hours" {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -332,7 +332,7 @@ func TaskConfigField(field *config.Field, value interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if components.GetInt32DisplayUnit(getTaskInt32Value(value)) == "days" {
+			if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "days" {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -396,7 +396,7 @@ func TaskConfigField(field *config.Field, value interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if getTaskBoolValue(value) {
+			if getTaskConfigBoolField(config, field.JSONName) {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, " checked")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -523,9 +523,9 @@ func TaskConfigField(field *config.Field, value interface{}) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var25 string
-			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%v", value))
+			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(getTaskConfigStringField(config, field.JSONName))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_config_schema.templ`, Line: 291, Col: 48}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_config_schema.templ`, Line: 291, Col: 72}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 			if templ_7745c5c3_Err != nil {
@@ -649,9 +649,9 @@ func TaskConfigField(field *config.Field, value interface{}) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var32 string
-			templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%v", value))
+			templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.6g", getTaskConfigFloatField(config, field.JSONName)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_config_schema.templ`, Line: 315, Col: 48}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_config_schema.templ`, Line: 315, Col: 92}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 			if templ_7745c5c3_Err != nil {
@@ -767,26 +767,99 @@ func TaskConfigField(field *config.Field, value interface{}) templ.Component {
 	})
 }
 
-// Helper functions for the template
-func getTaskBoolValue(value interface{}) bool {
-	if boolVal, ok := value.(bool); ok {
-		return boolVal
+// Typed field getters for task configs - avoiding interface{} where possible
+func getTaskConfigBoolField(config interface{}, fieldName string) bool {
+	switch fieldName {
+	case "enabled":
+		// Use reflection only for the common 'enabled' field in BaseConfig
+		if value := getTaskFieldValue(config, fieldName); value != nil {
+			if boolVal, ok := value.(bool); ok {
+				return boolVal
+			}
+		}
+		return false
+	default:
+		// For other boolean fields, use reflection
+		if value := getTaskFieldValue(config, fieldName); value != nil {
+			if boolVal, ok := value.(bool); ok {
+				return boolVal
+			}
+		}
+		return false
 	}
-	return false
 }
 
-// Helper function to safely convert interface{} to int32 for protobuf fields
-func getTaskInt32Value(value interface{}) int32 {
-	switch v := value.(type) {
-	case int32:
-		return v
-	case int:
-		return int32(v)
-	case int64:
-		return int32(v)
+func getTaskConfigInt32Field(config interface{}, fieldName string) int32 {
+	switch fieldName {
+	case "scan_interval_seconds", "max_concurrent":
+		// Common fields that should be int/int32
+		if value := getTaskFieldValue(config, fieldName); value != nil {
+			switch v := value.(type) {
+			case int32:
+				return v
+			case int:
+				return int32(v)
+			case int64:
+				return int32(v)
+			}
+		}
+		return 0
 	default:
+		// For other int fields, use reflection
+		if value := getTaskFieldValue(config, fieldName); value != nil {
+			switch v := value.(type) {
+			case int32:
+				return v
+			case int:
+				return int32(v)
+			case int64:
+				return int32(v)
+			case float64:
+				return int32(v)
+			}
+		}
 		return 0
 	}
+}
+
+func getTaskConfigFloatField(config interface{}, fieldName string) float64 {
+	if value := getTaskFieldValue(config, fieldName); value != nil {
+		switch v := value.(type) {
+		case float64:
+			return v
+		case float32:
+			return float64(v)
+		case int:
+			return float64(v)
+		case int32:
+			return float64(v)
+		case int64:
+			return float64(v)
+		}
+	}
+	return 0.0
+}
+
+func getTaskConfigStringField(config interface{}, fieldName string) string {
+	if value := getTaskFieldValue(config, fieldName); value != nil {
+		if strVal, ok := value.(string); ok {
+			return strVal
+		}
+		// Convert numbers to strings for form display
+		switch v := value.(type) {
+		case int:
+			return fmt.Sprintf("%d", v)
+		case int32:
+			return fmt.Sprintf("%d", v)
+		case int64:
+			return fmt.Sprintf("%d", v)
+		case float64:
+			return fmt.Sprintf("%.6g", v)
+		case float32:
+			return fmt.Sprintf("%.6g", v)
+		}
+	}
+	return ""
 }
 
 func getTaskNumberStep(field *config.Field) string {
