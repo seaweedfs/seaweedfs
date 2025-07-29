@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -88,12 +89,22 @@ func (vst *VolumeShardTracker) UpdateFromMaster(volumeMetrics []*types.VolumeHea
 	vst.mutex.Lock()
 	defer vst.mutex.Unlock()
 
+	glog.V(1).Infof("Updating volume shard tracker with %d volume metrics from master", len(volumeMetrics))
+
 	// Clear existing data
 	vst.volumes = make(map[uint32][]*VolumeShardInfo)
 	vst.nodes = make(map[string]*NodeCapacityInfo)
 
-	// Process volume metrics from master
+	// Track which servers we discover
+	discoveredServers := make(map[string]bool)
+
+	// Process volume metrics from master - only actual volumes
 	for _, metric := range volumeMetrics {
+		glog.V(2).Infof("Processing volume %d on server %s (size: %d bytes, collection: %s, ec: %v)",
+			metric.VolumeID, metric.Server, metric.Size, metric.Collection, metric.IsECVolume)
+
+		discoveredServers[metric.Server] = true
+
 		volumeInfo := &VolumeShardInfo{
 			VolumeID:     metric.VolumeID,
 			ShardIndex:   -1, // Regular volume
@@ -125,10 +136,83 @@ func (vst *VolumeShardTracker) UpdateFromMaster(volumeMetrics []*types.VolumeHea
 	}
 
 	vst.lastUpdated = time.Now()
-	glog.V(1).Infof("Updated volume/shard tracker with %d volumes across %d nodes",
+
+	// Log discovered servers (only those with volumes at this point)
+	var serverList []string
+	for server := range discoveredServers {
+		serverList = append(serverList, server)
+	}
+
+	glog.Infof("Volume shard tracker updated: discovered %d servers with volumes: %v",
+		len(discoveredServers), serverList)
+	glog.Infof("Volume shard tracker updated: %d volumes across %d nodes",
 		len(vst.volumes), len(vst.nodes))
 
 	return nil
+}
+
+// UpdateFromTopology adds empty servers from topology information
+func (vst *VolumeShardTracker) UpdateFromTopology(topologyInfo *master_pb.TopologyInfo) error {
+	if topologyInfo == nil {
+		return nil
+	}
+
+	vst.mutex.Lock()
+	defer vst.mutex.Unlock()
+
+	var emptyServers []string
+
+	// Scan topology for servers not yet in our tracking
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, node := range rack.DataNodeInfos {
+				if _, exists := vst.nodes[node.Id]; !exists {
+					// This server has no volumes, create empty server node
+					vst.createEmptyServerNode(node.Id)
+					emptyServers = append(emptyServers, node.Id)
+					glog.V(2).Infof("Added empty server to tracking: %s", node.Id)
+				}
+			}
+		}
+	}
+
+	if len(emptyServers) > 0 {
+		glog.Infof("Added %d empty servers to tracking for EC planning: %v", len(emptyServers), emptyServers)
+		glog.Infof("Total tracked nodes: %d (including empty servers)", len(vst.nodes))
+	}
+
+	return nil
+}
+
+// createEmptyServerNode creates a NodeCapacityInfo entry for an empty server
+func (vst *VolumeShardTracker) createEmptyServerNode(serverID string) {
+	if _, exists := vst.nodes[serverID]; exists {
+		glog.V(2).Infof("Node %s already exists, skipping empty server creation", serverID)
+		return
+	}
+
+	// Create node with reasonable default capacity
+	// We use a conservative default that can be overridden later if needed
+	defaultCapacityGB := uint64(100) // 100GB default capacity for empty servers
+	defaultCapacity := defaultCapacityGB * 1024 * 1024 * 1024
+
+	nodeInfo := &NodeCapacityInfo{
+		NodeID:        serverID,
+		DataCenter:    "default", // Default location - can be enhanced later
+		Rack:          "default",
+		TotalCapacity: defaultCapacity,
+		UsedCapacity:  0, // Empty server
+		VolumeCount:   0,
+		ShardCount:    0,
+	}
+
+	// Calculate free capacity (no pending operations for new empty server)
+	nodeInfo.FreeCapacity = nodeInfo.TotalCapacity - nodeInfo.UsedCapacity
+
+	vst.nodes[serverID] = nodeInfo
+
+	glog.V(1).Infof("Created empty server node entry: %s (default capacity: %d GB)",
+		serverID, defaultCapacityGB)
 }
 
 // parseServerLocation sets default location info (simplified)
@@ -473,10 +557,16 @@ func (vst *VolumeShardTracker) getClusterStats() ClusterStats {
 	}
 
 	var totalCapacity, usedCapacity uint64
+	var emptyServerCount int
 	for _, nodeInfo := range vst.nodes {
 		totalCapacity += nodeInfo.TotalCapacity
 		usedCapacity += nodeInfo.UsedCapacity
 		stats.TotalShards += nodeInfo.ShardCount
+
+		// Count empty servers (those with no volumes)
+		if nodeInfo.VolumeCount == 0 && nodeInfo.ShardCount == 0 {
+			emptyServerCount++
+		}
 	}
 
 	stats.TotalCapacity = totalCapacity
@@ -486,6 +576,9 @@ func (vst *VolumeShardTracker) getClusterStats() ClusterStats {
 	if totalCapacity > 0 {
 		stats.UsageRatio = float64(usedCapacity) / float64(totalCapacity)
 	}
+
+	glog.V(2).Infof("Cluster stats: %d total nodes (%d empty), %d volumes, %d shards, %.1f%% capacity used",
+		stats.TotalNodes, emptyServerCount, stats.TotalVolumes, stats.TotalShards, stats.UsageRatio*100)
 
 	return stats
 }

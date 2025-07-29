@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
@@ -259,6 +260,11 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 	}
 
 	return allResults, nil
+}
+
+// UpdateTopologyInfo updates the volume shard tracker with topology information for empty servers
+func (s *MaintenanceIntegration) UpdateTopologyInfo(topologyInfo *master_pb.TopologyInfo) error {
+	return s.volumeShardTracker.UpdateFromTopology(topologyInfo)
 }
 
 // convertToExistingFormat converts task results to existing system format using dynamic mapping

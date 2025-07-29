@@ -50,6 +50,13 @@ func (ms *MaintenanceScanner) ScanForMaintenanceTasks() ([]*TaskDetectionResult,
 			return nil, err
 		}
 
+		// Update topology information for empty servers
+		if ms.lastTopologyInfo != nil {
+			if err := ms.integration.UpdateTopologyInfo(ms.lastTopologyInfo); err != nil {
+				glog.Errorf("Failed to update topology info: %v", err)
+			}
+		}
+
 		glog.V(1).Infof("Maintenance scan completed: found %d tasks", len(results))
 		return results, nil
 	}
@@ -82,15 +89,33 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 		}
 
 		if resp.TopologyInfo == nil {
+			glog.Warningf("No topology info received from master")
 			return nil
 		}
 
 		volumeSizeLimitBytes := volumeSizeLimitMB * 1024 * 1024 // Convert MB to bytes
 
+		// Track all nodes discovered in topology
+		var allNodesInTopology []string
+		var nodesWithVolumes []string
+		var nodesWithoutVolumes []string
+
 		for _, dc := range resp.TopologyInfo.DataCenterInfos {
+			glog.V(2).Infof("Processing datacenter: %s", dc.Id)
 			for _, rack := range dc.RackInfos {
+				glog.V(2).Infof("Processing rack: %s in datacenter: %s", rack.Id, dc.Id)
 				for _, node := range rack.DataNodeInfos {
+					allNodesInTopology = append(allNodesInTopology, node.Id)
+					glog.V(2).Infof("Found volume server in topology: %s (disks: %d)", node.Id, len(node.DiskInfos))
+
+					hasVolumes := false
 					for _, diskInfo := range node.DiskInfos {
+						if len(diskInfo.VolumeInfos) > 0 {
+							hasVolumes = true
+							glog.V(2).Infof("Volume server %s has %d volumes on disk", node.Id, len(diskInfo.VolumeInfos))
+						}
+
+						// Process existing volumes ONLY - no fake entries
 						for _, volInfo := range diskInfo.VolumeInfos {
 							metric := &VolumeHealthMetrics{
 								VolumeID:         volInfo.Id,
@@ -119,9 +144,25 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 							metrics = append(metrics, metric)
 						}
 					}
+
+					if hasVolumes {
+						nodesWithVolumes = append(nodesWithVolumes, node.Id)
+					} else {
+						nodesWithoutVolumes = append(nodesWithoutVolumes, node.Id)
+						glog.V(1).Infof("Volume server %s found in topology but has no volumes", node.Id)
+					}
 				}
 			}
 		}
+
+		glog.Infof("Topology discovery complete:")
+		glog.Infof("  - Total volume servers in topology: %d (%v)", len(allNodesInTopology), allNodesInTopology)
+		glog.Infof("  - Volume servers with volumes: %d (%v)", len(nodesWithVolumes), nodesWithVolumes)
+		glog.Infof("  - Volume servers without volumes: %d (%v)", len(nodesWithoutVolumes), nodesWithoutVolumes)
+		glog.Infof("Note: Maintenance system will track empty servers separately from volume metrics.")
+
+		// Store topology info for volume shard tracker
+		ms.lastTopologyInfo = resp.TopologyInfo
 
 		return nil
 	})
@@ -131,12 +172,17 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 		return nil, err
 	}
 
-	glog.V(1).Infof("Successfully collected metrics for %d volumes", len(metrics))
+	glog.V(1).Infof("Successfully collected metrics for %d actual volumes", len(metrics))
 
 	// Count actual replicas and identify EC volumes
 	ms.enrichVolumeMetrics(metrics)
 
 	return metrics, nil
+}
+
+// getTopologyInfo returns the last collected topology information
+func (ms *MaintenanceScanner) getTopologyInfo() *master_pb.TopologyInfo {
+	return ms.lastTopologyInfo
 }
 
 // enrichVolumeMetrics adds additional information like replica counts
@@ -147,13 +193,17 @@ func (ms *MaintenanceScanner) enrichVolumeMetrics(metrics []*VolumeHealthMetrics
 		volumeGroups[metric.VolumeID] = append(volumeGroups[metric.VolumeID], metric)
 	}
 
-	// Update replica counts
-	for _, group := range volumeGroups {
-		actualReplicas := len(group)
-		for _, metric := range group {
-			metric.ReplicaCount = actualReplicas
+	// Update replica counts for actual volumes
+	for volumeID, replicas := range volumeGroups {
+		replicaCount := len(replicas)
+		for _, replica := range replicas {
+			replica.ReplicaCount = replicaCount
 		}
+		glog.V(3).Infof("Volume %d has %d replicas", volumeID, replicaCount)
 	}
+
+	// TODO: Identify EC volumes by checking volume structure
+	// This would require querying volume servers for EC shard information
 }
 
 // convertToTaskMetrics converts existing volume metrics to task system format
@@ -179,5 +229,6 @@ func (ms *MaintenanceScanner) convertToTaskMetrics(metrics []*VolumeHealthMetric
 		})
 	}
 
+	glog.V(2).Infof("Converted %d volume metrics for task detection", len(simplified))
 	return simplified
 }

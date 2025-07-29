@@ -277,11 +277,12 @@ type MaintenanceQueue struct {
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks
 type MaintenanceScanner struct {
-	adminClient AdminClient
-	policy      *MaintenancePolicy
-	queue       *MaintenanceQueue
-	lastScan    map[MaintenanceTaskType]time.Time
-	integration *MaintenanceIntegration
+	adminClient      AdminClient
+	policy           *MaintenancePolicy
+	queue            *MaintenanceQueue
+	lastScan         map[MaintenanceTaskType]time.Time
+	integration      *MaintenanceIntegration
+	lastTopologyInfo *master_pb.TopologyInfo
 }
 
 // TaskDetectionResult represents the result of scanning for maintenance needs
