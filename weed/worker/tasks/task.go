@@ -21,6 +21,7 @@ type BaseTask struct {
 	estimatedDuration time.Duration
 	logger            TaskLogger
 	loggerConfig      TaskLoggerConfig
+	progressCallback  func(float64) // Callback function for progress updates
 }
 
 // NewBaseTask creates a new base task
@@ -88,12 +89,18 @@ func (t *BaseTask) SetProgress(progress float64) {
 		progress = 100
 	}
 	oldProgress := t.progress
+	callback := t.progressCallback
 	t.progress = progress
 	t.mutex.Unlock()
 
 	// Log progress change
 	if t.logger != nil && progress != oldProgress {
 		t.logger.LogProgress(progress, fmt.Sprintf("Progress updated from %.1f%% to %.1f%%", oldProgress, progress))
+	}
+
+	// Call progress callback if set
+	if callback != nil && progress != oldProgress {
+		callback(progress)
 	}
 }
 
@@ -160,6 +167,13 @@ func (t *BaseTask) GetEstimatedDuration() time.Duration {
 	t.mutex.RLock()
 	defer t.mutex.RUnlock()
 	return t.estimatedDuration
+}
+
+// SetProgressCallback sets the progress callback function
+func (t *BaseTask) SetProgressCallback(callback func(float64)) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	t.progressCallback = callback
 }
 
 // GetLogger returns the task logger

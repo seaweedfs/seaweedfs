@@ -671,6 +671,11 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 
 // CompleteTask reports task completion to admin server
 func (c *GrpcAdminClient) CompleteTask(taskID string, success bool, errorMsg string) error {
+	return c.CompleteTaskWithMetadata(taskID, success, errorMsg, nil)
+}
+
+// CompleteTaskWithMetadata reports task completion with additional metadata
+func (c *GrpcAdminClient) CompleteTaskWithMetadata(taskID string, success bool, errorMsg string, metadata map[string]string) error {
 	if !c.connected {
 		// If we're currently reconnecting, don't wait - just skip the completion report
 		c.mutex.RLock()
@@ -689,17 +694,24 @@ func (c *GrpcAdminClient) CompleteTask(taskID string, success bool, errorMsg str
 		}
 	}
 
+	taskComplete := &worker_pb.TaskComplete{
+		TaskId:         taskID,
+		WorkerId:       c.workerID,
+		Success:        success,
+		ErrorMessage:   errorMsg,
+		CompletionTime: time.Now().Unix(),
+	}
+
+	// Add metadata if provided
+	if metadata != nil {
+		taskComplete.ResultMetadata = metadata
+	}
+
 	msg := &worker_pb.WorkerMessage{
 		WorkerId:  c.workerID,
 		Timestamp: time.Now().Unix(),
 		Message: &worker_pb.WorkerMessage_TaskComplete{
-			TaskComplete: &worker_pb.TaskComplete{
-				TaskId:         taskID,
-				WorkerId:       c.workerID,
-				Success:        success,
-				ErrorMessage:   errorMsg,
-				CompletionTime: time.Now().Unix(),
-			},
+			TaskComplete: taskComplete,
 		},
 	}
 
@@ -895,6 +907,12 @@ func (m *MockAdminClient) CompleteTask(taskID string, success bool, errorMsg str
 // UpdateTaskProgress mock implementation
 func (m *MockAdminClient) UpdateTaskProgress(taskID string, progress float64) error {
 	glog.V(2).Infof("Mock: Task %s progress: %.1f%%", taskID, progress)
+	return nil
+}
+
+// CompleteTaskWithMetadata mock implementation
+func (m *MockAdminClient) CompleteTaskWithMetadata(taskID string, success bool, errorMsg string, metadata map[string]string) error {
+	glog.Infof("Mock: Task %s completed: success=%v, error=%s, metadata=%v", taskID, success, errorMsg, metadata)
 	return nil
 }
 

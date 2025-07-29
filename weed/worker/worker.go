@@ -47,6 +47,7 @@ type AdminClient interface {
 	SendHeartbeat(workerID string, status *types.WorkerStatus) error
 	RequestTask(workerID string, capabilities []types.TaskType) (*types.Task, error)
 	CompleteTask(taskID string, success bool, errorMsg string) error
+	CompleteTaskWithMetadata(taskID string, success bool, errorMsg string, metadata map[string]string) error
 	UpdateTaskProgress(taskID string, progress float64) error
 	IsConnected() bool
 }
@@ -379,6 +380,11 @@ func (w *Worker) executeTask(task *types.Task) {
 	glog.Infof("🚀 TASK EXECUTION STARTED: Worker %s starting execution of task %s (type: %s, volume: %d, server: %s, collection: %s) at %v",
 		w.id, task.ID, task.Type, task.VolumeID, task.Server, task.Collection, startTime.Format(time.RFC3339))
 
+	// Report task start to admin server
+	if err := w.adminClient.UpdateTaskProgress(task.ID, 0.0); err != nil {
+		glog.V(1).Infof("Failed to report task start to admin: %v", err)
+	}
+
 	// Determine task-specific working directory
 	var taskWorkingDir string
 	if w.config.BaseWorkingDir != "" {
@@ -413,10 +419,13 @@ func (w *Worker) executeTask(task *types.Task) {
 				}
 			}
 
-			// Set progress callback
+			// Set progress callback that reports to admin server
 			typedTaskInstance.SetProgressCallback(func(progress float64) {
-				// Report progress updates
+				// Report progress updates to admin server
 				glog.V(2).Infof("Task %s progress: %.1f%%", task.ID, progress)
+				if err := w.adminClient.UpdateTaskProgress(task.ID, progress); err != nil {
+					glog.V(1).Infof("Failed to report task progress to admin: %v", err)
+				}
 			})
 
 			// Execute typed task
@@ -458,6 +467,18 @@ func (w *Worker) executeTask(task *types.Task) {
 		if err := loggerProvider.InitializeTaskLogger(task.ID, w.id, taskParams); err != nil {
 			glog.Warningf("Failed to initialize task logger for %s: %v", task.ID, err)
 		}
+	}
+
+	// Set progress callback for legacy tasks that support it
+	// Check if task has a SetProgressCallback method through reflection
+	if progressCaller, ok := taskInstance.(interface{ SetProgressCallback(func(float64)) }); ok {
+		progressCaller.SetProgressCallback(func(progress float64) {
+			// Report progress updates to admin server
+			glog.V(2).Infof("Legacy task %s progress: %.1f%%", task.ID, progress)
+			if err := w.adminClient.UpdateTaskProgress(task.ID, progress); err != nil {
+				glog.V(1).Infof("Failed to report legacy task progress to admin: %v", err)
+			}
+		})
 	}
 
 	// Execute task
