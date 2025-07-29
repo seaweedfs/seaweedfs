@@ -108,116 +108,28 @@ func (cp *ConfigPersistence) SaveMaintenanceConfig(config *MaintenanceConfig) er
 	return nil
 }
 
-// LoadMaintenanceConfig loads maintenance configuration from protobuf file or JSON fallback
+// LoadMaintenanceConfig loads maintenance configuration from protobuf file
 func (cp *ConfigPersistence) LoadMaintenanceConfig() (*MaintenanceConfig, error) {
 	if cp.dataDir == "" {
-		glog.Infof("MAINTENANCE_CONFIG_LOAD: No data directory specified, using default maintenance configuration")
-		defaultConfig := DefaultMaintenanceConfig()
-		glog.Infof("MAINTENANCE_CONFIG_LOAD: Default config - Enabled: %v, ScanInterval: %d, WorkerTimeout: %d, TaskTimeout: %d",
-			defaultConfig.Enabled, defaultConfig.ScanIntervalSeconds, defaultConfig.WorkerTimeoutSeconds, defaultConfig.TaskTimeoutSeconds)
-		return defaultConfig, nil
+		return DefaultMaintenanceConfig(), nil
 	}
 
 	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
 	configPath := filepath.Join(confDir, MaintenanceConfigFile)
-	jsonPath := filepath.Join(confDir, MaintenanceConfigJSONFile)
 
-	glog.Infof("MAINTENANCE_CONFIG_LOAD: Checking for config files - Protobuf: %s, JSON: %s", configPath, jsonPath)
-
-	// Check file existence and timestamps
-	pbStat, pbErr := os.Stat(configPath)
-	jsonStat, jsonErr := os.Stat(jsonPath)
-
-	glog.Infof("MAINTENANCE_CONFIG_LOAD: File status - Protobuf exists: %v, JSON exists: %v", pbErr == nil, jsonErr == nil)
-	if pbErr == nil {
-		glog.Infof("MAINTENANCE_CONFIG_LOAD: Protobuf file mod time: %v", pbStat.ModTime())
-	}
-	if jsonErr == nil {
-		glog.Infof("MAINTENANCE_CONFIG_LOAD: JSON file mod time: %v", jsonStat.ModTime())
-	}
-
-	// Try to load from protobuf file first
-	if pbErr == nil {
-		glog.Infof("MAINTENANCE_CONFIG_LOAD: Attempting to load from protobuf file: %s", configPath)
-		configData, err := os.ReadFile(configPath)
-		if err == nil {
-			glog.Infof("MAINTENANCE_CONFIG_LOAD: Protobuf file size: %d bytes", len(configData))
-			var config MaintenanceConfig
-			if err := proto.Unmarshal(configData, &config); err == nil {
-				glog.Infof("MAINTENANCE_CONFIG_LOAD: Successfully loaded from protobuf - Enabled: %v, ScanInterval: %d, WorkerTimeout: %d, TaskTimeout: %d",
-					config.Enabled, config.ScanIntervalSeconds, config.WorkerTimeoutSeconds, config.TaskTimeoutSeconds)
-
-				// Always populate policy from separate task configuration files
-				glog.Infof("MAINTENANCE_CONFIG_LOAD: Building policy from separate task configuration files")
-				config.Policy = buildPolicyFromTaskConfigs()
-				if config.Policy != nil {
-					glog.Infof("MAINTENANCE_CONFIG_LOAD: Built policy with %d task policies", len(config.Policy.TaskPolicies))
-				}
-
-				return &config, nil
-			} else {
-				glog.Warningf("MAINTENANCE_CONFIG_LOAD: Failed to unmarshal protobuf config, trying JSON fallback: %v", err)
-			}
-		} else {
-			glog.Warningf("MAINTENANCE_CONFIG_LOAD: Failed to read protobuf file: %v", err)
+	// Try to load from protobuf file
+	if configData, err := os.ReadFile(configPath); err == nil {
+		var config MaintenanceConfig
+		if err := proto.Unmarshal(configData, &config); err == nil {
+			// Always populate policy from separate task configuration files
+			config.Policy = buildPolicyFromTaskConfigs()
+			return &config, nil
 		}
-	} else {
-		glog.Infof("MAINTENANCE_CONFIG_LOAD: Protobuf file does not exist: %v", pbErr)
 	}
 
-	// Fallback: try to load from JSON file
-	if jsonErr == nil {
-		glog.Infof("MAINTENANCE_CONFIG_LOAD: Attempting to load from JSON file: %s", jsonPath)
-		jsonData, err := os.ReadFile(jsonPath)
-		if err == nil {
-			glog.Infof("MAINTENANCE_CONFIG_LOAD: JSON file content: %s", string(jsonData))
-			var config MaintenanceConfig
-			unmarshaler := protojson.UnmarshalOptions{
-				DiscardUnknown: true,
-			}
-			if err := unmarshaler.Unmarshal(jsonData, &config); err == nil {
-				glog.Infof("MAINTENANCE_CONFIG_LOAD: Successfully loaded from JSON - Enabled: %v, ScanInterval: %d, WorkerTimeout: %d, TaskTimeout: %d",
-					config.Enabled, config.ScanIntervalSeconds, config.WorkerTimeoutSeconds, config.TaskTimeoutSeconds)
-
-				// Save back to protobuf format for future use
-				glog.Infof("MAINTENANCE_CONFIG_LOAD: Syncing JSON config back to protobuf")
-				if saveErr := cp.SaveMaintenanceConfig(&config); saveErr != nil {
-					glog.Warningf("MAINTENANCE_CONFIG_LOAD: Failed to save JSON config back to protobuf: %v", saveErr)
-				} else {
-					glog.Infof("MAINTENANCE_CONFIG_LOAD: Successfully synced to protobuf")
-				}
-
-				// Always populate policy from separate task configuration files
-				glog.Infof("MAINTENANCE_CONFIG_LOAD: Building policy from separate task configuration files")
-				config.Policy = buildPolicyFromTaskConfigs()
-				if config.Policy != nil {
-					glog.Infof("MAINTENANCE_CONFIG_LOAD: Built policy with %d task policies", len(config.Policy.TaskPolicies))
-				}
-
-				return &config, nil
-			} else {
-				glog.Warningf("MAINTENANCE_CONFIG_LOAD: Failed to unmarshal JSON config: %v", err)
-			}
-		} else {
-			glog.Warningf("MAINTENANCE_CONFIG_LOAD: Failed to read JSON file: %v", err)
-		}
-	} else {
-		glog.Infof("MAINTENANCE_CONFIG_LOAD: JSON file does not exist: %v", jsonErr)
-	}
-
-	// Neither file exists or both failed to load, use defaults
-	glog.Infof("MAINTENANCE_CONFIG_LOAD: No valid maintenance config found, using defaults")
+	// File doesn't exist or failed to load, use defaults
 	defaultConfig := DefaultMaintenanceConfig()
-	glog.Infof("MAINTENANCE_CONFIG_LOAD: Default config - Enabled: %v, ScanInterval: %d, WorkerTimeout: %d, TaskTimeout: %d",
-		defaultConfig.Enabled, defaultConfig.ScanIntervalSeconds, defaultConfig.WorkerTimeoutSeconds, defaultConfig.TaskTimeoutSeconds)
-
-	// Always populate policy from separate task configuration files even for defaults
-	glog.Infof("MAINTENANCE_CONFIG_LOAD: Building policy from separate task configuration files for default config")
 	defaultConfig.Policy = buildPolicyFromTaskConfigs()
-	if defaultConfig.Policy != nil {
-		glog.Infof("MAINTENANCE_CONFIG_LOAD: Built policy with %d task policies for default config", len(defaultConfig.Policy.TaskPolicies))
-	}
-
 	return defaultConfig, nil
 }
 

@@ -1187,19 +1187,11 @@ func (as *AdminServer) getMaintenanceStats() (*MaintenanceStats, error) {
 
 // getMaintenanceConfig returns maintenance configuration
 func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigData, error) {
-	glog.Infof("MAINTENANCE_CONFIG_UI: Starting getMaintenanceConfig")
-
 	// Load configuration from persistent storage
 	config, err := as.configPersistence.LoadMaintenanceConfig()
 	if err != nil {
-		glog.Errorf("MAINTENANCE_CONFIG_UI: Failed to load maintenance configuration: %v", err)
 		// Fallback to default configuration
 		config = maintenance.DefaultMaintenanceConfig()
-		glog.Infof("MAINTENANCE_CONFIG_UI: Using fallback default config - Enabled: %v, ScanInterval: %d, WorkerTimeout: %d, TaskTimeout: %d",
-			config.Enabled, config.ScanIntervalSeconds, config.WorkerTimeoutSeconds, config.TaskTimeoutSeconds)
-	} else {
-		glog.Infof("MAINTENANCE_CONFIG_UI: Successfully loaded config - Enabled: %v, ScanInterval: %d, WorkerTimeout: %d, TaskTimeout: %d",
-			config.Enabled, config.ScanIntervalSeconds, config.WorkerTimeoutSeconds, config.TaskTimeoutSeconds)
 	}
 
 	// Note: Do NOT apply schema defaults to existing config as it overrides saved values
@@ -1238,26 +1230,6 @@ func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigDat
 		SystemStats:  systemStats,
 		MenuItems:    maintenance.BuildMaintenanceMenuItems(),
 	}
-
-	glog.Infof("MAINTENANCE_CONFIG_UI: Returning config data - Config.Enabled: %v, IsEnabled: %v, Config.ScanInterval: %d",
-		configData.Config.Enabled, configData.IsEnabled, configData.Config.ScanIntervalSeconds)
-	glog.Infof("MAINTENANCE_CONFIG_UI: Full config values - WorkerTimeout: %d, TaskTimeout: %d, RetryDelay: %d, MaxRetries: %d, CleanupInterval: %d, TaskRetention: %d",
-		configData.Config.WorkerTimeoutSeconds, configData.Config.TaskTimeoutSeconds, configData.Config.RetryDelaySeconds,
-		configData.Config.MaxRetries, configData.Config.CleanupIntervalSeconds, configData.Config.TaskRetentionSeconds)
-
-	// Check Policy field before sending to template
-	if configData.Config.Policy == nil {
-		glog.Warningf("MAINTENANCE_CONFIG_UI: WARNING - Policy field is NULL when sending to template!")
-	} else {
-		glog.Infof("MAINTENANCE_CONFIG_UI: Policy field for template - GlobalMaxConcurrent: %d, DefaultRepeatInterval: %d, DefaultCheckInterval: %d",
-			configData.Config.Policy.GlobalMaxConcurrent, configData.Config.Policy.DefaultRepeatIntervalSeconds, configData.Config.Policy.DefaultCheckIntervalSeconds)
-		glog.Infof("MAINTENANCE_CONFIG_UI: Policy has %d task policies", len(configData.Config.Policy.TaskPolicies))
-	}
-
-	// Log all individual fields that the template tries to access
-	glog.Infof("MAINTENANCE_CONFIG_UI: Template field values - ScanIntervalSeconds: %d, WorkerTimeoutSeconds: %d, TaskTimeoutSeconds: %d, RetryDelaySeconds: %d, MaxRetries: %d, TaskRetentionSeconds: %d",
-		configData.Config.ScanIntervalSeconds, configData.Config.WorkerTimeoutSeconds, configData.Config.TaskTimeoutSeconds,
-		configData.Config.RetryDelaySeconds, configData.Config.MaxRetries, configData.Config.TaskRetentionSeconds)
 
 	return configData, nil
 }
