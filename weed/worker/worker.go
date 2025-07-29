@@ -797,3 +797,21 @@ func (w *Worker) handleAdminShutdown(shutdown *worker_pb.AdminShutdown) {
 		go w.Stop()
 	}
 }
+
+// handleRegistrationResponse processes registration response from admin server
+func (w *Worker) handleRegistrationResponse(response *worker_pb.RegistrationResponse) {
+	glog.V(2).Infof("Worker %s processed registration response: success=%v", w.id, response.Success)
+	if !response.Success {
+		glog.Warningf("Worker %s registration failed: %s", w.id, response.Message)
+	}
+	// Registration responses are typically handled by the gRPC client during connection setup
+	// No additional action needed here
+}
+
+// handleHeartbeatResponse processes heartbeat response from admin server
+func (w *Worker) handleHeartbeatResponse(response *worker_pb.HeartbeatResponse) {
+	glog.V(4).Infof("Worker %s processed heartbeat response", w.id)
+	// Heartbeat responses are mainly for keeping the connection alive
+	// The admin may include configuration updates or status information in the future
+	// For now, just acknowledge receipt
+}
