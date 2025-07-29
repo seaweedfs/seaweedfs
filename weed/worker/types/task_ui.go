@@ -2,6 +2,8 @@ package types
 
 import (
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
 // Helper function to convert seconds to the most appropriate interval unit
@@ -38,6 +40,19 @@ func IntervalValueUnitToSeconds(value int, unit string) int {
 	}
 }
 
+// TaskConfig defines the interface for task configurations
+// This matches the interfaces used in base package and handlers
+type TaskConfig interface {
+	// Common methods from BaseConfig
+	IsEnabled() bool
+	SetEnabled(enabled bool)
+	Validate() error
+
+	// Protobuf serialization methods - no more interface{}!
+	ToTaskPolicy() *worker_pb.TaskPolicy
+	FromTaskPolicy(policy *worker_pb.TaskPolicy) error
+}
+
 // TaskUIProvider defines how tasks provide their configuration UI
 // This interface is simplified to work with schema-driven configuration
 type TaskUIProvider interface {
@@ -53,11 +68,14 @@ type TaskUIProvider interface {
 	// GetIcon returns the icon CSS class or HTML for this task type
 	GetIcon() string
 
-	// GetCurrentConfig returns the current configuration
-	GetCurrentConfig() interface{}
+	// GetCurrentConfig returns the current configuration as TaskConfig
+	GetCurrentConfig() TaskConfig
 
-	// ApplyConfig applies the new configuration
-	ApplyConfig(config interface{}) error
+	// ApplyTaskPolicy applies protobuf TaskPolicy configuration
+	ApplyTaskPolicy(policy *worker_pb.TaskPolicy) error
+
+	// ApplyTaskConfig applies TaskConfig interface configuration
+	ApplyTaskConfig(config TaskConfig) error
 }
 
 // TaskStats represents runtime statistics for a task type

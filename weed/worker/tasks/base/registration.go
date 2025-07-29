@@ -59,32 +59,40 @@ type GenericUIProvider struct {
 	taskDef *TaskDefinition
 }
 
-// GetCurrentConfig returns current config as interface{}
-func (ui *GenericUIProvider) GetCurrentConfig() interface{} {
+// GetTaskType returns the task type
+func (ui *GenericUIProvider) GetTaskType() types.TaskType {
+	return ui.taskDef.Type
+}
+
+// GetDisplayName returns the human-readable name
+func (ui *GenericUIProvider) GetDisplayName() string {
+	return ui.taskDef.DisplayName
+}
+
+// GetDescription returns a description of what this task does
+func (ui *GenericUIProvider) GetDescription() string {
+	return ui.taskDef.Description
+}
+
+// GetIcon returns the icon CSS class for this task type
+func (ui *GenericUIProvider) GetIcon() string {
+	return ui.taskDef.Icon
+}
+
+// GetCurrentConfig returns current config as TaskConfig
+func (ui *GenericUIProvider) GetCurrentConfig() types.TaskConfig {
 	return ui.taskDef.Config
 }
 
-// ApplyConfig applies configuration using protobuf directly
-func (ui *GenericUIProvider) ApplyConfig(config interface{}) error {
-	// Handle TaskPolicy protobuf input directly
-	if taskPolicy, ok := config.(*worker_pb.TaskPolicy); ok {
-		return ui.taskDef.Config.FromTaskPolicy(taskPolicy)
-	}
+// ApplyTaskPolicy applies protobuf TaskPolicy configuration
+func (ui *GenericUIProvider) ApplyTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	return ui.taskDef.Config.FromTaskPolicy(policy)
+}
 
-	// Handle TaskConfig interface input
-	if taskConfig, ok := config.(TaskConfig); ok {
-		taskPolicy := taskConfig.ToTaskPolicy()
-		return ui.taskDef.Config.FromTaskPolicy(taskPolicy)
-	}
-
-	// Fallback for backward compatibility with map[string]interface{}
-	if _, ok := config.(map[string]interface{}); ok {
-		// Convert map to protobuf first (less efficient but compatible)
-		// This should be phased out eventually
-		return fmt.Errorf("map[string]interface{} config format deprecated for %s, use protobuf or TaskConfig", ui.taskDef.Type)
-	}
-
-	return fmt.Errorf("unsupported config format for %s", ui.taskDef.Type)
+// ApplyTaskConfig applies TaskConfig interface configuration
+func (ui *GenericUIProvider) ApplyTaskConfig(config types.TaskConfig) error {
+	taskPolicy := config.ToTaskPolicy()
+	return ui.taskDef.Config.FromTaskPolicy(taskPolicy)
 }
 
 // RegisterTask registers a complete task definition with all registries
@@ -121,7 +129,8 @@ func RegisterTask(taskDef *TaskDefinition) {
 			taskDef.Icon,
 			schemaProvider.GetConfigSchema,
 			uiProvider.GetCurrentConfig,
-			uiProvider.ApplyConfig,
+			uiProvider.ApplyTaskPolicy,
+			uiProvider.ApplyTaskConfig,
 		)
 		uiRegistry.RegisterUI(baseUIProvider)
 	})

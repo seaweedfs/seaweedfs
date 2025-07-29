@@ -282,7 +282,7 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 	}
 
 	// Apply configuration using provider
-	err = provider.ApplyConfig(config)
+	err = provider.ApplyTaskConfig(config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply configuration: " + err.Error()})
 		return

@@ -4,18 +4,20 @@ import (
 	"reflect"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // BaseUIProvider provides common UIProvider functionality for all tasks
 type BaseUIProvider struct {
-	taskType    types.TaskType
-	displayName string
-	description string
-	icon        string
-	schemaFunc  func() *TaskConfigSchema
-	configFunc  func() interface{}
-	applyFunc   func(config interface{}) error
+	taskType            types.TaskType
+	displayName         string
+	description         string
+	icon                string
+	schemaFunc          func() *TaskConfigSchema
+	configFunc          func() types.TaskConfig
+	applyTaskPolicyFunc func(policy *worker_pb.TaskPolicy) error
+	applyTaskConfigFunc func(config types.TaskConfig) error
 }
 
 // NewBaseUIProvider creates a new base UI provider
@@ -25,17 +27,19 @@ func NewBaseUIProvider(
 	description string,
 	icon string,
 	schemaFunc func() *TaskConfigSchema,
-	configFunc func() interface{},
-	applyFunc func(config interface{}) error,
+	configFunc func() types.TaskConfig,
+	applyTaskPolicyFunc func(policy *worker_pb.TaskPolicy) error,
+	applyTaskConfigFunc func(config types.TaskConfig) error,
 ) *BaseUIProvider {
 	return &BaseUIProvider{
-		taskType:    taskType,
-		displayName: displayName,
-		description: description,
-		icon:        icon,
-		schemaFunc:  schemaFunc,
-		configFunc:  configFunc,
-		applyFunc:   applyFunc,
+		taskType:            taskType,
+		displayName:         displayName,
+		description:         description,
+		icon:                icon,
+		schemaFunc:          schemaFunc,
+		configFunc:          configFunc,
+		applyTaskPolicyFunc: applyTaskPolicyFunc,
+		applyTaskConfigFunc: applyTaskConfigFunc,
 	}
 }
 
@@ -59,38 +63,19 @@ func (ui *BaseUIProvider) GetIcon() string {
 	return ui.icon
 }
 
-// GetCurrentConfig returns the current configuration
-func (ui *BaseUIProvider) GetCurrentConfig() interface{} {
+// GetCurrentConfig returns the current configuration as TaskConfig
+func (ui *BaseUIProvider) GetCurrentConfig() types.TaskConfig {
 	return ui.configFunc()
 }
 
-// ApplyConfig applies the new configuration with common schema-based handling
-func (ui *BaseUIProvider) ApplyConfig(config interface{}) error {
-	// First try direct application
-	if err := ui.applyFunc(config); err == nil {
-		return nil
-	}
+// ApplyTaskPolicy applies protobuf TaskPolicy configuration
+func (ui *BaseUIProvider) ApplyTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	return ui.applyTaskPolicyFunc(policy)
+}
 
-	// Fallback: Try to get the configuration from the schema-based system
-	schema := ui.schemaFunc()
-	if schema != nil {
-		// Apply defaults to ensure we have a complete config
-		if err := schema.ApplyDefaults(config); err != nil {
-			return err
-		}
-
-		// Try again with defaults applied
-		if err := ui.applyFunc(config); err == nil {
-			return nil
-		}
-
-		// Last resort: use current config
-		glog.Warningf("Config type conversion failed for %s, using current config", ui.taskType)
-		currentConfig := ui.GetCurrentConfig()
-		return ui.applyFunc(currentConfig)
-	}
-
-	return nil
+// ApplyTaskConfig applies TaskConfig interface configuration
+func (ui *BaseUIProvider) ApplyTaskConfig(config types.TaskConfig) error {
+	return ui.applyTaskConfigFunc(config)
 }
 
 // CommonConfigGetter provides a common pattern for getting current configuration
@@ -190,8 +175,9 @@ func CommonRegisterUI[D, S any](
 	detector D,
 	scheduler S,
 	schemaFunc func() *TaskConfigSchema,
-	configFunc func() interface{},
-	applyFunc func(config interface{}) error,
+	configFunc func() types.TaskConfig,
+	applyTaskPolicyFunc func(policy *worker_pb.TaskPolicy) error,
+	applyTaskConfigFunc func(config types.TaskConfig) error,
 ) {
 	// Get metadata from schema
 	schema := schemaFunc()
@@ -210,7 +196,8 @@ func CommonRegisterUI[D, S any](
 		icon,
 		schemaFunc,
 		configFunc,
-		applyFunc,
+		applyTaskPolicyFunc,
+		applyTaskConfigFunc,
 	)
 
 	uiRegistry.RegisterUI(uiProvider)
