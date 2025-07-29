@@ -154,7 +154,7 @@ require (
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.113.2
-	go.etcd.io/etcd/client/pkg/v3 v3.6.2
+	go.etcd.io/etcd/client/pkg/v3 v3.6.4
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.16.0
 	google.golang.org/grpc/security/advancedtls v1.0.0
