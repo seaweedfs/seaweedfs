@@ -92,8 +92,8 @@ type TaskLogEntry struct {
 // DefaultTaskLoggerConfig returns default configuration
 func DefaultTaskLoggerConfig() TaskLoggerConfig {
 	return TaskLoggerConfig{
-		BaseLogDir:    "/tmp/seaweedfs/task_logs",
-		MaxTasks:      100,
+		BaseLogDir:    "/data/task_logs", // Use persistent data directory
+		MaxTasks:      100,               // Keep last 100 task logs
 		MaxLogSizeMB:  10,
 		EnableConsole: true,
 	}

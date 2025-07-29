@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -332,15 +333,21 @@ func (vst *VolumeShardTracker) planReplicationDestination(volumeID uint32, repli
 // planErasureCodingDestination plans destination for EC encoding (simplified)
 func (vst *VolumeShardTracker) planErasureCodingDestination(volumeID uint32, replicas []*VolumeShardInfo, sourceNode string, rule *PlacementRule) (*DestinationPlan, error) {
 	volumeSize := replicas[0].Size
-	shardSize := volumeSize / 10 // Approximate shard size
+
+	// EC uses fixed shards from erasure_coding package
+	shardSize := volumeSize / uint64(erasure_coding.DataShardsCount)
+	glog.V(1).Infof("EC primary destination planning for volume %d: volume_size=%d bytes, shard_size=%d bytes, source_node=%s",
+		volumeID, volumeSize, shardSize, sourceNode)
 
 	// Simple check: ensure we have enough nodes with sufficient capacity
 	availableNodes := 0
 	var bestNode *NodeCapacityInfo
+	var insufficientNodes []string
 
 	for _, nodeInfo := range vst.nodes {
 		// Skip source node
 		if nodeInfo.NodeID == sourceNode {
+			glog.V(2).Infof("EC primary destination planning for volume %d: skipping source node %s", volumeID, nodeInfo.NodeID)
 			continue
 		}
 
@@ -349,12 +356,29 @@ func (vst *VolumeShardTracker) planErasureCodingDestination(volumeID uint32, rep
 			if bestNode == nil || nodeInfo.FreeCapacity > bestNode.FreeCapacity {
 				bestNode = nodeInfo
 			}
+			glog.V(2).Infof("EC primary destination planning for volume %d: node %s is suitable (free: %d bytes)",
+				volumeID, nodeInfo.NodeID, nodeInfo.FreeCapacity)
+		} else {
+			insufficientNodes = append(insufficientNodes, fmt.Sprintf("%s(free:%d)", nodeInfo.NodeID, nodeInfo.FreeCapacity))
+			glog.V(2).Infof("EC primary destination planning for volume %d: node %s has insufficient capacity (free: %d bytes, need: %d bytes)",
+				volumeID, nodeInfo.NodeID, nodeInfo.FreeCapacity, shardSize)
 		}
 	}
 
-	if availableNodes < 14 {
-		return nil, fmt.Errorf("insufficient nodes for EC encoding: need 14, have %d", availableNodes)
+	if availableNodes < erasure_coding.TotalShardsCount {
+		glog.Warningf("EC primary destination planning failed for volume %d: insufficient nodes for EC encoding (need %d, have %d). "+
+			"Insufficient nodes: %v", volumeID, erasure_coding.TotalShardsCount, availableNodes, insufficientNodes)
+		return nil, fmt.Errorf("insufficient nodes for EC encoding: need %d, have %d", erasure_coding.TotalShardsCount, availableNodes)
 	}
+
+	if bestNode == nil {
+		glog.Warningf("EC primary destination planning failed for volume %d: no best node found despite having %d available nodes",
+			volumeID, availableNodes)
+		return nil, fmt.Errorf("no suitable primary destination found for EC encoding")
+	}
+
+	glog.Infof("EC primary destination planning succeeded for volume %d: selected primary node %s (free: %d bytes, shard_size: %d bytes)",
+		volumeID, bestNode.NodeID, bestNode.FreeCapacity, shardSize)
 
 	return &DestinationPlan{
 		TargetNode:     bestNode.NodeID,

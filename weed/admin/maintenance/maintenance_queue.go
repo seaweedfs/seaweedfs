@@ -82,6 +82,13 @@ func (mq *MaintenanceQueue) hasDuplicateTask(newTask *MaintenanceTask) bool {
 // AddTasksFromResults converts detection results to tasks and adds them to the queue
 func (mq *MaintenanceQueue) AddTasksFromResults(results []*TaskDetectionResult) {
 	for _, result := range results {
+		// Validate that task has proper typed parameters
+		if result.TypedParams == nil {
+			glog.Warningf("Rejecting invalid task: %s for volume %d on %s - no typed parameters (insufficient destinations or planning failed)",
+				result.TaskType, result.VolumeID, result.Server)
+			continue
+		}
+
 		task := &MaintenanceTask{
 			Type:       result.TaskType,
 			Priority:   result.Priority,
@@ -656,6 +663,12 @@ func (mq *MaintenanceQueue) trackPendingOperation(task *MaintenanceTask) {
 		return
 	}
 
+	// Skip tracking for tasks without proper typed parameters
+	if task.TypedParams == nil {
+		glog.V(2).Infof("Skipping pending operation tracking for task %s - no typed parameters", task.ID)
+		return
+	}
+
 	// Map maintenance task type to pending operation type
 	var opType PendingOperationType
 	switch task.Type {
@@ -675,30 +688,28 @@ func (mq *MaintenanceQueue) trackPendingOperation(task *MaintenanceTask) {
 	destNode := ""
 	estimatedSize := uint64(1024 * 1024 * 1024) // Default 1GB estimate
 
-	if task.TypedParams != nil {
-		switch params := task.TypedParams.TaskParams.(type) {
-		case *worker_pb.TaskParams_ErasureCodingParams:
-			if params.ErasureCodingParams != nil {
-				if params.ErasureCodingParams.PrimaryDestNode != "" {
-					destNode = params.ErasureCodingParams.PrimaryDestNode
-				}
-				if params.ErasureCodingParams.EstimatedShardSize > 0 {
-					estimatedSize = params.ErasureCodingParams.EstimatedShardSize
-				}
+	switch params := task.TypedParams.TaskParams.(type) {
+	case *worker_pb.TaskParams_ErasureCodingParams:
+		if params.ErasureCodingParams != nil {
+			if params.ErasureCodingParams.PrimaryDestNode != "" {
+				destNode = params.ErasureCodingParams.PrimaryDestNode
 			}
-		case *worker_pb.TaskParams_BalanceParams:
-			if params.BalanceParams != nil {
-				destNode = params.BalanceParams.DestNode
-				if params.BalanceParams.EstimatedSize > 0 {
-					estimatedSize = params.BalanceParams.EstimatedSize
-				}
+			if params.ErasureCodingParams.EstimatedShardSize > 0 {
+				estimatedSize = params.ErasureCodingParams.EstimatedShardSize
 			}
-		case *worker_pb.TaskParams_ReplicationParams:
-			if params.ReplicationParams != nil {
-				destNode = params.ReplicationParams.DestNode
-				if params.ReplicationParams.EstimatedSize > 0 {
-					estimatedSize = params.ReplicationParams.EstimatedSize
-				}
+		}
+	case *worker_pb.TaskParams_BalanceParams:
+		if params.BalanceParams != nil {
+			destNode = params.BalanceParams.DestNode
+			if params.BalanceParams.EstimatedSize > 0 {
+				estimatedSize = params.BalanceParams.EstimatedSize
+			}
+		}
+	case *worker_pb.TaskParams_ReplicationParams:
+		if params.ReplicationParams != nil {
+			destNode = params.ReplicationParams.DestNode
+			if params.ReplicationParams.EstimatedSize > 0 {
+				estimatedSize = params.ReplicationParams.EstimatedSize
 			}
 		}
 	}

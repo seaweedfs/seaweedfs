@@ -380,7 +380,7 @@ func (c *GrpcAdminClient) handleIncoming() {
 			break
 		}
 
-		glog.V(2).Infof("📨 MESSAGE RECEIVED: Worker %s received message from admin server: %T", c.workerID, msg.Message)
+		glog.V(4).Infof("📨 MESSAGE RECEIVED: Worker %s received message from admin server: %T", c.workerID, msg.Message)
 
 		// Route message to waiting goroutines or general handler
 		select {

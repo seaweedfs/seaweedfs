@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -50,8 +51,8 @@ func NewTypedTask() types.TypedTaskInterface {
 		masterClient:  "localhost:9333",                                         // Default master client
 		workDir:       "/tmp/seaweedfs_ec_work",                                 // Default work directory
 		grpcDialOpt:   grpc.WithTransportCredentials(insecure.NewCredentials()), // Default to insecure
-		dataShards:    10,
-		parityShards:  4,
+		dataShards:    erasure_coding.DataShardsCount,                           // Use package constant
+		parityShards:  erasure_coding.ParityShardsCount,                         // Use package constant
 		stepProgress:  make(map[string]float64),
 	}
 	return task
@@ -70,22 +71,28 @@ func (t *TypedTask) ValidateTyped(params *worker_pb.TaskParams) error {
 		return fmt.Errorf("erasure_coding_params is required for EC task")
 	}
 
-	// Validate destination nodes
+	// Require destination nodes - tasks without destinations should be rejected at admin level
 	if len(ecParams.DestNodes) == 0 && ecParams.PrimaryDestNode == "" {
-		return fmt.Errorf("at least one destination node must be specified")
+		return fmt.Errorf("at least one destination node must be specified for EC task")
 	}
 
-	// Validate shard configuration
-	if ecParams.DataShards > 0 && ecParams.DataShards < 4 {
-		return fmt.Errorf("data_shards must be at least 4, got %d", ecParams.DataShards)
+	// DataShards and ParityShards are constants from erasure_coding package
+	expectedDataShards := int32(erasure_coding.DataShardsCount)
+	expectedParityShards := int32(erasure_coding.ParityShardsCount)
+
+	if ecParams.DataShards > 0 && ecParams.DataShards != expectedDataShards {
+		return fmt.Errorf("data_shards must be %d (fixed constant), got %d", expectedDataShards, ecParams.DataShards)
 	}
-	if ecParams.ParityShards > 0 && ecParams.ParityShards < 2 {
-		return fmt.Errorf("parity_shards must be at least 2, got %d", ecParams.ParityShards)
+	if ecParams.ParityShards > 0 && ecParams.ParityShards != expectedParityShards {
+		return fmt.Errorf("parity_shards must be %d (fixed constant), got %d", expectedParityShards, ecParams.ParityShards)
 	}
 
-	totalShards := ecParams.DataShards + ecParams.ParityShards
-	if totalShards > int32(len(ecParams.DestNodes)) && len(ecParams.DestNodes) > 0 {
-		return fmt.Errorf("insufficient destination nodes: need %d, have %d", totalShards, len(ecParams.DestNodes))
+	// Validate destination count
+	if len(ecParams.DestNodes) > 0 {
+		totalShards := expectedDataShards + expectedParityShards
+		if totalShards > int32(len(ecParams.DestNodes)) {
+			return fmt.Errorf("insufficient destination nodes: need %d, have %d", totalShards, len(ecParams.DestNodes))
+		}
 	}
 
 	return nil
@@ -124,12 +131,9 @@ func (t *TypedTask) ExecuteTyped(params *worker_pb.TaskParams) error {
 		t.estimatedShardSize = ecParams.EstimatedShardSize
 		t.cleanupSource = ecParams.CleanupSource
 
-		if ecParams.DataShards > 0 {
-			t.dataShards = int(ecParams.DataShards)
-		}
-		if ecParams.ParityShards > 0 {
-			t.parityShards = int(ecParams.ParityShards)
-		}
+		// DataShards and ParityShards are constants, don't override from parameters
+		// t.dataShards and t.parityShards are already set to constants in NewTypedTask
+
 		if ecParams.WorkingDir != "" {
 			t.workDir = ecParams.WorkingDir
 		}
@@ -138,8 +142,14 @@ func (t *TypedTask) ExecuteTyped(params *worker_pb.TaskParams) error {
 		}
 	}
 
+	// Determine available destinations for logging
+	availableDestinations := t.destNodes
+	if len(availableDestinations) == 0 && t.primaryDestNode != "" {
+		availableDestinations = []string{t.primaryDestNode}
+	}
+
 	glog.V(1).Infof("Starting typed EC task for volume %d: %s -> %v (data:%d, parity:%d)",
-		t.volumeID, t.sourceServer, t.destNodes, t.dataShards, t.parityShards)
+		t.volumeID, t.sourceServer, availableDestinations, t.dataShards, t.parityShards)
 
 	// Create unique working directory for this task
 	taskWorkDir := filepath.Join(t.workDir, fmt.Sprintf("vol_%d_%d", t.volumeID, time.Now().Unix()))

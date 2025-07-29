@@ -143,10 +143,7 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 	registry := tasks.GetGlobalRegistry()
 
 	// Initialize task log handler
-	logDir := "/tmp/seaweedfs/task_logs"
-	if config.BaseWorkingDir != "" {
-		logDir = filepath.Join(config.BaseWorkingDir, "task_logs")
-	}
+	logDir := filepath.Join(config.BaseWorkingDir, "task_logs")
 	taskLogHandler := tasks.NewTaskLogHandler(logDir)
 
 	worker := &Worker{
@@ -162,6 +159,17 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 	glog.V(1).Infof("Worker created with %d registered task types", len(registry.GetSupportedTypes()))
 
 	return worker, nil
+}
+
+// getTaskLoggerConfig returns the task logger configuration with worker's log directory
+func (w *Worker) getTaskLoggerConfig() tasks.TaskLoggerConfig {
+	config := tasks.DefaultTaskLoggerConfig()
+
+	// Use worker's configured log directory (BaseWorkingDir is guaranteed to be non-empty)
+	logDir := filepath.Join(w.config.BaseWorkingDir, "task_logs")
+	config.BaseLogDir = logDir
+
+	return config
 }
 
 // ID returns the worker ID
@@ -385,68 +393,40 @@ func (w *Worker) executeTask(task *types.Task) {
 		glog.V(1).Infof("Failed to report task start to admin: %v", err)
 	}
 
-	// Determine task-specific working directory
-	var taskWorkingDir string
-	if w.config.BaseWorkingDir != "" {
-		taskWorkingDir = fmt.Sprintf("%s/%s", w.config.BaseWorkingDir, string(task.Type))
-		glog.V(2).Infof("📁 WORKING DIRECTORY: Task %s using working directory: %s", task.ID, taskWorkingDir)
-	}
+	// Determine task-specific working directory (BaseWorkingDir is guaranteed to be non-empty)
+	taskWorkingDir := filepath.Join(w.config.BaseWorkingDir, string(task.Type))
+	glog.V(2).Infof("📁 WORKING DIRECTORY: Task %s using working directory: %s", task.ID, taskWorkingDir)
 
 	// Check if we have typed protobuf parameters
-	if task.TypedParams != nil {
-		// Use typed task execution
-		glog.V(1).Infof("Executing task %s with typed protobuf parameters", task.ID)
-
-		typedRegistry := types.GetGlobalTypedTaskRegistry()
-		typedTaskInstance, err := typedRegistry.CreateTypedTask(task.Type)
-		if err != nil {
-			// Fall back to legacy task execution if typed task not available
-			glog.V(1).Infof("Typed task not available for %s, falling back to legacy execution: %v", task.Type, err)
-		} else {
-			// Initialize logging for typed tasks if they support it
-			if loggerProvider, ok := typedTaskInstance.(tasks.LoggerProvider); ok {
-				taskParams := types.TaskParams{
-					VolumeID:       task.VolumeID,
-					Server:         task.Server,
-					Collection:     task.Collection,
-					WorkingDir:     taskWorkingDir,
-					TypedParams:    task.TypedParams,
-					GrpcDialOption: w.config.GrpcDialOption,
-				}
-
-				if err := loggerProvider.InitializeTaskLogger(task.ID, w.id, taskParams); err != nil {
-					glog.Warningf("Failed to initialize task logger for %s: %v", task.ID, err)
-				}
-			}
-
-			// Set progress callback that reports to admin server
-			typedTaskInstance.SetProgressCallback(func(progress float64) {
-				// Report progress updates to admin server
-				glog.V(2).Infof("Task %s progress: %.1f%%", task.ID, progress)
-				if err := w.adminClient.UpdateTaskProgress(task.ID, progress); err != nil {
-					glog.V(1).Infof("Failed to report task progress to admin: %v", err)
-				}
-			})
-
-			// Execute typed task
-			err = typedTaskInstance.ExecuteTyped(task.TypedParams)
-
-			// Report completion
-			if err != nil {
-				w.completeTask(task.ID, false, err.Error())
-				w.tasksFailed++
-				glog.Errorf("Worker %s failed to execute typed task %s: %v", w.id, task.ID, err)
-			} else {
-				w.completeTask(task.ID, true, "")
-				w.tasksCompleted++
-				glog.Infof("Worker %s completed typed task %s successfully", w.id, task.ID)
-			}
-			return
-		}
+	if task.TypedParams == nil {
+		w.completeTask(task.ID, false, "task has no typed parameters - task was not properly planned")
+		glog.Errorf("Worker %s rejecting task %s: no typed parameters", w.id, task.ID)
+		return
 	}
 
-	// Legacy task execution path
-	glog.V(1).Infof("Executing task %s with legacy parameters", task.ID)
+	// Use typed task execution (all tasks should be typed)
+	glog.V(1).Infof("Executing task %s with typed protobuf parameters", task.ID)
+
+	typedRegistry := types.GetGlobalTypedTaskRegistry()
+	typedTaskInstance, err := typedRegistry.CreateTypedTask(task.Type)
+	if err != nil {
+		w.completeTask(task.ID, false, fmt.Sprintf("typed task not available for %s: %v", task.Type, err))
+		glog.Errorf("Worker %s failed to create typed task %s: %v", w.id, task.ID, err)
+		return
+	}
+
+	// Configure task logger directory (all typed tasks support this)
+	tasksLoggerConfig := w.getTaskLoggerConfig()
+	typedLoggerConfig := types.TaskLoggerConfig{
+		BaseLogDir:    tasksLoggerConfig.BaseLogDir,
+		MaxTasks:      tasksLoggerConfig.MaxTasks,
+		MaxLogSizeMB:  tasksLoggerConfig.MaxLogSizeMB,
+		EnableConsole: tasksLoggerConfig.EnableConsole,
+	}
+	typedTaskInstance.SetLoggerConfig(typedLoggerConfig)
+	glog.V(2).Infof("Set typed task logger config for %s: %s", task.ID, typedLoggerConfig.BaseLogDir)
+
+	// Initialize logging (all typed tasks support this)
 	taskParams := types.TaskParams{
 		VolumeID:       task.VolumeID,
 		Server:         task.Server,
@@ -456,43 +436,31 @@ func (w *Worker) executeTask(task *types.Task) {
 		GrpcDialOption: w.config.GrpcDialOption,
 	}
 
-	taskInstance, err := w.registry.CreateTask(task.Type, taskParams)
-	if err != nil {
-		w.completeTask(task.ID, false, fmt.Sprintf("failed to create task: %v", err))
-		return
+	if err := typedTaskInstance.InitializeTaskLogger(task.ID, w.id, taskParams); err != nil {
+		glog.Warningf("Failed to initialize task logger for %s: %v", task.ID, err)
 	}
 
-	// Initialize logging for legacy tasks if they support it
-	if loggerProvider, ok := taskInstance.(tasks.LoggerProvider); ok {
-		if err := loggerProvider.InitializeTaskLogger(task.ID, w.id, taskParams); err != nil {
-			glog.Warningf("Failed to initialize task logger for %s: %v", task.ID, err)
+	// Set progress callback that reports to admin server
+	typedTaskInstance.SetProgressCallback(func(progress float64) {
+		// Report progress updates to admin server
+		glog.V(2).Infof("Task %s progress: %.1f%%", task.ID, progress)
+		if err := w.adminClient.UpdateTaskProgress(task.ID, progress); err != nil {
+			glog.V(1).Infof("Failed to report task progress to admin: %v", err)
 		}
-	}
+	})
 
-	// Set progress callback for legacy tasks that support it
-	// Check if task has a SetProgressCallback method through reflection
-	if progressCaller, ok := taskInstance.(interface{ SetProgressCallback(func(float64)) }); ok {
-		progressCaller.SetProgressCallback(func(progress float64) {
-			// Report progress updates to admin server
-			glog.V(2).Infof("Legacy task %s progress: %.1f%%", task.ID, progress)
-			if err := w.adminClient.UpdateTaskProgress(task.ID, progress); err != nil {
-				glog.V(1).Infof("Failed to report legacy task progress to admin: %v", err)
-			}
-		})
-	}
-
-	// Execute task
-	err = taskInstance.Execute(taskParams)
+	// Execute typed task
+	err = typedTaskInstance.ExecuteTyped(task.TypedParams)
 
 	// Report completion
 	if err != nil {
 		w.completeTask(task.ID, false, err.Error())
 		w.tasksFailed++
-		glog.Errorf("Worker %s failed to execute task %s: %v", w.id, task.ID, err)
+		glog.Errorf("Worker %s failed to execute typed task %s: %v", w.id, task.ID, err)
 	} else {
 		w.completeTask(task.ID, true, "")
 		w.tasksCompleted++
-		glog.Infof("Worker %s completed task %s successfully", w.id, task.ID)
+		glog.Infof("Worker %s completed typed task %s successfully", w.id, task.ID)
 	}
 }
 
@@ -713,7 +681,7 @@ func (w *Worker) messageProcessingLoop() {
 
 // processAdminMessage processes different types of admin messages
 func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
-	glog.V(2).Infof("📫 ADMIN MESSAGE RECEIVED: Worker %s received admin message: %T", w.id, message.Message)
+	glog.V(4).Infof("📫 ADMIN MESSAGE RECEIVED: Worker %s received admin message: %T", w.id, message.Message)
 
 	switch msg := message.Message.(type) {
 	case *worker_pb.AdminMessage_RegistrationResponse:

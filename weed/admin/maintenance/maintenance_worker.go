@@ -146,6 +146,11 @@ func NewMaintenanceWorkerService(workerID, address, adminServer string) *Mainten
 func (mws *MaintenanceWorkerService) executeGenericTask(task *MaintenanceTask) error {
 	glog.V(2).Infof("Executing generic task %s: %s for volume %d", task.ID, task.Type, task.VolumeID)
 
+	// Validate that task has proper typed parameters
+	if task.TypedParams == nil {
+		return fmt.Errorf("task %s has no typed parameters - task was not properly planned (insufficient destinations)", task.ID)
+	}
+
 	// Convert MaintenanceTask to types.TaskType
 	taskType := types.TaskType(string(task.Type))
 

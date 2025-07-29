@@ -12,6 +12,24 @@ var (
 	ErrTaskTypeNotFound = errors.New("task type not found")
 )
 
+// TaskLogger interface for task logging (minimal definition to avoid import cycles)
+type TaskLogger interface {
+	Info(message string, args ...interface{})
+	Warning(message string, args ...interface{})
+	Error(message string, args ...interface{})
+	Debug(message string, args ...interface{})
+	LogWithFields(level string, message string, fields map[string]interface{})
+	Close() error
+}
+
+// TaskLoggerConfig holds configuration for task logging (minimal definition)
+type TaskLoggerConfig struct {
+	BaseLogDir    string
+	MaxTasks      int
+	MaxLogSizeMB  int
+	EnableConsole bool
+}
+
 // TypedTaskInterface defines the interface for tasks using typed protobuf parameters
 type TypedTaskInterface interface {
 	// Execute the task with typed protobuf parameters
@@ -37,6 +55,18 @@ type TypedTaskInterface interface {
 
 	// Set progress callback for progress updates
 	SetProgressCallback(callback func(float64))
+
+	// Logger configuration and initialization (all typed tasks support this)
+	SetLoggerConfig(config TaskLoggerConfig)
+	InitializeTaskLogger(taskID string, workerID string, params TaskParams) error
+	GetTaskLogger() TaskLogger
+
+	// Logging methods (all typed tasks support this)
+	LogInfo(message string, args ...interface{})
+	LogWarning(message string, args ...interface{})
+	LogError(message string, args ...interface{})
+	LogDebug(message string, args ...interface{})
+	LogWithFields(level string, message string, fields map[string]interface{})
 }
 
 // TypedTaskCreator is a function that creates a new typed task instance

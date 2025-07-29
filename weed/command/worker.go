@@ -85,16 +85,25 @@ func runWorker(cmd *Command, args []string) bool {
 		}
 		baseWorkingDir = wd
 		glog.Infof("Current working directory: %s", baseWorkingDir)
-
-		// Create task-specific subdirectories
-		for _, capability := range capabilities {
-			taskDir := filepath.Join(baseWorkingDir, string(capability))
-			if err := os.MkdirAll(taskDir, 0755); err != nil {
-				glog.Fatalf("Failed to create task directory %s: %v", taskDir, err)
-				return false
-			}
-			glog.Infof("Created task directory: %s", taskDir)
+	} else {
+		// Use default working directory when not specified
+		wd, err := os.Getwd()
+		if err != nil {
+			glog.Fatalf("Failed to get current working directory: %v", err)
+			return false
 		}
+		baseWorkingDir = wd
+		glog.Infof("Using current working directory: %s", baseWorkingDir)
+	}
+
+	// Create task-specific subdirectories
+	for _, capability := range capabilities {
+		taskDir := filepath.Join(baseWorkingDir, string(capability))
+		if err := os.MkdirAll(taskDir, 0755); err != nil {
+			glog.Fatalf("Failed to create task directory %s: %v", taskDir, err)
+			return false
+		}
+		glog.Infof("Created task directory: %s", taskDir)
 	}
 
 	// Create gRPC dial option using TLS configuration

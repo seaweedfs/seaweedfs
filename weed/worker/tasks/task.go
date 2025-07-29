@@ -176,6 +176,13 @@ func (t *BaseTask) SetProgressCallback(callback func(float64)) {
 	t.progressCallback = callback
 }
 
+// SetLoggerConfig sets the logger configuration for this task
+func (t *BaseTask) SetLoggerConfig(config TaskLoggerConfig) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	t.loggerConfig = config
+}
+
 // GetLogger returns the task logger
 func (t *BaseTask) GetLogger() TaskLogger {
 	t.mutex.RLock()

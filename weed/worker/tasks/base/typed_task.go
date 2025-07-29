@@ -2,20 +2,27 @@ package base
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// BaseTypedTask provides a base implementation for typed tasks
+// BaseTypedTask provides a base implementation for typed tasks with logger support
 type BaseTypedTask struct {
 	taskType         types.TaskType
+	taskID           string
 	progress         float64
 	progressCallback func(float64)
 	cancelled        bool
 	mutex            sync.RWMutex
+
+	// Logger functionality
+	logger       tasks.TaskLogger
+	loggerConfig types.TaskLoggerConfig
 }
 
 // NewBaseTypedTask creates a new base typed task
@@ -23,6 +30,12 @@ func NewBaseTypedTask(taskType types.TaskType) *BaseTypedTask {
 	return &BaseTypedTask{
 		taskType: taskType,
 		progress: 0.0,
+		loggerConfig: types.TaskLoggerConfig{
+			BaseLogDir:    "/data/task_logs",
+			MaxTasks:      100,
+			MaxLogSizeMB:  10,
+			EnableConsole: true,
+		},
 	}
 }
 
@@ -75,6 +88,108 @@ func (bt *BaseTypedTask) SetProgressCallback(callback func(float64)) {
 	bt.mutex.Lock()
 	defer bt.mutex.Unlock()
 	bt.progressCallback = callback
+}
+
+// SetLoggerConfig sets the logger configuration for this task
+func (bt *BaseTypedTask) SetLoggerConfig(config types.TaskLoggerConfig) {
+	bt.mutex.Lock()
+	defer bt.mutex.Unlock()
+	bt.loggerConfig = config
+}
+
+// convertToTasksLoggerConfig converts types.TaskLoggerConfig to tasks.TaskLoggerConfig
+func convertToTasksLoggerConfig(config types.TaskLoggerConfig) tasks.TaskLoggerConfig {
+	return tasks.TaskLoggerConfig{
+		BaseLogDir:    config.BaseLogDir,
+		MaxTasks:      config.MaxTasks,
+		MaxLogSizeMB:  config.MaxLogSizeMB,
+		EnableConsole: config.EnableConsole,
+	}
+}
+
+// InitializeTaskLogger initializes the task logger with task details (LoggerProvider interface)
+func (bt *BaseTypedTask) InitializeTaskLogger(taskID string, workerID string, params types.TaskParams) error {
+	bt.mutex.Lock()
+	defer bt.mutex.Unlock()
+
+	bt.taskID = taskID
+
+	// Convert the logger config to the tasks package type
+	tasksLoggerConfig := convertToTasksLoggerConfig(bt.loggerConfig)
+
+	logger, err := tasks.NewTaskLogger(taskID, bt.taskType, workerID, params, tasksLoggerConfig)
+	if err != nil {
+		return fmt.Errorf("failed to initialize task logger: %w", err)
+	}
+
+	bt.logger = logger
+	if bt.logger != nil {
+		bt.logger.Info("BaseTypedTask initialized for task %s (type: %s)", taskID, bt.taskType)
+	}
+
+	return nil
+}
+
+// GetTaskLogger returns the task logger (LoggerProvider interface)
+func (bt *BaseTypedTask) GetTaskLogger() types.TaskLogger {
+	bt.mutex.RLock()
+	defer bt.mutex.RUnlock()
+	return bt.logger
+}
+
+// LogInfo logs an info message
+func (bt *BaseTypedTask) LogInfo(message string, args ...interface{}) {
+	bt.mutex.RLock()
+	logger := bt.logger
+	bt.mutex.RUnlock()
+
+	if logger != nil {
+		logger.Info(message, args...)
+	}
+}
+
+// LogWarning logs a warning message
+func (bt *BaseTypedTask) LogWarning(message string, args ...interface{}) {
+	bt.mutex.RLock()
+	logger := bt.logger
+	bt.mutex.RUnlock()
+
+	if logger != nil {
+		logger.Warning(message, args...)
+	}
+}
+
+// LogError logs an error message
+func (bt *BaseTypedTask) LogError(message string, args ...interface{}) {
+	bt.mutex.RLock()
+	logger := bt.logger
+	bt.mutex.RUnlock()
+
+	if logger != nil {
+		logger.Error(message, args...)
+	}
+}
+
+// LogDebug logs a debug message
+func (bt *BaseTypedTask) LogDebug(message string, args ...interface{}) {
+	bt.mutex.RLock()
+	logger := bt.logger
+	bt.mutex.RUnlock()
+
+	if logger != nil {
+		logger.Debug(message, args...)
+	}
+}
+
+// LogWithFields logs a message with structured fields
+func (bt *BaseTypedTask) LogWithFields(level string, message string, fields map[string]interface{}) {
+	bt.mutex.RLock()
+	logger := bt.logger
+	bt.mutex.RUnlock()
+
+	if logger != nil {
+		logger.LogWithFields(level, message, fields)
+	}
 }
 
 // ValidateTyped provides basic validation for typed parameters

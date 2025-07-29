@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -488,6 +489,8 @@ func (s *MaintenanceIntegration) planDestinationForTask(task *TaskDetectionResul
 		return
 	}
 
+	glog.V(1).Infof("Planning destination for %s task on volume %d (server: %s)", task.TaskType, task.VolumeID, task.Server)
+
 	// Plan destination using the volume/shard tracker
 	destinationPlan, err := s.volumeShardTracker.PlanDestinationForVolume(
 		task.VolumeID,
@@ -496,25 +499,45 @@ func (s *MaintenanceIntegration) planDestinationForTask(task *TaskDetectionResul
 	)
 
 	if err != nil {
-		glog.V(2).Infof("Failed to plan destination for task %s volume %d: %v",
+		glog.Warningf("Failed to plan primary destination for %s task volume %d: %v",
 			task.TaskType, task.VolumeID, err)
-		return
+		// Don't return here - still try to create task params which might work with multiple destinations
 	}
 
 	// Create typed protobuf parameters based on operation type
 	switch opType {
 	case OpTypeErasureCoding:
+		if destinationPlan == nil {
+			// Create empty destination plan for EC tasks when primary planning fails
+			destinationPlan = &DestinationPlan{
+				TargetNode: "",
+				Conflicts:  []string{"primary_destination_planning_failed"},
+			}
+		}
 		s.createErasureCodingTaskParams(task, destinationPlan)
 	case OpTypeVolumeMove, OpTypeVolumeBalance:
+		if destinationPlan == nil {
+			glog.Warningf("Cannot create balance task for volume %d: destination planning failed", task.VolumeID)
+			return
+		}
 		s.createBalanceTaskParams(task, destinationPlan)
 	case OpTypeReplication:
+		if destinationPlan == nil {
+			glog.Warningf("Cannot create replication task for volume %d: destination planning failed", task.VolumeID)
+			return
+		}
 		s.createReplicationTaskParams(task, destinationPlan)
 	default:
 		glog.V(2).Infof("Unknown operation type for task %s: %v", task.TaskType, opType)
 	}
 
-	glog.V(1).Infof("Planned destination for %s task on volume %d: %s -> %s",
-		task.TaskType, task.VolumeID, task.Server, destinationPlan.TargetNode)
+	if destinationPlan != nil && destinationPlan.TargetNode != "" {
+		glog.V(1).Infof("Completed destination planning for %s task on volume %d: %s -> %s",
+			task.TaskType, task.VolumeID, task.Server, destinationPlan.TargetNode)
+	} else {
+		glog.V(1).Infof("Completed destination planning for %s task on volume %d: no primary destination planned",
+			task.TaskType, task.VolumeID)
+	}
 }
 
 // createVacuumTaskParams creates typed parameters for vacuum tasks
@@ -567,20 +590,30 @@ func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetecti
 	destNodes := multipleNodes
 	if len(destNodes) == 0 && primaryDestNode != "" {
 		destNodes = []string{primaryDestNode}
+		glog.V(1).Infof("Using primary destination node for EC task volume %d: %s", task.VolumeID, primaryDestNode)
 	}
 
+	// CRITICAL: If no destinations available, reject the task
+	if len(destNodes) == 0 {
+		glog.Warningf("No destinations available for EC task volume %d - rejecting task (insufficient capacity or nodes)", task.VolumeID)
+		// Don't create TypedParams - this will cause the task to be rejected
+		task.TypedParams = nil
+		return
+	}
+
+	// EC parameters are constants from erasure_coding package
+	dataShards := int32(erasure_coding.DataShardsCount)
+	parityShards := int32(erasure_coding.ParityShardsCount)
+
 	// Use configured values or defaults if config is not available
-	dataShards := int32(10)  // Default values
-	parityShards := int32(4) // Default values
 	workingDir := "/tmp/seaweedfs_ec_work"
 	masterClient := "localhost:9333" // Could be configurable
 	cleanupSource := true
 
 	if ecConfig != nil {
 		// Note: ErasureCodingTaskConfig has FullnessRatio, QuietForSeconds, MinVolumeSizeMb, CollectionFilter
-		// Other fields like DataShards, ParityShards, WorkingDir, MasterClient would need to be added
-		// to the protobuf definition if they should be configurable
-		// For now we use the existing fields and keep defaults for others
+		// DataShards and ParityShards are fixed constants from erasure_coding package
+		// Other fields like WorkingDir, MasterClient could be configurable if added to protobuf
 	}
 
 	// Create typed protobuf parameters
@@ -603,7 +636,8 @@ func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetecti
 		},
 	}
 
-	glog.V(1).Infof("Created EC task params with %d destinations for volume %d", len(destNodes), task.VolumeID)
+	glog.V(1).Infof("Created EC task params with %d destinations for volume %d (primary: %s, multiple: %v)",
+		len(destNodes), task.VolumeID, primaryDestNode, multipleNodes)
 }
 
 // createBalanceTaskParams creates typed parameters for balance/move tasks
@@ -682,29 +716,74 @@ func (s *MaintenanceIntegration) createReplicationTaskParams(task *TaskDetection
 func (s *MaintenanceIntegration) planMultipleECDestinations(volumeID uint32, sourceNode string) []string {
 	// Get available nodes from volume/shard tracker
 	clusterStats := s.volumeShardTracker.getClusterStats()
-	if clusterStats.TotalNodes < 14 {
-		glog.V(2).Infof("Insufficient nodes (%d) for full EC distribution, using available nodes", clusterStats.TotalNodes)
+	totalShards := erasure_coding.TotalShardsCount
+	if clusterStats.TotalNodes < totalShards {
+		glog.Warningf("EC destination planning failed for volume %d: insufficient cluster nodes (%d < %d required)",
+			volumeID, clusterStats.TotalNodes, totalShards)
+		return []string{}
 	}
+
+	// Get volume size - skip if unknown
+	volumeReplicas, err := s.volumeShardTracker.getVolumeInfo(volumeID)
+	if err != nil || len(volumeReplicas) == 0 {
+		glog.Warningf("EC destination planning failed for volume %d: volume info not available - %v", volumeID, err)
+		return []string{}
+	}
+
+	volumeSize := volumeReplicas[0].Size
+	if volumeSize == 0 {
+		glog.Warningf("EC destination planning failed for volume %d: volume has zero size", volumeID)
+		return []string{}
+	}
+
+	// Calculate estimated shard size based on EC constants
+	estimatedShardSize := volumeSize / uint64(erasure_coding.DataShardsCount)
+	glog.V(1).Infof("EC destination planning for volume %d: volume_size=%d bytes, estimated_shard_size=%d bytes",
+		volumeID, volumeSize, estimatedShardSize)
 
 	// Get all nodes with sufficient capacity
 	var availableNodes []string
+	var insufficientNodes []string
+	var excludedSource bool
+
 	for nodeID, nodeInfo := range s.volumeShardTracker.nodes {
 		if nodeID == sourceNode {
+			excludedSource = true
+			glog.V(2).Infof("EC destination planning for volume %d: excluding source node %s", volumeID, nodeID)
 			continue // Skip source node
 		}
 
-		// Estimate shard size (approximately 1/10th of volume size for data shards)
-		estimatedShardSize := uint64(10 * 1024 * 1024 * 1024) // Default 10GB if unknown
 		if nodeInfo.FreeCapacity >= estimatedShardSize {
 			availableNodes = append(availableNodes, nodeID)
+			glog.V(2).Infof("EC destination planning for volume %d: node %s has sufficient capacity (free: %d bytes)",
+				volumeID, nodeID, nodeInfo.FreeCapacity)
+		} else {
+			insufficientNodes = append(insufficientNodes, nodeID)
+			glog.V(2).Infof("EC destination planning for volume %d: node %s has insufficient capacity (free: %d bytes, need: %d bytes)",
+				volumeID, nodeID, nodeInfo.FreeCapacity, estimatedShardSize)
 		}
 	}
 
-	// Return up to 14 nodes for EC distribution (10 data + 4 parity shards)
-	maxNodes := 14
+	if !excludedSource {
+		glog.V(1).Infof("EC destination planning for volume %d: source node %s not found in cluster", volumeID, sourceNode)
+	}
+
+	if len(availableNodes) == 0 {
+		glog.Warningf("EC destination planning failed for volume %d: no nodes have sufficient capacity (%d bytes) for EC shards. "+
+			"Cluster status: total_nodes=%d, insufficient_nodes=%v, excluded_source=%s",
+			volumeID, estimatedShardSize, clusterStats.TotalNodes, insufficientNodes, sourceNode)
+		return []string{}
+	}
+
+	// Return up to totalShards nodes for EC distribution
+	maxNodes := totalShards
 	if len(availableNodes) < maxNodes {
 		maxNodes = len(availableNodes)
 	}
 
-	return availableNodes[:maxNodes]
+	selectedNodes := availableNodes[:maxNodes]
+	glog.Infof("EC destination planning succeeded for volume %d: selected %d nodes (shard_size: %d bytes, volume_size: %d bytes): %v",
+		volumeID, len(selectedNodes), estimatedShardSize, volumeSize, selectedNodes)
+
+	return selectedNodes
 }
