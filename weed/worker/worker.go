@@ -695,6 +695,12 @@ func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
 	glog.V(2).Infof("📫 ADMIN MESSAGE RECEIVED: Worker %s received admin message: %T", w.id, message.Message)
 
 	switch msg := message.Message.(type) {
+	case *worker_pb.AdminMessage_RegistrationResponse:
+		glog.V(2).Infof("✅ REGISTRATION RESPONSE: Worker %s received registration response", w.id)
+		w.handleRegistrationResponse(msg.RegistrationResponse)
+	case *worker_pb.AdminMessage_HeartbeatResponse:
+		glog.V(3).Infof("💓 HEARTBEAT RESPONSE: Worker %s received heartbeat response", w.id)
+		w.handleHeartbeatResponse(msg.HeartbeatResponse)
 	case *worker_pb.AdminMessage_TaskLogRequest:
 		glog.V(1).Infof("📋 TASK LOG REQUEST: Worker %s received task log request for task %s", w.id, msg.TaskLogRequest.TaskId)
 		w.handleTaskLogRequest(msg.TaskLogRequest)
