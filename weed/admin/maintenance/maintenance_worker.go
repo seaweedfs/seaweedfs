@@ -151,10 +151,10 @@ func (mws *MaintenanceWorkerService) executeGenericTask(task *MaintenanceTask) e
 
 	// Create task parameters
 	taskParams := types.TaskParams{
-		VolumeID:   task.VolumeID,
-		Server:     task.Server,
-		Collection: task.Collection,
-		Parameters: task.Parameters,
+		VolumeID:    task.VolumeID,
+		Server:      task.Server,
+		Collection:  task.Collection,
+		TypedParams: task.TypedParams,
 	}
 
 	// Create task instance using the registry

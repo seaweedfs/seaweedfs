@@ -7,7 +7,75 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
+
+// buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy
+func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
+	policy := &worker_pb.MaintenancePolicy{
+		GlobalMaxConcurrent:          4,
+		DefaultRepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
+		DefaultCheckIntervalSeconds:  12 * 3600, // 12 hours in seconds
+		TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
+	}
+
+	// Load vacuum task configuration
+	if vacuumConfig := vacuum.LoadConfigFromPersistence(nil); vacuumConfig != nil {
+		policy.TaskPolicies["vacuum"] = &worker_pb.TaskPolicy{
+			Enabled:               vacuumConfig.Enabled,
+			MaxConcurrent:         int32(vacuumConfig.MaxConcurrent),
+			RepeatIntervalSeconds: int32(vacuumConfig.ScanIntervalSeconds),
+			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
+			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
+				VacuumConfig: &worker_pb.VacuumTaskConfig{
+					GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
+					MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
+					MinIntervalSeconds: int32(vacuumConfig.MinIntervalSeconds),
+				},
+			},
+		}
+	}
+
+	// Load erasure coding task configuration
+	if ecConfig := erasure_coding.LoadConfigFromPersistence(nil); ecConfig != nil {
+		policy.TaskPolicies["erasure_coding"] = &worker_pb.TaskPolicy{
+			Enabled:               ecConfig.Enabled,
+			MaxConcurrent:         int32(ecConfig.MaxConcurrent),
+			RepeatIntervalSeconds: int32(ecConfig.ScanIntervalSeconds),
+			CheckIntervalSeconds:  int32(ecConfig.ScanIntervalSeconds),
+			TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
+				ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
+					FullnessRatio:    float64(ecConfig.FullnessRatio),
+					QuietForSeconds:  int32(ecConfig.QuietForSeconds),
+					MinVolumeSizeMb:  int32(ecConfig.MinSizeMB),
+					CollectionFilter: ecConfig.CollectionFilter,
+				},
+			},
+		}
+	}
+
+	// Load balance task configuration
+	if balanceConfig := balance.LoadConfigFromPersistence(nil); balanceConfig != nil {
+		policy.TaskPolicies["balance"] = &worker_pb.TaskPolicy{
+			Enabled:               balanceConfig.Enabled,
+			MaxConcurrent:         int32(balanceConfig.MaxConcurrent),
+			RepeatIntervalSeconds: int32(balanceConfig.ScanIntervalSeconds),
+			CheckIntervalSeconds:  int32(balanceConfig.ScanIntervalSeconds),
+			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
+				BalanceConfig: &worker_pb.BalanceTaskConfig{
+					ImbalanceThreshold: float64(balanceConfig.ImbalanceThreshold),
+					MinServerCount:     int32(balanceConfig.MinServerCount),
+				},
+			},
+		}
+	}
+
+	glog.V(1).Infof("Built maintenance policy from separate task configs - %d task policies loaded", len(policy.TaskPolicies))
+	return policy
+}
 
 // MaintenanceManager coordinates the maintenance system
 type MaintenanceManager struct {
@@ -32,8 +100,15 @@ func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig) *
 		config = DefaultMaintenanceConfig()
 	}
 
-	queue := NewMaintenanceQueue(config.Policy)
-	scanner := NewMaintenanceScanner(adminClient, config.Policy, queue)
+	// Use the policy from the config (which is populated from separate task files in LoadMaintenanceConfig)
+	policy := config.Policy
+	if policy == nil {
+		// Fallback: build policy from separate task configuration files if not already populated
+		policy = buildPolicyFromTaskConfigs()
+	}
+
+	queue := NewMaintenanceQueue(policy)
+	scanner := NewMaintenanceScanner(adminClient, policy, queue)
 
 	return &MaintenanceManager{
 		config:       config,
@@ -296,8 +371,19 @@ func (mm *MaintenanceManager) performCleanup() {
 	removedTasks := mm.queue.CleanupOldTasks(taskRetention)
 	removedWorkers := mm.queue.RemoveStaleWorkers(workerTimeout)
 
-	if removedTasks > 0 || removedWorkers > 0 {
-		glog.V(1).Infof("Cleanup completed: removed %d old tasks and %d stale workers", removedTasks, removedWorkers)
+	// Clean up stale pending operations (operations running for more than 4 hours)
+	staleOperationTimeout := 4 * time.Hour
+	removedOperations := 0
+	if mm.scanner != nil && mm.scanner.integration != nil {
+		pendingOps := mm.scanner.integration.GetPendingOperations()
+		if pendingOps != nil {
+			removedOperations = pendingOps.CleanupStaleOperations(staleOperationTimeout)
+		}
+	}
+
+	if removedTasks > 0 || removedWorkers > 0 || removedOperations > 0 {
+		glog.V(1).Infof("Cleanup completed: removed %d old tasks, %d stale workers, and %d stale operations",
+			removedTasks, removedWorkers, removedOperations)
 	}
 }
 

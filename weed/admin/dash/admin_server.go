@@ -22,6 +22,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
@@ -158,6 +161,9 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 	// Always initialize maintenance manager
 	server.InitMaintenanceManager(maintenanceConfig)
 
+	// Load saved task configurations from persistence
+	server.loadTaskConfigurationsFromPersistence()
+
 	// Start maintenance manager if enabled
 	if maintenanceConfig.Enabled {
 		go func() {
@@ -170,6 +176,31 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 	}
 
 	return server
+}
+
+// loadTaskConfigurationsFromPersistence loads saved task configurations from protobuf files
+func (s *AdminServer) loadTaskConfigurationsFromPersistence() {
+	if s.configPersistence == nil || !s.configPersistence.IsConfigured() {
+		glog.V(1).Infof("Config persistence not available, using default task configurations")
+		return
+	}
+
+	// Load vacuum task configuration
+	if err := vacuum.UpdateConfigFromPersistence(s.configPersistence); err != nil {
+		glog.Warningf("Failed to load vacuum configuration from persistence: %v", err)
+	}
+
+	// Load erasure coding task configuration
+	if err := erasure_coding.UpdateConfigFromPersistence(s.configPersistence); err != nil {
+		glog.Warningf("Failed to load erasure coding configuration from persistence: %v", err)
+	}
+
+	// Load balance task configuration
+	if err := balance.UpdateConfigFromPersistence(s.configPersistence); err != nil {
+		glog.Warningf("Failed to load balance configuration from persistence: %v", err)
+	}
+
+	glog.V(1).Infof("Task configurations loaded from persistence")
 }
 
 // GetCredentialManager returns the credential manager
@@ -930,13 +961,21 @@ func (as *AdminServer) GetMaintenanceConfigAPI(c *gin.Context) {
 
 // UpdateMaintenanceConfigAPI updates maintenance configuration via API
 func (as *AdminServer) UpdateMaintenanceConfigAPI(c *gin.Context) {
-	var config maintenance.MaintenanceConfig
-	if err := c.ShouldBindJSON(&config); err != nil {
+	// Parse JSON into a generic map first to handle type conversions
+	var jsonConfig map[string]interface{}
+	if err := c.ShouldBindJSON(&jsonConfig); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	err := as.updateMaintenanceConfig(&config)
+	// Convert JSON map to protobuf configuration
+	config, err := convertJSONToMaintenanceConfig(jsonConfig)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
+		return
+	}
+
+	err = as.updateMaintenanceConfig(config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1148,12 +1187,19 @@ func (as *AdminServer) getMaintenanceStats() (*MaintenanceStats, error) {
 
 // getMaintenanceConfig returns maintenance configuration
 func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigData, error) {
+	glog.Infof("MAINTENANCE_CONFIG_UI: Starting getMaintenanceConfig")
+
 	// Load configuration from persistent storage
 	config, err := as.configPersistence.LoadMaintenanceConfig()
 	if err != nil {
-		glog.Errorf("Failed to load maintenance configuration: %v", err)
+		glog.Errorf("MAINTENANCE_CONFIG_UI: Failed to load maintenance configuration: %v", err)
 		// Fallback to default configuration
 		config = maintenance.DefaultMaintenanceConfig()
+		glog.Infof("MAINTENANCE_CONFIG_UI: Using fallback default config - Enabled: %v, ScanInterval: %d, WorkerTimeout: %d, TaskTimeout: %d",
+			config.Enabled, config.ScanIntervalSeconds, config.WorkerTimeoutSeconds, config.TaskTimeoutSeconds)
+	} else {
+		glog.Infof("MAINTENANCE_CONFIG_UI: Successfully loaded config - Enabled: %v, ScanInterval: %d, WorkerTimeout: %d, TaskTimeout: %d",
+			config.Enabled, config.ScanIntervalSeconds, config.WorkerTimeoutSeconds, config.TaskTimeoutSeconds)
 	}
 
 	// Note: Do NOT apply schema defaults to existing config as it overrides saved values
@@ -1184,31 +1230,29 @@ func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigDat
 		}
 	}
 
-	return &MaintenanceConfigData{
+	configData := &MaintenanceConfigData{
 		Config:       config,
 		IsEnabled:    config.Enabled,
 		LastScanTime: systemStats.LastScanTime,
 		NextScanTime: systemStats.NextScanTime,
 		SystemStats:  systemStats,
 		MenuItems:    maintenance.BuildMaintenanceMenuItems(),
-	}, nil
+	}
+
+	glog.Infof("MAINTENANCE_CONFIG_UI: Returning config data - Config.Enabled: %v, IsEnabled: %v, Config.ScanInterval: %d",
+		configData.Config.Enabled, configData.IsEnabled, configData.Config.ScanIntervalSeconds)
+	glog.Infof("MAINTENANCE_CONFIG_UI: Full config values - WorkerTimeout: %d, TaskTimeout: %d, RetryDelay: %d, MaxRetries: %d, CleanupInterval: %d, TaskRetention: %d",
+		configData.Config.WorkerTimeoutSeconds, configData.Config.TaskTimeoutSeconds, configData.Config.RetryDelaySeconds,
+		configData.Config.MaxRetries, configData.Config.CleanupIntervalSeconds, configData.Config.TaskRetentionSeconds)
+
+	return configData, nil
 }
 
 // updateMaintenanceConfig updates maintenance configuration
 func (as *AdminServer) updateMaintenanceConfig(config *maintenance.MaintenanceConfig) error {
-	// Note: Do NOT apply schema defaults to user-submitted config as it overrides their intended values
-	// Schema defaults should only be used for new installations or missing fields, not user choices
-
-	// Get schema for validation only
-	schema := maintenance.GetMaintenanceConfigSchema()
-
-	// Validate configuration using schema
-	if validationErrors := schema.ValidateConfig(config); len(validationErrors) > 0 {
-		var errorMessages []string
-		for _, err := range validationErrors {
-			errorMessages = append(errorMessages, err.Error())
-		}
-		return fmt.Errorf("configuration validation failed: %v", errorMessages)
+	// Use ConfigField validation instead of standalone validation
+	if err := maintenance.ValidateMaintenanceConfigWithSchema(config); err != nil {
+		return fmt.Errorf("configuration validation failed: %v", err)
 	}
 
 	// Save configuration to persistent storage
@@ -1564,4 +1608,162 @@ func extractObjectLockInfoFromEntry(entry *filer_pb.Entry) (bool, string, int32)
 func extractVersioningFromEntry(entry *filer_pb.Entry) bool {
 	enabled, _ := s3api.LoadVersioningFromExtended(entry)
 	return enabled
+}
+
+// GetConfigPersistence returns the config persistence manager
+func (as *AdminServer) GetConfigPersistence() *ConfigPersistence {
+	return as.configPersistence
+}
+
+// convertJSONToMaintenanceConfig converts JSON map to protobuf MaintenanceConfig
+func convertJSONToMaintenanceConfig(jsonConfig map[string]interface{}) (*maintenance.MaintenanceConfig, error) {
+	config := &maintenance.MaintenanceConfig{}
+
+	// Helper function to get int32 from interface{}
+	getInt32 := func(key string) (int32, error) {
+		if val, ok := jsonConfig[key]; ok {
+			switch v := val.(type) {
+			case int:
+				return int32(v), nil
+			case int32:
+				return v, nil
+			case int64:
+				return int32(v), nil
+			case float64:
+				return int32(v), nil
+			default:
+				return 0, fmt.Errorf("invalid type for %s: expected number, got %T", key, v)
+			}
+		}
+		return 0, nil
+	}
+
+	// Helper function to get bool from interface{}
+	getBool := func(key string) bool {
+		if val, ok := jsonConfig[key]; ok {
+			if b, ok := val.(bool); ok {
+				return b
+			}
+		}
+		return false
+	}
+
+	var err error
+
+	// Convert basic fields
+	config.Enabled = getBool("enabled")
+
+	if config.ScanIntervalSeconds, err = getInt32("scan_interval_seconds"); err != nil {
+		return nil, err
+	}
+	if config.WorkerTimeoutSeconds, err = getInt32("worker_timeout_seconds"); err != nil {
+		return nil, err
+	}
+	if config.TaskTimeoutSeconds, err = getInt32("task_timeout_seconds"); err != nil {
+		return nil, err
+	}
+	if config.RetryDelaySeconds, err = getInt32("retry_delay_seconds"); err != nil {
+		return nil, err
+	}
+	if config.MaxRetries, err = getInt32("max_retries"); err != nil {
+		return nil, err
+	}
+	if config.CleanupIntervalSeconds, err = getInt32("cleanup_interval_seconds"); err != nil {
+		return nil, err
+	}
+	if config.TaskRetentionSeconds, err = getInt32("task_retention_seconds"); err != nil {
+		return nil, err
+	}
+
+	// Convert policy if present
+	if policyData, ok := jsonConfig["policy"]; ok {
+		if policyMap, ok := policyData.(map[string]interface{}); ok {
+			policy := &maintenance.MaintenancePolicy{}
+
+			if globalMaxConcurrent, err := getInt32FromMap(policyMap, "global_max_concurrent"); err != nil {
+				return nil, err
+			} else {
+				policy.GlobalMaxConcurrent = globalMaxConcurrent
+			}
+
+			if defaultRepeatIntervalSeconds, err := getInt32FromMap(policyMap, "default_repeat_interval_seconds"); err != nil {
+				return nil, err
+			} else {
+				policy.DefaultRepeatIntervalSeconds = defaultRepeatIntervalSeconds
+			}
+
+			if defaultCheckIntervalSeconds, err := getInt32FromMap(policyMap, "default_check_interval_seconds"); err != nil {
+				return nil, err
+			} else {
+				policy.DefaultCheckIntervalSeconds = defaultCheckIntervalSeconds
+			}
+
+			// Convert task policies if present
+			if taskPoliciesData, ok := policyMap["task_policies"]; ok {
+				if taskPoliciesMap, ok := taskPoliciesData.(map[string]interface{}); ok {
+					policy.TaskPolicies = make(map[string]*maintenance.TaskPolicy)
+
+					for taskType, taskPolicyData := range taskPoliciesMap {
+						if taskPolicyMap, ok := taskPolicyData.(map[string]interface{}); ok {
+							taskPolicy := &maintenance.TaskPolicy{}
+
+							taskPolicy.Enabled = getBoolFromMap(taskPolicyMap, "enabled")
+
+							if maxConcurrent, err := getInt32FromMap(taskPolicyMap, "max_concurrent"); err != nil {
+								return nil, err
+							} else {
+								taskPolicy.MaxConcurrent = maxConcurrent
+							}
+
+							if repeatIntervalSeconds, err := getInt32FromMap(taskPolicyMap, "repeat_interval_seconds"); err != nil {
+								return nil, err
+							} else {
+								taskPolicy.RepeatIntervalSeconds = repeatIntervalSeconds
+							}
+
+							if checkIntervalSeconds, err := getInt32FromMap(taskPolicyMap, "check_interval_seconds"); err != nil {
+								return nil, err
+							} else {
+								taskPolicy.CheckIntervalSeconds = checkIntervalSeconds
+							}
+
+							policy.TaskPolicies[taskType] = taskPolicy
+						}
+					}
+				}
+			}
+
+			config.Policy = policy
+		}
+	}
+
+	return config, nil
+}
+
+// Helper functions for map conversion
+func getInt32FromMap(m map[string]interface{}, key string) (int32, error) {
+	if val, ok := m[key]; ok {
+		switch v := val.(type) {
+		case int:
+			return int32(v), nil
+		case int32:
+			return v, nil
+		case int64:
+			return int32(v), nil
+		case float64:
+			return int32(v), nil
+		default:
+			return 0, fmt.Errorf("invalid type for %s: expected number, got %T", key, v)
+		}
+	}
+	return 0, nil
+}
+
+func getBoolFromMap(m map[string]interface{}, key string) bool {
+	if val, ok := m[key]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	return false
 }

@@ -1,7 +1,11 @@
 package vacuum
 
 import (
+	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/admin/config"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 )
 
@@ -35,6 +39,47 @@ func (c *Config) FromMap(data map[string]interface{}) error {
 // ToMap converts config to map using reflection for vacuum.Config
 func (c *Config) ToMap() map[string]interface{} {
 	return base.StructToMap(c)
+}
+
+// FromTaskPolicy loads configuration from a TaskPolicy protobuf message
+func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	if policy == nil {
+		return fmt.Errorf("policy is nil")
+	}
+
+	// Set general TaskPolicy fields
+	c.Enabled = policy.Enabled
+	c.MaxConcurrent = int(policy.MaxConcurrent)
+	c.ScanIntervalSeconds = int(policy.RepeatIntervalSeconds) // Direct seconds-to-seconds mapping
+
+	// Set vacuum-specific fields from the task config
+	if vacuumConfig := policy.GetVacuumConfig(); vacuumConfig != nil {
+		c.GarbageThreshold = float64(vacuumConfig.GarbageThreshold)
+		c.MinVolumeAgeSeconds = int(vacuumConfig.MinVolumeAgeHours * 3600) // Convert hours to seconds
+		c.MinIntervalSeconds = int(vacuumConfig.MinIntervalSeconds)
+	}
+
+	return nil
+}
+
+// LoadConfigFromPersistence loads configuration from the persistence layer if available
+func LoadConfigFromPersistence(configPersistence interface{}) *Config {
+	config := NewDefaultConfig()
+
+	// Try to load from persistence if available
+	if persistence, ok := configPersistence.(interface {
+		LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, error)
+	}); ok {
+		if policy, err := persistence.LoadVacuumTaskPolicy(); err == nil && policy != nil {
+			if err := config.FromTaskPolicy(policy); err == nil {
+				glog.V(1).Infof("Loaded vacuum configuration from persistence")
+				return config
+			}
+		}
+	}
+
+	glog.V(1).Infof("Using default vacuum configuration")
+	return config
 }
 
 // GetConfigSpec returns the configuration schema for vacuum tasks

@@ -626,12 +626,6 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 		select {
 		case response := <-c.incoming:
 			if taskAssign := response.GetTaskAssignment(); taskAssign != nil {
-				// Convert parameters map[string]string to map[string]interface{}
-				parameters := make(map[string]interface{})
-				for k, v := range taskAssign.Params.Parameters {
-					parameters[k] = v
-				}
-
 				// Convert to our task type
 				task := &types.Task{
 					ID:         taskAssign.TaskId,
@@ -642,7 +636,8 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 					Collection: taskAssign.Params.Collection,
 					Priority:   types.TaskPriority(taskAssign.Priority),
 					CreatedAt:  time.Unix(taskAssign.CreatedTime, 0),
-					Parameters: parameters,
+					// Use typed protobuf parameters directly
+					TypedParams: taskAssign.Params,
 				}
 				return task, nil
 			}

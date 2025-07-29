@@ -1,7 +1,11 @@
 package balance
 
 import (
+	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/admin/config"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 )
 
@@ -117,4 +121,44 @@ func (c *Config) FromMap(data map[string]interface{}) error {
 // ToMap converts config to map using reflection for balance.Config
 func (c *Config) ToMap() map[string]interface{} {
 	return base.StructToMap(c)
+}
+
+// FromTaskPolicy loads configuration from a TaskPolicy protobuf message
+func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	if policy == nil {
+		return fmt.Errorf("policy is nil")
+	}
+
+	// Set general TaskPolicy fields
+	c.Enabled = policy.Enabled
+	c.MaxConcurrent = int(policy.MaxConcurrent)
+	c.ScanIntervalSeconds = int(policy.RepeatIntervalSeconds) // Direct seconds-to-seconds mapping
+
+	// Set balance-specific fields from the task config
+	if balanceConfig := policy.GetBalanceConfig(); balanceConfig != nil {
+		c.ImbalanceThreshold = float64(balanceConfig.ImbalanceThreshold)
+		c.MinServerCount = int(balanceConfig.MinServerCount)
+	}
+
+	return nil
+}
+
+// LoadConfigFromPersistence loads configuration from the persistence layer if available
+func LoadConfigFromPersistence(configPersistence interface{}) *Config {
+	config := NewDefaultConfig()
+
+	// Try to load from persistence if available
+	if persistence, ok := configPersistence.(interface {
+		LoadBalanceTaskPolicy() (*worker_pb.TaskPolicy, error)
+	}); ok {
+		if policy, err := persistence.LoadBalanceTaskPolicy(); err == nil && policy != nil {
+			if err := config.FromTaskPolicy(policy); err == nil {
+				glog.V(1).Infof("Loaded balance configuration from persistence")
+				return config
+			}
+		}
+	}
+
+	glog.V(1).Infof("Using default balance configuration")
+	return config
 }

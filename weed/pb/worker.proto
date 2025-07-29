@@ -90,7 +90,7 @@ message TaskAssignment {
   map<string, string> metadata = 6;
 }
 
-// TaskParams contains task-specific parameters
+// TaskParams contains task-specific parameters with typed variants
 message TaskParams {
   uint32 volume_id = 1;
   string server = 2;
@@ -98,7 +98,60 @@ message TaskParams {
   string data_center = 4;
   string rack = 5;
   repeated string replicas = 6;
-  map<string, string> parameters = 7;
+  
+  // Typed task parameters
+  oneof task_params {
+    VacuumTaskParams vacuum_params = 7;
+    ErasureCodingTaskParams erasure_coding_params = 8;
+    BalanceTaskParams balance_params = 9;
+    ReplicationTaskParams replication_params = 10;
+  }
+}
+
+// VacuumTaskParams for vacuum operations
+message VacuumTaskParams {
+  double garbage_threshold = 1;           // Minimum garbage ratio to trigger vacuum
+  bool force_vacuum = 2;                  // Force vacuum even if below threshold
+  int32 batch_size = 3;                   // Number of files to process per batch
+  string working_dir = 4;                 // Working directory for temporary files
+  bool verify_checksum = 5;               // Verify file checksums during vacuum
+}
+
+// ErasureCodingTaskParams for EC encoding operations
+message ErasureCodingTaskParams {
+  repeated string dest_nodes = 1;         // Planned destination nodes for shards
+  string primary_dest_node = 2;           // Primary destination node
+  uint64 estimated_shard_size = 3;        // Estimated size per shard
+  int32 data_shards = 4;                  // Number of data shards (default: 10)
+  int32 parity_shards = 5;                // Number of parity shards (default: 4)
+  string working_dir = 6;                 // Working directory for EC processing
+  string master_client = 7;               // Master server address
+  bool cleanup_source = 8;                // Whether to cleanup source volume after EC
+  repeated string placement_conflicts = 9; // Any placement rule conflicts
+}
+
+// BalanceTaskParams for volume balancing operations
+message BalanceTaskParams {
+  string dest_node = 1;                   // Planned destination node
+  uint64 estimated_size = 2;              // Estimated volume size
+  string dest_rack = 3;                   // Destination rack for placement rules
+  string dest_dc = 4;                     // Destination data center
+  double placement_score = 5;             // Quality score of the planned placement
+  repeated string placement_conflicts = 6; // Any placement rule conflicts
+  bool force_move = 7;                    // Force move even with conflicts
+  int32 timeout_seconds = 8;              // Operation timeout
+}
+
+// ReplicationTaskParams for adding replicas
+message ReplicationTaskParams {
+  string dest_node = 1;                   // Planned destination node for new replica
+  uint64 estimated_size = 2;              // Estimated replica size
+  string dest_rack = 3;                   // Destination rack for placement rules
+  string dest_dc = 4;                     // Destination data center
+  double placement_score = 5;             // Quality score of the planned placement
+  repeated string placement_conflicts = 6; // Any placement rule conflicts
+  int32 replica_count = 7;                // Target replica count
+  bool verify_consistency = 8;            // Verify replica consistency after creation
 }
 
 // TaskUpdate reports task progress
@@ -139,4 +192,71 @@ message WorkerShutdown {
 message AdminShutdown {
   string reason = 1;
   int32 graceful_shutdown_seconds = 2;
+}
+
+// ========== Maintenance Configuration Messages ==========
+
+// MaintenanceConfig holds configuration for the maintenance system
+message MaintenanceConfig {
+  bool enabled = 1;
+  int32 scan_interval_seconds = 2;    // How often to scan for maintenance needs
+  int32 worker_timeout_seconds = 3;   // Worker heartbeat timeout
+  int32 task_timeout_seconds = 4;     // Individual task timeout
+  int32 retry_delay_seconds = 5;      // Delay between retries
+  int32 max_retries = 6;              // Default max retries for tasks
+  int32 cleanup_interval_seconds = 7; // How often to clean up old tasks
+  int32 task_retention_seconds = 8;   // How long to keep completed/failed tasks
+  MaintenancePolicy policy = 9;
+}
+
+// MaintenancePolicy defines policies for maintenance operations
+message MaintenancePolicy {
+  map<string, TaskPolicy> task_policies = 1;  // Task type -> policy mapping
+  int32 global_max_concurrent = 2;             // Overall limit across all task types
+  int32 default_repeat_interval_seconds = 3;   // Default seconds if task doesn't specify
+  int32 default_check_interval_seconds = 4;    // Default seconds for periodic checks
+}
+
+// TaskPolicy represents configuration for a specific task type
+message TaskPolicy {
+  bool enabled = 1;
+  int32 max_concurrent = 2;
+  int32 repeat_interval_seconds = 3;  // Seconds to wait before repeating
+  int32 check_interval_seconds = 4;   // Seconds between checks
+  
+  // Typed task-specific configuration (replaces generic map)
+  oneof task_config {
+    VacuumTaskConfig vacuum_config = 5;
+    ErasureCodingTaskConfig erasure_coding_config = 6;
+    BalanceTaskConfig balance_config = 7;
+    ReplicationTaskConfig replication_config = 8;
+  }
+}
+
+// Task-specific configuration messages
+
+// VacuumTaskConfig contains vacuum-specific configuration
+message VacuumTaskConfig {
+  double garbage_threshold = 1;     // Minimum garbage ratio to trigger vacuum (0.0-1.0)
+  int32 min_volume_age_hours = 2;   // Minimum age before vacuum is considered
+  int32 min_interval_seconds = 3;   // Minimum time between vacuum operations on the same volume
+}
+
+// ErasureCodingTaskConfig contains EC-specific configuration
+message ErasureCodingTaskConfig {
+  double fullness_ratio = 1;        // Minimum fullness ratio to trigger EC (0.0-1.0)
+  int32 quiet_for_seconds = 2;      // Minimum quiet time before EC
+  int32 min_volume_size_mb = 3;     // Minimum volume size for EC
+  string collection_filter = 4;     // Only process volumes from specific collections
+}
+
+// BalanceTaskConfig contains balance-specific configuration
+message BalanceTaskConfig {
+  double imbalance_threshold = 1;   // Threshold for triggering rebalancing (0.0-1.0)
+  int32 min_server_count = 2;       // Minimum number of servers required for balancing
+}
+
+// ReplicationTaskConfig contains replication-specific configuration
+message ReplicationTaskConfig {
+  int32 target_replica_count = 1;   // Target number of replicas
 } 

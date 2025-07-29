@@ -72,16 +72,6 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		Priority:   types.TaskPriorityNormal,
 		Reason:     reason,
 		ScheduleAt: time.Now(),
-		Parameters: map[string]interface{}{
-			"imbalance_ratio":        imbalanceRatio,
-			"threshold":              balanceConfig.ImbalanceThreshold,
-			"max_volumes":            maxVolumes,
-			"min_volumes":            minVolumes,
-			"avg_volumes_per_server": avgVolumesPerServer,
-			"max_server":             maxServer,
-			"min_server":             minServer,
-			"total_servers":          len(serverVolumeCounts),
-		},
 	}
 
 	return []*types.TaskDetectionResult{task}, nil
@@ -120,21 +110,6 @@ func Scheduling(task *types.Task, runningTasks []*types.Task, availableWorkers [
 
 // CreateTask creates a new balance task instance
 func CreateTask(params types.TaskParams) (types.TaskInterface, error) {
-	// Extract configuration from params
-	var config *Config
-	if configData, ok := params.Parameters["config"]; ok {
-		if configMap, ok := configData.(map[string]interface{}); ok {
-			config = &Config{}
-			if err := config.FromMap(configMap); err != nil {
-				return nil, fmt.Errorf("failed to parse balance config: %v", err)
-			}
-		}
-	}
-
-	if config == nil {
-		config = NewDefaultConfig()
-	}
-
 	// Create and return the balance task using existing Task type
 	return NewTask(params.Server, params.VolumeID, params.Collection), nil
 }

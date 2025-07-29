@@ -350,13 +350,48 @@ func (w *Worker) executeTask(task *types.Task) {
 		taskWorkingDir = fmt.Sprintf("%s/%s", w.config.BaseWorkingDir, string(task.Type))
 	}
 
-	// Create task instance
+	// Check if we have typed protobuf parameters
+	if task.TypedParams != nil {
+		// Use typed task execution
+		glog.V(1).Infof("Executing task %s with typed protobuf parameters", task.ID)
+
+		typedRegistry := types.GetGlobalTypedTaskRegistry()
+		typedTaskInstance, err := typedRegistry.CreateTypedTask(task.Type)
+		if err != nil {
+			// Fall back to legacy task execution if typed task not available
+			glog.V(1).Infof("Typed task not available for %s, falling back to legacy execution: %v", task.Type, err)
+		} else {
+			// Set progress callback
+			typedTaskInstance.SetProgressCallback(func(progress float64) {
+				// Report progress updates
+				glog.V(2).Infof("Task %s progress: %.1f%%", task.ID, progress)
+			})
+
+			// Execute typed task
+			err = typedTaskInstance.ExecuteTyped(task.TypedParams)
+
+			// Report completion
+			if err != nil {
+				w.completeTask(task.ID, false, err.Error())
+				w.tasksFailed++
+				glog.Errorf("Worker %s failed to execute typed task %s: %v", w.id, task.ID, err)
+			} else {
+				w.completeTask(task.ID, true, "")
+				w.tasksCompleted++
+				glog.Infof("Worker %s completed typed task %s successfully", w.id, task.ID)
+			}
+			return
+		}
+	}
+
+	// Legacy task execution path
+	glog.V(1).Infof("Executing task %s with legacy parameters", task.ID)
 	taskParams := types.TaskParams{
 		VolumeID:       task.VolumeID,
 		Server:         task.Server,
 		Collection:     task.Collection,
 		WorkingDir:     taskWorkingDir,
-		Parameters:     task.Parameters,
+		TypedParams:    task.TypedParams,
 		GrpcDialOption: w.config.GrpcDialOption,
 	}
 

@@ -769,16 +769,24 @@ func (x *TaskAssignment) GetMetadata() map[string]string {
 	return nil
 }
 
-// TaskParams contains task-specific parameters
+// TaskParams contains task-specific parameters with typed variants
 type TaskParams struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Server        string                 `protobuf:"bytes,2,opt,name=server,proto3" json:"server,omitempty"`
-	Collection    string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
-	DataCenter    string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
-	Rack          string                 `protobuf:"bytes,5,opt,name=rack,proto3" json:"rack,omitempty"`
-	Replicas      []string               `protobuf:"bytes,6,rep,name=replicas,proto3" json:"replicas,omitempty"`
-	Parameters    map[string]string      `protobuf:"bytes,7,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	VolumeId   uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Server     string                 `protobuf:"bytes,2,opt,name=server,proto3" json:"server,omitempty"`
+	Collection string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
+	DataCenter string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
+	Rack       string                 `protobuf:"bytes,5,opt,name=rack,proto3" json:"rack,omitempty"`
+	Replicas   []string               `protobuf:"bytes,6,rep,name=replicas,proto3" json:"replicas,omitempty"`
+	// Typed task parameters
+	//
+	// Types that are valid to be assigned to TaskParams:
+	//
+	//	*TaskParams_VacuumParams
+	//	*TaskParams_ErasureCodingParams
+	//	*TaskParams_BalanceParams
+	//	*TaskParams_ReplicationParams
+	TaskParams    isTaskParams_TaskParams `protobuf_oneof:"task_params"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -855,11 +863,463 @@ func (x *TaskParams) GetReplicas() []string {
 	return nil
 }
 
-func (x *TaskParams) GetParameters() map[string]string {
+func (x *TaskParams) GetTaskParams() isTaskParams_TaskParams {
 	if x != nil {
-		return x.Parameters
+		return x.TaskParams
 	}
 	return nil
+}
+
+func (x *TaskParams) GetVacuumParams() *VacuumTaskParams {
+	if x != nil {
+		if x, ok := x.TaskParams.(*TaskParams_VacuumParams); ok {
+			return x.VacuumParams
+		}
+	}
+	return nil
+}
+
+func (x *TaskParams) GetErasureCodingParams() *ErasureCodingTaskParams {
+	if x != nil {
+		if x, ok := x.TaskParams.(*TaskParams_ErasureCodingParams); ok {
+			return x.ErasureCodingParams
+		}
+	}
+	return nil
+}
+
+func (x *TaskParams) GetBalanceParams() *BalanceTaskParams {
+	if x != nil {
+		if x, ok := x.TaskParams.(*TaskParams_BalanceParams); ok {
+			return x.BalanceParams
+		}
+	}
+	return nil
+}
+
+func (x *TaskParams) GetReplicationParams() *ReplicationTaskParams {
+	if x != nil {
+		if x, ok := x.TaskParams.(*TaskParams_ReplicationParams); ok {
+			return x.ReplicationParams
+		}
+	}
+	return nil
+}
+
+type isTaskParams_TaskParams interface {
+	isTaskParams_TaskParams()
+}
+
+type TaskParams_VacuumParams struct {
+	VacuumParams *VacuumTaskParams `protobuf:"bytes,7,opt,name=vacuum_params,json=vacuumParams,proto3,oneof"`
+}
+
+type TaskParams_ErasureCodingParams struct {
+	ErasureCodingParams *ErasureCodingTaskParams `protobuf:"bytes,8,opt,name=erasure_coding_params,json=erasureCodingParams,proto3,oneof"`
+}
+
+type TaskParams_BalanceParams struct {
+	BalanceParams *BalanceTaskParams `protobuf:"bytes,9,opt,name=balance_params,json=balanceParams,proto3,oneof"`
+}
+
+type TaskParams_ReplicationParams struct {
+	ReplicationParams *ReplicationTaskParams `protobuf:"bytes,10,opt,name=replication_params,json=replicationParams,proto3,oneof"`
+}
+
+func (*TaskParams_VacuumParams) isTaskParams_TaskParams() {}
+
+func (*TaskParams_ErasureCodingParams) isTaskParams_TaskParams() {}
+
+func (*TaskParams_BalanceParams) isTaskParams_TaskParams() {}
+
+func (*TaskParams_ReplicationParams) isTaskParams_TaskParams() {}
+
+// VacuumTaskParams for vacuum operations
+type VacuumTaskParams struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	GarbageThreshold float64                `protobuf:"fixed64,1,opt,name=garbage_threshold,json=garbageThreshold,proto3" json:"garbage_threshold,omitempty"` // Minimum garbage ratio to trigger vacuum
+	ForceVacuum      bool                   `protobuf:"varint,2,opt,name=force_vacuum,json=forceVacuum,proto3" json:"force_vacuum,omitempty"`                 // Force vacuum even if below threshold
+	BatchSize        int32                  `protobuf:"varint,3,opt,name=batch_size,json=batchSize,proto3" json:"batch_size,omitempty"`                       // Number of files to process per batch
+	WorkingDir       string                 `protobuf:"bytes,4,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`                     // Working directory for temporary files
+	VerifyChecksum   bool                   `protobuf:"varint,5,opt,name=verify_checksum,json=verifyChecksum,proto3" json:"verify_checksum,omitempty"`        // Verify file checksums during vacuum
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *VacuumTaskParams) Reset() {
+	*x = VacuumTaskParams{}
+	mi := &file_worker_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VacuumTaskParams) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VacuumTaskParams) ProtoMessage() {}
+
+func (x *VacuumTaskParams) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VacuumTaskParams.ProtoReflect.Descriptor instead.
+func (*VacuumTaskParams) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *VacuumTaskParams) GetGarbageThreshold() float64 {
+	if x != nil {
+		return x.GarbageThreshold
+	}
+	return 0
+}
+
+func (x *VacuumTaskParams) GetForceVacuum() bool {
+	if x != nil {
+		return x.ForceVacuum
+	}
+	return false
+}
+
+func (x *VacuumTaskParams) GetBatchSize() int32 {
+	if x != nil {
+		return x.BatchSize
+	}
+	return 0
+}
+
+func (x *VacuumTaskParams) GetWorkingDir() string {
+	if x != nil {
+		return x.WorkingDir
+	}
+	return ""
+}
+
+func (x *VacuumTaskParams) GetVerifyChecksum() bool {
+	if x != nil {
+		return x.VerifyChecksum
+	}
+	return false
+}
+
+// ErasureCodingTaskParams for EC encoding operations
+type ErasureCodingTaskParams struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	DestNodes          []string               `protobuf:"bytes,1,rep,name=dest_nodes,json=destNodes,proto3" json:"dest_nodes,omitempty"`                               // Planned destination nodes for shards
+	PrimaryDestNode    string                 `protobuf:"bytes,2,opt,name=primary_dest_node,json=primaryDestNode,proto3" json:"primary_dest_node,omitempty"`           // Primary destination node
+	EstimatedShardSize uint64                 `protobuf:"varint,3,opt,name=estimated_shard_size,json=estimatedShardSize,proto3" json:"estimated_shard_size,omitempty"` // Estimated size per shard
+	DataShards         int32                  `protobuf:"varint,4,opt,name=data_shards,json=dataShards,proto3" json:"data_shards,omitempty"`                           // Number of data shards (default: 10)
+	ParityShards       int32                  `protobuf:"varint,5,opt,name=parity_shards,json=parityShards,proto3" json:"parity_shards,omitempty"`                     // Number of parity shards (default: 4)
+	WorkingDir         string                 `protobuf:"bytes,6,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`                            // Working directory for EC processing
+	MasterClient       string                 `protobuf:"bytes,7,opt,name=master_client,json=masterClient,proto3" json:"master_client,omitempty"`                      // Master server address
+	CleanupSource      bool                   `protobuf:"varint,8,opt,name=cleanup_source,json=cleanupSource,proto3" json:"cleanup_source,omitempty"`                  // Whether to cleanup source volume after EC
+	PlacementConflicts []string               `protobuf:"bytes,9,rep,name=placement_conflicts,json=placementConflicts,proto3" json:"placement_conflicts,omitempty"`    // Any placement rule conflicts
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ErasureCodingTaskParams) Reset() {
+	*x = ErasureCodingTaskParams{}
+	mi := &file_worker_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ErasureCodingTaskParams) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ErasureCodingTaskParams) ProtoMessage() {}
+
+func (x *ErasureCodingTaskParams) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ErasureCodingTaskParams.ProtoReflect.Descriptor instead.
+func (*ErasureCodingTaskParams) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ErasureCodingTaskParams) GetDestNodes() []string {
+	if x != nil {
+		return x.DestNodes
+	}
+	return nil
+}
+
+func (x *ErasureCodingTaskParams) GetPrimaryDestNode() string {
+	if x != nil {
+		return x.PrimaryDestNode
+	}
+	return ""
+}
+
+func (x *ErasureCodingTaskParams) GetEstimatedShardSize() uint64 {
+	if x != nil {
+		return x.EstimatedShardSize
+	}
+	return 0
+}
+
+func (x *ErasureCodingTaskParams) GetDataShards() int32 {
+	if x != nil {
+		return x.DataShards
+	}
+	return 0
+}
+
+func (x *ErasureCodingTaskParams) GetParityShards() int32 {
+	if x != nil {
+		return x.ParityShards
+	}
+	return 0
+}
+
+func (x *ErasureCodingTaskParams) GetWorkingDir() string {
+	if x != nil {
+		return x.WorkingDir
+	}
+	return ""
+}
+
+func (x *ErasureCodingTaskParams) GetMasterClient() string {
+	if x != nil {
+		return x.MasterClient
+	}
+	return ""
+}
+
+func (x *ErasureCodingTaskParams) GetCleanupSource() bool {
+	if x != nil {
+		return x.CleanupSource
+	}
+	return false
+}
+
+func (x *ErasureCodingTaskParams) GetPlacementConflicts() []string {
+	if x != nil {
+		return x.PlacementConflicts
+	}
+	return nil
+}
+
+// BalanceTaskParams for volume balancing operations
+type BalanceTaskParams struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	DestNode           string                 `protobuf:"bytes,1,opt,name=dest_node,json=destNode,proto3" json:"dest_node,omitempty"`                               // Planned destination node
+	EstimatedSize      uint64                 `protobuf:"varint,2,opt,name=estimated_size,json=estimatedSize,proto3" json:"estimated_size,omitempty"`               // Estimated volume size
+	DestRack           string                 `protobuf:"bytes,3,opt,name=dest_rack,json=destRack,proto3" json:"dest_rack,omitempty"`                               // Destination rack for placement rules
+	DestDc             string                 `protobuf:"bytes,4,opt,name=dest_dc,json=destDc,proto3" json:"dest_dc,omitempty"`                                     // Destination data center
+	PlacementScore     float64                `protobuf:"fixed64,5,opt,name=placement_score,json=placementScore,proto3" json:"placement_score,omitempty"`           // Quality score of the planned placement
+	PlacementConflicts []string               `protobuf:"bytes,6,rep,name=placement_conflicts,json=placementConflicts,proto3" json:"placement_conflicts,omitempty"` // Any placement rule conflicts
+	ForceMove          bool                   `protobuf:"varint,7,opt,name=force_move,json=forceMove,proto3" json:"force_move,omitempty"`                           // Force move even with conflicts
+	TimeoutSeconds     int32                  `protobuf:"varint,8,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`            // Operation timeout
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *BalanceTaskParams) Reset() {
+	*x = BalanceTaskParams{}
+	mi := &file_worker_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BalanceTaskParams) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BalanceTaskParams) ProtoMessage() {}
+
+func (x *BalanceTaskParams) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BalanceTaskParams.ProtoReflect.Descriptor instead.
+func (*BalanceTaskParams) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *BalanceTaskParams) GetDestNode() string {
+	if x != nil {
+		return x.DestNode
+	}
+	return ""
+}
+
+func (x *BalanceTaskParams) GetEstimatedSize() uint64 {
+	if x != nil {
+		return x.EstimatedSize
+	}
+	return 0
+}
+
+func (x *BalanceTaskParams) GetDestRack() string {
+	if x != nil {
+		return x.DestRack
+	}
+	return ""
+}
+
+func (x *BalanceTaskParams) GetDestDc() string {
+	if x != nil {
+		return x.DestDc
+	}
+	return ""
+}
+
+func (x *BalanceTaskParams) GetPlacementScore() float64 {
+	if x != nil {
+		return x.PlacementScore
+	}
+	return 0
+}
+
+func (x *BalanceTaskParams) GetPlacementConflicts() []string {
+	if x != nil {
+		return x.PlacementConflicts
+	}
+	return nil
+}
+
+func (x *BalanceTaskParams) GetForceMove() bool {
+	if x != nil {
+		return x.ForceMove
+	}
+	return false
+}
+
+func (x *BalanceTaskParams) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+// ReplicationTaskParams for adding replicas
+type ReplicationTaskParams struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	DestNode           string                 `protobuf:"bytes,1,opt,name=dest_node,json=destNode,proto3" json:"dest_node,omitempty"`                               // Planned destination node for new replica
+	EstimatedSize      uint64                 `protobuf:"varint,2,opt,name=estimated_size,json=estimatedSize,proto3" json:"estimated_size,omitempty"`               // Estimated replica size
+	DestRack           string                 `protobuf:"bytes,3,opt,name=dest_rack,json=destRack,proto3" json:"dest_rack,omitempty"`                               // Destination rack for placement rules
+	DestDc             string                 `protobuf:"bytes,4,opt,name=dest_dc,json=destDc,proto3" json:"dest_dc,omitempty"`                                     // Destination data center
+	PlacementScore     float64                `protobuf:"fixed64,5,opt,name=placement_score,json=placementScore,proto3" json:"placement_score,omitempty"`           // Quality score of the planned placement
+	PlacementConflicts []string               `protobuf:"bytes,6,rep,name=placement_conflicts,json=placementConflicts,proto3" json:"placement_conflicts,omitempty"` // Any placement rule conflicts
+	ReplicaCount       int32                  `protobuf:"varint,7,opt,name=replica_count,json=replicaCount,proto3" json:"replica_count,omitempty"`                  // Target replica count
+	VerifyConsistency  bool                   `protobuf:"varint,8,opt,name=verify_consistency,json=verifyConsistency,proto3" json:"verify_consistency,omitempty"`   // Verify replica consistency after creation
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ReplicationTaskParams) Reset() {
+	*x = ReplicationTaskParams{}
+	mi := &file_worker_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplicationTaskParams) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplicationTaskParams) ProtoMessage() {}
+
+func (x *ReplicationTaskParams) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplicationTaskParams.ProtoReflect.Descriptor instead.
+func (*ReplicationTaskParams) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ReplicationTaskParams) GetDestNode() string {
+	if x != nil {
+		return x.DestNode
+	}
+	return ""
+}
+
+func (x *ReplicationTaskParams) GetEstimatedSize() uint64 {
+	if x != nil {
+		return x.EstimatedSize
+	}
+	return 0
+}
+
+func (x *ReplicationTaskParams) GetDestRack() string {
+	if x != nil {
+		return x.DestRack
+	}
+	return ""
+}
+
+func (x *ReplicationTaskParams) GetDestDc() string {
+	if x != nil {
+		return x.DestDc
+	}
+	return ""
+}
+
+func (x *ReplicationTaskParams) GetPlacementScore() float64 {
+	if x != nil {
+		return x.PlacementScore
+	}
+	return 0
+}
+
+func (x *ReplicationTaskParams) GetPlacementConflicts() []string {
+	if x != nil {
+		return x.PlacementConflicts
+	}
+	return nil
+}
+
+func (x *ReplicationTaskParams) GetReplicaCount() int32 {
+	if x != nil {
+		return x.ReplicaCount
+	}
+	return 0
+}
+
+func (x *ReplicationTaskParams) GetVerifyConsistency() bool {
+	if x != nil {
+		return x.VerifyConsistency
+	}
+	return false
 }
 
 // TaskUpdate reports task progress
@@ -877,7 +1337,7 @@ type TaskUpdate struct {
 
 func (x *TaskUpdate) Reset() {
 	*x = TaskUpdate{}
-	mi := &file_worker_proto_msgTypes[9]
+	mi := &file_worker_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -889,7 +1349,7 @@ func (x *TaskUpdate) String() string {
 func (*TaskUpdate) ProtoMessage() {}
 
 func (x *TaskUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[9]
+	mi := &file_worker_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -902,7 +1362,7 @@ func (x *TaskUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskUpdate.ProtoReflect.Descriptor instead.
 func (*TaskUpdate) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{9}
+	return file_worker_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *TaskUpdate) GetTaskId() string {
@@ -962,7 +1422,7 @@ type TaskComplete struct {
 
 func (x *TaskComplete) Reset() {
 	*x = TaskComplete{}
-	mi := &file_worker_proto_msgTypes[10]
+	mi := &file_worker_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -974,7 +1434,7 @@ func (x *TaskComplete) String() string {
 func (*TaskComplete) ProtoMessage() {}
 
 func (x *TaskComplete) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[10]
+	mi := &file_worker_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -987,7 +1447,7 @@ func (x *TaskComplete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskComplete.ProtoReflect.Descriptor instead.
 func (*TaskComplete) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{10}
+	return file_worker_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *TaskComplete) GetTaskId() string {
@@ -1044,7 +1504,7 @@ type TaskCancellation struct {
 
 func (x *TaskCancellation) Reset() {
 	*x = TaskCancellation{}
-	mi := &file_worker_proto_msgTypes[11]
+	mi := &file_worker_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1056,7 +1516,7 @@ func (x *TaskCancellation) String() string {
 func (*TaskCancellation) ProtoMessage() {}
 
 func (x *TaskCancellation) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[11]
+	mi := &file_worker_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1069,7 +1529,7 @@ func (x *TaskCancellation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskCancellation.ProtoReflect.Descriptor instead.
 func (*TaskCancellation) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{11}
+	return file_worker_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *TaskCancellation) GetTaskId() string {
@@ -1105,7 +1565,7 @@ type WorkerShutdown struct {
 
 func (x *WorkerShutdown) Reset() {
 	*x = WorkerShutdown{}
-	mi := &file_worker_proto_msgTypes[12]
+	mi := &file_worker_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1117,7 +1577,7 @@ func (x *WorkerShutdown) String() string {
 func (*WorkerShutdown) ProtoMessage() {}
 
 func (x *WorkerShutdown) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[12]
+	mi := &file_worker_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1130,7 +1590,7 @@ func (x *WorkerShutdown) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerShutdown.ProtoReflect.Descriptor instead.
 func (*WorkerShutdown) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{12}
+	return file_worker_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *WorkerShutdown) GetWorkerId() string {
@@ -1165,7 +1625,7 @@ type AdminShutdown struct {
 
 func (x *AdminShutdown) Reset() {
 	*x = AdminShutdown{}
-	mi := &file_worker_proto_msgTypes[13]
+	mi := &file_worker_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1177,7 +1637,7 @@ func (x *AdminShutdown) String() string {
 func (*AdminShutdown) ProtoMessage() {}
 
 func (x *AdminShutdown) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[13]
+	mi := &file_worker_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1190,7 +1650,7 @@ func (x *AdminShutdown) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdminShutdown.ProtoReflect.Descriptor instead.
 func (*AdminShutdown) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{13}
+	return file_worker_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AdminShutdown) GetReason() string {
@@ -1203,6 +1663,561 @@ func (x *AdminShutdown) GetReason() string {
 func (x *AdminShutdown) GetGracefulShutdownSeconds() int32 {
 	if x != nil {
 		return x.GracefulShutdownSeconds
+	}
+	return 0
+}
+
+// MaintenanceConfig holds configuration for the maintenance system
+type MaintenanceConfig struct {
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	Enabled                bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	ScanIntervalSeconds    int32                  `protobuf:"varint,2,opt,name=scan_interval_seconds,json=scanIntervalSeconds,proto3" json:"scan_interval_seconds,omitempty"`          // How often to scan for maintenance needs
+	WorkerTimeoutSeconds   int32                  `protobuf:"varint,3,opt,name=worker_timeout_seconds,json=workerTimeoutSeconds,proto3" json:"worker_timeout_seconds,omitempty"`       // Worker heartbeat timeout
+	TaskTimeoutSeconds     int32                  `protobuf:"varint,4,opt,name=task_timeout_seconds,json=taskTimeoutSeconds,proto3" json:"task_timeout_seconds,omitempty"`             // Individual task timeout
+	RetryDelaySeconds      int32                  `protobuf:"varint,5,opt,name=retry_delay_seconds,json=retryDelaySeconds,proto3" json:"retry_delay_seconds,omitempty"`                // Delay between retries
+	MaxRetries             int32                  `protobuf:"varint,6,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`                                       // Default max retries for tasks
+	CleanupIntervalSeconds int32                  `protobuf:"varint,7,opt,name=cleanup_interval_seconds,json=cleanupIntervalSeconds,proto3" json:"cleanup_interval_seconds,omitempty"` // How often to clean up old tasks
+	TaskRetentionSeconds   int32                  `protobuf:"varint,8,opt,name=task_retention_seconds,json=taskRetentionSeconds,proto3" json:"task_retention_seconds,omitempty"`       // How long to keep completed/failed tasks
+	Policy                 *MaintenancePolicy     `protobuf:"bytes,9,opt,name=policy,proto3" json:"policy,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *MaintenanceConfig) Reset() {
+	*x = MaintenanceConfig{}
+	mi := &file_worker_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MaintenanceConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MaintenanceConfig) ProtoMessage() {}
+
+func (x *MaintenanceConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MaintenanceConfig.ProtoReflect.Descriptor instead.
+func (*MaintenanceConfig) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *MaintenanceConfig) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *MaintenanceConfig) GetScanIntervalSeconds() int32 {
+	if x != nil {
+		return x.ScanIntervalSeconds
+	}
+	return 0
+}
+
+func (x *MaintenanceConfig) GetWorkerTimeoutSeconds() int32 {
+	if x != nil {
+		return x.WorkerTimeoutSeconds
+	}
+	return 0
+}
+
+func (x *MaintenanceConfig) GetTaskTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TaskTimeoutSeconds
+	}
+	return 0
+}
+
+func (x *MaintenanceConfig) GetRetryDelaySeconds() int32 {
+	if x != nil {
+		return x.RetryDelaySeconds
+	}
+	return 0
+}
+
+func (x *MaintenanceConfig) GetMaxRetries() int32 {
+	if x != nil {
+		return x.MaxRetries
+	}
+	return 0
+}
+
+func (x *MaintenanceConfig) GetCleanupIntervalSeconds() int32 {
+	if x != nil {
+		return x.CleanupIntervalSeconds
+	}
+	return 0
+}
+
+func (x *MaintenanceConfig) GetTaskRetentionSeconds() int32 {
+	if x != nil {
+		return x.TaskRetentionSeconds
+	}
+	return 0
+}
+
+func (x *MaintenanceConfig) GetPolicy() *MaintenancePolicy {
+	if x != nil {
+		return x.Policy
+	}
+	return nil
+}
+
+// MaintenancePolicy defines policies for maintenance operations
+type MaintenancePolicy struct {
+	state                        protoimpl.MessageState `protogen:"open.v1"`
+	TaskPolicies                 map[string]*TaskPolicy `protobuf:"bytes,1,rep,name=task_policies,json=taskPolicies,proto3" json:"task_policies,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Task type -> policy mapping
+	GlobalMaxConcurrent          int32                  `protobuf:"varint,2,opt,name=global_max_concurrent,json=globalMaxConcurrent,proto3" json:"global_max_concurrent,omitempty"`                                                   // Overall limit across all task types
+	DefaultRepeatIntervalSeconds int32                  `protobuf:"varint,3,opt,name=default_repeat_interval_seconds,json=defaultRepeatIntervalSeconds,proto3" json:"default_repeat_interval_seconds,omitempty"`                      // Default seconds if task doesn't specify
+	DefaultCheckIntervalSeconds  int32                  `protobuf:"varint,4,opt,name=default_check_interval_seconds,json=defaultCheckIntervalSeconds,proto3" json:"default_check_interval_seconds,omitempty"`                         // Default seconds for periodic checks
+	unknownFields                protoimpl.UnknownFields
+	sizeCache                    protoimpl.SizeCache
+}
+
+func (x *MaintenancePolicy) Reset() {
+	*x = MaintenancePolicy{}
+	mi := &file_worker_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MaintenancePolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MaintenancePolicy) ProtoMessage() {}
+
+func (x *MaintenancePolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MaintenancePolicy.ProtoReflect.Descriptor instead.
+func (*MaintenancePolicy) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *MaintenancePolicy) GetTaskPolicies() map[string]*TaskPolicy {
+	if x != nil {
+		return x.TaskPolicies
+	}
+	return nil
+}
+
+func (x *MaintenancePolicy) GetGlobalMaxConcurrent() int32 {
+	if x != nil {
+		return x.GlobalMaxConcurrent
+	}
+	return 0
+}
+
+func (x *MaintenancePolicy) GetDefaultRepeatIntervalSeconds() int32 {
+	if x != nil {
+		return x.DefaultRepeatIntervalSeconds
+	}
+	return 0
+}
+
+func (x *MaintenancePolicy) GetDefaultCheckIntervalSeconds() int32 {
+	if x != nil {
+		return x.DefaultCheckIntervalSeconds
+	}
+	return 0
+}
+
+// TaskPolicy represents configuration for a specific task type
+type TaskPolicy struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Enabled               bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	MaxConcurrent         int32                  `protobuf:"varint,2,opt,name=max_concurrent,json=maxConcurrent,proto3" json:"max_concurrent,omitempty"`
+	RepeatIntervalSeconds int32                  `protobuf:"varint,3,opt,name=repeat_interval_seconds,json=repeatIntervalSeconds,proto3" json:"repeat_interval_seconds,omitempty"` // Seconds to wait before repeating
+	CheckIntervalSeconds  int32                  `protobuf:"varint,4,opt,name=check_interval_seconds,json=checkIntervalSeconds,proto3" json:"check_interval_seconds,omitempty"`    // Seconds between checks
+	// Typed task-specific configuration (replaces generic map)
+	//
+	// Types that are valid to be assigned to TaskConfig:
+	//
+	//	*TaskPolicy_VacuumConfig
+	//	*TaskPolicy_ErasureCodingConfig
+	//	*TaskPolicy_BalanceConfig
+	//	*TaskPolicy_ReplicationConfig
+	TaskConfig    isTaskPolicy_TaskConfig `protobuf_oneof:"task_config"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskPolicy) Reset() {
+	*x = TaskPolicy{}
+	mi := &file_worker_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskPolicy) ProtoMessage() {}
+
+func (x *TaskPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskPolicy.ProtoReflect.Descriptor instead.
+func (*TaskPolicy) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *TaskPolicy) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *TaskPolicy) GetMaxConcurrent() int32 {
+	if x != nil {
+		return x.MaxConcurrent
+	}
+	return 0
+}
+
+func (x *TaskPolicy) GetRepeatIntervalSeconds() int32 {
+	if x != nil {
+		return x.RepeatIntervalSeconds
+	}
+	return 0
+}
+
+func (x *TaskPolicy) GetCheckIntervalSeconds() int32 {
+	if x != nil {
+		return x.CheckIntervalSeconds
+	}
+	return 0
+}
+
+func (x *TaskPolicy) GetTaskConfig() isTaskPolicy_TaskConfig {
+	if x != nil {
+		return x.TaskConfig
+	}
+	return nil
+}
+
+func (x *TaskPolicy) GetVacuumConfig() *VacuumTaskConfig {
+	if x != nil {
+		if x, ok := x.TaskConfig.(*TaskPolicy_VacuumConfig); ok {
+			return x.VacuumConfig
+		}
+	}
+	return nil
+}
+
+func (x *TaskPolicy) GetErasureCodingConfig() *ErasureCodingTaskConfig {
+	if x != nil {
+		if x, ok := x.TaskConfig.(*TaskPolicy_ErasureCodingConfig); ok {
+			return x.ErasureCodingConfig
+		}
+	}
+	return nil
+}
+
+func (x *TaskPolicy) GetBalanceConfig() *BalanceTaskConfig {
+	if x != nil {
+		if x, ok := x.TaskConfig.(*TaskPolicy_BalanceConfig); ok {
+			return x.BalanceConfig
+		}
+	}
+	return nil
+}
+
+func (x *TaskPolicy) GetReplicationConfig() *ReplicationTaskConfig {
+	if x != nil {
+		if x, ok := x.TaskConfig.(*TaskPolicy_ReplicationConfig); ok {
+			return x.ReplicationConfig
+		}
+	}
+	return nil
+}
+
+type isTaskPolicy_TaskConfig interface {
+	isTaskPolicy_TaskConfig()
+}
+
+type TaskPolicy_VacuumConfig struct {
+	VacuumConfig *VacuumTaskConfig `protobuf:"bytes,5,opt,name=vacuum_config,json=vacuumConfig,proto3,oneof"`
+}
+
+type TaskPolicy_ErasureCodingConfig struct {
+	ErasureCodingConfig *ErasureCodingTaskConfig `protobuf:"bytes,6,opt,name=erasure_coding_config,json=erasureCodingConfig,proto3,oneof"`
+}
+
+type TaskPolicy_BalanceConfig struct {
+	BalanceConfig *BalanceTaskConfig `protobuf:"bytes,7,opt,name=balance_config,json=balanceConfig,proto3,oneof"`
+}
+
+type TaskPolicy_ReplicationConfig struct {
+	ReplicationConfig *ReplicationTaskConfig `protobuf:"bytes,8,opt,name=replication_config,json=replicationConfig,proto3,oneof"`
+}
+
+func (*TaskPolicy_VacuumConfig) isTaskPolicy_TaskConfig() {}
+
+func (*TaskPolicy_ErasureCodingConfig) isTaskPolicy_TaskConfig() {}
+
+func (*TaskPolicy_BalanceConfig) isTaskPolicy_TaskConfig() {}
+
+func (*TaskPolicy_ReplicationConfig) isTaskPolicy_TaskConfig() {}
+
+// VacuumTaskConfig contains vacuum-specific configuration
+type VacuumTaskConfig struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	GarbageThreshold   float64                `protobuf:"fixed64,1,opt,name=garbage_threshold,json=garbageThreshold,proto3" json:"garbage_threshold,omitempty"`        // Minimum garbage ratio to trigger vacuum (0.0-1.0)
+	MinVolumeAgeHours  int32                  `protobuf:"varint,2,opt,name=min_volume_age_hours,json=minVolumeAgeHours,proto3" json:"min_volume_age_hours,omitempty"`  // Minimum age before vacuum is considered
+	MinIntervalSeconds int32                  `protobuf:"varint,3,opt,name=min_interval_seconds,json=minIntervalSeconds,proto3" json:"min_interval_seconds,omitempty"` // Minimum time between vacuum operations on the same volume
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *VacuumTaskConfig) Reset() {
+	*x = VacuumTaskConfig{}
+	mi := &file_worker_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VacuumTaskConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VacuumTaskConfig) ProtoMessage() {}
+
+func (x *VacuumTaskConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VacuumTaskConfig.ProtoReflect.Descriptor instead.
+func (*VacuumTaskConfig) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *VacuumTaskConfig) GetGarbageThreshold() float64 {
+	if x != nil {
+		return x.GarbageThreshold
+	}
+	return 0
+}
+
+func (x *VacuumTaskConfig) GetMinVolumeAgeHours() int32 {
+	if x != nil {
+		return x.MinVolumeAgeHours
+	}
+	return 0
+}
+
+func (x *VacuumTaskConfig) GetMinIntervalSeconds() int32 {
+	if x != nil {
+		return x.MinIntervalSeconds
+	}
+	return 0
+}
+
+// ErasureCodingTaskConfig contains EC-specific configuration
+type ErasureCodingTaskConfig struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	FullnessRatio    float64                `protobuf:"fixed64,1,opt,name=fullness_ratio,json=fullnessRatio,proto3" json:"fullness_ratio,omitempty"`          // Minimum fullness ratio to trigger EC (0.0-1.0)
+	QuietForSeconds  int32                  `protobuf:"varint,2,opt,name=quiet_for_seconds,json=quietForSeconds,proto3" json:"quiet_for_seconds,omitempty"`   // Minimum quiet time before EC
+	MinVolumeSizeMb  int32                  `protobuf:"varint,3,opt,name=min_volume_size_mb,json=minVolumeSizeMb,proto3" json:"min_volume_size_mb,omitempty"` // Minimum volume size for EC
+	CollectionFilter string                 `protobuf:"bytes,4,opt,name=collection_filter,json=collectionFilter,proto3" json:"collection_filter,omitempty"`   // Only process volumes from specific collections
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ErasureCodingTaskConfig) Reset() {
+	*x = ErasureCodingTaskConfig{}
+	mi := &file_worker_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ErasureCodingTaskConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ErasureCodingTaskConfig) ProtoMessage() {}
+
+func (x *ErasureCodingTaskConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ErasureCodingTaskConfig.ProtoReflect.Descriptor instead.
+func (*ErasureCodingTaskConfig) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *ErasureCodingTaskConfig) GetFullnessRatio() float64 {
+	if x != nil {
+		return x.FullnessRatio
+	}
+	return 0
+}
+
+func (x *ErasureCodingTaskConfig) GetQuietForSeconds() int32 {
+	if x != nil {
+		return x.QuietForSeconds
+	}
+	return 0
+}
+
+func (x *ErasureCodingTaskConfig) GetMinVolumeSizeMb() int32 {
+	if x != nil {
+		return x.MinVolumeSizeMb
+	}
+	return 0
+}
+
+func (x *ErasureCodingTaskConfig) GetCollectionFilter() string {
+	if x != nil {
+		return x.CollectionFilter
+	}
+	return ""
+}
+
+// BalanceTaskConfig contains balance-specific configuration
+type BalanceTaskConfig struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	ImbalanceThreshold float64                `protobuf:"fixed64,1,opt,name=imbalance_threshold,json=imbalanceThreshold,proto3" json:"imbalance_threshold,omitempty"` // Threshold for triggering rebalancing (0.0-1.0)
+	MinServerCount     int32                  `protobuf:"varint,2,opt,name=min_server_count,json=minServerCount,proto3" json:"min_server_count,omitempty"`            // Minimum number of servers required for balancing
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *BalanceTaskConfig) Reset() {
+	*x = BalanceTaskConfig{}
+	mi := &file_worker_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BalanceTaskConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BalanceTaskConfig) ProtoMessage() {}
+
+func (x *BalanceTaskConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BalanceTaskConfig.ProtoReflect.Descriptor instead.
+func (*BalanceTaskConfig) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *BalanceTaskConfig) GetImbalanceThreshold() float64 {
+	if x != nil {
+		return x.ImbalanceThreshold
+	}
+	return 0
+}
+
+func (x *BalanceTaskConfig) GetMinServerCount() int32 {
+	if x != nil {
+		return x.MinServerCount
+	}
+	return 0
+}
+
+// ReplicationTaskConfig contains replication-specific configuration
+type ReplicationTaskConfig struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	TargetReplicaCount int32                  `protobuf:"varint,1,opt,name=target_replica_count,json=targetReplicaCount,proto3" json:"target_replica_count,omitempty"` // Target number of replicas
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ReplicationTaskConfig) Reset() {
+	*x = ReplicationTaskConfig{}
+	mi := &file_worker_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplicationTaskConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplicationTaskConfig) ProtoMessage() {}
+
+func (x *ReplicationTaskConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplicationTaskConfig.ProtoReflect.Descriptor instead.
+func (*ReplicationTaskConfig) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ReplicationTaskConfig) GetTargetReplicaCount() int32 {
+	if x != nil {
+		return x.TargetReplicaCount
 	}
 	return 0
 }
@@ -1270,7 +2285,7 @@ const file_worker_proto_rawDesc = "" +
 	"\bmetadata\x18\x06 \x03(\v2'.worker_pb.TaskAssignment.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb8\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf9\x03\n" +
 	"\n" +
 	"TaskParams\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x16\n" +
@@ -1281,13 +2296,53 @@ const file_worker_proto_rawDesc = "" +
 	"\vdata_center\x18\x04 \x01(\tR\n" +
 	"dataCenter\x12\x12\n" +
 	"\x04rack\x18\x05 \x01(\tR\x04rack\x12\x1a\n" +
-	"\breplicas\x18\x06 \x03(\tR\breplicas\x12E\n" +
+	"\breplicas\x18\x06 \x03(\tR\breplicas\x12B\n" +
+	"\rvacuum_params\x18\a \x01(\v2\x1b.worker_pb.VacuumTaskParamsH\x00R\fvacuumParams\x12X\n" +
+	"\x15erasure_coding_params\x18\b \x01(\v2\".worker_pb.ErasureCodingTaskParamsH\x00R\x13erasureCodingParams\x12E\n" +
+	"\x0ebalance_params\x18\t \x01(\v2\x1c.worker_pb.BalanceTaskParamsH\x00R\rbalanceParams\x12Q\n" +
+	"\x12replication_params\x18\n" +
+	" \x01(\v2 .worker_pb.ReplicationTaskParamsH\x00R\x11replicationParamsB\r\n" +
+	"\vtask_params\"\xcb\x01\n" +
+	"\x10VacuumTaskParams\x12+\n" +
+	"\x11garbage_threshold\x18\x01 \x01(\x01R\x10garbageThreshold\x12!\n" +
+	"\fforce_vacuum\x18\x02 \x01(\bR\vforceVacuum\x12\x1d\n" +
 	"\n" +
-	"parameters\x18\a \x03(\v2%.worker_pb.TaskParams.ParametersEntryR\n" +
-	"parameters\x1a=\n" +
-	"\x0fParametersEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x02\n" +
+	"batch_size\x18\x03 \x01(\x05R\tbatchSize\x12\x1f\n" +
+	"\vworking_dir\x18\x04 \x01(\tR\n" +
+	"workingDir\x12'\n" +
+	"\x0fverify_checksum\x18\x05 \x01(\bR\x0everifyChecksum\"\xfa\x02\n" +
+	"\x17ErasureCodingTaskParams\x12\x1d\n" +
+	"\n" +
+	"dest_nodes\x18\x01 \x03(\tR\tdestNodes\x12*\n" +
+	"\x11primary_dest_node\x18\x02 \x01(\tR\x0fprimaryDestNode\x120\n" +
+	"\x14estimated_shard_size\x18\x03 \x01(\x04R\x12estimatedShardSize\x12\x1f\n" +
+	"\vdata_shards\x18\x04 \x01(\x05R\n" +
+	"dataShards\x12#\n" +
+	"\rparity_shards\x18\x05 \x01(\x05R\fparityShards\x12\x1f\n" +
+	"\vworking_dir\x18\x06 \x01(\tR\n" +
+	"workingDir\x12#\n" +
+	"\rmaster_client\x18\a \x01(\tR\fmasterClient\x12%\n" +
+	"\x0ecleanup_source\x18\b \x01(\bR\rcleanupSource\x12/\n" +
+	"\x13placement_conflicts\x18\t \x03(\tR\x12placementConflicts\"\xaf\x02\n" +
+	"\x11BalanceTaskParams\x12\x1b\n" +
+	"\tdest_node\x18\x01 \x01(\tR\bdestNode\x12%\n" +
+	"\x0eestimated_size\x18\x02 \x01(\x04R\restimatedSize\x12\x1b\n" +
+	"\tdest_rack\x18\x03 \x01(\tR\bdestRack\x12\x17\n" +
+	"\adest_dc\x18\x04 \x01(\tR\x06destDc\x12'\n" +
+	"\x0fplacement_score\x18\x05 \x01(\x01R\x0eplacementScore\x12/\n" +
+	"\x13placement_conflicts\x18\x06 \x03(\tR\x12placementConflicts\x12\x1d\n" +
+	"\n" +
+	"force_move\x18\a \x01(\bR\tforceMove\x12'\n" +
+	"\x0ftimeout_seconds\x18\b \x01(\x05R\x0etimeoutSeconds\"\xbf\x02\n" +
+	"\x15ReplicationTaskParams\x12\x1b\n" +
+	"\tdest_node\x18\x01 \x01(\tR\bdestNode\x12%\n" +
+	"\x0eestimated_size\x18\x02 \x01(\x04R\restimatedSize\x12\x1b\n" +
+	"\tdest_rack\x18\x03 \x01(\tR\bdestRack\x12\x17\n" +
+	"\adest_dc\x18\x04 \x01(\tR\x06destDc\x12'\n" +
+	"\x0fplacement_score\x18\x05 \x01(\x01R\x0eplacementScore\x12/\n" +
+	"\x13placement_conflicts\x18\x06 \x03(\tR\x12placementConflicts\x12#\n" +
+	"\rreplica_count\x18\a \x01(\x05R\freplicaCount\x12-\n" +
+	"\x12verify_consistency\x18\b \x01(\bR\x11verifyConsistency\"\x8e\x02\n" +
 	"\n" +
 	"TaskUpdate\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1b\n" +
@@ -1319,7 +2374,51 @@ const file_worker_proto_rawDesc = "" +
 	"\x10pending_task_ids\x18\x03 \x03(\tR\x0ependingTaskIds\"c\n" +
 	"\rAdminShutdown\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x12:\n" +
-	"\x19graceful_shutdown_seconds\x18\x02 \x01(\x05R\x17gracefulShutdownSeconds2V\n" +
+	"\x19graceful_shutdown_seconds\x18\x02 \x01(\x05R\x17gracefulShutdownSeconds\"\xc0\x03\n" +
+	"\x11MaintenanceConfig\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x122\n" +
+	"\x15scan_interval_seconds\x18\x02 \x01(\x05R\x13scanIntervalSeconds\x124\n" +
+	"\x16worker_timeout_seconds\x18\x03 \x01(\x05R\x14workerTimeoutSeconds\x120\n" +
+	"\x14task_timeout_seconds\x18\x04 \x01(\x05R\x12taskTimeoutSeconds\x12.\n" +
+	"\x13retry_delay_seconds\x18\x05 \x01(\x05R\x11retryDelaySeconds\x12\x1f\n" +
+	"\vmax_retries\x18\x06 \x01(\x05R\n" +
+	"maxRetries\x128\n" +
+	"\x18cleanup_interval_seconds\x18\a \x01(\x05R\x16cleanupIntervalSeconds\x124\n" +
+	"\x16task_retention_seconds\x18\b \x01(\x05R\x14taskRetentionSeconds\x124\n" +
+	"\x06policy\x18\t \x01(\v2\x1c.worker_pb.MaintenancePolicyR\x06policy\"\x80\x03\n" +
+	"\x11MaintenancePolicy\x12S\n" +
+	"\rtask_policies\x18\x01 \x03(\v2..worker_pb.MaintenancePolicy.TaskPoliciesEntryR\ftaskPolicies\x122\n" +
+	"\x15global_max_concurrent\x18\x02 \x01(\x05R\x13globalMaxConcurrent\x12E\n" +
+	"\x1fdefault_repeat_interval_seconds\x18\x03 \x01(\x05R\x1cdefaultRepeatIntervalSeconds\x12C\n" +
+	"\x1edefault_check_interval_seconds\x18\x04 \x01(\x05R\x1bdefaultCheckIntervalSeconds\x1aV\n" +
+	"\x11TaskPoliciesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.worker_pb.TaskPolicyR\x05value:\x028\x01\"\x82\x04\n" +
+	"\n" +
+	"TaskPolicy\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12%\n" +
+	"\x0emax_concurrent\x18\x02 \x01(\x05R\rmaxConcurrent\x126\n" +
+	"\x17repeat_interval_seconds\x18\x03 \x01(\x05R\x15repeatIntervalSeconds\x124\n" +
+	"\x16check_interval_seconds\x18\x04 \x01(\x05R\x14checkIntervalSeconds\x12B\n" +
+	"\rvacuum_config\x18\x05 \x01(\v2\x1b.worker_pb.VacuumTaskConfigH\x00R\fvacuumConfig\x12X\n" +
+	"\x15erasure_coding_config\x18\x06 \x01(\v2\".worker_pb.ErasureCodingTaskConfigH\x00R\x13erasureCodingConfig\x12E\n" +
+	"\x0ebalance_config\x18\a \x01(\v2\x1c.worker_pb.BalanceTaskConfigH\x00R\rbalanceConfig\x12Q\n" +
+	"\x12replication_config\x18\b \x01(\v2 .worker_pb.ReplicationTaskConfigH\x00R\x11replicationConfigB\r\n" +
+	"\vtask_config\"\xa2\x01\n" +
+	"\x10VacuumTaskConfig\x12+\n" +
+	"\x11garbage_threshold\x18\x01 \x01(\x01R\x10garbageThreshold\x12/\n" +
+	"\x14min_volume_age_hours\x18\x02 \x01(\x05R\x11minVolumeAgeHours\x120\n" +
+	"\x14min_interval_seconds\x18\x03 \x01(\x05R\x12minIntervalSeconds\"\xc6\x01\n" +
+	"\x17ErasureCodingTaskConfig\x12%\n" +
+	"\x0efullness_ratio\x18\x01 \x01(\x01R\rfullnessRatio\x12*\n" +
+	"\x11quiet_for_seconds\x18\x02 \x01(\x05R\x0fquietForSeconds\x12+\n" +
+	"\x12min_volume_size_mb\x18\x03 \x01(\x05R\x0fminVolumeSizeMb\x12+\n" +
+	"\x11collection_filter\x18\x04 \x01(\tR\x10collectionFilter\"n\n" +
+	"\x11BalanceTaskConfig\x12/\n" +
+	"\x13imbalance_threshold\x18\x01 \x01(\x01R\x12imbalanceThreshold\x12(\n" +
+	"\x10min_server_count\x18\x02 \x01(\x05R\x0eminServerCount\"I\n" +
+	"\x15ReplicationTaskConfig\x120\n" +
+	"\x14target_replica_count\x18\x01 \x01(\x05R\x12targetReplicaCount2V\n" +
 	"\rWorkerService\x12E\n" +
 	"\fWorkerStream\x12\x18.worker_pb.WorkerMessage\x1a\x17.worker_pb.AdminMessage(\x010\x01B2Z0github.com/seaweedfs/seaweedfs/weed/pb/worker_pbb\x06proto3"
 
@@ -1335,53 +2434,74 @@ func file_worker_proto_rawDescGZIP() []byte {
 	return file_worker_proto_rawDescData
 }
 
-var file_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_worker_proto_goTypes = []any{
-	(*WorkerMessage)(nil),        // 0: worker_pb.WorkerMessage
-	(*AdminMessage)(nil),         // 1: worker_pb.AdminMessage
-	(*WorkerRegistration)(nil),   // 2: worker_pb.WorkerRegistration
-	(*RegistrationResponse)(nil), // 3: worker_pb.RegistrationResponse
-	(*WorkerHeartbeat)(nil),      // 4: worker_pb.WorkerHeartbeat
-	(*HeartbeatResponse)(nil),    // 5: worker_pb.HeartbeatResponse
-	(*TaskRequest)(nil),          // 6: worker_pb.TaskRequest
-	(*TaskAssignment)(nil),       // 7: worker_pb.TaskAssignment
-	(*TaskParams)(nil),           // 8: worker_pb.TaskParams
-	(*TaskUpdate)(nil),           // 9: worker_pb.TaskUpdate
-	(*TaskComplete)(nil),         // 10: worker_pb.TaskComplete
-	(*TaskCancellation)(nil),     // 11: worker_pb.TaskCancellation
-	(*WorkerShutdown)(nil),       // 12: worker_pb.WorkerShutdown
-	(*AdminShutdown)(nil),        // 13: worker_pb.AdminShutdown
-	nil,                          // 14: worker_pb.WorkerRegistration.MetadataEntry
-	nil,                          // 15: worker_pb.TaskAssignment.MetadataEntry
-	nil,                          // 16: worker_pb.TaskParams.ParametersEntry
-	nil,                          // 17: worker_pb.TaskUpdate.MetadataEntry
-	nil,                          // 18: worker_pb.TaskComplete.ResultMetadataEntry
+	(*WorkerMessage)(nil),           // 0: worker_pb.WorkerMessage
+	(*AdminMessage)(nil),            // 1: worker_pb.AdminMessage
+	(*WorkerRegistration)(nil),      // 2: worker_pb.WorkerRegistration
+	(*RegistrationResponse)(nil),    // 3: worker_pb.RegistrationResponse
+	(*WorkerHeartbeat)(nil),         // 4: worker_pb.WorkerHeartbeat
+	(*HeartbeatResponse)(nil),       // 5: worker_pb.HeartbeatResponse
+	(*TaskRequest)(nil),             // 6: worker_pb.TaskRequest
+	(*TaskAssignment)(nil),          // 7: worker_pb.TaskAssignment
+	(*TaskParams)(nil),              // 8: worker_pb.TaskParams
+	(*VacuumTaskParams)(nil),        // 9: worker_pb.VacuumTaskParams
+	(*ErasureCodingTaskParams)(nil), // 10: worker_pb.ErasureCodingTaskParams
+	(*BalanceTaskParams)(nil),       // 11: worker_pb.BalanceTaskParams
+	(*ReplicationTaskParams)(nil),   // 12: worker_pb.ReplicationTaskParams
+	(*TaskUpdate)(nil),              // 13: worker_pb.TaskUpdate
+	(*TaskComplete)(nil),            // 14: worker_pb.TaskComplete
+	(*TaskCancellation)(nil),        // 15: worker_pb.TaskCancellation
+	(*WorkerShutdown)(nil),          // 16: worker_pb.WorkerShutdown
+	(*AdminShutdown)(nil),           // 17: worker_pb.AdminShutdown
+	(*MaintenanceConfig)(nil),       // 18: worker_pb.MaintenanceConfig
+	(*MaintenancePolicy)(nil),       // 19: worker_pb.MaintenancePolicy
+	(*TaskPolicy)(nil),              // 20: worker_pb.TaskPolicy
+	(*VacuumTaskConfig)(nil),        // 21: worker_pb.VacuumTaskConfig
+	(*ErasureCodingTaskConfig)(nil), // 22: worker_pb.ErasureCodingTaskConfig
+	(*BalanceTaskConfig)(nil),       // 23: worker_pb.BalanceTaskConfig
+	(*ReplicationTaskConfig)(nil),   // 24: worker_pb.ReplicationTaskConfig
+	nil,                             // 25: worker_pb.WorkerRegistration.MetadataEntry
+	nil,                             // 26: worker_pb.TaskAssignment.MetadataEntry
+	nil,                             // 27: worker_pb.TaskUpdate.MetadataEntry
+	nil,                             // 28: worker_pb.TaskComplete.ResultMetadataEntry
+	nil,                             // 29: worker_pb.MaintenancePolicy.TaskPoliciesEntry
 }
 var file_worker_proto_depIdxs = []int32{
 	2,  // 0: worker_pb.WorkerMessage.registration:type_name -> worker_pb.WorkerRegistration
 	4,  // 1: worker_pb.WorkerMessage.heartbeat:type_name -> worker_pb.WorkerHeartbeat
 	6,  // 2: worker_pb.WorkerMessage.task_request:type_name -> worker_pb.TaskRequest
-	9,  // 3: worker_pb.WorkerMessage.task_update:type_name -> worker_pb.TaskUpdate
-	10, // 4: worker_pb.WorkerMessage.task_complete:type_name -> worker_pb.TaskComplete
-	12, // 5: worker_pb.WorkerMessage.shutdown:type_name -> worker_pb.WorkerShutdown
+	13, // 3: worker_pb.WorkerMessage.task_update:type_name -> worker_pb.TaskUpdate
+	14, // 4: worker_pb.WorkerMessage.task_complete:type_name -> worker_pb.TaskComplete
+	16, // 5: worker_pb.WorkerMessage.shutdown:type_name -> worker_pb.WorkerShutdown
 	3,  // 6: worker_pb.AdminMessage.registration_response:type_name -> worker_pb.RegistrationResponse
 	5,  // 7: worker_pb.AdminMessage.heartbeat_response:type_name -> worker_pb.HeartbeatResponse
 	7,  // 8: worker_pb.AdminMessage.task_assignment:type_name -> worker_pb.TaskAssignment
-	11, // 9: worker_pb.AdminMessage.task_cancellation:type_name -> worker_pb.TaskCancellation
-	13, // 10: worker_pb.AdminMessage.admin_shutdown:type_name -> worker_pb.AdminShutdown
-	14, // 11: worker_pb.WorkerRegistration.metadata:type_name -> worker_pb.WorkerRegistration.MetadataEntry
+	15, // 9: worker_pb.AdminMessage.task_cancellation:type_name -> worker_pb.TaskCancellation
+	17, // 10: worker_pb.AdminMessage.admin_shutdown:type_name -> worker_pb.AdminShutdown
+	25, // 11: worker_pb.WorkerRegistration.metadata:type_name -> worker_pb.WorkerRegistration.MetadataEntry
 	8,  // 12: worker_pb.TaskAssignment.params:type_name -> worker_pb.TaskParams
-	15, // 13: worker_pb.TaskAssignment.metadata:type_name -> worker_pb.TaskAssignment.MetadataEntry
-	16, // 14: worker_pb.TaskParams.parameters:type_name -> worker_pb.TaskParams.ParametersEntry
-	17, // 15: worker_pb.TaskUpdate.metadata:type_name -> worker_pb.TaskUpdate.MetadataEntry
-	18, // 16: worker_pb.TaskComplete.result_metadata:type_name -> worker_pb.TaskComplete.ResultMetadataEntry
-	0,  // 17: worker_pb.WorkerService.WorkerStream:input_type -> worker_pb.WorkerMessage
-	1,  // 18: worker_pb.WorkerService.WorkerStream:output_type -> worker_pb.AdminMessage
-	18, // [18:19] is the sub-list for method output_type
-	17, // [17:18] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	26, // 13: worker_pb.TaskAssignment.metadata:type_name -> worker_pb.TaskAssignment.MetadataEntry
+	9,  // 14: worker_pb.TaskParams.vacuum_params:type_name -> worker_pb.VacuumTaskParams
+	10, // 15: worker_pb.TaskParams.erasure_coding_params:type_name -> worker_pb.ErasureCodingTaskParams
+	11, // 16: worker_pb.TaskParams.balance_params:type_name -> worker_pb.BalanceTaskParams
+	12, // 17: worker_pb.TaskParams.replication_params:type_name -> worker_pb.ReplicationTaskParams
+	27, // 18: worker_pb.TaskUpdate.metadata:type_name -> worker_pb.TaskUpdate.MetadataEntry
+	28, // 19: worker_pb.TaskComplete.result_metadata:type_name -> worker_pb.TaskComplete.ResultMetadataEntry
+	19, // 20: worker_pb.MaintenanceConfig.policy:type_name -> worker_pb.MaintenancePolicy
+	29, // 21: worker_pb.MaintenancePolicy.task_policies:type_name -> worker_pb.MaintenancePolicy.TaskPoliciesEntry
+	21, // 22: worker_pb.TaskPolicy.vacuum_config:type_name -> worker_pb.VacuumTaskConfig
+	22, // 23: worker_pb.TaskPolicy.erasure_coding_config:type_name -> worker_pb.ErasureCodingTaskConfig
+	23, // 24: worker_pb.TaskPolicy.balance_config:type_name -> worker_pb.BalanceTaskConfig
+	24, // 25: worker_pb.TaskPolicy.replication_config:type_name -> worker_pb.ReplicationTaskConfig
+	20, // 26: worker_pb.MaintenancePolicy.TaskPoliciesEntry.value:type_name -> worker_pb.TaskPolicy
+	0,  // 27: worker_pb.WorkerService.WorkerStream:input_type -> worker_pb.WorkerMessage
+	1,  // 28: worker_pb.WorkerService.WorkerStream:output_type -> worker_pb.AdminMessage
+	28, // [28:29] is the sub-list for method output_type
+	27, // [27:28] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_worker_proto_init() }
@@ -1404,13 +2524,25 @@ func file_worker_proto_init() {
 		(*AdminMessage_TaskCancellation)(nil),
 		(*AdminMessage_AdminShutdown)(nil),
 	}
+	file_worker_proto_msgTypes[8].OneofWrappers = []any{
+		(*TaskParams_VacuumParams)(nil),
+		(*TaskParams_ErasureCodingParams)(nil),
+		(*TaskParams_BalanceParams)(nil),
+		(*TaskParams_ReplicationParams)(nil),
+	}
+	file_worker_proto_msgTypes[20].OneofWrappers = []any{
+		(*TaskPolicy_VacuumConfig)(nil),
+		(*TaskPolicy_ErasureCodingConfig)(nil),
+		(*TaskPolicy_BalanceConfig)(nil),
+		(*TaskPolicy_ReplicationConfig)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_proto_rawDesc), len(file_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

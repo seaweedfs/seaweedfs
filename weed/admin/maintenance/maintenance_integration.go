@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -16,6 +17,12 @@ type MaintenanceIntegration struct {
 	// Bridge to existing system
 	maintenanceQueue  *MaintenanceQueue
 	maintenancePolicy *MaintenancePolicy
+
+	// Pending operations tracker
+	pendingOperations *PendingOperations
+
+	// Enhanced volume/shard tracker with destination planning
+	volumeShardTracker *VolumeShardTracker
 
 	// Type conversion maps
 	taskTypeMap    map[types.TaskType]MaintenanceTaskType
@@ -31,7 +38,11 @@ func NewMaintenanceIntegration(queue *MaintenanceQueue, policy *MaintenancePolic
 		uiRegistry:        tasks.GetGlobalUIRegistry(),    // Use global UI registry with auto-registered UI providers
 		maintenanceQueue:  queue,
 		maintenancePolicy: policy,
+		pendingOperations: NewPendingOperations(),
 	}
+
+	// Initialize volume/shard tracker with pending operations integration
+	integration.volumeShardTracker = NewVolumeShardTracker(integration.pendingOperations)
 
 	// Initialize type conversion maps
 	integration.initializeTypeMaps()
@@ -143,7 +154,7 @@ func (s *MaintenanceIntegration) configureDetectorFromPolicy(taskType types.Task
 		// Convert task system type to maintenance task type for policy lookup
 		maintenanceTaskType, exists := s.taskTypeMap[taskType]
 		if exists {
-			enabled := s.maintenancePolicy.IsTaskEnabled(maintenanceTaskType)
+			enabled := IsTaskEnabled(s.maintenancePolicy, maintenanceTaskType)
 			basicDetector.SetEnabled(enabled)
 			glog.V(3).Infof("Set enabled=%v for detector %s", enabled, taskType)
 		}
@@ -172,14 +183,14 @@ func (s *MaintenanceIntegration) configureSchedulerFromPolicy(taskType types.Tas
 
 	// Set enabled status if scheduler supports it
 	if enableableScheduler, ok := scheduler.(interface{ SetEnabled(bool) }); ok {
-		enabled := s.maintenancePolicy.IsTaskEnabled(maintenanceTaskType)
+		enabled := IsTaskEnabled(s.maintenancePolicy, maintenanceTaskType)
 		enableableScheduler.SetEnabled(enabled)
 		glog.V(3).Infof("Set enabled=%v for scheduler %s", enabled, taskType)
 	}
 
 	// Set max concurrent if scheduler supports it
 	if concurrentScheduler, ok := scheduler.(interface{ SetMaxConcurrent(int) }); ok {
-		maxConcurrent := s.maintenancePolicy.GetMaxConcurrent(maintenanceTaskType)
+		maxConcurrent := GetMaxConcurrent(s.maintenancePolicy, maintenanceTaskType)
 		if maxConcurrent > 0 {
 			concurrentScheduler.SetMaxConcurrent(maxConcurrent)
 			glog.V(3).Infof("Set max concurrent=%d for scheduler %s", maxConcurrent, taskType)
@@ -193,11 +204,22 @@ func (s *MaintenanceIntegration) configureSchedulerFromPolicy(taskType types.Tas
 
 // ScanWithTaskDetectors performs a scan using the task system
 func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.VolumeHealthMetrics) ([]*TaskDetectionResult, error) {
+	// Update volume/shard tracker with latest master data
+	if err := s.volumeShardTracker.UpdateFromMaster(volumeMetrics); err != nil {
+		glog.Errorf("Failed to update volume/shard tracker: %v", err)
+	}
+
+	// Filter out volumes with pending operations to avoid duplicates
+	filteredMetrics := s.pendingOperations.FilterVolumeMetricsExcludingPending(volumeMetrics)
+
+	glog.V(1).Infof("Scanning %d volumes (filtered from %d) excluding pending operations",
+		len(filteredMetrics), len(volumeMetrics))
+
 	var allResults []*TaskDetectionResult
 
 	// Create cluster info
 	clusterInfo := &types.ClusterInfo{
-		TotalVolumes: len(volumeMetrics),
+		TotalVolumes: len(filteredMetrics),
 		LastUpdated:  time.Now(),
 	}
 
@@ -209,17 +231,26 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 
 		glog.V(2).Infof("Running detection for task type: %s", taskType)
 
-		results, err := detector.ScanForTasks(volumeMetrics, clusterInfo)
+		results, err := detector.ScanForTasks(filteredMetrics, clusterInfo)
 		if err != nil {
 			glog.Errorf("Failed to scan for %s tasks: %v", taskType, err)
 			continue
 		}
 
-		// Convert results to existing system format
+		// Convert results to existing system format and check for conflicts
 		for _, result := range results {
 			existingResult := s.convertToExistingFormat(result)
 			if existingResult != nil {
-				allResults = append(allResults, existingResult)
+				// Double-check for conflicts with pending operations
+				opType := s.mapMaintenanceTaskTypeToPendingOperationType(existingResult.TaskType)
+				if !s.pendingOperations.WouldConflictWithPending(existingResult.VolumeID, opType) {
+					// Plan destination for operations that need it
+					s.planDestinationForTask(existingResult, opType)
+					allResults = append(allResults, existingResult)
+				} else {
+					glog.V(2).Infof("Skipping task %s for volume %d due to conflict with pending operation",
+						existingResult.TaskType, existingResult.VolumeID)
+				}
 			}
 		}
 
@@ -246,14 +277,14 @@ func (s *MaintenanceIntegration) convertToExistingFormat(result *types.TaskDetec
 	}
 
 	return &TaskDetectionResult{
-		TaskType:   existingType,
-		VolumeID:   result.VolumeID,
-		Server:     result.Server,
-		Collection: result.Collection,
-		Priority:   existingPriority,
-		Reason:     result.Reason,
-		Parameters: result.Parameters,
-		ScheduleAt: result.ScheduleAt,
+		TaskType:    existingType,
+		VolumeID:    result.VolumeID,
+		Server:      result.Server,
+		Collection:  result.Collection,
+		Priority:    existingPriority,
+		Reason:      result.Reason,
+		TypedParams: result.TypedParams,
+		ScheduleAt:  result.ScheduleAt,
 	}
 }
 
@@ -317,14 +348,14 @@ func (s *MaintenanceIntegration) convertTaskToTaskSystem(task *MaintenanceTask) 
 	}
 
 	return &types.Task{
-		ID:         task.ID,
-		Type:       taskType,
-		Priority:   priority,
-		VolumeID:   task.VolumeID,
-		Server:     task.Server,
-		Collection: task.Collection,
-		Parameters: task.Parameters,
-		CreatedAt:  task.CreatedAt,
+		ID:          task.ID,
+		Type:        taskType,
+		Priority:    priority,
+		VolumeID:    task.VolumeID,
+		Server:      task.Server,
+		Collection:  task.Collection,
+		TypedParams: task.TypedParams,
+		CreatedAt:   task.CreatedAt,
 	}
 }
 
@@ -419,4 +450,207 @@ func (s *MaintenanceIntegration) GetAllTaskStats() []*types.TaskStats {
 	}
 
 	return stats
+}
+
+// mapMaintenanceTaskTypeToPendingOperationType converts a maintenance task type to a pending operation type
+func (s *MaintenanceIntegration) mapMaintenanceTaskTypeToPendingOperationType(taskType MaintenanceTaskType) PendingOperationType {
+	switch taskType {
+	case MaintenanceTaskType("balance"):
+		return OpTypeVolumeBalance
+	case MaintenanceTaskType("erasure_coding"):
+		return OpTypeErasureCoding
+	case MaintenanceTaskType("vacuum"):
+		return OpTypeVacuum
+	case MaintenanceTaskType("replication"):
+		return OpTypeReplication
+	default:
+		// For other task types, assume they're volume operations
+		return OpTypeVolumeMove
+	}
+}
+
+// GetPendingOperations returns the pending operations tracker
+func (s *MaintenanceIntegration) GetPendingOperations() *PendingOperations {
+	return s.pendingOperations
+}
+
+// GetVolumeShardTracker returns the volume/shard tracker
+func (s *MaintenanceIntegration) GetVolumeShardTracker() *VolumeShardTracker {
+	return s.volumeShardTracker
+}
+
+// planDestinationForTask plans the destination for a task that requires it and creates typed protobuf parameters
+func (s *MaintenanceIntegration) planDestinationForTask(task *TaskDetectionResult, opType PendingOperationType) {
+	// Only plan destinations for operations that move volumes/shards
+	if opType == OpTypeVacuum {
+		// For vacuum tasks, create VacuumTaskParams
+		s.createVacuumTaskParams(task)
+		return
+	}
+
+	// Plan destination using the volume/shard tracker
+	destinationPlan, err := s.volumeShardTracker.PlanDestinationForVolume(
+		task.VolumeID,
+		opType,
+		task.Server,
+	)
+
+	if err != nil {
+		glog.V(2).Infof("Failed to plan destination for task %s volume %d: %v",
+			task.TaskType, task.VolumeID, err)
+		return
+	}
+
+	// Create typed protobuf parameters based on operation type
+	switch opType {
+	case OpTypeErasureCoding:
+		s.createErasureCodingTaskParams(task, destinationPlan)
+	case OpTypeVolumeMove, OpTypeVolumeBalance:
+		s.createBalanceTaskParams(task, destinationPlan)
+	case OpTypeReplication:
+		s.createReplicationTaskParams(task, destinationPlan)
+	default:
+		glog.V(2).Infof("Unknown operation type for task %s: %v", task.TaskType, opType)
+	}
+
+	glog.V(1).Infof("Planned destination for %s task on volume %d: %s -> %s",
+		task.TaskType, task.VolumeID, task.Server, destinationPlan.TargetNode)
+}
+
+// createVacuumTaskParams creates typed parameters for vacuum tasks
+func (s *MaintenanceIntegration) createVacuumTaskParams(task *TaskDetectionResult) {
+	// Use default values for vacuum parameters
+	garbageThreshold := 0.3 // Default 30%
+	verifyChecksum := true  // Default to verify
+
+	// Create typed protobuf parameters
+	task.TypedParams = &worker_pb.TaskParams{
+		VolumeId:   task.VolumeID,
+		Server:     task.Server,
+		Collection: task.Collection,
+		TaskParams: &worker_pb.TaskParams_VacuumParams{
+			VacuumParams: &worker_pb.VacuumTaskParams{
+				GarbageThreshold: garbageThreshold,
+				ForceVacuum:      false,
+				BatchSize:        1000,
+				WorkingDir:       "/tmp/seaweedfs_vacuum_work",
+				VerifyChecksum:   verifyChecksum,
+			},
+		},
+	}
+}
+
+// createErasureCodingTaskParams creates typed parameters for EC tasks
+func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetectionResult, destinationPlan *DestinationPlan) {
+	// Get multiple destinations for EC operations
+	multipleNodes := s.planMultipleECDestinations(task.VolumeID, task.Server)
+
+	// Set primary destination from the plan
+	primaryDestNode := destinationPlan.TargetNode
+
+	// Use multiple nodes if available, otherwise use primary destination
+	destNodes := multipleNodes
+	if len(destNodes) == 0 && primaryDestNode != "" {
+		destNodes = []string{primaryDestNode}
+	}
+
+	// Create typed protobuf parameters
+	task.TypedParams = &worker_pb.TaskParams{
+		VolumeId:   task.VolumeID,
+		Server:     task.Server,
+		Collection: task.Collection,
+		TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
+			ErasureCodingParams: &worker_pb.ErasureCodingTaskParams{
+				DestNodes:          destNodes,
+				PrimaryDestNode:    primaryDestNode,
+				EstimatedShardSize: destinationPlan.ExpectedSize,
+				DataShards:         10, // Default values
+				ParityShards:       4,
+				WorkingDir:         "/tmp/seaweedfs_ec_work",
+				MasterClient:       "localhost:9333", // Could be configurable
+				CleanupSource:      true,
+				PlacementConflicts: destinationPlan.Conflicts,
+			},
+		},
+	}
+
+	glog.V(1).Infof("Created EC task params with %d destinations for volume %d", len(destNodes), task.VolumeID)
+}
+
+// createBalanceTaskParams creates typed parameters for balance/move tasks
+func (s *MaintenanceIntegration) createBalanceTaskParams(task *TaskDetectionResult, destinationPlan *DestinationPlan) {
+	// Create typed protobuf parameters
+	task.TypedParams = &worker_pb.TaskParams{
+		VolumeId:   task.VolumeID,
+		Server:     task.Server,
+		Collection: task.Collection,
+		TaskParams: &worker_pb.TaskParams_BalanceParams{
+			BalanceParams: &worker_pb.BalanceTaskParams{
+				DestNode:           destinationPlan.TargetNode,
+				EstimatedSize:      destinationPlan.ExpectedSize,
+				DestRack:           destinationPlan.TargetRack,
+				DestDc:             destinationPlan.TargetDC,
+				PlacementScore:     destinationPlan.PlacementScore,
+				PlacementConflicts: destinationPlan.Conflicts,
+				ForceMove:          false, // Default to safe mode
+				TimeoutSeconds:     3600,  // 1 hour default timeout
+			},
+		},
+	}
+}
+
+// createReplicationTaskParams creates typed parameters for replication tasks
+func (s *MaintenanceIntegration) createReplicationTaskParams(task *TaskDetectionResult, destinationPlan *DestinationPlan) {
+	// Use default target replica count
+	replicaCount := int32(2) // Default
+
+	// Create typed protobuf parameters
+	task.TypedParams = &worker_pb.TaskParams{
+		VolumeId:   task.VolumeID,
+		Server:     task.Server,
+		Collection: task.Collection,
+		TaskParams: &worker_pb.TaskParams_ReplicationParams{
+			ReplicationParams: &worker_pb.ReplicationTaskParams{
+				DestNode:           destinationPlan.TargetNode,
+				EstimatedSize:      destinationPlan.ExpectedSize,
+				DestRack:           destinationPlan.TargetRack,
+				DestDc:             destinationPlan.TargetDC,
+				PlacementScore:     destinationPlan.PlacementScore,
+				PlacementConflicts: destinationPlan.Conflicts,
+				ReplicaCount:       replicaCount,
+				VerifyConsistency:  true, // Default to verify consistency
+			},
+		},
+	}
+}
+
+// planMultipleECDestinations plans multiple destinations for EC shard distribution
+func (s *MaintenanceIntegration) planMultipleECDestinations(volumeID uint32, sourceNode string) []string {
+	// Get available nodes from volume/shard tracker
+	clusterStats := s.volumeShardTracker.getClusterStats()
+	if clusterStats.TotalNodes < 14 {
+		glog.V(2).Infof("Insufficient nodes (%d) for full EC distribution, using available nodes", clusterStats.TotalNodes)
+	}
+
+	// Get all nodes with sufficient capacity
+	var availableNodes []string
+	for nodeID, nodeInfo := range s.volumeShardTracker.nodes {
+		if nodeID == sourceNode {
+			continue // Skip source node
+		}
+
+		// Estimate shard size (approximately 1/10th of volume size for data shards)
+		estimatedShardSize := uint64(10 * 1024 * 1024 * 1024) // Default 10GB if unknown
+		if nodeInfo.FreeCapacity >= estimatedShardSize {
+			availableNodes = append(availableNodes, nodeID)
+		}
+	}
+
+	// Return up to 14 nodes for EC distribution (10 data + 4 parity shards)
+	maxNodes := 14
+	if len(availableNodes) < maxNodes {
+		maxNodes = len(availableNodes)
+	}
+
+	return availableNodes[:maxNodes]
 }

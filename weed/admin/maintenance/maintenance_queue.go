@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
 // NewMaintenanceQueue creates a new maintenance queue
@@ -59,7 +60,7 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 		scheduleInfo = fmt.Sprintf(", scheduled for %v", task.ScheduledAt.Format("15:04:05"))
 	}
 
-	glog.Infof("Task queued: %s (%s) volume %d on %s, priority %s%s, reason: %s",
+	glog.Infof("Task queued: %s (%s) volume %d on %s, priority %d%s, reason: %s",
 		task.ID, task.Type, task.VolumeID, task.Server, task.Priority, scheduleInfo, task.Reason)
 }
 
@@ -82,12 +83,13 @@ func (mq *MaintenanceQueue) hasDuplicateTask(newTask *MaintenanceTask) bool {
 func (mq *MaintenanceQueue) AddTasksFromResults(results []*TaskDetectionResult) {
 	for _, result := range results {
 		task := &MaintenanceTask{
-			Type:        result.TaskType,
-			Priority:    result.Priority,
-			VolumeID:    result.VolumeID,
-			Server:      result.Server,
-			Collection:  result.Collection,
-			Parameters:  result.Parameters,
+			Type:       result.TaskType,
+			Priority:   result.Priority,
+			VolumeID:   result.VolumeID,
+			Server:     result.Server,
+			Collection: result.Collection,
+			// Copy typed protobuf parameters
+			TypedParams: result.TypedParams,
 			Reason:      result.Reason,
 			ScheduledAt: result.ScheduleAt,
 		}
@@ -176,6 +178,9 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 		worker.CurrentLoad++
 	}
 
+	// Track pending operation
+	mq.trackPendingOperation(selectedTask)
+
 	glog.Infof("Task assigned: %s (%s) → worker %s (volume %d, server %s)",
 		selectedTask.ID, selectedTask.Type, workerID, selectedTask.VolumeID, selectedTask.Server)
 
@@ -240,6 +245,11 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 			}
 		}
 	}
+
+	// Remove pending operation (unless it's being retried)
+	if task.Status != TaskStatusPending {
+		mq.removePendingOperation(taskID)
+	}
 }
 
 // UpdateTaskProgress updates the progress of a running task
@@ -251,6 +261,9 @@ func (mq *MaintenanceQueue) UpdateTaskProgress(taskID string, progress float64) 
 		oldProgress := task.Progress
 		task.Progress = progress
 		task.Status = TaskStatusInProgress
+
+		// Update pending operation status
+		mq.updatePendingOperationStatus(taskID, "in_progress")
 
 		// Log progress at significant milestones or changes
 		if progress == 0 {
@@ -363,7 +376,7 @@ func (mq *MaintenanceQueue) getRepeatPreventionInterval(taskType MaintenanceTask
 
 	// Fallback to policy configuration if no scheduler available or scheduler doesn't provide default
 	if mq.policy != nil {
-		repeatIntervalHours := mq.policy.GetRepeatInterval(taskType)
+		repeatIntervalHours := GetRepeatInterval(mq.policy, taskType)
 		if repeatIntervalHours > 0 {
 			interval := time.Duration(repeatIntervalHours) * time.Hour
 			glog.V(3).Infof("Using policy configuration repeat interval for %s: %v", taskType, interval)
@@ -598,7 +611,7 @@ func (mq *MaintenanceQueue) getMaxConcurrentForTaskType(taskType MaintenanceTask
 
 	// Fallback to policy configuration if no scheduler available or scheduler doesn't provide default
 	if mq.policy != nil {
-		maxConcurrent := mq.policy.GetMaxConcurrent(taskType)
+		maxConcurrent := GetMaxConcurrent(mq.policy, taskType)
 		if maxConcurrent > 0 {
 			glog.V(3).Infof("Using policy configuration max concurrent for %s: %d", taskType, maxConcurrent)
 			return maxConcurrent
@@ -630,4 +643,105 @@ func (mq *MaintenanceQueue) getAvailableWorkers() []*MaintenanceWorker {
 		}
 	}
 	return availableWorkers
+}
+
+// trackPendingOperation adds a task to the pending operations tracker
+func (mq *MaintenanceQueue) trackPendingOperation(task *MaintenanceTask) {
+	if mq.integration == nil {
+		return
+	}
+
+	pendingOps := mq.integration.GetPendingOperations()
+	if pendingOps == nil {
+		return
+	}
+
+	// Map maintenance task type to pending operation type
+	var opType PendingOperationType
+	switch task.Type {
+	case MaintenanceTaskType("balance"):
+		opType = OpTypeVolumeBalance
+	case MaintenanceTaskType("erasure_coding"):
+		opType = OpTypeErasureCoding
+	case MaintenanceTaskType("vacuum"):
+		opType = OpTypeVacuum
+	case MaintenanceTaskType("replication"):
+		opType = OpTypeReplication
+	default:
+		opType = OpTypeVolumeMove
+	}
+
+	// Determine destination node and estimated size from typed parameters
+	destNode := ""
+	estimatedSize := uint64(1024 * 1024 * 1024) // Default 1GB estimate
+
+	if task.TypedParams != nil {
+		switch params := task.TypedParams.TaskParams.(type) {
+		case *worker_pb.TaskParams_ErasureCodingParams:
+			if params.ErasureCodingParams != nil {
+				if params.ErasureCodingParams.PrimaryDestNode != "" {
+					destNode = params.ErasureCodingParams.PrimaryDestNode
+				}
+				if params.ErasureCodingParams.EstimatedShardSize > 0 {
+					estimatedSize = params.ErasureCodingParams.EstimatedShardSize
+				}
+			}
+		case *worker_pb.TaskParams_BalanceParams:
+			if params.BalanceParams != nil {
+				destNode = params.BalanceParams.DestNode
+				if params.BalanceParams.EstimatedSize > 0 {
+					estimatedSize = params.BalanceParams.EstimatedSize
+				}
+			}
+		case *worker_pb.TaskParams_ReplicationParams:
+			if params.ReplicationParams != nil {
+				destNode = params.ReplicationParams.DestNode
+				if params.ReplicationParams.EstimatedSize > 0 {
+					estimatedSize = params.ReplicationParams.EstimatedSize
+				}
+			}
+		}
+	}
+
+	operation := &PendingOperation{
+		VolumeID:      task.VolumeID,
+		OperationType: opType,
+		SourceNode:    task.Server,
+		DestNode:      destNode,
+		TaskID:        task.ID,
+		StartTime:     time.Now(),
+		EstimatedSize: estimatedSize,
+		Collection:    task.Collection,
+		Status:        "assigned",
+	}
+
+	pendingOps.AddOperation(operation)
+}
+
+// removePendingOperation removes a task from the pending operations tracker
+func (mq *MaintenanceQueue) removePendingOperation(taskID string) {
+	if mq.integration == nil {
+		return
+	}
+
+	pendingOps := mq.integration.GetPendingOperations()
+	if pendingOps == nil {
+		return
+	}
+
+	pendingOps.RemoveOperation(taskID)
+}
+
+// updatePendingOperationStatus updates the status of a pending operation
+func (mq *MaintenanceQueue) updatePendingOperationStatus(taskID string, status string) {
+	if mq.integration == nil {
+		return
+	}
+
+	pendingOps := mq.integration.GetPendingOperations()
+	if pendingOps == nil {
+		return
+	}
+
+	pendingOps.UpdateOperationStatus(taskID, status)
 }

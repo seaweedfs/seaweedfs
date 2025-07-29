@@ -15,6 +15,9 @@ type Task struct {
 	server     string
 	volumeID   uint32
 	collection string
+
+	// Task parameters for accessing planned destinations
+	taskParams types.TaskParams
 }
 
 // NewTask creates a new balance task instance
@@ -30,7 +33,18 @@ func NewTask(server string, volumeID uint32, collection string) *Task {
 
 // Execute executes the balance task
 func (t *Task) Execute(params types.TaskParams) error {
-	glog.Infof("Starting balance task for volume %d on server %s (collection: %s)", t.volumeID, t.server, t.collection)
+	// Store task parameters for accessing planned destinations
+	t.taskParams = params
+
+	// Get planned destination
+	destNode := t.getPlannedDestination()
+	if destNode != "" {
+		glog.Infof("Starting balance task for volume %d: %s -> %s (collection: %s)",
+			t.volumeID, t.server, destNode, t.collection)
+	} else {
+		glog.Infof("Starting balance task for volume %d on server %s (collection: %s) - no specific destination planned",
+			t.volumeID, t.server, t.collection)
+	}
 
 	// Simulate balance operation with progress updates
 	steps := []struct {
@@ -70,6 +84,19 @@ func (t *Task) Validate(params types.TaskParams) error {
 		return fmt.Errorf("server is required")
 	}
 	return nil
+}
+
+// getPlannedDestination extracts the planned destination node from task parameters
+func (t *Task) getPlannedDestination() string {
+	if t.taskParams.TypedParams != nil {
+		if balanceParams := t.taskParams.TypedParams.GetBalanceParams(); balanceParams != nil {
+			if balanceParams.DestNode != "" {
+				glog.V(2).Infof("Found planned destination for volume %d: %s", t.volumeID, balanceParams.DestNode)
+				return balanceParams.DestNode
+			}
+		}
+	}
+	return ""
 }
 
 // EstimateTime estimates the time needed for the task

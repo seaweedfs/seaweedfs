@@ -35,6 +35,9 @@ type Task struct {
 	masterClient string
 	grpcDialOpt  grpc.DialOption
 
+	// Task parameters for accessing planned destinations
+	taskParams types.TaskParams
+
 	// EC parameters
 	dataShards   int // Default: 10
 	parityShards int // Default: 4
@@ -88,15 +91,22 @@ func (t *Task) SetDialOption(dialOpt grpc.DialOption) {
 func (t *Task) Execute(params types.TaskParams) error {
 	glog.V(1).Infof("Starting erasure coding for volume %d from server %s (download → ec → distribute)", t.volumeID, t.sourceServer)
 
+	// Store task parameters for use in destination planning
+	t.taskParams = params
+
 	// Extract parameters - use the actual collection from task params
 	t.collection = params.Collection
 
-	// Override defaults with parameters if provided
-	if mc, ok := params.Parameters["master_client"].(string); ok && mc != "" {
-		t.masterClient = mc
-	}
-	if wd, ok := params.Parameters["work_dir"].(string); ok && wd != "" {
-		t.workDir = wd
+	// Override defaults with typed parameters if provided
+	if params.TypedParams != nil {
+		if ecParams := params.TypedParams.GetErasureCodingParams(); ecParams != nil {
+			if ecParams.MasterClient != "" {
+				t.masterClient = ecParams.MasterClient
+			}
+			if ecParams.WorkingDir != "" {
+				t.workDir = ecParams.WorkingDir
+			}
+		}
 	}
 
 	// Create unique working directory for this task to avoid conflicts
@@ -425,20 +435,34 @@ func (t *Task) Validate(params types.TaskParams) error {
 	return nil
 }
 
+// getPlannedDestinations extracts planned destination nodes from task parameters
+func (t *Task) getPlannedDestinations() []string {
+	var destinations []string
+
+	if t.taskParams.TypedParams != nil {
+		if ecParams := t.taskParams.TypedParams.GetErasureCodingParams(); ecParams != nil {
+			// Check for primary destination
+			if ecParams.PrimaryDestNode != "" {
+				destinations = append(destinations, ecParams.PrimaryDestNode)
+				glog.V(2).Infof("Found planned primary destination: %s", ecParams.PrimaryDestNode)
+			}
+
+			// Check for multiple destinations (for EC shards)
+			if len(ecParams.DestNodes) > 0 {
+				destinations = append(destinations, ecParams.DestNodes...)
+				glog.V(2).Infof("Found planned destinations: %v", ecParams.DestNodes)
+			}
+		}
+	}
+
+	return destinations
+}
+
 // EstimateTime estimates the time needed for EC processing
 func (t *Task) EstimateTime(params types.TaskParams) time.Duration {
 	baseTime := 20 * time.Minute // Processing takes time due to comprehensive operations
 
-	if size, ok := params.Parameters["volume_size"].(int64); ok {
-		// More accurate estimate based on volume size
-		// Account for copying, encoding, and distribution
-		gbSize := size / (1024 * 1024 * 1024)
-		estimatedTime := time.Duration(gbSize*2) * time.Minute // 2 minutes per GB
-		if estimatedTime > baseTime {
-			return estimatedTime
-		}
-	}
-
+	// Use default estimation since volume size is not available in typed params
 	return baseTime
 }
 
@@ -552,39 +576,49 @@ func (t *Task) distributeEcShardsAcrossServers(shardFiles []string, taskWorkDir 
 	t.SetProgress(70.0)
 	glog.V(1).Infof("Distributing %d EC shards across servers", len(shardFiles))
 
-	// Get volume servers from topology
+	// Use planned destinations if available, otherwise fall back to topology discovery
 	var volumeServers []pb.ServerAddress
-	err := operation.WithMasterServerClient(false, pb.ServerAddress(t.masterClient), t.grpcDialOpt, func(masterClient master_pb.SeaweedClient) error {
-		topologyResp, err := masterClient.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		if err != nil {
-			return err
-		}
+	var err error
 
-		// Extract unique volume server addresses
-		serverSet := make(map[string]bool)
-		for _, dc := range topologyResp.TopologyInfo.DataCenterInfos {
-			for _, rack := range dc.RackInfos {
-				for _, node := range rack.DataNodeInfos {
-					serverAddr := pb.NewServerAddressFromDataNode(node)
-					serverKey := string(serverAddr)
-					if !serverSet[serverKey] {
-						serverSet[serverKey] = true
-						volumeServers = append(volumeServers, serverAddr)
+	if plannedDestinations := t.getPlannedDestinations(); len(plannedDestinations) > 0 {
+		glog.V(1).Infof("Using planned destinations for EC shard distribution: %v", plannedDestinations)
+		for _, dest := range plannedDestinations {
+			volumeServers = append(volumeServers, pb.ServerAddress(dest))
+		}
+	} else {
+		glog.V(1).Infof("No planned destinations found, discovering from topology")
+		err = operation.WithMasterServerClient(false, pb.ServerAddress(t.masterClient), t.grpcDialOpt, func(masterClient master_pb.SeaweedClient) error {
+			topologyResp, err := masterClient.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+			if err != nil {
+				return err
+			}
+
+			// Extract unique volume server addresses
+			serverSet := make(map[string]bool)
+			for _, dc := range topologyResp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						serverAddr := pb.NewServerAddressFromDataNode(node)
+						serverKey := string(serverAddr)
+						if !serverSet[serverKey] {
+							serverSet[serverKey] = true
+							volumeServers = append(volumeServers, serverAddr)
+						}
 					}
 				}
 			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("failed to get volume servers: %v", err)
 		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("failed to get volume servers: %v", err)
 	}
 
 	if len(volumeServers) == 0 {
 		return fmt.Errorf("no volume servers available for EC distribution")
 	}
 
-	// Distribute shards in round-robin fashion
+	// Distribute shards across available servers
 	shardTargets := make(map[int]pb.ServerAddress)
 	targetServers := make(map[string]bool) // Track unique target servers
 	for i, shardFile := range shardFiles {
