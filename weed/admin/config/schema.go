@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// ConfigWithDefaults defines an interface for configurations that can apply their own defaults
+type ConfigWithDefaults interface {
+	// ApplySchemaDefaults applies default values using the provided schema
+	ApplySchemaDefaults(schema *Schema) error
+	// Validate validates the configuration
+	Validate() error
+}
+
 // FieldType defines the type of a configuration field
 type FieldType string
 
@@ -235,8 +243,19 @@ func (s *Schema) GetFieldByName(jsonName string) *Field {
 	return nil
 }
 
-// ApplyDefaults applies default values to a configuration struct using reflection
-func (s *Schema) ApplyDefaults(config interface{}) error {
+// ApplyDefaultsToConfig applies defaults to a configuration that implements ConfigWithDefaults
+func (s *Schema) ApplyDefaultsToConfig(config ConfigWithDefaults) error {
+	return config.ApplySchemaDefaults(s)
+}
+
+// ApplyDefaultsToProtobuf applies defaults to protobuf types using reflection
+func (s *Schema) ApplyDefaultsToProtobuf(config interface{}) error {
+	return s.applyDefaultsReflection(config)
+}
+
+// applyDefaultsReflection applies default values using reflection (internal use only)
+// Used for protobuf types and embedded struct handling
+func (s *Schema) applyDefaultsReflection(config interface{}) error {
 	configValue := reflect.ValueOf(config)
 	if configValue.Kind() == reflect.Ptr {
 		configValue = configValue.Elem()
@@ -257,7 +276,7 @@ func (s *Schema) ApplyDefaults(config interface{}) error {
 			if !field.CanAddr() {
 				return fmt.Errorf("embedded struct %s is not addressable - config must be a pointer", fieldType.Name)
 			}
-			err := s.ApplyDefaults(field.Addr().Interface())
+			err := s.applyDefaultsReflection(field.Addr().Interface())
 			if err != nil {
 				return fmt.Errorf("failed to apply defaults to embedded struct %s: %v", fieldType.Name, err)
 			}
@@ -271,7 +290,7 @@ func (s *Schema) ApplyDefaults(config interface{}) error {
 		}
 
 		// Remove options like ",omitempty"
-		if commaIdx := strings.Index(jsonTag, ","); commaIdx > 0 {
+		if commaIdx := strings.Index(jsonTag, ","); commaIdx >= 0 {
 			jsonTag = jsonTag[:commaIdx]
 		}
 
@@ -347,7 +366,7 @@ func isZeroValue(v reflect.Value) bool {
 		return !v.Bool()
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return v.Int() == 0
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return v.Uint() == 0
 	case reflect.Float32, reflect.Float64:
 		return v.Float() == 0

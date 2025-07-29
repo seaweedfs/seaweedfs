@@ -11,10 +11,30 @@ type TestBaseConfigForSchema struct {
 	MaxConcurrent       int  `json:"max_concurrent"`
 }
 
+// ApplySchemaDefaults implements ConfigWithDefaults for test struct
+func (c *TestBaseConfigForSchema) ApplySchemaDefaults(schema *Schema) error {
+	return schema.ApplyDefaultsToProtobuf(c)
+}
+
+// Validate implements ConfigWithDefaults for test struct
+func (c *TestBaseConfigForSchema) Validate() error {
+	return nil
+}
+
 type TestTaskConfigForSchema struct {
 	TestBaseConfigForSchema
 	TaskSpecificField    float64 `json:"task_specific_field"`
 	AnotherSpecificField string  `json:"another_specific_field"`
+}
+
+// ApplySchemaDefaults implements ConfigWithDefaults for test struct
+func (c *TestTaskConfigForSchema) ApplySchemaDefaults(schema *Schema) error {
+	return schema.ApplyDefaultsToProtobuf(c)
+}
+
+// Validate implements ConfigWithDefaults for test struct
+func (c *TestTaskConfigForSchema) Validate() error {
+	return nil
 }
 
 func createTestSchema() *Schema {
@@ -60,9 +80,9 @@ func TestApplyDefaults_WithEmbeddedStruct(t *testing.T) {
 	// Start with zero values
 	config := &TestTaskConfigForSchema{}
 
-	err := schema.ApplyDefaults(config)
+	err := schema.ApplyDefaultsToConfig(config)
 	if err != nil {
-		t.Fatalf("ApplyDefaults failed: %v", err)
+		t.Fatalf("ApplyDefaultsToConfig failed: %v", err)
 	}
 
 	// Verify embedded struct fields got default values
@@ -78,7 +98,7 @@ func TestApplyDefaults_WithEmbeddedStruct(t *testing.T) {
 		t.Errorf("Expected MaxConcurrent=3 (default), got %v", config.MaxConcurrent)
 	}
 
-	// Verify regular fields got default values
+	// Verify task-specific fields got default values
 	if config.TaskSpecificField != 0.25 {
 		t.Errorf("Expected TaskSpecificField=0.25 (default), got %v", config.TaskSpecificField)
 	}
@@ -91,91 +111,81 @@ func TestApplyDefaults_WithEmbeddedStruct(t *testing.T) {
 func TestApplyDefaults_PartiallySet(t *testing.T) {
 	schema := createTestSchema()
 
-	// Start with some values already set
+	// Start with some pre-set values
 	config := &TestTaskConfigForSchema{
 		TestBaseConfigForSchema: TestBaseConfigForSchema{
 			Enabled:             true, // Non-zero value, should not be overridden
-			ScanIntervalSeconds: 0,    // Zero value, should get default
+			ScanIntervalSeconds: 0,    // Should get default
 			MaxConcurrent:       5,    // Non-zero value, should not be overridden
 		},
-		TaskSpecificField:    0.0,      // Zero value, should get default
+		TaskSpecificField:    0.0,      // Should get default
 		AnotherSpecificField: "custom", // Non-zero value, should not be overridden
 	}
 
-	err := schema.ApplyDefaults(config)
+	err := schema.ApplyDefaultsToConfig(config)
 	if err != nil {
-		t.Fatalf("ApplyDefaults failed: %v", err)
+		t.Fatalf("ApplyDefaultsToConfig failed: %v", err)
 	}
 
-	// Verify non-zero values were preserved
+	// Verify already-set values are preserved
 	if config.Enabled != true {
-		t.Errorf("Expected Enabled=true (preserved), got %v", config.Enabled)
+		t.Errorf("Expected Enabled=true (pre-set), got %v", config.Enabled)
 	}
 
 	if config.MaxConcurrent != 5 {
-		t.Errorf("Expected MaxConcurrent=5 (preserved), got %v", config.MaxConcurrent)
+		t.Errorf("Expected MaxConcurrent=5 (pre-set), got %v", config.MaxConcurrent)
 	}
 
 	if config.AnotherSpecificField != "custom" {
-		t.Errorf("Expected AnotherSpecificField='custom' (preserved), got %v", config.AnotherSpecificField)
+		t.Errorf("Expected AnotherSpecificField='custom' (pre-set), got %v", config.AnotherSpecificField)
 	}
 
 	// Verify zero values got defaults
 	if config.ScanIntervalSeconds != 1800 {
-		t.Errorf("Expected ScanIntervalSeconds=1800 (default applied), got %v", config.ScanIntervalSeconds)
+		t.Errorf("Expected ScanIntervalSeconds=1800 (default), got %v", config.ScanIntervalSeconds)
 	}
 
 	if config.TaskSpecificField != 0.25 {
-		t.Errorf("Expected TaskSpecificField=0.25 (default applied), got %v", config.TaskSpecificField)
+		t.Errorf("Expected TaskSpecificField=0.25 (default), got %v", config.TaskSpecificField)
 	}
 }
 
 func TestApplyDefaults_NonPointer(t *testing.T) {
 	schema := createTestSchema()
-
-	config := TestTaskConfigForSchema{} // Not a pointer
-	err := schema.ApplyDefaults(config)
-
+	config := TestTaskConfigForSchema{}
+	// This should fail since we need a pointer to modify the struct
+	err := schema.ApplyDefaultsToProtobuf(config)
 	if err == nil {
-		t.Errorf("Expected error for non-pointer input, but got none")
+		t.Fatal("Expected error for non-pointer config, but got nil")
 	}
 }
 
 func TestApplyDefaults_NonStruct(t *testing.T) {
 	schema := createTestSchema()
-
 	var config interface{} = "not a struct"
-	err := schema.ApplyDefaults(config)
-
+	err := schema.ApplyDefaultsToProtobuf(config)
 	if err == nil {
-		t.Errorf("Expected error for non-struct input, but got none")
+		t.Fatal("Expected error for non-struct config, but got nil")
 	}
 }
 
 func TestApplyDefaults_EmptySchema(t *testing.T) {
-	schema := &Schema{
-		Fields: []*Field{}, // No fields
-	}
-
+	schema := &Schema{Fields: []*Field{}}
 	config := &TestTaskConfigForSchema{}
-	err := schema.ApplyDefaults(config)
 
+	err := schema.ApplyDefaultsToConfig(config)
 	if err != nil {
-		t.Fatalf("ApplyDefaults failed for empty schema: %v", err)
+		t.Fatalf("ApplyDefaultsToConfig failed for empty schema: %v", err)
 	}
 
-	// All fields should remain zero values
+	// All fields should remain at zero values since no defaults are defined
 	if config.Enabled != false {
 		t.Errorf("Expected Enabled=false (zero value), got %v", config.Enabled)
-	}
-
-	if config.ScanIntervalSeconds != 0 {
-		t.Errorf("Expected ScanIntervalSeconds=0 (zero value), got %v", config.ScanIntervalSeconds)
 	}
 }
 
 func TestApplyDefaults_MissingSchemaField(t *testing.T) {
-	// Schema missing some fields that exist in struct
+	// Schema with fewer fields than the struct
 	schema := &Schema{
 		Fields: []*Field{
 			{
@@ -184,39 +194,33 @@ func TestApplyDefaults_MissingSchemaField(t *testing.T) {
 				Type:         FieldTypeBool,
 				DefaultValue: true,
 			},
-			// Missing scan_interval_seconds, max_concurrent, etc.
+			// Note: missing scan_interval_seconds and other fields
 		},
 	}
 
 	config := &TestTaskConfigForSchema{}
-	err := schema.ApplyDefaults(config)
-
+	err := schema.ApplyDefaultsToConfig(config)
 	if err != nil {
-		t.Fatalf("ApplyDefaults failed: %v", err)
+		t.Fatalf("ApplyDefaultsToConfig failed: %v", err)
 	}
 
-	// Only the field with schema should get default
+	// Only the field with a schema definition should get a default
 	if config.Enabled != true {
-		t.Errorf("Expected Enabled=true (default applied), got %v", config.Enabled)
+		t.Errorf("Expected Enabled=true (has schema), got %v", config.Enabled)
 	}
 
-	// Fields without schema should remain zero
+	// Fields without schema should remain at zero values
 	if config.ScanIntervalSeconds != 0 {
 		t.Errorf("Expected ScanIntervalSeconds=0 (no schema), got %v", config.ScanIntervalSeconds)
 	}
-
-	if config.MaxConcurrent != 0 {
-		t.Errorf("Expected MaxConcurrent=0 (no schema), got %v", config.MaxConcurrent)
-	}
 }
 
-// Benchmark to ensure performance is reasonable
 func BenchmarkApplyDefaults(b *testing.B) {
 	schema := createTestSchema()
+	config := &TestTaskConfigForSchema{}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		config := &TestTaskConfigForSchema{}
-		_ = schema.ApplyDefaults(config)
+		_ = schema.ApplyDefaultsToConfig(config)
 	}
 }

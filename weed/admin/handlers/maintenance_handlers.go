@@ -198,8 +198,8 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Apply schema defaults first
-	if err := schema.ApplyDefaults(config); err != nil {
+	// Apply schema defaults first using type-safe method
+	if err := schema.ApplyDefaultsToConfig(config); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply defaults: " + err.Error()})
 		return
 	}

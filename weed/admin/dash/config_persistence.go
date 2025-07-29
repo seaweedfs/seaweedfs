@@ -1,7 +1,6 @@
 package dash
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,9 +33,6 @@ const (
 	BalanceTaskConfigJSONFile     = "task_balance.json"
 	ReplicationTaskConfigJSONFile = "task_replication.json"
 
-	// Legacy admin config (remains in root)
-	AdminConfigFile = "admin.json"
-
 	ConfigDirPermissions  = 0755
 	ConfigFilePermissions = 0644
 )
@@ -67,44 +63,37 @@ func (cp *ConfigPersistence) SaveMaintenanceConfig(config *MaintenanceConfig) er
 		return fmt.Errorf("no data directory specified, cannot save configuration")
 	}
 
-	// Create conf subdirectory path
 	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
-	configPath := filepath.Join(confDir, MaintenanceConfigFile)
-	jsonPath := filepath.Join(confDir, MaintenanceConfigJSONFile)
-
-	// Create conf directory if it doesn't exist
 	if err := os.MkdirAll(confDir, ConfigDirPermissions); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	// Marshal configuration to protobuf binary format
-	configData, err := proto.Marshal(config)
+	// Save as protobuf (primary format)
+	pbConfigPath := filepath.Join(confDir, MaintenanceConfigFile)
+	pbData, err := proto.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("failed to marshal maintenance config: %w", err)
+		return fmt.Errorf("failed to marshal maintenance config to protobuf: %w", err)
 	}
 
-	// Write protobuf file
-	if err := os.WriteFile(configPath, configData, ConfigFilePermissions); err != nil {
-		return fmt.Errorf("failed to write maintenance config file: %w", err)
+	if err := os.WriteFile(pbConfigPath, pbData, ConfigFilePermissions); err != nil {
+		return fmt.Errorf("failed to write protobuf config file: %w", err)
 	}
 
-	// Marshal configuration to JSON for reference
-	marshaler := protojson.MarshalOptions{
+	// Save JSON reference copy for debugging
+	jsonConfigPath := filepath.Join(confDir, MaintenanceConfigJSONFile)
+	jsonData, err := protojson.MarshalOptions{
 		Multiline:       true,
 		Indent:          "  ",
 		EmitUnpopulated: true,
-	}
-	jsonData, err := marshaler.Marshal(config)
+	}.Marshal(config)
 	if err != nil {
-		glog.Warningf("Failed to marshal maintenance config to JSON reference: %v", err)
-	} else {
-		// Write JSON reference file
-		if err := os.WriteFile(jsonPath, jsonData, ConfigFilePermissions); err != nil {
-			glog.Warningf("Failed to write maintenance config JSON reference: %v", err)
-		}
+		return fmt.Errorf("failed to marshal maintenance config to JSON: %w", err)
 	}
 
-	glog.V(1).Infof("Saved maintenance configuration to %s (with JSON reference)", configPath)
+	if err := os.WriteFile(jsonConfigPath, jsonData, ConfigFilePermissions); err != nil {
+		return fmt.Errorf("failed to write JSON reference file: %w", err)
+	}
+
 	return nil
 }
 
@@ -128,68 +117,7 @@ func (cp *ConfigPersistence) LoadMaintenanceConfig() (*MaintenanceConfig, error)
 	}
 
 	// File doesn't exist or failed to load, use defaults
-	defaultConfig := DefaultMaintenanceConfig()
-	defaultConfig.Policy = buildPolicyFromTaskConfigs()
-	return defaultConfig, nil
-}
-
-// SaveAdminConfig saves general admin configuration to JSON file
-func (cp *ConfigPersistence) SaveAdminConfig(config map[string]interface{}) error {
-	if cp.dataDir == "" {
-		return fmt.Errorf("no data directory specified, cannot save configuration")
-	}
-
-	configPath := filepath.Join(cp.dataDir, AdminConfigFile)
-
-	// Create directory if it doesn't exist
-	if err := os.MkdirAll(cp.dataDir, ConfigDirPermissions); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
-	}
-
-	// Marshal configuration to JSON
-	configData, err := json.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("failed to marshal admin config: %w", err)
-	}
-
-	// Write to file
-	if err := os.WriteFile(configPath, configData, ConfigFilePermissions); err != nil {
-		return fmt.Errorf("failed to write admin config file: %w", err)
-	}
-
-	glog.V(1).Infof("Saved admin configuration to %s", configPath)
-	return nil
-}
-
-// LoadAdminConfig loads general admin configuration from JSON file
-func (cp *ConfigPersistence) LoadAdminConfig() (map[string]interface{}, error) {
-	if cp.dataDir == "" {
-		glog.V(1).Infof("No data directory specified, using default admin configuration")
-		return make(map[string]interface{}), nil
-	}
-
-	configPath := filepath.Join(cp.dataDir, AdminConfigFile)
-
-	// Check if file exists
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		glog.V(1).Infof("Admin config file does not exist, using defaults: %s", configPath)
-		return make(map[string]interface{}), nil
-	}
-
-	// Read file
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read admin config file: %w", err)
-	}
-
-	// Unmarshal JSON
-	var config map[string]interface{}
-	if err := json.Unmarshal(configData, &config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal admin config: %w", err)
-	}
-
-	glog.V(1).Infof("Loaded admin configuration from %s", configPath)
-	return config, nil
+	return DefaultMaintenanceConfig(), nil
 }
 
 // GetConfigPath returns the path to a configuration file
@@ -198,12 +126,7 @@ func (cp *ConfigPersistence) GetConfigPath(filename string) string {
 		return ""
 	}
 
-	// Admin config stays in root directory
-	if filename == AdminConfigFile {
-		return filepath.Join(cp.dataDir, filename)
-	}
-
-	// All other configs go in conf subdirectory
+	// All configs go in conf subdirectory
 	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
 	return filepath.Join(confDir, filename)
 }
@@ -252,14 +175,9 @@ func (cp *ConfigPersistence) BackupConfig(filename string) error {
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 	backupName := fmt.Sprintf("%s.backup_%s", filename, timestamp)
 
-	// Determine backup directory (same as source file)
-	var backupPath string
-	if filename == AdminConfigFile {
-		backupPath = filepath.Join(cp.dataDir, backupName)
-	} else {
-		confDir := filepath.Join(cp.dataDir, ConfigSubdir)
-		backupPath = filepath.Join(confDir, backupName)
-	}
+	// Determine backup directory (conf subdirectory)
+	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
+	backupPath := filepath.Join(confDir, backupName)
 
 	// Copy file
 	configData, err := os.ReadFile(configPath)
@@ -281,14 +199,9 @@ func (cp *ConfigPersistence) RestoreConfig(filename, backupName string) error {
 		return fmt.Errorf("no data directory specified")
 	}
 
-	// Determine backup path (same directory as target file)
-	var backupPath string
-	if filename == AdminConfigFile {
-		backupPath = filepath.Join(cp.dataDir, backupName)
-	} else {
-		confDir := filepath.Join(cp.dataDir, ConfigSubdir)
-		backupPath = filepath.Join(confDir, backupName)
-	}
+	// Determine backup path (conf subdirectory)
+	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
+	backupPath := filepath.Join(confDir, backupName)
 
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 		return fmt.Errorf("backup file does not exist: %s", backupName)

@@ -38,11 +38,11 @@ type TaskDefinition struct {
 	RepeatInterval time.Duration
 }
 
-// TaskConfig provides a simple configuration interface using protobuf
+// TaskConfig provides a configuration interface that supports type-safe defaults
 type TaskConfig interface {
+	config.ConfigWithDefaults // Extends ConfigWithDefaults for type-safe schema operations
 	IsEnabled() bool
 	SetEnabled(bool)
-	Validate() error
 	ToTaskPolicy() *worker_pb.TaskPolicy
 	FromTaskPolicy(policy *worker_pb.TaskPolicy) error
 }
@@ -200,6 +200,12 @@ func (c *BaseConfig) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 	c.MaxConcurrent = int(policy.MaxConcurrent)
 	c.ScanIntervalSeconds = int(policy.RepeatIntervalSeconds)
 	return nil
+}
+
+// ApplySchemaDefaults applies default values from schema using reflection
+func (c *BaseConfig) ApplySchemaDefaults(schema *config.Schema) error {
+	// Use reflection-based approach for BaseConfig since it needs to handle embedded structs
+	return schema.ApplyDefaultsToProtobuf(c)
 }
 
 // setFieldValue sets a field value with type conversion

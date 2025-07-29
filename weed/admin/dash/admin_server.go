@@ -141,7 +141,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 
 		// Apply new defaults to handle schema changes (like enabling by default)
 		schema := maintenance.GetMaintenanceConfigSchema()
-		if err := schema.ApplyDefaults(maintenanceConfig); err != nil {
+		if err := schema.ApplyDefaultsToProtobuf(maintenanceConfig); err != nil {
 			glog.Warningf("Failed to apply schema defaults to loaded config: %v", err)
 		}
 
