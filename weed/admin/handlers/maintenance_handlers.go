@@ -186,7 +186,7 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 	}
 
 	// Create a new config instance based on task type and apply schema defaults
-	var config interface{}
+	var config TaskConfig
 	switch taskType {
 	case types.TaskTypeVacuum:
 		config = &vacuum.Config{}
@@ -220,15 +220,11 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 	if currentProvider != nil {
 		// Copy current config values to the new config
 		currentConfig := currentProvider.GetCurrentConfig()
-		if currentConfigMap, ok := currentConfig.(interface{ ToMap() map[string]interface{} }); ok {
+		if currentConfigMap, ok := currentConfig.(TaskConfig); ok {
 			currentMap := currentConfigMap.ToMap()
-			// Apply current values first
-			if configInterface, ok := config.(interface {
-				FromMap(map[string]interface{}) error
-			}); ok {
-				if err := configInterface.FromMap(currentMap); err != nil {
-					glog.Warningf("Failed to load current config for %s: %v", taskTypeName, err)
-				}
+			// Apply current values first (config is already TaskConfig interface)
+			if err := config.FromMap(currentMap); err != nil {
+				glog.Warningf("Failed to load current config for %s: %v", taskTypeName, err)
 			}
 		}
 	}
@@ -525,7 +521,7 @@ func (h *MaintenanceHandlers) updateMaintenanceConfig(config *maintenance.Mainte
 }
 
 // saveTaskConfigToProtobuf saves task configuration to protobuf file
-func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, config interface{}) error {
+func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, config TaskConfig) error {
 	configPersistence := h.adminServer.GetConfigPersistence()
 	if configPersistence == nil {
 		return fmt.Errorf("config persistence not available")
