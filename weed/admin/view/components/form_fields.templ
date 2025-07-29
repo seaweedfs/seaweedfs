@@ -269,6 +269,55 @@ templ DurationInputField(data DurationInputFieldData) {
 }
 
 // Helper functions for duration conversion (used by DurationInputField)
+
+// Typed conversion functions for protobuf int32 (most common) - EXPORTED
+func ConvertInt32SecondsToDisplayValue(seconds int32) float64 {
+	return convertIntSecondsToDisplayValue(int(seconds))
+}
+
+func GetInt32DisplayUnit(seconds int32) string {
+	return getIntDisplayUnit(int(seconds))
+}
+
+// Typed conversion functions for regular int
+func convertIntSecondsToDisplayValue(seconds int) float64 {
+	if seconds == 0 {
+		return 0
+	}
+	
+	// Check if it's evenly divisible by days
+	if seconds%(24*3600) == 0 {
+		return float64(seconds / (24 * 3600))
+	}
+	
+	// Check if it's evenly divisible by hours
+	if seconds%3600 == 0 {
+		return float64(seconds / 3600)
+	}
+	
+	// Default to minutes
+	return float64(seconds / 60)
+}
+
+func getIntDisplayUnit(seconds int) string {
+	if seconds == 0 {
+		return "minutes"
+	}
+	
+	// Check if it's evenly divisible by days
+	if seconds%(24*3600) == 0 {
+		return "days"
+	}
+	
+	// Check if it's evenly divisible by hours
+	if seconds%3600 == 0 {
+		return "hours"
+	}
+	
+	// Default to minutes
+	return "minutes"
+}
+
 func convertSecondsToUnit(seconds int) string {
 	if seconds == 0 {
 		return "minutes"

@@ -9,6 +9,7 @@ import (
     "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
     "github.com/seaweedfs/seaweedfs/weed/worker/tasks"
     "github.com/seaweedfs/seaweedfs/weed/admin/config"
+    "github.com/seaweedfs/seaweedfs/weed/admin/view/components"
 )
 
 // Helper function to convert task schema to JSON string
@@ -205,7 +206,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                     class="form-control" 
                     id={ field.JSONName + "_value" } 
                     name={ field.JSONName + "_value" } 
-                    value={ fmt.Sprintf("%.0f", convertTaskSecondsToDisplayValue(value, field)) }
+                    value={ fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getTaskInt32Value(value))) }
                     step="1"
                     min="1"
                     if field.Required {
@@ -223,7 +224,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                 >
                     <option 
                         value="minutes"
-                        if getTaskDisplayUnit(value, field) == "minutes" {
+                        if components.GetInt32DisplayUnit(getTaskInt32Value(value)) == "minutes" {
                             selected
                         }
                     >
@@ -231,7 +232,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                     </option>
                     <option 
                         value="hours"
-                        if getTaskDisplayUnit(value, field) == "hours" {
+                        if components.GetInt32DisplayUnit(getTaskInt32Value(value)) == "hours" {
                             selected
                         }
                     >
@@ -239,7 +240,7 @@ templ TaskConfigField(field *config.Field, value interface{}) {
                     </option>
                     <option 
                         value="days"
-                        if getTaskDisplayUnit(value, field) == "days" {
+                        if components.GetInt32DisplayUnit(getTaskInt32Value(value)) == "days" {
                             selected
                         }
                     >
@@ -339,48 +340,18 @@ func getTaskBoolValue(value interface{}) bool {
     return false
 }
 
-func convertTaskSecondsToDisplayValue(value interface{}, field *config.Field) float64 {
-    if intVal, ok := value.(int); ok {
-        if intVal == 0 {
-            return 0
-        }
-        
-        // Check if it's evenly divisible by days
-        if intVal%(24*3600) == 0 {
-            return float64(intVal / (24 * 3600))
-        }
-        
-        // Check if it's evenly divisible by hours
-        if intVal%3600 == 0 {
-            return float64(intVal / 3600)
-        }
-        
-        // Default to minutes
-        return float64(intVal / 60)
+// Helper function to safely convert interface{} to int32 for protobuf fields
+func getTaskInt32Value(value interface{}) int32 {
+    switch v := value.(type) {
+    case int32:
+        return v
+    case int:
+        return int32(v)
+    case int64:
+        return int32(v)
+    default:
+        return 0
     }
-    return 0
-}
-
-func getTaskDisplayUnit(value interface{}, field *config.Field) string {
-    if intVal, ok := value.(int); ok {
-        if intVal == 0 {
-            return "minutes"
-        }
-        
-        // Check if it's evenly divisible by days
-        if intVal%(24*3600) == 0 {
-            return "days"
-        }
-        
-        // Check if it's evenly divisible by hours
-        if intVal%3600 == 0 {
-            return "hours"
-        }
-        
-        // Default to minutes
-        return "minutes"
-    }
-    return "minutes"
 }
 
 func getTaskNumberStep(field *config.Field) string {

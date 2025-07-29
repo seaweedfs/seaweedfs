@@ -6,6 +6,7 @@ import (
     "strings"
     "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
     "github.com/seaweedfs/seaweedfs/weed/admin/config"
+    "github.com/seaweedfs/seaweedfs/weed/admin/view/components"
 )
 
 templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *maintenance.MaintenanceConfigSchema) {
@@ -222,7 +223,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     class="form-control" 
                     id={ field.JSONName + "_value" } 
                     name={ field.JSONName + "_value" } 
-                    value={ fmt.Sprintf("%.0f", convertSecondsToDisplayValue(value, field)) }
+                    value={ fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getInt32Value(value))) }
                     step="1"
                     min="1"
                     if field.Required {
@@ -240,7 +241,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                 >
                     <option 
                         value="minutes"
-                        if getDisplayUnit(value, field) == "minutes" {
+                        if components.GetInt32DisplayUnit(getInt32Value(value)) == "minutes" {
                             selected
                         }
                     >
@@ -248,7 +249,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     </option>
                     <option 
                         value="hours"
-                        if getDisplayUnit(value, field) == "hours" {
+                        if components.GetInt32DisplayUnit(getInt32Value(value)) == "hours" {
                             selected
                         }
                     >
@@ -256,7 +257,7 @@ templ ConfigField(field *config.Field, value interface{}) {
                     </option>
                     <option 
                         value="days"
-                        if getDisplayUnit(value, field) == "days" {
+                        if components.GetInt32DisplayUnit(getInt32Value(value)) == "days" {
                             selected
                         }
                     >
@@ -331,70 +332,18 @@ func getBoolValue(value interface{}) bool {
     return false
 }
 
-func convertSecondsToDisplayValue(value interface{}, field *config.Field) float64 {
-    var intVal int
-    
-    // Handle both int and int32 types (protobuf uses int32)
+// Helper function to safely convert interface{} to int32 for protobuf fields
+func getInt32Value(value interface{}) int32 {
     switch v := value.(type) {
-    case int:
-        intVal = v
     case int32:
-        intVal = int(v)
+        return v
+    case int:
+        return int32(v)
     case int64:
-        intVal = int(v)
+        return int32(v)
     default:
         return 0
     }
-    
-    if intVal == 0 {
-        return 0
-    }
-    
-    // Check if it's evenly divisible by days
-    if intVal%(24*3600) == 0 {
-        return float64(intVal / (24 * 3600))
-    }
-    
-    // Check if it's evenly divisible by hours
-    if intVal%3600 == 0 {
-        return float64(intVal / 3600)
-    }
-    
-    // Default to minutes
-    return float64(intVal / 60)
-}
-
-func getDisplayUnit(value interface{}, field *config.Field) string {
-    var intVal int
-    
-    // Handle both int and int32 types (protobuf uses int32)
-    switch v := value.(type) {
-    case int:
-        intVal = v
-    case int32:
-        intVal = int(v)
-    case int64:
-        intVal = int(v)
-    default:
-        return "minutes"
-    }
-    
-    if intVal == 0 {
-        return "minutes"
-    }
-    
-    // Check if it's evenly divisible by days
-    if intVal%(24*3600) == 0 {
-        return "days"
-    }
-    
-    // Check if it's evenly divisible by hours
-    if intVal%3600 == 0 {
-        return "hours"
-    }
-    
-    // Default to minutes
-    return "minutes"
 }
 
 func getNumberStep(field *config.Field) string {
