@@ -15,7 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
@@ -220,10 +219,10 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 	if currentProvider != nil {
 		// Copy current config values to the new config
 		currentConfig := currentProvider.GetCurrentConfig()
-		if currentConfigMap, ok := currentConfig.(TaskConfig); ok {
-			currentMap := currentConfigMap.ToMap()
-			// Apply current values first (config is already TaskConfig interface)
-			if err := config.FromMap(currentMap); err != nil {
+		if currentConfigProtobuf, ok := currentConfig.(TaskConfig); ok {
+			// Apply current values using protobuf directly - no map conversion needed!
+			currentPolicy := currentConfigProtobuf.ToTaskPolicy()
+			if err := config.FromTaskPolicy(currentPolicy); err != nil {
 				glog.Warningf("Failed to load current config for %s: %v", taskTypeName, err)
 			}
 		}
@@ -527,79 +526,17 @@ func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, 
 		return fmt.Errorf("config persistence not available")
 	}
 
+	// Use the new ToTaskPolicy method - much simpler and more maintainable!
+	taskPolicy := config.ToTaskPolicy()
+
+	// Save using task-specific methods
 	switch taskType {
 	case types.TaskTypeVacuum:
-		if vacuumConfig, ok := config.(*vacuum.Config); ok {
-			// Debug logging
-			glog.V(1).Infof("Saving vacuum config - Enabled: %v, MaxConcurrent: %d, GarbageThreshold: %f, MinVolumeAgeSeconds: %d, MinIntervalSeconds: %d",
-				vacuumConfig.Enabled, vacuumConfig.MaxConcurrent, vacuumConfig.GarbageThreshold, vacuumConfig.MinVolumeAgeSeconds, vacuumConfig.MinIntervalSeconds)
-
-			// Create complete TaskPolicy with both general and task-specific fields
-			taskPolicy := &worker_pb.TaskPolicy{
-				Enabled:               vacuumConfig.Enabled,
-				MaxConcurrent:         int32(vacuumConfig.MaxConcurrent),
-				RepeatIntervalSeconds: int32(vacuumConfig.ScanIntervalSeconds), // Use scan interval as repeat interval
-				CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds), // Use scan interval as check interval
-				TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-					VacuumConfig: &worker_pb.VacuumTaskConfig{
-						GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
-						MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
-						MinIntervalSeconds: int32(vacuumConfig.MinIntervalSeconds),
-					},
-				},
-			}
-			return configPersistence.SaveVacuumTaskPolicy(taskPolicy)
-		}
-		return fmt.Errorf("invalid config type for vacuum task")
-
+		return configPersistence.SaveVacuumTaskPolicy(taskPolicy)
 	case types.TaskTypeErasureCoding:
-		if ecConfig, ok := config.(*erasure_coding.Config); ok {
-			// Debug logging
-			glog.V(1).Infof("Saving EC config - Enabled: %v, MaxConcurrent: %d, FullnessRatio: %f, QuietForSeconds: %d, MinSizeMB: %d, CollectionFilter: '%s'",
-				ecConfig.Enabled, ecConfig.MaxConcurrent, ecConfig.FullnessRatio, ecConfig.QuietForSeconds, ecConfig.MinSizeMB, ecConfig.CollectionFilter)
-
-			// Create complete TaskPolicy with both general and task-specific fields
-			taskPolicy := &worker_pb.TaskPolicy{
-				Enabled:               ecConfig.Enabled,
-				MaxConcurrent:         int32(ecConfig.MaxConcurrent),
-				RepeatIntervalSeconds: int32(ecConfig.ScanIntervalSeconds), // Use scan interval as repeat interval
-				CheckIntervalSeconds:  int32(ecConfig.ScanIntervalSeconds), // Use scan interval as check interval
-				TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
-					ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
-						FullnessRatio:    float64(ecConfig.FullnessRatio),
-						QuietForSeconds:  int32(ecConfig.QuietForSeconds),
-						MinVolumeSizeMb:  int32(ecConfig.MinSizeMB),
-						CollectionFilter: ecConfig.CollectionFilter,
-					},
-				},
-			}
-			return configPersistence.SaveErasureCodingTaskPolicy(taskPolicy)
-		}
-		return fmt.Errorf("invalid config type for erasure coding task")
-
+		return configPersistence.SaveErasureCodingTaskPolicy(taskPolicy)
 	case types.TaskTypeBalance:
-		if balanceConfig, ok := config.(*balance.Config); ok {
-			// Debug logging
-			glog.V(1).Infof("Saving balance config - Enabled: %v, MaxConcurrent: %d, ImbalanceThreshold: %f, MinServerCount: %d",
-				balanceConfig.Enabled, balanceConfig.MaxConcurrent, balanceConfig.ImbalanceThreshold, balanceConfig.MinServerCount)
-
-			// Create complete TaskPolicy with both general and task-specific fields
-			taskPolicy := &worker_pb.TaskPolicy{
-				Enabled:               balanceConfig.Enabled,
-				MaxConcurrent:         int32(balanceConfig.MaxConcurrent),
-				RepeatIntervalSeconds: int32(balanceConfig.ScanIntervalSeconds), // Use scan interval as repeat interval
-				CheckIntervalSeconds:  int32(balanceConfig.ScanIntervalSeconds), // Use scan interval as check interval
-				TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-					BalanceConfig: &worker_pb.BalanceTaskConfig{
-						ImbalanceThreshold: float64(balanceConfig.ImbalanceThreshold),
-						MinServerCount:     int32(balanceConfig.MinServerCount),
-					},
-				},
-			}
-			return configPersistence.SaveBalanceTaskPolicy(taskPolicy)
-		}
-		return fmt.Errorf("invalid config type for balance task")
-
+		return configPersistence.SaveBalanceTaskPolicy(taskPolicy)
 	default:
 		return fmt.Errorf("unsupported task type for protobuf persistence: %s", taskType)
 	}

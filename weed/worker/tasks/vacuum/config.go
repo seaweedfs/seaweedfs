@@ -31,14 +31,21 @@ func NewDefaultConfig() *Config {
 	}
 }
 
-// FromMap loads config from map using reflection for vacuum.Config
-func (c *Config) FromMap(data map[string]interface{}) error {
-	return base.MapToStruct(data, c)
-}
-
-// ToMap converts config to map using reflection for vacuum.Config
-func (c *Config) ToMap() map[string]interface{} {
-	return base.StructToMap(c)
+// ToTaskPolicy converts configuration to a TaskPolicy protobuf message
+func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
+	return &worker_pb.TaskPolicy{
+		Enabled:               c.Enabled,
+		MaxConcurrent:         int32(c.MaxConcurrent),
+		RepeatIntervalSeconds: int32(c.ScanIntervalSeconds),
+		CheckIntervalSeconds:  int32(c.ScanIntervalSeconds),
+		TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
+			VacuumConfig: &worker_pb.VacuumTaskConfig{
+				GarbageThreshold:   float64(c.GarbageThreshold),
+				MinVolumeAgeHours:  int32(c.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
+				MinIntervalSeconds: int32(c.MinIntervalSeconds),
+			},
+		},
+	}
 }
 
 // FromTaskPolicy loads configuration from a TaskPolicy protobuf message

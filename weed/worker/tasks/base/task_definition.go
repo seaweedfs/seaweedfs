@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/config"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -37,13 +38,13 @@ type TaskDefinition struct {
 	RepeatInterval time.Duration
 }
 
-// TaskConfig provides a simple configuration interface
+// TaskConfig provides a simple configuration interface using protobuf
 type TaskConfig interface {
 	IsEnabled() bool
 	SetEnabled(bool)
 	Validate() error
-	ToMap() map[string]interface{}
-	FromMap(map[string]interface{}) error
+	ToTaskPolicy() *worker_pb.TaskPolicy
+	FromTaskPolicy(policy *worker_pb.TaskPolicy) error
 }
 
 // ConfigSpec defines the configuration schema
@@ -177,13 +178,28 @@ func MapToStruct(data map[string]interface{}, obj interface{}) error {
 }
 
 // ToMap converts config to map using reflection
-func (c *BaseConfig) ToMap() map[string]interface{} {
-	return StructToMap(c)
+// ToTaskPolicy converts BaseConfig to protobuf (partial implementation)
+// Note: Concrete implementations should override this to include task-specific config
+func (c *BaseConfig) ToTaskPolicy() *worker_pb.TaskPolicy {
+	return &worker_pb.TaskPolicy{
+		Enabled:               c.Enabled,
+		MaxConcurrent:         int32(c.MaxConcurrent),
+		RepeatIntervalSeconds: int32(c.ScanIntervalSeconds),
+		CheckIntervalSeconds:  int32(c.ScanIntervalSeconds),
+		// TaskConfig field should be set by concrete implementations
+	}
 }
 
-// FromMap loads config from map using reflection
-func (c *BaseConfig) FromMap(data map[string]interface{}) error {
-	return MapToStruct(data, c)
+// FromTaskPolicy loads BaseConfig from protobuf (partial implementation)
+// Note: Concrete implementations should override this to handle task-specific config
+func (c *BaseConfig) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	if policy == nil {
+		return fmt.Errorf("policy is nil")
+	}
+	c.Enabled = policy.Enabled
+	c.MaxConcurrent = int(policy.MaxConcurrent)
+	c.ScanIntervalSeconds = int(policy.RepeatIntervalSeconds)
+	return nil
 }
 
 // setFieldValue sets a field value with type conversion

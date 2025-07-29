@@ -433,20 +433,17 @@ func BuildMaintenancePolicyFromTasks() *MaintenancePolicy {
 			CheckIntervalSeconds:  policy.DefaultCheckIntervalSeconds,
 		}
 
-		// Extract configuration from UI provider's config
-		if configMap, ok := defaultConfig.(map[string]interface{}); ok {
-			// Extract common fields
-			if enabled, exists := configMap["enabled"]; exists {
-				if enabledBool, ok := enabled.(bool); ok {
-					taskPolicy.Enabled = enabledBool
-				}
+		// Extract configuration using TaskConfig interface - no more map conversions!
+		if taskConfig, ok := defaultConfig.(interface{ ToTaskPolicy() *worker_pb.TaskPolicy }); ok {
+			// Use protobuf directly for clean, type-safe config extraction
+			pbTaskPolicy := taskConfig.ToTaskPolicy()
+			taskPolicy.Enabled = pbTaskPolicy.Enabled
+			taskPolicy.MaxConcurrent = pbTaskPolicy.MaxConcurrent
+			if pbTaskPolicy.RepeatIntervalSeconds > 0 {
+				taskPolicy.RepeatIntervalSeconds = pbTaskPolicy.RepeatIntervalSeconds
 			}
-			if maxConcurrent, exists := configMap["max_concurrent"]; exists {
-				if maxConcurrentInt, ok := maxConcurrent.(int); ok {
-					taskPolicy.MaxConcurrent = int32(maxConcurrentInt)
-				} else if maxConcurrentFloat, ok := maxConcurrent.(float64); ok {
-					taskPolicy.MaxConcurrent = int32(maxConcurrentFloat)
-				}
+			if pbTaskPolicy.CheckIntervalSeconds > 0 {
+				taskPolicy.CheckIntervalSeconds = pbTaskPolicy.CheckIntervalSeconds
 			}
 		}
 

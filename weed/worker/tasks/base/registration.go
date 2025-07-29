@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/config"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -63,24 +64,27 @@ func (ui *GenericUIProvider) GetCurrentConfig() interface{} {
 	return ui.taskDef.Config
 }
 
-// ApplyConfig applies configuration
+// ApplyConfig applies configuration using protobuf directly
 func (ui *GenericUIProvider) ApplyConfig(config interface{}) error {
-	// Handle map[string]interface{} input
-	if configMap, ok := config.(map[string]interface{}); ok {
-		return ui.taskDef.Config.FromMap(configMap)
+	// Handle TaskPolicy protobuf input directly
+	if taskPolicy, ok := config.(*worker_pb.TaskPolicy); ok {
+		return ui.taskDef.Config.FromTaskPolicy(taskPolicy)
 	}
 
-	// Handle struct input by converting to map first
-	if config != nil {
-		configMap := StructToMap(config)
-		err := ui.taskDef.Config.FromMap(configMap)
-		if err != nil {
-			return err
-		}
-		return nil
+	// Handle TaskConfig interface input
+	if taskConfig, ok := config.(TaskConfig); ok {
+		taskPolicy := taskConfig.ToTaskPolicy()
+		return ui.taskDef.Config.FromTaskPolicy(taskPolicy)
 	}
 
-	return fmt.Errorf("invalid config format for %s", ui.taskDef.Type)
+	// Fallback for backward compatibility with map[string]interface{}
+	if _, ok := config.(map[string]interface{}); ok {
+		// Convert map to protobuf first (less efficient but compatible)
+		// This should be phased out eventually
+		return fmt.Errorf("map[string]interface{} config format deprecated for %s, use protobuf or TaskConfig", ui.taskDef.Type)
+	}
+
+	return fmt.Errorf("unsupported config format for %s", ui.taskDef.Type)
 }
 
 // RegisterTask registers a complete task definition with all registries
