@@ -519,9 +519,21 @@ func (s *MaintenanceIntegration) planDestinationForTask(task *TaskDetectionResul
 
 // createVacuumTaskParams creates typed parameters for vacuum tasks
 func (s *MaintenanceIntegration) createVacuumTaskParams(task *TaskDetectionResult) {
-	// Use default values for vacuum parameters
-	garbageThreshold := 0.3 // Default 30%
-	verifyChecksum := true  // Default to verify
+	// Get configuration from policy instead of using hard-coded values
+	vacuumConfig := GetVacuumTaskConfig(s.maintenancePolicy, MaintenanceTaskType("vacuum"))
+
+	// Use configured values or defaults if config is not available
+	garbageThreshold := 0.3                    // Default 30%
+	verifyChecksum := true                     // Default to verify
+	batchSize := int32(1000)                   // Default batch size
+	workingDir := "/tmp/seaweedfs_vacuum_work" // Default working directory
+
+	if vacuumConfig != nil {
+		garbageThreshold = vacuumConfig.GarbageThreshold
+		// Note: VacuumTaskConfig has GarbageThreshold, MinVolumeAgeHours, MinIntervalSeconds
+		// Other fields like VerifyChecksum, BatchSize, WorkingDir would need to be added
+		// to the protobuf definition if they should be configurable
+	}
 
 	// Create typed protobuf parameters
 	task.TypedParams = &worker_pb.TaskParams{
@@ -532,8 +544,8 @@ func (s *MaintenanceIntegration) createVacuumTaskParams(task *TaskDetectionResul
 			VacuumParams: &worker_pb.VacuumTaskParams{
 				GarbageThreshold: garbageThreshold,
 				ForceVacuum:      false,
-				BatchSize:        1000,
-				WorkingDir:       "/tmp/seaweedfs_vacuum_work",
+				BatchSize:        batchSize,
+				WorkingDir:       workingDir,
 				VerifyChecksum:   verifyChecksum,
 			},
 		},
@@ -542,6 +554,9 @@ func (s *MaintenanceIntegration) createVacuumTaskParams(task *TaskDetectionResul
 
 // createErasureCodingTaskParams creates typed parameters for EC tasks
 func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetectionResult, destinationPlan *DestinationPlan) {
+	// Get configuration from policy instead of using hard-coded values
+	ecConfig := GetErasureCodingTaskConfig(s.maintenancePolicy, MaintenanceTaskType("erasure_coding"))
+
 	// Get multiple destinations for EC operations
 	multipleNodes := s.planMultipleECDestinations(task.VolumeID, task.Server)
 
@@ -554,6 +569,20 @@ func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetecti
 		destNodes = []string{primaryDestNode}
 	}
 
+	// Use configured values or defaults if config is not available
+	dataShards := int32(10)  // Default values
+	parityShards := int32(4) // Default values
+	workingDir := "/tmp/seaweedfs_ec_work"
+	masterClient := "localhost:9333" // Could be configurable
+	cleanupSource := true
+
+	if ecConfig != nil {
+		// Note: ErasureCodingTaskConfig has FullnessRatio, QuietForSeconds, MinVolumeSizeMb, CollectionFilter
+		// Other fields like DataShards, ParityShards, WorkingDir, MasterClient would need to be added
+		// to the protobuf definition if they should be configurable
+		// For now we use the existing fields and keep defaults for others
+	}
+
 	// Create typed protobuf parameters
 	task.TypedParams = &worker_pb.TaskParams{
 		VolumeId:   task.VolumeID,
@@ -564,11 +593,11 @@ func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetecti
 				DestNodes:          destNodes,
 				PrimaryDestNode:    primaryDestNode,
 				EstimatedShardSize: destinationPlan.ExpectedSize,
-				DataShards:         10, // Default values
-				ParityShards:       4,
-				WorkingDir:         "/tmp/seaweedfs_ec_work",
-				MasterClient:       "localhost:9333", // Could be configurable
-				CleanupSource:      true,
+				DataShards:         dataShards,
+				ParityShards:       parityShards,
+				WorkingDir:         workingDir,
+				MasterClient:       masterClient,
+				CleanupSource:      cleanupSource,
 				PlacementConflicts: destinationPlan.Conflicts,
 			},
 		},
@@ -579,6 +608,20 @@ func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetecti
 
 // createBalanceTaskParams creates typed parameters for balance/move tasks
 func (s *MaintenanceIntegration) createBalanceTaskParams(task *TaskDetectionResult, destinationPlan *DestinationPlan) {
+	// Get configuration from policy instead of using hard-coded values
+	balanceConfig := GetBalanceTaskConfig(s.maintenancePolicy, MaintenanceTaskType("balance"))
+
+	// Use configured values or defaults if config is not available
+	forceMove := false            // Default to safe mode
+	timeoutSeconds := int32(3600) // 1 hour default timeout
+
+	if balanceConfig != nil {
+		// Note: BalanceTaskConfig has ImbalanceThreshold, MinServerCount
+		// Other fields like ForceMove, TimeoutSeconds would need to be added
+		// to the protobuf definition if they should be configurable
+		// For now we use the existing fields and keep defaults for others
+	}
+
 	// Create typed protobuf parameters
 	task.TypedParams = &worker_pb.TaskParams{
 		VolumeId:   task.VolumeID,
@@ -592,8 +635,8 @@ func (s *MaintenanceIntegration) createBalanceTaskParams(task *TaskDetectionResu
 				DestDc:             destinationPlan.TargetDC,
 				PlacementScore:     destinationPlan.PlacementScore,
 				PlacementConflicts: destinationPlan.Conflicts,
-				ForceMove:          false, // Default to safe mode
-				TimeoutSeconds:     3600,  // 1 hour default timeout
+				ForceMove:          forceMove,
+				TimeoutSeconds:     timeoutSeconds,
 			},
 		},
 	}
@@ -601,8 +644,19 @@ func (s *MaintenanceIntegration) createBalanceTaskParams(task *TaskDetectionResu
 
 // createReplicationTaskParams creates typed parameters for replication tasks
 func (s *MaintenanceIntegration) createReplicationTaskParams(task *TaskDetectionResult, destinationPlan *DestinationPlan) {
-	// Use default target replica count
-	replicaCount := int32(2) // Default
+	// Get configuration from policy instead of using hard-coded values
+	replicationConfig := GetReplicationTaskConfig(s.maintenancePolicy, MaintenanceTaskType("replication"))
+
+	// Use configured values or defaults if config is not available
+	replicaCount := int32(2)  // Default
+	verifyConsistency := true // Default to verify consistency
+
+	if replicationConfig != nil {
+		replicaCount = replicationConfig.TargetReplicaCount
+		// Note: ReplicationTaskConfig has TargetReplicaCount
+		// Other fields like VerifyConsistency would need to be added
+		// to the protobuf definition if they should be configurable
+	}
 
 	// Create typed protobuf parameters
 	task.TypedParams = &worker_pb.TaskParams{
@@ -618,7 +672,7 @@ func (s *MaintenanceIntegration) createReplicationTaskParams(task *TaskDetection
 				PlacementScore:     destinationPlan.PlacementScore,
 				PlacementConflicts: destinationPlan.Conflicts,
 				ReplicaCount:       replicaCount,
-				VerifyConsistency:  true, // Default to verify consistency
+				VerifyConsistency:  verifyConsistency,
 			},
 		},
 	}
