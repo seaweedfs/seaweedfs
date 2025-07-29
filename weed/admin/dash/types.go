@@ -468,6 +468,7 @@ type EcVolumeWithShards struct {
 	ShardSizes     map[int]int64  `json:"shard_sizes"`     // shardId -> size in bytes
 	DataCenters    []string       `json:"data_centers"`
 	Servers        []string       `json:"servers"`
+	Racks          []string       `json:"racks"`
 	ModifiedTime   int64          `json:"modified_time"`
 }
 

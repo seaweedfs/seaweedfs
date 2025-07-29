@@ -734,6 +734,7 @@ templ displayEcVolumeStatus(volume dash.EcVolumeWithShards) {
 // calculateVolumeDistributionSummary calculates and formats the distribution summary for a volume
 func calculateVolumeDistributionSummary(volume dash.EcVolumeWithShards) string {
     dataCenters := make(map[string]bool)
+    racks := make(map[string]bool)
     servers := make(map[string]bool)
     
     // Count unique servers from shard locations
@@ -751,14 +752,22 @@ func calculateVolumeDistributionSummary(volume dash.EcVolumeWithShards) string {
         servers[server] = true
     }
     
-    // If we don't have rack information, estimate it from servers
-    // This is a simple approximation - in practice you'd want better rack detection
-    rackCount := len(servers) // Assuming each server might be in a different rack
-    if len(dataCenters) > 0 {
-        // More conservative estimate if we have DC info
-        rackCount = (len(servers) + len(dataCenters) - 1) / len(dataCenters)
-        if rackCount == 0 {
-            rackCount = 1
+    // Use the Racks field if available
+    for _, rack := range volume.Racks {
+        racks[rack] = true
+    }
+    
+    // If we don't have rack information, estimate it from servers as fallback
+    rackCount := len(racks)
+    if rackCount == 0 {
+        // Fallback estimation - assume each server might be in a different rack
+        rackCount = len(servers)
+        if len(dataCenters) > 0 {
+            // More conservative estimate if we have DC info
+            rackCount = (len(servers) + len(dataCenters) - 1) / len(dataCenters)
+            if rackCount == 0 {
+                rackCount = 1
+            }
         }
     }
     

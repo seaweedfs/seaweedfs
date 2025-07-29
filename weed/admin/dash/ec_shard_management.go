@@ -278,6 +278,7 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 										ShardSizes:     make(map[int]int64),
 										DataCenters:    []string{},
 										Servers:        []string{},
+										Racks:          []string{},
 									}
 								}
 
@@ -304,6 +305,18 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 								}
 								if !serverExists {
 									volume.Servers = append(volume.Servers, node.Id)
+								}
+
+								// Track racks
+								rackExists := false
+								for _, existingRack := range volume.Racks {
+									if existingRack == rack.Id {
+										rackExists = true
+										break
+									}
+								}
+								if !rackExists {
+									volume.Racks = append(volume.Racks, rack.Id)
 								}
 
 								// Process each shard this server has for this volume
