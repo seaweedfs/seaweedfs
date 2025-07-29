@@ -1245,6 +1245,20 @@ func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigDat
 		configData.Config.WorkerTimeoutSeconds, configData.Config.TaskTimeoutSeconds, configData.Config.RetryDelaySeconds,
 		configData.Config.MaxRetries, configData.Config.CleanupIntervalSeconds, configData.Config.TaskRetentionSeconds)
 
+	// Check Policy field before sending to template
+	if configData.Config.Policy == nil {
+		glog.Warningf("MAINTENANCE_CONFIG_UI: WARNING - Policy field is NULL when sending to template!")
+	} else {
+		glog.Infof("MAINTENANCE_CONFIG_UI: Policy field for template - GlobalMaxConcurrent: %d, DefaultRepeatInterval: %d, DefaultCheckInterval: %d",
+			configData.Config.Policy.GlobalMaxConcurrent, configData.Config.Policy.DefaultRepeatIntervalSeconds, configData.Config.Policy.DefaultCheckIntervalSeconds)
+		glog.Infof("MAINTENANCE_CONFIG_UI: Policy has %d task policies", len(configData.Config.Policy.TaskPolicies))
+	}
+
+	// Log all individual fields that the template tries to access
+	glog.Infof("MAINTENANCE_CONFIG_UI: Template field values - ScanIntervalSeconds: %d, WorkerTimeoutSeconds: %d, TaskTimeoutSeconds: %d, RetryDelaySeconds: %d, MaxRetries: %d, TaskRetentionSeconds: %d",
+		configData.Config.ScanIntervalSeconds, configData.Config.WorkerTimeoutSeconds, configData.Config.TaskTimeoutSeconds,
+		configData.Config.RetryDelaySeconds, configData.Config.MaxRetries, configData.Config.TaskRetentionSeconds)
+
 	return configData, nil
 }
 

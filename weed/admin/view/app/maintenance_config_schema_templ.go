@@ -541,46 +541,68 @@ func getBoolValue(value interface{}) bool {
 }
 
 func convertSecondsToDisplayValue(value interface{}, field *config.Field) float64 {
-	if intVal, ok := value.(int); ok {
-		if intVal == 0 {
-			return 0
-		}
+	var intVal int
 
-		// Check if it's evenly divisible by days
-		if intVal%(24*3600) == 0 {
-			return float64(intVal / (24 * 3600))
-		}
-
-		// Check if it's evenly divisible by hours
-		if intVal%3600 == 0 {
-			return float64(intVal / 3600)
-		}
-
-		// Default to minutes
-		return float64(intVal / 60)
+	// Handle both int and int32 types (protobuf uses int32)
+	switch v := value.(type) {
+	case int:
+		intVal = v
+	case int32:
+		intVal = int(v)
+	case int64:
+		intVal = int(v)
+	default:
+		return 0
 	}
-	return 0
+
+	if intVal == 0 {
+		return 0
+	}
+
+	// Check if it's evenly divisible by days
+	if intVal%(24*3600) == 0 {
+		return float64(intVal / (24 * 3600))
+	}
+
+	// Check if it's evenly divisible by hours
+	if intVal%3600 == 0 {
+		return float64(intVal / 3600)
+	}
+
+	// Default to minutes
+	return float64(intVal / 60)
 }
 
 func getDisplayUnit(value interface{}, field *config.Field) string {
-	if intVal, ok := value.(int); ok {
-		if intVal == 0 {
-			return "minutes"
-		}
+	var intVal int
 
-		// Check if it's evenly divisible by days
-		if intVal%(24*3600) == 0 {
-			return "days"
-		}
-
-		// Check if it's evenly divisible by hours
-		if intVal%3600 == 0 {
-			return "hours"
-		}
-
-		// Default to minutes
+	// Handle both int and int32 types (protobuf uses int32)
+	switch v := value.(type) {
+	case int:
+		intVal = v
+	case int32:
+		intVal = int(v)
+	case int64:
+		intVal = int(v)
+	default:
 		return "minutes"
 	}
+
+	if intVal == 0 {
+		return "minutes"
+	}
+
+	// Check if it's evenly divisible by days
+	if intVal%(24*3600) == 0 {
+		return "days"
+	}
+
+	// Check if it's evenly divisible by hours
+	if intVal%3600 == 0 {
+		return "hours"
+	}
+
+	// Default to minutes
 	return "minutes"
 }
 
@@ -661,7 +683,7 @@ func schemaToJSON(schema *maintenance.MaintenanceConfigSchema) templ.Component {
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(`{}`)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 432, Col: 9}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_config_schema.templ`, Line: 454, Col: 9}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 		if templ_7745c5c3_Err != nil {

@@ -332,46 +332,68 @@ func getBoolValue(value interface{}) bool {
 }
 
 func convertSecondsToDisplayValue(value interface{}, field *config.Field) float64 {
-    if intVal, ok := value.(int); ok {
-        if intVal == 0 {
-            return 0
-        }
-        
-        // Check if it's evenly divisible by days
-        if intVal%(24*3600) == 0 {
-            return float64(intVal / (24 * 3600))
-        }
-        
-        // Check if it's evenly divisible by hours
-        if intVal%3600 == 0 {
-            return float64(intVal / 3600)
-        }
-        
-        // Default to minutes
-        return float64(intVal / 60)
+    var intVal int
+    
+    // Handle both int and int32 types (protobuf uses int32)
+    switch v := value.(type) {
+    case int:
+        intVal = v
+    case int32:
+        intVal = int(v)
+    case int64:
+        intVal = int(v)
+    default:
+        return 0
     }
-    return 0
+    
+    if intVal == 0 {
+        return 0
+    }
+    
+    // Check if it's evenly divisible by days
+    if intVal%(24*3600) == 0 {
+        return float64(intVal / (24 * 3600))
+    }
+    
+    // Check if it's evenly divisible by hours
+    if intVal%3600 == 0 {
+        return float64(intVal / 3600)
+    }
+    
+    // Default to minutes
+    return float64(intVal / 60)
 }
 
 func getDisplayUnit(value interface{}, field *config.Field) string {
-    if intVal, ok := value.(int); ok {
-        if intVal == 0 {
-            return "minutes"
-        }
-        
-        // Check if it's evenly divisible by days
-        if intVal%(24*3600) == 0 {
-            return "days"
-        }
-        
-        // Check if it's evenly divisible by hours
-        if intVal%3600 == 0 {
-            return "hours"
-        }
-        
-        // Default to minutes
+    var intVal int
+    
+    // Handle both int and int32 types (protobuf uses int32)
+    switch v := value.(type) {
+    case int:
+        intVal = v
+    case int32:
+        intVal = int(v)
+    case int64:
+        intVal = int(v)
+    default:
         return "minutes"
     }
+    
+    if intVal == 0 {
+        return "minutes"
+    }
+    
+    // Check if it's evenly divisible by days
+    if intVal%(24*3600) == 0 {
+        return "days"
+    }
+    
+    // Check if it's evenly divisible by hours
+    if intVal%3600 == 0 {
+        return "hours"
+    }
+    
+    // Default to minutes
     return "minutes"
 }
 
