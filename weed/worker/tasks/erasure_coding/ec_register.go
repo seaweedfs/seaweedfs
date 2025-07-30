@@ -37,7 +37,7 @@ func RegisterErasureCodingTask() {
 
 		Config:         config,
 		ConfigSpec:     GetConfigSpec(),
-		CreateTask:     CreateTask,
+		CreateTask:     nil, // No longer used - system uses typed task registry
 		DetectionFunc:  Detection,
 		ScanInterval:   1 * time.Hour,
 		SchedulingFunc: Scheduling,

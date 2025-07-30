@@ -139,8 +139,3 @@ func Scheduling(task *types.Task, runningTasks []*types.Task, availableWorkers [
 	return false
 }
 
-// CreateTask creates a new erasure coding task instance
-func CreateTask(params types.TaskParams) (types.TaskInterface, error) {
-	// Create and return the erasure coding task using existing Task type
-	return NewTask(params.Server, params.VolumeID), nil
-}
