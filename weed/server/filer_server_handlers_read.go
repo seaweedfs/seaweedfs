@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -17,11 +16,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/images"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -231,27 +228,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
-	}
-
-	if rangeReq := r.Header.Get("Range"); rangeReq == "" {
-		ext := filepath.Ext(filename)
-		if len(ext) > 0 {
-			ext = strings.ToLower(ext)
-		}
-		width, height, mode, shouldResize := shouldResizeImages(ext, r)
-		if shouldResize {
-			data := mem.Allocate(int(totalSize))
-			defer mem.Free(data)
-			err := filer.ReadAll(ctx, data, fs.filer.MasterClient, entry.GetChunks())
-			if err != nil {
-				glog.ErrorfCtx(ctx, "failed to read %s: %v", path, err)
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			rs, _, _ := images.Resized(ext, bytes.NewReader(data), width, height, mode)
-			io.Copy(w, rs)
-			return
-		}
 	}
 
 	ProcessRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
