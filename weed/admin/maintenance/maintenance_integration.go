@@ -1,12 +1,13 @@
 package maintenance
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -23,8 +24,8 @@ type MaintenanceIntegration struct {
 	// Pending operations tracker
 	pendingOperations *PendingOperations
 
-	// Enhanced volume/shard tracker with destination planning
-	volumeShardTracker *VolumeShardTracker
+	// Active topology for task detection and target selection
+	activeTopology *topology.ActiveTopology
 
 	// Type conversion maps
 	taskTypeMap    map[types.TaskType]MaintenanceTaskType
@@ -43,8 +44,8 @@ func NewMaintenanceIntegration(queue *MaintenanceQueue, policy *MaintenancePolic
 		pendingOperations: NewPendingOperations(),
 	}
 
-	// Initialize volume/shard tracker with pending operations integration
-	integration.volumeShardTracker = NewVolumeShardTracker(integration.pendingOperations)
+	// Initialize active topology with 10 second recent task window
+	integration.activeTopology = topology.NewActiveTopology(10)
 
 	// Initialize type conversion maps
 	integration.initializeTypeMaps()
@@ -206,10 +207,8 @@ func (s *MaintenanceIntegration) configureSchedulerFromPolicy(taskType types.Tas
 
 // ScanWithTaskDetectors performs a scan using the task system
 func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.VolumeHealthMetrics) ([]*TaskDetectionResult, error) {
-	// Update volume/shard tracker with latest master data
-	if err := s.volumeShardTracker.UpdateFromMaster(volumeMetrics); err != nil {
-		glog.Errorf("Failed to update volume/shard tracker: %v", err)
-	}
+	// Note: ActiveTopology gets updated from topology info instead of volume metrics
+	glog.V(2).Infof("Processed %d volume metrics for task detection", len(volumeMetrics))
 
 	// Filter out volumes with pending operations to avoid duplicates
 	filteredMetrics := s.pendingOperations.FilterVolumeMetricsExcludingPending(volumeMetrics)
@@ -264,7 +263,7 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 
 // UpdateTopologyInfo updates the volume shard tracker with topology information for empty servers
 func (s *MaintenanceIntegration) UpdateTopologyInfo(topologyInfo *master_pb.TopologyInfo) error {
-	return s.volumeShardTracker.UpdateFromTopology(topologyInfo)
+	return s.activeTopology.UpdateTopology(topologyInfo)
 }
 
 // convertToExistingFormat converts task results to existing system format using dynamic mapping
@@ -481,9 +480,9 @@ func (s *MaintenanceIntegration) GetPendingOperations() *PendingOperations {
 	return s.pendingOperations
 }
 
-// GetVolumeShardTracker returns the volume/shard tracker
-func (s *MaintenanceIntegration) GetVolumeShardTracker() *VolumeShardTracker {
-	return s.volumeShardTracker
+// GetActiveTopology returns the active topology for task detection
+func (s *MaintenanceIntegration) GetActiveTopology() *topology.ActiveTopology {
+	return s.activeTopology
 }
 
 // planDestinationForTask plans the destination for a task that requires it and creates typed protobuf parameters
@@ -497,12 +496,8 @@ func (s *MaintenanceIntegration) planDestinationForTask(task *TaskDetectionResul
 
 	glog.V(1).Infof("Planning destination for %s task on volume %d (server: %s)", task.TaskType, task.VolumeID, task.Server)
 
-	// Plan destination using the volume/shard tracker
-	destinationPlan, err := s.volumeShardTracker.PlanDestinationForVolume(
-		task.VolumeID,
-		opType,
-		task.Server,
-	)
+	// Use ActiveTopology for destination planning
+	destinationPlan, err := s.planDestinationWithActiveTopology(task, opType)
 
 	if err != nil {
 		glog.Warningf("Failed to plan primary destination for %s task volume %d: %v",
@@ -514,11 +509,8 @@ func (s *MaintenanceIntegration) planDestinationForTask(task *TaskDetectionResul
 	switch opType {
 	case OpTypeErasureCoding:
 		if destinationPlan == nil {
-			// Create empty destination plan for EC tasks when primary planning fails
-			destinationPlan = &DestinationPlan{
-				TargetNode: "",
-				Conflicts:  []string{"primary_destination_planning_failed"},
-			}
+			glog.Warningf("Cannot create EC task for volume %d: destination planning failed", task.VolumeID)
+			return
 		}
 		s.createErasureCodingTaskParams(task, destinationPlan)
 	case OpTypeVolumeMove, OpTypeVolumeBalance:
@@ -526,22 +518,28 @@ func (s *MaintenanceIntegration) planDestinationForTask(task *TaskDetectionResul
 			glog.Warningf("Cannot create balance task for volume %d: destination planning failed", task.VolumeID)
 			return
 		}
-		s.createBalanceTaskParams(task, destinationPlan)
+		s.createBalanceTaskParams(task, destinationPlan.(*topology.DestinationPlan))
 	case OpTypeReplication:
 		if destinationPlan == nil {
 			glog.Warningf("Cannot create replication task for volume %d: destination planning failed", task.VolumeID)
 			return
 		}
-		s.createReplicationTaskParams(task, destinationPlan)
+		s.createReplicationTaskParams(task, destinationPlan.(*topology.DestinationPlan))
 	default:
 		glog.V(2).Infof("Unknown operation type for task %s: %v", task.TaskType, opType)
 	}
 
-	if destinationPlan != nil && destinationPlan.TargetNode != "" {
-		glog.V(1).Infof("Completed destination planning for %s task on volume %d: %s -> %s",
-			task.TaskType, task.VolumeID, task.Server, destinationPlan.TargetNode)
+	if destinationPlan != nil {
+		switch plan := destinationPlan.(type) {
+		case *topology.DestinationPlan:
+			glog.V(1).Infof("Completed destination planning for %s task on volume %d: %s -> %s",
+				task.TaskType, task.VolumeID, task.Server, plan.TargetNode)
+		case *topology.MultiDestinationPlan:
+			glog.V(1).Infof("Completed EC destination planning for volume %d: %s -> %d destinations (racks: %d, DCs: %d)",
+				task.VolumeID, task.Server, len(plan.Plans), plan.SuccessfulRack, plan.SuccessfulDCs)
+		}
 	} else {
-		glog.V(1).Infof("Completed destination planning for %s task on volume %d: no primary destination planned",
+		glog.V(1).Infof("Completed destination planning for %s task on volume %d: no destination planned",
 			task.TaskType, task.VolumeID)
 	}
 }
@@ -581,215 +579,277 @@ func (s *MaintenanceIntegration) createVacuumTaskParams(task *TaskDetectionResul
 	}
 }
 
-// createErasureCodingTaskParams creates typed parameters for EC tasks
-func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetectionResult, destinationPlan *DestinationPlan) {
-	// Get configuration from policy instead of using hard-coded values
-	ecConfig := GetErasureCodingTaskConfig(s.maintenancePolicy, MaintenanceTaskType("erasure_coding"))
+// planDestinationWithActiveTopology uses ActiveTopology to plan destinations
+func (s *MaintenanceIntegration) planDestinationWithActiveTopology(task *TaskDetectionResult, opType PendingOperationType) (interface{}, error) {
+	// Get source node information from topology
+	var sourceRack, sourceDC string
 
-	// Get multiple destinations for EC operations
-	multipleNodes := s.planMultipleECDestinations(task.VolumeID, task.Server)
-
-	// Set primary destination from the plan
-	primaryDestNode := destinationPlan.TargetNode
-
-	// Use multiple nodes if available, otherwise use primary destination
-	destNodes := multipleNodes
-	if len(destNodes) == 0 && primaryDestNode != "" {
-		destNodes = []string{primaryDestNode}
-		glog.V(1).Infof("Using primary destination node for EC task volume %d: %s", task.VolumeID, primaryDestNode)
+	// Extract rack and DC from topology info
+	topologyInfo := s.activeTopology.GetTopologyInfo()
+	if topologyInfo != nil {
+		for _, dc := range topologyInfo.DataCenterInfos {
+			for _, rack := range dc.RackInfos {
+				for _, dataNodeInfo := range rack.DataNodeInfos {
+					if dataNodeInfo.Id == task.Server {
+						sourceDC = dc.Id
+						sourceRack = rack.Id
+						break
+					}
+				}
+				if sourceRack != "" {
+					break
+				}
+			}
+			if sourceDC != "" {
+				break
+			}
+		}
 	}
 
-	// CRITICAL: If no destinations available, reject the task
-	if len(destNodes) == 0 {
-		glog.Warningf("No destinations available for EC task volume %d - rejecting task (insufficient capacity or nodes)", task.VolumeID)
-		// Don't create TypedParams - this will cause the task to be rejected
+	switch opType {
+	case OpTypeVolumeBalance, OpTypeVolumeMove:
+		// Plan single destination for balance operation
+		return s.activeTopology.PlanBalanceDestination(task.VolumeID, task.Server, sourceRack, sourceDC, 0)
+
+	case OpTypeErasureCoding:
+		// Plan multiple destinations for EC operation using adaptive shard counts
+		// Start with the default configuration, but fall back to smaller configurations if insufficient disks
+		totalShards := s.getOptimalECShardCount()
+		multiPlan, err := s.activeTopology.PlanECDestinations(task.VolumeID, task.Server, sourceRack, sourceDC, totalShards)
+		if err != nil {
+			return nil, err
+		}
+		if multiPlan != nil && len(multiPlan.Plans) > 0 {
+			// Return the multi-destination plan for EC
+			return multiPlan, nil
+		}
+		return nil, fmt.Errorf("no EC destinations found")
+
+	default:
+		return nil, fmt.Errorf("unsupported operation type for destination planning: %v", opType)
+	}
+}
+
+// createErasureCodingTaskParams creates typed parameters for EC tasks
+func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetectionResult, destinationPlan interface{}) {
+	// Determine EC shard counts based on the number of planned destinations
+	multiPlan, ok := destinationPlan.(*topology.MultiDestinationPlan)
+	if !ok {
+		glog.Warningf("EC task for volume %d received unexpected destination plan type", task.VolumeID)
 		task.TypedParams = nil
 		return
 	}
 
-	// EC parameters are constants from erasure_coding package
-	dataShards := int32(erasure_coding.DataShardsCount)
-	parityShards := int32(erasure_coding.ParityShardsCount)
+	// Use adaptive shard configuration based on actual planned destinations
+	totalShards := len(multiPlan.Plans)
+	dataShards, parityShards := s.getECShardCounts(totalShards)
 
-	// Use configured values or defaults if config is not available
-	workingDir := "/tmp/seaweedfs_ec_work"
-	masterClient := "localhost:9333" // Could be configurable
-	cleanupSource := true
+	// Extract destination nodes from the multi-destination plan
+	var destNodes []string
+	var allConflicts []string
 
-	if ecConfig != nil {
-		// Note: ErasureCodingTaskConfig has FullnessRatio, QuietForSeconds, MinVolumeSizeMb, CollectionFilter
-		// DataShards and ParityShards are fixed constants from erasure_coding package
-		// Other fields like WorkingDir, MasterClient could be configurable if added to protobuf
+	for _, plan := range multiPlan.Plans {
+		destNodes = append(destNodes, plan.TargetNode)
+		allConflicts = append(allConflicts, plan.Conflicts...)
 	}
 
-	// Create typed protobuf parameters
+	glog.V(1).Infof("EC destination planning for volume %d: got %d destinations (%d+%d shards) across %d racks and %d DCs",
+		task.VolumeID, len(destNodes), dataShards, parityShards, multiPlan.SuccessfulRack, multiPlan.SuccessfulDCs)
+
+	if len(destNodes) == 0 {
+		glog.Warningf("No destinations available for EC task volume %d - rejecting task", task.VolumeID)
+		task.TypedParams = nil
+		return
+	}
+
+	// Create EC task parameters
+	ecParams := &worker_pb.ErasureCodingTaskParams{
+		DestNodes:       destNodes,
+		PrimaryDestNode: destNodes[0],
+		DataShards:      dataShards,
+		ParityShards:    parityShards,
+		WorkingDir:      "/tmp/seaweedfs_ec_work",
+		MasterClient:    "localhost:9333",
+		CleanupSource:   true,
+	}
+
+	// Add placement conflicts if any
+	if len(allConflicts) > 0 {
+		// Remove duplicates
+		conflictMap := make(map[string]bool)
+		var uniqueConflicts []string
+		for _, conflict := range allConflicts {
+			if !conflictMap[conflict] {
+				conflictMap[conflict] = true
+				uniqueConflicts = append(uniqueConflicts, conflict)
+			}
+		}
+		ecParams.PlacementConflicts = uniqueConflicts
+	}
+
+	// Wrap in TaskParams
 	task.TypedParams = &worker_pb.TaskParams{
 		VolumeId:   task.VolumeID,
 		Server:     task.Server,
 		Collection: task.Collection,
 		TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
-			ErasureCodingParams: &worker_pb.ErasureCodingTaskParams{
-				DestNodes:          destNodes,
-				PrimaryDestNode:    primaryDestNode,
-				EstimatedShardSize: destinationPlan.ExpectedSize,
-				DataShards:         dataShards,
-				ParityShards:       parityShards,
-				WorkingDir:         workingDir,
-				MasterClient:       masterClient,
-				CleanupSource:      cleanupSource,
-				PlacementConflicts: destinationPlan.Conflicts,
-			},
+			ErasureCodingParams: ecParams,
 		},
 	}
 
-	glog.V(1).Infof("Created EC task params with %d destinations for volume %d (primary: %s, multiple: %v)",
-		len(destNodes), task.VolumeID, primaryDestNode, multipleNodes)
+	glog.V(1).Infof("Created EC task params with %d destinations for volume %d: %v",
+		len(destNodes), task.VolumeID, destNodes)
 }
 
 // createBalanceTaskParams creates typed parameters for balance/move tasks
-func (s *MaintenanceIntegration) createBalanceTaskParams(task *TaskDetectionResult, destinationPlan *DestinationPlan) {
-	// Get configuration from policy instead of using hard-coded values
-	balanceConfig := GetBalanceTaskConfig(s.maintenancePolicy, MaintenanceTaskType("balance"))
+func (s *MaintenanceIntegration) createBalanceTaskParams(task *TaskDetectionResult, destinationPlan *topology.DestinationPlan) {
+	// balanceConfig could be used for future config options like ImbalanceThreshold, MinServerCount
 
-	// Use configured values or defaults if config is not available
-	forceMove := false            // Default to safe mode
-	timeoutSeconds := int32(3600) // 1 hour default timeout
-
-	if balanceConfig != nil {
-		// Note: BalanceTaskConfig has ImbalanceThreshold, MinServerCount
-		// Other fields like ForceMove, TimeoutSeconds would need to be added
-		// to the protobuf definition if they should be configurable
-		// For now we use the existing fields and keep defaults for others
+	// Create balance task parameters
+	balanceParams := &worker_pb.BalanceTaskParams{
+		DestNode:       destinationPlan.TargetNode,
+		EstimatedSize:  destinationPlan.ExpectedSize,
+		DestRack:       destinationPlan.TargetRack,
+		DestDc:         destinationPlan.TargetDC,
+		PlacementScore: destinationPlan.PlacementScore,
+		ForceMove:      false, // Default to false
+		TimeoutSeconds: 300,   // Default 5 minutes
 	}
 
-	// Create typed protobuf parameters
+	// Add placement conflicts if any
+	if len(destinationPlan.Conflicts) > 0 {
+		balanceParams.PlacementConflicts = destinationPlan.Conflicts
+	}
+
+	// Note: balanceConfig would have ImbalanceThreshold, MinServerCount if needed for future enhancements
+
+	// Wrap in TaskParams
 	task.TypedParams = &worker_pb.TaskParams{
 		VolumeId:   task.VolumeID,
 		Server:     task.Server,
 		Collection: task.Collection,
 		TaskParams: &worker_pb.TaskParams_BalanceParams{
-			BalanceParams: &worker_pb.BalanceTaskParams{
-				DestNode:           destinationPlan.TargetNode,
-				EstimatedSize:      destinationPlan.ExpectedSize,
-				DestRack:           destinationPlan.TargetRack,
-				DestDc:             destinationPlan.TargetDC,
-				PlacementScore:     destinationPlan.PlacementScore,
-				PlacementConflicts: destinationPlan.Conflicts,
-				ForceMove:          forceMove,
-				TimeoutSeconds:     timeoutSeconds,
-			},
+			BalanceParams: balanceParams,
 		},
 	}
+
+	glog.V(1).Infof("Created balance task params for volume %d: %s -> %s (score: %.2f)",
+		task.VolumeID, task.Server, destinationPlan.TargetNode, destinationPlan.PlacementScore)
 }
 
 // createReplicationTaskParams creates typed parameters for replication tasks
-func (s *MaintenanceIntegration) createReplicationTaskParams(task *TaskDetectionResult, destinationPlan *DestinationPlan) {
-	// Get configuration from policy instead of using hard-coded values
-	replicationConfig := GetReplicationTaskConfig(s.maintenancePolicy, MaintenanceTaskType("replication"))
+func (s *MaintenanceIntegration) createReplicationTaskParams(task *TaskDetectionResult, destinationPlan *topology.DestinationPlan) {
+	// replicationConfig could be used for future config options like TargetReplicaCount
 
-	// Use configured values or defaults if config is not available
-	replicaCount := int32(2)  // Default
-	verifyConsistency := true // Default to verify consistency
-
-	if replicationConfig != nil {
-		replicaCount = replicationConfig.TargetReplicaCount
-		// Note: ReplicationTaskConfig has TargetReplicaCount
-		// Other fields like VerifyConsistency would need to be added
-		// to the protobuf definition if they should be configurable
+	// Create replication task parameters
+	replicationParams := &worker_pb.ReplicationTaskParams{
+		DestNode:       destinationPlan.TargetNode,
+		DestRack:       destinationPlan.TargetRack,
+		DestDc:         destinationPlan.TargetDC,
+		PlacementScore: destinationPlan.PlacementScore,
 	}
 
-	// Create typed protobuf parameters
+	// Add placement conflicts if any
+	if len(destinationPlan.Conflicts) > 0 {
+		replicationParams.PlacementConflicts = destinationPlan.Conflicts
+	}
+
+	// Note: replicationConfig would have TargetReplicaCount if needed for future enhancements
+
+	// Wrap in TaskParams
 	task.TypedParams = &worker_pb.TaskParams{
 		VolumeId:   task.VolumeID,
 		Server:     task.Server,
 		Collection: task.Collection,
 		TaskParams: &worker_pb.TaskParams_ReplicationParams{
-			ReplicationParams: &worker_pb.ReplicationTaskParams{
-				DestNode:           destinationPlan.TargetNode,
-				EstimatedSize:      destinationPlan.ExpectedSize,
-				DestRack:           destinationPlan.TargetRack,
-				DestDc:             destinationPlan.TargetDC,
-				PlacementScore:     destinationPlan.PlacementScore,
-				PlacementConflicts: destinationPlan.Conflicts,
-				ReplicaCount:       replicaCount,
-				VerifyConsistency:  verifyConsistency,
-			},
+			ReplicationParams: replicationParams,
 		},
+	}
+
+	glog.V(1).Infof("Created replication task params for volume %d: %s -> %s",
+		task.VolumeID, task.Server, destinationPlan.TargetNode)
+}
+
+// getOptimalECShardCount returns the optimal number of EC shards based on available disks
+// Uses a simplified approach to avoid blocking during UI access
+func (s *MaintenanceIntegration) getOptimalECShardCount() int {
+	// Try to get available disks quickly, but don't block if topology is busy
+	availableDisks := s.getAvailableDisksQuickly()
+
+	// EC configurations in order of preference: (data+parity=total)
+	// Use smaller configurations for smaller clusters
+	if availableDisks >= 14 {
+		glog.V(1).Infof("Using default EC configuration: 10+4=14 shards for %d available disks", availableDisks)
+		return 14 // Default: 10+4
+	} else if availableDisks >= 6 {
+		glog.V(1).Infof("Using small cluster EC configuration: 4+2=6 shards for %d available disks", availableDisks)
+		return 6 // Small cluster: 4+2
+	} else if availableDisks >= 4 {
+		glog.V(1).Infof("Using minimal EC configuration: 3+1=4 shards for %d available disks", availableDisks)
+		return 4 // Minimal: 3+1
+	} else {
+		glog.V(1).Infof("Using very small cluster EC configuration: 2+1=3 shards for %d available disks", availableDisks)
+		return 3 // Very small: 2+1
 	}
 }
 
-// planMultipleECDestinations plans multiple destinations for EC shard distribution
-func (s *MaintenanceIntegration) planMultipleECDestinations(volumeID uint32, sourceNode string) []string {
-	// Get available nodes from volume/shard tracker
-	clusterStats := s.volumeShardTracker.getClusterStats()
-	totalShards := erasure_coding.TotalShardsCount
-	if clusterStats.TotalNodes < totalShards {
-		glog.Warningf("EC destination planning failed for volume %d: insufficient cluster nodes (%d < %d required)",
-			volumeID, clusterStats.TotalNodes, totalShards)
-		return []string{}
+// getAvailableDisksQuickly returns available disk count with a fast path to avoid UI blocking
+func (s *MaintenanceIntegration) getAvailableDisksQuickly() int {
+	// Use ActiveTopology's optimized disk counting if available
+	// Use empty task type and node filter for general availability check
+	allDisks := s.activeTopology.GetAvailableDisks(topology.TaskTypeErasureCoding, "")
+	if len(allDisks) > 0 {
+		return len(allDisks)
 	}
 
-	// Get volume size - skip if unknown
-	volumeReplicas, err := s.volumeShardTracker.getVolumeInfo(volumeID)
-	if err != nil || len(volumeReplicas) == 0 {
-		glog.Warningf("EC destination planning failed for volume %d: volume info not available - %v", volumeID, err)
-		return []string{}
+	// Fallback: try to count from topology but don't hold locks for too long
+	topologyInfo := s.activeTopology.GetTopologyInfo()
+	return s.countAvailableDisks(topologyInfo)
+}
+
+// countAvailableDisks counts the total number of available disks in the topology
+func (s *MaintenanceIntegration) countAvailableDisks(topologyInfo *master_pb.TopologyInfo) int {
+	if topologyInfo == nil {
+		return 0
 	}
 
-	volumeSize := volumeReplicas[0].Size
-	if volumeSize == 0 {
-		glog.Warningf("EC destination planning failed for volume %d: volume has zero size", volumeID)
-		return []string{}
-	}
-
-	// Calculate estimated shard size based on EC constants
-	estimatedShardSize := volumeSize / uint64(erasure_coding.DataShardsCount)
-	glog.V(1).Infof("EC destination planning for volume %d: volume_size=%d bytes, estimated_shard_size=%d bytes",
-		volumeID, volumeSize, estimatedShardSize)
-
-	// Get all nodes with sufficient capacity
-	var availableNodes []string
-	var insufficientNodes []string
-	var excludedSource bool
-
-	for nodeID, nodeInfo := range s.volumeShardTracker.nodes {
-		if nodeID == sourceNode {
-			excludedSource = true
-			glog.V(2).Infof("EC destination planning for volume %d: excluding source node %s", volumeID, nodeID)
-			continue // Skip source node
-		}
-
-		if nodeInfo.FreeCapacity >= estimatedShardSize {
-			availableNodes = append(availableNodes, nodeID)
-			glog.V(2).Infof("EC destination planning for volume %d: node %s has sufficient capacity (free: %d bytes)",
-				volumeID, nodeID, nodeInfo.FreeCapacity)
-		} else {
-			insufficientNodes = append(insufficientNodes, nodeID)
-			glog.V(2).Infof("EC destination planning for volume %d: node %s has insufficient capacity (free: %d bytes, need: %d bytes)",
-				volumeID, nodeID, nodeInfo.FreeCapacity, estimatedShardSize)
+	diskCount := 0
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, node := range rack.DataNodeInfos {
+				diskCount += len(node.DiskInfos)
+			}
 		}
 	}
 
-	if !excludedSource {
-		glog.V(1).Infof("EC destination planning for volume %d: source node %s not found in cluster", volumeID, sourceNode)
+	return diskCount
+}
+
+// getECShardCounts determines data and parity shard counts for a given total
+func (s *MaintenanceIntegration) getECShardCounts(totalShards int) (int32, int32) {
+	// Map total shards to (data, parity) configurations
+	switch totalShards {
+	case 14:
+		return 10, 4 // Default: 10+4
+	case 9:
+		return 6, 3 // Medium: 6+3
+	case 6:
+		return 4, 2 // Small: 4+2
+	case 4:
+		return 3, 1 // Minimal: 3+1
+	case 3:
+		return 2, 1 // Very small: 2+1
+	default:
+		// For any other total, try to maintain roughly 3:1 or 4:1 ratio
+		if totalShards >= 4 {
+			parityShards := totalShards / 4
+			if parityShards < 1 {
+				parityShards = 1
+			}
+			dataShards := totalShards - parityShards
+			return int32(dataShards), int32(parityShards)
+		}
+		// Fallback for very small clusters
+		return int32(totalShards - 1), 1
 	}
-
-	if len(availableNodes) == 0 {
-		glog.Warningf("EC destination planning failed for volume %d: no nodes have sufficient capacity (%d bytes) for EC shards. "+
-			"Cluster status: total_nodes=%d, insufficient_nodes=%v, excluded_source=%s",
-			volumeID, estimatedShardSize, clusterStats.TotalNodes, insufficientNodes, sourceNode)
-		return []string{}
-	}
-
-	// Return up to totalShards nodes for EC distribution
-	maxNodes := totalShards
-	if len(availableNodes) < maxNodes {
-		maxNodes = len(availableNodes)
-	}
-
-	selectedNodes := availableNodes[:maxNodes]
-	glog.Infof("EC destination planning succeeded for volume %d: selected %d nodes (shard_size: %d bytes, volume_size: %d bytes): %v",
-		volumeID, len(selectedNodes), estimatedShardSize, volumeSize, selectedNodes)
-
-	return selectedNodes
 }

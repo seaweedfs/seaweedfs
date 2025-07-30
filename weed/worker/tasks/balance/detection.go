@@ -63,15 +63,34 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		return nil, nil
 	}
 
-	// Create balance task
+	// Select a volume from the overloaded server for balance
+	var selectedVolume *types.VolumeHealthMetrics
+	for _, metric := range metrics {
+		if metric.Server == maxServer {
+			selectedVolume = metric
+			break
+		}
+	}
+
+	if selectedVolume == nil {
+		glog.Warningf("BALANCE: Could not find volume on overloaded server %s", maxServer)
+		return nil, nil
+	}
+
+	// Create balance task with volume and destination planning info
 	reason := fmt.Sprintf("Cluster imbalance detected: %.1f%% (max: %d on %s, min: %d on %s, avg: %.1f)",
 		imbalanceRatio*100, maxVolumes, maxServer, minVolumes, minServer, avgVolumesPerServer)
 
 	task := &types.TaskDetectionResult{
 		TaskType:   types.TaskTypeBalance,
+		VolumeID:   selectedVolume.VolumeID,
+		Server:     selectedVolume.Server,
+		Collection: selectedVolume.Collection,
 		Priority:   types.TaskPriorityNormal,
 		Reason:     reason,
 		ScheduleAt: time.Now(),
+		// TypedParams will be populated by the maintenance integration
+		// with destination planning information
 	}
 
 	return []*types.TaskDetectionResult{task}, nil
