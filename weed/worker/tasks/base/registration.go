@@ -149,8 +149,7 @@ func validateTaskDefinition(taskDef *TaskDefinition) error {
 	if taskDef.Config == nil {
 		return fmt.Errorf("task config is required")
 	}
-	if taskDef.CreateTask == nil {
-		return fmt.Errorf("task creation function is required")
-	}
+	// CreateTask is optional for tasks that use the typed task system
+	// The typed system registers tasks separately via types.RegisterGlobalTypedTask()
 	return nil
 }

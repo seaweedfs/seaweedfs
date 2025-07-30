@@ -1,23 +1,23 @@
 package erasure_coding
 
 import (
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"google.golang.org/grpc"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -201,32 +201,32 @@ func (t *Task) ExecuteTyped(params *worker_pb.TaskParams) error {
 	}
 	glog.V(1).Infof("WORKFLOW: Volume %d marked readonly on all replicas", t.volumeID)
 
-	// Step 4: Copy volume data to local worker
-	glog.V(1).Infof("WORKFLOW STEP 3: Downloading volume %d data to worker", t.volumeID)
-	t.SetProgress(25.0)
-	err = t.copyVolumeDataLocally(taskWorkDir)
+	// Step 4: Generate EC shards on source server (standard SeaweedFS approach)
+	glog.V(1).Infof("WORKFLOW STEP 3: Generating EC shards on source server %s", t.sourceServer)
+	t.SetProgress(30.0)
+	err = t.generateEcShardsOnSource()
 	if err != nil {
-		return fmt.Errorf("failed to copy volume data locally: %v", err)
+		return fmt.Errorf("failed to generate EC shards on source: %v", err)
 	}
-	glog.V(1).Infof("WORKFLOW: Volume %d data downloaded successfully", t.volumeID)
+	glog.V(1).Infof("WORKFLOW: EC shards generated successfully on source server")
 
-	// Step 5: Perform local EC encoding
-	glog.V(1).Infof("WORKFLOW STEP 4: Performing local EC encoding for volume %d", t.volumeID)
-	t.SetProgress(50.0)
-	shardFiles, err := t.performLocalECEncoding(taskWorkDir)
+	// Step 5: Copy shards to destination servers
+	glog.V(1).Infof("WORKFLOW STEP 4: Copying EC shards to destination servers")
+	t.SetProgress(60.0)
+	err = t.copyEcShardsToDestinations()
 	if err != nil {
-		return fmt.Errorf("failed to generate EC shards locally: %v", err)
+		return fmt.Errorf("failed to copy EC shards to destinations: %v", err)
 	}
-	glog.V(1).Infof("WORKFLOW: Generated %d EC shards for volume %d", len(shardFiles), t.volumeID)
+	glog.V(1).Infof("WORKFLOW: EC shards copied to all destination servers")
 
-	// Step 6: Distribute shards to planned destinations
-	glog.V(1).Infof("WORKFLOW STEP 5: Distributing EC shards to planned destinations")
-	t.SetProgress(75.0)
-	err = t.distributeEcShardsToPlannedDestinations(shardFiles, taskWorkDir)
+	// Step 6: Mount EC shards on destination servers
+	glog.V(1).Infof("WORKFLOW STEP 5: Mounting EC shards on destination servers")
+	t.SetProgress(80.0)
+	err = t.mountEcShardsOnDestinations()
 	if err != nil {
-		return fmt.Errorf("failed to distribute EC shards to destinations: %v", err)
+		return fmt.Errorf("failed to mount EC shards: %v", err)
 	}
-	glog.V(1).Infof("WORKFLOW: EC shards distributed successfully")
+	glog.V(1).Infof("WORKFLOW: EC shards mounted successfully")
 
 	// Step 7: Delete original volume from all locations
 	glog.V(1).Infof("WORKFLOW STEP 6: Deleting original volume %d from all replica servers", t.volumeID)
@@ -239,72 +239,6 @@ func (t *Task) ExecuteTyped(params *worker_pb.TaskParams) error {
 
 	t.SetProgress(100.0)
 	glog.Infof("EC task completed successfully for volume %d", t.volumeID)
-	return nil
-}
-
-// distributeEcShardsToPlannedDestinations distributes shards using planned destinations from protobuf
-func (t *Task) distributeEcShardsToPlannedDestinations(shardFiles []string, taskWorkDir string) error {
-	glog.V(1).Infof("Distributing %d EC shards to planned destinations: %v", len(shardFiles), t.destNodes)
-
-	// Use planned destinations if available
-	var volumeServers []pb.ServerAddress
-	if len(t.destNodes) > 0 {
-		glog.V(1).Infof("Using planned destinations for EC shard distribution: %v", t.destNodes)
-		for _, dest := range t.destNodes {
-			volumeServers = append(volumeServers, pb.ServerAddress(dest))
-		}
-	} else if t.primaryDestNode != "" {
-		glog.V(1).Infof("Using primary destination node: %s", t.primaryDestNode)
-		volumeServers = append(volumeServers, pb.ServerAddress(t.primaryDestNode))
-	} else {
-		return fmt.Errorf("no destination nodes specified for EC shard distribution")
-	}
-
-	if len(volumeServers) == 0 {
-		return fmt.Errorf("no volume servers available for EC distribution")
-	}
-
-	// Distribute shards across available servers
-	shardTargets := make(map[int]pb.ServerAddress)
-	targetServers := make(map[string]bool) // Track unique target servers
-	for i, shardFile := range shardFiles {
-		targetServer := volumeServers[i%len(volumeServers)]
-		shardTargets[i] = targetServer
-		targetServers[string(targetServer)] = true
-		glog.V(1).Infof("Shard %d (%s) will go to server %s", i, shardFile, targetServer)
-	}
-
-	// Upload all shards to their target servers
-	glog.V(1).Infof("Starting shard upload phase - uploading %d shards to %d servers", len(shardFiles), len(targetServers))
-	var wg sync.WaitGroup
-	errorChan := make(chan error, len(shardFiles))
-
-	for i, shardFile := range shardFiles {
-		wg.Add(1)
-		go func(shardId int, shardFile string, targetServer pb.ServerAddress) {
-			defer wg.Done()
-
-			// Check for cancellation before each upload
-			if t.IsCancelled() {
-				errorChan <- fmt.Errorf("task cancelled during shard upload")
-				return
-			}
-
-			glog.V(1).Infof("Uploading shard %d (%s) to server: %s", shardId, shardFile, targetServer)
-			// Actual upload implementation would go here
-			glog.V(1).Infof("Successfully uploaded shard %d to server: %s", shardId, targetServer)
-		}(i, shardFile, shardTargets[i])
-	}
-
-	wg.Wait()
-	close(errorChan)
-
-	// Check for any upload errors
-	if err := <-errorChan; err != nil {
-		return err
-	}
-
-	glog.V(1).Infof("Successfully distributed all %d EC shards", len(shardFiles))
 	return nil
 }
 
@@ -335,133 +269,185 @@ func (t *Task) markVolumeReadonlyOnAllReplicas(volumeId needle.VolumeId, volumeL
 	return nil
 }
 
-// copyVolumeDataLocally downloads volume data to the local worker
-func (t *Task) copyVolumeDataLocally(workDir string) error {
-	glog.V(1).Infof("Copying volume %d data to local directory: %s", t.volumeID, workDir)
+// copyEcShardsToDestinations copies EC shards from source to planned destinations
+// generateEcShardsOnSource generates EC shards on the source volume server
+func (t *Task) generateEcShardsOnSource() error {
+	glog.V(1).Infof("Generating EC shards for volume %d on source server %s", t.volumeID, t.sourceServer)
 
-	// Download .dat file
-	datFile := filepath.Join(workDir, fmt.Sprintf("%d.dat", t.volumeID))
-	err := t.downloadVolumeFile(".dat", datFile)
-	if err != nil {
-		return fmt.Errorf("failed to download .dat file: %v", err)
-	}
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.sourceServer), t.grpcDialOpt,
+		func(client volume_server_pb.VolumeServerClient) error {
+			_, err := client.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
+				VolumeId:   uint32(t.volumeID),
+				Collection: t.collection,
+			})
+			if err != nil {
+				return fmt.Errorf("VolumeEcShardsGenerate failed: %v", err)
+			}
 
-	// Download .idx file
-	idxFile := filepath.Join(workDir, fmt.Sprintf("%d.idx", t.volumeID))
-	err = t.downloadVolumeFile(".idx", idxFile)
-	if err != nil {
-		return fmt.Errorf("failed to download .idx file: %v", err)
-	}
-
-	glog.V(1).Infof("Successfully downloaded volume %d files to %s", t.volumeID, workDir)
-	return nil
+			glog.V(1).Infof("Successfully generated EC shards for volume %d on %s", t.volumeID, t.sourceServer)
+			return nil
+		})
 }
 
-// downloadVolumeFile downloads a specific volume file extension
-func (t *Task) downloadVolumeFile(extension, localPath string) error {
-	// Use the source server as the download location
-	sourceUrl := fmt.Sprintf("http://%s/admin/get_volume_data_file?volume=%d&extension=%s",
-		t.sourceServer, t.volumeID, extension)
-
-	resp, err := http.Get(sourceUrl)
-	if err != nil {
-		return fmt.Errorf("failed to download from %s: %v", sourceUrl, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed with status %d from %s", resp.StatusCode, sourceUrl)
+func (t *Task) copyEcShardsToDestinations() error {
+	if len(t.destNodes) == 0 {
+		return fmt.Errorf("no destination nodes specified for EC shard distribution")
 	}
 
-	// Create local file
-	localFile, err := os.Create(localPath)
-	if err != nil {
-		return fmt.Errorf("failed to create local file %s: %v", localPath, err)
-	}
-	defer localFile.Close()
+	glog.V(1).Infof("Copying EC shards for volume %d to %d destinations: %v", t.volumeID, len(t.destNodes), t.destNodes)
 
-	// Copy data
-	_, err = io.Copy(localFile, resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to copy data to %s: %v", localPath, err)
+	// Prepare shard IDs (0-13 for EC shards)
+	var shardIds []uint32
+	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+		shardIds = append(shardIds, uint32(i))
 	}
 
-	glog.V(1).Infof("Downloaded volume file %s to %s", extension, localPath)
-	return nil
-}
+	// Distribute shards across destinations
+	var wg sync.WaitGroup
+	errorChan := make(chan error, len(t.destNodes))
 
-// performLocalECEncoding performs Reed-Solomon encoding on local volume files
-func (t *Task) performLocalECEncoding(workDir string) ([]string, error) {
-	glog.V(1).Infof("Performing local EC encoding for volume %d", t.volumeID)
+	// Track which servers have already received metadata files
+	metadataFilesCopied := make(map[string]bool)
+	var metadataMutex sync.Mutex
 
-	datFile := filepath.Join(workDir, fmt.Sprintf("%d.dat", t.volumeID))
-	idxFile := filepath.Join(workDir, fmt.Sprintf("%d.idx", t.volumeID))
+	// For each destination, copy a subset of shards
+	shardsPerNode := len(shardIds) / len(t.destNodes)
+	remainder := len(shardIds) % len(t.destNodes)
 
-	// Check if files exist and get their sizes
-	datInfo, err := os.Stat(datFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to stat dat file: %v", err)
-	}
+	shardOffset := 0
+	for i, destNode := range t.destNodes {
+		wg.Add(1)
 
-	idxInfo, err := os.Stat(idxFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to stat idx file: %v", err)
-	}
-
-	glog.V(1).Infof("Encoding files: %s (%d bytes), %s (%d bytes)",
-		datFile, datInfo.Size(), idxFile, idxInfo.Size())
-
-	// Handle empty volumes - this is a valid case that should not be EC encoded
-	if datInfo.Size() == 0 {
-		glog.Infof("Volume %d is empty (0 bytes), skipping EC encoding", t.volumeID)
-		return nil, fmt.Errorf("volume %d is empty and cannot be EC encoded", t.volumeID)
-	}
-
-	// Use the existing volume files directly with the SeaweedFS EC library
-	// The SeaweedFS EC library expects baseFileName without extension
-	baseFileName := filepath.Join(workDir, fmt.Sprintf("%d", t.volumeID))
-
-	glog.V(1).Infof("Starting EC encoding with base filename: %s", baseFileName)
-
-	// Generate EC shards using SeaweedFS erasure coding library
-	glog.V(1).Infof("Starting EC shard generation for volume %d", t.volumeID)
-	err = erasure_coding.WriteEcFiles(baseFileName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write EC files: %v", err)
-	}
-	glog.V(1).Infof("Completed EC shard generation for volume %d", t.volumeID)
-
-	// Generate .ecx file from .idx file
-	glog.V(1).Infof("Creating .ecx index file for volume %d", t.volumeID)
-	err = erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx")
-	if err != nil {
-		return nil, fmt.Errorf("failed to write .ecx file: %v", err)
-	}
-	glog.V(1).Infof("Successfully created .ecx index file for volume %d", t.volumeID)
-
-	// Create .ecj file (EC journal file) - initially empty for new EC volumes
-	ecjFile := baseFileName + ".ecj"
-	if _, err := os.Create(ecjFile); err != nil {
-		return nil, fmt.Errorf("failed to create .ecj file: %v", err)
-	}
-	glog.V(1).Infof("Created empty .ecj journal file for volume %d", t.volumeID)
-
-	// Collect all generated shard files
-	var shardFiles []string
-	totalShards := erasure_coding.TotalShardsCount
-
-	for i := 0; i < totalShards; i++ {
-		shardFile := fmt.Sprintf("%s.ec%02d", baseFileName, i)
-		if _, err := os.Stat(shardFile); err == nil {
-			shardFiles = append(shardFiles, shardFile)
+		shardsForThisNode := shardsPerNode
+		if i < remainder {
+			shardsForThisNode++ // Distribute remainder shards
 		}
+
+		nodeShardIds := shardIds[shardOffset : shardOffset+shardsForThisNode]
+		shardOffset += shardsForThisNode
+
+		go func(targetNode string, targetShardIds []uint32) {
+			defer wg.Done()
+
+			if t.IsCancelled() {
+				errorChan <- fmt.Errorf("task cancelled during shard copy")
+				return
+			}
+
+			glog.V(1).Infof("Copying shards %v from %s to %s", targetShardIds, t.sourceServer, targetNode)
+
+			// Check if this server needs metadata files (only once per server)
+			metadataMutex.Lock()
+			needsMetadataFiles := !metadataFilesCopied[targetNode]
+			if needsMetadataFiles {
+				metadataFilesCopied[targetNode] = true
+			}
+			metadataMutex.Unlock()
+
+			err := operation.WithVolumeServerClient(false, pb.ServerAddress(targetNode), t.grpcDialOpt,
+				func(client volume_server_pb.VolumeServerClient) error {
+					_, copyErr := client.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
+						VolumeId:       uint32(t.volumeID),
+						Collection:     t.collection,
+						ShardIds:       targetShardIds,
+						CopyEcxFile:    needsMetadataFiles, // Copy .ecx only once per server
+						CopyEcjFile:    needsMetadataFiles, // Copy .ecj only once per server
+						CopyVifFile:    needsMetadataFiles, // Copy .vif only once per server
+						SourceDataNode: t.sourceServer,
+					})
+					return copyErr
+				})
+
+			if err != nil {
+				errorChan <- fmt.Errorf("failed to copy shards to %s: %v", targetNode, err)
+				return
+			}
+
+			if needsMetadataFiles {
+				glog.V(1).Infof("Successfully copied shards %v and metadata files (.ecx, .ecj, .vif) to %s", targetShardIds, targetNode)
+			} else {
+				glog.V(1).Infof("Successfully copied shards %v to %s (metadata files already present)", targetShardIds, targetNode)
+			}
+		}(destNode, nodeShardIds)
 	}
 
-	// Also include .ecx and .ecj files
-	shardFiles = append(shardFiles, baseFileName+".ecx", baseFileName+".ecj")
+	wg.Wait()
+	close(errorChan)
 
-	glog.V(1).Infof("Generated %d shard files for volume %d: %v", len(shardFiles), t.volumeID, shardFiles)
-	return shardFiles, nil
+	// Check for any copy errors
+	if err := <-errorChan; err != nil {
+		return err
+	}
+
+	glog.V(1).Infof("Successfully copied all EC shards for volume %d", t.volumeID)
+	return nil
+}
+
+// mountEcShardsOnDestinations mounts EC shards on all destination servers
+func (t *Task) mountEcShardsOnDestinations() error {
+	if len(t.destNodes) == 0 {
+		return fmt.Errorf("no destination nodes specified for mounting EC shards")
+	}
+
+	glog.V(1).Infof("Mounting EC shards for volume %d on %d destinations", t.volumeID, len(t.destNodes))
+
+	// Prepare all shard IDs (0-13)
+	var allShardIds []uint32
+	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+		allShardIds = append(allShardIds, uint32(i))
+	}
+
+	var wg sync.WaitGroup
+	errorChan := make(chan error, len(t.destNodes))
+
+	// Mount shards on each destination server
+	for _, destNode := range t.destNodes {
+		wg.Add(1)
+
+		go func(targetNode string) {
+			defer wg.Done()
+
+			if t.IsCancelled() {
+				errorChan <- fmt.Errorf("task cancelled during shard mounting")
+				return
+			}
+
+			glog.V(1).Infof("Mounting EC shards on %s", targetNode)
+
+			err := operation.WithVolumeServerClient(false, pb.ServerAddress(targetNode), t.grpcDialOpt,
+				func(client volume_server_pb.VolumeServerClient) error {
+					_, mountErr := client.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
+						VolumeId:   uint32(t.volumeID),
+						Collection: t.collection,
+						ShardIds:   allShardIds, // Mount all available shards on each server
+					})
+					return mountErr
+				})
+
+			if err != nil {
+				// It's normal for some servers to not have all shards, so log as warning rather than error
+				glog.Warningf("Failed to mount some shards on %s (this may be normal): %v", targetNode, err)
+			} else {
+				glog.V(1).Infof("Successfully mounted EC shards on %s", targetNode)
+			}
+		}(destNode)
+	}
+
+	wg.Wait()
+	close(errorChan)
+
+	// Check for any critical mounting errors
+	select {
+	case err := <-errorChan:
+		if err != nil {
+			glog.Warningf("Some shard mounting issues occurred: %v", err)
+		}
+	default:
+		// No errors
+	}
+
+	glog.V(1).Infof("Completed mounting EC shards for volume %d", t.volumeID)
+	return nil
 }
 
 // deleteVolumeFromAllLocations deletes the original volume from all replica servers
