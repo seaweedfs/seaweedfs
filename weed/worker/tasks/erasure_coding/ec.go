@@ -259,10 +259,25 @@ func (t *Task) markVolumeReadonlyOnAllReplicas(volumeId needle.VolumeId, volumeL
 
 	// Mark volume readonly on all replica servers
 	for _, location := range volumeLocations {
-		// For now, log the operation - actual implementation would make volume readonly
-		glog.V(1).Infof("Would mark volume %d readonly on %s", volumeId, location)
-		// TODO: Implement actual volume readonly marking using volume server API
+		glog.V(1).Infof("Marking volume %d readonly on %s", volumeId, location)
+
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(location), t.grpcDialOpt,
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, markErr := client.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{
+					VolumeId: uint32(volumeId),
+				})
+				return markErr
+			})
+
+		if err != nil {
+			glog.Errorf("Failed to mark volume %d readonly on %s: %v", volumeId, location, err)
+			return fmt.Errorf("failed to mark volume %d readonly on %s: %v", volumeId, location, err)
+		}
+
+		glog.V(1).Infof("Successfully marked volume %d readonly on %s", volumeId, location)
 	}
+
+	glog.V(1).Infof("Successfully marked volume %d readonly on all %d locations", volumeId, len(volumeLocations))
 	return nil
 }
 
@@ -463,10 +478,26 @@ func (t *Task) deleteVolumeFromAllLocations(volumeId needle.VolumeId, volumeLoca
 	glog.V(1).Infof("Deleting original volume %d from %d locations", volumeId, len(volumeLocations))
 
 	for _, location := range volumeLocations {
-		// For now, log the operation - actual implementation would delete the volume
-		glog.V(1).Infof("Would delete volume %d from %s", volumeId, location)
-		// TODO: Implement actual volume deletion using volume server API
+		glog.V(1).Infof("Deleting volume %d from %s", volumeId, location)
+
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(location), t.grpcDialOpt,
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, deleteErr := client.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{
+					VolumeId:  uint32(volumeId),
+					OnlyEmpty: false, // Force delete even if not empty since we've already created EC shards
+				})
+				return deleteErr
+			})
+
+		if err != nil {
+			glog.Errorf("Failed to delete volume %d from %s: %v", volumeId, location, err)
+			return fmt.Errorf("failed to delete volume %d from %s: %v", volumeId, location, err)
+		}
+
+		glog.V(1).Infof("Successfully deleted volume %d from %s", volumeId, location)
 	}
+
+	glog.V(1).Infof("Successfully deleted volume %d from all %d locations", volumeId, len(volumeLocations))
 	return nil
 }
 
