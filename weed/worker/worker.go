@@ -670,7 +670,7 @@ func (w *Worker) messageProcessingLoop() {
 			return
 		case message := <-incomingChan:
 			if message != nil {
-				glog.V(2).Infof("📥 MESSAGE PROCESSING: Worker %s processing incoming message", w.id)
+				glog.V(3).Infof("📥 MESSAGE PROCESSING: Worker %s processing incoming message", w.id)
 				w.processAdminMessage(message)
 			} else {
 				glog.V(3).Infof("📭 NULL MESSAGE: Worker %s received nil message", w.id)
