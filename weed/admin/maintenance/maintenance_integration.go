@@ -1,15 +1,20 @@
 package maintenance
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // MaintenanceIntegration bridges the task system with existing maintenance
@@ -670,14 +675,18 @@ func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetecti
 		return
 	}
 
+	// Collect existing EC shard locations for cleanup
+	existingShardLocations := s.collectExistingEcShardLocations(task.VolumeID)
+
 	// Create EC task parameters
 	ecParams := &worker_pb.ErasureCodingTaskParams{
-		Destinations:  destinations, // Disk-aware destinations
-		DataShards:    dataShards,
-		ParityShards:  parityShards,
-		WorkingDir:    "/tmp/seaweedfs_ec_work",
-		MasterClient:  "localhost:9333",
-		CleanupSource: true,
+		Destinations:           destinations, // Disk-aware destinations
+		DataShards:             dataShards,
+		ParityShards:           parityShards,
+		WorkingDir:             "/tmp/seaweedfs_ec_work",
+		MasterClient:           "localhost:9333",
+		CleanupSource:          true,
+		ExistingShardLocations: existingShardLocations, // Pass existing shards for cleanup
 	}
 
 	// Add placement conflicts if any
@@ -859,4 +868,57 @@ func (s *MaintenanceIntegration) getECShardCounts(totalShards int) (int32, int32
 		// Fallback for very small clusters
 		return int32(totalShards - 1), 1
 	}
+}
+
+// collectExistingEcShardLocations queries the master for existing EC shard locations during planning
+func (s *MaintenanceIntegration) collectExistingEcShardLocations(volumeId uint32) []*worker_pb.ExistingECShardLocation {
+	var existingShardLocations []*worker_pb.ExistingECShardLocation
+
+	// Use insecure connection for simplicity - in production this might be configurable
+	grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	err := operation.WithMasterServerClient(false, pb.ServerAddress("localhost:9333"), grpcDialOption,
+		func(masterClient master_pb.SeaweedClient) error {
+			req := &master_pb.LookupEcVolumeRequest{
+				VolumeId: volumeId,
+			}
+			resp, err := masterClient.LookupEcVolume(context.Background(), req)
+			if err != nil {
+				// If volume doesn't exist as EC volume, that's fine - just no existing shards
+				glog.V(1).Infof("LookupEcVolume for volume %d returned: %v (this is normal if no existing EC shards)", volumeId, err)
+				return nil
+			}
+
+			// Group shard locations by server
+			serverShardMap := make(map[string][]uint32)
+			for _, shardIdLocation := range resp.ShardIdLocations {
+				shardId := uint32(shardIdLocation.ShardId)
+				for _, location := range shardIdLocation.Locations {
+					serverAddr := pb.NewServerAddressFromLocation(location)
+					serverShardMap[string(serverAddr)] = append(serverShardMap[string(serverAddr)], shardId)
+				}
+			}
+
+			// Convert to protobuf format
+			for serverAddr, shardIds := range serverShardMap {
+				existingShardLocations = append(existingShardLocations, &worker_pb.ExistingECShardLocation{
+					Node:     serverAddr,
+					ShardIds: shardIds,
+				})
+			}
+
+			return nil
+		})
+
+	if err != nil {
+		glog.Errorf("Failed to lookup existing EC shards from master for volume %d: %v", volumeId, err)
+		// Return empty list - cleanup will be skipped but task can continue
+		return []*worker_pb.ExistingECShardLocation{}
+	}
+
+	if len(existingShardLocations) > 0 {
+		glog.V(1).Infof("Found existing EC shards for volume %d on %d servers during planning", volumeId, len(existingShardLocations))
+	}
+
+	return existingShardLocations
 }

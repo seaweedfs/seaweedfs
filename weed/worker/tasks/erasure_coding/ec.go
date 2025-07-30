@@ -34,11 +34,12 @@ type Task struct {
 	grpcDialOpt  grpc.DialOption
 
 	// EC parameters from protobuf
-	destinations       []*worker_pb.ECDestination // Disk-aware destinations
-	estimatedShardSize uint64
-	dataShards         int
-	parityShards       int
-	cleanupSource      bool
+	destinations           []*worker_pb.ECDestination           // Disk-aware destinations
+	existingShardLocations []*worker_pb.ExistingECShardLocation // Existing shards to cleanup
+	estimatedShardSize     uint64
+	dataShards             int
+	parityShards           int
+	cleanupSource          bool
 
 	// Progress tracking
 	currentStep  string
@@ -126,7 +127,8 @@ func (t *Task) ExecuteTyped(params *worker_pb.TaskParams) error {
 	// Extract EC-specific parameters
 	ecParams := params.GetErasureCodingParams()
 	if ecParams != nil {
-		t.destinations = ecParams.Destinations // Store disk-aware destinations
+		t.destinations = ecParams.Destinations                     // Store disk-aware destinations
+		t.existingShardLocations = ecParams.ExistingShardLocations // Store existing shards for cleanup
 		t.estimatedShardSize = ecParams.EstimatedShardSize
 		t.cleanupSource = ecParams.CleanupSource
 
@@ -189,8 +191,18 @@ func (t *Task) ExecuteTyped(params *worker_pb.TaskParams) error {
 		return nil
 	}
 
+	// Step 2A: Cleanup existing EC shards if any
+	glog.V(1).Infof("WORKFLOW STEP 2A: Cleaning up existing EC shards for volume %d", t.volumeID)
+	t.SetProgress(10.0)
+	err = t.cleanupExistingEcShards()
+	if err != nil {
+		glog.Warningf("Failed to cleanup existing EC shards (continuing anyway): %v", err)
+		// Don't fail the task - this is just cleanup
+	}
+	glog.V(1).Infof("WORKFLOW: Existing EC shards cleanup completed for volume %d", t.volumeID)
+
 	// Step 3: Mark volume readonly on all servers
-	glog.V(1).Infof("WORKFLOW STEP 2: Marking volume %d readonly on all replica servers", t.volumeID)
+	glog.V(1).Infof("WORKFLOW STEP 2B: Marking volume %d readonly on all replica servers", t.volumeID)
 	t.SetProgress(15.0)
 	err = t.markVolumeReadonlyOnAllReplicas(needle.VolumeId(t.volumeID), locationStrings)
 	if err != nil {
@@ -198,7 +210,7 @@ func (t *Task) ExecuteTyped(params *worker_pb.TaskParams) error {
 	}
 	glog.V(1).Infof("WORKFLOW: Volume %d marked readonly on all replicas", t.volumeID)
 
-	// Step 4: Generate EC shards on source server (standard SeaweedFS approach)
+	// Step 5: Generate EC shards on source server (standard SeaweedFS approach)
 	glog.V(1).Infof("WORKFLOW STEP 3: Generating EC shards on source server %s", t.sourceServer)
 	t.SetProgress(30.0)
 	err = t.generateEcShardsOnSource()
@@ -207,7 +219,7 @@ func (t *Task) ExecuteTyped(params *worker_pb.TaskParams) error {
 	}
 	glog.V(1).Infof("WORKFLOW: EC shards generated successfully on source server")
 
-	// Step 5: Copy shards to destination servers
+	// Step 6: Copy shards to destination servers
 	glog.V(1).Infof("WORKFLOW STEP 4: Copying EC shards to destination servers")
 	t.SetProgress(60.0)
 	err = t.copyEcShardsToDestinations()
@@ -216,7 +228,7 @@ func (t *Task) ExecuteTyped(params *worker_pb.TaskParams) error {
 	}
 	glog.V(1).Infof("WORKFLOW: EC shards copied to all destination servers")
 
-	// Step 6: Mount EC shards on destination servers
+	// Step 7: Mount EC shards on destination servers
 	glog.V(1).Infof("WORKFLOW STEP 5: Mounting EC shards on destination servers")
 	t.SetProgress(80.0)
 	err = t.mountEcShardsOnDestinations()
@@ -225,7 +237,7 @@ func (t *Task) ExecuteTyped(params *worker_pb.TaskParams) error {
 	}
 	glog.V(1).Infof("WORKFLOW: EC shards mounted successfully")
 
-	// Step 7: Delete original volume from all locations
+	// Step 8: Delete original volume from all locations
 	glog.V(1).Infof("WORKFLOW STEP 6: Deleting original volume %d from all replica servers", t.volumeID)
 	t.SetProgress(90.0)
 	err = t.deleteVolumeFromAllLocations(needle.VolumeId(t.volumeID), locationStrings)
@@ -244,6 +256,45 @@ func (t *Task) collectVolumeLocations(volumeId needle.VolumeId) ([]pb.ServerAddr
 	// For now, return a placeholder implementation
 	// Full implementation would call master to get volume locations
 	return []pb.ServerAddress{pb.ServerAddress(t.sourceServer)}, nil
+}
+
+// cleanupExistingEcShards deletes existing EC shards using planned locations
+func (t *Task) cleanupExistingEcShards() error {
+	if len(t.existingShardLocations) == 0 {
+		glog.V(1).Infof("No existing EC shards to cleanup for volume %d", t.volumeID)
+		return nil
+	}
+
+	glog.V(1).Infof("Cleaning up existing EC shards for volume %d on %d servers", t.volumeID, len(t.existingShardLocations))
+
+	// Delete existing shards from each location using planned shard locations
+	for _, location := range t.existingShardLocations {
+		if len(location.ShardIds) == 0 {
+			continue
+		}
+
+		glog.V(1).Infof("Deleting existing EC shards %v from %s for volume %d", location.ShardIds, location.Node, t.volumeID)
+
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(location.Node), t.grpcDialOpt,
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, deleteErr := client.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+					VolumeId:   t.volumeID,
+					Collection: t.collection,
+					ShardIds:   location.ShardIds,
+				})
+				return deleteErr
+			})
+
+		if err != nil {
+			glog.Errorf("Failed to delete existing EC shards %v from %s for volume %d: %v", location.ShardIds, location.Node, t.volumeID, err)
+			// Continue with other servers - don't fail the entire cleanup
+		} else {
+			glog.V(1).Infof("Successfully deleted existing EC shards %v from %s for volume %d", location.ShardIds, location.Node, t.volumeID)
+		}
+	}
+
+	glog.V(1).Infof("Completed cleanup of existing EC shards for volume %d", t.volumeID)
+	return nil
 }
 
 // shouldPerformECEncoding checks if the volume meets criteria for EC encoding
