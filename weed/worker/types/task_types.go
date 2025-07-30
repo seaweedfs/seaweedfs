@@ -14,6 +14,7 @@ const (
 	TaskTypeVacuum        TaskType = "vacuum"
 	TaskTypeErasureCoding TaskType = "erasure_coding"
 	TaskTypeBalance       TaskType = "balance"
+	TaskTypeReplication   TaskType = "replication"
 )
 
 // TaskStatus represents the status of a maintenance task
@@ -29,12 +30,14 @@ const (
 )
 
 // TaskPriority represents the priority of a maintenance task
-type TaskPriority int
+type TaskPriority string
 
 const (
-	TaskPriorityLow    TaskPriority = 1
-	TaskPriorityNormal TaskPriority = 5
-	TaskPriorityHigh   TaskPriority = 10
+	TaskPriorityLow      TaskPriority = "low"
+	TaskPriorityMedium   TaskPriority = "medium"
+	TaskPriorityNormal   TaskPriority = "normal"
+	TaskPriorityHigh     TaskPriority = "high"
+	TaskPriorityCritical TaskPriority = "critical"
 )
 
 // Task represents a maintenance task
