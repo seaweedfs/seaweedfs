@@ -201,23 +201,14 @@ func (mm *MaintenanceManager) scanLoop() {
 			return
 		case <-ticker.C:
 			glog.V(1).Infof("Performing maintenance scan every %v", scanInterval)
-			mm.performScan()
 
-			// Adjust ticker interval based on error state
-			mm.mutex.RLock()
-			currentInterval := scanInterval
-			if mm.errorCount > 0 {
-				// Use backoff delay when there are errors
-				currentInterval = mm.backoffDelay
-				if currentInterval > scanInterval {
-					// Don't make it longer than the configured interval * 10
-					maxInterval := scanInterval * 10
-					if currentInterval > maxInterval {
-						currentInterval = maxInterval
-					}
-				}
+			// Use the same synchronization as TriggerScan to prevent concurrent scans
+			if err := mm.triggerScanInternal(false); err != nil {
+				glog.V(1).Infof("Scheduled scan skipped: %v", err)
 			}
-			mm.mutex.RUnlock()
+
+			// Adjust ticker interval based on error state (read error state safely)
+			currentInterval := mm.getScanInterval(scanInterval)
 
 			// Reset ticker with new interval if needed
 			if currentInterval != scanInterval {
@@ -226,6 +217,26 @@ func (mm *MaintenanceManager) scanLoop() {
 			}
 		}
 	}
+}
+
+// getScanInterval safely reads the current scan interval with error backoff
+func (mm *MaintenanceManager) getScanInterval(baseInterval time.Duration) time.Duration {
+	mm.mutex.RLock()
+	defer mm.mutex.RUnlock()
+
+	if mm.errorCount > 0 {
+		// Use backoff delay when there are errors
+		currentInterval := mm.backoffDelay
+		if currentInterval > baseInterval {
+			// Don't make it longer than the configured interval * 10
+			maxInterval := baseInterval * 10
+			if currentInterval > maxInterval {
+				currentInterval = maxInterval
+			}
+		}
+		return currentInterval
+	}
+	return baseInterval
 }
 
 // cleanupLoop periodically cleans up old tasks and stale workers
@@ -257,6 +268,7 @@ func (mm *MaintenanceManager) performScan() {
 
 	results, err := mm.scanner.ScanForMaintenanceTasks()
 	if err != nil {
+		// Handle scan error
 		mm.mutex.Lock()
 		mm.handleScanError(err)
 		mm.mutex.Unlock()
@@ -264,29 +276,34 @@ func (mm *MaintenanceManager) performScan() {
 		return
 	}
 
-	// Scan succeeded, reset error tracking and add tasks
+	// Scan succeeded - update state and process results
+	mm.handleScanSuccess(results)
+}
+
+// handleScanSuccess processes successful scan results with proper lock management
+func (mm *MaintenanceManager) handleScanSuccess(results []*TaskDetectionResult) {
+	// Update manager state first
 	mm.mutex.Lock()
 	mm.resetErrorTracking()
+	taskCount := len(results)
+	mm.mutex.Unlock()
 
-	if len(results) > 0 {
-		// Count tasks by type for logging
+	if taskCount > 0 {
+		// Count tasks by type for logging (outside of lock)
 		taskCounts := make(map[MaintenanceTaskType]int)
 		for _, result := range results {
 			taskCounts[result.TaskType]++
 		}
 
-		// Release the mutex before calling AddTasksFromResults to avoid holding
-		// the manager mutex while trying to acquire the queue mutex
-		mm.mutex.Unlock()
+		// Add tasks to queue (no manager lock held)
 		mm.queue.AddTasksFromResults(results)
 
 		// Log detailed scan results
-		glog.Infof("Maintenance scan completed: found %d tasks", len(results))
+		glog.Infof("Maintenance scan completed: found %d tasks", taskCount)
 		for taskType, count := range taskCounts {
 			glog.Infof("  - %s: %d tasks", taskType, count)
 		}
 	} else {
-		mm.mutex.Unlock()
 		glog.Infof("Maintenance scan completed: no maintenance tasks needed")
 	}
 }
@@ -455,6 +472,11 @@ func (mm *MaintenanceManager) GetWorkers() []*MaintenanceWorker {
 
 // TriggerScan manually triggers a maintenance scan
 func (mm *MaintenanceManager) TriggerScan() error {
+	return mm.triggerScanInternal(true)
+}
+
+// triggerScanInternal handles both manual and automatic scan triggers
+func (mm *MaintenanceManager) triggerScanInternal(isManual bool) error {
 	if !mm.running {
 		return fmt.Errorf("maintenance manager is not running")
 	}
@@ -463,8 +485,12 @@ func (mm *MaintenanceManager) TriggerScan() error {
 	mm.mutex.Lock()
 	if mm.scanInProgress {
 		mm.mutex.Unlock()
-		glog.V(1).Infof("Scan already in progress, ignoring trigger request")
-		return nil
+		if isManual {
+			glog.V(1).Infof("Manual scan already in progress, ignoring trigger request")
+		} else {
+			glog.V(2).Infof("Automatic scan already in progress, ignoring scheduled scan")
+		}
+		return fmt.Errorf("scan already in progress")
 	}
 	mm.scanInProgress = true
 	mm.mutex.Unlock()
