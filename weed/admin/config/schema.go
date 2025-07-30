@@ -301,7 +301,7 @@ func (s *Schema) applyDefaultsReflection(config interface{}) error {
 		}
 
 		// Apply default if field is zero value
-		if field.CanSet() && isZeroValue(field) {
+		if field.CanSet() && field.IsZero() {
 			defaultValue := reflect.ValueOf(schemaField.DefaultValue)
 			if defaultValue.Type().ConvertibleTo(field.Type()) {
 				field.Set(defaultValue.Convert(field.Type()))
@@ -357,25 +357,4 @@ func (s *Schema) ValidateConfig(config interface{}) []error {
 	}
 
 	return errors
-}
-
-// isZeroValue checks if a reflect.Value represents a zero value
-func isZeroValue(v reflect.Value) bool {
-	switch v.Kind() {
-	case reflect.Bool:
-		return !v.Bool()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return v.Int() == 0
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return v.Uint() == 0
-	case reflect.Float32, reflect.Float64:
-		return v.Float() == 0
-	case reflect.String:
-		return v.String() == ""
-	case reflect.Slice, reflect.Map, reflect.Array:
-		return v.IsNil() || v.Len() == 0
-	case reflect.Interface, reflect.Ptr:
-		return v.IsNil()
-	}
-	return false
 }

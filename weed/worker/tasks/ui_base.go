@@ -135,33 +135,12 @@ func mergeConfigs[T any](dest *T, source T) {
 		}
 
 		// Only copy non-zero values
-		if !isZeroValue(sourceField) {
+		if !sourceField.IsZero() {
 			if destField.Type() == sourceField.Type() {
 				destField.Set(sourceField)
 			}
 		}
 	}
-}
-
-// isZeroValue checks if a reflect.Value represents a zero value
-func isZeroValue(v reflect.Value) bool {
-	switch v.Kind() {
-	case reflect.Bool:
-		return !v.Bool()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return v.Int() == 0
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return v.Uint() == 0
-	case reflect.Float32, reflect.Float64:
-		return v.Float() == 0
-	case reflect.String:
-		return v.String() == ""
-	case reflect.Slice, reflect.Map, reflect.Array:
-		return v.IsNil() || v.Len() == 0
-	case reflect.Interface, reflect.Ptr:
-		return v.IsNil()
-	}
-	return false
 }
 
 // RegisterUIFunc provides a common registration function signature
