@@ -3,6 +3,8 @@ package types
 import (
 	"sync"
 	"time"
+
+	"google.golang.org/grpc"
 )
 
 // WorkerConfig represents the configuration for a worker
@@ -12,7 +14,9 @@ type WorkerConfig struct {
 	MaxConcurrent       int                    `json:"max_concurrent"`
 	HeartbeatInterval   time.Duration          `json:"heartbeat_interval"`
 	TaskRequestInterval time.Duration          `json:"task_request_interval"`
+	BaseWorkingDir      string                 `json:"base_working_dir,omitempty"`
 	CustomParameters    map[string]interface{} `json:"custom_parameters,omitempty"`
+	GrpcDialOption      grpc.DialOption        `json:"-"` // Not serializable, for runtime use only
 }
 
 // MaintenanceConfig represents the configuration for the maintenance system

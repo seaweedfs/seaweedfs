@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -96,7 +97,7 @@ type MaintenanceTask struct {
 	VolumeID    uint32                  `json:"volume_id,omitempty"`
 	Server      string                  `json:"server,omitempty"`
 	Collection  string                  `json:"collection,omitempty"`
-	Parameters  map[string]interface{}  `json:"parameters,omitempty"`
+	TypedParams *worker_pb.TaskParams   `json:"typed_params,omitempty"`
 	Reason      string                  `json:"reason"`
 	CreatedAt   time.Time               `json:"created_at"`
 	ScheduledAt time.Time               `json:"scheduled_at"`
@@ -109,89 +110,148 @@ type MaintenanceTask struct {
 	MaxRetries  int                     `json:"max_retries"`
 }
 
+// MaintenanceConfig holds configuration for the maintenance system
+// DEPRECATED: Use worker_pb.MaintenanceConfig instead
+type MaintenanceConfig = worker_pb.MaintenanceConfig
+
+// MaintenancePolicy defines policies for maintenance operations
+// DEPRECATED: Use worker_pb.MaintenancePolicy instead
+type MaintenancePolicy = worker_pb.MaintenancePolicy
+
 // TaskPolicy represents configuration for a specific task type
-type TaskPolicy struct {
-	Enabled        bool                   `json:"enabled"`
-	MaxConcurrent  int                    `json:"max_concurrent"`
-	RepeatInterval int                    `json:"repeat_interval"` // Hours to wait before repeating
-	CheckInterval  int                    `json:"check_interval"`  // Hours between checks
-	Configuration  map[string]interface{} `json:"configuration"`   // Task-specific config
+// DEPRECATED: Use worker_pb.TaskPolicy instead
+type TaskPolicy = worker_pb.TaskPolicy
+
+// Default configuration values
+func DefaultMaintenanceConfig() *MaintenanceConfig {
+	return DefaultMaintenanceConfigProto()
 }
 
-// MaintenancePolicy defines policies for maintenance operations using a dynamic structure
-type MaintenancePolicy struct {
-	// Task-specific policies mapped by task type
-	TaskPolicies map[MaintenanceTaskType]*TaskPolicy `json:"task_policies"`
+// Policy helper functions (since we can't add methods to type aliases)
 
-	// Global policy settings
-	GlobalMaxConcurrent   int `json:"global_max_concurrent"`   // Overall limit across all task types
-	DefaultRepeatInterval int `json:"default_repeat_interval"` // Default hours if task doesn't specify
-	DefaultCheckInterval  int `json:"default_check_interval"`  // Default hours for periodic checks
-}
-
-// GetTaskPolicy returns the policy for a specific task type, creating generic defaults if needed
-func (mp *MaintenancePolicy) GetTaskPolicy(taskType MaintenanceTaskType) *TaskPolicy {
+// GetTaskPolicy returns the policy for a specific task type
+func GetTaskPolicy(mp *MaintenancePolicy, taskType MaintenanceTaskType) *TaskPolicy {
 	if mp.TaskPolicies == nil {
-		mp.TaskPolicies = make(map[MaintenanceTaskType]*TaskPolicy)
+		return nil
 	}
-
-	policy, exists := mp.TaskPolicies[taskType]
-	if !exists {
-		// Create generic default policy using global settings - no hardcoded fallbacks
-		policy = &TaskPolicy{
-			Enabled:        false,                    // Conservative default - require explicit enabling
-			MaxConcurrent:  1,                        // Conservative default concurrency
-			RepeatInterval: mp.DefaultRepeatInterval, // Use configured default, 0 if not set
-			CheckInterval:  mp.DefaultCheckInterval,  // Use configured default, 0 if not set
-			Configuration:  make(map[string]interface{}),
-		}
-		mp.TaskPolicies[taskType] = policy
-	}
-
-	return policy
+	return mp.TaskPolicies[string(taskType)]
 }
 
 // SetTaskPolicy sets the policy for a specific task type
-func (mp *MaintenancePolicy) SetTaskPolicy(taskType MaintenanceTaskType, policy *TaskPolicy) {
+func SetTaskPolicy(mp *MaintenancePolicy, taskType MaintenanceTaskType, policy *TaskPolicy) {
 	if mp.TaskPolicies == nil {
-		mp.TaskPolicies = make(map[MaintenanceTaskType]*TaskPolicy)
+		mp.TaskPolicies = make(map[string]*TaskPolicy)
 	}
-	mp.TaskPolicies[taskType] = policy
+	mp.TaskPolicies[string(taskType)] = policy
 }
 
 // IsTaskEnabled returns whether a task type is enabled
-func (mp *MaintenancePolicy) IsTaskEnabled(taskType MaintenanceTaskType) bool {
-	policy := mp.GetTaskPolicy(taskType)
+func IsTaskEnabled(mp *MaintenancePolicy, taskType MaintenanceTaskType) bool {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy == nil {
+		return false
+	}
 	return policy.Enabled
 }
 
 // GetMaxConcurrent returns the max concurrent limit for a task type
-func (mp *MaintenancePolicy) GetMaxConcurrent(taskType MaintenanceTaskType) int {
-	policy := mp.GetTaskPolicy(taskType)
-	return policy.MaxConcurrent
+func GetMaxConcurrent(mp *MaintenancePolicy, taskType MaintenanceTaskType) int {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy == nil {
+		return 1
+	}
+	return int(policy.MaxConcurrent)
 }
 
 // GetRepeatInterval returns the repeat interval for a task type
-func (mp *MaintenancePolicy) GetRepeatInterval(taskType MaintenanceTaskType) int {
-	policy := mp.GetTaskPolicy(taskType)
-	return policy.RepeatInterval
-}
-
-// GetTaskConfig returns a configuration value for a task type
-func (mp *MaintenancePolicy) GetTaskConfig(taskType MaintenanceTaskType, key string) (interface{}, bool) {
-	policy := mp.GetTaskPolicy(taskType)
-	value, exists := policy.Configuration[key]
-	return value, exists
-}
-
-// SetTaskConfig sets a configuration value for a task type
-func (mp *MaintenancePolicy) SetTaskConfig(taskType MaintenanceTaskType, key string, value interface{}) {
-	policy := mp.GetTaskPolicy(taskType)
-	if policy.Configuration == nil {
-		policy.Configuration = make(map[string]interface{})
+func GetRepeatInterval(mp *MaintenancePolicy, taskType MaintenanceTaskType) int {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy == nil {
+		return int(mp.DefaultRepeatIntervalSeconds)
 	}
-	policy.Configuration[key] = value
+	return int(policy.RepeatIntervalSeconds)
 }
+
+// GetVacuumTaskConfig returns the vacuum task configuration
+func GetVacuumTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.VacuumTaskConfig {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy == nil {
+		return nil
+	}
+	return policy.GetVacuumConfig()
+}
+
+// GetErasureCodingTaskConfig returns the erasure coding task configuration
+func GetErasureCodingTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.ErasureCodingTaskConfig {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy == nil {
+		return nil
+	}
+	return policy.GetErasureCodingConfig()
+}
+
+// GetBalanceTaskConfig returns the balance task configuration
+func GetBalanceTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.BalanceTaskConfig {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy == nil {
+		return nil
+	}
+	return policy.GetBalanceConfig()
+}
+
+// GetReplicationTaskConfig returns the replication task configuration
+func GetReplicationTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.ReplicationTaskConfig {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy == nil {
+		return nil
+	}
+	return policy.GetReplicationConfig()
+}
+
+// Note: GetTaskConfig was removed - use typed getters: GetVacuumTaskConfig, GetErasureCodingTaskConfig, GetBalanceTaskConfig, or GetReplicationTaskConfig
+
+// SetVacuumTaskConfig sets the vacuum task configuration
+func SetVacuumTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.VacuumTaskConfig) {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy != nil {
+		policy.TaskConfig = &worker_pb.TaskPolicy_VacuumConfig{
+			VacuumConfig: config,
+		}
+	}
+}
+
+// SetErasureCodingTaskConfig sets the erasure coding task configuration
+func SetErasureCodingTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.ErasureCodingTaskConfig) {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy != nil {
+		policy.TaskConfig = &worker_pb.TaskPolicy_ErasureCodingConfig{
+			ErasureCodingConfig: config,
+		}
+	}
+}
+
+// SetBalanceTaskConfig sets the balance task configuration
+func SetBalanceTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.BalanceTaskConfig) {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy != nil {
+		policy.TaskConfig = &worker_pb.TaskPolicy_BalanceConfig{
+			BalanceConfig: config,
+		}
+	}
+}
+
+// SetReplicationTaskConfig sets the replication task configuration
+func SetReplicationTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.ReplicationTaskConfig) {
+	policy := GetTaskPolicy(mp, taskType)
+	if policy != nil {
+		policy.TaskConfig = &worker_pb.TaskPolicy_ReplicationConfig{
+			ReplicationConfig: config,
+		}
+	}
+}
+
+// SetTaskConfig sets a configuration value for a task type (legacy method - use typed setters above)
+// Note: SetTaskConfig was removed - use typed setters: SetVacuumTaskConfig, SetErasureCodingTaskConfig, SetBalanceTaskConfig, or SetReplicationTaskConfig
 
 // MaintenanceWorker represents a worker instance
 type MaintenanceWorker struct {
@@ -217,29 +277,32 @@ type MaintenanceQueue struct {
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks
 type MaintenanceScanner struct {
-	adminClient AdminClient
-	policy      *MaintenancePolicy
-	queue       *MaintenanceQueue
-	lastScan    map[MaintenanceTaskType]time.Time
-	integration *MaintenanceIntegration
+	adminClient      AdminClient
+	policy           *MaintenancePolicy
+	queue            *MaintenanceQueue
+	lastScan         map[MaintenanceTaskType]time.Time
+	integration      *MaintenanceIntegration
+	lastTopologyInfo *master_pb.TopologyInfo
 }
 
 // TaskDetectionResult represents the result of scanning for maintenance needs
 type TaskDetectionResult struct {
-	TaskType   MaintenanceTaskType     `json:"task_type"`
-	VolumeID   uint32                  `json:"volume_id,omitempty"`
-	Server     string                  `json:"server,omitempty"`
-	Collection string                  `json:"collection,omitempty"`
-	Priority   MaintenanceTaskPriority `json:"priority"`
-	Reason     string                  `json:"reason"`
-	Parameters map[string]interface{}  `json:"parameters,omitempty"`
-	ScheduleAt time.Time               `json:"schedule_at"`
+	TaskType    MaintenanceTaskType     `json:"task_type"`
+	VolumeID    uint32                  `json:"volume_id,omitempty"`
+	Server      string                  `json:"server,omitempty"`
+	Collection  string                  `json:"collection,omitempty"`
+	Priority    MaintenanceTaskPriority `json:"priority"`
+	Reason      string                  `json:"reason"`
+	TypedParams *worker_pb.TaskParams   `json:"typed_params,omitempty"`
+	ScheduleAt  time.Time               `json:"schedule_at"`
 }
 
-// VolumeHealthMetrics contains health information about a volume
+// VolumeHealthMetrics represents the health metrics for a volume
 type VolumeHealthMetrics struct {
 	VolumeID         uint32        `json:"volume_id"`
 	Server           string        `json:"server"`
+	DiskType         string        `json:"disk_type"` // Disk type (e.g., "hdd", "ssd") or disk path (e.g., "/data1")
+	DiskId           uint32        `json:"disk_id"`   // ID of the disk in Store.Locations array
 	Collection       string        `json:"collection"`
 	Size             uint64        `json:"size"`
 	DeletedBytes     uint64        `json:"deleted_bytes"`
@@ -265,38 +328,6 @@ type MaintenanceStats struct {
 	AverageTaskTime time.Duration                 `json:"average_task_time"`
 	LastScanTime    time.Time                     `json:"last_scan_time"`
 	NextScanTime    time.Time                     `json:"next_scan_time"`
-}
-
-// MaintenanceConfig holds configuration for the maintenance system
-type MaintenanceConfig struct {
-	Enabled                bool               `json:"enabled"`
-	ScanIntervalSeconds    int                `json:"scan_interval_seconds"`    // How often to scan for maintenance needs (in seconds)
-	WorkerTimeoutSeconds   int                `json:"worker_timeout_seconds"`   // Worker heartbeat timeout (in seconds)
-	TaskTimeoutSeconds     int                `json:"task_timeout_seconds"`     // Individual task timeout (in seconds)
-	RetryDelaySeconds      int                `json:"retry_delay_seconds"`      // Delay between retries (in seconds)
-	MaxRetries             int                `json:"max_retries"`              // Default max retries for tasks
-	CleanupIntervalSeconds int                `json:"cleanup_interval_seconds"` // How often to clean up old tasks (in seconds)
-	TaskRetentionSeconds   int                `json:"task_retention_seconds"`   // How long to keep completed/failed tasks (in seconds)
-	Policy                 *MaintenancePolicy `json:"policy"`
-}
-
-// Default configuration values
-func DefaultMaintenanceConfig() *MaintenanceConfig {
-	return &MaintenanceConfig{
-		Enabled:                false,       // Disabled by default for safety
-		ScanIntervalSeconds:    30 * 60,     // 30 minutes
-		WorkerTimeoutSeconds:   5 * 60,      // 5 minutes
-		TaskTimeoutSeconds:     2 * 60 * 60, // 2 hours
-		RetryDelaySeconds:      15 * 60,     // 15 minutes
-		MaxRetries:             3,
-		CleanupIntervalSeconds: 24 * 60 * 60,     // 24 hours
-		TaskRetentionSeconds:   7 * 24 * 60 * 60, // 7 days
-		Policy: &MaintenancePolicy{
-			GlobalMaxConcurrent:   4,
-			DefaultRepeatInterval: 6,
-			DefaultCheckInterval:  12,
-		},
-	}
 }
 
 // MaintenanceQueueData represents data for the queue visualization UI
@@ -380,10 +411,10 @@ type ClusterReplicationTask struct {
 // from all registered tasks using their UI providers
 func BuildMaintenancePolicyFromTasks() *MaintenancePolicy {
 	policy := &MaintenancePolicy{
-		TaskPolicies:          make(map[MaintenanceTaskType]*TaskPolicy),
-		GlobalMaxConcurrent:   4,
-		DefaultRepeatInterval: 6,
-		DefaultCheckInterval:  12,
+		TaskPolicies:                 make(map[string]*TaskPolicy),
+		GlobalMaxConcurrent:          4,
+		DefaultRepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
+		DefaultCheckIntervalSeconds:  12 * 3600, // 12 hours in seconds
 	}
 
 	// Get all registered task types from the UI registry
@@ -399,32 +430,23 @@ func BuildMaintenancePolicyFromTasks() *MaintenancePolicy {
 
 		// Create task policy from UI configuration
 		taskPolicy := &TaskPolicy{
-			Enabled:        true, // Default enabled
-			MaxConcurrent:  2,    // Default concurrency
-			RepeatInterval: policy.DefaultRepeatInterval,
-			CheckInterval:  policy.DefaultCheckInterval,
-			Configuration:  make(map[string]interface{}),
+			Enabled:               true, // Default enabled
+			MaxConcurrent:         2,    // Default concurrency
+			RepeatIntervalSeconds: policy.DefaultRepeatIntervalSeconds,
+			CheckIntervalSeconds:  policy.DefaultCheckIntervalSeconds,
 		}
 
-		// Extract configuration from UI provider's config
-		if configMap, ok := defaultConfig.(map[string]interface{}); ok {
-			// Copy all configuration values
-			for key, value := range configMap {
-				taskPolicy.Configuration[key] = value
+		// Extract configuration using TaskConfig interface - no more map conversions!
+		if taskConfig, ok := defaultConfig.(interface{ ToTaskPolicy() *worker_pb.TaskPolicy }); ok {
+			// Use protobuf directly for clean, type-safe config extraction
+			pbTaskPolicy := taskConfig.ToTaskPolicy()
+			taskPolicy.Enabled = pbTaskPolicy.Enabled
+			taskPolicy.MaxConcurrent = pbTaskPolicy.MaxConcurrent
+			if pbTaskPolicy.RepeatIntervalSeconds > 0 {
+				taskPolicy.RepeatIntervalSeconds = pbTaskPolicy.RepeatIntervalSeconds
 			}
-
-			// Extract common fields
-			if enabled, exists := configMap["enabled"]; exists {
-				if enabledBool, ok := enabled.(bool); ok {
-					taskPolicy.Enabled = enabledBool
-				}
-			}
-			if maxConcurrent, exists := configMap["max_concurrent"]; exists {
-				if maxConcurrentInt, ok := maxConcurrent.(int); ok {
-					taskPolicy.MaxConcurrent = maxConcurrentInt
-				} else if maxConcurrentFloat, ok := maxConcurrent.(float64); ok {
-					taskPolicy.MaxConcurrent = int(maxConcurrentFloat)
-				}
+			if pbTaskPolicy.CheckIntervalSeconds > 0 {
+				taskPolicy.CheckIntervalSeconds = pbTaskPolicy.CheckIntervalSeconds
 			}
 		}
 
@@ -432,24 +454,24 @@ func BuildMaintenancePolicyFromTasks() *MaintenancePolicy {
 		var scheduler types.TaskScheduler = typesRegistry.GetScheduler(taskType)
 		if scheduler != nil {
 			if taskPolicy.MaxConcurrent <= 0 {
-				taskPolicy.MaxConcurrent = scheduler.GetMaxConcurrent()
+				taskPolicy.MaxConcurrent = int32(scheduler.GetMaxConcurrent())
 			}
-			// Convert default repeat interval to hours
+			// Convert default repeat interval to seconds
 			if repeatInterval := scheduler.GetDefaultRepeatInterval(); repeatInterval > 0 {
-				taskPolicy.RepeatInterval = int(repeatInterval.Hours())
+				taskPolicy.RepeatIntervalSeconds = int32(repeatInterval.Seconds())
 			}
 		}
 
 		// Also get defaults from detector if available (using types.TaskDetector explicitly)
 		var detector types.TaskDetector = typesRegistry.GetDetector(taskType)
 		if detector != nil {
-			// Convert scan interval to check interval (hours)
+			// Convert scan interval to check interval (seconds)
 			if scanInterval := detector.ScanInterval(); scanInterval > 0 {
-				taskPolicy.CheckInterval = int(scanInterval.Hours())
+				taskPolicy.CheckIntervalSeconds = int32(scanInterval.Seconds())
 			}
 		}
 
-		policy.TaskPolicies[maintenanceTaskType] = taskPolicy
+		policy.TaskPolicies[string(maintenanceTaskType)] = taskPolicy
 		glog.V(3).Infof("Built policy for task type %s: enabled=%v, max_concurrent=%d",
 			maintenanceTaskType, taskPolicy.Enabled, taskPolicy.MaxConcurrent)
 	}
@@ -558,3 +580,8 @@ func BuildMaintenanceMenuItems() []*MaintenanceMenuItem {
 
 	return menuItems
 }
+
+// Helper functions to extract configuration fields
+
+// Note: Removed getVacuumConfigField, getErasureCodingConfigField, getBalanceConfigField, getReplicationConfigField
+// These were orphaned after removing GetTaskConfig - use typed getters instead

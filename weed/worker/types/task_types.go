@@ -2,6 +2,9 @@ package types
 
 import (
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"google.golang.org/grpc"
 )
 
 // TaskType represents the type of maintenance task
@@ -11,6 +14,7 @@ const (
 	TaskTypeVacuum        TaskType = "vacuum"
 	TaskTypeErasureCoding TaskType = "erasure_coding"
 	TaskTypeBalance       TaskType = "balance"
+	TaskTypeReplication   TaskType = "replication"
 )
 
 // TaskStatus represents the status of a maintenance task
@@ -26,53 +30,57 @@ const (
 )
 
 // TaskPriority represents the priority of a maintenance task
-type TaskPriority int
+type TaskPriority string
 
 const (
-	TaskPriorityLow    TaskPriority = 1
-	TaskPriorityNormal TaskPriority = 5
-	TaskPriorityHigh   TaskPriority = 10
+	TaskPriorityLow      TaskPriority = "low"
+	TaskPriorityMedium   TaskPriority = "medium"
+	TaskPriorityNormal   TaskPriority = "normal"
+	TaskPriorityHigh     TaskPriority = "high"
+	TaskPriorityCritical TaskPriority = "critical"
 )
 
 // Task represents a maintenance task
 type Task struct {
-	ID          string                 `json:"id"`
-	Type        TaskType               `json:"type"`
-	Status      TaskStatus             `json:"status"`
-	Priority    TaskPriority           `json:"priority"`
-	VolumeID    uint32                 `json:"volume_id,omitempty"`
-	Server      string                 `json:"server,omitempty"`
-	Collection  string                 `json:"collection,omitempty"`
-	WorkerID    string                 `json:"worker_id,omitempty"`
-	Progress    float64                `json:"progress"`
-	Error       string                 `json:"error,omitempty"`
-	Parameters  map[string]interface{} `json:"parameters,omitempty"`
-	CreatedAt   time.Time              `json:"created_at"`
-	ScheduledAt time.Time              `json:"scheduled_at"`
-	StartedAt   *time.Time             `json:"started_at,omitempty"`
-	CompletedAt *time.Time             `json:"completed_at,omitempty"`
-	RetryCount  int                    `json:"retry_count"`
-	MaxRetries  int                    `json:"max_retries"`
+	ID          string                `json:"id"`
+	Type        TaskType              `json:"type"`
+	Status      TaskStatus            `json:"status"`
+	Priority    TaskPriority          `json:"priority"`
+	VolumeID    uint32                `json:"volume_id,omitempty"`
+	Server      string                `json:"server,omitempty"`
+	Collection  string                `json:"collection,omitempty"`
+	WorkerID    string                `json:"worker_id,omitempty"`
+	Progress    float64               `json:"progress"`
+	Error       string                `json:"error,omitempty"`
+	TypedParams *worker_pb.TaskParams `json:"typed_params,omitempty"`
+	CreatedAt   time.Time             `json:"created_at"`
+	ScheduledAt time.Time             `json:"scheduled_at"`
+	StartedAt   *time.Time            `json:"started_at,omitempty"`
+	CompletedAt *time.Time            `json:"completed_at,omitempty"`
+	RetryCount  int                   `json:"retry_count"`
+	MaxRetries  int                   `json:"max_retries"`
 }
 
 // TaskParams represents parameters for task execution
 type TaskParams struct {
-	VolumeID   uint32                 `json:"volume_id,omitempty"`
-	Server     string                 `json:"server,omitempty"`
-	Collection string                 `json:"collection,omitempty"`
-	Parameters map[string]interface{} `json:"parameters,omitempty"`
+	VolumeID       uint32                `json:"volume_id,omitempty"`
+	Server         string                `json:"server,omitempty"`
+	Collection     string                `json:"collection,omitempty"`
+	WorkingDir     string                `json:"working_dir,omitempty"`
+	TypedParams    *worker_pb.TaskParams `json:"typed_params,omitempty"`
+	GrpcDialOption grpc.DialOption       `json:"-"` // Not serializable, for runtime use only
 }
 
 // TaskDetectionResult represents the result of scanning for maintenance needs
 type TaskDetectionResult struct {
-	TaskType   TaskType               `json:"task_type"`
-	VolumeID   uint32                 `json:"volume_id,omitempty"`
-	Server     string                 `json:"server,omitempty"`
-	Collection string                 `json:"collection,omitempty"`
-	Priority   TaskPriority           `json:"priority"`
-	Reason     string                 `json:"reason"`
-	Parameters map[string]interface{} `json:"parameters,omitempty"`
-	ScheduleAt time.Time              `json:"schedule_at"`
+	TaskType    TaskType              `json:"task_type"`
+	VolumeID    uint32                `json:"volume_id,omitempty"`
+	Server      string                `json:"server,omitempty"`
+	Collection  string                `json:"collection,omitempty"`
+	Priority    TaskPriority          `json:"priority"`
+	Reason      string                `json:"reason"`
+	TypedParams *worker_pb.TaskParams `json:"typed_params,omitempty"`
+	ScheduleAt  time.Time             `json:"schedule_at"`
 }
 
 // ClusterReplicationTask represents a cluster replication task parameters

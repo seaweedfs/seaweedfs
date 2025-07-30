@@ -1,0 +1,18 @@
+FROM alpine:latest
+
+# Install required packages
+RUN apk add --no-cache \
+    ca-certificates \
+    fuse \
+    curl \
+    jq
+
+# Copy our locally built binary
+COPY weed-local /usr/bin/weed
+RUN chmod +x /usr/bin/weed
+
+# Create working directory
+WORKDIR /data
+
+# Default command
+ENTRYPOINT ["/usr/bin/weed"] 

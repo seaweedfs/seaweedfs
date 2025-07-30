@@ -1,0 +1,455 @@
+package app
+
+import (
+    "fmt"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ ClusterEcShards(data dash.ClusterEcShardsData) {
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <div>
+            <h1 class="h2">
+                <i class="fas fa-th-large me-2"></i>EC Shards
+            </h1>
+            if data.FilterCollection != "" {
+                <div class="d-flex align-items-center mt-2">
+                    if data.FilterCollection == "default" {
+                        <span class="badge bg-secondary text-white me-2">
+                            <i class="fas fa-filter me-1"></i>Collection: default
+                        </span>
+                    } else {
+                        <span class="badge bg-info text-white me-2">
+                            <i class="fas fa-filter me-1"></i>Collection: {data.FilterCollection}
+                        </span>
+                    }
+                    <a href="/cluster/ec-shards" class="btn btn-sm btn-outline-secondary">
+                        <i class="fas fa-times me-1"></i>Clear Filter
+                    </a>
+                </div>
+            }
+        </div>
+        <div class="btn-toolbar mb-2 mb-md-0">
+            <div class="btn-group me-2">
+                <select class="form-select form-select-sm me-2" id="pageSizeSelect" onchange="changePageSize()" style="width: auto;">
+                    <option value="50" if data.PageSize == 50 { selected="selected" }>50 per page</option>
+                    <option value="100" if data.PageSize == 100 { selected="selected" }>100 per page</option>
+                    <option value="200" if data.PageSize == 200 { selected="selected" }>200 per page</option>
+                    <option value="500" if data.PageSize == 500 { selected="selected" }>500 per page</option>
+                </select>
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportEcShards()">
+                    <i class="fas fa-download me-1"></i>Export
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-bg-primary">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">Total Shards</h6>
+                            <h4 class="mb-0">{fmt.Sprintf("%d", data.TotalShards)}</h4>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-puzzle-piece fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-bg-info">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">EC Volumes</h6>
+                            <h4 class="mb-0">{fmt.Sprintf("%d", data.TotalVolumes)}</h4>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-database fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-bg-success">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">Healthy Volumes</h6>
+                            <h4 class="mb-0">{fmt.Sprintf("%d", data.VolumesWithAllShards)}</h4>
+                            <small>Complete (14/14 shards)</small>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-check-circle fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-bg-warning">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <h6 class="card-title">Degraded Volumes</h6>
+                            <h4 class="mb-0">{fmt.Sprintf("%d", data.VolumesWithMissingShards)}</h4>
+                            <small>Incomplete/Critical</small>
+                        </div>
+                        <div class="align-self-center">
+                            <i class="fas fa-exclamation-triangle fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shards Table -->
+    <div class="table-responsive">
+        <table class="table table-striped table-hover" id="ecShardsTable">
+            <thead>
+                <tr>
+                    <th>
+                        <a href="#" onclick="sortBy('volume_id')" class="text-dark text-decoration-none">
+                            Volume ID
+                            if data.SortBy == "volume_id" {
+                                if data.SortOrder == "asc" {
+                                    <i class="fas fa-sort-up ms-1"></i>
+                                } else {
+                                    <i class="fas fa-sort-down ms-1"></i>
+                                }
+                            } else {
+                                <i class="fas fa-sort ms-1 text-muted"></i>
+                            }
+                        </a>
+                    </th>
+
+                    if data.ShowCollectionColumn {
+                        <th>
+                            <a href="#" onclick="sortBy('collection')" class="text-dark text-decoration-none">
+                                Collection
+                                if data.SortBy == "collection" {
+                                    if data.SortOrder == "asc" {
+                                        <i class="fas fa-sort-up ms-1"></i>
+                                    } else {
+                                        <i class="fas fa-sort-down ms-1"></i>
+                                    }
+                                } else {
+                                    <i class="fas fa-sort ms-1 text-muted"></i>
+                                }
+                            </a>
+                        </th>
+                    }
+                    <th>
+                        <a href="#" onclick="sortBy('server')" class="text-dark text-decoration-none">
+                            Server
+                            if data.SortBy == "server" {
+                                if data.SortOrder == "asc" {
+                                    <i class="fas fa-sort-up ms-1"></i>
+                                } else {
+                                    <i class="fas fa-sort-down ms-1"></i>
+                                }
+                            } else {
+                                <i class="fas fa-sort ms-1 text-muted"></i>
+                            }
+                        </a>
+                    </th>
+                    if data.ShowDataCenterColumn {
+                        <th>
+                            <a href="#" onclick="sortBy('datacenter')" class="text-dark text-decoration-none">
+                                Data Center
+                                if data.SortBy == "datacenter" {
+                                    if data.SortOrder == "asc" {
+                                        <i class="fas fa-sort-up ms-1"></i>
+                                    } else {
+                                        <i class="fas fa-sort-down ms-1"></i>
+                                    }
+                                } else {
+                                    <i class="fas fa-sort ms-1 text-muted"></i>
+                                }
+                            </a>
+                        </th>
+                    }
+                    if data.ShowRackColumn {
+                        <th>
+                            <a href="#" onclick="sortBy('rack')" class="text-dark text-decoration-none">
+                                Rack
+                                if data.SortBy == "rack" {
+                                    if data.SortOrder == "asc" {
+                                        <i class="fas fa-sort-up ms-1"></i>
+                                    } else {
+                                        <i class="fas fa-sort-down ms-1"></i>
+                                    }
+                                } else {
+                                    <i class="fas fa-sort ms-1 text-muted"></i>
+                                }
+                            </a>
+                        </th>
+                    }
+                    <th class="text-dark">Distribution</th>
+                    <th class="text-dark">Status</th>
+                    <th class="text-dark">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                for _, shard := range data.EcShards {
+                    <tr>
+                        <td>
+                            <span class="fw-bold">{fmt.Sprintf("%d", shard.VolumeID)}</span>
+                        </td>
+                        if data.ShowCollectionColumn {
+                            <td>
+                                if shard.Collection != "" {
+                                    <a href="/cluster/ec-shards?collection={shard.Collection}" class="text-decoration-none">
+                                        <span class="badge bg-info text-white">{shard.Collection}</span>
+                                    </a>
+                                } else {
+                                    <a href="/cluster/ec-shards?collection=default" class="text-decoration-none">
+                                        <span class="badge bg-secondary text-white">default</span>
+                                    </a>
+                                }
+                            </td>
+                        }
+                        <td>
+                            <code class="small">{shard.Server}</code>
+                        </td>
+                        if data.ShowDataCenterColumn {
+                            <td>
+                                <span class="badge bg-outline-primary">{shard.DataCenter}</span>
+                            </td>
+                        }
+                        if data.ShowRackColumn {
+                            <td>
+                                <span class="badge bg-outline-secondary">{shard.Rack}</span>
+                            </td>
+                        }
+                        <td>
+                            @displayShardDistribution(shard, data.EcShards)
+                        </td>
+                        <td>
+                            @displayVolumeStatus(shard)
+                        </td>
+                        <td>
+                            <div class="btn-group" role="group">
+                                <button type="button" class="btn btn-sm btn-outline-primary" 
+                                        onclick="showShardDetails(event)" 
+                                        data-volume-id={ fmt.Sprintf("%d", shard.VolumeID) }
+                                        title="View EC volume details">
+                                    <i class="fas fa-info-circle"></i>
+                                </button>
+                                if !shard.IsComplete {
+                                    <button type="button" class="btn btn-sm btn-outline-warning" 
+                                            onclick="repairVolume(event)" 
+                                            data-volume-id={ fmt.Sprintf("%d", shard.VolumeID) }
+                                            title="Repair missing shards">
+                                        <i class="fas fa-wrench"></i>
+                                    </button>
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    if data.TotalPages > 1 {
+        <nav aria-label="EC Shards pagination">
+            <ul class="pagination justify-content-center">
+                if data.CurrentPage > 1 {
+                    <li class="page-item">
+                        <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.CurrentPage-1) }>
+                            <i class="fas fa-chevron-left"></i>
+                        </a>
+                    </li>
+                }
+                
+                <!-- First page -->
+                if data.CurrentPage > 3 {
+                    <li class="page-item">
+                        <a class="page-link" href="#" onclick="goToPage(1)">1</a>
+                    </li>
+                    if data.CurrentPage > 4 {
+                        <li class="page-item disabled">
+                            <span class="page-link">...</span>
+                        </li>
+                    }
+                }
+                
+                <!-- Current page and neighbors -->
+                if data.CurrentPage > 1 && data.CurrentPage-1 >= 1 {
+                    <li class="page-item">
+                        <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.CurrentPage-1) }>{fmt.Sprintf("%d", data.CurrentPage-1)}</a>
+                    </li>
+                }
+                
+                <li class="page-item active">
+                    <span class="page-link">{fmt.Sprintf("%d", data.CurrentPage)}</span>
+                </li>
+                
+                if data.CurrentPage < data.TotalPages && data.CurrentPage+1 <= data.TotalPages {
+                    <li class="page-item">
+                        <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.CurrentPage+1) }>{fmt.Sprintf("%d", data.CurrentPage+1)}</a>
+                    </li>
+                }
+                
+                <!-- Last page -->
+                if data.CurrentPage < data.TotalPages-2 {
+                    if data.CurrentPage < data.TotalPages-3 {
+                        <li class="page-item disabled">
+                            <span class="page-link">...</span>
+                        </li>
+                    }
+                    <li class="page-item">
+                        <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.TotalPages) }>{fmt.Sprintf("%d", data.TotalPages)}</a>
+                    </li>
+                }
+                
+                if data.CurrentPage < data.TotalPages {
+                    <li class="page-item">
+                        <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.CurrentPage+1) }>
+                            <i class="fas fa-chevron-right"></i>
+                        </a>
+                    </li>
+                }
+            </ul>
+        </nav>
+    }
+
+
+    <!-- JavaScript -->
+    <script>
+        function sortBy(field) {
+            const currentSort = "{data.SortBy}";
+            const currentOrder = "{data.SortOrder}";
+            let newOrder = 'asc';
+            
+            if (currentSort === field && currentOrder === 'asc') {
+                newOrder = 'desc';
+            }
+            
+            updateUrl({
+                sortBy: field,
+                sortOrder: newOrder,
+                page: 1
+            });
+        }
+
+        function goToPage(event) {
+            // Get data from the link element (not any child elements)
+            const link = event.target.closest('a');
+            const page = link.getAttribute('data-page');
+            updateUrl({ page: page });
+        }
+
+        function changePageSize() {
+            const pageSize = document.getElementById('pageSizeSelect').value;
+            updateUrl({ pageSize: pageSize, page: 1 });
+        }
+
+        function updateUrl(params) {
+            const url = new URL(window.location);
+            Object.keys(params).forEach(key => {
+                if (params[key]) {
+                    url.searchParams.set(key, params[key]);
+                } else {
+                    url.searchParams.delete(key);
+                }
+            });
+            window.location.href = url.toString();
+        }
+
+        function exportEcShards() {
+            const url = new URL('/api/cluster/ec-shards/export', window.location.origin);
+            const params = new URLSearchParams(window.location.search);
+            params.forEach((value, key) => {
+                url.searchParams.set(key, value);
+            });
+            window.open(url.toString(), '_blank');
+        }
+
+        function showShardDetails(event) {
+            // Get data from the button element (not the icon inside it)
+            const button = event.target.closest('button');
+            const volumeId = button.getAttribute('data-volume-id');
+            
+            // Navigate to the EC volume details page
+            window.location.href = `/cluster/ec-volumes/${volumeId}`;
+        }
+
+        function repairVolume(event) {
+            // Get data from the button element (not the icon inside it)
+            const button = event.target.closest('button');
+            const volumeId = button.getAttribute('data-volume-id');
+            if (confirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`)) {
+                fetch(`/api/cluster/volumes/${volumeId}/repair`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Repair initiated successfully');
+                        location.reload();
+                    } else {
+                        alert('Failed to initiate repair: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    alert('Error: ' + error.message);
+                });
+            }
+        }
+    </script>
+}
+
+// displayShardDistribution shows the distribution summary for a volume's shards
+templ displayShardDistribution(shard dash.EcShardWithInfo, allShards []dash.EcShardWithInfo) {
+    <div class="small">
+        <i class="fas fa-sitemap me-1"></i>
+        { calculateDistributionSummary(shard.VolumeID, allShards) }
+    </div>
+}
+
+// displayVolumeStatus shows an improved status display
+templ displayVolumeStatus(shard dash.EcShardWithInfo) {
+    if shard.IsComplete {
+        <span class="badge bg-success"><i class="fas fa-check me-1"></i>Complete</span>
+    } else {
+        if len(shard.MissingShards) > 10 {
+            <span class="badge bg-danger"><i class="fas fa-skull me-1"></i>Critical ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+        } else if len(shard.MissingShards) > 6 {
+            <span class="badge bg-warning"><i class="fas fa-exclamation-triangle me-1"></i>Degraded ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+        } else if len(shard.MissingShards) > 2 {
+            <span class="badge bg-warning"><i class="fas fa-info-circle me-1"></i>Incomplete ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+        } else {
+            <span class="badge bg-info"><i class="fas fa-info-circle me-1"></i>Minor Issues ({fmt.Sprintf("%d", len(shard.MissingShards))} missing)</span>
+        }
+    }
+}
+
+// calculateDistributionSummary calculates and formats the distribution summary
+func calculateDistributionSummary(volumeID uint32, allShards []dash.EcShardWithInfo) string {
+    dataCenters := make(map[string]bool)
+    racks := make(map[string]bool)
+    servers := make(map[string]bool)
+    
+    for _, s := range allShards {
+        if s.VolumeID == volumeID {
+            dataCenters[s.DataCenter] = true
+            racks[s.Rack] = true
+            servers[s.Server] = true
+        }
+    }
+    
+    return fmt.Sprintf("%d DCs, %d racks, %d servers", len(dataCenters), len(racks), len(servers))
+}
+

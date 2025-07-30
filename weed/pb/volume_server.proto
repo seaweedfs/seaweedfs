@@ -53,6 +53,8 @@ service VolumeServer {
     }
     rpc CopyFile (CopyFileRequest) returns (stream CopyFileResponse) {
     }
+    rpc ReceiveFile (stream ReceiveFileRequest) returns (ReceiveFileResponse) {
+    }
 
     rpc ReadNeedleBlob (ReadNeedleBlobRequest) returns (ReadNeedleBlobResponse) {
     }
@@ -86,6 +88,8 @@ service VolumeServer {
     rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {
     }
     rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {
+    }
+    rpc VolumeEcShardsInfo (VolumeEcShardsInfoRequest) returns (VolumeEcShardsInfoResponse) {
     }
 
     // tiered storage
@@ -285,6 +289,27 @@ message CopyFileResponse {
     int64 modified_ts_ns = 2;
 }
 
+message ReceiveFileRequest {
+    oneof data {
+        ReceiveFileInfo info = 1;
+        bytes file_content = 2;
+    }
+}
+
+message ReceiveFileInfo {
+    uint32 volume_id = 1;
+    string ext = 2;
+    string collection = 3;
+    bool is_ec_volume = 4;
+    uint32 shard_id = 5;
+    uint64 file_size = 6;
+}
+
+message ReceiveFileResponse {
+    uint64 bytes_written = 1;
+    string error = 2;
+}
+
 message ReadNeedleBlobRequest {
     uint32 volume_id = 1;
     int64 offset = 3; // actual offset
@@ -376,6 +401,7 @@ message VolumeEcShardsCopyRequest {
     string source_data_node = 5;
     bool copy_ecj_file = 6;
     bool copy_vif_file = 7;
+    uint32 disk_id = 8;  // Target disk ID for storing EC shards
 }
 message VolumeEcShardsCopyResponse {
 }
@@ -429,6 +455,19 @@ message VolumeEcShardsToVolumeRequest {
     string collection = 2;
 }
 message VolumeEcShardsToVolumeResponse {
+}
+
+message VolumeEcShardsInfoRequest {
+    uint32 volume_id = 1;
+}
+message VolumeEcShardsInfoResponse {
+    repeated EcShardInfo ec_shard_infos = 1;
+}
+
+message EcShardInfo {
+    uint32 shard_id = 1;
+    int64 size = 2;
+    string collection = 3;
 }
 
 message ReadVolumeFileStatusRequest {

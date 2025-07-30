@@ -38,6 +38,7 @@ const (
 	VolumeServer_VolumeCopy_FullMethodName                  = "/volume_server_pb.VolumeServer/VolumeCopy"
 	VolumeServer_ReadVolumeFileStatus_FullMethodName        = "/volume_server_pb.VolumeServer/ReadVolumeFileStatus"
 	VolumeServer_CopyFile_FullMethodName                    = "/volume_server_pb.VolumeServer/CopyFile"
+	VolumeServer_ReceiveFile_FullMethodName                 = "/volume_server_pb.VolumeServer/ReceiveFile"
 	VolumeServer_ReadNeedleBlob_FullMethodName              = "/volume_server_pb.VolumeServer/ReadNeedleBlob"
 	VolumeServer_ReadNeedleMeta_FullMethodName              = "/volume_server_pb.VolumeServer/ReadNeedleMeta"
 	VolumeServer_WriteNeedleBlob_FullMethodName             = "/volume_server_pb.VolumeServer/WriteNeedleBlob"
@@ -53,6 +54,7 @@ const (
 	VolumeServer_VolumeEcShardRead_FullMethodName           = "/volume_server_pb.VolumeServer/VolumeEcShardRead"
 	VolumeServer_VolumeEcBlobDelete_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeEcBlobDelete"
 	VolumeServer_VolumeEcShardsToVolume_FullMethodName      = "/volume_server_pb.VolumeServer/VolumeEcShardsToVolume"
+	VolumeServer_VolumeEcShardsInfo_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeEcShardsInfo"
 	VolumeServer_VolumeTierMoveDatToRemote_FullMethodName   = "/volume_server_pb.VolumeServer/VolumeTierMoveDatToRemote"
 	VolumeServer_VolumeTierMoveDatFromRemote_FullMethodName = "/volume_server_pb.VolumeServer/VolumeTierMoveDatFromRemote"
 	VolumeServer_VolumeServerStatus_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeServerStatus"
@@ -88,6 +90,7 @@ type VolumeServerClient interface {
 	VolumeCopy(ctx context.Context, in *VolumeCopyRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeCopyResponse], error)
 	ReadVolumeFileStatus(ctx context.Context, in *ReadVolumeFileStatusRequest, opts ...grpc.CallOption) (*ReadVolumeFileStatusResponse, error)
 	CopyFile(ctx context.Context, in *CopyFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CopyFileResponse], error)
+	ReceiveFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReceiveFileRequest, ReceiveFileResponse], error)
 	ReadNeedleBlob(ctx context.Context, in *ReadNeedleBlobRequest, opts ...grpc.CallOption) (*ReadNeedleBlobResponse, error)
 	ReadNeedleMeta(ctx context.Context, in *ReadNeedleMetaRequest, opts ...grpc.CallOption) (*ReadNeedleMetaResponse, error)
 	WriteNeedleBlob(ctx context.Context, in *WriteNeedleBlobRequest, opts ...grpc.CallOption) (*WriteNeedleBlobResponse, error)
@@ -104,6 +107,7 @@ type VolumeServerClient interface {
 	VolumeEcShardRead(ctx context.Context, in *VolumeEcShardReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeEcShardReadResponse], error)
 	VolumeEcBlobDelete(ctx context.Context, in *VolumeEcBlobDeleteRequest, opts ...grpc.CallOption) (*VolumeEcBlobDeleteResponse, error)
 	VolumeEcShardsToVolume(ctx context.Context, in *VolumeEcShardsToVolumeRequest, opts ...grpc.CallOption) (*VolumeEcShardsToVolumeResponse, error)
+	VolumeEcShardsInfo(ctx context.Context, in *VolumeEcShardsInfoRequest, opts ...grpc.CallOption) (*VolumeEcShardsInfoResponse, error)
 	// tiered storage
 	VolumeTierMoveDatToRemote(ctx context.Context, in *VolumeTierMoveDatToRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatToRemoteResponse], error)
 	VolumeTierMoveDatFromRemote(ctx context.Context, in *VolumeTierMoveDatFromRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatFromRemoteResponse], error)
@@ -351,6 +355,19 @@ func (c *volumeServerClient) CopyFile(ctx context.Context, in *CopyFileRequest, 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type VolumeServer_CopyFileClient = grpc.ServerStreamingClient[CopyFileResponse]
 
+func (c *volumeServerClient) ReceiveFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReceiveFileRequest, ReceiveFileResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[4], VolumeServer_ReceiveFile_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ReceiveFileRequest, ReceiveFileResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type VolumeServer_ReceiveFileClient = grpc.ClientStreamingClient[ReceiveFileRequest, ReceiveFileResponse]
+
 func (c *volumeServerClient) ReadNeedleBlob(ctx context.Context, in *ReadNeedleBlobRequest, opts ...grpc.CallOption) (*ReadNeedleBlobResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReadNeedleBlobResponse)
@@ -383,7 +400,7 @@ func (c *volumeServerClient) WriteNeedleBlob(ctx context.Context, in *WriteNeedl
 
 func (c *volumeServerClient) ReadAllNeedles(ctx context.Context, in *ReadAllNeedlesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadAllNeedlesResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[4], VolumeServer_ReadAllNeedles_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[5], VolumeServer_ReadAllNeedles_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +419,7 @@ type VolumeServer_ReadAllNeedlesClient = grpc.ServerStreamingClient[ReadAllNeedl
 
 func (c *volumeServerClient) VolumeTailSender(ctx context.Context, in *VolumeTailSenderRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTailSenderResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[5], VolumeServer_VolumeTailSender_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[6], VolumeServer_VolumeTailSender_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +508,7 @@ func (c *volumeServerClient) VolumeEcShardsUnmount(ctx context.Context, in *Volu
 
 func (c *volumeServerClient) VolumeEcShardRead(ctx context.Context, in *VolumeEcShardReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeEcShardReadResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[6], VolumeServer_VolumeEcShardRead_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[7], VolumeServer_VolumeEcShardRead_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -528,9 +545,19 @@ func (c *volumeServerClient) VolumeEcShardsToVolume(ctx context.Context, in *Vol
 	return out, nil
 }
 
+func (c *volumeServerClient) VolumeEcShardsInfo(ctx context.Context, in *VolumeEcShardsInfoRequest, opts ...grpc.CallOption) (*VolumeEcShardsInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VolumeEcShardsInfoResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcShardsInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *volumeServerClient) VolumeTierMoveDatToRemote(ctx context.Context, in *VolumeTierMoveDatToRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatToRemoteResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[7], VolumeServer_VolumeTierMoveDatToRemote_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[8], VolumeServer_VolumeTierMoveDatToRemote_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -549,7 +576,7 @@ type VolumeServer_VolumeTierMoveDatToRemoteClient = grpc.ServerStreamingClient[V
 
 func (c *volumeServerClient) VolumeTierMoveDatFromRemote(ctx context.Context, in *VolumeTierMoveDatFromRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatFromRemoteResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[8], VolumeServer_VolumeTierMoveDatFromRemote_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[9], VolumeServer_VolumeTierMoveDatFromRemote_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -598,7 +625,7 @@ func (c *volumeServerClient) FetchAndWriteNeedle(ctx context.Context, in *FetchA
 
 func (c *volumeServerClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[QueriedStripe], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[9], VolumeServer_Query_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[10], VolumeServer_Query_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -660,6 +687,7 @@ type VolumeServerServer interface {
 	VolumeCopy(*VolumeCopyRequest, grpc.ServerStreamingServer[VolumeCopyResponse]) error
 	ReadVolumeFileStatus(context.Context, *ReadVolumeFileStatusRequest) (*ReadVolumeFileStatusResponse, error)
 	CopyFile(*CopyFileRequest, grpc.ServerStreamingServer[CopyFileResponse]) error
+	ReceiveFile(grpc.ClientStreamingServer[ReceiveFileRequest, ReceiveFileResponse]) error
 	ReadNeedleBlob(context.Context, *ReadNeedleBlobRequest) (*ReadNeedleBlobResponse, error)
 	ReadNeedleMeta(context.Context, *ReadNeedleMetaRequest) (*ReadNeedleMetaResponse, error)
 	WriteNeedleBlob(context.Context, *WriteNeedleBlobRequest) (*WriteNeedleBlobResponse, error)
@@ -676,6 +704,7 @@ type VolumeServerServer interface {
 	VolumeEcShardRead(*VolumeEcShardReadRequest, grpc.ServerStreamingServer[VolumeEcShardReadResponse]) error
 	VolumeEcBlobDelete(context.Context, *VolumeEcBlobDeleteRequest) (*VolumeEcBlobDeleteResponse, error)
 	VolumeEcShardsToVolume(context.Context, *VolumeEcShardsToVolumeRequest) (*VolumeEcShardsToVolumeResponse, error)
+	VolumeEcShardsInfo(context.Context, *VolumeEcShardsInfoRequest) (*VolumeEcShardsInfoResponse, error)
 	// tiered storage
 	VolumeTierMoveDatToRemote(*VolumeTierMoveDatToRemoteRequest, grpc.ServerStreamingServer[VolumeTierMoveDatToRemoteResponse]) error
 	VolumeTierMoveDatFromRemote(*VolumeTierMoveDatFromRemoteRequest, grpc.ServerStreamingServer[VolumeTierMoveDatFromRemoteResponse]) error
@@ -754,6 +783,9 @@ func (UnimplementedVolumeServerServer) ReadVolumeFileStatus(context.Context, *Re
 func (UnimplementedVolumeServerServer) CopyFile(*CopyFileRequest, grpc.ServerStreamingServer[CopyFileResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method CopyFile not implemented")
 }
+func (UnimplementedVolumeServerServer) ReceiveFile(grpc.ClientStreamingServer[ReceiveFileRequest, ReceiveFileResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method ReceiveFile not implemented")
+}
 func (UnimplementedVolumeServerServer) ReadNeedleBlob(context.Context, *ReadNeedleBlobRequest) (*ReadNeedleBlobResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReadNeedleBlob not implemented")
 }
@@ -798,6 +830,9 @@ func (UnimplementedVolumeServerServer) VolumeEcBlobDelete(context.Context, *Volu
 }
 func (UnimplementedVolumeServerServer) VolumeEcShardsToVolume(context.Context, *VolumeEcShardsToVolumeRequest) (*VolumeEcShardsToVolumeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeEcShardsToVolume not implemented")
+}
+func (UnimplementedVolumeServerServer) VolumeEcShardsInfo(context.Context, *VolumeEcShardsInfoRequest) (*VolumeEcShardsInfoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method VolumeEcShardsInfo not implemented")
 }
 func (UnimplementedVolumeServerServer) VolumeTierMoveDatToRemote(*VolumeTierMoveDatToRemoteRequest, grpc.ServerStreamingServer[VolumeTierMoveDatToRemoteResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeTierMoveDatToRemote not implemented")
@@ -1158,6 +1193,13 @@ func _VolumeServer_CopyFile_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type VolumeServer_CopyFileServer = grpc.ServerStreamingServer[CopyFileResponse]
 
+func _VolumeServer_ReceiveFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VolumeServerServer).ReceiveFile(&grpc.GenericServerStream[ReceiveFileRequest, ReceiveFileResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type VolumeServer_ReceiveFileServer = grpc.ClientStreamingServer[ReceiveFileRequest, ReceiveFileResponse]
+
 func _VolumeServer_ReadNeedleBlob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReadNeedleBlobRequest)
 	if err := dec(in); err != nil {
@@ -1407,6 +1449,24 @@ func _VolumeServer_VolumeEcShardsToVolume_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_VolumeEcShardsInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeEcShardsInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeEcShardsInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_VolumeEcShardsInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeEcShardsInfo(ctx, req.(*VolumeEcShardsInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _VolumeServer_VolumeTierMoveDatToRemote_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(VolumeTierMoveDatToRemoteRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -1646,6 +1706,10 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _VolumeServer_VolumeEcShardsToVolume_Handler,
 		},
 		{
+			MethodName: "VolumeEcShardsInfo",
+			Handler:    _VolumeServer_VolumeEcShardsInfo_Handler,
+		},
+		{
 			MethodName: "VolumeServerStatus",
 			Handler:    _VolumeServer_VolumeServerStatus_Handler,
 		},
@@ -1686,6 +1750,11 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "CopyFile",
 			Handler:       _VolumeServer_CopyFile_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "ReceiveFile",
+			Handler:       _VolumeServer_ReceiveFile_Handler,
+			ClientStreams: true,
 		},
 		{
 			StreamName:    "ReadAllNeedles",

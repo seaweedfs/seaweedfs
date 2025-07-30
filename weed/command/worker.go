@@ -3,6 +3,7 @@ package command
 import (
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -21,7 +22,7 @@ import (
 )
 
 var cmdWorker = &Command{
-	UsageLine: "worker -admin=<admin_server> [-capabilities=<task_types>] [-maxConcurrent=<num>]",
+	UsageLine: "worker -admin=<admin_server> [-capabilities=<task_types>] [-maxConcurrent=<num>] [-workingDir=<path>]",
 	Short:     "start a maintenance worker to process cluster maintenance tasks",
 	Long: `Start a maintenance worker that connects to an admin server to process
 maintenance tasks like vacuum, erasure coding, remote upload, and replication fixes.
@@ -34,6 +35,7 @@ Examples:
   weed worker -admin=admin.example.com:23646
   weed worker -admin=localhost:23646 -capabilities=vacuum,replication
   weed worker -admin=localhost:23646 -maxConcurrent=4
+  weed worker -admin=localhost:23646 -workingDir=/tmp/worker
 `,
 }
 
@@ -43,6 +45,7 @@ var (
 	workerMaxConcurrent       = cmdWorker.Flag.Int("maxConcurrent", 2, "maximum number of concurrent tasks")
 	workerHeartbeatInterval   = cmdWorker.Flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	workerTaskRequestInterval = cmdWorker.Flag.Duration("taskInterval", 5*time.Second, "task request interval")
+	workerWorkingDir          = cmdWorker.Flag.String("workingDir", "", "working directory for the worker")
 )
 
 func init() {
@@ -67,6 +70,45 @@ func runWorker(cmd *Command, args []string) bool {
 		return false
 	}
 
+	// Set working directory and create task-specific subdirectories
+	var baseWorkingDir string
+	if *workerWorkingDir != "" {
+		glog.Infof("Setting working directory to: %s", *workerWorkingDir)
+		if err := os.Chdir(*workerWorkingDir); err != nil {
+			glog.Fatalf("Failed to change working directory: %v", err)
+			return false
+		}
+		wd, err := os.Getwd()
+		if err != nil {
+			glog.Fatalf("Failed to get working directory: %v", err)
+			return false
+		}
+		baseWorkingDir = wd
+		glog.Infof("Current working directory: %s", baseWorkingDir)
+	} else {
+		// Use default working directory when not specified
+		wd, err := os.Getwd()
+		if err != nil {
+			glog.Fatalf("Failed to get current working directory: %v", err)
+			return false
+		}
+		baseWorkingDir = wd
+		glog.Infof("Using current working directory: %s", baseWorkingDir)
+	}
+
+	// Create task-specific subdirectories
+	for _, capability := range capabilities {
+		taskDir := filepath.Join(baseWorkingDir, string(capability))
+		if err := os.MkdirAll(taskDir, 0755); err != nil {
+			glog.Fatalf("Failed to create task directory %s: %v", taskDir, err)
+			return false
+		}
+		glog.Infof("Created task directory: %s", taskDir)
+	}
+
+	// Create gRPC dial option using TLS configuration
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
+
 	// Create worker configuration
 	config := &types.WorkerConfig{
 		AdminServer:         *workerAdminServer,
@@ -74,6 +116,8 @@ func runWorker(cmd *Command, args []string) bool {
 		MaxConcurrent:       *workerMaxConcurrent,
 		HeartbeatInterval:   *workerHeartbeatInterval,
 		TaskRequestInterval: *workerTaskRequestInterval,
+		BaseWorkingDir:      baseWorkingDir,
+		GrpcDialOption:      grpcDialOption,
 	}
 
 	// Create worker instance
@@ -82,9 +126,6 @@ func runWorker(cmd *Command, args []string) bool {
 		glog.Fatalf("Failed to create worker: %v", err)
 		return false
 	}
-
-	// Create admin client with LoadClientTLS
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 	adminClient, err := worker.CreateAdminClient(*workerAdminServer, workerInstance.ID(), grpcDialOption)
 	if err != nil {
 		glog.Fatalf("Failed to create admin client: %v", err)
@@ -94,10 +135,25 @@ func runWorker(cmd *Command, args []string) bool {
 	// Set admin client
 	workerInstance.SetAdminClient(adminClient)
 
+	// Set working directory
+	if *workerWorkingDir != "" {
+		glog.Infof("Setting working directory to: %s", *workerWorkingDir)
+		if err := os.Chdir(*workerWorkingDir); err != nil {
+			glog.Fatalf("Failed to change working directory: %v", err)
+			return false
+		}
+		wd, err := os.Getwd()
+		if err != nil {
+			glog.Fatalf("Failed to get working directory: %v", err)
+			return false
+		}
+		glog.Infof("Current working directory: %s", wd)
+	}
+
 	// Start the worker
 	err = workerInstance.Start()
 	if err != nil {
-		glog.Fatalf("Failed to start worker: %v", err)
+		glog.Errorf("Failed to start worker: %v", err)
 		return false
 	}
 

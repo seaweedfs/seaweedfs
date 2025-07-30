@@ -1,0 +1,486 @@
+package app
+
+import (
+    "encoding/base64"
+    "encoding/json"
+    "fmt"
+    "reflect"
+    "strings"
+    "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+    "github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+    "github.com/seaweedfs/seaweedfs/weed/admin/config"
+    "github.com/seaweedfs/seaweedfs/weed/admin/view/components"
+)
+
+// Helper function to convert task schema to JSON string
+func taskSchemaToJSON(schema *tasks.TaskConfigSchema) string {
+    if schema == nil {
+        return "{}"
+    }
+    
+    data := map[string]interface{}{
+        "fields": schema.Fields,
+    }
+    
+    jsonBytes, err := json.Marshal(data)
+    if err != nil {
+        return "{}"
+    }
+    
+    return string(jsonBytes)
+}
+
+// Helper function to base64 encode the JSON to avoid HTML escaping issues
+func taskSchemaToBase64JSON(schema *tasks.TaskConfigSchema) string {
+    jsonStr := taskSchemaToJSON(schema)
+    return base64.StdEncoding.EncodeToString([]byte(jsonStr))
+}
+
+templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfigSchema, config interface{}) {
+    <div class="container-fluid">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2 class="mb-0">
+                        <i class={schema.Icon + " me-2"}></i>
+                        {schema.DisplayName} Configuration
+                    </h2>
+                    <div class="btn-group">
+                        <a href="/maintenance/config" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left me-1"></i>
+                            Back to System Config
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration Card -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-cogs me-2"></i>
+                            Task Configuration
+                        </h5>
+                        <p class="mb-0 text-muted small">{schema.Description}</p>
+                    </div>
+                    <div class="card-body">
+                        <form id="taskConfigForm" method="POST">
+                            <!-- Dynamically render all schema fields in defined order -->
+                            for _, field := range schema.Fields {
+                                @TaskConfigField(field, config)
+                            }
+                            
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save me-1"></i>
+                                    Save Configuration
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="resetToDefaults()">
+                                    <i class="fas fa-undo me-1"></i>
+                                    Reset to Defaults
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Performance Notes Card -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Important Notes
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info" role="alert">
+                            if schema.TaskName == "vacuum" {
+                                <h6 class="alert-heading">Vacuum Operations:</h6>
+                                <p class="mb-2"><strong>Performance:</strong> Vacuum operations are I/O intensive and may impact cluster performance.</p>
+                                <p class="mb-2"><strong>Safety:</strong> Only volumes meeting age and garbage thresholds will be processed.</p>
+                                <p class="mb-0"><strong>Recommendation:</strong> Monitor cluster load and adjust concurrent limits accordingly.</p>
+                            } else if schema.TaskName == "balance" {
+                                <h6 class="alert-heading">Balance Operations:</h6>
+                                <p class="mb-2"><strong>Performance:</strong> Volume balancing involves data movement and can impact cluster performance.</p>
+                                <p class="mb-2"><strong>Safety:</strong> Requires adequate server count to ensure data safety during moves.</p>
+                                <p class="mb-0"><strong>Recommendation:</strong> Run during off-peak hours to minimize impact on production workloads.</p>
+                            } else if schema.TaskName == "erasure_coding" {
+                                <h6 class="alert-heading">Erasure Coding Operations:</h6>
+                                <p class="mb-2"><strong>Performance:</strong> Erasure coding is CPU and I/O intensive. Consider running during off-peak hours.</p>
+                                <p class="mb-2"><strong>Durability:</strong> With 10+4 configuration, can tolerate up to 4 shard failures.</p>
+                                <p class="mb-0"><strong>Configuration:</strong> Fullness ratio should be between 0.5 and 1.0 (e.g., 0.90 for 90%).</p>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function resetToDefaults() {
+            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {
+                // Reset form fields to their default values
+                const form = document.getElementById('taskConfigForm');
+                const schemaFields = window.taskConfigSchema ? window.taskConfigSchema.fields : {};
+                
+                Object.keys(schemaFields).forEach(fieldName => {
+                    const field = schemaFields[fieldName];
+                    const element = document.getElementById(fieldName);
+                    
+                    if (element && field.default_value !== undefined) {
+                        if (field.input_type === 'checkbox') {
+                            element.checked = field.default_value;
+                        } else if (field.input_type === 'interval') {
+                            // Handle interval fields with value and unit
+                            const valueElement = document.getElementById(fieldName + '_value');
+                            const unitElement = document.getElementById(fieldName + '_unit');
+                            if (valueElement && unitElement && field.default_value) {
+                                const defaultSeconds = field.default_value;
+                                const { value, unit } = convertSecondsToTaskIntervalValueUnit(defaultSeconds);
+                                valueElement.value = value;
+                                unitElement.value = unit;
+                            }
+                        } else {
+                            element.value = field.default_value;
+                        }
+                    }
+                });
+            }
+        }
+
+        function convertSecondsToTaskIntervalValueUnit(totalSeconds) {
+            if (totalSeconds === 0) {
+                return { value: 0, unit: 'minutes' };
+            }
+
+            // Check if it's evenly divisible by days
+            if (totalSeconds % (24 * 3600) === 0) {
+                return { value: totalSeconds / (24 * 3600), unit: 'days' };
+            }
+
+            // Check if it's evenly divisible by hours
+            if (totalSeconds % 3600 === 0) {
+                return { value: totalSeconds / 3600, unit: 'hours' };
+            }
+
+            // Default to minutes
+            return { value: totalSeconds / 60, unit: 'minutes' };
+        }
+
+        // Store schema data for JavaScript access (moved to after div is created)
+    </script>
+    
+    <!-- Hidden element to store schema data -->
+    <div data-task-schema={ taskSchemaToBase64JSON(schema) } style="display: none;"></div>
+    
+    <script>
+        // Load schema data now that the div exists
+        const base64Data = document.querySelector('[data-task-schema]').getAttribute('data-task-schema');
+        const jsonStr = atob(base64Data);
+        window.taskConfigSchema = JSON.parse(jsonStr);
+    </script>
+}
+
+// TaskConfigField renders a single task configuration field based on schema with typed field lookup
+templ TaskConfigField(field *config.Field, config interface{}) {
+    if field.InputType == "interval" {
+        <!-- Interval field with number input + unit dropdown -->
+        <div class="mb-3">
+            <label for={ field.JSONName } class="form-label">
+                { field.DisplayName }
+                if field.Required {
+                    <span class="text-danger">*</span>
+                }
+            </label>
+            <div class="input-group">
+                <input 
+                    type="number" 
+                    class="form-control" 
+                    id={ field.JSONName + "_value" } 
+                    name={ field.JSONName + "_value" } 
+                    value={ fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getTaskConfigInt32Field(config, field.JSONName))) }
+                    step="1"
+                    min="1"
+                    if field.Required {
+                        required
+                    }
+                />
+                <select 
+                    class="form-select" 
+                    id={ field.JSONName + "_unit" } 
+                    name={ field.JSONName + "_unit" }
+                    style="max-width: 120px;"
+                    if field.Required {
+                        required
+                    }
+                >
+                    <option 
+                        value="minutes"
+                        if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "minutes" {
+                            selected
+                        }
+                    >
+                        Minutes
+                    </option>
+                    <option 
+                        value="hours"
+                        if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "hours" {
+                            selected
+                        }
+                    >
+                        Hours
+                    </option>
+                    <option 
+                        value="days"
+                        if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "days" {
+                            selected
+                        }
+                    >
+                        Days
+                    </option>
+                </select>
+            </div>
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    } else if field.InputType == "checkbox" {
+        <!-- Checkbox field -->
+        <div class="mb-3">
+            <div class="form-check form-switch">
+                                        <input 
+                    class="form-check-input"
+                    type="checkbox" 
+                    id={ field.JSONName }
+                    name={ field.JSONName }
+                    value="on"
+                    if getTaskConfigBoolField(config, field.JSONName) {
+                        checked
+                    }
+                />
+                <label class="form-check-label" for={ field.JSONName }>
+                    <strong>{ field.DisplayName }</strong>
+                </label>
+            </div>
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    } else if field.InputType == "text" {
+        <!-- Text field -->
+        <div class="mb-3">
+            <label for={ field.JSONName } class="form-label">
+                { field.DisplayName }
+                if field.Required {
+                    <span class="text-danger">*</span>
+                }
+            </label>
+            <input 
+                type="text" 
+                class="form-control" 
+                id={ field.JSONName }
+                name={ field.JSONName }
+                value={ getTaskConfigStringField(config, field.JSONName) }
+                placeholder={ field.Placeholder }
+                if field.Required {
+                    required
+                }
+            />
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    } else {
+        <!-- Number field -->
+        <div class="mb-3">
+            <label for={ field.JSONName } class="form-label">
+                { field.DisplayName }
+                if field.Required {
+                    <span class="text-danger">*</span>
+                }
+            </label>
+            <input 
+                type="number" 
+                class="form-control" 
+                id={ field.JSONName }
+                name={ field.JSONName }
+                value={ fmt.Sprintf("%.6g", getTaskConfigFloatField(config, field.JSONName)) }
+                placeholder={ field.Placeholder }
+                if field.MinValue != nil {
+                    min={ fmt.Sprintf("%v", field.MinValue) }
+                }
+                if field.MaxValue != nil {
+                    max={ fmt.Sprintf("%v", field.MaxValue) }
+                }
+                step={ getTaskNumberStep(field) }
+                if field.Required {
+                    required
+                }
+            />
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    }
+}
+
+// Typed field getters for task configs - avoiding interface{} where possible
+func getTaskConfigBoolField(config interface{}, fieldName string) bool {
+    switch fieldName {
+    case "enabled":
+        // Use reflection only for the common 'enabled' field in BaseConfig
+        if value := getTaskFieldValue(config, fieldName); value != nil {
+            if boolVal, ok := value.(bool); ok {
+                return boolVal
+            }
+        }
+        return false
+    default:
+        // For other boolean fields, use reflection
+        if value := getTaskFieldValue(config, fieldName); value != nil {
+            if boolVal, ok := value.(bool); ok {
+                return boolVal
+            }
+        }
+        return false
+    }
+}
+
+func getTaskConfigInt32Field(config interface{}, fieldName string) int32 {
+    switch fieldName {
+    case "scan_interval_seconds", "max_concurrent":
+        // Common fields that should be int/int32
+        if value := getTaskFieldValue(config, fieldName); value != nil {
+            switch v := value.(type) {
+            case int32:
+                return v
+            case int:
+                return int32(v)
+            case int64:
+                return int32(v)
+            }
+        }
+        return 0
+    default:
+        // For other int fields, use reflection
+        if value := getTaskFieldValue(config, fieldName); value != nil {
+            switch v := value.(type) {
+            case int32:
+                return v
+            case int:
+                return int32(v)
+            case int64:
+                return int32(v)
+            case float64:
+                return int32(v)
+            }
+        }
+        return 0
+    }
+}
+
+func getTaskConfigFloatField(config interface{}, fieldName string) float64 {
+    if value := getTaskFieldValue(config, fieldName); value != nil {
+        switch v := value.(type) {
+        case float64:
+            return v
+        case float32:
+            return float64(v)
+        case int:
+            return float64(v)
+        case int32:
+            return float64(v)
+        case int64:
+            return float64(v)
+        }
+    }
+    return 0.0
+}
+
+func getTaskConfigStringField(config interface{}, fieldName string) string {
+    if value := getTaskFieldValue(config, fieldName); value != nil {
+        if strVal, ok := value.(string); ok {
+            return strVal
+        }
+        // Convert numbers to strings for form display
+        switch v := value.(type) {
+        case int:
+            return fmt.Sprintf("%d", v)
+        case int32:
+            return fmt.Sprintf("%d", v)
+        case int64:
+            return fmt.Sprintf("%d", v)
+        case float64:
+            return fmt.Sprintf("%.6g", v)
+        case float32:
+            return fmt.Sprintf("%.6g", v)
+        }
+    }
+    return ""
+}
+
+func getTaskNumberStep(field *config.Field) string {
+    if field.Type == config.FieldTypeFloat {
+        return "0.01"
+    }
+    return "1"
+}
+
+func getTaskFieldValue(config interface{}, fieldName string) interface{} {
+    if config == nil {
+        return nil
+    }
+    
+    // Use reflection to get the field value from the config struct
+    configValue := reflect.ValueOf(config)
+    if configValue.Kind() == reflect.Ptr {
+        configValue = configValue.Elem()
+    }
+    
+    if configValue.Kind() != reflect.Struct {
+        return nil
+    }
+    
+    configType := configValue.Type()
+    
+    for i := 0; i < configValue.NumField(); i++ {
+        field := configValue.Field(i)
+        fieldType := configType.Field(i)
+        
+        // Handle embedded structs recursively (before JSON tag check)
+        if field.Kind() == reflect.Struct && fieldType.Anonymous {
+            if value := getTaskFieldValue(field.Interface(), fieldName); value != nil {
+                return value
+            }
+            continue
+        }
+        
+        // Get JSON tag name
+        jsonTag := fieldType.Tag.Get("json")
+        if jsonTag == "" {
+            continue
+        }
+        
+        // Remove options like ",omitempty"
+        if commaIdx := strings.Index(jsonTag, ","); commaIdx > 0 {
+            jsonTag = jsonTag[:commaIdx]
+        }
+        
+        // Check if this is the field we're looking for
+        if jsonTag == fieldName {
+            return field.Interface()
+        }
+    }
+    
+    return nil
+}
+
+ 

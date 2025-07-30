@@ -22,7 +22,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
     <div id="collections-content">
         <!-- Summary Cards -->
         <div class="row mb-4">
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4">
                 <div class="card border-left-primary shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -42,13 +42,13 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                 </div>
             </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4">
                 <div class="card border-left-info shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
-                                    Total Volumes
+                                    Regular Volumes
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
                                     {fmt.Sprintf("%d", data.TotalVolumes)}
@@ -62,7 +62,27 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                 </div>
             </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4">
+                <div class="card border-left-success shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                    EC Volumes
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {fmt.Sprintf("%d", data.TotalEcVolumes)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-th-large fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4">
                 <div class="card border-left-warning shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
@@ -76,19 +96,19 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                             </div>
                             <div class="col-auto">
                                 <i class="fas fa-file fa-2x text-gray-300"></i>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
 
-            <div class="col-xl-3 col-md-6 mb-4">
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4">
                 <div class="card border-left-secondary shadow h-100 py-2">
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-secondary text-uppercase mb-1">
-                                    Total Storage Size
+                                    Total Storage Size (Logical)
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
                                     {formatBytes(data.TotalSize)}
@@ -117,9 +137,10 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                             <thead>
                                 <tr>
                                     <th>Collection Name</th>
-                                    <th>Volumes</th>
+                                    <th>Regular Volumes</th>
+                                    <th>EC Volumes</th>
                                     <th>Files</th>
-                                    <th>Size</th>
+                                    <th>Size (Logical)</th>
                                     <th>Disk Types</th>
                                     <th>Actions</th>
                                 </tr>
@@ -128,7 +149,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                 for _, collection := range data.Collections {
                                     <tr>
                                         <td>
-                                            <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", collection.Name))} class="text-decoration-none">
+                                            <a href={templ.SafeURL(fmt.Sprintf("/cluster/collections/%s", collection.Name))} class="text-decoration-none">
                                             <strong>{collection.Name}</strong>
                                             </a>
                                         </td>
@@ -136,7 +157,23 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                             <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", collection.Name))} class="text-decoration-none">
                                             <div class="d-flex align-items-center">
                                                 <i class="fas fa-database me-2 text-muted"></i>
-                                                {fmt.Sprintf("%d", collection.VolumeCount)}
+                                                if collection.VolumeCount > 0 {
+                                                    {fmt.Sprintf("%d", collection.VolumeCount)}
+                                                } else {
+                                                    <span class="text-muted">0</span>
+                                                }
+                                            </div>
+                                            </a>
+                                        </td>
+                                        <td>
+                                            <a href={templ.SafeURL(fmt.Sprintf("/cluster/ec-shards?collection=%s", collection.Name))} class="text-decoration-none">
+                                            <div class="d-flex align-items-center">
+                                                <i class="fas fa-th-large me-2 text-muted"></i>
+                                                if collection.EcVolumeCount > 0 {
+                                                    {fmt.Sprintf("%d", collection.EcVolumeCount)}
+                                                } else {
+                                                    <span class="text-muted">0</span>
+                                                }
                                             </div>
                                             </a>
                                         </td>
@@ -171,6 +208,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                                     data-name={collection.Name}
                                                     data-datacenter={collection.DataCenter}
                                                     data-volume-count={fmt.Sprintf("%d", collection.VolumeCount)}
+                                                    data-ec-volume-count={fmt.Sprintf("%d", collection.EcVolumeCount)}
                                                     data-file-count={fmt.Sprintf("%d", collection.FileCount)}
                                                     data-total-size={fmt.Sprintf("%d", collection.TotalSize)}
                                                     data-disk-types={formatDiskTypes(collection.DiskTypes)}>
@@ -223,6 +261,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                         name: button.getAttribute('data-name'),
                         datacenter: button.getAttribute('data-datacenter'),
                         volumeCount: parseInt(button.getAttribute('data-volume-count')),
+                        ecVolumeCount: parseInt(button.getAttribute('data-ec-volume-count')),
                         fileCount: parseInt(button.getAttribute('data-file-count')),
                         totalSize: parseInt(button.getAttribute('data-total-size')),
                         diskTypes: button.getAttribute('data-disk-types')
@@ -260,10 +299,16 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
             '<div class="col-md-6">' +
             '<h6 class="text-primary"><i class="fas fa-chart-bar me-1"></i>Storage Statistics</h6>' +
             '<table class="table table-sm">' +
-            '<tr><td><strong>Total Volumes:</strong></td><td>' +
+            '<tr><td><strong>Regular Volumes:</strong></td><td>' +
             '<div class="d-flex align-items-center">' +
             '<i class="fas fa-database me-2 text-muted"></i>' +
             '<span>' + collection.volumeCount.toLocaleString() + '</span>' +
+            '</div>' +
+            '</td></tr>' +
+            '<tr><td><strong>EC Volumes:</strong></td><td>' +
+            '<div class="d-flex align-items-center">' +
+            '<i class="fas fa-th-large me-2 text-muted"></i>' +
+            '<span>' + collection.ecVolumeCount.toLocaleString() + '</span>' +
             '</div>' +
             '</td></tr>' +
             '<tr><td><strong>Total Files:</strong></td><td>' +
@@ -272,7 +317,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
             '<span>' + collection.fileCount.toLocaleString() + '</span>' +
             '</div>' +
             '</td></tr>' +
-            '<tr><td><strong>Total Size:</strong></td><td>' +
+            '<tr><td><strong>Total Size (Logical):</strong></td><td>' +
             '<div class="d-flex align-items-center">' +
             '<i class="fas fa-hdd me-2 text-muted"></i>' +
             '<span>' + formatBytes(collection.totalSize) + '</span>' +
@@ -288,9 +333,13 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
             '<a href="/cluster/volumes?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-primary">' +
             '<i class="fas fa-database me-1"></i>View Volumes' +
             '</a>' +
+            '<a href="/cluster/ec-shards?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-secondary">' +
+            '<i class="fas fa-th-large me-1"></i>View EC Volumes' +
+            '</a>' +
             '<a href="/files?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-info">' +
             '<i class="fas fa-folder me-1"></i>Browse Files' +
             '</a>' +
+            '</div>' +
             '</div>' +
             '</div>' +
             '</div>' +

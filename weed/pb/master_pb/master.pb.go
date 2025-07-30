@@ -313,6 +313,7 @@ type VolumeInformationMessage struct {
 	RemoteStorageName string                 `protobuf:"bytes,13,opt,name=remote_storage_name,json=remoteStorageName,proto3" json:"remote_storage_name,omitempty"`
 	RemoteStorageKey  string                 `protobuf:"bytes,14,opt,name=remote_storage_key,json=remoteStorageKey,proto3" json:"remote_storage_key,omitempty"`
 	DiskType          string                 `protobuf:"bytes,15,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	DiskId            uint32                 `protobuf:"varint,16,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -452,6 +453,13 @@ func (x *VolumeInformationMessage) GetDiskType() string {
 	return ""
 }
 
+func (x *VolumeInformationMessage) GetDiskId() uint32 {
+	if x != nil {
+		return x.DiskId
+	}
+	return 0
+}
+
 type VolumeShortInformationMessage struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Id               uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -460,6 +468,7 @@ type VolumeShortInformationMessage struct {
 	Version          uint32                 `protobuf:"varint,9,opt,name=version,proto3" json:"version,omitempty"`
 	Ttl              uint32                 `protobuf:"varint,10,opt,name=ttl,proto3" json:"ttl,omitempty"`
 	DiskType         string                 `protobuf:"bytes,15,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	DiskId           uint32                 `protobuf:"varint,16,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -536,6 +545,13 @@ func (x *VolumeShortInformationMessage) GetDiskType() string {
 	return ""
 }
 
+func (x *VolumeShortInformationMessage) GetDiskId() uint32 {
+	if x != nil {
+		return x.DiskId
+	}
+	return 0
+}
+
 type VolumeEcShardInformationMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -543,6 +559,7 @@ type VolumeEcShardInformationMessage struct {
 	EcIndexBits   uint32                 `protobuf:"varint,3,opt,name=ec_index_bits,json=ecIndexBits,proto3" json:"ec_index_bits,omitempty"`
 	DiskType      string                 `protobuf:"bytes,4,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
 	ExpireAtSec   uint64                 `protobuf:"varint,5,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // used to record the destruction time of ec volume
+	DiskId        uint32                 `protobuf:"varint,6,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -608,6 +625,13 @@ func (x *VolumeEcShardInformationMessage) GetDiskType() string {
 func (x *VolumeEcShardInformationMessage) GetExpireAtSec() uint64 {
 	if x != nil {
 		return x.ExpireAtSec
+	}
+	return 0
+}
+
+func (x *VolumeEcShardInformationMessage) GetDiskId() uint32 {
+	if x != nil {
+		return x.DiskId
 	}
 	return 0
 }
@@ -1904,6 +1928,7 @@ type DiskInfo struct {
 	VolumeInfos       []*VolumeInformationMessage        `protobuf:"bytes,6,rep,name=volume_infos,json=volumeInfos,proto3" json:"volume_infos,omitempty"`
 	EcShardInfos      []*VolumeEcShardInformationMessage `protobuf:"bytes,7,rep,name=ec_shard_infos,json=ecShardInfos,proto3" json:"ec_shard_infos,omitempty"`
 	RemoteVolumeCount int64                              `protobuf:"varint,8,opt,name=remote_volume_count,json=remoteVolumeCount,proto3" json:"remote_volume_count,omitempty"`
+	DiskId            uint32                             `protobuf:"varint,9,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1990,6 +2015,13 @@ func (x *DiskInfo) GetEcShardInfos() []*VolumeEcShardInformationMessage {
 func (x *DiskInfo) GetRemoteVolumeCount() int64 {
 	if x != nil {
 		return x.RemoteVolumeCount
+	}
+	return 0
+}
+
+func (x *DiskInfo) GetDiskId() uint32 {
+	if x != nil {
+		return x.DiskId
 	}
 	return 0
 }
@@ -4034,7 +4066,7 @@ const file_master_proto_rawDesc = "" +
 	"\x18metrics_interval_seconds\x18\x04 \x01(\rR\x16metricsIntervalSeconds\x12D\n" +
 	"\x10storage_backends\x18\x05 \x03(\v2\x19.master_pb.StorageBackendR\x0fstorageBackends\x12)\n" +
 	"\x10duplicated_uuids\x18\x06 \x03(\tR\x0fduplicatedUuids\x12 \n" +
-	"\vpreallocate\x18\a \x01(\bR\vpreallocate\"\x98\x04\n" +
+	"\vpreallocate\x18\a \x01(\bR\vpreallocate\"\xb1\x04\n" +
 	"\x18VolumeInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x04R\x04size\x12\x1e\n" +
@@ -4054,7 +4086,8 @@ const file_master_proto_rawDesc = "" +
 	"\x12modified_at_second\x18\f \x01(\x03R\x10modifiedAtSecond\x12.\n" +
 	"\x13remote_storage_name\x18\r \x01(\tR\x11remoteStorageName\x12,\n" +
 	"\x12remote_storage_key\x18\x0e \x01(\tR\x10remoteStorageKey\x12\x1b\n" +
-	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\"\xc5\x01\n" +
+	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xde\x01\n" +
 	"\x1dVolumeShortInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
@@ -4064,7 +4097,8 @@ const file_master_proto_rawDesc = "" +
 	"\aversion\x18\t \x01(\rR\aversion\x12\x10\n" +
 	"\x03ttl\x18\n" +
 	" \x01(\rR\x03ttl\x12\x1b\n" +
-	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\"\xb6\x01\n" +
+	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xcf\x01\n" +
 	"\x1fVolumeEcShardInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
@@ -4072,7 +4106,8 @@ const file_master_proto_rawDesc = "" +
 	"collection\x12\"\n" +
 	"\rec_index_bits\x18\x03 \x01(\rR\vecIndexBits\x12\x1b\n" +
 	"\tdisk_type\x18\x04 \x01(\tR\bdiskType\x12\"\n" +
-	"\rexpire_at_sec\x18\x05 \x01(\x04R\vexpireAtSec\"\xbe\x01\n" +
+	"\rexpire_at_sec\x18\x05 \x01(\x04R\vexpireAtSec\x12\x17\n" +
+	"\adisk_id\x18\x06 \x01(\rR\x06diskId\"\xbe\x01\n" +
 	"\x0eStorageBackend\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12I\n" +
@@ -4199,7 +4234,7 @@ const file_master_proto_rawDesc = "" +
 	"\vcollections\x18\x01 \x03(\v2\x15.master_pb.CollectionR\vcollections\"-\n" +
 	"\x17CollectionDeleteRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"\x1a\n" +
-	"\x18CollectionDeleteResponse\"\x91\x03\n" +
+	"\x18CollectionDeleteResponse\"\xaa\x03\n" +
 	"\bDiskInfo\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12!\n" +
 	"\fvolume_count\x18\x02 \x01(\x03R\vvolumeCount\x12(\n" +
@@ -4208,7 +4243,8 @@ const file_master_proto_rawDesc = "" +
 	"\x13active_volume_count\x18\x05 \x01(\x03R\x11activeVolumeCount\x12F\n" +
 	"\fvolume_infos\x18\x06 \x03(\v2#.master_pb.VolumeInformationMessageR\vvolumeInfos\x12P\n" +
 	"\x0eec_shard_infos\x18\a \x03(\v2*.master_pb.VolumeEcShardInformationMessageR\fecShardInfos\x12.\n" +
-	"\x13remote_volume_count\x18\b \x01(\x03R\x11remoteVolumeCount\"\xd4\x01\n" +
+	"\x13remote_volume_count\x18\b \x01(\x03R\x11remoteVolumeCount\x12\x17\n" +
+	"\adisk_id\x18\t \x01(\rR\x06diskId\"\xd4\x01\n" +
 	"\fDataNodeInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12D\n" +
 	"\tdiskInfos\x18\x02 \x03(\v2&.master_pb.DataNodeInfo.DiskInfosEntryR\tdiskInfos\x12\x1b\n" +

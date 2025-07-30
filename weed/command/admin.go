@@ -33,6 +33,7 @@ var (
 
 type AdminOptions struct {
 	port          *int
+	grpcPort      *int
 	masters       *string
 	adminUser     *string
 	adminPassword *string
@@ -42,6 +43,7 @@ type AdminOptions struct {
 func init() {
 	cmdAdmin.Run = runAdmin // break init cycle
 	a.port = cmdAdmin.Flag.Int("port", 23646, "admin server port")
+	a.grpcPort = cmdAdmin.Flag.Int("port.grpc", 0, "gRPC server port for worker connections (default: http port + 10000)")
 	a.masters = cmdAdmin.Flag.String("masters", "localhost:9333", "comma-separated master servers")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
 
@@ -50,7 +52,7 @@ func init() {
 }
 
 var cmdAdmin = &Command{
-	UsageLine: "admin -port=23646 -masters=localhost:9333 [-dataDir=/path/to/data]",
+	UsageLine: "admin -port=23646 -masters=localhost:9333 [-port.grpc=33646] [-dataDir=/path/to/data]",
 	Short:     "start SeaweedFS web admin interface",
 	Long: `Start a web admin interface for SeaweedFS cluster management.
 
@@ -63,12 +65,13 @@ var cmdAdmin = &Command{
   - Maintenance operations
 
   The admin interface automatically discovers filers from the master servers.
-  A gRPC server for worker connections runs on HTTP port + 10000.
+  A gRPC server for worker connections runs on the configured gRPC port (default: HTTP port + 10000).
 
   Example Usage:
     weed admin -port=23646 -masters="master1:9333,master2:9333"
     weed admin -port=23646 -masters="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
-    weed admin -port=23646 -masters="localhost:9333" -dataDir="~/seaweedfs-admin"
+    weed admin -port=23646 -port.grpc=33646 -masters="localhost:9333" -dataDir="~/seaweedfs-admin"
+    weed admin -port=9900 -port.grpc=19900 -masters="localhost:9333"
 
   Data Directory:
     - If dataDir is specified, admin configuration and maintenance data is persisted
@@ -128,6 +131,11 @@ func runAdmin(cmd *Command, args []string) bool {
 		return false
 	}
 
+	// Set default gRPC port if not specified
+	if *a.grpcPort == 0 {
+		*a.grpcPort = *a.port + 10000
+	}
+
 	// Security warnings
 	if *a.adminPassword == "" {
 		fmt.Println("WARNING: Admin interface is running without authentication!")
@@ -135,6 +143,7 @@ func runAdmin(cmd *Command, args []string) bool {
 	}
 
 	fmt.Printf("Starting SeaweedFS Admin Interface on port %d\n", *a.port)
+	fmt.Printf("Worker gRPC server will run on port %d\n", *a.grpcPort)
 	fmt.Printf("Masters: %s\n", *a.masters)
 	fmt.Printf("Filers will be discovered automatically from masters\n")
 	if *a.dataDir != "" {
@@ -232,7 +241,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}
 
 	// Start worker gRPC server for worker connections
-	err = adminServer.StartWorkerGrpcServer(*options.port)
+	err = adminServer.StartWorkerGrpcServer(*options.grpcPort)
 	if err != nil {
 		return fmt.Errorf("failed to start worker gRPC server: %w", err)
 	}

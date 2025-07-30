@@ -2,80 +2,71 @@ package vacuum
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// Factory creates vacuum task instances
-type Factory struct {
-	*tasks.BaseTaskFactory
-}
-
-// NewFactory creates a new vacuum task factory
-func NewFactory() *Factory {
-	return &Factory{
-		BaseTaskFactory: tasks.NewBaseTaskFactory(
-			types.TaskTypeVacuum,
-			[]string{"vacuum", "storage"},
-			"Vacuum operation to reclaim disk space by removing deleted files",
-		),
-	}
-}
-
-// Create creates a new vacuum task instance
-func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
-	// Validate parameters
-	if params.VolumeID == 0 {
-		return nil, fmt.Errorf("volume_id is required")
-	}
-	if params.Server == "" {
-		return nil, fmt.Errorf("server is required")
-	}
-
-	task := NewTask(params.Server, params.VolumeID)
-	task.SetEstimatedDuration(task.EstimateTime(params))
-
-	return task, nil
-}
-
-// Shared detector and scheduler instances
-var (
-	sharedDetector  *VacuumDetector
-	sharedScheduler *VacuumScheduler
-)
-
-// getSharedInstances returns the shared detector and scheduler instances
-func getSharedInstances() (*VacuumDetector, *VacuumScheduler) {
-	if sharedDetector == nil {
-		sharedDetector = NewVacuumDetector()
-	}
-	if sharedScheduler == nil {
-		sharedScheduler = NewVacuumScheduler()
-	}
-	return sharedDetector, sharedScheduler
-}
-
-// GetSharedInstances returns the shared detector and scheduler instances (public access)
-func GetSharedInstances() (*VacuumDetector, *VacuumScheduler) {
-	return getSharedInstances()
-}
+// Global variable to hold the task definition for configuration updates
+var globalTaskDef *base.TaskDefinition
 
 // Auto-register this task when the package is imported
 func init() {
-	factory := NewFactory()
-	tasks.AutoRegister(types.TaskTypeVacuum, factory)
+	RegisterVacuumTask()
 
-	// Get shared instances for all registrations
-	detector, scheduler := getSharedInstances()
+	// Register config updater
+	tasks.AutoRegisterConfigUpdater(types.TaskTypeVacuum, UpdateConfigFromPersistence)
+}
 
-	// Register with types registry
-	tasks.AutoRegisterTypes(func(registry *types.TaskRegistry) {
-		registry.RegisterTask(detector, scheduler)
-	})
+// RegisterVacuumTask registers the vacuum task with the new architecture
+func RegisterVacuumTask() {
+	// Create configuration instance
+	config := NewDefaultConfig()
 
-	// Register with UI registry using the same instances
-	tasks.AutoRegisterUI(func(uiRegistry *types.UIRegistry) {
-		RegisterUI(uiRegistry, detector, scheduler)
-	})
+	// Create complete task definition
+	taskDef := &base.TaskDefinition{
+		Type:         types.TaskTypeVacuum,
+		Name:         "vacuum",
+		DisplayName:  "Volume Vacuum",
+		Description:  "Reclaims disk space by removing deleted files from volumes",
+		Icon:         "fas fa-broom text-primary",
+		Capabilities: []string{"vacuum", "storage"},
+
+		Config:         config,
+		ConfigSpec:     GetConfigSpec(),
+		CreateTask:     CreateTask,
+		DetectionFunc:  Detection,
+		ScanInterval:   2 * time.Hour,
+		SchedulingFunc: Scheduling,
+		MaxConcurrent:  2,
+		RepeatInterval: 7 * 24 * time.Hour,
+	}
+
+	// Store task definition globally for configuration updates
+	globalTaskDef = taskDef
+
+	// Register everything with a single function call!
+	base.RegisterTask(taskDef)
+}
+
+// UpdateConfigFromPersistence updates the vacuum configuration from persistence
+func UpdateConfigFromPersistence(configPersistence interface{}) error {
+	if globalTaskDef == nil {
+		return fmt.Errorf("vacuum task not registered")
+	}
+
+	// Load configuration from persistence
+	newConfig := LoadConfigFromPersistence(configPersistence)
+	if newConfig == nil {
+		return fmt.Errorf("failed to load configuration from persistence")
+	}
+
+	// Update the task definition's config
+	globalTaskDef.Config = newConfig
+
+	glog.V(1).Infof("Updated vacuum task configuration from persistence")
+	return nil
 }

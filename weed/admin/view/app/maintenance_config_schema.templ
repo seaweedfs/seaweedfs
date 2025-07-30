@@ -1,0 +1,381 @@
+package app
+
+import (
+    "fmt"
+    "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+    "github.com/seaweedfs/seaweedfs/weed/admin/config"
+    "github.com/seaweedfs/seaweedfs/weed/admin/view/components"
+)
+
+templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *maintenance.MaintenanceConfigSchema) {
+    <div class="container-fluid">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2 class="mb-0">
+                        <i class="fas fa-cogs me-2"></i>
+                        Maintenance Configuration
+                    </h2>
+                    <div class="btn-group">
+                        <a href="/maintenance/tasks" class="btn btn-outline-primary">
+                            <i class="fas fa-tasks me-1"></i>
+                            View Tasks
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">System Settings</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="maintenanceConfigForm">
+                            <!-- Dynamically render all schema fields in order -->
+                            for _, field := range schema.Fields {
+                                @ConfigField(field, data.Config)
+                            }
+
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-primary" onclick="saveConfiguration()">
+                                    <i class="fas fa-save me-1"></i>
+                                    Save Configuration
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="resetToDefaults()">
+                                    <i class="fas fa-undo me-1"></i>
+                                    Reset to Defaults
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Task Configuration Cards -->
+        <div class="row mt-4">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-broom me-2"></i>
+                            Volume Vacuum
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-text">Reclaims disk space by removing deleted files from volumes.</p>
+                        <a href="/maintenance/config/vacuum" class="btn btn-primary">Configure</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-balance-scale me-2"></i>
+                            Volume Balance
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-text">Redistributes volumes across servers to optimize storage utilization.</p>
+                        <a href="/maintenance/config/balance" class="btn btn-primary">Configure</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-shield-alt me-2"></i>
+                            Erasure Coding
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-text">Converts volumes to erasure coded format for improved durability.</p>
+                        <a href="/maintenance/config/erasure_coding" class="btn btn-primary">Configure</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function saveConfiguration() {
+            const form = document.getElementById('maintenanceConfigForm');
+            const formData = new FormData(form);
+            
+            // Convert form data to JSON, handling interval fields specially
+            const config = {};
+            
+            for (let [key, value] of formData.entries()) {
+                if (key.endsWith('_value')) {
+                    // This is an interval value part
+                    const baseKey = key.replace('_value', '');
+                    const unitKey = baseKey + '_unit';
+                    const unitValue = formData.get(unitKey);
+                    
+                    if (unitValue) {
+                        // Convert to seconds based on unit
+                        const numValue = parseInt(value) || 0;
+                        let seconds = numValue;
+                        switch(unitValue) {
+                            case 'minutes':
+                                seconds = numValue * 60;
+                                break;
+                            case 'hours':
+                                seconds = numValue * 3600;
+                                break;
+                            case 'days':
+                                seconds = numValue * 24 * 3600;
+                                break;
+                        }
+                        config[baseKey] = seconds;
+                    }
+                } else if (key.endsWith('_unit')) {
+                    // Skip unit keys - they're handled with their corresponding value
+                    continue;
+                } else {
+                    // Regular field
+                    if (form.querySelector(`[name="${key}"]`).type === 'checkbox') {
+                        config[key] = form.querySelector(`[name="${key}"]`).checked;
+                    } else {
+                        const numValue = parseFloat(value);
+                        config[key] = isNaN(numValue) ? value : numValue;
+                    }
+                }
+            }
+
+            fetch('/api/maintenance/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(config)
+            })
+            .then(response => {
+                if (response.status === 401) {
+                    alert('Authentication required. Please log in first.');
+                    window.location.href = '/login';
+                    return;
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (!data) return; // Skip if redirected to login
+                if (data.success) {
+                    alert('Configuration saved successfully!');
+                    location.reload();
+                } else {
+                    alert('Error saving configuration: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error saving configuration: ' + error.message);
+            });
+        }
+
+        function resetToDefaults() {
+            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {
+                fetch('/maintenance/config/defaults', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Configuration reset to defaults!');
+                        location.reload();
+                    } else {
+                        alert('Error resetting configuration: ' + (data.error || 'Unknown error'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error resetting configuration: ' + error.message);
+                });
+            }
+        }
+    </script>
+}
+
+// ConfigField renders a single configuration field based on schema with typed value lookup
+templ ConfigField(field *config.Field, config *maintenance.MaintenanceConfig) {
+    if field.InputType == "interval" {
+        <!-- Interval field with number input + unit dropdown -->
+        <div class="mb-3">
+            <label for={ field.JSONName } class="form-label">
+                { field.DisplayName }
+                if field.Required {
+                    <span class="text-danger">*</span>
+                }
+            </label>
+            <div class="input-group">
+                <input 
+                    type="number" 
+                    class="form-control" 
+                    id={ field.JSONName + "_value" } 
+                    name={ field.JSONName + "_value" } 
+                    value={ fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getMaintenanceInt32Field(config, field.JSONName))) }
+                    step="1"
+                    min="1"
+                    if field.Required {
+                        required
+                    }
+                />
+                <select 
+                    class="form-select" 
+                    id={ field.JSONName + "_unit" } 
+                    name={ field.JSONName + "_unit" }
+                    style="max-width: 120px;"
+                    if field.Required {
+                        required
+                    }
+                >
+                    <option 
+                        value="minutes"
+                        if components.GetInt32DisplayUnit(getMaintenanceInt32Field(config, field.JSONName)) == "minutes" {
+                            selected
+                        }
+                    >
+                        Minutes
+                    </option>
+                    <option 
+                        value="hours"
+                        if components.GetInt32DisplayUnit(getMaintenanceInt32Field(config, field.JSONName)) == "hours" {
+                            selected
+                        }
+                    >
+                        Hours
+                    </option>
+                    <option 
+                        value="days"
+                        if components.GetInt32DisplayUnit(getMaintenanceInt32Field(config, field.JSONName)) == "days" {
+                            selected
+                        }
+                    >
+                        Days
+                    </option>
+                </select>
+            </div>
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    } else if field.InputType == "checkbox" {
+        <!-- Checkbox field -->
+        <div class="mb-3">
+            <div class="form-check form-switch">
+                <input 
+                    class="form-check-input"
+                    type="checkbox" 
+                    id={ field.JSONName }
+                    name={ field.JSONName }
+                    if getMaintenanceBoolField(config, field.JSONName) {
+                        checked
+                    }
+                />
+                <label class="form-check-label" for={ field.JSONName }>
+                    <strong>{ field.DisplayName }</strong>
+                </label>
+            </div>
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    } else {
+        <!-- Number field -->
+        <div class="mb-3">
+            <label for={ field.JSONName } class="form-label">
+                { field.DisplayName }
+                if field.Required {
+                    <span class="text-danger">*</span>
+                }
+            </label>
+            <input 
+                type="number" 
+                class="form-control" 
+                id={ field.JSONName }
+                name={ field.JSONName }
+                value={ fmt.Sprintf("%d", getMaintenanceInt32Field(config, field.JSONName)) }
+                placeholder={ field.Placeholder }
+                if field.MinValue != nil {
+                    min={ fmt.Sprintf("%v", field.MinValue) }
+                }
+                if field.MaxValue != nil {
+                    max={ fmt.Sprintf("%v", field.MaxValue) }
+                }
+                step={ getNumberStep(field) }
+                if field.Required {
+                    required
+                }
+            />
+            if field.Description != "" {
+                <div class="form-text text-muted">{ field.Description }</div>
+            }
+        </div>
+    }
+}
+
+// Helper functions for form field types
+
+func getNumberStep(field *config.Field) string {
+    if field.Type == config.FieldTypeFloat {
+        return "0.01"
+    }
+    return "1"
+}
+
+// Typed field getters for MaintenanceConfig - no interface{} needed
+func getMaintenanceInt32Field(config *maintenance.MaintenanceConfig, fieldName string) int32 {
+    if config == nil {
+        return 0
+    }
+    
+    switch fieldName {
+    case "scan_interval_seconds":
+        return config.ScanIntervalSeconds
+    case "worker_timeout_seconds":
+        return config.WorkerTimeoutSeconds
+    case "task_timeout_seconds":
+        return config.TaskTimeoutSeconds
+    case "retry_delay_seconds":
+        return config.RetryDelaySeconds
+    case "max_retries":
+        return config.MaxRetries
+    case "cleanup_interval_seconds":
+        return config.CleanupIntervalSeconds
+    case "task_retention_seconds":
+        return config.TaskRetentionSeconds
+    case "global_max_concurrent":
+        if config.Policy != nil {
+            return config.Policy.GlobalMaxConcurrent
+        }
+        return 0
+    default:
+        return 0
+    }
+}
+
+func getMaintenanceBoolField(config *maintenance.MaintenanceConfig, fieldName string) bool {
+    if config == nil {
+        return false
+    }
+    
+    switch fieldName {
+    case "enabled":
+        return config.Enabled
+    default:
+        return false
+    }
+}
+
+// Helper function to convert schema to JSON for JavaScript
+templ schemaToJSON(schema *maintenance.MaintenanceConfigSchema) {
+    {`{}`}
+} 

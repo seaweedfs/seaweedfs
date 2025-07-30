@@ -246,6 +246,17 @@ func (d *Disk) FreeSpace() int64 {
 
 func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
+
+	// Get disk ID from first volume or EC shard
+	var diskId uint32
+	volumes := d.GetVolumes()
+	ecShards := d.GetEcShards()
+	if len(volumes) > 0 {
+		diskId = volumes[0].DiskId
+	} else if len(ecShards) > 0 {
+		diskId = ecShards[0].DiskId
+	}
+
 	m := &master_pb.DiskInfo{
 		Type:              string(d.Id()),
 		VolumeCount:       diskUsage.volumeCount,
@@ -253,11 +264,12 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 		FreeVolumeCount:   diskUsage.maxVolumeCount - (diskUsage.volumeCount - diskUsage.remoteVolumeCount) - (diskUsage.ecShardCount+1)/erasure_coding.DataShardsCount,
 		ActiveVolumeCount: diskUsage.activeVolumeCount,
 		RemoteVolumeCount: diskUsage.remoteVolumeCount,
+		DiskId:            diskId,
 	}
-	for _, v := range d.GetVolumes() {
+	for _, v := range volumes {
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
 	}
-	for _, ecv := range d.GetEcShards() {
+	for _, ecv := range ecShards {
 		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
 	}
 	return m

@@ -16,6 +16,8 @@ type ClusterInfo struct {
 type VolumeHealthMetrics struct {
 	VolumeID         uint32
 	Server           string
+	DiskType         string // Disk type (e.g., "hdd", "ssd") or disk path (e.g., "/data1")
+	DiskId           uint32 // ID of the disk in Store.Locations array
 	Collection       string
 	Size             uint64
 	DeletedBytes     uint64

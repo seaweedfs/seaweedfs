@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 
@@ -154,6 +155,129 @@ func (h *ClusterHandlers) ShowClusterCollections(c *gin.Context) {
 	c.Header("Content-Type", "text/html")
 	collectionsComponent := app.ClusterCollections(*collectionsData)
 	layoutComponent := layout.Layout(c, collectionsComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
+// ShowCollectionDetails renders the collection detail page
+func (h *ClusterHandlers) ShowCollectionDetails(c *gin.Context) {
+	collectionName := c.Param("name")
+	if collectionName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Collection name is required"})
+		return
+	}
+
+	// Parse query parameters
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "25"))
+	sortBy := c.DefaultQuery("sort_by", "volume_id")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+
+	// Get collection details data (volumes and EC volumes)
+	collectionDetailsData, err := h.adminServer.GetCollectionDetails(collectionName, page, pageSize, sortBy, sortOrder)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get collection details: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	collectionDetailsData.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	collectionDetailsComponent := app.CollectionDetails(*collectionDetailsData)
+	layoutComponent := layout.Layout(c, collectionDetailsComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
+// ShowClusterEcShards handles the cluster EC shards page (individual shards view)
+func (h *ClusterHandlers) ShowClusterEcShards(c *gin.Context) {
+	// Parse query parameters
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "100"))
+	sortBy := c.DefaultQuery("sort_by", "volume_id")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+	collection := c.DefaultQuery("collection", "")
+
+	// Get data from admin server
+	data, err := h.adminServer.GetClusterEcVolumes(page, pageSize, sortBy, sortOrder, collection)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	data.Username = username
+
+	// Render template
+	c.Header("Content-Type", "text/html")
+	ecVolumesComponent := app.ClusterEcVolumes(*data)
+	layoutComponent := layout.Layout(c, ecVolumesComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+}
+
+// ShowEcVolumeDetails renders the EC volume details page
+func (h *ClusterHandlers) ShowEcVolumeDetails(c *gin.Context) {
+	volumeIDStr := c.Param("id")
+
+	if volumeIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Volume ID is required"})
+		return
+	}
+
+	volumeID, err := strconv.Atoi(volumeIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid volume ID"})
+		return
+	}
+
+	// Check that volumeID is within uint32 range
+	if volumeID < 0 || volumeID > int(math.MaxUint32) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Volume ID out of range"})
+		return
+	}
+
+	// Parse sorting parameters
+	sortBy := c.DefaultQuery("sort_by", "shard_id")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+
+	// Get EC volume details
+	ecVolumeDetails, err := h.adminServer.GetEcVolumeDetails(uint32(volumeID), sortBy, sortOrder)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get EC volume details: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	ecVolumeDetails.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	ecVolumeDetailsComponent := app.EcVolumeDetails(*ecVolumeDetails)
+	layoutComponent := layout.Layout(c, ecVolumeDetailsComponent)
 	err = layoutComponent.Render(c.Request.Context(), c.Writer)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})

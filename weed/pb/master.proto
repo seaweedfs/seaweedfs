@@ -109,6 +109,7 @@ message VolumeInformationMessage {
   string remote_storage_name = 13;
   string remote_storage_key = 14;
   string disk_type = 15;
+  uint32 disk_id = 16;
 }
 
 message VolumeShortInformationMessage {
@@ -118,6 +119,7 @@ message VolumeShortInformationMessage {
   uint32 version = 9;
   uint32 ttl = 10;
   string disk_type = 15;
+  uint32 disk_id = 16;
 }
 
 message VolumeEcShardInformationMessage {
@@ -126,6 +128,7 @@ message VolumeEcShardInformationMessage {
   uint32 ec_index_bits = 3;
   string disk_type = 4;
   uint64 expire_at_sec = 5; // used to record the destruction time of ec volume
+  uint32 disk_id = 6;
 }
 
 message StorageBackend {
@@ -279,6 +282,7 @@ message DiskInfo {
   repeated VolumeInformationMessage volume_infos = 6;
   repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
   int64 remote_volume_count = 8;
+  uint32 disk_id = 9;
 }
 message DataNodeInfo {
   string id = 1;

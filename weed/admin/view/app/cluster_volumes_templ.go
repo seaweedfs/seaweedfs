@@ -399,7 +399,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "</a></th><th>Storage Usage</th><th><a href=\"#\" onclick=\"sortTable('filecount')\" class=\"text-decoration-none text-dark\">File Count")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "</a></th><th>Volume Utilization</th><th><a href=\"#\" onclick=\"sortTable('filecount')\" class=\"text-decoration-none text-dark\">File Count")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

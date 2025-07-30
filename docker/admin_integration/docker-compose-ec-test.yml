@@ -1,0 +1,240 @@
+name: admin_integration
+
+networks:
+  seaweed_net:
+    driver: bridge
+
+services:
+  master:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    command: "master -ip=master -mdir=/data -volumeSizeLimitMB=50"
+    environment:
+      - WEED_MASTER_VOLUME_GROWTH_COPY_1=1
+      - WEED_MASTER_VOLUME_GROWTH_COPY_2=2
+      - WEED_MASTER_VOLUME_GROWTH_COPY_OTHER=1
+    volumes:
+      - ./data/master:/data
+    networks:
+      - seaweed_net
+
+  volume1:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8080:8080"
+      - "18080:18080"
+    command: "volume -mserver=master:9333 -ip=volume1 -dir=/data -max=10"
+    depends_on:
+      - master
+    volumes:
+      - ./data/volume1:/data
+    networks:
+      - seaweed_net
+
+  volume2:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8081:8080"
+      - "18081:18080"
+    command: "volume -mserver=master:9333 -ip=volume2 -dir=/data -max=10"
+    depends_on:
+      - master
+    volumes:
+      - ./data/volume2:/data
+    networks:
+      - seaweed_net
+
+  volume3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8082:8080"
+      - "18082:18080"
+    command: "volume -mserver=master:9333 -ip=volume3 -dir=/data -max=10"
+    depends_on:
+      - master
+    volumes:
+      - ./data/volume3:/data
+    networks:
+      - seaweed_net
+
+  volume4:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8083:8080"
+      - "18083:18080"
+    command: "volume -mserver=master:9333 -ip=volume4 -dir=/data -max=10"
+    depends_on:
+      - master
+    volumes:
+      - ./data/volume4:/data
+    networks:
+      - seaweed_net
+
+  volume5:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8084:8080"
+      - "18084:18080"
+    command: "volume -mserver=master:9333 -ip=volume5 -dir=/data -max=10"
+    depends_on:
+      - master
+    volumes:
+      - ./data/volume5:/data
+    networks:
+      - seaweed_net
+
+  volume6:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8085:8080"
+      - "18085:18080"
+    command: "volume -mserver=master:9333 -ip=volume6 -dir=/data -max=10"
+    depends_on:
+      - master
+    volumes:
+      - ./data/volume6:/data
+    networks:
+      - seaweed_net
+
+  filer:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8888:8888"
+      - "18888:18888"
+    command: "filer -master=master:9333 -ip=filer"
+    depends_on:
+      - master
+    volumes:
+      - ./data/filer:/data
+    networks:
+      - seaweed_net
+
+  admin:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "23646:23646"      # HTTP admin interface (default port)
+      - "33646:33646"      # gRPC worker communication (23646 + 10000)
+    command: "admin -port=23646 -masters=master:9333 -dataDir=/data"
+    depends_on:
+      - master
+      - filer
+    volumes:
+      - ./data/admin:/data
+    networks:
+      - seaweed_net
+
+  worker1:
+    image: chrislusf/seaweedfs:local
+    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
+    depends_on:
+      - admin
+    volumes:
+      - ./data/worker1:/data
+    networks:
+      - seaweed_net
+    environment:
+      - WORKER_ID=worker-1
+
+  worker2:
+    image: chrislusf/seaweedfs:local
+    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
+    depends_on:
+      - admin
+    volumes:
+      - ./data/worker2:/data
+    networks:
+      - seaweed_net
+    environment:
+      - WORKER_ID=worker-2
+
+  worker3:
+    image: chrislusf/seaweedfs:local
+    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
+    depends_on:
+      - admin
+    volumes:
+      - ./data/worker3:/data
+    networks:
+      - seaweed_net
+    environment:
+      - WORKER_ID=worker-3
+
+  load_generator:
+    image: chrislusf/seaweedfs:local
+    entrypoint: ["/bin/sh"]
+    command: >
+      -c "
+      echo 'Starting load generator...';
+      sleep 30;
+      echo 'Generating continuous load with 50MB volume limit...';
+      while true; do
+        echo 'Writing test files...';
+        echo 'Test file content at $(date)' | /usr/bin/weed upload -server=master:9333;
+        sleep 5;
+        echo 'Deleting some files...';
+        /usr/bin/weed shell -master=master:9333 <<< 'fs.rm /test_file_*' || true;
+        sleep 10;
+      done
+      "
+    depends_on:
+      - master
+      - filer
+      - admin
+    networks:
+      - seaweed_net
+
+  monitor:
+    image: alpine:latest
+    entrypoint: ["/bin/sh"]
+    command: >
+      -c "
+      apk add --no-cache curl jq;
+      echo 'Starting cluster monitor...';
+      sleep 30;
+      while true; do
+        echo '=== Cluster Status $(date) ===';
+        echo 'Master status:';
+        curl -s http://master:9333/cluster/status | jq '.IsLeader, .Peers' || echo 'Master not ready';
+        echo;
+        echo 'Admin status:';
+        curl -s http://admin:23646/ | grep -o 'Admin.*Interface' || echo 'Admin not ready';
+        echo;
+        echo 'Volume count by server:';
+        curl -s http://master:9333/vol/status | jq '.Volumes | length' || echo 'Volumes not ready';
+        echo;
+        sleep 60;
+      done
+      "
+    depends_on:
+      - master
+      - admin
+      - filer
+    networks:
+      - seaweed_net
+
+  vacuum-tester:
+    image: chrislusf/seaweedfs:local
+    entrypoint: ["/bin/sh"]
+    command: >
+      -c "
+      echo 'Installing dependencies for vacuum testing...';
+      apk add --no-cache jq curl go bash;
+      echo 'Vacuum tester ready...';
+      echo 'Use: docker-compose exec vacuum-tester sh';
+      echo 'Available commands: go, weed, curl, jq, bash, sh';
+      sleep infinity
+      "
+    depends_on:
+      - master
+      - admin
+      - filer
+    volumes:
+      - .:/testing
+    working_dir: /testing
+    networks:
+      - seaweed_net
+    environment:
+      - MASTER_HOST=master:9333
+      - ADMIN_HOST=admin:23646 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 
@@ -145,15 +146,20 @@ func NewMaintenanceWorkerService(workerID, address, adminServer string) *Mainten
 func (mws *MaintenanceWorkerService) executeGenericTask(task *MaintenanceTask) error {
 	glog.V(2).Infof("Executing generic task %s: %s for volume %d", task.ID, task.Type, task.VolumeID)
 
+	// Validate that task has proper typed parameters
+	if task.TypedParams == nil {
+		return fmt.Errorf("task %s has no typed parameters - task was not properly planned (insufficient destinations)", task.ID)
+	}
+
 	// Convert MaintenanceTask to types.TaskType
 	taskType := types.TaskType(string(task.Type))
 
 	// Create task parameters
 	taskParams := types.TaskParams{
-		VolumeID:   task.VolumeID,
-		Server:     task.Server,
-		Collection: task.Collection,
-		Parameters: task.Parameters,
+		VolumeID:    task.VolumeID,
+		Server:      task.Server,
+		Collection:  task.Collection,
+		TypedParams: task.TypedParams,
 	}
 
 	// Create task instance using the registry
@@ -396,10 +402,19 @@ func NewMaintenanceWorkerCommand(workerID, address, adminServer string) *Mainten
 
 // Run starts the maintenance worker as a standalone service
 func (mwc *MaintenanceWorkerCommand) Run() error {
-	// Generate worker ID if not provided
+	// Generate or load persistent worker ID if not provided
 	if mwc.workerService.workerID == "" {
-		hostname, _ := os.Hostname()
-		mwc.workerService.workerID = fmt.Sprintf("worker-%s-%d", hostname, time.Now().Unix())
+		// Get current working directory for worker ID persistence
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get working directory: %w", err)
+		}
+
+		workerID, err := worker.GenerateOrLoadWorkerID(wd)
+		if err != nil {
+			return fmt.Errorf("failed to generate or load worker ID: %w", err)
+		}
+		mwc.workerService.workerID = workerID
 	}
 
 	// Start the worker service

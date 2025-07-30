@@ -2,80 +2,71 @@ package erasure_coding
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// Factory creates erasure coding task instances
-type Factory struct {
-	*tasks.BaseTaskFactory
-}
-
-// NewFactory creates a new erasure coding task factory
-func NewFactory() *Factory {
-	return &Factory{
-		BaseTaskFactory: tasks.NewBaseTaskFactory(
-			types.TaskTypeErasureCoding,
-			[]string{"erasure_coding", "storage", "durability"},
-			"Convert volumes to erasure coded format for improved durability",
-		),
-	}
-}
-
-// Create creates a new erasure coding task instance
-func (f *Factory) Create(params types.TaskParams) (types.TaskInterface, error) {
-	// Validate parameters
-	if params.VolumeID == 0 {
-		return nil, fmt.Errorf("volume_id is required")
-	}
-	if params.Server == "" {
-		return nil, fmt.Errorf("server is required")
-	}
-
-	task := NewTask(params.Server, params.VolumeID)
-	task.SetEstimatedDuration(task.EstimateTime(params))
-
-	return task, nil
-}
-
-// Shared detector and scheduler instances
-var (
-	sharedDetector  *EcDetector
-	sharedScheduler *Scheduler
-)
-
-// getSharedInstances returns the shared detector and scheduler instances
-func getSharedInstances() (*EcDetector, *Scheduler) {
-	if sharedDetector == nil {
-		sharedDetector = NewEcDetector()
-	}
-	if sharedScheduler == nil {
-		sharedScheduler = NewScheduler()
-	}
-	return sharedDetector, sharedScheduler
-}
-
-// GetSharedInstances returns the shared detector and scheduler instances (public access)
-func GetSharedInstances() (*EcDetector, *Scheduler) {
-	return getSharedInstances()
-}
+// Global variable to hold the task definition for configuration updates
+var globalTaskDef *base.TaskDefinition
 
 // Auto-register this task when the package is imported
 func init() {
-	factory := NewFactory()
-	tasks.AutoRegister(types.TaskTypeErasureCoding, factory)
+	RegisterErasureCodingTask()
 
-	// Get shared instances for all registrations
-	detector, scheduler := getSharedInstances()
+	// Register config updater
+	tasks.AutoRegisterConfigUpdater(types.TaskTypeErasureCoding, UpdateConfigFromPersistence)
+}
 
-	// Register with types registry
-	tasks.AutoRegisterTypes(func(registry *types.TaskRegistry) {
-		registry.RegisterTask(detector, scheduler)
-	})
+// RegisterErasureCodingTask registers the erasure coding task with the new architecture
+func RegisterErasureCodingTask() {
+	// Create configuration instance
+	config := NewDefaultConfig()
 
-	// Register with UI registry using the same instances
-	tasks.AutoRegisterUI(func(uiRegistry *types.UIRegistry) {
-		RegisterUI(uiRegistry, detector, scheduler)
-	})
+	// Create complete task definition
+	taskDef := &base.TaskDefinition{
+		Type:         types.TaskTypeErasureCoding,
+		Name:         "erasure_coding",
+		DisplayName:  "Erasure Coding",
+		Description:  "Applies erasure coding to volumes for data protection",
+		Icon:         "fas fa-shield-alt text-success",
+		Capabilities: []string{"erasure_coding", "data_protection"},
+
+		Config:         config,
+		ConfigSpec:     GetConfigSpec(),
+		CreateTask:     nil, // Uses typed task system - see init() in ec.go
+		DetectionFunc:  Detection,
+		ScanInterval:   1 * time.Hour,
+		SchedulingFunc: Scheduling,
+		MaxConcurrent:  1,
+		RepeatInterval: 24 * time.Hour,
+	}
+
+	// Store task definition globally for configuration updates
+	globalTaskDef = taskDef
+
+	// Register everything with a single function call!
+	base.RegisterTask(taskDef)
+}
+
+// UpdateConfigFromPersistence updates the erasure coding configuration from persistence
+func UpdateConfigFromPersistence(configPersistence interface{}) error {
+	if globalTaskDef == nil {
+		return fmt.Errorf("erasure coding task not registered")
+	}
+
+	// Load configuration from persistence
+	newConfig := LoadConfigFromPersistence(configPersistence)
+	if newConfig == nil {
+		return fmt.Errorf("failed to load configuration from persistence")
+	}
+
+	// Update the task definition's config
+	globalTaskDef.Config = newConfig
+
+	glog.V(1).Infof("Updated erasure coding task configuration from persistence")
+	return nil
 }
