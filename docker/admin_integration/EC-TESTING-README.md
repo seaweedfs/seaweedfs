@@ -127,7 +127,7 @@ Run `make help` to see all available targets:
 |---------|-----|-------------|
 | Master UI | http://localhost:9333 | Cluster status and topology |
 | Filer | http://localhost:8888 | File operations |
-| Admin Server | http://localhost:9900/status | Task management |
+| Admin Server | http://localhost:23646/ | Task management |
 | Monitor | http://localhost:9999/status | Complete cluster monitoring |
 | Volume Servers | http://localhost:8080-8085/status | Individual volume server stats |
 
