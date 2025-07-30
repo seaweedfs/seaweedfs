@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 
@@ -246,6 +247,12 @@ func (h *ClusterHandlers) ShowEcVolumeDetails(c *gin.Context) {
 	volumeID, err := strconv.Atoi(volumeIDStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid volume ID"})
+		return
+	}
+
+	// Check that volumeID is within uint32 range
+	if volumeID < 0 || volumeID > int(math.MaxUint32) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Volume ID out of range"})
 		return
 	}
 
