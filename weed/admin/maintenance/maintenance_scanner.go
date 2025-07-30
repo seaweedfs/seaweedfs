@@ -43,18 +43,22 @@ func (ms *MaintenanceScanner) ScanForMaintenanceTasks() ([]*TaskDetectionResult,
 		// Convert metrics to task system format
 		taskMetrics := ms.convertToTaskMetrics(volumeMetrics)
 
-		// Use task detection system
+		// Update topology information for complete cluster view (including empty servers)
+		// This must happen before task detection to ensure EC placement can consider all servers
+		if ms.lastTopologyInfo != nil {
+			if err := ms.integration.UpdateTopologyInfo(ms.lastTopologyInfo); err != nil {
+				glog.Errorf("Failed to update topology info for empty servers: %v", err)
+				// Don't fail the scan - continue with just volume-bearing servers
+			} else {
+				glog.V(1).Infof("Updated topology info for complete cluster view including empty servers")
+			}
+		}
+
+		// Use task detection system with complete cluster information
 		results, err := ms.integration.ScanWithTaskDetectors(taskMetrics)
 		if err != nil {
 			glog.Errorf("Task scanning failed: %v", err)
 			return nil, err
-		}
-
-		// Update topology information for empty servers
-		if ms.lastTopologyInfo != nil {
-			if err := ms.integration.UpdateTopologyInfo(ms.lastTopologyInfo); err != nil {
-				glog.Errorf("Failed to update topology info: %v", err)
-			}
 		}
 
 		glog.V(1).Infof("Maintenance scan completed: found %d tasks", len(results))
