@@ -691,8 +691,8 @@ func (mq *MaintenanceQueue) trackPendingOperation(task *MaintenanceTask) {
 	switch params := task.TypedParams.TaskParams.(type) {
 	case *worker_pb.TaskParams_ErasureCodingParams:
 		if params.ErasureCodingParams != nil {
-			if params.ErasureCodingParams.PrimaryDestNode != "" {
-				destNode = params.ErasureCodingParams.PrimaryDestNode
+			if len(params.ErasureCodingParams.Destinations) > 0 {
+				destNode = params.ErasureCodingParams.Destinations[0].Node
 			}
 			if params.ErasureCodingParams.EstimatedShardSize > 0 {
 				estimatedSize = params.ErasureCodingParams.EstimatedShardSize

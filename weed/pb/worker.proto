@@ -121,8 +121,6 @@ message VacuumTaskParams {
 
 // ErasureCodingTaskParams for EC encoding operations
 message ErasureCodingTaskParams {
-  repeated string dest_nodes = 1;         // Planned destination nodes for shards
-  string primary_dest_node = 2;           // Primary destination node
   uint64 estimated_shard_size = 3;        // Estimated size per shard
   int32 data_shards = 4;                  // Number of data shards (default: 10)
   int32 parity_shards = 5;                // Number of parity shards (default: 4)
@@ -130,6 +128,16 @@ message ErasureCodingTaskParams {
   string master_client = 7;               // Master server address
   bool cleanup_source = 8;                // Whether to cleanup source volume after EC
   repeated string placement_conflicts = 9; // Any placement rule conflicts
+  repeated ECDestination destinations = 10; // Planned destinations with disk information
+}
+
+// ECDestination represents a planned destination for EC shards with disk information
+message ECDestination {
+  string node = 1;                        // Target server address
+  uint32 disk_id = 2;                     // Target disk ID
+  string rack = 3;                        // Target rack for placement tracking
+  string data_center = 4;                 // Target data center for placement tracking
+  double placement_score = 5;             // Quality score of the placement
 }
 
 // BalanceTaskParams for volume balancing operations

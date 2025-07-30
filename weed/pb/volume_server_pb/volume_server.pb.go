@@ -3113,6 +3113,7 @@ type VolumeEcShardsCopyRequest struct {
 	SourceDataNode string                 `protobuf:"bytes,5,opt,name=source_data_node,json=sourceDataNode,proto3" json:"source_data_node,omitempty"`
 	CopyEcjFile    bool                   `protobuf:"varint,6,opt,name=copy_ecj_file,json=copyEcjFile,proto3" json:"copy_ecj_file,omitempty"`
 	CopyVifFile    bool                   `protobuf:"varint,7,opt,name=copy_vif_file,json=copyVifFile,proto3" json:"copy_vif_file,omitempty"`
+	DiskId         uint32                 `protobuf:"varint,8,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"` // Target disk ID for storing EC shards
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -3194,6 +3195,13 @@ func (x *VolumeEcShardsCopyRequest) GetCopyVifFile() bool {
 		return x.CopyVifFile
 	}
 	return false
+}
+
+func (x *VolumeEcShardsCopyRequest) GetDiskId() uint32 {
+	if x != nil {
+		return x.DiskId
+	}
+	return 0
 }
 
 type VolumeEcShardsCopyResponse struct {
@@ -6303,7 +6311,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\"K\n" +
 	"\x1dVolumeEcShardsRebuildResponse\x12*\n" +
-	"\x11rebuilt_shard_ids\x18\x01 \x03(\rR\x0frebuiltShardIds\"\x8b\x02\n" +
+	"\x11rebuilt_shard_ids\x18\x01 \x03(\rR\x0frebuiltShardIds\"\xa4\x02\n" +
 	"\x19VolumeEcShardsCopyRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
@@ -6313,7 +6321,8 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rcopy_ecx_file\x18\x04 \x01(\bR\vcopyEcxFile\x12(\n" +
 	"\x10source_data_node\x18\x05 \x01(\tR\x0esourceDataNode\x12\"\n" +
 	"\rcopy_ecj_file\x18\x06 \x01(\bR\vcopyEcjFile\x12\"\n" +
-	"\rcopy_vif_file\x18\a \x01(\bR\vcopyVifFile\"\x1c\n" +
+	"\rcopy_vif_file\x18\a \x01(\bR\vcopyVifFile\x12\x17\n" +
+	"\adisk_id\x18\b \x01(\rR\x06diskId\"\x1c\n" +
 	"\x1aVolumeEcShardsCopyResponse\"w\n" +
 	"\x1bVolumeEcShardsDeleteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +

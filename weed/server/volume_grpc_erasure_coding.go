@@ -141,20 +141,31 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
 
 	var location *storage.DiskLocation
-	if req.CopyEcxFile {
-		location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
-			return location.DiskType == types.HardDriveType
-		})
+
+	// Use disk_id if provided (disk-aware storage)
+	if req.DiskId > 0 || (req.DiskId == 0 && len(vs.store.Locations) > 0) {
+		// Validate disk ID is within bounds
+		if int(req.DiskId) >= len(vs.store.Locations) {
+			return nil, fmt.Errorf("invalid disk_id %d: only have %d disks", req.DiskId, len(vs.store.Locations))
+		}
+
+		// Use the specific disk location
+		location = vs.store.Locations[req.DiskId]
+		glog.V(1).Infof("Using disk %d for EC shard copy: %s", req.DiskId, location.Directory)
 	} else {
-		location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
-			//(location.FindEcVolume) This method is error, will cause location is nil, redundant judgment
-			// _, found := location.FindEcVolume(needle.VolumeId(req.VolumeId))
-			// return found
-			return true
-		})
-	}
-	if location == nil {
-		return nil, fmt.Errorf("no space left")
+		// Fallback to old behavior for backward compatibility
+		if req.CopyEcxFile {
+			location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
+				return location.DiskType == types.HardDriveType
+			})
+		} else {
+			location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
+				return true
+			})
+		}
+		if location == nil {
+			return nil, fmt.Errorf("no space left")
+		}
 	}
 
 	dataBaseFileName := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))

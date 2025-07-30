@@ -644,19 +644,27 @@ func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetecti
 	totalShards := len(multiPlan.Plans)
 	dataShards, parityShards := s.getECShardCounts(totalShards)
 
-	// Extract destination nodes from the multi-destination plan
-	var destNodes []string
+	// Extract disk-aware destinations from the multi-destination plan
+	var destinations []*worker_pb.ECDestination
 	var allConflicts []string
 
 	for _, plan := range multiPlan.Plans {
-		destNodes = append(destNodes, plan.TargetNode)
 		allConflicts = append(allConflicts, plan.Conflicts...)
+
+		// Create disk-aware destination
+		destinations = append(destinations, &worker_pb.ECDestination{
+			Node:           plan.TargetNode,
+			DiskId:         plan.TargetDisk,
+			Rack:           plan.TargetRack,
+			DataCenter:     plan.TargetDC,
+			PlacementScore: plan.PlacementScore,
+		})
 	}
 
 	glog.V(1).Infof("EC destination planning for volume %d: got %d destinations (%d+%d shards) across %d racks and %d DCs",
-		task.VolumeID, len(destNodes), dataShards, parityShards, multiPlan.SuccessfulRack, multiPlan.SuccessfulDCs)
+		task.VolumeID, len(destinations), dataShards, parityShards, multiPlan.SuccessfulRack, multiPlan.SuccessfulDCs)
 
-	if len(destNodes) == 0 {
+	if len(destinations) == 0 {
 		glog.Warningf("No destinations available for EC task volume %d - rejecting task", task.VolumeID)
 		task.TypedParams = nil
 		return
@@ -664,13 +672,12 @@ func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetecti
 
 	// Create EC task parameters
 	ecParams := &worker_pb.ErasureCodingTaskParams{
-		DestNodes:       destNodes,
-		PrimaryDestNode: destNodes[0],
-		DataShards:      dataShards,
-		ParityShards:    parityShards,
-		WorkingDir:      "/tmp/seaweedfs_ec_work",
-		MasterClient:    "localhost:9333",
-		CleanupSource:   true,
+		Destinations:  destinations, // Disk-aware destinations
+		DataShards:    dataShards,
+		ParityShards:  parityShards,
+		WorkingDir:    "/tmp/seaweedfs_ec_work",
+		MasterClient:  "localhost:9333",
+		CleanupSource: true,
 	}
 
 	// Add placement conflicts if any
@@ -697,8 +704,8 @@ func (s *MaintenanceIntegration) createErasureCodingTaskParams(task *TaskDetecti
 		},
 	}
 
-	glog.V(1).Infof("Created EC task params with %d destinations for volume %d: %v",
-		len(destNodes), task.VolumeID, destNodes)
+	glog.V(1).Infof("Created EC task params with %d destinations for volume %d",
+		len(destinations), task.VolumeID)
 }
 
 // createBalanceTaskParams creates typed parameters for balance/move tasks

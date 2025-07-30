@@ -34,8 +34,7 @@ type Task struct {
 	grpcDialOpt  grpc.DialOption
 
 	// EC parameters from protobuf
-	destNodes          []string
-	primaryDestNode    string
+	destinations       []*worker_pb.ECDestination // Disk-aware destinations
 	estimatedShardSize uint64
 	dataShards         int
 	parityShards       int
@@ -73,9 +72,9 @@ func (t *Task) ValidateTyped(params *worker_pb.TaskParams) error {
 		return fmt.Errorf("erasure_coding_params is required for EC task")
 	}
 
-	// Require destination nodes - tasks without destinations should be rejected at admin level
-	if len(ecParams.DestNodes) == 0 && ecParams.PrimaryDestNode == "" {
-		return fmt.Errorf("at least one destination node must be specified for EC task")
+	// Require destinations
+	if len(ecParams.Destinations) == 0 {
+		return fmt.Errorf("destinations must be specified for EC task")
 	}
 
 	// DataShards and ParityShards are constants from erasure_coding package
@@ -90,11 +89,10 @@ func (t *Task) ValidateTyped(params *worker_pb.TaskParams) error {
 	}
 
 	// Validate destination count
-	if len(ecParams.DestNodes) > 0 {
-		totalShards := expectedDataShards + expectedParityShards
-		if totalShards > int32(len(ecParams.DestNodes)) {
-			return fmt.Errorf("insufficient destination nodes: need %d, have %d", totalShards, len(ecParams.DestNodes))
-		}
+	destinationCount := len(ecParams.Destinations)
+	totalShards := expectedDataShards + expectedParityShards
+	if totalShards > int32(destinationCount) {
+		return fmt.Errorf("insufficient destinations: need %d, have %d", totalShards, destinationCount)
 	}
 
 	return nil
@@ -128,8 +126,7 @@ func (t *Task) ExecuteTyped(params *worker_pb.TaskParams) error {
 	// Extract EC-specific parameters
 	ecParams := params.GetErasureCodingParams()
 	if ecParams != nil {
-		t.destNodes = ecParams.DestNodes
-		t.primaryDestNode = ecParams.PrimaryDestNode
+		t.destinations = ecParams.Destinations // Store disk-aware destinations
 		t.estimatedShardSize = ecParams.EstimatedShardSize
 		t.cleanupSource = ecParams.CleanupSource
 
@@ -145,9 +142,9 @@ func (t *Task) ExecuteTyped(params *worker_pb.TaskParams) error {
 	}
 
 	// Determine available destinations for logging
-	availableDestinations := t.destNodes
-	if len(availableDestinations) == 0 && t.primaryDestNode != "" {
-		availableDestinations = []string{t.primaryDestNode}
+	var availableDestinations []string
+	for _, dest := range t.destinations {
+		availableDestinations = append(availableDestinations, fmt.Sprintf("%s(disk:%d)", dest.Node, dest.DiskId))
 	}
 
 	glog.V(1).Infof("Starting EC task for volume %d: %s -> %v (data:%d, parity:%d)",
@@ -290,11 +287,13 @@ func (t *Task) generateEcShardsOnSource() error {
 }
 
 func (t *Task) copyEcShardsToDestinations() error {
-	if len(t.destNodes) == 0 {
-		return fmt.Errorf("no destination nodes specified for EC shard distribution")
+	if len(t.destinations) == 0 {
+		return fmt.Errorf("no destinations specified for EC shard distribution")
 	}
 
-	glog.V(1).Infof("Copying EC shards for volume %d to %d destinations: %v", t.volumeID, len(t.destNodes), t.destNodes)
+	destinations := t.destinations
+
+	glog.V(1).Infof("Copying EC shards for volume %d to %d destinations", t.volumeID, len(destinations))
 
 	// Prepare shard IDs (0-13 for EC shards)
 	var shardIds []uint32
@@ -304,29 +303,29 @@ func (t *Task) copyEcShardsToDestinations() error {
 
 	// Distribute shards across destinations
 	var wg sync.WaitGroup
-	errorChan := make(chan error, len(t.destNodes))
+	errorChan := make(chan error, len(destinations))
 
-	// Track which servers have already received metadata files
+	// Track which disks have already received metadata files (server+disk)
 	metadataFilesCopied := make(map[string]bool)
 	var metadataMutex sync.Mutex
 
 	// For each destination, copy a subset of shards
-	shardsPerNode := len(shardIds) / len(t.destNodes)
-	remainder := len(shardIds) % len(t.destNodes)
+	shardsPerDest := len(shardIds) / len(destinations)
+	remainder := len(shardIds) % len(destinations)
 
 	shardOffset := 0
-	for i, destNode := range t.destNodes {
+	for i, dest := range destinations {
 		wg.Add(1)
 
-		shardsForThisNode := shardsPerNode
+		shardsForThisDest := shardsPerDest
 		if i < remainder {
-			shardsForThisNode++ // Distribute remainder shards
+			shardsForThisDest++ // Distribute remainder shards
 		}
 
-		nodeShardIds := shardIds[shardOffset : shardOffset+shardsForThisNode]
-		shardOffset += shardsForThisNode
+		destShardIds := shardIds[shardOffset : shardOffset+shardsForThisDest]
+		shardOffset += shardsForThisDest
 
-		go func(targetNode string, targetShardIds []uint32) {
+		go func(destination *worker_pb.ECDestination, targetShardIds []uint32) {
 			defer wg.Done()
 
 			if t.IsCancelled() {
@@ -334,41 +333,48 @@ func (t *Task) copyEcShardsToDestinations() error {
 				return
 			}
 
-			glog.V(1).Infof("Copying shards %v from %s to %s", targetShardIds, t.sourceServer, targetNode)
+			// Create disk-specific metadata key (server+disk)
+			diskKey := fmt.Sprintf("%s:%d", destination.Node, destination.DiskId)
 
-			// Check if this server needs metadata files (only once per server)
+			glog.V(1).Infof("Copying shards %v from %s to %s (disk %d)",
+				targetShardIds, t.sourceServer, destination.Node, destination.DiskId)
+
+			// Check if this disk needs metadata files (only once per disk)
 			metadataMutex.Lock()
-			needsMetadataFiles := !metadataFilesCopied[targetNode]
+			needsMetadataFiles := !metadataFilesCopied[diskKey]
 			if needsMetadataFiles {
-				metadataFilesCopied[targetNode] = true
+				metadataFilesCopied[diskKey] = true
 			}
 			metadataMutex.Unlock()
 
-			err := operation.WithVolumeServerClient(false, pb.ServerAddress(targetNode), t.grpcDialOpt,
+			err := operation.WithVolumeServerClient(false, pb.ServerAddress(destination.Node), t.grpcDialOpt,
 				func(client volume_server_pb.VolumeServerClient) error {
 					_, copyErr := client.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
 						VolumeId:       uint32(t.volumeID),
 						Collection:     t.collection,
 						ShardIds:       targetShardIds,
-						CopyEcxFile:    needsMetadataFiles, // Copy .ecx only once per server
-						CopyEcjFile:    needsMetadataFiles, // Copy .ecj only once per server
-						CopyVifFile:    needsMetadataFiles, // Copy .vif only once per server
+						CopyEcxFile:    needsMetadataFiles, // Copy .ecx only once per disk
+						CopyEcjFile:    needsMetadataFiles, // Copy .ecj only once per disk
+						CopyVifFile:    needsMetadataFiles, // Copy .vif only once per disk
 						SourceDataNode: t.sourceServer,
+						DiskId:         destination.DiskId, // Pass target disk ID
 					})
 					return copyErr
 				})
 
 			if err != nil {
-				errorChan <- fmt.Errorf("failed to copy shards to %s: %v", targetNode, err)
+				errorChan <- fmt.Errorf("failed to copy shards to %s disk %d: %v", destination.Node, destination.DiskId, err)
 				return
 			}
 
 			if needsMetadataFiles {
-				glog.V(1).Infof("Successfully copied shards %v and metadata files (.ecx, .ecj, .vif) to %s", targetShardIds, targetNode)
+				glog.V(1).Infof("Successfully copied shards %v and metadata files (.ecx, .ecj, .vif) to %s disk %d",
+					targetShardIds, destination.Node, destination.DiskId)
 			} else {
-				glog.V(1).Infof("Successfully copied shards %v to %s (metadata files already present)", targetShardIds, targetNode)
+				glog.V(1).Infof("Successfully copied shards %v to %s disk %d (metadata files already present)",
+					targetShardIds, destination.Node, destination.DiskId)
 			}
-		}(destNode, nodeShardIds)
+		}(dest, destShardIds)
 	}
 
 	wg.Wait()
@@ -385,11 +391,13 @@ func (t *Task) copyEcShardsToDestinations() error {
 
 // mountEcShardsOnDestinations mounts EC shards on all destination servers
 func (t *Task) mountEcShardsOnDestinations() error {
-	if len(t.destNodes) == 0 {
-		return fmt.Errorf("no destination nodes specified for mounting EC shards")
+	if len(t.destinations) == 0 {
+		return fmt.Errorf("no destinations specified for mounting EC shards")
 	}
 
-	glog.V(1).Infof("Mounting EC shards for volume %d on %d destinations", t.volumeID, len(t.destNodes))
+	destinations := t.destinations
+
+	glog.V(1).Infof("Mounting EC shards for volume %d on %d destinations", t.volumeID, len(destinations))
 
 	// Prepare all shard IDs (0-13)
 	var allShardIds []uint32
@@ -398,13 +406,13 @@ func (t *Task) mountEcShardsOnDestinations() error {
 	}
 
 	var wg sync.WaitGroup
-	errorChan := make(chan error, len(t.destNodes))
+	errorChan := make(chan error, len(destinations))
 
 	// Mount shards on each destination server
-	for _, destNode := range t.destNodes {
+	for _, dest := range destinations {
 		wg.Add(1)
 
-		go func(targetNode string) {
+		go func(destination *worker_pb.ECDestination) {
 			defer wg.Done()
 
 			if t.IsCancelled() {
@@ -412,9 +420,9 @@ func (t *Task) mountEcShardsOnDestinations() error {
 				return
 			}
 
-			glog.V(1).Infof("Mounting EC shards on %s", targetNode)
+			glog.V(1).Infof("Mounting EC shards on %s disk %d", destination.Node, destination.DiskId)
 
-			err := operation.WithVolumeServerClient(false, pb.ServerAddress(targetNode), t.grpcDialOpt,
+			err := operation.WithVolumeServerClient(false, pb.ServerAddress(destination.Node), t.grpcDialOpt,
 				func(client volume_server_pb.VolumeServerClient) error {
 					_, mountErr := client.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
 						VolumeId:   uint32(t.volumeID),
@@ -426,11 +434,11 @@ func (t *Task) mountEcShardsOnDestinations() error {
 
 			if err != nil {
 				// It's normal for some servers to not have all shards, so log as warning rather than error
-				glog.Warningf("Failed to mount some shards on %s (this may be normal): %v", targetNode, err)
+				glog.Warningf("Failed to mount some shards on %s disk %d (this may be normal): %v", destination.Node, destination.DiskId, err)
 			} else {
-				glog.V(1).Infof("Successfully mounted EC shards on %s", targetNode)
+				glog.V(1).Infof("Successfully mounted EC shards on %s disk %d", destination.Node, destination.DiskId)
 			}
-		}(destNode)
+		}(dest)
 	}
 
 	wg.Wait()
