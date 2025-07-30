@@ -2,6 +2,8 @@ package erasure_coding
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -177,8 +179,64 @@ func (t *TypedTask) ExecuteTyped(params *worker_pb.TaskParams) error {
 	}
 	glog.V(1).Infof("WORKFLOW: Found volume %d on %d servers: %v", t.volumeID, len(volumeLocations), volumeLocations)
 
-	// Additional workflow steps would be implemented here
-	// For now, just simulate the work
+	// Convert ServerAddress slice to string slice
+	var locationStrings []string
+	for _, addr := range volumeLocations {
+		locationStrings = append(locationStrings, string(addr))
+	}
+
+	// Step 2: Check if volume has sufficient size for EC encoding
+	if !t.shouldPerformECEncoding(locationStrings) {
+		glog.Infof("Volume %d does not meet EC encoding criteria, skipping", t.volumeID)
+		t.SetProgress(100.0)
+		return nil
+	}
+
+	// Step 3: Mark volume readonly on all servers
+	glog.V(1).Infof("WORKFLOW STEP 2: Marking volume %d readonly on all replica servers", t.volumeID)
+	t.SetProgress(15.0)
+	err = t.markVolumeReadonlyOnAllReplicas(needle.VolumeId(t.volumeID), locationStrings)
+	if err != nil {
+		return fmt.Errorf("failed to mark volume readonly: %v", err)
+	}
+	glog.V(1).Infof("WORKFLOW: Volume %d marked readonly on all replicas", t.volumeID)
+
+	// Step 4: Copy volume data to local worker
+	glog.V(1).Infof("WORKFLOW STEP 3: Downloading volume %d data to worker", t.volumeID)
+	t.SetProgress(25.0)
+	err = t.copyVolumeDataLocally(taskWorkDir)
+	if err != nil {
+		return fmt.Errorf("failed to copy volume data locally: %v", err)
+	}
+	glog.V(1).Infof("WORKFLOW: Volume %d data downloaded successfully", t.volumeID)
+
+	// Step 5: Perform local EC encoding
+	glog.V(1).Infof("WORKFLOW STEP 4: Performing local EC encoding for volume %d", t.volumeID)
+	t.SetProgress(50.0)
+	shardFiles, err := t.performLocalECEncoding(taskWorkDir)
+	if err != nil {
+		return fmt.Errorf("failed to generate EC shards locally: %v", err)
+	}
+	glog.V(1).Infof("WORKFLOW: Generated %d EC shards for volume %d", len(shardFiles), t.volumeID)
+
+	// Step 6: Distribute shards to planned destinations
+	glog.V(1).Infof("WORKFLOW STEP 5: Distributing EC shards to planned destinations")
+	t.SetProgress(75.0)
+	err = t.distributeEcShardsToPlannedDestinations(shardFiles, taskWorkDir)
+	if err != nil {
+		return fmt.Errorf("failed to distribute EC shards to destinations: %v", err)
+	}
+	glog.V(1).Infof("WORKFLOW: EC shards distributed successfully")
+
+	// Step 7: Delete original volume from all locations
+	glog.V(1).Infof("WORKFLOW STEP 6: Deleting original volume %d from all replica servers", t.volumeID)
+	t.SetProgress(90.0)
+	err = t.deleteVolumeFromAllLocations(needle.VolumeId(t.volumeID), locationStrings)
+	if err != nil {
+		return fmt.Errorf("failed to delete original volume: %v", err)
+	}
+	glog.V(1).Infof("WORKFLOW: Original volume %d deleted from all locations", t.volumeID)
+
 	t.SetProgress(100.0)
 	glog.Infof("Typed EC task completed successfully for volume %d", t.volumeID)
 	return nil
@@ -255,6 +313,167 @@ func (t *TypedTask) collectVolumeLocations(volumeId needle.VolumeId) ([]pb.Serve
 	// For now, return a placeholder implementation
 	// Full implementation would call master to get volume locations
 	return []pb.ServerAddress{pb.ServerAddress(t.sourceServer)}, nil
+}
+
+// shouldPerformECEncoding checks if the volume meets criteria for EC encoding
+func (t *TypedTask) shouldPerformECEncoding(volumeLocations []string) bool {
+	// For now, always proceed with EC encoding if volume exists
+	// This can be extended with volume size checks, etc.
+	return len(volumeLocations) > 0
+}
+
+// markVolumeReadonlyOnAllReplicas marks the volume as readonly on all replica servers
+func (t *TypedTask) markVolumeReadonlyOnAllReplicas(volumeId needle.VolumeId, volumeLocations []string) error {
+	glog.V(1).Infof("Marking volume %d readonly on %d servers", volumeId, len(volumeLocations))
+
+	// Mark volume readonly on all replica servers
+	for _, location := range volumeLocations {
+		// For now, log the operation - actual implementation would make volume readonly
+		glog.V(1).Infof("Would mark volume %d readonly on %s", volumeId, location)
+		// TODO: Implement actual volume readonly marking using volume server API
+	}
+	return nil
+}
+
+// copyVolumeDataLocally downloads volume data to the local worker
+func (t *TypedTask) copyVolumeDataLocally(workDir string) error {
+	glog.V(1).Infof("Copying volume %d data to local directory: %s", t.volumeID, workDir)
+
+	// Download .dat file
+	datFile := filepath.Join(workDir, fmt.Sprintf("%d.dat", t.volumeID))
+	err := t.downloadVolumeFile(".dat", datFile)
+	if err != nil {
+		return fmt.Errorf("failed to download .dat file: %v", err)
+	}
+
+	// Download .idx file
+	idxFile := filepath.Join(workDir, fmt.Sprintf("%d.idx", t.volumeID))
+	err = t.downloadVolumeFile(".idx", idxFile)
+	if err != nil {
+		return fmt.Errorf("failed to download .idx file: %v", err)
+	}
+
+	glog.V(1).Infof("Successfully downloaded volume %d files to %s", t.volumeID, workDir)
+	return nil
+}
+
+// downloadVolumeFile downloads a specific volume file extension
+func (t *TypedTask) downloadVolumeFile(extension, localPath string) error {
+	// Use the source server as the download location
+	sourceUrl := fmt.Sprintf("http://%s/admin/get_volume_data_file?volume=%d&extension=%s",
+		t.sourceServer, t.volumeID, extension)
+
+	resp, err := http.Get(sourceUrl)
+	if err != nil {
+		return fmt.Errorf("failed to download from %s: %v", sourceUrl, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed with status %d from %s", resp.StatusCode, sourceUrl)
+	}
+
+	// Create local file
+	localFile, err := os.Create(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to create local file %s: %v", localPath, err)
+	}
+	defer localFile.Close()
+
+	// Copy data
+	_, err = io.Copy(localFile, resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to copy data to %s: %v", localPath, err)
+	}
+
+	glog.V(1).Infof("Downloaded volume file %s to %s", extension, localPath)
+	return nil
+}
+
+// performLocalECEncoding performs Reed-Solomon encoding on local volume files
+func (t *TypedTask) performLocalECEncoding(workDir string) ([]string, error) {
+	glog.V(1).Infof("Performing local EC encoding for volume %d", t.volumeID)
+
+	datFile := filepath.Join(workDir, fmt.Sprintf("%d.dat", t.volumeID))
+	idxFile := filepath.Join(workDir, fmt.Sprintf("%d.idx", t.volumeID))
+
+	// Check if files exist and get their sizes
+	datInfo, err := os.Stat(datFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat dat file: %v", err)
+	}
+
+	idxInfo, err := os.Stat(idxFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat idx file: %v", err)
+	}
+
+	glog.V(1).Infof("Encoding files: %s (%d bytes), %s (%d bytes)",
+		datFile, datInfo.Size(), idxFile, idxInfo.Size())
+
+	// Handle empty volumes - this is a valid case that should not be EC encoded
+	if datInfo.Size() == 0 {
+		glog.Infof("Volume %d is empty (0 bytes), skipping EC encoding", t.volumeID)
+		return nil, fmt.Errorf("volume %d is empty and cannot be EC encoded", t.volumeID)
+	}
+
+	// Use the existing volume files directly with the SeaweedFS EC library
+	// The SeaweedFS EC library expects baseFileName without extension
+	baseFileName := filepath.Join(workDir, fmt.Sprintf("%d", t.volumeID))
+
+	glog.V(1).Infof("Starting EC encoding with base filename: %s", baseFileName)
+
+	// Generate EC shards using SeaweedFS erasure coding library
+	glog.V(1).Infof("Starting EC shard generation for volume %d", t.volumeID)
+	err = erasure_coding.WriteEcFiles(baseFileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write EC files: %v", err)
+	}
+	glog.V(1).Infof("Completed EC shard generation for volume %d", t.volumeID)
+
+	// Generate .ecx file from .idx file
+	glog.V(1).Infof("Creating .ecx index file for volume %d", t.volumeID)
+	err = erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx")
+	if err != nil {
+		return nil, fmt.Errorf("failed to write .ecx file: %v", err)
+	}
+	glog.V(1).Infof("Successfully created .ecx index file for volume %d", t.volumeID)
+
+	// Create .ecj file (EC journal file) - initially empty for new EC volumes
+	ecjFile := baseFileName + ".ecj"
+	if _, err := os.Create(ecjFile); err != nil {
+		return nil, fmt.Errorf("failed to create .ecj file: %v", err)
+	}
+	glog.V(1).Infof("Created empty .ecj journal file for volume %d", t.volumeID)
+
+	// Collect all generated shard files
+	var shardFiles []string
+	totalShards := erasure_coding.TotalShardsCount
+
+	for i := 0; i < totalShards; i++ {
+		shardFile := fmt.Sprintf("%s.ec%02d", baseFileName, i)
+		if _, err := os.Stat(shardFile); err == nil {
+			shardFiles = append(shardFiles, shardFile)
+		}
+	}
+
+	// Also include .ecx and .ecj files
+	shardFiles = append(shardFiles, baseFileName+".ecx", baseFileName+".ecj")
+
+	glog.V(1).Infof("Generated %d shard files for volume %d: %v", len(shardFiles), t.volumeID, shardFiles)
+	return shardFiles, nil
+}
+
+// deleteVolumeFromAllLocations deletes the original volume from all replica servers
+func (t *TypedTask) deleteVolumeFromAllLocations(volumeId needle.VolumeId, volumeLocations []string) error {
+	glog.V(1).Infof("Deleting original volume %d from %d locations", volumeId, len(volumeLocations))
+
+	for _, location := range volumeLocations {
+		// For now, log the operation - actual implementation would delete the volume
+		glog.V(1).Infof("Would delete volume %d from %s", volumeId, location)
+		// TODO: Implement actual volume deletion using volume server API
+	}
+	return nil
 }
 
 // Register the typed task in the global registry

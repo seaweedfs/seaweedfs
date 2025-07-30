@@ -2,6 +2,8 @@ package maintenance
 
 import (
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
 // Test suite for canScheduleTaskNow() function and related scheduling logic
@@ -117,10 +119,10 @@ func TestCanScheduleTaskNow_DifferentTaskTypes(t *testing.T) {
 func TestCanScheduleTaskNow_WithIntegration(t *testing.T) {
 	// Test with a real MaintenanceIntegration (will use fallback logic in current implementation)
 	policy := &MaintenancePolicy{
-		TaskPolicies:          make(map[MaintenanceTaskType]*TaskPolicy),
-		GlobalMaxConcurrent:   10,
-		DefaultRepeatInterval: 24,
-		DefaultCheckInterval:  1,
+		TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
+		GlobalMaxConcurrent:          10,
+		DefaultRepeatIntervalSeconds: 24 * 60 * 60, // 24 hours in seconds
+		DefaultCheckIntervalSeconds:  60 * 60,      // 1 hour in seconds
 	}
 	mq := NewMaintenanceQueue(policy)
 
@@ -286,21 +288,23 @@ func TestCanScheduleTaskNow_EmptyTaskType(t *testing.T) {
 func TestCanScheduleTaskNow_WithPolicy(t *testing.T) {
 	// Test with a policy that allows higher concurrency
 	policy := &MaintenancePolicy{
-		TaskPolicies: map[MaintenanceTaskType]*TaskPolicy{
-			MaintenanceTaskType("erasure_coding"): {
-				Enabled:       true,
-				MaxConcurrent: 3,
-				Configuration: make(map[string]interface{}),
+		TaskPolicies: map[string]*worker_pb.TaskPolicy{
+			string(MaintenanceTaskType("erasure_coding")): {
+				Enabled:               true,
+				MaxConcurrent:         3,
+				RepeatIntervalSeconds: 60 * 60, // 1 hour
+				CheckIntervalSeconds:  60 * 60, // 1 hour
 			},
-			MaintenanceTaskType("vacuum"): {
-				Enabled:       true,
-				MaxConcurrent: 2,
-				Configuration: make(map[string]interface{}),
+			string(MaintenanceTaskType("vacuum")): {
+				Enabled:               true,
+				MaxConcurrent:         2,
+				RepeatIntervalSeconds: 60 * 60, // 1 hour
+				CheckIntervalSeconds:  60 * 60, // 1 hour
 			},
 		},
-		GlobalMaxConcurrent:   10,
-		DefaultRepeatInterval: 24,
-		DefaultCheckInterval:  1,
+		GlobalMaxConcurrent:          10,
+		DefaultRepeatIntervalSeconds: 24 * 60 * 60, // 24 hours in seconds
+		DefaultCheckIntervalSeconds:  60 * 60,      // 1 hour in seconds
 	}
 
 	mq := &MaintenanceQueue{

@@ -367,8 +367,8 @@ func (at *ActiveTopology) PlanECDestinations(volumeID uint32, sourceNode string,
 
 	// Get available disks for EC placement
 	availableDisks := at.getAvailableDisksForPlanning(TaskTypeErasureCoding, "")
-	if len(availableDisks) < 4 {
-		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d", shardsNeeded, 4)
+	if len(availableDisks) < shardsNeeded {
+		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d", shardsNeeded, len(availableDisks))
 	}
 
 	// Select best disks for EC placement with rack/DC diversity
