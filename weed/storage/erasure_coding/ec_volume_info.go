@@ -11,15 +11,17 @@ type EcVolumeInfo struct {
 	Collection  string
 	ShardBits   ShardBits
 	DiskType    string
-	ExpireAtSec uint64 //ec volume destroy time, calculated from the ec volume was created
+	DiskId      uint32 // ID of the disk this EC volume is on
+	ExpireAtSec uint64 // ec volume destroy time, calculated from the ec volume was created
 }
 
-func NewEcVolumeInfo(diskType string, collection string, vid needle.VolumeId, shardBits ShardBits, expireAtSec uint64) *EcVolumeInfo {
+func NewEcVolumeInfo(diskType string, collection string, vid needle.VolumeId, shardBits ShardBits, expireAtSec uint64, diskId uint32) *EcVolumeInfo {
 	return &EcVolumeInfo{
 		Collection:  collection,
 		VolumeId:    vid,
 		ShardBits:   shardBits,
 		DiskType:    diskType,
+		DiskId:      diskId,
 		ExpireAtSec: expireAtSec,
 	}
 }
@@ -62,6 +64,7 @@ func (ecInfo *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret *master_pb.
 		Collection:  ecInfo.Collection,
 		DiskType:    ecInfo.DiskType,
 		ExpireAtSec: ecInfo.ExpireAtSec,
+		DiskId:      ecInfo.DiskId,
 	}
 }
 

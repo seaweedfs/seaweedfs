@@ -51,6 +51,7 @@ type Volume struct {
 	volumeInfoRWLock sync.RWMutex
 	volumeInfo       *volume_server_pb.VolumeInfo
 	location         *DiskLocation
+	diskId           uint32 // ID of this volume's disk in Store.Locations array
 
 	lastIoError error
 }
@@ -337,6 +338,7 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 		CompactRevision:  uint32(v.SuperBlock.CompactionRevision),
 		ModifiedAtSecond: modTime.Unix(),
 		DiskType:         string(v.location.DiskType),
+		DiskId:           v.diskId,
 	}
 
 	volumeInfo.RemoteStorageName, volumeInfo.RemoteStorageKey = v.RemoteStorageNameKey()

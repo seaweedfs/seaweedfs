@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"io"
 )
@@ -220,13 +221,14 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 		return int(a.Id) - int(b.Id)
 	})
 	volumeInfosFound := false
+
 	for _, vi := range t.VolumeInfos {
 		if c.isNotMatchDiskInfo(vi.ReadOnly, vi.Collection, vi.Id, int64(vi.Size)) {
 			continue
 		}
 		if !volumeInfosFound {
 			outNodeInfo()
-			output(verbosityLevel >= 4, writer, "        Disk %s(%s)\n", diskType, diskInfoToString(t))
+			output(verbosityLevel >= 4, writer, "        Disk %s(%s) id:%d\n", diskType, diskInfoToString(t), t.DiskId)
 			volumeInfosFound = true
 		}
 		s = s.plus(writeVolumeInformationMessage(writer, vi, verbosityLevel))
@@ -238,7 +240,7 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 		}
 		if !volumeInfosFound && !ecShardInfoFound {
 			outNodeInfo()
-			output(verbosityLevel >= 4, writer, "        Disk %s(%s)\n", diskType, diskInfoToString(t))
+			output(verbosityLevel >= 4, writer, "        Disk %s(%s) id:%d\n", diskType, diskInfoToString(t), t.DiskId)
 			ecShardInfoFound = true
 		}
 		var expireAtString string
@@ -246,7 +248,8 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 		if destroyTime > 0 {
 			expireAtString = fmt.Sprintf("expireAt:%s", time.Unix(int64(destroyTime), 0).Format("2006-01-02 15:04:05"))
 		}
-		output(verbosityLevel >= 5, writer, "          ec volume id:%v collection:%v shards:%v %s\n", ecShardInfo.Id, ecShardInfo.Collection, erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds(), expireAtString)
+		output(verbosityLevel >= 5, writer, "          ec volume id:%v collection:%v shards:%v %s\n",
+			ecShardInfo.Id, ecShardInfo.Collection, erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds(), expireAtString)
 	}
 	output((volumeInfosFound || ecShardInfoFound) && verbosityLevel >= 4, writer, "        Disk %s %+v \n", diskType, s)
 	return s

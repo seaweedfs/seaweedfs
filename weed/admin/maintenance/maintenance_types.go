@@ -297,10 +297,12 @@ type TaskDetectionResult struct {
 	ScheduleAt  time.Time               `json:"schedule_at"`
 }
 
-// VolumeHealthMetrics contains health information about a volume
+// VolumeHealthMetrics represents the health metrics for a volume
 type VolumeHealthMetrics struct {
 	VolumeID         uint32        `json:"volume_id"`
 	Server           string        `json:"server"`
+	DiskType         string        `json:"disk_type"` // Disk type (e.g., "hdd", "ssd") or disk path (e.g., "/data1")
+	DiskId           uint32        `json:"disk_id"`   // ID of the disk in Store.Locations array
 	Collection       string        `json:"collection"`
 	Size             uint64        `json:"size"`
 	DeletedBytes     uint64        `json:"deleted_bytes"`

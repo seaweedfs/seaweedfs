@@ -109,17 +109,20 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 					glog.V(2).Infof("Found volume server in topology: %s (disks: %d)", node.Id, len(node.DiskInfos))
 
 					hasVolumes := false
-					for _, diskInfo := range node.DiskInfos {
+					// Process each disk on this node
+					for diskType, diskInfo := range node.DiskInfos {
 						if len(diskInfo.VolumeInfos) > 0 {
 							hasVolumes = true
-							glog.V(2).Infof("Volume server %s has %d volumes on disk", node.Id, len(diskInfo.VolumeInfos))
+							glog.V(2).Infof("Volume server %s disk %s has %d volumes", node.Id, diskType, len(diskInfo.VolumeInfos))
 						}
 
-						// Process existing volumes ONLY - no fake entries
+						// Process volumes on this specific disk
 						for _, volInfo := range diskInfo.VolumeInfos {
 							metric := &VolumeHealthMetrics{
 								VolumeID:         volInfo.Id,
 								Server:           node.Id,
+								DiskType:         diskType,       // Track which disk this volume is on
+								DiskId:           volInfo.DiskId, // Use disk ID from volume info
 								Collection:       volInfo.Collection,
 								Size:             volInfo.Size,
 								DeletedBytes:     volInfo.DeletedByteCount,
@@ -138,8 +141,8 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 							}
 							metric.Age = time.Since(metric.LastModified)
 
-							glog.V(3).Infof("Volume %d: size=%d, limit=%d, fullness=%.2f",
-								metric.VolumeID, metric.Size, volumeSizeLimitBytes, metric.FullnessRatio)
+							glog.V(3).Infof("Volume %d on %s:%s (ID %d): size=%d, limit=%d, fullness=%.2f",
+								metric.VolumeID, metric.Server, metric.DiskType, metric.DiskId, metric.Size, volumeSizeLimitBytes, metric.FullnessRatio)
 
 							metrics = append(metrics, metric)
 						}
@@ -172,7 +175,7 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 		return nil, err
 	}
 
-	glog.V(1).Infof("Successfully collected metrics for %d actual volumes", len(metrics))
+	glog.V(1).Infof("Successfully collected metrics for %d actual volumes with disk ID information", len(metrics))
 
 	// Count actual replicas and identify EC volumes
 	ms.enrichVolumeMetrics(metrics)
@@ -214,6 +217,8 @@ func (ms *MaintenanceScanner) convertToTaskMetrics(metrics []*VolumeHealthMetric
 		simplified = append(simplified, &types.VolumeHealthMetrics{
 			VolumeID:         metric.VolumeID,
 			Server:           metric.Server,
+			DiskType:         metric.DiskType,
+			DiskId:           metric.DiskId,
 			Collection:       metric.Collection,
 			Size:             metric.Size,
 			DeletedBytes:     metric.DeletedBytes,
@@ -229,6 +234,6 @@ func (ms *MaintenanceScanner) convertToTaskMetrics(metrics []*VolumeHealthMetric
 		})
 	}
 
-	glog.V(2).Infof("Converted %d volume metrics for task detection", len(simplified))
+	glog.V(2).Infof("Converted %d volume metrics with disk ID information for task detection", len(simplified))
 	return simplified
 }
