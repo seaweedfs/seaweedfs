@@ -185,8 +185,8 @@ func TestParseTaskConfigFromForm_WithEmbeddedStruct(t *testing.T) {
 	})
 }
 
-func TestConfigurationRoundTrip(t *testing.T) {
-	// Test complete round-trip: config -> map -> config for all task types
+func TestConfigurationValidation(t *testing.T) {
+	// Test that config structs can be validated and converted to protobuf format
 	taskTypes := []struct {
 		name   string
 		config interface{}
@@ -234,76 +234,58 @@ func TestConfigurationRoundTrip(t *testing.T) {
 
 	for _, test := range taskTypes {
 		t.Run(test.name, func(t *testing.T) {
-			// Convert to map (simulating ToMap)
-			var configMap map[string]interface{}
-
+			// Test that configs can be converted to protobuf TaskPolicy
 			switch cfg := test.config.(type) {
 			case *balance.Config:
-				configMap = cfg.ToMap()
+				policy := cfg.ToTaskPolicy()
+				if policy == nil {
+					t.Fatal("ToTaskPolicy returned nil")
+				}
+				if policy.Enabled != cfg.Enabled {
+					t.Errorf("Expected Enabled=%v, got %v", cfg.Enabled, policy.Enabled)
+				}
+				if policy.MaxConcurrent != int32(cfg.MaxConcurrent) {
+					t.Errorf("Expected MaxConcurrent=%v, got %v", cfg.MaxConcurrent, policy.MaxConcurrent)
+				}
 			case *vacuum.Config:
-				configMap = cfg.ToMap()
+				policy := cfg.ToTaskPolicy()
+				if policy == nil {
+					t.Fatal("ToTaskPolicy returned nil")
+				}
+				if policy.Enabled != cfg.Enabled {
+					t.Errorf("Expected Enabled=%v, got %v", cfg.Enabled, policy.Enabled)
+				}
+				if policy.MaxConcurrent != int32(cfg.MaxConcurrent) {
+					t.Errorf("Expected MaxConcurrent=%v, got %v", cfg.MaxConcurrent, policy.MaxConcurrent)
+				}
 			case *erasure_coding.Config:
-				configMap = cfg.ToMap()
+				policy := cfg.ToTaskPolicy()
+				if policy == nil {
+					t.Fatal("ToTaskPolicy returned nil")
+				}
+				if policy.Enabled != cfg.Enabled {
+					t.Errorf("Expected Enabled=%v, got %v", cfg.Enabled, policy.Enabled)
+				}
+				if policy.MaxConcurrent != int32(cfg.MaxConcurrent) {
+					t.Errorf("Expected MaxConcurrent=%v, got %v", cfg.MaxConcurrent, policy.MaxConcurrent)
+				}
 			default:
 				t.Fatalf("Unknown config type: %T", test.config)
 			}
 
-			// Verify all expected fields are present in map
-			expectedFields := []string{"enabled", "scan_interval_seconds", "max_concurrent"}
-			for _, field := range expectedFields {
-				if _, exists := configMap[field]; !exists {
-					t.Errorf("Missing field in map: %s", field)
-				}
-			}
-
-			// Convert back to struct (simulating FromMap)
-			var roundTrip interface{}
-			switch test.config.(type) {
+			// Test that configs can be validated
+			switch cfg := test.config.(type) {
 			case *balance.Config:
-				roundTrip = &balance.Config{}
-			case *vacuum.Config:
-				roundTrip = &vacuum.Config{}
-			case *erasure_coding.Config:
-				roundTrip = &erasure_coding.Config{}
-			}
-
-			// Apply the map back to the struct
-			switch rt := roundTrip.(type) {
-			case *balance.Config:
-				if err := rt.FromMap(configMap); err != nil {
-					t.Fatalf("FromMap failed: %v", err)
+				if err := cfg.Validate(); err != nil {
+					t.Errorf("Validation failed: %v", err)
 				}
 			case *vacuum.Config:
-				if err := rt.FromMap(configMap); err != nil {
-					t.Fatalf("FromMap failed: %v", err)
+				if err := cfg.Validate(); err != nil {
+					t.Errorf("Validation failed: %v", err)
 				}
 			case *erasure_coding.Config:
-				if err := rt.FromMap(configMap); err != nil {
-					t.Fatalf("FromMap failed: %v", err)
-				}
-			}
-
-			// Compare original and round-trip
-			// Note: We can't use reflect.DeepEqual due to potential embedded struct differences
-			// So we'll compare the maps instead
-			originalMap := configMap
-			var roundTripMap map[string]interface{}
-
-			switch rt := roundTrip.(type) {
-			case *balance.Config:
-				roundTripMap = rt.ToMap()
-			case *vacuum.Config:
-				roundTripMap = rt.ToMap()
-			case *erasure_coding.Config:
-				roundTripMap = rt.ToMap()
-			}
-
-			// Compare all fields
-			for key, originalValue := range originalMap {
-				if roundTripValue, exists := roundTripMap[key]; !exists {
-					t.Errorf("Missing field in round-trip: %s", key)
-				} else if originalValue != roundTripValue {
-					t.Errorf("Field %s: original=%v, round-trip=%v", key, originalValue, roundTripValue)
+				if err := cfg.Validate(); err != nil {
+					t.Errorf("Validation failed: %v", err)
 				}
 			}
 		})
