@@ -64,9 +64,9 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				Server:     metric.Server,
 				Collection: metric.Collection,
 				Priority:   types.TaskPriorityLow, // EC is not urgent
-				Reason: fmt.Sprintf("Volume meets EC criteria: quiet for %.1fs (>%ds), fullness=%.1f%% (>%.1f%%), size=%.1fMB (>100MB)",
+				Reason: fmt.Sprintf("Volume meets EC criteria: quiet for %.1fs (>%ds), fullness=%.1f%% (>%.1f%%), size=%.1fMB (>%dMB)",
 					metric.Age.Seconds(), ecConfig.QuietForSeconds, metric.FullnessRatio*100, ecConfig.FullnessRatio*100,
-					float64(metric.Size)/(1024*1024)),
+					float64(metric.Size)/(1024*1024), ecConfig.MinSizeMB),
 				ScheduleAt: now,
 			}
 			results = append(results, result)
