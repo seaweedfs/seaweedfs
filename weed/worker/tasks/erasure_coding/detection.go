@@ -87,8 +87,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	// Log debug summary if no tasks were created
 	if len(results) == 0 && len(metrics) > 0 {
 		totalVolumes := len(metrics)
-		glog.Infof("ERASURE CODING: No tasks created for %d volumes. QuietTime=%s, FullnessRatio=%.1f%%, MinSize=%dMB. Skipped: %d (already EC), %d (too small), %d (collection filter), %d (not quiet), %d (not full)",
-			totalVolumes, quietThreshold, ecConfig.FullnessRatio*100, ecConfig.MinSizeMB, skippedAlreadyEC, skippedTooSmall, skippedCollectionFilter, skippedQuietTime, skippedFullness)
+		glog.V(1).Infof("EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
+			totalVolumes, skippedAlreadyEC, skippedTooSmall, skippedCollectionFilter, skippedQuietTime, skippedFullness)
 
 		// Show details for first few volumes
 		for i, metric := range metrics {
@@ -138,4 +138,3 @@ func Scheduling(task *types.Task, runningTasks []*types.Task, availableWorkers [
 
 	return false
 }
-

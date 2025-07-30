@@ -319,9 +319,8 @@ func (w *Worker) GetStatus() types.WorkerStatus {
 
 // HandleTask handles a task execution
 func (w *Worker) HandleTask(task *types.Task) error {
-	// *** NEW LOGGING: Task received by worker ***
-	glog.Infof("🎯 TASK RECEIVED: Worker %s received task assignment - ID: %s, Type: %s, VolumeID: %d, Server: %s, Collection: %s, Priority: %d, CreatedAt: %v",
-		w.id, task.ID, task.Type, task.VolumeID, task.Server, task.Collection, task.Priority, task.CreatedAt)
+	glog.V(1).Infof("Worker %s received task %s (type: %s, volume: %d)",
+		w.id, task.ID, task.Type, task.VolumeID)
 
 	w.mutex.Lock()
 	currentLoad := len(w.currentTasks)
@@ -694,10 +693,9 @@ func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
 		glog.V(1).Infof("📋 TASK LOG REQUEST: Worker %s received task log request for task %s", w.id, msg.TaskLogRequest.TaskId)
 		w.handleTaskLogRequest(msg.TaskLogRequest)
 	case *worker_pb.AdminMessage_TaskAssignment:
-		// *** NEW LOGGING: Direct task assignment received ***
 		taskAssign := msg.TaskAssignment
-		glog.Infof("🎯 DIRECT TASK ASSIGNMENT: Worker %s received direct task assignment - ID: %s, Type: %s, VolumeID: %d, Server: %s, Priority: %d",
-			w.id, taskAssign.TaskId, taskAssign.TaskType, taskAssign.Params.VolumeId, taskAssign.Params.Server, taskAssign.Priority)
+		glog.V(1).Infof("Worker %s received direct task assignment %s (type: %s, volume: %d)",
+			w.id, taskAssign.TaskId, taskAssign.TaskType, taskAssign.Params.VolumeId)
 
 		// Convert to task and handle it
 		task := &types.Task{

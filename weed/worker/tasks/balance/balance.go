@@ -38,7 +38,7 @@ func (t *Task) Execute(params types.TaskParams) error {
 	return t.ExecuteTask(context.Background(), params, t.executeImpl)
 }
 
-// executeImpl is the actual balance implementation with new logging
+// executeImpl is the actual balance implementation
 func (t *Task) executeImpl(ctx context.Context, params types.TaskParams) error {
 	// Store task parameters for accessing planned destinations
 	t.taskParams = params

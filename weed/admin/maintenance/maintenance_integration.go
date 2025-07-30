@@ -283,7 +283,7 @@ func (s *MaintenanceIntegration) convertToExistingFormat(result *types.TaskDetec
 
 	existingPriority, exists := s.priorityMap[result.Priority]
 	if !exists {
-		glog.Warningf("Unknown priority %d, defaulting to normal", result.Priority)
+		glog.Warningf("Unknown priority %s, defaulting to normal", result.Priority)
 		existingPriority = PriorityNormal
 	}
 

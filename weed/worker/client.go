@@ -642,8 +642,8 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 		case response := <-c.incoming:
 			glog.V(3).Infof("📨 RESPONSE RECEIVED: Worker %s received response from admin server: %T", workerID, response.Message)
 			if taskAssign := response.GetTaskAssignment(); taskAssign != nil {
-				glog.Infof("🎯 TASK ASSIGNMENT IN RESPONSE: Worker %s received task assignment in response - ID: %s, Type: %s, VolumeID: %d, Server: %s, Priority: %d",
-					workerID, taskAssign.TaskId, taskAssign.TaskType, taskAssign.Params.VolumeId, taskAssign.Params.Server, taskAssign.Priority)
+				glog.V(1).Infof("Worker %s received task assignment in response: %s (type: %s, volume: %d)",
+					workerID, taskAssign.TaskId, taskAssign.TaskType, taskAssign.Params.VolumeId)
 
 				// Convert to our task type
 				task := &types.Task{

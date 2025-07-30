@@ -568,13 +568,13 @@ func (mq *MaintenanceQueue) workerCanHandle(taskType MaintenanceTaskType, capabi
 
 // canScheduleTaskNow determines if a task can be scheduled using task schedulers or fallback logic
 func (mq *MaintenanceQueue) canScheduleTaskNow(task *MaintenanceTask) bool {
-	glog.Infof("DEBUG canScheduleTaskNow: Checking if task %s (type: %s) can be scheduled", task.ID, task.Type)
+	glog.V(2).Infof("Checking if task %s (type: %s) can be scheduled", task.ID, task.Type)
 
 	// TEMPORARY FIX: Skip integration task scheduler which is being overly restrictive
 	// Use fallback logic directly for now
-	glog.Infof("DEBUG canScheduleTaskNow: Using fallback logic (bypassing integration scheduler)")
+	glog.V(2).Infof("Using fallback logic for task scheduling")
 	canExecute := mq.canExecuteTaskType(task.Type)
-	glog.Infof("DEBUG canScheduleTaskNow: Fallback decision for task %s (%s): %v", task.ID, task.Type, canExecute)
+	glog.V(2).Infof("Fallback decision for task %s: %v", task.ID, canExecute)
 	return canExecute
 
 	// NOTE: Original integration code disabled temporarily
