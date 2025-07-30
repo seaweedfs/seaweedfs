@@ -18,6 +18,7 @@ type VolumeShardInfo struct {
 	Collection   string `json:"collection"`
 	Size         uint64 `json:"size"`
 	Server       string `json:"server"`
+	DiskID       uint32 `json:"disk_id"` // Disk ID within the server
 	DataCenter   string `json:"data_center"`
 	Rack         string `json:"rack"`
 	IsECVolume   bool   `json:"is_ec_volume"`
@@ -33,11 +34,14 @@ type PlacementRule struct {
 	DifferentDCs     bool   `json:"different_dcs"`
 	PreferSameRack   bool   `json:"prefer_same_rack"`    // For EC shards
 	MaxShardsPerNode int    `json:"max_shards_per_node"` // For EC shards
+	MaxShardsPerDisk int    `json:"max_shards_per_disk"` // For EC shards per disk
 }
 
-// NodeCapacityInfo represents node capacity and usage
-type NodeCapacityInfo struct {
+// DiskCapacityInfo represents disk capacity and usage within a node
+type DiskCapacityInfo struct {
 	NodeID        string `json:"node_id"`
+	DiskID        uint32 `json:"disk_id"`
+	DiskType      string `json:"disk_type"` // hdd, ssd, nvme, etc.
 	DataCenter    string `json:"data_center"`
 	Rack          string `json:"rack"`
 	TotalCapacity uint64 `json:"total_capacity"`
@@ -47,9 +51,23 @@ type NodeCapacityInfo struct {
 	ShardCount    int    `json:"shard_count"`
 }
 
+// NodeCapacityInfo represents node capacity and usage (aggregated from disks)
+type NodeCapacityInfo struct {
+	NodeID        string `json:"node_id"`
+	DataCenter    string `json:"data_center"`
+	Rack          string `json:"rack"`
+	TotalCapacity uint64 `json:"total_capacity"`
+	UsedCapacity  uint64 `json:"used_capacity"`
+	FreeCapacity  uint64 `json:"free_capacity"`
+	VolumeCount   int    `json:"volume_count"`
+	ShardCount    int    `json:"shard_count"`
+	DiskCount     int    `json:"disk_count"` // Number of disks in this node
+}
+
 // DestinationPlan represents a planned destination for a volume/shard operation (simplified)
 type DestinationPlan struct {
 	TargetNode     string   `json:"target_node"`
+	TargetDisk     uint32   `json:"target_disk"` // Target disk ID within the node
 	TargetRack     string   `json:"target_rack"` // Keep for placement logic
 	TargetDC       string   `json:"target_dc"`   // Keep for placement logic
 	ExpectedSize   uint64   `json:"expected_size"`
@@ -62,6 +80,7 @@ type VolumeShardTracker struct {
 	// Volume and shard information from master
 	volumes map[uint32][]*VolumeShardInfo // VolumeID -> list of replicas/shards
 	nodes   map[string]*NodeCapacityInfo  // NodeID -> capacity info
+	disks   map[string]*DiskCapacityInfo  // "NodeID:DiskID" -> disk capacity info
 
 	// Placement rules
 	placementRules map[string]*PlacementRule // Collection -> rules
@@ -79,6 +98,7 @@ func NewVolumeShardTracker(pendingOps *PendingOperations) *VolumeShardTracker {
 	return &VolumeShardTracker{
 		volumes:        make(map[uint32][]*VolumeShardInfo),
 		nodes:          make(map[string]*NodeCapacityInfo),
+		disks:          make(map[string]*DiskCapacityInfo),
 		placementRules: make(map[string]*PlacementRule),
 		pendingOps:     pendingOps,
 	}
@@ -94,14 +114,15 @@ func (vst *VolumeShardTracker) UpdateFromMaster(volumeMetrics []*types.VolumeHea
 	// Clear existing data
 	vst.volumes = make(map[uint32][]*VolumeShardInfo)
 	vst.nodes = make(map[string]*NodeCapacityInfo)
+	vst.disks = make(map[string]*DiskCapacityInfo)
 
 	// Track which servers we discover
 	discoveredServers := make(map[string]bool)
 
 	// Process volume metrics from master - only actual volumes
 	for _, metric := range volumeMetrics {
-		glog.V(2).Infof("Processing volume %d on server %s (size: %d bytes, collection: %s, ec: %v)",
-			metric.VolumeID, metric.Server, metric.Size, metric.Collection, metric.IsECVolume)
+		glog.V(2).Infof("Processing volume %d on server %s disk %d (size: %d bytes, collection: %s, ec: %v)",
+			metric.VolumeID, metric.Server, metric.DiskId, metric.Size, metric.Collection, metric.IsECVolume)
 
 		discoveredServers[metric.Server] = true
 
@@ -111,6 +132,7 @@ func (vst *VolumeShardTracker) UpdateFromMaster(volumeMetrics []*types.VolumeHea
 			Collection:   metric.Collection,
 			Size:         metric.Size,
 			Server:       metric.Server,
+			DiskID:       metric.DiskId,
 			IsECVolume:   metric.IsECVolume,
 			IsReadOnly:   metric.IsReadOnly,
 			ReplicaIndex: 0, // Will be determined by counting replicas
@@ -125,6 +147,9 @@ func (vst *VolumeShardTracker) UpdateFromMaster(volumeMetrics []*types.VolumeHea
 
 		// Update node capacity info
 		vst.updateNodeCapacity(volumeInfo)
+
+		// Update disk capacity info
+		vst.updateDiskCapacity(volumeInfo, metric.DiskType)
 	}
 
 	// Set replica indexes based on order
@@ -250,10 +275,47 @@ func (vst *VolumeShardTracker) updateNodeCapacity(info *VolumeShardInfo) {
 	vst.updateNodeFreeCapacity(nodeInfo)
 }
 
+// updateDiskCapacity updates disk capacity information for a node
+func (vst *VolumeShardTracker) updateDiskCapacity(info *VolumeShardInfo, diskType string) {
+	diskInfo, exists := vst.disks[info.Server+":"+fmt.Sprintf("%d", info.DiskID)]
+	if !exists {
+		diskInfo = &DiskCapacityInfo{
+			NodeID:        info.Server,
+			DiskID:        info.DiskID,
+			DiskType:      diskType,
+			DataCenter:    info.DataCenter,
+			Rack:          info.Rack,
+			TotalCapacity: 100 * 1024 * 1024 * 1024, // Default 100GB - should come from master
+			UsedCapacity:  0,
+			FreeCapacity:  100 * 1024 * 1024 * 1024, // Default 100GB
+			VolumeCount:   0,
+			ShardCount:    0,
+		}
+		vst.disks[info.Server+":"+fmt.Sprintf("%d", info.DiskID)] = diskInfo
+	}
+
+	// Update usage
+	diskInfo.UsedCapacity += info.Size
+	if info.IsECVolume && info.ShardIndex >= 0 {
+		diskInfo.ShardCount++
+	} else {
+		diskInfo.VolumeCount++
+	}
+
+	// Calculate free capacity including pending operations
+	vst.updateDiskFreeCapacity(diskInfo)
+}
+
 // updateNodeFreeCapacity recalculates free capacity including pending operations
 func (vst *VolumeShardTracker) updateNodeFreeCapacity(nodeInfo *NodeCapacityInfo) {
 	incoming, outgoing := vst.pendingOps.GetPendingCapacityImpactForNode(nodeInfo.NodeID)
 	nodeInfo.FreeCapacity = nodeInfo.TotalCapacity - nodeInfo.UsedCapacity - incoming + outgoing
+}
+
+// updateDiskFreeCapacity recalculates free capacity including pending operations for a disk
+func (vst *VolumeShardTracker) updateDiskFreeCapacity(diskInfo *DiskCapacityInfo) {
+	incoming, outgoing := vst.pendingOps.GetPendingCapacityImpactForNode(diskInfo.NodeID)
+	diskInfo.FreeCapacity = diskInfo.TotalCapacity - diskInfo.UsedCapacity - incoming + outgoing
 }
 
 // setPlacementRule sets replication placement rule for a collection (test helper)
@@ -539,10 +601,73 @@ func (vst *VolumeShardTracker) getNodeInfo(nodeID string) (*NodeCapacityInfo, er
 	if nodeInfo, exists := vst.nodes[nodeID]; exists {
 		// Update free capacity to include latest pending operations
 		vst.updateNodeFreeCapacity(nodeInfo)
+
+		// Aggregate disk information to node level
+		vst.aggregateDisksToNode(nodeInfo)
+
 		return nodeInfo, nil
 	}
 
 	return nil, fmt.Errorf("node %s not found", nodeID)
+}
+
+// getDiskInfo returns information about a specific disk (helper)
+func (vst *VolumeShardTracker) getDiskInfo(nodeID string, diskID uint32) (*DiskCapacityInfo, error) {
+	vst.mutex.Lock() // Use write lock to allow capacity update
+	defer vst.mutex.Unlock()
+
+	diskKey := nodeID + ":" + fmt.Sprintf("%d", diskID)
+	if diskInfo, exists := vst.disks[diskKey]; exists {
+		// Update free capacity to include latest pending operations
+		vst.updateDiskFreeCapacity(diskInfo)
+		return diskInfo, nil
+	}
+
+	return nil, fmt.Errorf("disk %d on node %s not found", diskID, nodeID)
+}
+
+// getNodeDisks returns all disks for a given node (helper)
+func (vst *VolumeShardTracker) getNodeDisks(nodeID string) ([]*DiskCapacityInfo, error) {
+	vst.mutex.RLock()
+	defer vst.mutex.RUnlock()
+
+	var disks []*DiskCapacityInfo
+	for _, diskInfo := range vst.disks {
+		if diskInfo.NodeID == nodeID {
+			disks = append(disks, diskInfo)
+		}
+	}
+
+	if len(disks) == 0 {
+		return nil, fmt.Errorf("no disks found for node %s", nodeID)
+	}
+
+	return disks, nil
+}
+
+// aggregateDisksToNode updates node capacity info by aggregating from its disks
+func (vst *VolumeShardTracker) aggregateDisksToNode(nodeInfo *NodeCapacityInfo) {
+	var totalCapacity, usedCapacity, freeCapacity uint64
+	var volumeCount, shardCount, diskCount int
+
+	for _, diskInfo := range vst.disks {
+		if diskInfo.NodeID == nodeInfo.NodeID {
+			totalCapacity += diskInfo.TotalCapacity
+			usedCapacity += diskInfo.UsedCapacity
+			freeCapacity += diskInfo.FreeCapacity
+			volumeCount += diskInfo.VolumeCount
+			shardCount += diskInfo.ShardCount
+			diskCount++
+		}
+	}
+
+	// Update node info with aggregated values
+	nodeInfo.TotalCapacity = totalCapacity
+	nodeInfo.UsedCapacity = usedCapacity
+	nodeInfo.FreeCapacity = freeCapacity
+	nodeInfo.VolumeCount = volumeCount
+	nodeInfo.ShardCount = shardCount
+	nodeInfo.DiskCount = diskCount
 }
 
 // getClusterStats returns overall cluster statistics (test helper)
