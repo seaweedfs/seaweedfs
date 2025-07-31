@@ -178,7 +178,7 @@ func (s *SingleChunkCacher) startCaching() {
 
 	s.data = mem.Allocate(s.chunkSize)
 
-	_, s.err = util_http.RetriedFetchChunkData(context.Background(), s.data, urlStrings, s.cipherKey, s.isGzipped, true, 0)
+	_, s.err = util_http.RetriedFetchChunkData(context.Background(), s.data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId)
 	if s.err != nil {
 		mem.Free(s.data)
 		s.data = nil
