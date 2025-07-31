@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -39,6 +40,9 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				Reason:     "Volume has excessive garbage requiring vacuum",
 				ScheduleAt: time.Now(),
 			}
+
+			// Create typed parameters for vacuum task
+			result.TypedParams = createVacuumTaskParams(result, vacuumConfig)
 			results = append(results, result)
 		} else {
 			// Debug why volume was not selected
@@ -109,4 +113,37 @@ func Scheduling(task *types.Task, runningTasks []*types.Task, availableWorkers [
 func CreateTask(params types.TaskParams) (types.TaskInterface, error) {
 	// Create and return the vacuum task using existing Task type
 	return NewTask(params.Server, params.VolumeID), nil
+}
+
+// createVacuumTaskParams creates typed parameters for vacuum tasks
+// This function is moved from MaintenanceIntegration.createVacuumTaskParams to the detection logic
+func createVacuumTaskParams(task *types.TaskDetectionResult, vacuumConfig *Config) *worker_pb.TaskParams {
+	// Use configured values or defaults
+	garbageThreshold := 0.3                    // Default 30%
+	verifyChecksum := true                     // Default to verify
+	batchSize := int32(1000)                   // Default batch size
+	workingDir := "/tmp/seaweedfs_vacuum_work" // Default working directory
+
+	if vacuumConfig != nil {
+		garbageThreshold = vacuumConfig.GarbageThreshold
+		// Note: VacuumTaskConfig has GarbageThreshold, MinVolumeAgeHours, MinIntervalSeconds
+		// Other fields like VerifyChecksum, BatchSize, WorkingDir would need to be added
+		// to the protobuf definition if they should be configurable
+	}
+
+	// Create typed protobuf parameters
+	return &worker_pb.TaskParams{
+		VolumeId:   task.VolumeID,
+		Server:     task.Server,
+		Collection: task.Collection,
+		TaskParams: &worker_pb.TaskParams_VacuumParams{
+			VacuumParams: &worker_pb.VacuumTaskParams{
+				GarbageThreshold: garbageThreshold,
+				ForceVacuum:      false,
+				BatchSize:        batchSize,
+				WorkingDir:       workingDir,
+				VerifyChecksum:   verifyChecksum,
+			},
+		},
+	}
 }
