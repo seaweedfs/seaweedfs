@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	globalRegistry        *TaskRegistry
+	globalRegistry        *UnifiedTaskRegistry
 	globalTypesRegistry   *types.TaskRegistry
 	globalUIRegistry      *types.UIRegistry
 	globalUnifiedRegistry *UnifiedTaskRegistry
@@ -19,9 +19,9 @@ var (
 )
 
 // GetGlobalRegistry returns the global task registry (singleton)
-func GetGlobalRegistry() *TaskRegistry {
+func GetGlobalRegistry() *UnifiedTaskRegistry {
 	registryOnce.Do(func() {
-		globalRegistry = NewTaskRegistry()
+		globalRegistry = NewUnifiedTaskRegistry()
 		glog.V(1).Infof("Created global task registry")
 	})
 	return globalRegistry
@@ -54,15 +54,8 @@ func GetGlobalUnifiedRegistry() *UnifiedTaskRegistry {
 	return globalUnifiedRegistry
 }
 
-// AutoRegister registers a task directly with the global registry
-func AutoRegister(taskType types.TaskType, factory types.TaskFactory) {
-	registry := GetGlobalRegistry()
-	registry.Register(taskType, factory)
-	glog.V(1).Infof("Auto-registered task type: %s", taskType)
-}
-
-// AutoRegisterV2 registers a task with the global unified registry
-func AutoRegisterV2(taskType types.TaskType, factory types.UnifiedTaskFactoryV2) {
+// AutoRegister registers a task with the global unified registry
+func AutoRegister(taskType types.TaskType, factory types.UnifiedTaskFactory) {
 	registry := GetGlobalUnifiedRegistry()
 	registry.Register(taskType, factory)
 	glog.V(1).Infof("Auto-registered unified task type: %s", taskType)
@@ -129,36 +122,36 @@ func SetMaintenancePolicyFromTasks() {
 
 // UnifiedTaskRegistry manages unified task factories
 type UnifiedTaskRegistry struct {
-	factories map[types.TaskType]types.UnifiedTaskFactoryV2
+	factories map[types.TaskType]types.UnifiedTaskFactory
 	mutex     sync.RWMutex
 }
 
 // NewUnifiedTaskRegistry creates a new unified task registry
 func NewUnifiedTaskRegistry() *UnifiedTaskRegistry {
 	return &UnifiedTaskRegistry{
-		factories: make(map[types.TaskType]types.UnifiedTaskFactoryV2),
+		factories: make(map[types.TaskType]types.UnifiedTaskFactory),
 	}
 }
 
 // Register adds a factory to the registry
-func (r *UnifiedTaskRegistry) Register(taskType types.TaskType, factory types.UnifiedTaskFactoryV2) {
+func (r *UnifiedTaskRegistry) Register(taskType types.TaskType, factory types.UnifiedTaskFactory) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	r.factories[taskType] = factory
 }
 
 // Get returns a factory from the registry
-func (r *UnifiedTaskRegistry) Get(taskType types.TaskType) types.UnifiedTaskFactoryV2 {
+func (r *UnifiedTaskRegistry) Get(taskType types.TaskType) types.UnifiedTaskFactory {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 	return r.factories[taskType]
 }
 
 // GetAll returns all registered factories
-func (r *UnifiedTaskRegistry) GetAll() map[types.TaskType]types.UnifiedTaskFactoryV2 {
+func (r *UnifiedTaskRegistry) GetAll() map[types.TaskType]types.UnifiedTaskFactory {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
-	result := make(map[types.TaskType]types.UnifiedTaskFactoryV2)
+	result := make(map[types.TaskType]types.UnifiedTaskFactory)
 	for k, v := range r.factories {
 		result[k] = v
 	}

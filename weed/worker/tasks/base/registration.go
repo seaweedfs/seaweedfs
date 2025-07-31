@@ -120,7 +120,7 @@ func RegisterTask(taskDef *TaskDefinition) {
 
 	// Create and register factory
 	factory := NewGenericFactory(taskDef)
-	tasks.AutoRegisterV2(taskDef.Type, factory)
+	tasks.AutoRegister(taskDef.Type, factory)
 
 	// Create and register detector/scheduler
 	detector := NewGenericDetector(taskDef)

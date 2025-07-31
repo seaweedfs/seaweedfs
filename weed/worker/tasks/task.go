@@ -318,59 +318,6 @@ func (t *BaseTask) ExecuteTask(ctx context.Context, params types.TaskParams, exe
 	return nil
 }
 
-// TaskRegistry manages task factories
-type TaskRegistry struct {
-	factories map[types.TaskType]types.TaskFactory
-	mutex     sync.RWMutex
-}
-
-// NewTaskRegistry creates a new task registry
-func NewTaskRegistry() *TaskRegistry {
-	return &TaskRegistry{
-		factories: make(map[types.TaskType]types.TaskFactory),
-	}
-}
-
-// Register registers a task factory
-func (r *TaskRegistry) Register(taskType types.TaskType, factory types.TaskFactory) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	r.factories[taskType] = factory
-}
-
-// CreateTask creates a task instance
-func (r *TaskRegistry) CreateTask(taskType types.TaskType, params types.TaskParams) (types.TaskInterface, error) {
-	r.mutex.RLock()
-	factory, exists := r.factories[taskType]
-	r.mutex.RUnlock()
-
-	if !exists {
-		return nil, &UnsupportedTaskTypeError{TaskType: taskType}
-	}
-
-	return factory.Create(params)
-}
-
-// GetSupportedTypes returns all supported task types
-func (r *TaskRegistry) GetSupportedTypes() []types.TaskType {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-
-	types := make([]types.TaskType, 0, len(r.factories))
-	for taskType := range r.factories {
-		types = append(types, taskType)
-	}
-	return types
-}
-
-// GetFactory returns the factory for a task type
-func (r *TaskRegistry) GetFactory(taskType types.TaskType) (types.TaskFactory, bool) {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-	factory, exists := r.factories[taskType]
-	return factory, exists
-}
-
 // UnsupportedTaskTypeError represents an error for unsupported task types
 type UnsupportedTaskTypeError struct {
 	TaskType types.TaskType

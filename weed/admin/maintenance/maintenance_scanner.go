@@ -73,20 +73,10 @@ func (ms *MaintenanceScanner) ScanForMaintenanceTasks() ([]*TaskDetectionResult,
 // getVolumeHealthMetrics collects health information for all volumes
 func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, error) {
 	var metrics []*VolumeHealthMetrics
-	var volumeSizeLimitMB uint64
 
 	glog.V(1).Infof("Collecting volume health metrics from master")
 	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		// First, get volume size limit from master configuration
-		configResp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
-		if err != nil {
-			glog.Warningf("Failed to get volume size limit from master: %v", err)
-			volumeSizeLimitMB = 30000 // Default to 30GB if we can't get from master
-		} else {
-			volumeSizeLimitMB = uint64(configResp.VolumeSizeLimitMB)
-		}
 
-		// Now get volume list
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
@@ -97,7 +87,7 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 			return nil
 		}
 
-		volumeSizeLimitBytes := volumeSizeLimitMB * 1024 * 1024 // Convert MB to bytes
+		volumeSizeLimitBytes := uint64(resp.VolumeSizeLimitMb) * 1024 * 1024 // Convert MB to bytes
 
 		// Track all nodes discovered in topology
 		var allNodesInTopology []string
@@ -166,7 +156,6 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 		glog.Infof("  - Total volume servers in topology: %d (%v)", len(allNodesInTopology), allNodesInTopology)
 		glog.Infof("  - Volume servers with volumes: %d (%v)", len(nodesWithVolumes), nodesWithVolumes)
 		glog.Infof("  - Volume servers without volumes: %d (%v)", len(nodesWithoutVolumes), nodesWithoutVolumes)
-		glog.Infof("Note: Maintenance system will track empty servers separately from volume metrics.")
 
 		// Store topology info for volume shard tracker
 		ms.lastTopologyInfo = resp.TopologyInfo
@@ -185,11 +174,6 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 	ms.enrichVolumeMetrics(metrics)
 
 	return metrics, nil
-}
-
-// getTopologyInfo returns the last collected topology information
-func (ms *MaintenanceScanner) getTopologyInfo() *master_pb.TopologyInfo {
-	return ms.lastTopologyInfo
 }
 
 // enrichVolumeMetrics adds additional information like replica counts

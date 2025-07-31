@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -35,9 +36,19 @@ func RegisterErasureCodingTask() {
 		Icon:         "fas fa-shield-alt text-success",
 		Capabilities: []string{"erasure_coding", "data_protection"},
 
-		Config:         config,
-		ConfigSpec:     GetConfigSpec(),
-		CreateTask:     nil, // Uses typed task system - see init() in ec.go
+		Config:     config,
+		ConfigSpec: GetConfigSpec(),
+		CreateTask: func(params *worker_pb.TaskParams) (types.UnifiedTask, error) {
+			if params == nil {
+				return nil, fmt.Errorf("task parameters are required")
+			}
+			return NewUnifiedErasureCodingTask(
+				fmt.Sprintf("erasure_coding-%d", params.VolumeId),
+				params.Server,
+				params.VolumeId,
+				params.Collection,
+			), nil
+		},
 		DetectionFunc:  Detection,
 		ScanInterval:   1 * time.Hour,
 		SchedulingFunc: Scheduling,

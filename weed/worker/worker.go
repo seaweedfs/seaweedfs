@@ -25,7 +25,7 @@ import (
 type Worker struct {
 	id              string
 	config          *types.WorkerConfig
-	registry        *tasks.TaskRegistry
+	registry        *tasks.UnifiedTaskRegistry
 	currentTasks    map[string]*types.Task
 	adminClient     AdminClient
 	running         bool
@@ -156,7 +156,7 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 		taskLogHandler: taskLogHandler,
 	}
 
-	glog.V(1).Infof("Worker created with %d registered task types", len(registry.GetSupportedTypes()))
+	glog.V(1).Infof("Worker created with %d registered task types", len(registry.GetAll()))
 
 	return worker, nil
 }
@@ -279,7 +279,7 @@ func (w *Worker) Stop() error {
 }
 
 // RegisterTask registers a task factory
-func (w *Worker) RegisterTask(taskType types.TaskType, factory types.TaskFactory) {
+func (w *Worker) RegisterTask(taskType types.TaskType, factory types.UnifiedTaskFactory) {
 	w.registry.Register(taskType, factory)
 }
 
@@ -410,7 +410,10 @@ func (w *Worker) executeTask(task *types.Task) {
 	typedTaskInstance, err := typedRegistry.CreateTypedTask(task.Type)
 	if err != nil {
 		w.completeTask(task.ID, false, fmt.Sprintf("typed task not available for %s: %v", task.Type, err))
-		glog.Errorf("Worker %s failed to create typed task %s: %v", w.id, task.ID, err)
+		glog.Errorf("Worker %s failed to create typed task %s type %v: %v", w.id, task.ID, task.Type, err)
+		for _, t := range typedRegistry.GetSupportedTypes() {
+			glog.Errorf("Supported typed task: %v", t)
+		}
 		return
 	}
 
@@ -553,7 +556,7 @@ func (w *Worker) requestTasks() {
 }
 
 // GetTaskRegistry returns the task registry
-func (w *Worker) GetTaskRegistry() *tasks.TaskRegistry {
+func (w *Worker) GetTaskRegistry() *tasks.UnifiedTaskRegistry {
 	return w.registry
 }
 

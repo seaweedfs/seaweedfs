@@ -226,6 +226,7 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 	// Run detection for each registered task type
 	for taskType, detector := range s.taskRegistry.GetAllDetectors() {
 		if !detector.IsEnabled() {
+			glog.V(2).Infof("Skipping disabled detection for task type: %s", taskType)
 			continue
 		}
 

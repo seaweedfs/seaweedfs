@@ -1,7 +1,6 @@
 package types
 
-// This file contains the new unified factory interfaces that will replace
-// the existing factory interfaces.
+// This file contains the unified factory interfaces.
 
 import (
 	"context"
@@ -21,8 +20,8 @@ type Factory[T any, C any] interface {
 	Capabilities() []string
 }
 
-// UnifiedTaskFactoryV2 creates new task instances using the new unified interface
-type UnifiedTaskFactoryV2 interface {
+// UnifiedTaskFactory creates new task instances
+type UnifiedTaskFactory interface {
 	Create(params *worker_pb.TaskParams) (UnifiedTask, error)
 	Type() string
 	Description() string
@@ -38,9 +37,6 @@ type UnifiedTaskConfig struct {
 	VolumeID   uint32
 	Logger     Logger
 }
-
-// UnifiedTaskFactory creates new task instances
-type UnifiedTaskFactory = Factory[UnifiedTask, UnifiedTaskConfig]
 
 // UnifiedWorkerConfig encapsulates all worker configuration
 type UnifiedWorkerConfig struct {
