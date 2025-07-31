@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -23,6 +24,18 @@ import (
 )
 
 var ErrNotFound = fmt.Errorf("not found")
+
+var (
+	jwtSigningReadKey        security.SigningKey
+	jwtSigningReadKeyExpires int
+	loadJwtConfigOnce        sync.Once
+)
+
+func loadJwtConfig() {
+	v := util.GetViper()
+	jwtSigningReadKey = security.SigningKey(v.GetString("jwt.signing.read.key"))
+	jwtSigningReadKeyExpires = v.GetInt("jwt.signing.read.expires_after_seconds")
+}
 
 func Post(url string, values url.Values) ([]byte, error) {
 	r, err := GetGlobalHttpClient().PostForm(url, values)
@@ -456,13 +469,14 @@ func (r *CountingReader) Read(p []byte) (n int, err error) {
 
 func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (n int, err error) {
 
-	v := util.GetViper()
-	signingKey := v.GetString("jwt.signing.read.key")
+	loadJwtConfigOnce.Do(loadJwtConfig)
 	var jwt security.EncodedJwt
-
-	if signingKey != "" {
-		expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
-		jwt = security.GenJwtForVolumeServer(security.SigningKey(signingKey), expiresAfterSec, fileId)
+	if len(jwtSigningReadKey) > 0 {
+		jwt = security.GenJwtForVolumeServer(
+			jwtSigningReadKey,
+			jwtSigningReadKeyExpires,
+			fileId,
+		)
 	}
 
 	var shouldRetry bool
@@ -473,7 +487,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
-			shouldRetry, err = ReadUrlAsStreamAuthenticated(ctx, urlString+"?readDeleted=true", string(security.EncodedJwt(jwt)), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+			shouldRetry, err = ReadUrlAsStreamAuthenticated(ctx, urlString+"?readDeleted=true", string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
 				if n < len(buffer) {
 					x := copy(buffer[n:], data)
 					n += x
