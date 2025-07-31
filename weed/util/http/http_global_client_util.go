@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 var ErrNotFound = fmt.Errorf("not found")
@@ -452,7 +454,16 @@ func (r *CountingReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
+func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (n int, err error) {
+
+	v := util.GetViper()
+	signingKey := v.GetString("jwt.signing.read.key")
+	var jwt security.EncodedJwt
+
+	if signingKey != "" {
+		expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
+		jwt = security.GenJwtForVolumeServer(security.SigningKey(signingKey), expiresAfterSec, fileId)
+	}
 
 	var shouldRetry bool
 
@@ -462,7 +473,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
-			shouldRetry, err = ReadUrlAsStream(ctx, urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+			shouldRetry, err = ReadUrlAsStreamAuthenticated(ctx, urlString+"?readDeleted=true", string(security.EncodedJwt(jwt)), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
 				if n < len(buffer) {
 					x := copy(buffer[n:], data)
 					n += x
