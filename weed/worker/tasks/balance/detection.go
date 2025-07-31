@@ -128,37 +128,6 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	return []*types.TaskDetectionResult{task}, nil
 }
 
-// Scheduling implements the scheduling logic for balance tasks
-func Scheduling(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker, config base.TaskConfig) bool {
-	balanceConfig := config.(*Config)
-
-	// Count running balance tasks
-	runningBalanceCount := 0
-	for _, runningTask := range runningTasks {
-		if runningTask.Type == types.TaskTypeBalance {
-			runningBalanceCount++
-		}
-	}
-
-	// Check concurrency limit
-	if runningBalanceCount >= balanceConfig.MaxConcurrent {
-		return false
-	}
-
-	// Check if we have available workers
-	availableWorkerCount := 0
-	for _, worker := range availableWorkers {
-		for _, capability := range worker.Capabilities {
-			if capability == types.TaskTypeBalance {
-				availableWorkerCount++
-				break
-			}
-		}
-	}
-
-	return availableWorkerCount > 0
-}
-
 // CreateTask creates a new balance task instance
 func CreateTask(params types.TaskParams) (types.TaskInterface, error) {
 	// Create and return the balance task using existing Task type

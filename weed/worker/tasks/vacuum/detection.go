@@ -78,37 +78,6 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	return results, nil
 }
 
-// Scheduling implements the scheduling logic for vacuum tasks
-func Scheduling(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker, config base.TaskConfig) bool {
-	vacuumConfig := config.(*Config)
-
-	// Count running vacuum tasks
-	runningVacuumCount := 0
-	for _, runningTask := range runningTasks {
-		if runningTask.Type == types.TaskTypeVacuum {
-			runningVacuumCount++
-		}
-	}
-
-	// Check concurrency limit
-	if runningVacuumCount >= vacuumConfig.MaxConcurrent {
-		return false
-	}
-
-	// Check for available workers with vacuum capability
-	for _, worker := range availableWorkers {
-		if worker.CurrentLoad < worker.MaxConcurrent {
-			for _, capability := range worker.Capabilities {
-				if capability == types.TaskTypeVacuum {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
 // CreateTask creates a new vacuum task instance
 func CreateTask(params types.TaskParams) (types.TaskInterface, error) {
 	// Create and return the vacuum task using existing Task type
