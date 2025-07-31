@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -35,9 +36,19 @@ func RegisterVacuumTask() {
 		Icon:         "fas fa-broom text-primary",
 		Capabilities: []string{"vacuum", "storage"},
 
-		Config:         config,
-		ConfigSpec:     GetConfigSpec(),
-		CreateTask:     CreateTask,
+		Config:     config,
+		ConfigSpec: GetConfigSpec(),
+		CreateTask: func(params *worker_pb.TaskParams) (types.UnifiedTask, error) {
+			if params == nil {
+				return nil, fmt.Errorf("task parameters are required")
+			}
+			return NewUnifiedVacuumTask(
+				fmt.Sprintf("vacuum-%d", params.VolumeId),
+				params.Server,
+				params.VolumeId,
+				params.Collection,
+			), nil
+		},
 		DetectionFunc:  Detection,
 		ScanInterval:   2 * time.Hour,
 		SchedulingFunc: Scheduling,

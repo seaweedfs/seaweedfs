@@ -78,12 +78,6 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	return results, nil
 }
 
-// CreateTask creates a new vacuum task instance
-func CreateTask(params types.TaskParams) (types.TaskInterface, error) {
-	// Create and return the vacuum task using existing Task type
-	return NewTask(params.Server, params.VolumeID), nil
-}
-
 // createVacuumTaskParams creates typed parameters for vacuum tasks
 // This function is moved from MaintenanceIntegration.createVacuumTaskParams to the detection logic
 func createVacuumTaskParams(task *types.TaskDetectionResult, vacuumConfig *Config) *worker_pb.TaskParams {

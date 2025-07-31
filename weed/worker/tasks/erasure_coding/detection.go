@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -161,19 +162,19 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 		}
 	}
 
-	// Determine optimal shard count based on configuration
-	totalShards := getOptimalECShardCount(ecConfig)
+	// Determine minimum shard disk locations based on configuration
+	minTotalDisks := 4
 
 	// Get available disks for EC placement (include source node for EC)
 	availableDisks := activeTopology.GetAvailableDisks(topology.TaskTypeErasureCoding, "")
-	if len(availableDisks) < totalShards {
-		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d", totalShards, len(availableDisks))
+	if len(availableDisks) < minTotalDisks {
+		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d", minTotalDisks, len(availableDisks))
 	}
 
 	// Select best disks for EC placement with rack/DC diversity
-	selectedDisks := selectBestECDestinations(availableDisks, sourceRack, sourceDC, totalShards)
-	if len(selectedDisks) < totalShards {
-		return nil, fmt.Errorf("could not find %d suitable destinations for EC placement", totalShards)
+	selectedDisks := selectBestECDestinations(availableDisks, sourceRack, sourceDC, erasure_coding.TotalShardsCount)
+	if len(selectedDisks) < minTotalDisks {
+		return nil, fmt.Errorf("found %d disks, but could not find %d suitable destinations for EC placement", len(selectedDisks), minTotalDisks)
 	}
 
 	var plans []*topology.DestinationPlan
@@ -204,12 +205,6 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 		SuccessfulRack: len(rackCount),
 		SuccessfulDCs:  len(dcCount),
 	}, nil
-}
-
-// getOptimalECShardCount determines the optimal number of EC shards based on configuration
-func getOptimalECShardCount(ecConfig *Config) int {
-	// Default EC configuration - can be made configurable later
-	return 14 // 10 data shards + 4 parity shards (standard configuration)
 }
 
 // createECTaskParams creates EC task parameters from the multi-destination plan

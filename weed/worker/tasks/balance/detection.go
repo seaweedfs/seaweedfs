@@ -128,12 +128,6 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	return []*types.TaskDetectionResult{task}, nil
 }
 
-// CreateTask creates a new balance task instance
-func CreateTask(params types.TaskParams) (types.TaskInterface, error) {
-	// Create and return the balance task using existing Task type
-	return NewTask(params.Server, params.VolumeID, params.Collection), nil
-}
-
 // planBalanceDestination plans the destination for a balance operation
 // This function implements destination planning logic directly in the detection phase
 func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVolume *types.VolumeHealthMetrics) (*topology.DestinationPlan, error) {

@@ -26,7 +26,7 @@ type TaskDefinition struct {
 	ConfigSpec ConfigSpec
 
 	// Task creation
-	CreateTask func(params types.TaskParams) (types.TaskInterface, error)
+	CreateTask func(params *worker_pb.TaskParams) (types.UnifiedTask, error)
 
 	// Detection logic
 	DetectionFunc func(metrics []*types.VolumeHealthMetrics, info *types.ClusterInfo, config TaskConfig) ([]*types.TaskDetectionResult, error)

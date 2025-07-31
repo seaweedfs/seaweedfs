@@ -29,11 +29,26 @@ func NewGenericFactory(taskDef *TaskDefinition) *GenericFactory {
 }
 
 // Create creates a task instance using the task definition
-func (f *GenericFactory) Create(params types.TaskParams) (types.TaskInterface, error) {
+func (f *GenericFactory) Create(params *worker_pb.TaskParams) (types.UnifiedTask, error) {
 	if f.taskDef.CreateTask == nil {
 		return nil, fmt.Errorf("no task creation function defined for %s", f.taskDef.Type)
 	}
 	return f.taskDef.CreateTask(params)
+}
+
+// Type returns the task type
+func (f *GenericFactory) Type() string {
+	return string(f.taskDef.Type)
+}
+
+// Description returns a description of what this task does
+func (f *GenericFactory) Description() string {
+	return f.taskDef.Description
+}
+
+// Capabilities returns the task capabilities
+func (f *GenericFactory) Capabilities() []string {
+	return f.taskDef.Capabilities
 }
 
 // GenericSchemaProvider provides config schema from TaskDefinition
@@ -105,7 +120,7 @@ func RegisterTask(taskDef *TaskDefinition) {
 
 	// Create and register factory
 	factory := NewGenericFactory(taskDef)
-	tasks.AutoRegister(taskDef.Type, factory)
+	tasks.AutoRegisterV2(taskDef.Type, factory)
 
 	// Create and register detector/scheduler
 	detector := NewGenericDetector(taskDef)
@@ -149,7 +164,8 @@ func validateTaskDefinition(taskDef *TaskDefinition) error {
 	if taskDef.Config == nil {
 		return fmt.Errorf("task config is required")
 	}
-	// CreateTask is optional for tasks that use the typed task system
-	// The typed system registers tasks separately via types.RegisterGlobalTypedTask()
+	if taskDef.CreateTask == nil {
+		return fmt.Errorf("task creation function is required")
+	}
 	return nil
 }
