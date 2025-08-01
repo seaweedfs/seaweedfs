@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -462,12 +463,19 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 	}
 
 	if tags := r.Header.Get(s3_constants.AmzObjectTagging); tags != "" {
-		for _, v := range strings.Split(tags, "&") {
-			tag := strings.Split(v, "=")
-			if len(tag) == 2 {
-				metadata[s3_constants.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
-			} else if len(tag) == 1 {
-				metadata[s3_constants.AmzObjectTagging+"-"+tag[0]] = nil
+		// Use url.ParseQuery for robust parsing and automatic URL decoding
+		parsedTags, err := url.ParseQuery(tags)
+		if err != nil {
+			glog.Errorf("Failed to parse S3 tags '%s': %v", tags, err)
+		} else {
+			for key, values := range parsedTags {
+				// According to S3 spec, if a key is provided multiple times, the last value is used.
+				// A tag value can be an empty string but not nil.
+				value := ""
+				if len(values) > 0 {
+					value = values[len(values)-1]
+				}
+				metadata[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
 			}
 		}
 	}
