@@ -321,7 +321,7 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	}
 
 	// Add metadata files
-	ecxFile := idxFile + ".ecx"
+	ecxFile := baseName + ".ecx"
 	if _, err := os.Stat(ecxFile); err == nil {
 		shardFiles["ecx"] = ecxFile
 	}
@@ -437,7 +437,8 @@ func (t *ErasureCodingTask) createShardAssignment(shardFiles map[string]string) 
 		glog.V(2).Infof("Assigned shards %v to destination %s", destShards, dest.Node)
 	}
 
-	// Assign metadata files (.ecx, .ecj, .vif) to each destination that has shards
+	// Assign metadata files (.ecx, .vif) to each destination that has shards
+	// Note: .ecj files are created during mount, not during initial generation
 	for destNode, destShards := range assignment {
 		if len(destShards) > 0 {
 			// Add .ecx file if available
@@ -445,17 +446,12 @@ func (t *ErasureCodingTask) createShardAssignment(shardFiles map[string]string) 
 				assignment[destNode] = append(assignment[destNode], "ecx")
 			}
 
-			// Add .ecj file if available
-			if _, hasEcj := shardFiles["ecj"]; hasEcj {
-				assignment[destNode] = append(assignment[destNode], "ecj")
-			}
-
 			// Add .vif file if available
 			if _, hasVif := shardFiles["vif"]; hasVif {
 				assignment[destNode] = append(assignment[destNode], "vif")
 			}
 
-			glog.V(2).Infof("Assigned metadata files (.ecx, .ecj, .vif) to destination %s", destNode)
+			glog.V(2).Infof("Assigned metadata files (.ecx, .vif) to destination %s", destNode)
 		}
 	}
 
@@ -485,9 +481,6 @@ func (t *ErasureCodingTask) sendShardFileToDestination(destServer, filePath, sha
 			if shardType == "ecx" {
 				ext = ".ecx"
 				shardId = 0 // ecx file doesn't have a specific shard ID
-			} else if shardType == "ecj" {
-				ext = ".ecj"
-				shardId = 0 // ecj file doesn't have a specific shard ID
 			} else if shardType == "vif" {
 				ext = ".vif"
 				shardId = 0 // vif file doesn't have a specific shard ID
