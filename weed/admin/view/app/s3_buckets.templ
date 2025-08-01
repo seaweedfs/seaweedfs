@@ -336,11 +336,22 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     </div>
                                 </div>
                                 <div class="col-md-6">
-                                    <label for="objectLockDuration" class="form-label">Default Retention (days)</label>
-                                    <input type="number" class="form-control" id="objectLockDuration" name="object_lock_duration" 
-                                           placeholder="30" min="1" max="36500" step="1">
-                                    <div class="form-text">
-                                        Default retention period for new objects (1-36500 days).
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" id="setDefaultRetention" name="set_default_retention">
+                                        <label class="form-check-label" for="setDefaultRetention">
+                                            Set Default Retention
+                                        </label>
+                                        <div class="form-text">
+                                            Apply default retention to all new objects in this bucket.
+                                        </div>
+                                    </div>
+                                    <div id="defaultRetentionSettings" style="display: none;">
+                                        <label for="objectLockDuration" class="form-label">Default Retention (days)</label>
+                                        <input type="number" class="form-control" id="objectLockDuration" name="object_lock_duration" 
+                                               placeholder="30" min="1" max="36500" step="1">
+                                        <div class="form-text">
+                                            Default retention period for new objects (1-36500 days).
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -478,6 +489,8 @@ templ S3Buckets(data dash.S3BucketsData) {
         const versioningCheckbox = document.getElementById('enableVersioning');
         const objectLockCheckbox = document.getElementById('enableObjectLock');
         const objectLockSettings = document.getElementById('objectLockSettings');
+        const setDefaultRetentionCheckbox = document.getElementById('setDefaultRetention');
+        const defaultRetentionSettings = document.getElementById('defaultRetentionSettings');
         const createBucketForm = document.getElementById('createBucketForm');
 
         // Toggle quota settings
@@ -493,7 +506,15 @@ templ S3Buckets(data dash.S3BucketsData) {
                 versioningCheckbox.disabled = true;
             } else {
                 versioningCheckbox.disabled = false;
+                // Reset default retention settings when object lock is disabled
+                setDefaultRetentionCheckbox.checked = false;
+                defaultRetentionSettings.style.display = 'none';
             }
+        });
+
+        // Toggle default retention settings
+        setDefaultRetentionCheckbox.addEventListener('change', function() {
+            defaultRetentionSettings.style.display = this.checked ? 'block' : 'none';
         });
 
         // Handle form submission
@@ -510,11 +531,12 @@ templ S3Buckets(data dash.S3BucketsData) {
                 versioning_enabled: versioningCheckbox.checked,
                 object_lock_enabled: objectLockCheckbox.checked,
                 object_lock_mode: formData.get('object_lock_mode') || 'GOVERNANCE',
-                object_lock_duration: objectLockCheckbox.checked ? parseInt(formData.get('object_lock_duration')) || 30 : 0
+                set_default_retention: setDefaultRetentionCheckbox.checked,
+                object_lock_duration: setDefaultRetentionCheckbox.checked ? parseInt(formData.get('object_lock_duration')) || 30 : 0
             };
 
             // Validate object lock settings
-            if (data.object_lock_enabled && data.object_lock_duration <= 0) {
+            if (data.object_lock_enabled && data.set_default_retention && data.object_lock_duration <= 0) {
                 alert('Please enter a valid retention duration for object lock.');
                 return;
             }

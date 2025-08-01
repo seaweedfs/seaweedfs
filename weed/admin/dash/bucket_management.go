@@ -23,15 +23,16 @@ type S3BucketsData struct {
 }
 
 type CreateBucketRequest struct {
-	Name               string `json:"name" binding:"required"`
-	Region             string `json:"region"`
-	QuotaSize          int64  `json:"quota_size"`           // Quota size in bytes
-	QuotaUnit          string `json:"quota_unit"`           // Unit: MB, GB, TB
-	QuotaEnabled       bool   `json:"quota_enabled"`        // Whether quota is enabled
-	VersioningEnabled  bool   `json:"versioning_enabled"`   // Whether versioning is enabled
-	ObjectLockEnabled  bool   `json:"object_lock_enabled"`  // Whether object lock is enabled
-	ObjectLockMode     string `json:"object_lock_mode"`     // Object lock mode: "GOVERNANCE" or "COMPLIANCE"
-	ObjectLockDuration int32  `json:"object_lock_duration"` // Default retention duration in days
+	Name                string `json:"name" binding:"required"`
+	Region              string `json:"region"`
+	QuotaSize           int64  `json:"quota_size"`            // Quota size in bytes
+	QuotaUnit           string `json:"quota_unit"`            // Unit: MB, GB, TB
+	QuotaEnabled        bool   `json:"quota_enabled"`         // Whether quota is enabled
+	VersioningEnabled   bool   `json:"versioning_enabled"`    // Whether versioning is enabled
+	ObjectLockEnabled   bool   `json:"object_lock_enabled"`   // Whether object lock is enabled
+	ObjectLockMode      string `json:"object_lock_mode"`      // Object lock mode: "GOVERNANCE" or "COMPLIANCE"
+	SetDefaultRetention bool   `json:"set_default_retention"` // Whether to set default retention
+	ObjectLockDuration  int32  `json:"object_lock_duration"`  // Default retention duration in days
 }
 
 // S3 Bucket Management Handlers
@@ -105,17 +106,19 @@ func (s *AdminServer) CreateBucket(c *gin.Context) {
 			return
 		}
 
-		// Validate retention duration
-		if req.ObjectLockDuration <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Object lock duration must be greater than 0 days"})
-			return
+		// Validate retention duration if default retention is enabled
+		if req.SetDefaultRetention {
+			if req.ObjectLockDuration <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Object lock duration must be greater than 0 days when default retention is enabled"})
+				return
+			}
 		}
 	}
 
 	// Convert quota to bytes
 	quotaBytes := convertQuotaToBytes(req.QuotaSize, req.QuotaUnit)
 
-	err := s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.ObjectLockDuration)
+	err := s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.SetDefaultRetention, req.ObjectLockDuration)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create bucket: " + err.Error()})
 		return
@@ -285,11 +288,11 @@ func (s *AdminServer) SetBucketQuota(bucketName string, quotaBytes int64, quotaE
 
 // CreateS3BucketWithQuota creates a new S3 bucket with quota settings
 func (s *AdminServer) CreateS3BucketWithQuota(bucketName string, quotaBytes int64, quotaEnabled bool) error {
-	return s.CreateS3BucketWithObjectLock(bucketName, quotaBytes, quotaEnabled, false, false, "", 0)
+	return s.CreateS3BucketWithObjectLock(bucketName, quotaBytes, quotaEnabled, false, false, "", false, 0)
 }
 
 // CreateS3BucketWithObjectLock creates a new S3 bucket with quota, versioning, and object lock settings
-func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes int64, quotaEnabled, versioningEnabled, objectLockEnabled bool, objectLockMode string, objectLockDuration int32) error {
+func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes int64, quotaEnabled, versioningEnabled, objectLockEnabled bool, objectLockMode string, setDefaultRetention bool, objectLockDuration int32) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// First ensure /buckets directory exists
 		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
@@ -360,13 +363,17 @@ func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes
 
 		// Handle Object Lock configuration using shared utilities
 		if objectLockEnabled {
-			// Validate Object Lock parameters
-			if err := s3api.ValidateObjectLockParameters(objectLockEnabled, objectLockMode, objectLockDuration); err != nil {
-				return fmt.Errorf("invalid Object Lock parameters: %w", err)
+			var duration int32 = 0
+			if setDefaultRetention {
+				// Validate Object Lock parameters only when setting default retention
+				if err := s3api.ValidateObjectLockParameters(objectLockEnabled, objectLockMode, objectLockDuration); err != nil {
+					return fmt.Errorf("invalid Object Lock parameters: %w", err)
+				}
+				duration = objectLockDuration
 			}
 
 			// Create Object Lock configuration using shared utility
-			objectLockConfig := s3api.CreateObjectLockConfigurationFromParams(objectLockEnabled, objectLockMode, objectLockDuration)
+			objectLockConfig := s3api.CreateObjectLockConfigurationFromParams(objectLockEnabled, objectLockMode, duration)
 
 			// Store Object Lock configuration in extended attributes using shared utility
 			if err := s3api.StoreObjectLockConfigurationInExtended(bucketEntry, objectLockConfig); err != nil {
