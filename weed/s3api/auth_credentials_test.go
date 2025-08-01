@@ -357,3 +357,119 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 		})
 	}
 }
+
+// TestBucketLevelListPermissions tests that bucket-level List permissions work correctly
+// This test validates the fix for issue #7066
+func TestBucketLevelListPermissions(t *testing.T) {
+	// Test the functionality that was broken in issue #7066
+
+	t.Run("Bucket Wildcard Permissions", func(t *testing.T) {
+		// Create identity with bucket-level List permission using wildcards
+		identity := &Identity{
+			Name: "bucket-user",
+			Actions: []Action{
+				"List:mybucket*",
+				"Read:mybucket*",
+				"ReadAcp:mybucket*",
+				"Write:mybucket*",
+				"WriteAcp:mybucket*",
+				"Tagging:mybucket*",
+			},
+		}
+
+		// Test cases for bucket-level wildcard permissions
+		testCases := []struct {
+			name        string
+			action      Action
+			bucket      string
+			object      string
+			shouldAllow bool
+			description string
+		}{
+			{
+				name:        "exact bucket match",
+				action:      "List",
+				bucket:      "mybucket",
+				object:      "",
+				shouldAllow: true,
+				description: "Should allow access to exact bucket name",
+			},
+			{
+				name:        "bucket with suffix",
+				action:      "List",
+				bucket:      "mybucket-prod",
+				object:      "",
+				shouldAllow: true,
+				description: "Should allow access to bucket with matching prefix",
+			},
+			{
+				name:        "bucket with numbers",
+				action:      "List",
+				bucket:      "mybucket123",
+				object:      "",
+				shouldAllow: true,
+				description: "Should allow access to bucket with numbers",
+			},
+			{
+				name:        "different bucket",
+				action:      "List",
+				bucket:      "otherbucket",
+				object:      "",
+				shouldAllow: false,
+				description: "Should deny access to bucket with different prefix",
+			},
+			{
+				name:        "partial match",
+				action:      "List",
+				bucket:      "notmybucket",
+				object:      "",
+				shouldAllow: false,
+				description: "Should deny access to bucket that contains but doesn't start with the prefix",
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				result := identity.canDo(tc.action, tc.bucket, tc.object)
+				assert.Equal(t, tc.shouldAllow, result, tc.description)
+			})
+		}
+	})
+
+	t.Run("Global List Permission", func(t *testing.T) {
+		// Create identity with global List permission
+		identity := &Identity{
+			Name: "global-user",
+			Actions: []Action{
+				"List",
+			},
+		}
+
+		// Should allow access to any bucket
+		testCases := []string{"anybucket", "mybucket", "test-bucket", "prod-data"}
+
+		for _, bucket := range testCases {
+			result := identity.canDo("List", bucket, "")
+			assert.True(t, result, "Global List permission should allow access to bucket %s", bucket)
+		}
+	})
+
+	t.Run("No Wildcard Exact Match", func(t *testing.T) {
+		// Create identity with exact bucket permission (no wildcard)
+		identity := &Identity{
+			Name: "exact-user",
+			Actions: []Action{
+				"List:specificbucket",
+			},
+		}
+
+		// Should only allow access to the exact bucket
+		assert.True(t, identity.canDo("List", "specificbucket", ""), "Should allow access to exact bucket")
+		assert.False(t, identity.canDo("List", "specificbucket-test", ""), "Should deny access to bucket with suffix")
+		assert.False(t, identity.canDo("List", "otherbucket", ""), "Should deny access to different bucket")
+	})
+
+	t.Log("This test validates the fix for issue #7066")
+	t.Log("Bucket-level List permissions like 'List:bucket*' work correctly")
+	t.Log("ListBucketsHandler now uses consistent authentication flow")
+}

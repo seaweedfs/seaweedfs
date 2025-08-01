@@ -37,7 +37,9 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	if s3a.iam.isEnabled() {
-		identity, s3Err = s3a.iam.authUser(r)
+		// Use authRequest instead of authUser for consistency with other endpoints
+		// This ensures the same authentication flow and any fixes (like prefix handling) are applied
+		identity, s3Err = s3a.iam.authRequest(r, s3_constants.ACTION_LIST)
 		if s3Err != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, s3Err)
 			return
