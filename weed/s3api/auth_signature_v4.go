@@ -154,13 +154,14 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	}
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, object) {
+	canDoResult := identity.canDo(s3_constants.ACTION_WRITE, bucket, object)
+	if !canDoResult {
 		return nil, s3err.ErrAccessDenied
 	}
 
 	// Extract date, if not present throw error.
 	var dateStr string
-	if dateStr = req.Header.Get(http.CanonicalHeaderKey("x-amz-date")); dateStr == "" {
+	if dateStr = req.Header.Get("x-amz-date"); dateStr == "" {
 		if dateStr = r.Header.Get("Date"); dateStr == "" {
 			return nil, s3err.ErrMissingDateHeader
 		}
@@ -174,25 +175,46 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	// Query string.
 	queryStr := req.URL.Query().Encode()
 
+	// Check if reverse proxy is forwarding with prefix
+	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
+		// Try signature verification with the forwarded prefix first.
+		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
+		// Note: This is non-standard behavior for AWS S3 and not supported in MinIO.
+		errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, forwardedPrefix+req.URL.Path, req.Method, foundCred.SecretKey, t, signV4Values)
+		if errCode == s3err.ErrNone {
+			return identity, errCode
+		}
+	}
+
+	// Try normal signature verification (without prefix)
+	errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, req.URL.Path, req.Method, foundCred.SecretKey, t, signV4Values)
+	if errCode == s3err.ErrNone {
+		return identity, errCode
+	}
+
+	return nil, errCode
+}
+
+// verifySignatureWithPath verifies signature with a given path (used for both normal and prefixed paths).
+func (iam *IdentityAccessManagement) verifySignatureWithPath(extractedSignedHeaders http.Header, hashedPayload, queryStr, urlPath, method, secretKey string, t time.Time, signV4Values signValues) s3err.ErrorCode {
 	// Get canonical request.
-	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, req.URL.Path, req.Method)
+	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, urlPath, method)
 
 	// Get string to sign from canonical request.
 	stringToSign := getStringToSign(canonicalRequest, t, signV4Values.Credential.getScope())
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(foundCred.SecretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), signV4Values.Credential.scope.region, "s3")
+	signingKey := getSigningKey(secretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), signV4Values.Credential.scope.region, "s3")
 
 	// Calculate signature.
 	newSignature := getSignature(signingKey, stringToSign)
 
 	// Verify if signature match.
 	if !compareSignatureV4(newSignature, signV4Values.Signature) {
-		return nil, s3err.ErrSignatureDoesNotMatch
+		return s3err.ErrSignatureDoesNotMatch
 	}
 
-	// Return error none.
-	return identity, s3err.ErrNone
+	return s3err.ErrNone
 }
 
 // Simple implementation for presigned signature verification
@@ -284,16 +306,24 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	queryForCanonical.Del("X-Amz-Signature")
 	queryStr := strings.Replace(queryForCanonical.Encode(), "+", "%20", -1)
 
-	// Get canonical request
+	// Check if reverse proxy is forwarding with prefix for presigned URLs
+	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
+		// Try signature verification with the forwarded prefix first.
+		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
+		canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, forwardedPrefix+r.URL.Path, r.Method)
+		stringToSign := getStringToSign(canonicalRequest, t, credHeader.getScope())
+		signingKey := getSigningKey(foundCred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
+		expectedSignature := getSignature(signingKey, stringToSign)
+
+		if compareSignatureV4(expectedSignature, signature) {
+			return identity, s3err.ErrNone
+		}
+	}
+
+	// Try normal signature verification (without prefix)
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, r.URL.Path, r.Method)
-
-	// Get string to sign
 	stringToSign := getStringToSign(canonicalRequest, t, credHeader.getScope())
-
-	// Get signing key
 	signingKey := getSigningKey(foundCred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
-
-	// Calculate expected signature
 	expectedSignature := getSignature(signingKey, stringToSign)
 
 	// Verify signature
@@ -444,6 +474,13 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 
 // extractHostHeader returns the value of host header if available.
 func extractHostHeader(r *http.Request) string {
+	// Check for X-Forwarded-Host header first, which is set by reverse proxies
+	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
+		// Using reverse proxy with X-Forwarded-Host.
+		// Note: This is non-standard behavior for AWS S3 and not supported in MinIO.
+		return forwardedHost
+	}
+
 	hostHeaderValue := r.Host
 	// For standard requests, this should be fine.
 	if r.Host != "" {

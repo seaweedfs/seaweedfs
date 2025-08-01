@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
@@ -252,6 +253,229 @@ func preSignV4(iam *IdentityAccessManagement, req *http.Request, accessKey, secr
 	req.URL.RawQuery = query.Encode()
 
 	return nil
+}
+
+// Test X-Forwarded-Prefix support for reverse proxy scenarios
+func TestSignatureV4WithForwardedPrefix(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	iam.identities = []*Identity{
+		{
+			Name:        "testuser",
+			Credentials: []*Credential{{AccessKey: "AKIAIOSFODNN7EXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}},
+			Actions:     []Action{s3_constants.ACTION_ADMIN, s3_constants.ACTION_READ, s3_constants.ACTION_WRITE},
+		},
+	}
+	// Initialize the access key map for lookup
+	iam.accessKeyIdent = make(map[string]*Identity)
+	iam.accessKeyIdent["AKIAIOSFODNN7EXAMPLE"] = iam.identities[0]
+
+	// Create a request with X-Forwarded-Prefix header
+	r, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+
+	// Set the mux variables manually since we're not going through the actual router
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "test-bucket",
+		"object": "test-object",
+	})
+
+	r.Header.Set("X-Forwarded-Prefix", "/s3")
+	r.Header.Set("Host", "example.com")
+	r.Header.Set("X-Forwarded-Host", "example.com/s3")
+
+	// Sign the request with the prefixed path
+	signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "/s3"+r.URL.Path)
+
+	// Test signature verification
+	_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+	if errCode != s3err.ErrNone {
+		t.Errorf("Expected successful signature validation with X-Forwarded-Prefix, got error: %v (code: %d)", errCode, int(errCode))
+	}
+}
+
+// Test basic presigned URL functionality without prefix
+func TestPresignedSignatureV4Basic(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	iam.identities = []*Identity{
+		{
+			Name:        "testuser",
+			Credentials: []*Credential{{AccessKey: "AKIAIOSFODNN7EXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}},
+			Actions:     []Action{s3_constants.ACTION_ADMIN, s3_constants.ACTION_READ, s3_constants.ACTION_WRITE},
+		},
+	}
+	// Initialize the access key map for lookup
+	iam.accessKeyIdent = make(map[string]*Identity)
+	iam.accessKeyIdent["AKIAIOSFODNN7EXAMPLE"] = iam.identities[0]
+
+	// Create a presigned request without X-Forwarded-Prefix header
+	r, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+
+	// Set the mux variables manually since we're not going through the actual router
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "test-bucket",
+		"object": "test-object",
+	})
+
+	r.Header.Set("Host", "example.com")
+
+	// Create presigned URL with the normal path (no prefix)
+	err = preSignV4WithPath(iam, r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", 3600, r.URL.Path)
+	if err != nil {
+		t.Errorf("Failed to presign request: %v", err)
+	}
+
+	// Test presigned signature verification
+	_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+	if errCode != s3err.ErrNone {
+		t.Errorf("Expected successful presigned signature validation, got error: %v (code: %d)", errCode, int(errCode))
+	}
+}
+
+// Test X-Forwarded-Prefix support for presigned URLs
+func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	iam.identities = []*Identity{
+		{
+			Name:        "testuser",
+			Credentials: []*Credential{{AccessKey: "AKIAIOSFODNN7EXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}},
+			Actions:     []Action{s3_constants.ACTION_ADMIN, s3_constants.ACTION_READ, s3_constants.ACTION_WRITE},
+		},
+	}
+	// Initialize the access key map for lookup
+	iam.accessKeyIdent = make(map[string]*Identity)
+	iam.accessKeyIdent["AKIAIOSFODNN7EXAMPLE"] = iam.identities[0]
+
+	// Create a presigned request that simulates reverse proxy scenario:
+	// 1. Client generates presigned URL with prefixed path
+	// 2. Proxy strips prefix and forwards to SeaweedFS with X-Forwarded-Prefix header
+
+	// Start with the original request URL (what client sees)
+	r, err := newTestRequest("GET", "https://example.com/s3/test-bucket/test-object", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+
+	// Generate presigned URL with the original prefixed path
+	err = preSignV4WithPath(iam, r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", 3600, r.URL.Path)
+	if err != nil {
+		t.Errorf("Failed to presign request: %v", err)
+		return
+	}
+
+	// Now simulate what the reverse proxy does:
+	// 1. Strip the prefix from the URL path
+	r.URL.Path = "/test-bucket/test-object"
+
+	// 2. Set the mux variables for the stripped path
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "test-bucket",
+		"object": "test-object",
+	})
+
+	// 3. Add the forwarded headers
+	r.Header.Set("X-Forwarded-Prefix", "/s3")
+	r.Header.Set("Host", "example.com")
+	r.Header.Set("X-Forwarded-Host", "example.com/s3")
+
+	// Test presigned signature verification
+	_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+	if errCode != s3err.ErrNone {
+		t.Errorf("Expected successful presigned signature validation with X-Forwarded-Prefix, got error: %v (code: %d)", errCode, int(errCode))
+	}
+}
+
+// preSignV4WithPath adds presigned URL parameters to the request with a custom path
+func preSignV4WithPath(iam *IdentityAccessManagement, req *http.Request, accessKey, secretKey string, expires int64, urlPath string) error {
+	// Create credential scope
+	now := time.Now().UTC()
+	dateStr := now.Format(iso8601Format)
+
+	// Create credential header
+	scope := fmt.Sprintf("%s/%s/%s/%s", now.Format(yyyymmdd), "us-east-1", "s3", "aws4_request")
+	credential := fmt.Sprintf("%s/%s", accessKey, scope)
+
+	// Get the query parameters
+	query := req.URL.Query()
+	query.Set("X-Amz-Algorithm", signV4Algorithm)
+	query.Set("X-Amz-Credential", credential)
+	query.Set("X-Amz-Date", dateStr)
+	query.Set("X-Amz-Expires", fmt.Sprintf("%d", expires))
+	query.Set("X-Amz-SignedHeaders", "host")
+
+	// Set the query on the URL (without signature yet)
+	req.URL.RawQuery = query.Encode()
+
+	// Get the payload hash
+	hashedPayload := getContentSha256Cksum(req)
+
+	// Extract signed headers
+	extractedSignedHeaders := make(http.Header)
+	extractedSignedHeaders["host"] = []string{extractHostHeader(req)}
+
+	// Get canonical request with custom path
+	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, req.URL.RawQuery, urlPath, req.Method)
+
+	// Get string to sign
+	stringToSign := getStringToSign(canonicalRequest, now, scope)
+
+	// Get signing key
+	signingKey := getSigningKey(secretKey, now.Format(yyyymmdd), "us-east-1", "s3")
+
+	// Calculate signature
+	signature := getSignature(signingKey, stringToSign)
+
+	// Add signature to query
+	query.Set("X-Amz-Signature", signature)
+	req.URL.RawQuery = query.Encode()
+
+	return nil
+}
+
+// signV4WithPath signs a request with a custom path
+func signV4WithPath(req *http.Request, accessKey, secretKey, urlPath string) {
+	// Create credential scope
+	now := time.Now().UTC()
+	dateStr := now.Format(iso8601Format)
+
+	// Set required headers
+	req.Header.Set("X-Amz-Date", dateStr)
+
+	// Create credential header
+	scope := fmt.Sprintf("%s/%s/%s/%s", now.Format(yyyymmdd), "us-east-1", "s3", "aws4_request")
+	credential := fmt.Sprintf("%s/%s", accessKey, scope)
+
+	// Get signed headers
+	signedHeaders := "host;x-amz-date"
+
+	// Extract signed headers
+	extractedSignedHeaders := make(http.Header)
+	extractedSignedHeaders["host"] = []string{extractHostHeader(req)}
+	extractedSignedHeaders["x-amz-date"] = []string{dateStr}
+
+	// Get the payload hash
+	hashedPayload := getContentSha256Cksum(req)
+
+	// Get canonical request with custom path
+	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, req.URL.RawQuery, urlPath, req.Method)
+
+	// Get string to sign
+	stringToSign := getStringToSign(canonicalRequest, now, scope)
+
+	// Get signing key
+	signingKey := getSigningKey(secretKey, now.Format(yyyymmdd), "us-east-1", "s3")
+
+	// Calculate signature
+	signature := getSignature(signingKey, stringToSign)
+
+	// Set Authorization header
+	authorization := fmt.Sprintf("%s Credential=%s, SignedHeaders=%s, Signature=%s",
+		signV4Algorithm, credential, signedHeaders, signature)
+	req.Header.Set("Authorization", authorization)
 }
 
 // Returns new HTTP request object.
