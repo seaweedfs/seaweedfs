@@ -364,6 +364,22 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 			forwardedProto: "https",
 			expectedHost:   "example.com",
 		},
+		{
+			name:           "empty proto with non-standard port",
+			host:           "backend:8333",
+			forwardedHost:  "example.com",
+			forwardedPort:  "8080",
+			forwardedProto: "",
+			expectedHost:   "example.com:8080",
+		},
+		{
+			name:           "empty proto with standard http port",
+			host:           "backend:8333",
+			forwardedHost:  "example.com",
+			forwardedPort:  "80",
+			forwardedProto: "",
+			expectedHost:   "example.com",
+		},
 	}
 
 	for _, tt := range tests {
