@@ -306,8 +306,8 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 		return nil, fmt.Errorf("failed to generate EC shard files: %v", err)
 	}
 
-	// Generate .ecx file from .idx
-	if err := erasure_coding.WriteSortedFileFromIdx(idxFile, ".ecx"); err != nil {
+	// Generate .ecx file from .idx (use baseName, not full idx path)
+	if err := erasure_coding.WriteSortedFileFromIdx(baseName, ".ecx"); err != nil {
 		return nil, fmt.Errorf("failed to generate .ecx file: %v", err)
 	}
 
