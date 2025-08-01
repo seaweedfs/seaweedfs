@@ -216,6 +216,28 @@ func (iam *IdentityAccessManagement) verifySignatureWithPath(extractedSignedHead
 	return s3err.ErrNone
 }
 
+// verifyPresignedSignatureWithPath verifies presigned signature with a given path (used for both normal and prefixed paths).
+func (iam *IdentityAccessManagement) verifyPresignedSignatureWithPath(extractedSignedHeaders http.Header, hashedPayload, queryStr, urlPath, method, secretKey string, t time.Time, credHeader credentialHeader, signature string) s3err.ErrorCode {
+	// Get canonical request.
+	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, urlPath, method)
+
+	// Get string to sign from canonical request.
+	stringToSign := getStringToSign(canonicalRequest, t, credHeader.getScope())
+
+	// Get hmac signing key.
+	signingKey := getSigningKey(secretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
+
+	// Calculate expected signature.
+	expectedSignature := getSignature(signingKey, stringToSign)
+
+	// Verify if signature match.
+	if !compareSignatureV4(expectedSignature, signature) {
+		return s3err.ErrSignatureDoesNotMatch
+	}
+
+	return s3err.ErrNone
+}
+
 // Simple implementation for presigned signature verification
 func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload string, r *http.Request) (*Identity, s3err.ErrorCode) {
 	// Parse presigned signature values from query parameters
@@ -305,30 +327,23 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	queryForCanonical.Del("X-Amz-Signature")
 	queryStr := strings.Replace(queryForCanonical.Encode(), "+", "%20", -1)
 
-	// Helper function to verify signature against a given path
-	verifySignature := func(urlPath string) bool {
-		canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, urlPath, r.Method)
-		stringToSign := getStringToSign(canonicalRequest, t, credHeader.getScope())
-		signingKey := getSigningKey(foundCred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
-		expectedSignature := getSignature(signingKey, stringToSign)
-		return compareSignatureV4(expectedSignature, signature)
-	}
-
 	// Check if reverse proxy is forwarding with prefix for presigned URLs
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		if verifySignature(forwardedPrefix + r.URL.Path) {
-			return identity, s3err.ErrNone
+		errCode := iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, forwardedPrefix+r.URL.Path, r.Method, foundCred.SecretKey, t, credHeader, signature)
+		if errCode == s3err.ErrNone {
+			return identity, errCode
 		}
 	}
 
 	// Try normal signature verification (without prefix)
-	if verifySignature(r.URL.Path) {
-		return identity, s3err.ErrNone
+	errCode := iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, r.URL.Path, r.Method, foundCred.SecretKey, t, credHeader, signature)
+	if errCode == s3err.ErrNone {
+		return identity, errCode
 	}
 
-	return nil, s3err.ErrSignatureDoesNotMatch
+	return nil, errCode
 }
 
 // credentialHeader data type represents structured form of Credential
