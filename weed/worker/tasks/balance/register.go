@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -35,9 +36,19 @@ func RegisterBalanceTask() {
 		Icon:         "fas fa-balance-scale text-warning",
 		Capabilities: []string{"balance", "distribution"},
 
-		Config:         config,
-		ConfigSpec:     GetConfigSpec(),
-		CreateTask:     CreateTask,
+		Config:     config,
+		ConfigSpec: GetConfigSpec(),
+		CreateTask: func(params *worker_pb.TaskParams) (types.Task, error) {
+			if params == nil {
+				return nil, fmt.Errorf("task parameters are required")
+			}
+			return NewBalanceTask(
+				fmt.Sprintf("balance-%d", params.VolumeId),
+				params.Server,
+				params.VolumeId,
+				params.Collection,
+			), nil
+		},
 		DetectionFunc:  Detection,
 		ScanInterval:   30 * time.Minute,
 		SchedulingFunc: Scheduling,

@@ -10,7 +10,7 @@ import (
 
 // Registry manages workers and their statistics
 type Registry struct {
-	workers map[string]*types.Worker
+	workers map[string]*types.WorkerData
 	stats   *types.RegistryStats
 	mutex   sync.RWMutex
 }
@@ -18,7 +18,7 @@ type Registry struct {
 // NewRegistry creates a new worker registry
 func NewRegistry() *Registry {
 	return &Registry{
-		workers: make(map[string]*types.Worker),
+		workers: make(map[string]*types.WorkerData),
 		stats: &types.RegistryStats{
 			TotalWorkers:   0,
 			ActiveWorkers:  0,
@@ -33,7 +33,7 @@ func NewRegistry() *Registry {
 }
 
 // RegisterWorker registers a new worker
-func (r *Registry) RegisterWorker(worker *types.Worker) error {
+func (r *Registry) RegisterWorker(worker *types.WorkerData) error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
@@ -61,7 +61,7 @@ func (r *Registry) UnregisterWorker(workerID string) error {
 }
 
 // GetWorker returns a worker by ID
-func (r *Registry) GetWorker(workerID string) (*types.Worker, bool) {
+func (r *Registry) GetWorker(workerID string) (*types.WorkerData, bool) {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
@@ -70,11 +70,11 @@ func (r *Registry) GetWorker(workerID string) (*types.Worker, bool) {
 }
 
 // ListWorkers returns all registered workers
-func (r *Registry) ListWorkers() []*types.Worker {
+func (r *Registry) ListWorkers() []*types.WorkerData {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
-	workers := make([]*types.Worker, 0, len(r.workers))
+	workers := make([]*types.WorkerData, 0, len(r.workers))
 	for _, worker := range r.workers {
 		workers = append(workers, worker)
 	}
@@ -82,11 +82,11 @@ func (r *Registry) ListWorkers() []*types.Worker {
 }
 
 // GetWorkersByCapability returns workers that support a specific capability
-func (r *Registry) GetWorkersByCapability(capability types.TaskType) []*types.Worker {
+func (r *Registry) GetWorkersByCapability(capability types.TaskType) []*types.WorkerData {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
-	var workers []*types.Worker
+	var workers []*types.WorkerData
 	for _, worker := range r.workers {
 		for _, cap := range worker.Capabilities {
 			if cap == capability {
@@ -99,11 +99,11 @@ func (r *Registry) GetWorkersByCapability(capability types.TaskType) []*types.Wo
 }
 
 // GetAvailableWorkers returns workers that are available for new tasks
-func (r *Registry) GetAvailableWorkers() []*types.Worker {
+func (r *Registry) GetAvailableWorkers() []*types.WorkerData {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
-	var workers []*types.Worker
+	var workers []*types.WorkerData
 	for _, worker := range r.workers {
 		if worker.Status == "active" && worker.CurrentLoad < worker.MaxConcurrent {
 			workers = append(workers, worker)
@@ -113,11 +113,11 @@ func (r *Registry) GetAvailableWorkers() []*types.Worker {
 }
 
 // GetBestWorkerForTask returns the best worker for a specific task
-func (r *Registry) GetBestWorkerForTask(taskType types.TaskType) *types.Worker {
+func (r *Registry) GetBestWorkerForTask(taskType types.TaskType) *types.WorkerData {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
-	var bestWorker *types.Worker
+	var bestWorker *types.WorkerData
 	var bestScore float64
 
 	for _, worker := range r.workers {
@@ -277,11 +277,11 @@ func (r *Registry) GetTaskCapabilities() []types.TaskType {
 }
 
 // GetWorkersByStatus returns workers filtered by status
-func (r *Registry) GetWorkersByStatus(status string) []*types.Worker {
+func (r *Registry) GetWorkersByStatus(status string) []*types.WorkerData {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
-	var workers []*types.Worker
+	var workers []*types.WorkerData
 	for _, worker := range r.workers {
 		if worker.Status == status {
 			workers = append(workers, worker)

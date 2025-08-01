@@ -116,7 +116,7 @@ services:
     ports:
       - "23646:23646"      # HTTP admin interface (default port)
       - "33646:33646"      # gRPC worker communication (23646 + 10000)
-    command: "admin -port=23646 -masters=master:9333 -dataDir=/data"
+    command: "-v=2 admin -port=23646 -masters=master:9333 -dataDir=/data"
     depends_on:
       - master
       - filer

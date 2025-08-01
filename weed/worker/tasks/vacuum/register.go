@@ -1,10 +1,11 @@
-package erasure_coding
+package vacuum
 
 import (
 	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -15,34 +16,44 @@ var globalTaskDef *base.TaskDefinition
 
 // Auto-register this task when the package is imported
 func init() {
-	RegisterErasureCodingTask()
+	RegisterVacuumTask()
 
 	// Register config updater
-	tasks.AutoRegisterConfigUpdater(types.TaskTypeErasureCoding, UpdateConfigFromPersistence)
+	tasks.AutoRegisterConfigUpdater(types.TaskTypeVacuum, UpdateConfigFromPersistence)
 }
 
-// RegisterErasureCodingTask registers the erasure coding task with the new architecture
-func RegisterErasureCodingTask() {
+// RegisterVacuumTask registers the vacuum task with the new architecture
+func RegisterVacuumTask() {
 	// Create configuration instance
 	config := NewDefaultConfig()
 
 	// Create complete task definition
 	taskDef := &base.TaskDefinition{
-		Type:         types.TaskTypeErasureCoding,
-		Name:         "erasure_coding",
-		DisplayName:  "Erasure Coding",
-		Description:  "Applies erasure coding to volumes for data protection",
-		Icon:         "fas fa-shield-alt text-success",
-		Capabilities: []string{"erasure_coding", "data_protection"},
+		Type:         types.TaskTypeVacuum,
+		Name:         "vacuum",
+		DisplayName:  "Volume Vacuum",
+		Description:  "Reclaims disk space by removing deleted files from volumes",
+		Icon:         "fas fa-broom text-primary",
+		Capabilities: []string{"vacuum", "storage"},
 
-		Config:         config,
-		ConfigSpec:     GetConfigSpec(),
-		CreateTask:     nil, // Uses typed task system - see init() in ec.go
+		Config:     config,
+		ConfigSpec: GetConfigSpec(),
+		CreateTask: func(params *worker_pb.TaskParams) (types.Task, error) {
+			if params == nil {
+				return nil, fmt.Errorf("task parameters are required")
+			}
+			return NewVacuumTask(
+				fmt.Sprintf("vacuum-%d", params.VolumeId),
+				params.Server,
+				params.VolumeId,
+				params.Collection,
+			), nil
+		},
 		DetectionFunc:  Detection,
-		ScanInterval:   1 * time.Hour,
+		ScanInterval:   2 * time.Hour,
 		SchedulingFunc: Scheduling,
-		MaxConcurrent:  1,
-		RepeatInterval: 24 * time.Hour,
+		MaxConcurrent:  2,
+		RepeatInterval: 7 * 24 * time.Hour,
 	}
 
 	// Store task definition globally for configuration updates
@@ -52,10 +63,10 @@ func RegisterErasureCodingTask() {
 	base.RegisterTask(taskDef)
 }
 
-// UpdateConfigFromPersistence updates the erasure coding configuration from persistence
+// UpdateConfigFromPersistence updates the vacuum configuration from persistence
 func UpdateConfigFromPersistence(configPersistence interface{}) error {
 	if globalTaskDef == nil {
-		return fmt.Errorf("erasure coding task not registered")
+		return fmt.Errorf("vacuum task not registered")
 	}
 
 	// Load configuration from persistence
@@ -67,6 +78,6 @@ func UpdateConfigFromPersistence(configPersistence interface{}) error {
 	// Update the task definition's config
 	globalTaskDef.Config = newConfig
 
-	glog.V(1).Infof("Updated erasure coding task configuration from persistence")
+	glog.V(1).Infof("Updated vacuum task configuration from persistence")
 	return nil
 }

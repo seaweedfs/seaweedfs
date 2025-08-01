@@ -1,6 +1,7 @@
 package maintenance
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -131,13 +132,13 @@ func NewMaintenanceWorkerService(workerID, address, adminServer string) *Mainten
 		currentTasks:  make(map[string]*MaintenanceTask),
 		stopChan:      make(chan struct{}),
 		taskExecutors: make(map[MaintenanceTaskType]TaskExecutor),
-		taskRegistry:  tasks.GetGlobalRegistry(), // Use global registry with auto-registered tasks
+		taskRegistry:  tasks.GetGlobalTaskRegistry(), // Use global registry with auto-registered tasks
 	}
 
 	// Initialize task executor registry
 	worker.initializeTaskExecutors()
 
-	glog.V(1).Infof("Created maintenance worker with %d registered task types", len(worker.taskRegistry.GetSupportedTypes()))
+	glog.V(1).Infof("Created maintenance worker with %d registered task types", len(worker.taskRegistry.GetAll()))
 
 	return worker
 }
@@ -154,16 +155,8 @@ func (mws *MaintenanceWorkerService) executeGenericTask(task *MaintenanceTask) e
 	// Convert MaintenanceTask to types.TaskType
 	taskType := types.TaskType(string(task.Type))
 
-	// Create task parameters
-	taskParams := types.TaskParams{
-		VolumeID:    task.VolumeID,
-		Server:      task.Server,
-		Collection:  task.Collection,
-		TypedParams: task.TypedParams,
-	}
-
 	// Create task instance using the registry
-	taskInstance, err := mws.taskRegistry.CreateTask(taskType, taskParams)
+	taskInstance, err := mws.taskRegistry.Get(taskType).Create(task.TypedParams)
 	if err != nil {
 		return fmt.Errorf("failed to create task instance: %w", err)
 	}
@@ -172,7 +165,7 @@ func (mws *MaintenanceWorkerService) executeGenericTask(task *MaintenanceTask) e
 	mws.updateTaskProgress(task.ID, 5)
 
 	// Execute the task
-	err = taskInstance.Execute(taskParams)
+	err = taskInstance.Execute(context.Background(), task.TypedParams)
 	if err != nil {
 		return fmt.Errorf("task execution failed: %w", err)
 	}

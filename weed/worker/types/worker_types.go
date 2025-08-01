@@ -4,13 +4,13 @@ import (
 	"time"
 )
 
-// Worker represents a maintenance worker instance
-type Worker struct {
+// WorkerData represents a maintenance worker instance data
+type WorkerData struct {
 	ID            string     `json:"id"`
 	Address       string     `json:"address"`
 	LastHeartbeat time.Time  `json:"last_heartbeat"`
 	Status        string     `json:"status"` // active, inactive, busy
-	CurrentTask   *Task      `json:"current_task,omitempty"`
+	CurrentTask   *TaskInput `json:"current_task,omitempty"`
 	Capabilities  []TaskType `json:"capabilities"`
 	MaxConcurrent int        `json:"max_concurrent"`
 	CurrentLoad   int        `json:"current_load"`
@@ -24,7 +24,7 @@ type WorkerStatus struct {
 	MaxConcurrent  int           `json:"max_concurrent"`
 	CurrentLoad    int           `json:"current_load"`
 	LastHeartbeat  time.Time     `json:"last_heartbeat"`
-	CurrentTasks   []Task        `json:"current_tasks"`
+	CurrentTasks   []TaskInput   `json:"current_tasks"`
 	Uptime         time.Duration `json:"uptime"`
 	TasksCompleted int           `json:"tasks_completed"`
 	TasksFailed    int           `json:"tasks_failed"`
@@ -32,9 +32,9 @@ type WorkerStatus struct {
 
 // WorkerDetailsData represents detailed worker information
 type WorkerDetailsData struct {
-	Worker       *Worker            `json:"worker"`
-	CurrentTasks []*Task            `json:"current_tasks"`
-	RecentTasks  []*Task            `json:"recent_tasks"`
+	Worker       *WorkerData        `json:"worker"`
+	CurrentTasks []*TaskInput       `json:"current_tasks"`
+	RecentTasks  []*TaskInput       `json:"recent_tasks"`
 	Performance  *WorkerPerformance `json:"performance"`
 	LastUpdated  time.Time          `json:"last_updated"`
 }
@@ -69,43 +69,4 @@ type WorkerSummary struct {
 	ByCapability map[TaskType]int `json:"by_capability"`
 	TotalLoad    int              `json:"total_load"`
 	MaxCapacity  int              `json:"max_capacity"`
-}
-
-// WorkerFactory creates worker instances
-type WorkerFactory interface {
-	Create(config WorkerConfig) (WorkerInterface, error)
-	Type() string
-	Description() string
-}
-
-// WorkerInterface defines the interface for all worker implementations
-type WorkerInterface interface {
-	ID() string
-	Start() error
-	Stop() error
-	RegisterTask(taskType TaskType, factory TaskFactory)
-	GetCapabilities() []TaskType
-	GetStatus() WorkerStatus
-	HandleTask(task *Task) error
-	SetCapabilities(capabilities []TaskType)
-	SetMaxConcurrent(max int)
-	SetHeartbeatInterval(interval time.Duration)
-	SetTaskRequestInterval(interval time.Duration)
-}
-
-// TaskFactory creates task instances
-type TaskFactory interface {
-	Create(params TaskParams) (TaskInterface, error)
-	Capabilities() []string
-	Description() string
-}
-
-// TaskInterface defines the interface for all task implementations
-type TaskInterface interface {
-	Type() TaskType
-	Execute(params TaskParams) error
-	Validate(params TaskParams) error
-	EstimateTime(params TaskParams) time.Duration
-	GetProgress() float64
-	Cancel() error
 }

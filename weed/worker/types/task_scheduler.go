@@ -8,10 +8,10 @@ type TaskScheduler interface {
 	GetTaskType() TaskType
 
 	// CanScheduleNow determines if a task can be scheduled now
-	CanScheduleNow(task *Task, runningTasks []*Task, availableWorkers []*Worker) bool
+	CanScheduleNow(task *TaskInput, runningTasks []*TaskInput, availableWorkers []*WorkerData) bool
 
 	// GetPriority returns the priority for tasks of this type
-	GetPriority(task *Task) TaskPriority
+	GetPriority(task *TaskInput) TaskPriority
 
 	// GetMaxConcurrent returns the maximum concurrent tasks of this type
 	GetMaxConcurrent() int
