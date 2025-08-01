@@ -47,8 +47,8 @@ func NewErasureCodingTask(id string, server string, volumeID uint32, collection 
 		server:       server,
 		volumeID:     volumeID,
 		collection:   collection,
-		dataShards:   10, // Default values
-		parityShards: 4,  // Default values
+		dataShards:   erasure_coding.DataShardsCount,   // Default values
+		parityShards: erasure_coding.ParityShardsCount, // Default values
 	}
 }
 
