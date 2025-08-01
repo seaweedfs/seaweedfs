@@ -115,7 +115,7 @@ type MaintenanceWorkerService struct {
 	taskExecutors map[MaintenanceTaskType]TaskExecutor
 
 	// Task registry for creating task instances
-	taskRegistry *tasks.UnifiedTaskRegistry
+	taskRegistry *tasks.TaskRegistry
 }
 
 // NewMaintenanceWorkerService creates a new maintenance worker service
@@ -132,7 +132,7 @@ func NewMaintenanceWorkerService(workerID, address, adminServer string) *Mainten
 		currentTasks:  make(map[string]*MaintenanceTask),
 		stopChan:      make(chan struct{}),
 		taskExecutors: make(map[MaintenanceTaskType]TaskExecutor),
-		taskRegistry:  tasks.GetGlobalRegistry(), // Use global registry with auto-registered tasks
+		taskRegistry:  tasks.GetGlobalTaskRegistry(), // Use global registry with auto-registered tasks
 	}
 
 	// Initialize task executor registry

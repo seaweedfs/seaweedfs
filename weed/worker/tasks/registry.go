@@ -8,24 +8,13 @@ import (
 )
 
 var (
-	globalRegistry        *UnifiedTaskRegistry
-	globalTypesRegistry   *types.TaskRegistry
-	globalUIRegistry      *types.UIRegistry
-	globalUnifiedRegistry *UnifiedTaskRegistry
-	registryOnce          sync.Once
-	typesRegistryOnce     sync.Once
-	uiRegistryOnce        sync.Once
-	unifiedRegistryOnce   sync.Once
+	globalTypesRegistry *types.TaskRegistry
+	globalUIRegistry    *types.UIRegistry
+	globalTaskRegistry  *TaskRegistry
+	typesRegistryOnce   sync.Once
+	uiRegistryOnce      sync.Once
+	taskRegistryOnce    sync.Once
 )
-
-// GetGlobalRegistry returns the global task registry (singleton)
-func GetGlobalRegistry() *UnifiedTaskRegistry {
-	registryOnce.Do(func() {
-		globalRegistry = NewUnifiedTaskRegistry()
-		glog.V(1).Infof("Created global task registry")
-	})
-	return globalRegistry
-}
 
 // GetGlobalTypesRegistry returns the global types registry (singleton)
 func GetGlobalTypesRegistry() *types.TaskRegistry {
@@ -45,20 +34,20 @@ func GetGlobalUIRegistry() *types.UIRegistry {
 	return globalUIRegistry
 }
 
-// GetGlobalUnifiedRegistry returns the global unified task registry (singleton)
-func GetGlobalUnifiedRegistry() *UnifiedTaskRegistry {
-	unifiedRegistryOnce.Do(func() {
-		globalUnifiedRegistry = NewUnifiedTaskRegistry()
-		glog.V(1).Infof("Created global unified task registry")
+// GetGlobalTaskRegistry returns the global task registry (singleton)
+func GetGlobalTaskRegistry() *TaskRegistry {
+	taskRegistryOnce.Do(func() {
+		globalTaskRegistry = NewTaskRegistry()
+		glog.V(1).Infof("Created global task registry")
 	})
-	return globalUnifiedRegistry
+	return globalTaskRegistry
 }
 
-// AutoRegister registers a task with the global unified registry
-func AutoRegister(taskType types.TaskType, factory types.UnifiedTaskFactory) {
-	registry := GetGlobalUnifiedRegistry()
+// AutoRegister registers a task with the global task registry
+func AutoRegister(taskType types.TaskType, factory types.TaskFactory) {
+	registry := GetGlobalTaskRegistry()
 	registry.Register(taskType, factory)
-	glog.V(1).Infof("Auto-registered unified task type: %s", taskType)
+	glog.V(1).Infof("Auto-registered task type: %s", taskType)
 }
 
 // AutoRegisterTypes registers a task with the global types registry
@@ -120,38 +109,38 @@ func SetMaintenancePolicyFromTasks() {
 	glog.V(1).Infof("SetMaintenancePolicyFromTasks called - policy should be built by the integration layer")
 }
 
-// UnifiedTaskRegistry manages unified task factories
-type UnifiedTaskRegistry struct {
-	factories map[types.TaskType]types.UnifiedTaskFactory
+// TaskRegistry manages task factories
+type TaskRegistry struct {
+	factories map[types.TaskType]types.TaskFactory
 	mutex     sync.RWMutex
 }
 
-// NewUnifiedTaskRegistry creates a new unified task registry
-func NewUnifiedTaskRegistry() *UnifiedTaskRegistry {
-	return &UnifiedTaskRegistry{
-		factories: make(map[types.TaskType]types.UnifiedTaskFactory),
+// NewTaskRegistry creates a new task registry
+func NewTaskRegistry() *TaskRegistry {
+	return &TaskRegistry{
+		factories: make(map[types.TaskType]types.TaskFactory),
 	}
 }
 
 // Register adds a factory to the registry
-func (r *UnifiedTaskRegistry) Register(taskType types.TaskType, factory types.UnifiedTaskFactory) {
+func (r *TaskRegistry) Register(taskType types.TaskType, factory types.TaskFactory) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	r.factories[taskType] = factory
 }
 
 // Get returns a factory from the registry
-func (r *UnifiedTaskRegistry) Get(taskType types.TaskType) types.UnifiedTaskFactory {
+func (r *TaskRegistry) Get(taskType types.TaskType) types.TaskFactory {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 	return r.factories[taskType]
 }
 
 // GetAll returns all registered factories
-func (r *UnifiedTaskRegistry) GetAll() map[types.TaskType]types.UnifiedTaskFactory {
+func (r *TaskRegistry) GetAll() map[types.TaskType]types.TaskFactory {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
-	result := make(map[types.TaskType]types.UnifiedTaskFactory)
+	result := make(map[types.TaskType]types.TaskFactory)
 	for k, v := range r.factories {
 		result[k] = v
 	}

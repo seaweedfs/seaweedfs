@@ -40,8 +40,8 @@ const (
 	TaskPriorityCritical TaskPriority = "critical"
 )
 
-// Task represents a maintenance task
-type Task struct {
+// TaskInput represents a maintenance task data
+type TaskInput struct {
 	ID          string                `json:"id"`
 	Type        TaskType              `json:"type"`
 	Status      TaskStatus            `json:"status"`

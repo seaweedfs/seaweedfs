@@ -38,11 +38,11 @@ func RegisterVacuumTask() {
 
 		Config:     config,
 		ConfigSpec: GetConfigSpec(),
-		CreateTask: func(params *worker_pb.TaskParams) (types.UnifiedTask, error) {
+		CreateTask: func(params *worker_pb.TaskParams) (types.Task, error) {
 			if params == nil {
 				return nil, fmt.Errorf("task parameters are required")
 			}
-			return NewUnifiedVacuumTask(
+			return NewVacuumTask(
 				fmt.Sprintf("vacuum-%d", params.VolumeId),
 				params.Server,
 				params.VolumeId,

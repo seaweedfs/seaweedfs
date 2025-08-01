@@ -11,9 +11,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types/base"
 )
 
-// UnifiedErasureCodingTask implements the new UnifiedTask interface
-type UnifiedErasureCodingTask struct {
-	*base.UnifiedBaseTask
+// ErasureCodingTask implements the Task interface
+type ErasureCodingTask struct {
+	*base.BaseTask
 	server     string
 	volumeID   uint32
 	collection string
@@ -26,20 +26,20 @@ type UnifiedErasureCodingTask struct {
 	destinations []*worker_pb.ECDestination
 }
 
-// NewUnifiedErasureCodingTask creates a new unified EC task instance
-func NewUnifiedErasureCodingTask(id string, server string, volumeID uint32, collection string) *UnifiedErasureCodingTask {
-	return &UnifiedErasureCodingTask{
-		UnifiedBaseTask: base.NewUnifiedBaseTask(id, types.TaskTypeErasureCoding),
-		server:          server,
-		volumeID:        volumeID,
-		collection:      collection,
-		dataShards:      10, // Default values
-		parityShards:    4,  // Default values
+// NewErasureCodingTask creates a new unified EC task instance
+func NewErasureCodingTask(id string, server string, volumeID uint32, collection string) *ErasureCodingTask {
+	return &ErasureCodingTask{
+		BaseTask:     base.NewBaseTask(id, types.TaskTypeErasureCoding),
+		server:       server,
+		volumeID:     volumeID,
+		collection:   collection,
+		dataShards:   10, // Default values
+		parityShards: 4,  // Default values
 	}
 }
 
 // Execute implements the UnifiedTask interface
-func (t *UnifiedErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskParams) error {
+func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskParams) error {
 	if params == nil {
 		return fmt.Errorf("task parameters are required")
 	}
@@ -109,7 +109,7 @@ func (t *UnifiedErasureCodingTask) Execute(ctx context.Context, params *worker_p
 }
 
 // Validate implements the UnifiedTask interface
-func (t *UnifiedErasureCodingTask) Validate(params *worker_pb.TaskParams) error {
+func (t *ErasureCodingTask) Validate(params *worker_pb.TaskParams) error {
 	if params == nil {
 		return fmt.Errorf("task parameters are required")
 	}
@@ -143,12 +143,12 @@ func (t *UnifiedErasureCodingTask) Validate(params *worker_pb.TaskParams) error 
 }
 
 // EstimateTime implements the UnifiedTask interface
-func (t *UnifiedErasureCodingTask) EstimateTime(params *worker_pb.TaskParams) time.Duration {
+func (t *ErasureCodingTask) EstimateTime(params *worker_pb.TaskParams) time.Duration {
 	// Basic estimate based on simulated steps
 	return 20 * time.Second // Sum of all step durations
 }
 
 // GetProgress returns current progress
-func (t *UnifiedErasureCodingTask) GetProgress() float64 {
+func (t *ErasureCodingTask) GetProgress() float64 {
 	return t.progress
 }

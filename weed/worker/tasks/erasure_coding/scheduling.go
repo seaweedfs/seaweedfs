@@ -6,7 +6,7 @@ import (
 )
 
 // Scheduling implements the scheduling logic for erasure coding tasks
-func Scheduling(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker, config base.TaskConfig) bool {
+func Scheduling(task *types.TaskInput, runningTasks []*types.TaskInput, availableWorkers []*types.WorkerData, config base.TaskConfig) bool {
 	ecConfig := config.(*Config)
 
 	// Check if we have available workers

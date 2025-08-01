@@ -11,9 +11,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types/base"
 )
 
-// UnifiedVacuumTask implements the new UnifiedTask interface
-type UnifiedVacuumTask struct {
-	*base.UnifiedBaseTask
+// VacuumTask implements the Task interface
+type VacuumTask struct {
+	*base.BaseTask
 	server           string
 	volumeID         uint32
 	collection       string
@@ -21,10 +21,10 @@ type UnifiedVacuumTask struct {
 	progress         float64
 }
 
-// NewUnifiedVacuumTask creates a new unified vacuum task instance
-func NewUnifiedVacuumTask(id string, server string, volumeID uint32, collection string) *UnifiedVacuumTask {
-	return &UnifiedVacuumTask{
-		UnifiedBaseTask:  base.NewUnifiedBaseTask(id, types.TaskTypeVacuum),
+// NewVacuumTask creates a new unified vacuum task instance
+func NewVacuumTask(id string, server string, volumeID uint32, collection string) *VacuumTask {
+	return &VacuumTask{
+		BaseTask:         base.NewBaseTask(id, types.TaskTypeVacuum),
 		server:           server,
 		volumeID:         volumeID,
 		collection:       collection,
@@ -33,7 +33,7 @@ func NewUnifiedVacuumTask(id string, server string, volumeID uint32, collection 
 }
 
 // Execute implements the UnifiedTask interface
-func (t *UnifiedVacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams) error {
+func (t *VacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams) error {
 	if params == nil {
 		return fmt.Errorf("task parameters are required")
 	}
@@ -97,7 +97,7 @@ func (t *UnifiedVacuumTask) Execute(ctx context.Context, params *worker_pb.TaskP
 }
 
 // Validate implements the UnifiedTask interface
-func (t *UnifiedVacuumTask) Validate(params *worker_pb.TaskParams) error {
+func (t *VacuumTask) Validate(params *worker_pb.TaskParams) error {
 	if params == nil {
 		return fmt.Errorf("task parameters are required")
 	}
@@ -123,12 +123,12 @@ func (t *UnifiedVacuumTask) Validate(params *worker_pb.TaskParams) error {
 }
 
 // EstimateTime implements the UnifiedTask interface
-func (t *UnifiedVacuumTask) EstimateTime(params *worker_pb.TaskParams) time.Duration {
+func (t *VacuumTask) EstimateTime(params *worker_pb.TaskParams) time.Duration {
 	// Basic estimate based on simulated steps
 	return 14 * time.Second // Sum of all step durations
 }
 
 // GetProgress returns current progress
-func (t *UnifiedVacuumTask) GetProgress() float64 {
+func (t *VacuumTask) GetProgress() float64 {
 	return t.progress
 }

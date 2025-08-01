@@ -10,9 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
-// UnifiedTask defines the core task interface that all tasks must implement
-// This will replace the existing TaskInterface and TypedTaskInterface
-type UnifiedTask interface {
+// Task defines the core task interface that all tasks must implement
+type Task interface {
 	// Core identity
 	ID() string
 	Type() TaskType
@@ -32,8 +31,8 @@ type UnifiedTask interface {
 }
 
 // TaskWithLogging extends Task with logging capabilities
-type UnifiedTaskWithLogging interface {
-	UnifiedTask
+type TaskWithLogging interface {
+	Task
 	Logger
 }
 

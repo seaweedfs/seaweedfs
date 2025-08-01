@@ -58,7 +58,7 @@ func (s *GenericScheduler) GetTaskType() types.TaskType {
 }
 
 // CanScheduleNow determines if a task can be scheduled using the task definition's function
-func (s *GenericScheduler) CanScheduleNow(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker) bool {
+func (s *GenericScheduler) CanScheduleNow(task *types.TaskInput, runningTasks []*types.TaskInput, availableWorkers []*types.WorkerData) bool {
 	if s.taskDef.SchedulingFunc == nil {
 		return s.defaultCanSchedule(task, runningTasks, availableWorkers)
 	}
@@ -66,7 +66,7 @@ func (s *GenericScheduler) CanScheduleNow(task *types.Task, runningTasks []*type
 }
 
 // defaultCanSchedule provides default scheduling logic
-func (s *GenericScheduler) defaultCanSchedule(task *types.Task, runningTasks []*types.Task, availableWorkers []*types.Worker) bool {
+func (s *GenericScheduler) defaultCanSchedule(task *types.TaskInput, runningTasks []*types.TaskInput, availableWorkers []*types.WorkerData) bool {
 	if !s.taskDef.Config.IsEnabled() {
 		return false
 	}
@@ -103,7 +103,7 @@ func (s *GenericScheduler) defaultCanSchedule(task *types.Task, runningTasks []*
 }
 
 // GetPriority returns the priority for this task
-func (s *GenericScheduler) GetPriority(task *types.Task) types.TaskPriority {
+func (s *GenericScheduler) GetPriority(task *types.TaskInput) types.TaskPriority {
 	return task.Priority
 }
 

@@ -29,7 +29,7 @@ func NewGenericFactory(taskDef *TaskDefinition) *GenericFactory {
 }
 
 // Create creates a task instance using the task definition
-func (f *GenericFactory) Create(params *worker_pb.TaskParams) (types.UnifiedTask, error) {
+func (f *GenericFactory) Create(params *worker_pb.TaskParams) (types.Task, error) {
 	if f.taskDef.CreateTask == nil {
 		return nil, fmt.Errorf("no task creation function defined for %s", f.taskDef.Type)
 	}

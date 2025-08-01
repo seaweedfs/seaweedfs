@@ -11,27 +11,27 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types/base"
 )
 
-// UnifiedBalanceTask implements the new UnifiedTask interface
-type UnifiedBalanceTask struct {
-	*base.UnifiedBaseTask
+// BalanceTask implements the Task interface
+type BalanceTask struct {
+	*base.BaseTask
 	server     string
 	volumeID   uint32
 	collection string
 	progress   float64
 }
 
-// NewUnifiedBalanceTask creates a new unified balance task instance
-func NewUnifiedBalanceTask(id string, server string, volumeID uint32, collection string) *UnifiedBalanceTask {
-	return &UnifiedBalanceTask{
-		UnifiedBaseTask: base.NewUnifiedBaseTask(id, types.TaskTypeBalance),
-		server:          server,
-		volumeID:        volumeID,
-		collection:      collection,
+// NewBalanceTask creates a new balance task instance
+func NewBalanceTask(id string, server string, volumeID uint32, collection string) *BalanceTask {
+	return &BalanceTask{
+		BaseTask:   base.NewBaseTask(id, types.TaskTypeBalance),
+		server:     server,
+		volumeID:   volumeID,
+		collection: collection,
 	}
 }
 
-// Execute implements the UnifiedTask interface
-func (t *UnifiedBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams) error {
+// Execute implements the Task interface
+func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams) error {
 	if params == nil {
 		return fmt.Errorf("task parameters are required")
 	}
@@ -103,7 +103,7 @@ func (t *UnifiedBalanceTask) Execute(ctx context.Context, params *worker_pb.Task
 }
 
 // Validate implements the UnifiedTask interface
-func (t *UnifiedBalanceTask) Validate(params *worker_pb.TaskParams) error {
+func (t *BalanceTask) Validate(params *worker_pb.TaskParams) error {
 	if params == nil {
 		return fmt.Errorf("task parameters are required")
 	}
@@ -125,12 +125,12 @@ func (t *UnifiedBalanceTask) Validate(params *worker_pb.TaskParams) error {
 }
 
 // EstimateTime implements the UnifiedTask interface
-func (t *UnifiedBalanceTask) EstimateTime(params *worker_pb.TaskParams) time.Duration {
+func (t *BalanceTask) EstimateTime(params *worker_pb.TaskParams) time.Duration {
 	// Basic estimate based on simulated steps
 	return 14 * time.Second // Sum of all step durations
 }
 
 // GetProgress returns current progress
-func (t *UnifiedBalanceTask) GetProgress() float64 {
+func (t *BalanceTask) GetProgress() float64 {
 	return t.progress
 }

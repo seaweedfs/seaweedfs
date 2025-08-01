@@ -226,7 +226,6 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 	// Run detection for each registered task type
 	for taskType, detector := range s.taskRegistry.GetAllDetectors() {
 		if !detector.IsEnabled() {
-			glog.V(2).Infof("Skipping disabled detection for task type: %s", taskType)
 			continue
 		}
 
@@ -341,7 +340,7 @@ func (s *MaintenanceIntegration) CanScheduleWithTaskSchedulers(task *Maintenance
 }
 
 // convertTaskToTaskSystem converts existing task to task system format using dynamic mapping
-func (s *MaintenanceIntegration) convertTaskToTaskSystem(task *MaintenanceTask) *types.Task {
+func (s *MaintenanceIntegration) convertTaskToTaskSystem(task *MaintenanceTask) *types.TaskInput {
 	// Convert task type using mapping
 	taskType, exists := s.revTaskTypeMap[task.Type]
 	if !exists {
@@ -357,7 +356,7 @@ func (s *MaintenanceIntegration) convertTaskToTaskSystem(task *MaintenanceTask) 
 		priority = types.TaskPriorityNormal
 	}
 
-	return &types.Task{
+	return &types.TaskInput{
 		ID:          task.ID,
 		Type:        taskType,
 		Priority:    priority,
@@ -370,8 +369,8 @@ func (s *MaintenanceIntegration) convertTaskToTaskSystem(task *MaintenanceTask) 
 }
 
 // convertTasksToTaskSystem converts multiple tasks
-func (s *MaintenanceIntegration) convertTasksToTaskSystem(tasks []*MaintenanceTask) []*types.Task {
-	var result []*types.Task
+func (s *MaintenanceIntegration) convertTasksToTaskSystem(tasks []*MaintenanceTask) []*types.TaskInput {
+	var result []*types.TaskInput
 	for _, task := range tasks {
 		converted := s.convertTaskToTaskSystem(task)
 		if converted != nil {
@@ -382,8 +381,8 @@ func (s *MaintenanceIntegration) convertTasksToTaskSystem(tasks []*MaintenanceTa
 }
 
 // convertWorkersToTaskSystem converts workers to task system format using dynamic mapping
-func (s *MaintenanceIntegration) convertWorkersToTaskSystem(workers []*MaintenanceWorker) []*types.Worker {
-	var result []*types.Worker
+func (s *MaintenanceIntegration) convertWorkersToTaskSystem(workers []*MaintenanceWorker) []*types.WorkerData {
+	var result []*types.WorkerData
 	for _, worker := range workers {
 		capabilities := make([]types.TaskType, 0, len(worker.Capabilities))
 		for _, cap := range worker.Capabilities {
@@ -396,7 +395,7 @@ func (s *MaintenanceIntegration) convertWorkersToTaskSystem(workers []*Maintenan
 			}
 		}
 
-		result = append(result, &types.Worker{
+		result = append(result, &types.WorkerData{
 			ID:            worker.ID,
 			Address:       worker.Address,
 			Capabilities:  capabilities,

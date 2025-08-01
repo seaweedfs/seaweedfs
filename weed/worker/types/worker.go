@@ -7,20 +7,19 @@ import (
 	"context"
 )
 
-// UnifiedWorker defines core worker functionality
-// This will replace the existing WorkerInterface
-type UnifiedWorker interface {
+// Worker defines core worker functionality
+type Worker interface {
 	// Core operations
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
-	HandleTask(ctx context.Context, task UnifiedTask) error
+	HandleTask(ctx context.Context, task Task) error
 
 	// Status
 	GetStatus() WorkerStatus
 	GetCapabilities() []TaskType
 
 	// Configuration
-	Configure(config UnifiedWorkerConfig) error
+	Configure(config WorkerCreationConfig) error
 }
 
 // BaseWorker provides common worker functionality
@@ -41,7 +40,7 @@ func NewBaseWorker(id string) *BaseWorker {
 }
 
 // Configure applies worker configuration
-func (w *BaseWorker) Configure(config UnifiedWorkerConfig) error {
+func (w *BaseWorker) Configure(config WorkerCreationConfig) error {
 	w.id = config.ID
 	w.capabilities = config.Capabilities
 	w.maxConcurrent = config.MaxConcurrent

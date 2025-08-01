@@ -26,14 +26,14 @@ type TaskDefinition struct {
 	ConfigSpec ConfigSpec
 
 	// Task creation
-	CreateTask func(params *worker_pb.TaskParams) (types.UnifiedTask, error)
+	CreateTask func(params *worker_pb.TaskParams) (types.Task, error)
 
 	// Detection logic
 	DetectionFunc func(metrics []*types.VolumeHealthMetrics, info *types.ClusterInfo, config TaskConfig) ([]*types.TaskDetectionResult, error)
 	ScanInterval  time.Duration
 
 	// Scheduling logic
-	SchedulingFunc func(task *types.Task, running []*types.Task, workers []*types.Worker, config TaskConfig) bool
+	SchedulingFunc func(task *types.TaskInput, running []*types.TaskInput, workers []*types.WorkerData, config TaskConfig) bool
 	MaxConcurrent  int
 	RepeatInterval time.Duration
 }

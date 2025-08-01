@@ -20,16 +20,16 @@ type Factory[T any, C any] interface {
 	Capabilities() []string
 }
 
-// UnifiedTaskFactory creates new task instances
-type UnifiedTaskFactory interface {
-	Create(params *worker_pb.TaskParams) (UnifiedTask, error)
+// TaskFactory creates new task instances
+type TaskFactory interface {
+	Create(params *worker_pb.TaskParams) (Task, error)
 	Type() string
 	Description() string
 	Capabilities() []string
 }
 
-// UnifiedTaskConfig defines task creation configuration
-type UnifiedTaskConfig struct {
+// TaskCreationConfig defines task creation configuration
+type TaskCreationConfig struct {
 	ID         string
 	Type       TaskType
 	Server     string
@@ -38,8 +38,8 @@ type UnifiedTaskConfig struct {
 	Logger     Logger
 }
 
-// UnifiedWorkerConfig encapsulates all worker configuration
-type UnifiedWorkerConfig struct {
+// WorkerCreationConfig encapsulates all worker configuration
+type WorkerCreationConfig struct {
 	ID                  string
 	Capabilities        []TaskType
 	MaxConcurrent       int
@@ -49,4 +49,4 @@ type UnifiedWorkerConfig struct {
 }
 
 // WorkerFactory creates new worker instances
-type UnifiedWorkerFactory = Factory[UnifiedWorker, UnifiedWorkerConfig]
+type WorkerFactory = Factory[Worker, WorkerConfig]
