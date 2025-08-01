@@ -90,7 +90,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					VolumeId:   metric.VolumeID,
 					Server:     metric.Server,
 					Collection: metric.Collection,
-					Replicas:   replicas, // Include all volume replicas for deletion
+					VolumeSize: metric.Size, // Store original volume size for tracking changes
+					Replicas:   replicas,    // Include all volume replicas for deletion
 					TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
 						ErasureCodingParams: createECTaskParams(multiPlan),
 					},

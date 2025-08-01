@@ -810,6 +810,7 @@ type TaskParams struct {
 	DataCenter string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
 	Rack       string                 `protobuf:"bytes,5,opt,name=rack,proto3" json:"rack,omitempty"`
 	Replicas   []string               `protobuf:"bytes,6,rep,name=replicas,proto3" json:"replicas,omitempty"`
+	VolumeSize uint64                 `protobuf:"varint,11,opt,name=volume_size,json=volumeSize,proto3" json:"volume_size,omitempty"` // Original volume size in bytes for tracking size changes
 	// Typed task parameters
 	//
 	// Types that are valid to be assigned to TaskParams:
@@ -893,6 +894,13 @@ func (x *TaskParams) GetReplicas() []string {
 		return x.Replicas
 	}
 	return nil
+}
+
+func (x *TaskParams) GetVolumeSize() uint64 {
+	if x != nil {
+		return x.VolumeSize
+	}
+	return 0
 }
 
 func (x *TaskParams) GetTaskParams() isTaskParams_TaskParams {
@@ -2861,7 +2869,7 @@ const file_worker_proto_rawDesc = "" +
 	"\bmetadata\x18\x06 \x03(\v2'.worker_pb.TaskAssignment.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf9\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9a\x04\n" +
 	"\n" +
 	"TaskParams\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x16\n" +
@@ -2872,7 +2880,9 @@ const file_worker_proto_rawDesc = "" +
 	"\vdata_center\x18\x04 \x01(\tR\n" +
 	"dataCenter\x12\x12\n" +
 	"\x04rack\x18\x05 \x01(\tR\x04rack\x12\x1a\n" +
-	"\breplicas\x18\x06 \x03(\tR\breplicas\x12B\n" +
+	"\breplicas\x18\x06 \x03(\tR\breplicas\x12\x1f\n" +
+	"\vvolume_size\x18\v \x01(\x04R\n" +
+	"volumeSize\x12B\n" +
 	"\rvacuum_params\x18\a \x01(\v2\x1b.worker_pb.VacuumTaskParamsH\x00R\fvacuumParams\x12X\n" +
 	"\x15erasure_coding_params\x18\b \x01(\v2\".worker_pb.ErasureCodingTaskParamsH\x00R\x13erasureCodingParams\x12E\n" +
 	"\x0ebalance_params\x18\t \x01(\v2\x1c.worker_pb.BalanceTaskParamsH\x00R\rbalanceParams\x12Q\n" +

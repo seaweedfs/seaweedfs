@@ -100,6 +100,7 @@ message TaskParams {
   string data_center = 4;
   string rack = 5;
   repeated string replicas = 6;
+  uint64 volume_size = 11;  // Original volume size in bytes for tracking size changes
   
   // Typed task parameters
   oneof task_params {

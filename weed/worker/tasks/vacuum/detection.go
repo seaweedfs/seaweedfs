@@ -42,7 +42,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			}
 
 			// Create typed parameters for vacuum task
-			result.TypedParams = createVacuumTaskParams(result, vacuumConfig)
+			result.TypedParams = createVacuumTaskParams(result, metric, vacuumConfig)
 			results = append(results, result)
 		} else {
 			// Debug why volume was not selected
@@ -80,7 +80,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 // createVacuumTaskParams creates typed parameters for vacuum tasks
 // This function is moved from MaintenanceIntegration.createVacuumTaskParams to the detection logic
-func createVacuumTaskParams(task *types.TaskDetectionResult, vacuumConfig *Config) *worker_pb.TaskParams {
+func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.VolumeHealthMetrics, vacuumConfig *Config) *worker_pb.TaskParams {
 	// Use configured values or defaults
 	garbageThreshold := 0.3                    // Default 30%
 	verifyChecksum := true                     // Default to verify
@@ -99,6 +99,7 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, vacuumConfig *Confi
 		VolumeId:   task.VolumeID,
 		Server:     task.Server,
 		Collection: task.Collection,
+		VolumeSize: metric.Size, // Store original volume size for tracking changes
 		TaskParams: &worker_pb.TaskParams_VacuumParams{
 			VacuumParams: &worker_pb.VacuumTaskParams{
 				GarbageThreshold: garbageThreshold,

@@ -106,6 +106,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			VolumeId:   selectedVolume.VolumeID,
 			Server:     selectedVolume.Server,
 			Collection: selectedVolume.Collection,
+			VolumeSize: selectedVolume.Size, // Store original volume size for tracking changes
 			TaskParams: &worker_pb.TaskParams_BalanceParams{
 				BalanceParams: &worker_pb.BalanceTaskParams{
 					DestNode:           destinationPlan.TargetNode,
