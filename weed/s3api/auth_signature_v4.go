@@ -24,6 +24,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -179,7 +180,7 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, forwardedPrefix+req.URL.Path, req.Method, foundCred.SecretKey, t, signV4Values)
+		errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, path.Clean(forwardedPrefix+req.URL.Path), req.Method, foundCred.SecretKey, t, signV4Values)
 		if errCode == s3err.ErrNone {
 			return identity, errCode
 		}
@@ -327,18 +328,19 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	queryForCanonical.Del("X-Amz-Signature")
 	queryStr := strings.Replace(queryForCanonical.Encode(), "+", "%20", -1)
 
+	var errCode s3err.ErrorCode
 	// Check if reverse proxy is forwarding with prefix for presigned URLs
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		errCode := iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, forwardedPrefix+r.URL.Path, r.Method, foundCred.SecretKey, t, credHeader, signature)
+		errCode = iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, path.Clean(forwardedPrefix+r.URL.Path), r.Method, foundCred.SecretKey, t, credHeader, signature)
 		if errCode == s3err.ErrNone {
 			return identity, errCode
 		}
 	}
 
 	// Try normal signature verification (without prefix)
-	errCode := iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, r.URL.Path, r.Method, foundCred.SecretKey, t, credHeader, signature)
+	errCode = iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, r.URL.Path, r.Method, foundCred.SecretKey, t, credHeader, signature)
 	if errCode == s3err.ErrNone {
 		return identity, errCode
 	}

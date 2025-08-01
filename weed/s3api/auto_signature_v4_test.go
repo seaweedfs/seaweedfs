@@ -273,31 +273,52 @@ func newTestIAM() *IdentityAccessManagement {
 
 // Test X-Forwarded-Prefix support for reverse proxy scenarios
 func TestSignatureV4WithForwardedPrefix(t *testing.T) {
-	iam := newTestIAM()
-
-	// Create a request with X-Forwarded-Prefix header
-	r, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
-	if err != nil {
-		t.Fatalf("Failed to create test request: %v", err)
+	tests := []struct {
+		name            string
+		forwardedPrefix string
+		expectedPath    string
+	}{
+		{
+			name:            "prefix without trailing slash",
+			forwardedPrefix: "/s3",
+			expectedPath:    "/s3/test-bucket/test-object",
+		},
+		{
+			name:            "prefix with trailing slash",
+			forwardedPrefix: "/s3/",
+			expectedPath:    "/s3/test-bucket/test-object",
+		},
 	}
 
-	// Set the mux variables manually since we're not going through the actual router
-	r = mux.SetURLVars(r, map[string]string{
-		"bucket": "test-bucket",
-		"object": "test-object",
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iam := newTestIAM()
 
-	r.Header.Set("X-Forwarded-Prefix", "/s3")
-	r.Header.Set("Host", "example.com")
-	r.Header.Set("X-Forwarded-Host", "example.com")
+			// Create a request with X-Forwarded-Prefix header
+			r, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
+			if err != nil {
+				t.Fatalf("Failed to create test request: %v", err)
+			}
 
-	// Sign the request with the prefixed path
-	signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "/s3"+r.URL.Path)
+			// Set the mux variables manually since we're not going through the actual router
+			r = mux.SetURLVars(r, map[string]string{
+				"bucket": "test-bucket",
+				"object": "test-object",
+			})
 
-	// Test signature verification
-	_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
-	if errCode != s3err.ErrNone {
-		t.Errorf("Expected successful signature validation with X-Forwarded-Prefix, got error: %v (code: %d)", errCode, int(errCode))
+			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
+			r.Header.Set("Host", "example.com")
+			r.Header.Set("X-Forwarded-Host", "example.com")
+
+			// Sign the request with the expected normalized path
+			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", tt.expectedPath)
+
+			// Test signature verification
+			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected successful signature validation with X-Forwarded-Prefix %q, got error: %v (code: %d)", tt.forwardedPrefix, errCode, int(errCode))
+			}
+		})
 	}
 }
 
@@ -334,44 +355,68 @@ func TestPresignedSignatureV4Basic(t *testing.T) {
 
 // Test X-Forwarded-Prefix support for presigned URLs
 func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
-	iam := newTestIAM()
-
-	// Create a presigned request that simulates reverse proxy scenario:
-	// 1. Client generates presigned URL with prefixed path
-	// 2. Proxy strips prefix and forwards to SeaweedFS with X-Forwarded-Prefix header
-
-	// Start with the original request URL (what client sees)
-	r, err := newTestRequest("GET", "https://example.com/s3/test-bucket/test-object", 0, nil)
-	if err != nil {
-		t.Fatalf("Failed to create test request: %v", err)
+	tests := []struct {
+		name            string
+		forwardedPrefix string
+		originalPath    string
+		expectedPath    string
+	}{
+		{
+			name:            "prefix without trailing slash",
+			forwardedPrefix: "/s3",
+			originalPath:    "/s3/test-bucket/test-object",
+			expectedPath:    "/s3/test-bucket/test-object",
+		},
+		{
+			name:            "prefix with trailing slash",
+			forwardedPrefix: "/s3/",
+			originalPath:    "/s3/test-bucket/test-object",
+			expectedPath:    "/s3/test-bucket/test-object",
+		},
 	}
 
-	// Generate presigned URL with the original prefixed path
-	err = preSignV4WithPath(iam, r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", 3600, r.URL.Path)
-	if err != nil {
-		t.Errorf("Failed to presign request: %v", err)
-		return
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iam := newTestIAM()
 
-	// Now simulate what the reverse proxy does:
-	// 1. Strip the prefix from the URL path
-	r.URL.Path = "/test-bucket/test-object"
+			// Create a presigned request that simulates reverse proxy scenario:
+			// 1. Client generates presigned URL with prefixed path
+			// 2. Proxy strips prefix and forwards to SeaweedFS with X-Forwarded-Prefix header
 
-	// 2. Set the mux variables for the stripped path
-	r = mux.SetURLVars(r, map[string]string{
-		"bucket": "test-bucket",
-		"object": "test-object",
-	})
+			// Start with the original request URL (what client sees)
+			r, err := newTestRequest("GET", "https://example.com"+tt.originalPath, 0, nil)
+			if err != nil {
+				t.Fatalf("Failed to create test request: %v", err)
+			}
 
-	// 3. Add the forwarded headers
-	r.Header.Set("X-Forwarded-Prefix", "/s3")
-	r.Header.Set("Host", "example.com")
-	r.Header.Set("X-Forwarded-Host", "example.com")
+			// Generate presigned URL with the original prefixed path
+			err = preSignV4WithPath(iam, r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", 3600, tt.originalPath)
+			if err != nil {
+				t.Errorf("Failed to presign request: %v", err)
+				return
+			}
 
-	// Test presigned signature verification
-	_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
-	if errCode != s3err.ErrNone {
-		t.Errorf("Expected successful presigned signature validation with X-Forwarded-Prefix, got error: %v (code: %d)", errCode, int(errCode))
+			// Now simulate what the reverse proxy does:
+			// 1. Strip the prefix from the URL path
+			r.URL.Path = "/test-bucket/test-object"
+
+			// 2. Set the mux variables for the stripped path
+			r = mux.SetURLVars(r, map[string]string{
+				"bucket": "test-bucket",
+				"object": "test-object",
+			})
+
+			// 3. Add the forwarded headers
+			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
+			r.Header.Set("Host", "example.com")
+			r.Header.Set("X-Forwarded-Host", "example.com")
+
+			// Test presigned signature verification
+			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected successful presigned signature validation with X-Forwarded-Prefix %q, got error: %v (code: %d)", tt.forwardedPrefix, errCode, int(errCode))
+			}
+		})
 	}
 }
 
