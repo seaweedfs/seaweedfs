@@ -22,6 +22,7 @@ func NewBaseTask(id string, taskType types.TaskType) *BaseTask {
 	return &BaseTask{
 		id:       id,
 		taskType: taskType,
+		logger:   &types.GlogFallbackLogger{}, // Default fallback logger
 	}
 }
 

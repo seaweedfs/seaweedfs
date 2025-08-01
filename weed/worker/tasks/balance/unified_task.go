@@ -43,6 +43,7 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 
 	// Get planned destination
 	destNode := balanceParams.DestNode
+
 	if destNode != "" {
 		t.GetLogger().WithFields(map[string]interface{}{
 			"volume_id":   t.volumeID,

@@ -7,6 +7,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
@@ -43,6 +44,58 @@ type Logger interface {
 	Error(msg string, args ...interface{})
 	Debug(msg string, args ...interface{})
 	WithFields(fields map[string]interface{}) Logger
+}
+
+// NoOpLogger is a logger that does nothing (silent)
+type NoOpLogger struct{}
+
+func (l *NoOpLogger) Info(msg string, args ...interface{})    {}
+func (l *NoOpLogger) Warning(msg string, args ...interface{}) {}
+func (l *NoOpLogger) Error(msg string, args ...interface{})   {}
+func (l *NoOpLogger) Debug(msg string, args ...interface{})   {}
+func (l *NoOpLogger) WithFields(fields map[string]interface{}) Logger {
+	return l // Return self since we're doing nothing anyway
+}
+
+// GlogFallbackLogger is a logger that falls back to glog
+type GlogFallbackLogger struct{}
+
+func (l *GlogFallbackLogger) Info(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		glog.Infof(msg, args...)
+	} else {
+		glog.Info(msg)
+	}
+}
+
+func (l *GlogFallbackLogger) Warning(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		glog.Warningf(msg, args...)
+	} else {
+		glog.Warning(msg)
+	}
+}
+
+func (l *GlogFallbackLogger) Error(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		glog.Errorf(msg, args...)
+	} else {
+		glog.Error(msg)
+	}
+}
+
+func (l *GlogFallbackLogger) Debug(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		glog.V(1).Infof(msg, args...)
+	} else {
+		glog.V(1).Info(msg)
+	}
+}
+
+func (l *GlogFallbackLogger) WithFields(fields map[string]interface{}) Logger {
+	// For glog fallback, we'll just return self and ignore fields for simplicity
+	// A more sophisticated implementation could format the fields into the message
+	return l
 }
 
 // LogLevel represents logging severity levels
