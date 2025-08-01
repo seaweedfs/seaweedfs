@@ -455,8 +455,14 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		object = prefix
 	}
 
-	if !identity.canDo(action, bucket, object) {
-		return identity, s3err.ErrAccessDenied
+	// For ListBuckets, authorization is performed in the handler by iterating
+	// through buckets and checking permissions for each. Skip the global check here.
+	if action == s3_constants.ACTION_LIST && bucket == "" {
+		// ListBuckets operation - authorization handled per-bucket in the handler
+	} else {
+		if !identity.canDo(action, bucket, object) {
+			return identity, s3err.ErrAccessDenied
+		}
 	}
 
 	r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
