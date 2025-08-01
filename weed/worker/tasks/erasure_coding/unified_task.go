@@ -136,7 +136,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	// Step 4: Distribute shards to destinations
 	t.ReportProgress(60.0)
 	t.GetLogger().Info("Distributing EC shards to destinations")
-	if err := t.distributeEcShards(); err != nil {
+	if err := t.distributeEcShards(shardFiles); err != nil {
 		return fmt.Errorf("failed to distribute EC shards: %v", err)
 	}
 
@@ -340,35 +340,128 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	return shardFiles, nil
 }
 
-// distributeEcShards distributes EC shards to destination servers
-func (t *ErasureCodingTask) distributeEcShards() error {
+// distributeEcShards distributes locally generated EC shards to destination servers
+func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) error {
 	if len(t.destinations) == 0 {
 		return fmt.Errorf("no destinations specified for EC shard distribution")
 	}
 
-	// Use VolumeEcShardsCopy to copy shards from source to destinations
-	for _, dest := range t.destinations {
-		err := operation.WithVolumeServerClient(false, pb.ServerAddress(dest.Node), grpc.WithInsecure(),
-			func(client volume_server_pb.VolumeServerClient) error {
-				_, copyErr := client.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
-					VolumeId:       t.volumeID,
-					Collection:     t.collection,
-					ShardIds:       []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}, // All shards
-					CopyEcxFile:    true,
-					CopyEcjFile:    false,
-					CopyVifFile:    true,
-					SourceDataNode: t.server,
-					DiskId:         dest.DiskId, // Pass target disk ID
-				})
-				return copyErr
-			})
+	if len(shardFiles) == 0 {
+		return fmt.Errorf("no shard files available for distribution")
+	}
 
-		if err != nil {
-			return fmt.Errorf("failed to copy shards to %s: %v", dest.Node, err)
+	// Send each shard file to the appropriate destination servers
+	for _, dest := range t.destinations {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"destination": dest.Node,
+			"disk_id":     dest.DiskId,
+			"shards":      len(shardFiles),
+		}).Info("Distributing EC shards to destination")
+
+		// Send all shard files to this destination
+		for shardType, filePath := range shardFiles {
+			if err := t.sendShardFileToDestination(dest.Node, filePath, shardType); err != nil {
+				return fmt.Errorf("failed to send %s to %s: %v", shardType, dest.Node, err)
+			}
 		}
 	}
 
+	glog.V(1).Infof("Successfully distributed EC shards to %d destinations", len(t.destinations))
 	return nil
+}
+
+// sendShardFileToDestination sends a single shard file to a destination server using ReceiveFile API
+func (t *ErasureCodingTask) sendShardFileToDestination(destServer, filePath, shardType string) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(destServer), grpc.WithInsecure(),
+		func(client volume_server_pb.VolumeServerClient) error {
+			// Open the local shard file
+			file, err := os.Open(filePath)
+			if err != nil {
+				return fmt.Errorf("failed to open shard file %s: %v", filePath, err)
+			}
+			defer file.Close()
+
+			// Get file size
+			fileInfo, err := file.Stat()
+			if err != nil {
+				return fmt.Errorf("failed to get file info for %s: %v", filePath, err)
+			}
+
+			// Determine file extension and shard ID
+			var ext string
+			var shardId uint32
+			if shardType == "ecx" {
+				ext = ".ecx"
+				shardId = 0 // ecx file doesn't have a specific shard ID
+			} else if shardType == "vif" {
+				ext = ".vif"
+				shardId = 0 // vif file doesn't have a specific shard ID
+			} else if strings.HasPrefix(shardType, "ec") && len(shardType) == 4 {
+				// EC shard file like "ec00", "ec01", etc.
+				ext = "." + shardType
+				fmt.Sscanf(shardType[2:], "%d", &shardId)
+			} else {
+				return fmt.Errorf("unknown shard type: %s", shardType)
+			}
+
+			// Create streaming client
+			stream, err := client.ReceiveFile(context.Background())
+			if err != nil {
+				return fmt.Errorf("failed to create receive stream: %v", err)
+			}
+
+			// Send file info first
+			err = stream.Send(&volume_server_pb.ReceiveFileRequest{
+				Data: &volume_server_pb.ReceiveFileRequest_Info{
+					Info: &volume_server_pb.ReceiveFileInfo{
+						VolumeId:   t.volumeID,
+						Ext:        ext,
+						Collection: t.collection,
+						IsEcVolume: true,
+						ShardId:    shardId,
+						FileSize:   uint64(fileInfo.Size()),
+					},
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("failed to send file info: %v", err)
+			}
+
+			// Send file content in chunks
+			buffer := make([]byte, 64*1024) // 64KB chunks
+			for {
+				n, readErr := file.Read(buffer)
+				if n > 0 {
+					err = stream.Send(&volume_server_pb.ReceiveFileRequest{
+						Data: &volume_server_pb.ReceiveFileRequest_FileContent{
+							FileContent: buffer[:n],
+						},
+					})
+					if err != nil {
+						return fmt.Errorf("failed to send file content: %v", err)
+					}
+				}
+				if readErr == io.EOF {
+					break
+				}
+				if readErr != nil {
+					return fmt.Errorf("failed to read file: %v", readErr)
+				}
+			}
+
+			// Close stream and get response
+			resp, err := stream.CloseAndRecv()
+			if err != nil {
+				return fmt.Errorf("failed to close stream: %v", err)
+			}
+
+			if resp.Error != "" {
+				return fmt.Errorf("server error: %s", resp.Error)
+			}
+
+			glog.V(2).Infof("Successfully sent %s (%d bytes) to %s", shardType, resp.BytesWritten, destServer)
+			return nil
+		})
 }
 
 // mountEcShards mounts EC shards on destination servers
