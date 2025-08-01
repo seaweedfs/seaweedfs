@@ -463,29 +463,19 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 	}
 
 	if tags := r.Header.Get(s3_constants.AmzObjectTagging); tags != "" {
-		for _, v := range strings.Split(tags, "&") {
-			tag := strings.Split(v, "=")
-			if len(tag) == 2 {
-				// URL decode both key and value
-				decodedKey, err := url.QueryUnescape(tag[0])
-				if err != nil {
-					glog.Errorf("Failed to decode tag key '%s': %v", tag[0], err)
-					continue
+		// Use url.ParseQuery for robust parsing and automatic URL decoding
+		parsedTags, err := url.ParseQuery(tags)
+		if err != nil {
+			glog.Errorf("Failed to parse S3 tags '%s': %v", tags, err)
+		} else {
+			for key, values := range parsedTags {
+				// According to S3 spec, if a key is provided multiple times, the last value is used.
+				// A tag value can be an empty string but not nil.
+				value := ""
+				if len(values) > 0 {
+					value = values[len(values)-1]
 				}
-				decodedValue, err := url.QueryUnescape(tag[1])
-				if err != nil {
-					glog.Errorf("Failed to decode tag value '%s': %v", tag[1], err)
-					continue
-				}
-				metadata[s3_constants.AmzObjectTagging+"-"+decodedKey] = []byte(decodedValue)
-			} else if len(tag) == 1 {
-				// URL decode key for empty value tags
-				decodedKey, err := url.QueryUnescape(tag[0])
-				if err != nil {
-					glog.Errorf("Failed to decode tag key '%s': %v", tag[0], err)
-					continue
-				}
-				metadata[s3_constants.AmzObjectTagging+"-"+decodedKey] = nil
+				metadata[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
 			}
 		}
 	}

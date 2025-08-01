@@ -160,11 +160,15 @@ func TestObjectUploadWithEncodedTags(t *testing.T) {
 
 	// Upload object with tags that contain special characters that would be URL encoded
 	// The AWS SDK will automatically URL encode these when sending the X-Amz-Tagging header
+	// Test edge cases that url.ParseQuery handles better than manual parsing:
+	// - Values containing "=" characters
+	// - Empty values
+	// - Complex special characters
 	_, err := svc.PutObject(&s3.PutObjectInput{
 		Bucket:  aws.String("theBucket"),
 		Key:     aws.String(objectKey),
 		Body:    aws.ReadSeekCloser(strings.NewReader("test content")),
-		Tagging: aws.String("Timestamp=2025-07-16 14:40:39&Path=/tmp/file.txt&Description=A test file with spaces"),
+		Tagging: aws.String("Timestamp=2025-07-16 14:40:39&Path=/tmp/file.txt&Description=A test file with spaces&Equation=x=y+1&EmptyValue=&Complex=A%20tag%20with%20%26%20%3D%20chars"),
 	})
 
 	if err != nil {
