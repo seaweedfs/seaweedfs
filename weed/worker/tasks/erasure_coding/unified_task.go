@@ -75,20 +75,39 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		"destinations":  len(t.destinations),
 	}).Info("Starting erasure coding task")
 
+	// Use the working directory from task parameters, or fall back to a default
+	baseWorkDir := t.workDir
+	if baseWorkDir == "" {
+		baseWorkDir = "/tmp/seaweedfs_ec_work"
+	}
+
 	// Create unique working directory for this task
-	taskWorkDir := fmt.Sprintf("/tmp/seaweedfs_ec_work/vol_%d_%d", t.volumeID, time.Now().Unix())
+	taskWorkDir := filepath.Join(baseWorkDir, fmt.Sprintf("vol_%d_%d", t.volumeID, time.Now().Unix()))
 	if err := os.MkdirAll(taskWorkDir, 0755); err != nil {
 		return fmt.Errorf("failed to create task working directory %s: %v", taskWorkDir, err)
 	}
 	glog.V(1).Infof("Created working directory: %s", taskWorkDir)
 
-	// Ensure cleanup of working directory
+	// Update the task's working directory to the specific instance directory
+	t.workDir = taskWorkDir
+	glog.V(1).Infof("Task working directory configured: %s (logs will be written here)", taskWorkDir)
+
+	// Ensure cleanup of working directory (but preserve logs)
 	defer func() {
-		if err := os.RemoveAll(taskWorkDir); err != nil {
-			glog.Warningf("Failed to cleanup working directory %s: %v", taskWorkDir, err)
-		} else {
-			glog.V(1).Infof("Cleaned up working directory: %s", taskWorkDir)
+		// Clean up volume files and EC shards, but preserve the directory structure and any logs
+		patterns := []string{"*.dat", "*.idx", "*.ec*", "*.vif"}
+		for _, pattern := range patterns {
+			matches, err := filepath.Glob(filepath.Join(taskWorkDir, pattern))
+			if err != nil {
+				continue
+			}
+			for _, match := range matches {
+				if err := os.Remove(match); err != nil {
+					glog.V(2).Infof("Could not remove %s: %v", match, err)
+				}
+			}
 		}
+		glog.V(1).Infof("Cleaned up volume files from working directory: %s (logs preserved)", taskWorkDir)
 	}()
 
 	// Step 1: Mark volume readonly
