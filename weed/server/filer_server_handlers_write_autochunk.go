@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -465,9 +466,26 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 		for _, v := range strings.Split(tags, "&") {
 			tag := strings.Split(v, "=")
 			if len(tag) == 2 {
-				metadata[s3_constants.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
+				// URL decode both key and value
+				decodedKey, err := url.QueryUnescape(tag[0])
+				if err != nil {
+					glog.Errorf("Failed to decode tag key '%s': %v", tag[0], err)
+					continue
+				}
+				decodedValue, err := url.QueryUnescape(tag[1])
+				if err != nil {
+					glog.Errorf("Failed to decode tag value '%s': %v", tag[1], err)
+					continue
+				}
+				metadata[s3_constants.AmzObjectTagging+"-"+decodedKey] = []byte(decodedValue)
 			} else if len(tag) == 1 {
-				metadata[s3_constants.AmzObjectTagging+"-"+tag[0]] = nil
+				// URL decode key for empty value tags
+				decodedKey, err := url.QueryUnescape(tag[0])
+				if err != nil {
+					glog.Errorf("Failed to decode tag key '%s': %v", tag[0], err)
+					continue
+				}
+				metadata[s3_constants.AmzObjectTagging+"-"+decodedKey] = nil
 			}
 		}
 	}
