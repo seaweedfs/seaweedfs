@@ -490,7 +490,16 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 func extractHostHeader(r *http.Request) string {
 	// Check for X-Forwarded-Host header first, which is set by reverse proxies
 	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
-		// Using reverse proxy with X-Forwarded-Host.
+		// Check if reverse proxy also forwarded the port
+		if forwardedPort := r.Header.Get("X-Forwarded-Port"); forwardedPort != "" {
+			// Determine the protocol to check for standard ports
+			proto := r.Header.Get("X-Forwarded-Proto")
+			// Only add port if it's not the standard port for the protocol
+            if (proto == "https" && forwardedPort != "443") || (proto != "https" && forwardedPort != "80") {
+				return forwardedHost + ":" + forwardedPort
+			}
+		}
+		// Using reverse proxy with X-Forwarded-Host (standard port or no port forwarded).
 		return forwardedHost
 	}
 
