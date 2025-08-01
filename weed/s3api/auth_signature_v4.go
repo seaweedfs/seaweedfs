@@ -495,7 +495,7 @@ func extractHostHeader(r *http.Request) string {
 			// Determine the protocol to check for standard ports
 			proto := r.Header.Get("X-Forwarded-Proto")
 			// Only add port if it's not the standard port for the protocol
-			if ((proto == "http" || proto == "") && forwardedPort != "80") || ((proto == "https" || proto == "") && forwardedPort != "443") {
+            if (proto == "https" && forwardedPort != "443") || (proto != "https" && forwardedPort != "80") {
 				return forwardedHost + ":" + forwardedPort
 			}
 		}
