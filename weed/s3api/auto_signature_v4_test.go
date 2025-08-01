@@ -322,6 +322,88 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 	}
 }
 
+// Test X-Forwarded-Port support for reverse proxy scenarios
+func TestSignatureV4WithForwardedPort(t *testing.T) {
+	tests := []struct {
+		name           string
+		host           string
+		forwardedHost  string
+		forwardedPort  string
+		forwardedProto string
+		expectedHost   string
+	}{
+		{
+			name:           "HTTP with non-standard port",
+			host:           "backend:8333",
+			forwardedHost:  "example.com",
+			forwardedPort:  "8080",
+			forwardedProto: "http",
+			expectedHost:   "example.com:8080",
+		},
+		{
+			name:           "HTTPS with non-standard port",
+			host:           "backend:8333",
+			forwardedHost:  "example.com",
+			forwardedPort:  "8443",
+			forwardedProto: "https",
+			expectedHost:   "example.com:8443",
+		},
+		{
+			name:           "HTTP with standard port (80)",
+			host:           "backend:8333",
+			forwardedHost:  "example.com",
+			forwardedPort:  "80",
+			forwardedProto: "http",
+			expectedHost:   "example.com",
+		},
+		{
+			name:           "HTTPS with standard port (443)",
+			host:           "backend:8333",
+			forwardedHost:  "example.com",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			expectedHost:   "example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iam := newTestIAM()
+
+			// Create a request
+			r, err := newTestRequest("GET", "https://"+tt.host+"/test-bucket/test-object", 0, nil)
+			if err != nil {
+				t.Fatalf("Failed to create test request: %v", err)
+			}
+
+			// Set the mux variables manually since we're not going through the actual router
+			r = mux.SetURLVars(r, map[string]string{
+				"bucket": "test-bucket",
+				"object": "test-object",
+			})
+
+			// Set forwarded headers
+			r.Header.Set("Host", tt.host)
+			r.Header.Set("X-Forwarded-Host", tt.forwardedHost)
+			r.Header.Set("X-Forwarded-Port", tt.forwardedPort)
+			r.Header.Set("X-Forwarded-Proto", tt.forwardedProto)
+
+			// Sign the request with the expected host header
+			// We need to temporarily modify the Host header for signing
+			originalHost := r.Host
+			r.Host = tt.expectedHost
+			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", r.URL.Path)
+			r.Host = originalHost // Restore original host
+
+			// Test signature verification
+			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected successful signature validation with forwarded port, got error: %v (code: %d)", errCode, int(errCode))
+			}
+		})
+	}
+}
+
 // Test basic presigned URL functionality without prefix
 func TestPresignedSignatureV4Basic(t *testing.T) {
 	iam := newTestIAM()
