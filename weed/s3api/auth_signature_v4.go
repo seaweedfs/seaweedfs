@@ -179,7 +179,6 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		// Note: This is non-standard behavior for AWS S3 and not supported in MinIO.
 		errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, forwardedPrefix+req.URL.Path, req.Method, foundCred.SecretKey, t, signV4Values)
 		if errCode == s3err.ErrNone {
 			return identity, errCode
@@ -477,7 +476,6 @@ func extractHostHeader(r *http.Request) string {
 	// Check for X-Forwarded-Host header first, which is set by reverse proxies
 	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
 		// Using reverse proxy with X-Forwarded-Host.
-		// Note: This is non-standard behavior for AWS S3 and not supported in MinIO.
 		return forwardedHost
 	}
 
