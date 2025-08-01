@@ -34,9 +34,10 @@ type ErasureCodingTask struct {
 	progress   float64
 
 	// EC parameters
-	dataShards   int32
-	parityShards int32
-	destinations []*worker_pb.ECDestination
+	dataShards      int32
+	parityShards    int32
+	destinations    []*worker_pb.ECDestination
+	shardAssignment map[string][]string // destination -> assigned shard types
 }
 
 // NewErasureCodingTask creates a new unified EC task instance
@@ -357,6 +358,9 @@ func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) err
 		return fmt.Errorf("failed to create shard assignment")
 	}
 
+	// Store assignment for use during mounting
+	t.shardAssignment = shardAssignment
+
 	// Send assigned shards to each destination
 	for destNode, assignedShards := range shardAssignment {
 		t.GetLogger().WithFields(map[string]interface{}{
@@ -554,27 +558,46 @@ func (t *ErasureCodingTask) sendShardFileToDestination(destServer, filePath, sha
 
 // mountEcShards mounts EC shards on destination servers
 func (t *ErasureCodingTask) mountEcShards() error {
-	// Prepare all shard IDs (0-13)
-	var allShardIds []uint32
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-		allShardIds = append(allShardIds, uint32(i))
+	if t.shardAssignment == nil {
+		return fmt.Errorf("shard assignment not available for mounting")
 	}
 
-	for _, dest := range t.destinations {
-		err := operation.WithVolumeServerClient(false, pb.ServerAddress(dest.Node), grpc.WithInsecure(),
+	// Mount only assigned shards on each destination
+	for destNode, assignedShards := range t.shardAssignment {
+		// Convert shard names to shard IDs for mounting
+		var shardIds []uint32
+		for _, shardType := range assignedShards {
+			// Skip metadata files (.ecx, .vif) - only mount EC shards
+			if strings.HasPrefix(shardType, "ec") && len(shardType) == 4 {
+				// Parse shard ID from "ec00", "ec01", etc.
+				var shardId uint32
+				if _, err := fmt.Sscanf(shardType[2:], "%d", &shardId); err == nil {
+					shardIds = append(shardIds, shardId)
+				}
+			}
+		}
+
+		if len(shardIds) == 0 {
+			glog.V(1).Infof("No EC shards to mount on %s (only metadata files)", destNode)
+			continue
+		}
+
+		glog.V(1).Infof("Mounting shards %v on %s", shardIds, destNode)
+
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(destNode), grpc.WithInsecure(),
 			func(client volume_server_pb.VolumeServerClient) error {
 				_, mountErr := client.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
 					VolumeId:   t.volumeID,
 					Collection: t.collection,
-					ShardIds:   allShardIds,
+					ShardIds:   shardIds,
 				})
 				return mountErr
 			})
 
 		if err != nil {
-			glog.Warningf("Failed to mount shards on %s (this may be normal): %v", dest.Node, err)
+			glog.Warningf("Failed to mount shards %v on %s: %v", shardIds, destNode, err)
 		} else {
-			glog.V(1).Infof("Successfully mounted EC shards on %s", dest.Node)
+			glog.V(1).Infof("Successfully mounted EC shards %v on %s", shardIds, destNode)
 		}
 	}
 
