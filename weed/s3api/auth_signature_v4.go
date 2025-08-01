@@ -305,32 +305,30 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	queryForCanonical.Del("X-Amz-Signature")
 	queryStr := strings.Replace(queryForCanonical.Encode(), "+", "%20", -1)
 
+	// Helper function to verify signature against a given path
+	verifySignature := func(urlPath string) bool {
+		canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, urlPath, r.Method)
+		stringToSign := getStringToSign(canonicalRequest, t, credHeader.getScope())
+		signingKey := getSigningKey(foundCred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
+		expectedSignature := getSignature(signingKey, stringToSign)
+		return compareSignatureV4(expectedSignature, signature)
+	}
+
 	// Check if reverse proxy is forwarding with prefix for presigned URLs
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, forwardedPrefix+r.URL.Path, r.Method)
-		stringToSign := getStringToSign(canonicalRequest, t, credHeader.getScope())
-		signingKey := getSigningKey(foundCred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
-		expectedSignature := getSignature(signingKey, stringToSign)
-
-		if compareSignatureV4(expectedSignature, signature) {
+		if verifySignature(forwardedPrefix + r.URL.Path) {
 			return identity, s3err.ErrNone
 		}
 	}
 
 	// Try normal signature verification (without prefix)
-	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, r.URL.Path, r.Method)
-	stringToSign := getStringToSign(canonicalRequest, t, credHeader.getScope())
-	signingKey := getSigningKey(foundCred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
-	expectedSignature := getSignature(signingKey, stringToSign)
-
-	// Verify signature
-	if !compareSignatureV4(expectedSignature, signature) {
-		return nil, s3err.ErrSignatureDoesNotMatch
+	if verifySignature(r.URL.Path) {
+		return identity, s3err.ErrNone
 	}
 
-	return identity, s3err.ErrNone
+	return nil, s3err.ErrSignatureDoesNotMatch
 }
 
 // credentialHeader data type represents structured form of Credential

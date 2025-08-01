@@ -255,8 +255,8 @@ func preSignV4(iam *IdentityAccessManagement, req *http.Request, accessKey, secr
 	return nil
 }
 
-// Test X-Forwarded-Prefix support for reverse proxy scenarios
-func TestSignatureV4WithForwardedPrefix(t *testing.T) {
+// newTestIAM creates a test IAM with a standard test user
+func newTestIAM() *IdentityAccessManagement {
 	iam := &IdentityAccessManagement{}
 	iam.identities = []*Identity{
 		{
@@ -268,6 +268,12 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 	// Initialize the access key map for lookup
 	iam.accessKeyIdent = make(map[string]*Identity)
 	iam.accessKeyIdent["AKIAIOSFODNN7EXAMPLE"] = iam.identities[0]
+	return iam
+}
+
+// Test X-Forwarded-Prefix support for reverse proxy scenarios
+func TestSignatureV4WithForwardedPrefix(t *testing.T) {
+	iam := newTestIAM()
 
 	// Create a request with X-Forwarded-Prefix header
 	r, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
@@ -283,7 +289,7 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 
 	r.Header.Set("X-Forwarded-Prefix", "/s3")
 	r.Header.Set("Host", "example.com")
-	r.Header.Set("X-Forwarded-Host", "example.com/s3")
+	r.Header.Set("X-Forwarded-Host", "example.com")
 
 	// Sign the request with the prefixed path
 	signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "/s3"+r.URL.Path)
@@ -297,17 +303,7 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 
 // Test basic presigned URL functionality without prefix
 func TestPresignedSignatureV4Basic(t *testing.T) {
-	iam := &IdentityAccessManagement{}
-	iam.identities = []*Identity{
-		{
-			Name:        "testuser",
-			Credentials: []*Credential{{AccessKey: "AKIAIOSFODNN7EXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}},
-			Actions:     []Action{s3_constants.ACTION_ADMIN, s3_constants.ACTION_READ, s3_constants.ACTION_WRITE},
-		},
-	}
-	// Initialize the access key map for lookup
-	iam.accessKeyIdent = make(map[string]*Identity)
-	iam.accessKeyIdent["AKIAIOSFODNN7EXAMPLE"] = iam.identities[0]
+	iam := newTestIAM()
 
 	// Create a presigned request without X-Forwarded-Prefix header
 	r, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
@@ -338,17 +334,7 @@ func TestPresignedSignatureV4Basic(t *testing.T) {
 
 // Test X-Forwarded-Prefix support for presigned URLs
 func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
-	iam := &IdentityAccessManagement{}
-	iam.identities = []*Identity{
-		{
-			Name:        "testuser",
-			Credentials: []*Credential{{AccessKey: "AKIAIOSFODNN7EXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}},
-			Actions:     []Action{s3_constants.ACTION_ADMIN, s3_constants.ACTION_READ, s3_constants.ACTION_WRITE},
-		},
-	}
-	// Initialize the access key map for lookup
-	iam.accessKeyIdent = make(map[string]*Identity)
-	iam.accessKeyIdent["AKIAIOSFODNN7EXAMPLE"] = iam.identities[0]
+	iam := newTestIAM()
 
 	// Create a presigned request that simulates reverse proxy scenario:
 	// 1. Client generates presigned URL with prefixed path
@@ -380,7 +366,7 @@ func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
 	// 3. Add the forwarded headers
 	r.Header.Set("X-Forwarded-Prefix", "/s3")
 	r.Header.Set("Host", "example.com")
-	r.Header.Set("X-Forwarded-Host", "example.com/s3")
+	r.Header.Set("X-Forwarded-Host", "example.com")
 
 	// Test presigned signature verification
 	_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
