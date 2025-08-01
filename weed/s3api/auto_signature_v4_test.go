@@ -390,10 +390,7 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 
 			// Sign the request with the expected host header
 			// We need to temporarily modify the Host header for signing
-			originalHost := r.Host
-			r.Host = tt.expectedHost
-			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", r.URL.Path)
-			r.Host = originalHost // Restore original host
+            signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", r.URL.Path)
 
 			// Test signature verification
 			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
