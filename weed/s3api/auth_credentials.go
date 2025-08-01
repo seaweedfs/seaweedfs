@@ -455,68 +455,20 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		object = prefix
 	}
 
-	if !identity.canDo(action, bucket, object) {
-		return identity, s3err.ErrAccessDenied
+	// For ListBuckets, authorization is performed in the handler by iterating
+	// through buckets and checking permissions for each. Skip the global check here.
+	if action == s3_constants.ACTION_LIST && bucket == "" {
+		// ListBuckets operation - authorization handled per-bucket in the handler
+	} else {
+		if !identity.canDo(action, bucket, object) {
+			return identity, s3err.ErrAccessDenied
+		}
 	}
 
 	r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
 
 	return identity, s3err.ErrNone
 
-}
-
-func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err.ErrorCode) {
-	var identity *Identity
-	var s3Err s3err.ErrorCode
-	var found bool
-	var authType string
-	switch getRequestAuthType(r) {
-	case authTypeStreamingSigned:
-		glog.V(3).Infof("signed streaming upload")
-		return identity, s3err.ErrNone
-	case authTypeStreamingUnsigned:
-		glog.V(3).Infof("unsigned streaming upload")
-		return identity, s3err.ErrNone
-	case authTypeUnknown:
-		glog.V(3).Infof("unknown auth type")
-		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
-		return identity, s3err.ErrAccessDenied
-	case authTypePresignedV2, authTypeSignedV2:
-		glog.V(3).Infof("v2 auth type")
-		identity, s3Err = iam.isReqAuthenticatedV2(r)
-		authType = "SigV2"
-	case authTypeSigned, authTypePresigned:
-		glog.V(3).Infof("v4 auth type")
-		identity, s3Err = iam.reqSignatureV4Verify(r)
-		authType = "SigV4"
-	case authTypePostPolicy:
-		glog.V(3).Infof("post policy auth type")
-		r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
-		return identity, s3err.ErrNone
-	case authTypeJWT:
-		glog.V(3).Infof("jwt auth type")
-		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
-		return identity, s3err.ErrNotImplemented
-	case authTypeAnonymous:
-		authType = "Anonymous"
-		identity, found = iam.lookupAnonymous()
-		if !found {
-			r.Header.Set(s3_constants.AmzAuthType, authType)
-			return identity, s3err.ErrAccessDenied
-		}
-	default:
-		return identity, s3err.ErrNotImplemented
-	}
-
-	if len(authType) > 0 {
-		r.Header.Set(s3_constants.AmzAuthType, authType)
-	}
-
-	glog.V(3).Infof("auth error: %v", s3Err)
-	if s3Err != s3err.ErrNone {
-		return identity, s3Err
-	}
-	return identity, s3err.ErrNone
 }
 
 func (identity *Identity) canDo(action Action, bucket string, objectKey string) bool {
