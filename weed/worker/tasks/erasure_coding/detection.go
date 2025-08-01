@@ -81,11 +81,16 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					continue // Skip this volume if destination planning fails
 				}
 
-				// Create typed parameters with EC destination information
+				// Find all volume replicas from topology
+				replicas := findVolumeReplicas(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
+				glog.V(1).Infof("Found %d replicas for volume %d: %v", len(replicas), metric.VolumeID, replicas)
+
+				// Create typed parameters with EC destination information and replicas
 				result.TypedParams = &worker_pb.TaskParams{
 					VolumeId:   metric.VolumeID,
 					Server:     metric.Server,
 					Collection: metric.Collection,
+					Replicas:   replicas, // Include all volume replicas for deletion
 					TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
 						ErasureCodingParams: createECTaskParams(multiPlan),
 					},
@@ -375,4 +380,36 @@ func checkECPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC str
 	}
 
 	return conflicts
+}
+
+// findVolumeReplicas finds all servers that have replicas of the specified volume
+func findVolumeReplicas(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []string {
+	if activeTopology == nil {
+		return []string{}
+	}
+
+	topologyInfo := activeTopology.GetTopologyInfo()
+	if topologyInfo == nil {
+		return []string{}
+	}
+
+	var replicaServers []string
+
+	// Iterate through all nodes to find volume replicas
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, nodeInfo := range rack.DataNodeInfos {
+				for _, diskInfo := range nodeInfo.DiskInfos {
+					for _, volumeInfo := range diskInfo.VolumeInfos {
+						if volumeInfo.Id == volumeID && volumeInfo.Collection == collection {
+							replicaServers = append(replicaServers, nodeInfo.Id)
+							break // Found volume on this node, move to next node
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return replicaServers
 }

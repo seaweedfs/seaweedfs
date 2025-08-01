@@ -38,6 +38,7 @@ type ErasureCodingTask struct {
 	parityShards    int32
 	destinations    []*worker_pb.ECDestination
 	shardAssignment map[string][]string // destination -> assigned shard types
+	replicas        []string            // volume replica servers for deletion
 }
 
 // NewErasureCodingTask creates a new unified EC task instance
@@ -67,6 +68,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.parityShards = ecParams.ParityShards
 	t.workDir = ecParams.WorkingDir
 	t.destinations = ecParams.Destinations
+	t.replicas = params.Replicas // Get replicas from task parameters
 
 	t.GetLogger().WithFields(map[string]interface{}{
 		"volume_id":     t.volumeID,
@@ -604,14 +606,55 @@ func (t *ErasureCodingTask) mountEcShards() error {
 	return nil
 }
 
-// deleteOriginalVolume deletes the original volume from the source server
+// deleteOriginalVolume deletes the original volume and all its replicas from all servers
 func (t *ErasureCodingTask) deleteOriginalVolume() error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), grpc.WithInsecure(),
-		func(client volume_server_pb.VolumeServerClient) error {
-			_, err := client.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{
-				VolumeId:  t.volumeID,
-				OnlyEmpty: false, // Force delete since we've created EC shards
+	// Get replicas from task parameters (set during detection)
+	replicas := t.getReplicas()
+
+	if len(replicas) == 0 {
+		glog.Warningf("No replicas found for volume %d, falling back to source server only", t.volumeID)
+		replicas = []string{t.server}
+	}
+
+	glog.V(1).Infof("Deleting volume %d from %d replica servers: %v", t.volumeID, len(replicas), replicas)
+
+	// Delete volume from all replica locations
+	var deleteErrors []string
+	successCount := 0
+
+	for _, replicaServer := range replicas {
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(replicaServer), grpc.WithInsecure(),
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, err := client.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{
+					VolumeId:  t.volumeID,
+					OnlyEmpty: false, // Force delete since we've created EC shards
+				})
+				return err
 			})
-			return err
-		})
+
+		if err != nil {
+			deleteErrors = append(deleteErrors, fmt.Sprintf("failed to delete volume %d from %s: %v", t.volumeID, replicaServer, err))
+			glog.Warningf("Failed to delete volume %d from replica server %s: %v", t.volumeID, replicaServer, err)
+		} else {
+			successCount++
+			glog.V(1).Infof("Successfully deleted volume %d from replica server %s", t.volumeID, replicaServer)
+		}
+	}
+
+	// Report results
+	if len(deleteErrors) > 0 {
+		glog.Warningf("Some volume deletions failed (%d/%d successful): %v", successCount, len(replicas), deleteErrors)
+		// Don't return error - EC task should still be considered successful if shards are mounted
+	} else {
+		glog.V(1).Infof("Successfully deleted volume %d from all %d replica servers", t.volumeID, len(replicas))
+	}
+
+	return nil
+}
+
+// getReplicas extracts replica servers from task parameters
+func (t *ErasureCodingTask) getReplicas() []string {
+	// Access replicas from the parameters passed during Execute
+	// We'll need to store these during Execute - let me add a field to the task
+	return t.replicas
 }
