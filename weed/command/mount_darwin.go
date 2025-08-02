@@ -1,5 +1,5 @@
 package command
 
-func checkMountPointAvailable(dir string) bool {
+func checkMountPointAvailable(dir string, ignoreMounted bool) bool {
 	return true
 }
