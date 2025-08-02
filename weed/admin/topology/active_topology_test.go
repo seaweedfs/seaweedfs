@@ -58,8 +58,9 @@ func TestTaskLifecycle(t *testing.T) {
 	taskID := "balance-001"
 
 	// 1. Add pending task
-	topology.AddPendingTask(taskID, TaskTypeBalance, 1001,
-		"10.0.0.1:8080", 0, "10.0.0.2:8080", 1)
+	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1024*1024*1024)
+	topology.addPendingTaskWithStorageInfo(taskID, TaskTypeBalance, 1001,
+		"10.0.0.1:8080", 0, "10.0.0.2:8080", 1, sourceChange, targetChange, 1024*1024*1024)
 
 	// Verify pending state
 	assert.Equal(t, 1, len(topology.pendingTasks))
@@ -258,8 +259,7 @@ func TestTargetSelectionScenarios(t *testing.T) {
 				assert.NotEqual(t, tt.excludeNode, disk.NodeID,
 					"Available disk should not be on excluded node")
 
-				load := tt.topology.GetDiskLoad(disk.NodeID, disk.DiskID)
-				assert.Less(t, load, 2, "Disk load should be less than 2")
+				assert.Less(t, disk.LoadCount, 2, "Disk load should be less than 2")
 			}
 		})
 	}
@@ -271,37 +271,71 @@ func TestDiskLoadCalculation(t *testing.T) {
 	topology.UpdateTopology(createSampleTopology())
 
 	// Initially no load
-	load := topology.GetDiskLoad("10.0.0.1:8080", 0)
-	assert.Equal(t, 0, load)
+	disks := topology.GetNodeDisks("10.0.0.1:8080")
+	var targetDisk *DiskInfo
+	for _, disk := range disks {
+		if disk.DiskID == 0 {
+			targetDisk = disk
+			break
+		}
+	}
+	require.NotNil(t, targetDisk, "Should find disk with ID 0")
+	assert.Equal(t, 0, targetDisk.LoadCount)
 
 	// Add pending task
-	topology.AddPendingTask("task1", TaskTypeBalance, 1001,
-		"10.0.0.1:8080", 0, "10.0.0.2:8080", 1)
+	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1024*1024*1024)
+	topology.addPendingTaskWithStorageInfo("task1", TaskTypeBalance, 1001,
+		"10.0.0.1:8080", 0, "10.0.0.2:8080", 1, sourceChange, targetChange, 1024*1024*1024)
 
 	// Check load increased
-	load = topology.GetDiskLoad("10.0.0.1:8080", 0)
-	assert.Equal(t, 1, load)
+	disks = topology.GetNodeDisks("10.0.0.1:8080")
+	for _, disk := range disks {
+		if disk.DiskID == 0 {
+			targetDisk = disk
+			break
+		}
+	}
+	assert.Equal(t, 1, targetDisk.LoadCount)
 
 	// Add another task to same disk
-	topology.AddPendingTask("task2", TaskTypeVacuum, 1002,
-		"10.0.0.1:8080", 0, "", 0)
+	sourceChange2, targetChange2 := CalculateTaskStorageImpact(TaskTypeVacuum, 0)
+	topology.addPendingTaskWithStorageInfo("task2", TaskTypeVacuum, 1002,
+		"10.0.0.1:8080", 0, "", 0, sourceChange2, targetChange2, 0)
 
-	load = topology.GetDiskLoad("10.0.0.1:8080", 0)
-	assert.Equal(t, 2, load)
+	disks = topology.GetNodeDisks("10.0.0.1:8080")
+	for _, disk := range disks {
+		if disk.DiskID == 0 {
+			targetDisk = disk
+			break
+		}
+	}
+	assert.Equal(t, 2, targetDisk.LoadCount)
 
 	// Move one task to assigned
 	topology.AssignTask("task1")
 
 	// Load should still be 2 (1 pending + 1 assigned)
-	load = topology.GetDiskLoad("10.0.0.1:8080", 0)
-	assert.Equal(t, 2, load)
+	disks = topology.GetNodeDisks("10.0.0.1:8080")
+	for _, disk := range disks {
+		if disk.DiskID == 0 {
+			targetDisk = disk
+			break
+		}
+	}
+	assert.Equal(t, 2, targetDisk.LoadCount)
 
 	// Complete one task
 	topology.CompleteTask("task1")
 
 	// Load should decrease to 1
-	load = topology.GetDiskLoad("10.0.0.1:8080", 0)
-	assert.Equal(t, 1, load)
+	disks = topology.GetNodeDisks("10.0.0.1:8080")
+	for _, disk := range disks {
+		if disk.DiskID == 0 {
+			targetDisk = disk
+			break
+		}
+	}
+	assert.Equal(t, 1, targetDisk.LoadCount)
 }
 
 // TestTaskConflictDetection tests task conflict detection
@@ -310,8 +344,9 @@ func TestTaskConflictDetection(t *testing.T) {
 	topology.UpdateTopology(createSampleTopology())
 
 	// Add a balance task
-	topology.AddPendingTask("balance1", TaskTypeBalance, 1001,
-		"10.0.0.1:8080", 0, "10.0.0.2:8080", 1)
+	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1024*1024*1024)
+	topology.addPendingTaskWithStorageInfo("balance1", TaskTypeBalance, 1001,
+		"10.0.0.1:8080", 0, "10.0.0.2:8080", 1, sourceChange, targetChange, 1024*1024*1024)
 	topology.AssignTask("balance1")
 
 	// Try to get available disks for vacuum (conflicts with balance)
@@ -448,8 +483,9 @@ func createTopologyWithLoad() *ActiveTopology {
 	topology.UpdateTopology(createSampleTopology())
 
 	// Add some existing tasks to create load
-	topology.AddPendingTask("existing1", TaskTypeVacuum, 2001,
-		"10.0.0.1:8080", 0, "", 0)
+	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeVacuum, 0)
+	topology.addPendingTaskWithStorageInfo("existing1", TaskTypeVacuum, 2001,
+		"10.0.0.1:8080", 0, "", 0, sourceChange, targetChange, 0)
 	topology.AssignTask("existing1")
 
 	return topology
@@ -466,12 +502,14 @@ func createTopologyWithConflicts() *ActiveTopology {
 	topology.UpdateTopology(createSampleTopology())
 
 	// Add conflicting tasks
-	topology.AddPendingTask("balance1", TaskTypeBalance, 3001,
-		"10.0.0.1:8080", 0, "10.0.0.2:8080", 0)
+	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1024*1024*1024)
+	topology.addPendingTaskWithStorageInfo("balance1", TaskTypeBalance, 3001,
+		"10.0.0.1:8080", 0, "10.0.0.2:8080", 0, sourceChange, targetChange, 1024*1024*1024)
 	topology.AssignTask("balance1")
 
-	topology.AddPendingTask("ec1", TaskTypeErasureCoding, 3002,
-		"10.0.0.1:8080", 1, "", 0)
+	sourceChange2, targetChange2 := CalculateTaskStorageImpact(TaskTypeErasureCoding, 1024*1024*1024)
+	topology.addPendingTaskWithStorageInfo("ec1", TaskTypeErasureCoding, 3002,
+		"10.0.0.1:8080", 1, "", 0, sourceChange2, targetChange2, 1024*1024*1024)
 	topology.AssignTask("ec1")
 
 	return topology

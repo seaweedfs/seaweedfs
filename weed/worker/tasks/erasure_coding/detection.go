@@ -81,6 +81,50 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					continue // Skip this volume if destination planning fails
 				}
 
+				// Calculate expected shard size for EC operation
+				// Each data shard will be approximately volumeSize / dataShards
+				expectedShardSize := uint64(metric.Size) / uint64(erasure_coding.DataShardsCount)
+
+				// Add pending EC shard task to ActiveTopology for capacity management
+				taskID := fmt.Sprintf("ec_vol_%d_%d", metric.VolumeID, now.Unix())
+
+				// Extract shard destinations from multiPlan
+				var shardDestinations []string
+				var shardDiskIDs []uint32
+				for _, plan := range multiPlan.Plans {
+					shardDestinations = append(shardDestinations, plan.TargetNode)
+					shardDiskIDs = append(shardDiskIDs, plan.TargetDisk)
+				}
+
+				// Find source disk by looking up volume location in topology
+				// Default to disk 0 if not found (common case for single-disk nodes)
+				sourceDisk := uint32(0)
+				nodeDisks := clusterInfo.ActiveTopology.GetNodeDisks(metric.Server)
+				if len(nodeDisks) > 0 {
+					// For now, use the first disk. In the future, this could be improved
+					// to find the actual disk containing the volume
+					sourceDisk = nodeDisks[0].DiskID
+				}
+
+				err = clusterInfo.ActiveTopology.AddPendingECShardTask(
+					taskID,
+					metric.VolumeID,
+					metric.Server,
+					sourceDisk,
+					shardDestinations,
+					shardDiskIDs,
+					int32(len(multiPlan.Plans)),
+					int64(expectedShardSize),
+					int64(metric.Size),
+				)
+				if err != nil {
+					glog.Warningf("Failed to add pending EC shard task to ActiveTopology for volume %d: %v", metric.VolumeID, err)
+					continue // Skip this volume if topology task addition fails
+				}
+
+				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d shard destinations",
+					taskID, metric.VolumeID, len(multiPlan.Plans))
+
 				// Find all volume replicas from topology
 				replicas := findVolumeReplicas(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
 				glog.V(1).Infof("Found %d replicas for volume %d: %v", len(replicas), metric.VolumeID, replicas)
@@ -168,10 +212,11 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 		}
 	}
 
-	// Get available disks for EC placement (include source node for EC)
-	availableDisks := activeTopology.GetAvailableDisks(topology.TaskTypeErasureCoding, "")
+	// Get available disks for EC placement with effective capacity consideration (includes pending tasks)
+	// For EC, we typically need 1 volume slot per shard, so use minimum capacity of 1
+	availableDisks := activeTopology.GetDisksWithEffectiveCapacity(topology.TaskTypeErasureCoding, "", 1)
 	if len(availableDisks) < erasure_coding.MinTotalDisks {
-		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d", erasure_coding.MinTotalDisks, len(availableDisks))
+		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d (considering pending/active tasks)", erasure_coding.MinTotalDisks, len(availableDisks))
 	}
 
 	// Select best disks for EC placement with rack/DC diversity
@@ -201,6 +246,25 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 		rackCount[rackKey]++
 		dcCount[disk.DataCenter]++
 	}
+
+	// Log capacity utilization information using ActiveTopology's encapsulated logic
+	totalEffectiveCapacity := int64(0)
+	for _, plan := range plans {
+		effectiveCapacity := activeTopology.GetEffectiveAvailableCapacity(plan.TargetNode, plan.TargetDisk)
+		totalEffectiveCapacity += effectiveCapacity
+	}
+
+	// Calculate expected shard size for logging purposes
+	expectedShardSize := uint64(metric.Size) / uint64(erasure_coding.DataShardsCount)
+
+	glog.V(1).Infof("Planned EC destinations for volume %d (size=%d bytes): expected shard size=%d bytes, %d shards across %d racks, %d DCs, total effective capacity=%d slots",
+		metric.VolumeID, metric.Size, expectedShardSize, len(plans), len(rackCount), len(dcCount), totalEffectiveCapacity)
+
+	// Log storage impact for EC task (source only - EC has multiple targets handled individually)
+	sourceChange, _ := topology.CalculateTaskStorageImpact(topology.TaskTypeErasureCoding, int64(metric.Size))
+	glog.V(2).Infof("EC task capacity management: source_reserves_with_zero_impact={VolumeSlots:%d, ShardSlots:%d}, %d_targets_will_receive_shards, estimated_size=%d",
+		sourceChange.VolumeSlots, sourceChange.ShardSlots, len(plans), metric.Size)
+	glog.V(2).Infof("EC source reserves capacity but with zero StorageSlotChange impact")
 
 	return &topology.MultiDestinationPlan{
 		Plans:          plans,
@@ -348,19 +412,45 @@ func calculateECScore(disk *topology.DiskInfo, sourceRack, sourceDC string) floa
 	return score
 }
 
+// calculateECScoreWithSize calculates placement score for EC operations with shard size consideration
+func calculateECScoreWithSize(disk *topology.DiskInfo, sourceRack, sourceDC string, expectedShardSize uint64) float64 {
+	baseScore := calculateECScore(disk, sourceRack, sourceDC)
+
+	// Additional scoring based on effective available space vs expected shard size
+	if disk.DiskInfo != nil && expectedShardSize > 0 {
+		// Use effective available capacity (MaxVolumeCount - VolumeCount already accounts for tasks)
+		// The GetDisksWithEffectiveCapacity method adjusts VolumeCount to reflect effective capacity
+		effectiveAvailableSlots := disk.DiskInfo.MaxVolumeCount - disk.DiskInfo.VolumeCount
+		if effectiveAvailableSlots > 0 {
+			// Bonus for having plenty of space for the expected shard
+			// This is a heuristic - each volume slot can theoretically hold any size
+			baseScore += float64(effectiveAvailableSlots) * 2.0 // Up to 2 points per available slot
+		}
+
+		// Additional penalty if load count is high (many pending/active tasks)
+		if disk.LoadCount > 1 {
+			baseScore -= float64(disk.LoadCount) * 1.0 // 1 point penalty per high load
+		}
+	}
+
+	return baseScore
+}
+
 // isDiskSuitableForEC checks if a disk is suitable for EC placement
 func isDiskSuitableForEC(disk *topology.DiskInfo) bool {
 	if disk.DiskInfo == nil {
 		return false
 	}
 
-	// Check if disk has capacity
-	if disk.DiskInfo.VolumeCount >= disk.DiskInfo.MaxVolumeCount {
+	// Check if disk has effective capacity (accounting for pending/active tasks)
+	// The GetDisksWithEffectiveCapacity method already adjusts VolumeCount to reflect effective capacity
+	effectiveAvailableSlots := disk.DiskInfo.MaxVolumeCount - disk.DiskInfo.VolumeCount
+	if effectiveAvailableSlots <= 0 {
 		return false
 	}
 
-	// Check if disk is not overloaded
-	if disk.LoadCount > 10 { // Arbitrary threshold
+	// Check if disk is not overloaded with tasks
+	if disk.LoadCount > 10 { // Arbitrary threshold for total task load
 		return false
 	}
 

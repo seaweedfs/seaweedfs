@@ -121,6 +121,27 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 		glog.V(1).Infof("Planned balance destination for volume %d: %s -> %s (score: %.2f)",
 			selectedVolume.VolumeID, selectedVolume.Server, destinationPlan.TargetNode, destinationPlan.PlacementScore)
+
+		// Add pending balance task to ActiveTopology for capacity management
+		taskID := fmt.Sprintf("balance_vol_%d_%d", selectedVolume.VolumeID, time.Now().Unix())
+
+		// Get source disk (assume disk 0 for now, could be improved to find actual disk)
+		sourceDisk := uint32(0)
+		targetDisk := destinationPlan.TargetDisk
+
+		clusterInfo.ActiveTopology.AddPendingTaskForTaskType(
+			taskID,
+			topology.TaskTypeBalance,
+			selectedVolume.VolumeID,
+			selectedVolume.Server,
+			sourceDisk,
+			destinationPlan.TargetNode,
+			targetDisk,
+			int64(selectedVolume.Size),
+		)
+
+		glog.V(2).Infof("Added pending balance task %s to ActiveTopology for volume %d: %s -> %s",
+			taskID, selectedVolume.VolumeID, selectedVolume.Server, destinationPlan.TargetNode)
 	} else {
 		glog.Warningf("No ActiveTopology available for destination planning in balance detection")
 		return nil, nil
