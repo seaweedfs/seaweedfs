@@ -177,7 +177,7 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 	// Select best disks for EC placement with rack/DC diversity
 	selectedDisks := selectBestECDestinations(availableDisks, sourceRack, sourceDC, erasure_coding.TotalShardsCount)
 	if len(selectedDisks) < erasure_coding.MinTotalDisks {
-		return nil, fmt.Errorf("found %d disks, but could not find %d suitable destinations for EC placement", len(selectedDisks), minTotalDisks)
+		return nil, fmt.Errorf("found %d disks, but could not find %d suitable destinations for EC placement", len(selectedDisks), erasure_coding.MinTotalDisks)
 	}
 
 	var plans []*topology.DestinationPlan
