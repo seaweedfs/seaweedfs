@@ -195,7 +195,11 @@ func (w *Queue) logDeadLetterMessages() error {
 	go func() {
 		for {
 			select {
-			case msg := <-ch:
+			case msg, ok := <-ch:
+				if !ok {
+					glog.Info("dead letter channel closed")
+					return
+				}
 				if msg == nil {
 					glog.Errorf("received nil message from dead letter channel")
 					continue
@@ -208,7 +212,12 @@ func (w *Queue) logDeadLetterMessages() error {
 				}
 				payload := ""
 				if msg.Payload != nil {
-					payload = string(msg.Payload)
+					var n filer_pb.EventNotification
+					if err := proto.Unmarshal(msg.Payload, &n); err != nil {
+						payload = fmt.Sprintf("failed to unmarshal payload: %v", err)
+					} else {
+						payload = n.String()
+					}
 				}
 				glog.Errorf("received dead letter message: %s, key: %s", payload, key)
 			case <-w.ctx.Done():
