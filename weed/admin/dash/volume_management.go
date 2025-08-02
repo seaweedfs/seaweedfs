@@ -472,18 +472,21 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 
 								// Count shards and collect shard numbers with sizes
 								shardBits := ecShardInfo.EcIndexBits
-								for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ { // EC uses erasure_coding.TotalShardsCount shards
+
+								// More efficient approach: iterate through ShardSizes directly
+								shardSizeIndex := 0
+								for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										ecVolumeMap[volumeId].ShardCount++
 										ecVolumeMap[volumeId].ShardNumbers = append(ecVolumeMap[volumeId].ShardNumbers, shardId)
 
-										// Add shard size if available using optimized format
-										typedShardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-										if index, found := typedShardBits.ShardIdToIndex(erasure_coding.ShardId(shardId)); found && index < len(ecShardInfo.ShardSizes) {
-											shardSize := ecShardInfo.ShardSizes[index]
+										// Add shard size if available using direct indexing (O(1) instead of O(n))
+										if shardSizeIndex < len(ecShardInfo.ShardSizes) {
+											shardSize := ecShardInfo.ShardSizes[shardSizeIndex]
 											ecVolumeMap[volumeId].ShardSizes[shardId] = shardSize
 											ecVolumeMap[volumeId].TotalSize += shardSize
 										}
+										shardSizeIndex++
 
 										vs.EcShards++
 									}
