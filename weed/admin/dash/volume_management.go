@@ -500,17 +500,12 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 								ecInfo.EcIndexBits |= ecShardInfo.EcIndexBits
 
 								// Collect shard sizes from this disk
-								shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-								var setShardIds []erasure_coding.ShardId
+                                shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
 								shardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
-									setShardIds = append(setShardIds, shardId)
-								})
-
-								for i, shardId := range setShardIds {
-									if i < len(ecShardInfo.ShardSizes) {
-										allShardSizes[shardId] = ecShardInfo.ShardSizes[i]
+									if size, found := erasure_coding.GetShardSize(ecShardInfo, shardId); found {
+										allShardSizes[shardId] = size
 									}
-								}
+								})
 							}
 
 							// Process final merged shard information
