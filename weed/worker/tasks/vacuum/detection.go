@@ -1,6 +1,7 @@
 package vacuum
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -31,7 +32,11 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				priority = types.TaskPriorityHigh
 			}
 
+			// Generate task ID for future ActiveTopology integration
+			taskID := fmt.Sprintf("vacuum_vol_%d_%d", metric.VolumeID, time.Now().Unix())
+
 			result := &types.TaskDetectionResult{
+				TaskID:     taskID, // For future ActiveTopology integration
 				TaskType:   types.TaskTypeVacuum,
 				VolumeID:   metric.VolumeID,
 				Server:     metric.Server,
@@ -96,6 +101,7 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 
 	// Create typed protobuf parameters
 	return &worker_pb.TaskParams{
+		TaskId:     task.TaskID, // Link to ActiveTopology pending task (if integrated)
 		VolumeId:   task.VolumeID,
 		Server:     task.Server,
 		Collection: task.Collection,

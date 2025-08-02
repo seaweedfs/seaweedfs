@@ -61,7 +61,11 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 		// Check quiet duration and fullness criteria
 		if metric.Age >= quietThreshold && metric.FullnessRatio >= ecConfig.FullnessRatio {
+			// Generate task ID for ActiveTopology integration
+			taskID := fmt.Sprintf("ec_vol_%d_%d", metric.VolumeID, now.Unix())
+
 			result := &types.TaskDetectionResult{
+				TaskID:     taskID, // Link to ActiveTopology pending task
 				TaskType:   types.TaskTypeErasureCoding,
 				VolumeID:   metric.VolumeID,
 				Server:     metric.Server,
@@ -86,7 +90,6 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				expectedShardSize := uint64(metric.Size) / uint64(erasure_coding.DataShardsCount)
 
 				// Add pending EC shard task to ActiveTopology for capacity management
-				taskID := fmt.Sprintf("ec_vol_%d_%d", metric.VolumeID, now.Unix())
 
 				// Extract shard destinations from multiPlan
 				var shardDestinations []string
@@ -124,6 +127,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 				// Create typed parameters with EC destination information and replicas
 				result.TypedParams = &worker_pb.TaskParams{
+					TaskId:     taskID, // Link to ActiveTopology pending task
 					VolumeId:   metric.VolumeID,
 					Server:     metric.Server,
 					Collection: metric.Collection,

@@ -73,6 +73,7 @@ type TaskParams struct {
 
 // TaskDetectionResult represents the result of scanning for maintenance needs
 type TaskDetectionResult struct {
+	TaskID      string                `json:"task_id"` // ActiveTopology task ID for lifecycle management
 	TaskType    TaskType              `json:"task_type"`
 	VolumeID    uint32                `json:"volume_id,omitempty"`
 	Server      string                `json:"server,omitempty"`
