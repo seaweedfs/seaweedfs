@@ -172,7 +172,6 @@ func (b ShardBits) MinusParityShards() ShardBits {
 
 // ShardIdToIndex converts a shard ID to its index position in the ShardSizes slice
 // Returns the index and true if the shard is present, -1 and false if not present
-// Time complexity: O(1) using bit manipulation
 func (b ShardBits) ShardIdToIndex(shardId ShardId) (index int, found bool) {
 	if !b.HasShardId(shardId) {
 		return -1, false
