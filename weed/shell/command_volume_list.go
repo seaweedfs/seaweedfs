@@ -248,8 +248,27 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 		if destroyTime > 0 {
 			expireAtString = fmt.Sprintf("expireAt:%s", time.Unix(int64(destroyTime), 0).Format("2006-01-02 15:04:05"))
 		}
-		output(verbosityLevel >= 5, writer, "          ec volume id:%v collection:%v shards:%v %s\n",
-			ecShardInfo.Id, ecShardInfo.Collection, erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds(), expireAtString)
+
+		// Build shard size information
+		shardIds := erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds()
+		var totalSize int64
+		var shardSizeInfo string
+
+		if len(ecShardInfo.ShardIdToSize) > 0 {
+			var shardDetails []string
+			for _, shardId := range shardIds {
+				if size, exists := ecShardInfo.ShardIdToSize[uint32(shardId)]; exists {
+					shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, formatBytes(size)))
+					totalSize += size
+				} else {
+					shardDetails = append(shardDetails, fmt.Sprintf("%d:?", shardId))
+				}
+			}
+			shardSizeInfo = fmt.Sprintf(" sizes:[%s] total:%s", strings.Join(shardDetails, " "), formatBytes(totalSize))
+		}
+
+		output(verbosityLevel >= 5, writer, "          ec volume id:%v collection:%v shards:%v%s %s\n",
+			ecShardInfo.Id, ecShardInfo.Collection, shardIds, shardSizeInfo, expireAtString)
 	}
 	output((volumeInfosFound || ecShardInfoFound) && verbosityLevel >= 4, writer, "        Disk %s %+v \n", diskType, s)
 	return s
@@ -300,4 +319,25 @@ func (s statistics) String() string {
 		return fmt.Sprintf("total size:%d file_count:%d deleted_file:%d deleted_bytes:%d", s.Size, s.FileCount, s.DeletedFileCount, s.DeletedBytes)
 	}
 	return fmt.Sprintf("total size:%d file_count:%d", s.Size, s.FileCount)
+}
+
+// formatBytes converts bytes to human readable format
+func formatBytes(bytes int64) string {
+	if bytes == 0 {
+		return "0 B"
+	}
+
+	units := []string{"B", "KB", "MB", "GB", "TB", "PB"}
+	var i int
+	value := float64(bytes)
+
+	for value >= 1024 && i < len(units)-1 {
+		value /= 1024
+		i++
+	}
+
+	if i == 0 {
+		return fmt.Sprintf("%.0f %s", value, units[i])
+	}
+	return fmt.Sprintf("%.1f %s", value, units[i])
 }
