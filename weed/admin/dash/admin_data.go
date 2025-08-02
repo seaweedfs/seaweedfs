@@ -23,6 +23,10 @@ type AdminData struct {
 	MessageBrokers    []MessageBrokerNode `json:"message_brokers"`
 	DataCenters       []DataCenter        `json:"datacenters"`
 	LastUpdated       time.Time           `json:"last_updated"`
+
+	// EC shard totals for dashboard
+	TotalEcVolumes int `json:"total_ec_volumes"` // Total number of EC volumes across all servers
+	TotalEcShards  int `json:"total_ec_shards"`  // Total number of EC shards across all servers
 }
 
 // Object Store Users management structures
@@ -98,6 +102,13 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		return AdminData{}, err
 	}
 
+	// Get volume servers data with EC shard information
+	volumeServersData, err := s.GetClusterVolumeServers()
+	if err != nil {
+		glog.Errorf("Failed to get cluster volume servers: %v", err)
+		return AdminData{}, err
+	}
+
 	// Get master nodes status
 	masterNodes := s.getMasterNodesStatus()
 
@@ -122,6 +133,19 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		// Keep default value on error
 	}
 
+	// Calculate EC shard totals
+	var totalEcVolumes, totalEcShards int
+	ecVolumeSet := make(map[uint32]bool) // To avoid counting the same EC volume multiple times
+
+	for _, vs := range volumeServersData.VolumeServers {
+		totalEcShards += vs.EcShards
+		// Count unique EC volumes across all servers
+		for _, ecInfo := range vs.EcShardDetails {
+			ecVolumeSet[ecInfo.VolumeID] = true
+		}
+	}
+	totalEcVolumes = len(ecVolumeSet)
+
 	// Prepare admin data
 	adminData := AdminData{
 		Username:          username,
@@ -130,11 +154,13 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		TotalSize:         topology.TotalSize,
 		VolumeSizeLimitMB: volumeSizeLimitMB,
 		MasterNodes:       masterNodes,
-		VolumeServers:     topology.VolumeServers,
+		VolumeServers:     volumeServersData.VolumeServers,
 		FilerNodes:        filerNodes,
 		MessageBrokers:    messageBrokers,
 		DataCenters:       topology.DataCenters,
 		LastUpdated:       topology.UpdatedAt,
+		TotalEcVolumes:    totalEcVolumes,
+		TotalEcShards:     totalEcShards,
 	}
 
 	return adminData, nil

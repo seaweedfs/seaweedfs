@@ -103,6 +103,8 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                     <th>Data Center</th>
                                     <th>Rack</th>
                                     <th>Volumes</th>
+                                    <th>Max Volumes</th>
+                                    <th>EC Shards</th>
                                     <th>Capacity</th>
                                     <th>Usage</th>
                                     <th>Actions</th>
@@ -133,8 +135,27 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                                          style={fmt.Sprintf("width: %d%%", calculatePercent(host.Volumes, host.MaxVolumes))}>
                                                     </div>
                                                 </div>
-                                                <small>{fmt.Sprintf("%d/%d", host.Volumes, host.MaxVolumes)}</small>
+                                                <span class="badge bg-primary">{fmt.Sprintf("%d", host.Volumes)}</span>
                                             </div>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-secondary">{fmt.Sprintf("%d", host.MaxVolumes)}</span>
+                                        </td>
+                                        <td>
+                                            if host.EcShards > 0 {
+                                                <div class="d-flex align-items-center">
+                                                    <i class="fas fa-layer-group me-1 text-info"></i>
+                                                    <span class="badge bg-info text-white me-1">{fmt.Sprintf("%d", host.EcShards)}</span>
+                                                    <small class="text-muted">shards</small>
+                                                </div>
+                                                if host.EcVolumes > 0 {
+                                                    <div class="mt-1">
+                                                        <small class="text-muted">{fmt.Sprintf("%d EC volumes", host.EcVolumes)}</small>
+                                                    </div>
+                                                }
+                                            } else {
+                                                <span class="text-muted">-</span>
+                                            }
                                         </td>
                                         <td>{formatBytes(host.DiskCapacity)}</td>
                                         <td>
@@ -161,6 +182,8 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                                     data-max-volumes={fmt.Sprintf("%d", host.MaxVolumes)}
                                                     data-disk-usage={fmt.Sprintf("%d", host.DiskUsage)}
                                                     data-disk-capacity={fmt.Sprintf("%d", host.DiskCapacity)}
+                                                    data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
+                                                    data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
                                                     data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
                                                 <i class="fas fa-eye"></i>
                                             </button>
@@ -213,6 +236,8 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                         maxVolumes: parseInt(button.getAttribute('data-max-volumes')),
                         diskUsage: parseInt(button.getAttribute('data-disk-usage')),
                         diskCapacity: parseInt(button.getAttribute('data-disk-capacity')),
+                        ecVolumes: parseInt(button.getAttribute('data-ec-volumes')),
+                        ecShards: parseInt(button.getAttribute('data-ec-shards')),
                         lastHeartbeat: button.getAttribute('data-last-heartbeat')
                     };
                     showVolumeServerDetails(serverData);
@@ -268,6 +293,19 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             '</table>' +
             '</div>' +
             '</div>' +
+            
+            // Add EC Shard information if available
+            (server.ecShards > 0 ? 
+            '<div class="row mt-3">' +
+            '<div class="col-12">' +
+            '<h6 class="text-primary"><i class="fas fa-layer-group me-1"></i>Erasure Coding Information</h6>' +
+            '<table class="table table-sm">' +
+            '<tr><td><strong>EC Volumes:</strong></td><td><span class="badge bg-info text-white">' + server.ecVolumes + '</span></td></tr>' +
+            '<tr><td><strong>EC Shards:</strong></td><td><span class="badge bg-info text-white">' + server.ecShards + '</span></td></tr>' +
+            '</table>' +
+            '</div>' +
+            '</div>' : '') +
+            
             '<div class="row mt-3">' +
             '<div class="col-12">' +
             '<h6 class="text-primary"><i class="fas fa-link me-1"></i>Quick Actions</h6>' +

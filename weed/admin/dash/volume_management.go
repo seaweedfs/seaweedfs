@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
@@ -370,23 +371,106 @@ func (s *AdminServer) VacuumVolume(volumeID int, server string) error {
 	})
 }
 
-// GetClusterVolumeServers retrieves cluster volume servers data
+// GetClusterVolumeServers retrieves cluster volume servers data including EC shard information
 func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, error) {
+	// Get basic topology first
 	topology, err := s.GetClusterTopology()
 	if err != nil {
 		return nil, err
 	}
 
+	// Create a map for quick lookup and to add EC shard information
+	volumeServerMap := make(map[string]*VolumeServer)
+	for _, vs := range topology.VolumeServers {
+		// Create a copy of the volume server
+		vsCopy := vs
+		vsCopy.EcVolumes = 0
+		vsCopy.EcShards = 0
+		vsCopy.EcShardDetails = []VolumeServerEcInfo{}
+		volumeServerMap[vs.Address] = &vsCopy
+	}
+
+	// Get detailed EC shard information via gRPC
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						// Find the corresponding volume server
+						vs, exists := volumeServerMap[node.Id]
+						if !exists {
+							continue
+						}
+
+						// Process EC shard information for this server
+						ecVolumeMap := make(map[uint32]*VolumeServerEcInfo)
+
+						for _, diskInfo := range node.DiskInfos {
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								volumeId := ecShardInfo.Id
+
+								// Initialize or get existing EC info for this volume
+								if ecVolumeMap[volumeId] == nil {
+									ecVolumeMap[volumeId] = &VolumeServerEcInfo{
+										VolumeID:     volumeId,
+										Collection:   ecShardInfo.Collection,
+										ShardCount:   0,
+										EcIndexBits:  ecShardInfo.EcIndexBits,
+										ShardNumbers: []int{},
+									}
+								}
+
+								// Count shards and collect shard numbers
+								shardBits := ecShardInfo.EcIndexBits
+								for shardId := 0; shardId < 14; shardId++ { // EC uses 14 shards
+									if (shardBits & (1 << uint(shardId))) != 0 {
+										ecVolumeMap[volumeId].ShardCount++
+										ecVolumeMap[volumeId].ShardNumbers = append(ecVolumeMap[volumeId].ShardNumbers, shardId)
+										vs.EcShards++
+									}
+								}
+							}
+						}
+
+						// Convert map to slice and update volume server
+						for _, ecInfo := range ecVolumeMap {
+							vs.EcShardDetails = append(vs.EcShardDetails, *ecInfo)
+							vs.EcVolumes++
+						}
+					}
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		// If EC shard query fails, continue with basic data but log the error
+		glog.Warningf("Failed to get EC shard information: %v", err)
+	}
+
+	// Convert map back to slice
+	var volumeServers []VolumeServer
+	for _, vs := range volumeServerMap {
+		volumeServers = append(volumeServers, *vs)
+	}
+
 	var totalCapacity int64
 	var totalVolumes int
-	for _, vs := range topology.VolumeServers {
+	for _, vs := range volumeServers {
 		totalCapacity += vs.DiskCapacity
 		totalVolumes += vs.Volumes
 	}
 
 	return &ClusterVolumeServersData{
-		VolumeServers:      topology.VolumeServers,
-		TotalVolumeServers: len(topology.VolumeServers),
+		VolumeServers:      volumeServers,
+		TotalVolumeServers: len(volumeServers),
 		TotalVolumes:       totalVolumes,
 		TotalCapacity:      totalCapacity,
 		LastUpdated:        time.Now(),
