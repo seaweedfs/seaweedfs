@@ -28,6 +28,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	}
 	var volumes []VolumeWithTopology
 	var totalSize int64
+	var cachedTopologyInfo *master_pb.TopologyInfo
 
 	// Get detailed volume information via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
@@ -36,11 +37,15 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 			return err
 		}
 
+		// Cache the topology info for reuse
+		cachedTopologyInfo = resp.TopologyInfo
+
 		if resp.TopologyInfo != nil {
 			for _, dc := range resp.TopologyInfo.DataCenterInfos {
 				for _, rack := range dc.RackInfos {
 					for _, node := range rack.DataNodeInfos {
 						for _, diskInfo := range node.DiskInfos {
+							// Process regular volumes
 							for _, volInfo := range diskInfo.VolumeInfos {
 								volume := VolumeWithTopology{
 									VolumeInformationMessage: volInfo,
@@ -50,6 +55,14 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 								}
 								volumes = append(volumes, volume)
 								totalSize += int64(volInfo.Size)
+							}
+
+							// Process EC shards in the same loop
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								// Add all shard sizes for this EC volume
+								for _, shardSize := range ecShardInfo.ShardSizes {
+									totalSize += shardSize
+								}
 							}
 						}
 					}
@@ -62,39 +75,6 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 
 	if err != nil {
 		return nil, err
-	}
-
-	// Add EC shard sizes to total size calculation
-	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		if err != nil {
-			return err
-		}
-
-		var ecTotalSize int64
-		if resp.TopologyInfo != nil {
-			for _, dc := range resp.TopologyInfo.DataCenterInfos {
-				for _, rack := range dc.RackInfos {
-					for _, node := range rack.DataNodeInfos {
-						for _, diskInfo := range node.DiskInfos {
-							for _, ecShardInfo := range diskInfo.EcShardInfos {
-								// Add all shard sizes for this EC volume
-								for _, shardSize := range ecShardInfo.ShardSizes {
-									ecTotalSize += shardSize
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-		totalSize += ecTotalSize
-		return nil
-	})
-
-	if err != nil {
-		// If EC shard query fails, continue with basic data but log the error
-		glog.Warningf("Failed to get EC shard information for size calculation: %v", err)
 	}
 
 	// Filter by collection if specified
@@ -114,31 +94,24 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 			}
 		}
 
-		// Also filter EC shard sizes by collection
-		err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-			resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-			if err != nil {
-				return err
-			}
+		// Also filter EC shard sizes by collection using cached topology
+		var filteredEcTotalSize int64
+		if cachedTopologyInfo != nil {
+			for _, dc := range cachedTopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								// Handle "default" collection filtering for empty collections
+								ecCollection := ecShardInfo.Collection
+								if ecCollection == "" {
+									ecCollection = "default"
+								}
 
-			var filteredEcTotalSize int64
-			if resp.TopologyInfo != nil {
-				for _, dc := range resp.TopologyInfo.DataCenterInfos {
-					for _, rack := range dc.RackInfos {
-						for _, node := range rack.DataNodeInfos {
-							for _, diskInfo := range node.DiskInfos {
-								for _, ecShardInfo := range diskInfo.EcShardInfos {
-									// Handle "default" collection filtering for empty collections
-									ecCollection := ecShardInfo.Collection
-									if ecCollection == "" {
-										ecCollection = "default"
-									}
-
-									if ecCollection == collection {
-										// Add all shard sizes for this EC volume
-										for _, shardSize := range ecShardInfo.ShardSizes {
-											filteredEcTotalSize += shardSize
-										}
+								if ecCollection == collection {
+									// Add all shard sizes for this EC volume
+									for _, shardSize := range ecShardInfo.ShardSizes {
+										filteredEcTotalSize += shardSize
 									}
 								}
 							}
@@ -146,14 +119,8 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 					}
 				}
 			}
-			filteredTotalSize += filteredEcTotalSize
-			return nil
-		})
-
-		if err != nil {
-			// If EC shard query fails, continue with basic data but log the error
-			glog.Warningf("Failed to get filtered EC shard information: %v", err)
 		}
+		filteredTotalSize += filteredEcTotalSize
 
 		volumes = filteredVolumes
 		totalSize = filteredTotalSize
@@ -505,14 +472,14 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 
 								// Count shards and collect shard numbers with sizes
 								shardBits := ecShardInfo.EcIndexBits
-								for shardId := 0; shardId < 14; shardId++ { // EC uses 14 shards
+								for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ { // EC uses erasure_coding.TotalShardsCount shards
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										ecVolumeMap[volumeId].ShardCount++
 										ecVolumeMap[volumeId].ShardNumbers = append(ecVolumeMap[volumeId].ShardNumbers, shardId)
 
 										// Add shard size if available using optimized format
-										shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-										if index, found := shardBits.ShardIdToIndex(erasure_coding.ShardId(shardId)); found && index < len(ecShardInfo.ShardSizes) {
+										typedShardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+										if index, found := typedShardBits.ShardIdToIndex(erasure_coding.ShardId(shardId)); found && index < len(ecShardInfo.ShardSizes) {
 											shardSize := ecShardInfo.ShardSizes[index]
 											ecVolumeMap[volumeId].ShardSizes[shardId] = shardSize
 											ecVolumeMap[volumeId].TotalSize += shardSize
