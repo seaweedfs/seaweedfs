@@ -24,7 +24,7 @@ func (ecInfo *EcVolumeInfo) AddShardId(id ShardId) {
 
 	// If shard was actually added, resize ShardSizes array
 	if oldBits != ecInfo.ShardBits {
-		ecInfo.resizeShardSizes()
+		ecInfo.resizeShardSizes(oldBits)
 	}
 }
 
@@ -34,7 +34,7 @@ func (ecInfo *EcVolumeInfo) RemoveShardId(id ShardId) {
 
 	// If shard was actually removed, resize ShardSizes array
 	if oldBits != ecInfo.ShardBits {
-		ecInfo.resizeShardSizes()
+		ecInfo.resizeShardSizes(oldBits)
 	}
 }
 
@@ -221,11 +221,12 @@ func (b ShardBits) IndexToShardId(index int) (shardId ShardId, found bool) {
 func (ecInfo *EcVolumeInfo) ensureShardSizesInitialized() {
 	expectedLength := ecInfo.ShardBits.ShardIdCount()
 	if len(ecInfo.ShardSizes) != expectedLength {
-		ecInfo.resizeShardSizes()
+		// For initialization, assume empty previous state
+		ecInfo.resizeShardSizes(ShardBits(0))
 	}
 }
 
-func (ecInfo *EcVolumeInfo) resizeShardSizes() {
+func (ecInfo *EcVolumeInfo) resizeShardSizes(prevShardBits ShardBits) {
 	expectedLength := ecInfo.ShardBits.ShardIdCount()
 	newSizes := make([]int64, expectedLength)
 
@@ -234,8 +235,8 @@ func (ecInfo *EcVolumeInfo) resizeShardSizes() {
 		newIndex := 0
 		for shardId := ShardId(0); shardId < TotalShardsCount && newIndex < expectedLength; shardId++ {
 			if ecInfo.ShardBits.HasShardId(shardId) {
-				// Try to find the size for this shard in the old array
-				if oldIndex, found := ecInfo.ShardBits.ShardIdToIndex(shardId); found && oldIndex < len(ecInfo.ShardSizes) {
+				// Try to find the size for this shard in the old array using previous ShardBits
+				if oldIndex, found := prevShardBits.ShardIdToIndex(shardId); found && oldIndex < len(ecInfo.ShardSizes) {
 					newSizes[newIndex] = ecInfo.ShardSizes[oldIndex]
 				}
 				newIndex++
