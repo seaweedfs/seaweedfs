@@ -220,9 +220,11 @@ func (b ShardBits) IndexToShardId(index int) (shardId ShardId, found bool) {
 // Helper methods for EcVolumeInfo to manage the optimized ShardSizes slice
 func (ecInfo *EcVolumeInfo) ensureShardSizesInitialized() {
 	expectedLength := ecInfo.ShardBits.ShardIdCount()
-	if len(ecInfo.ShardSizes) != expectedLength {
-		// For initialization, assume empty previous state
-		ecInfo.resizeShardSizes(ShardBits(0))
+	if ecInfo.ShardSizes == nil {
+		ecInfo.ShardSizes = make([]int64, expectedLength)
+	} else if len(ecInfo.ShardSizes) != expectedLength {
+		// Resize and preserve existing data
+		ecInfo.resizeShardSizes(ecInfo.ShardBits)
 	}
 }
 
