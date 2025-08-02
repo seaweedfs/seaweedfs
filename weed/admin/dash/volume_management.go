@@ -487,22 +487,26 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 								shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
 
 								// More efficient approach: iterate only over set bits (O(k) where k = number of set shards)
-								shardSizeIndex := 0
+								// Collect all set shard IDs in order
+								var setShardIds []erasure_coding.ShardId
 								shardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
+									setShardIds = append(setShardIds, shardId)
+								})
+
+								for i, shardId := range setShardIds {
 									ecVolumeMap[volumeId].ShardCount++
 									ecVolumeMap[volumeId].ShardNumbers = append(ecVolumeMap[volumeId].ShardNumbers, int(shardId))
 
 									// Add shard size if available using direct indexing (O(1) instead of O(n))
-									if shardSizeIndex < len(ecShardInfo.ShardSizes) {
-										shardSize := ecShardInfo.ShardSizes[shardSizeIndex]
+									if i < len(ecShardInfo.ShardSizes) {
+										shardSize := ecShardInfo.ShardSizes[i]
 										ecVolumeMap[volumeId].ShardSizes[int(shardId)] = shardSize
 										ecVolumeMap[volumeId].TotalSize += shardSize
 										vs.DiskUsage += shardSize // Add EC shard size to total disk usage
 									}
-									shardSizeIndex++
 
 									vs.EcShards++
-								})
+								}
 							}
 
 							// Convert EC volume map to slice and update volume server
