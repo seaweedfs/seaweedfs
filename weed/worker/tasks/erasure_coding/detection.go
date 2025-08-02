@@ -173,13 +173,10 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 		}
 	}
 
-	// Determine minimum shard disk locations based on configuration
-	minTotalDisks := 4
-
 	// Get available disks for EC placement (include source node for EC)
 	availableDisks := activeTopology.GetAvailableDisks(topology.TaskTypeErasureCoding, "")
-	if len(availableDisks) < minTotalDisks {
-		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d", minTotalDisks, len(availableDisks))
+	if len(availableDisks) < erasure_coding.MinTotalDisks {
+		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d", erasure_coding.MinTotalDisks, len(availableDisks))
 	}
 
 	// Select best disks for EC placement with rack/DC diversity
