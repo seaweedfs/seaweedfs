@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 // GetClusterVolumes retrieves cluster volumes data with pagination, sorting, and filtering
@@ -434,8 +435,10 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 										ecVolumeMap[volumeId].ShardCount++
 										ecVolumeMap[volumeId].ShardNumbers = append(ecVolumeMap[volumeId].ShardNumbers, shardId)
 
-										// Add shard size if available
-										if shardSize, exists := ecShardInfo.ShardIdToSize[uint32(shardId)]; exists {
+										// Add shard size if available using optimized format
+										shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+										if index, found := shardBits.ShardIdToIndex(erasure_coding.ShardId(shardId)); found && index < len(ecShardInfo.ShardSizes) {
+											shardSize := ecShardInfo.ShardSizes[index]
 											ecVolumeMap[volumeId].ShardSizes[shardId] = shardSize
 											ecVolumeMap[volumeId].TotalSize += shardSize
 										}

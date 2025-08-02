@@ -17,15 +17,19 @@ func (t *Topology) SyncDataNodeEcShards(shardInfos []*master_pb.VolumeEcShardInf
 	// convert into in memory struct storage.VolumeInfo
 	var shards []*erasure_coding.EcVolumeInfo
 	for _, shardInfo := range shardInfos {
-		shards = append(shards,
-			erasure_coding.NewEcVolumeInfo(
-				shardInfo.DiskType,
-				shardInfo.Collection,
-				needle.VolumeId(shardInfo.Id),
-				erasure_coding.ShardBits(shardInfo.EcIndexBits),
-				shardInfo.ExpireAtSec,
-				shardInfo.DiskId,
-				shardInfo.ShardIdToSize))
+		// Create EcVolumeInfo directly with optimized format
+		ecVolumeInfo := &erasure_coding.EcVolumeInfo{
+			VolumeId:    needle.VolumeId(shardInfo.Id),
+			Collection:  shardInfo.Collection,
+			ShardBits:   erasure_coding.ShardBits(shardInfo.EcIndexBits),
+			DiskType:    shardInfo.DiskType,
+			DiskId:      shardInfo.DiskId,
+			ExpireAtSec: shardInfo.ExpireAtSec,
+			ShardSizes:  make([]int64, len(shardInfo.ShardSizes)),
+		}
+		copy(ecVolumeInfo.ShardSizes, shardInfo.ShardSizes)
+
+		shards = append(shards, ecVolumeInfo)
 	}
 	// find out the delta volumes
 	newShards, deletedShards = dn.UpdateEcShards(shards)
@@ -42,26 +46,34 @@ func (t *Topology) IncrementalSyncDataNodeEcShards(newEcShards, deletedEcShards 
 	// convert into in memory struct storage.VolumeInfo
 	var newShards, deletedShards []*erasure_coding.EcVolumeInfo
 	for _, shardInfo := range newEcShards {
-		newShards = append(newShards,
-			erasure_coding.NewEcVolumeInfo(
-				shardInfo.DiskType,
-				shardInfo.Collection,
-				needle.VolumeId(shardInfo.Id),
-				erasure_coding.ShardBits(shardInfo.EcIndexBits),
-				shardInfo.ExpireAtSec,
-				shardInfo.DiskId,
-				shardInfo.ShardIdToSize))
+		// Create EcVolumeInfo directly with optimized format
+		ecVolumeInfo := &erasure_coding.EcVolumeInfo{
+			VolumeId:    needle.VolumeId(shardInfo.Id),
+			Collection:  shardInfo.Collection,
+			ShardBits:   erasure_coding.ShardBits(shardInfo.EcIndexBits),
+			DiskType:    shardInfo.DiskType,
+			DiskId:      shardInfo.DiskId,
+			ExpireAtSec: shardInfo.ExpireAtSec,
+			ShardSizes:  make([]int64, len(shardInfo.ShardSizes)),
+		}
+		copy(ecVolumeInfo.ShardSizes, shardInfo.ShardSizes)
+
+		newShards = append(newShards, ecVolumeInfo)
 	}
 	for _, shardInfo := range deletedEcShards {
-		deletedShards = append(deletedShards,
-			erasure_coding.NewEcVolumeInfo(
-				shardInfo.DiskType,
-				shardInfo.Collection,
-				needle.VolumeId(shardInfo.Id),
-				erasure_coding.ShardBits(shardInfo.EcIndexBits),
-				shardInfo.ExpireAtSec,
-				shardInfo.DiskId,
-				shardInfo.ShardIdToSize))
+		// Create EcVolumeInfo directly with optimized format
+		ecVolumeInfo := &erasure_coding.EcVolumeInfo{
+			VolumeId:    needle.VolumeId(shardInfo.Id),
+			Collection:  shardInfo.Collection,
+			ShardBits:   erasure_coding.ShardBits(shardInfo.EcIndexBits),
+			DiskType:    shardInfo.DiskType,
+			DiskId:      shardInfo.DiskId,
+			ExpireAtSec: shardInfo.ExpireAtSec,
+			ShardSizes:  make([]int64, len(shardInfo.ShardSizes)),
+		}
+		copy(ecVolumeInfo.ShardSizes, shardInfo.ShardSizes)
+
+		deletedShards = append(deletedShards, ecVolumeInfo)
 	}
 
 	dn.DeltaUpdateEcShards(newShards, deletedShards)

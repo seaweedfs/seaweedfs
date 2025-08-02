@@ -217,20 +217,19 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 	for _, s := range ev.Shards {
 		if s.VolumeId != prevVolumeId {
 			m = &master_pb.VolumeEcShardInformationMessage{
-				Id:            uint32(s.VolumeId),
-				Collection:    s.Collection,
-				DiskType:      string(ev.diskType),
-				ExpireAtSec:   ev.ExpireAtSec,
-				DiskId:        diskId,
-				ShardIdToSize: make(map[uint32]int64),
+				Id:          uint32(s.VolumeId),
+				Collection:  s.Collection,
+				DiskType:    string(ev.diskType),
+				ExpireAtSec: ev.ExpireAtSec,
+				DiskId:      diskId,
 			}
 			messages = append(messages, m)
 		}
 		prevVolumeId = s.VolumeId
 		m.EcIndexBits = uint32(ShardBits(m.EcIndexBits).AddShardId(s.ShardId))
 
-		// Add shard size information
-		m.ShardIdToSize[uint32(s.ShardId)] = s.Size()
+		// Add shard size information using the optimized format
+		SetShardSize(m, s.ShardId, s.Size())
 	}
 	return
 }
