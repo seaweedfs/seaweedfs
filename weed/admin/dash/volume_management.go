@@ -64,6 +64,39 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 		return nil, err
 	}
 
+	// Add EC shard sizes to total size calculation
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		var ecTotalSize int64
+		if resp.TopologyInfo != nil {
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								// Add all shard sizes for this EC volume
+								for _, shardSize := range ecShardInfo.ShardSizes {
+									ecTotalSize += shardSize
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		totalSize += ecTotalSize
+		return nil
+	})
+
+	if err != nil {
+		// If EC shard query fails, continue with basic data but log the error
+		glog.Warningf("Failed to get EC shard information for size calculation: %v", err)
+	}
+
 	// Filter by collection if specified
 	if collection != "" {
 		var filteredVolumes []VolumeWithTopology
@@ -80,6 +113,48 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 				filteredTotalSize += int64(volume.Size)
 			}
 		}
+
+		// Also filter EC shard sizes by collection
+		err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+			resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+			if err != nil {
+				return err
+			}
+
+			var filteredEcTotalSize int64
+			if resp.TopologyInfo != nil {
+				for _, dc := range resp.TopologyInfo.DataCenterInfos {
+					for _, rack := range dc.RackInfos {
+						for _, node := range rack.DataNodeInfos {
+							for _, diskInfo := range node.DiskInfos {
+								for _, ecShardInfo := range diskInfo.EcShardInfos {
+									// Handle "default" collection filtering for empty collections
+									ecCollection := ecShardInfo.Collection
+									if ecCollection == "" {
+										ecCollection = "default"
+									}
+
+									if ecCollection == collection {
+										// Add all shard sizes for this EC volume
+										for _, shardSize := range ecShardInfo.ShardSizes {
+											filteredEcTotalSize += shardSize
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			filteredTotalSize += filteredEcTotalSize
+			return nil
+		})
+
+		if err != nil {
+			// If EC shard query fails, continue with basic data but log the error
+			glog.Warningf("Failed to get filtered EC shard information: %v", err)
+		}
+
 		volumes = filteredVolumes
 		totalSize = filteredTotalSize
 	}
@@ -465,6 +540,15 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 	if err != nil {
 		// If EC shard query fails, continue with basic data but log the error
 		glog.Warningf("Failed to get EC shard information: %v", err)
+	}
+
+	// Add EC shard sizes to each volume server's DiskUsage
+	for _, vs := range volumeServerMap {
+		var ecTotalSizeForServer int64
+		for _, ecInfo := range vs.EcShardDetails {
+			ecTotalSizeForServer += ecInfo.TotalSize
+		}
+		vs.DiskUsage += ecTotalSizeForServer
 	}
 
 	// Convert map back to slice
