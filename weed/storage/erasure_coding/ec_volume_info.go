@@ -1,6 +1,8 @@
 package erasure_coding
 
 import (
+	"math/bits"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -170,18 +172,16 @@ func (b ShardBits) MinusParityShards() ShardBits {
 
 // ShardIdToIndex converts a shard ID to its index position in the ShardSizes slice
 // Returns the index and true if the shard is present, -1 and false if not present
+// Time complexity: O(1) using bit manipulation
 func (b ShardBits) ShardIdToIndex(shardId ShardId) (index int, found bool) {
 	if !b.HasShardId(shardId) {
 		return -1, false
 	}
 
-	// Count how many bits are set before this shard ID
-	index = 0
-	for i := ShardId(0); i < shardId; i++ {
-		if b.HasShardId(i) {
-			index++
-		}
-	}
+	// Create a mask for bits before the shardId
+	mask := uint32((1 << shardId) - 1)
+	// Count set bits before the shardId using efficient bit manipulation
+	index = bits.OnesCount32(uint32(b) & mask)
 	return index, true
 }
 
