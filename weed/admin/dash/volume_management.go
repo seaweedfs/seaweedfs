@@ -80,6 +80,8 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	if collection != "" {
 		var filteredVolumes []VolumeWithTopology
 		var filteredTotalSize int64
+		var filteredEcTotalSize int64
+
 		for _, volume := range volumes {
 			// Handle "default" collection filtering for empty collections
 			volumeCollection := volume.Collection
@@ -93,8 +95,8 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 			}
 		}
 
-		// Also filter EC shard sizes by collection using cached topology
-		var filteredEcTotalSize int64
+		// Filter EC shard sizes by collection using already processed data
+		// This reuses the topology traversal done above (lines 43-71) to avoid a second pass
 		if cachedTopologyInfo != nil {
 			for _, dc := range cachedTopologyInfo.DataCenterInfos {
 				for _, rack := range dc.RackInfos {
@@ -119,10 +121,9 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 				}
 			}
 		}
-		filteredTotalSize += filteredEcTotalSize
 
 		volumes = filteredVolumes
-		totalSize = filteredTotalSize
+		totalSize = filteredTotalSize + filteredEcTotalSize
 	}
 
 	// Calculate unique data center, rack, disk type, collection, and version counts from filtered volumes
@@ -454,6 +455,11 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 						}
 						vs := volumeServerMap[node.Id]
 
+						// Process EC shard information for this server at volume server level (not per-disk)
+						ecVolumeMap := make(map[uint32]*VolumeServerEcInfo)
+						// Temporary map to accumulate shard info across disks
+						ecShardAccumulator := make(map[uint32][]*master_pb.VolumeEcShardInformationMessage)
+
 						// Process disk information
 						for _, diskInfo := range node.DiskInfos {
 							vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * int64(volumeSizeLimitMB) * 1024 * 1024 // Use actual volume size limit
@@ -464,56 +470,71 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 								vs.DiskUsage += int64(volInfo.Size)
 							}
 
-							// Process EC shard information for this server (combined with topology building)
-							ecVolumeMap := make(map[uint32]*VolumeServerEcInfo)
-
+							// Accumulate EC shard information across all disks for this volume server
 							for _, ecShardInfo := range diskInfo.EcShardInfos {
 								volumeId := ecShardInfo.Id
+								ecShardAccumulator[volumeId] = append(ecShardAccumulator[volumeId], ecShardInfo)
+							}
+						}
 
-								// Initialize or get existing EC info for this volume
-								if ecVolumeMap[volumeId] == nil {
-									ecVolumeMap[volumeId] = &VolumeServerEcInfo{
-										VolumeID:     volumeId,
-										Collection:   ecShardInfo.Collection,
-										ShardCount:   0,
-										EcIndexBits:  ecShardInfo.EcIndexBits,
-										ShardNumbers: []int{},
-										ShardSizes:   make(map[int]int64),
-										TotalSize:    0,
-									}
-								}
+						// Process accumulated EC shard information per volume
+						for volumeId, ecShardInfos := range ecShardAccumulator {
+							if len(ecShardInfos) == 0 {
+								continue
+							}
 
-								// Count shards and collect shard numbers with sizes
+							// Initialize EC volume info
+							ecInfo := &VolumeServerEcInfo{
+								VolumeID:     volumeId,
+								Collection:   ecShardInfos[0].Collection,
+								ShardCount:   0,
+								EcIndexBits:  0,
+								ShardNumbers: []int{},
+								ShardSizes:   make(map[int]int64),
+								TotalSize:    0,
+							}
+
+							// Merge EcIndexBits from all disks and collect shard sizes
+							allShardSizes := make(map[erasure_coding.ShardId]int64)
+							for _, ecShardInfo := range ecShardInfos {
+								ecInfo.EcIndexBits |= ecShardInfo.EcIndexBits
+
+								// Collect shard sizes from this disk
 								shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-
-								// More efficient approach: iterate only over set bits (O(k) where k = number of set shards)
-								// Collect all set shard IDs in order
 								var setShardIds []erasure_coding.ShardId
 								shardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
 									setShardIds = append(setShardIds, shardId)
 								})
 
 								for i, shardId := range setShardIds {
-									ecVolumeMap[volumeId].ShardCount++
-									ecVolumeMap[volumeId].ShardNumbers = append(ecVolumeMap[volumeId].ShardNumbers, int(shardId))
-
-									// Add shard size if available using direct indexing (O(1) instead of O(n))
 									if i < len(ecShardInfo.ShardSizes) {
-										shardSize := ecShardInfo.ShardSizes[i]
-										ecVolumeMap[volumeId].ShardSizes[int(shardId)] = shardSize
-										ecVolumeMap[volumeId].TotalSize += shardSize
-										vs.DiskUsage += shardSize // Add EC shard size to total disk usage
+										allShardSizes[shardId] = ecShardInfo.ShardSizes[i]
 									}
-
-									vs.EcShards++
 								}
 							}
 
-							// Convert EC volume map to slice and update volume server
-							for _, ecInfo := range ecVolumeMap {
-								vs.EcShardDetails = append(vs.EcShardDetails, *ecInfo)
-								vs.EcVolumes++
-							}
+							// Process final merged shard information
+							finalShardBits := erasure_coding.ShardBits(ecInfo.EcIndexBits)
+							finalShardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
+								ecInfo.ShardCount++
+								ecInfo.ShardNumbers = append(ecInfo.ShardNumbers, int(shardId))
+								vs.EcShards++
+
+								// Add shard size if available
+								if shardSize, exists := allShardSizes[shardId]; exists {
+									ecInfo.ShardSizes[int(shardId)] = shardSize
+									ecInfo.TotalSize += shardSize
+									vs.DiskUsage += shardSize // Add EC shard size to total disk usage
+								}
+							})
+
+							ecVolumeMap[volumeId] = ecInfo
+						}
+
+						// Convert EC volume map to slice and update volume server (after processing all disks)
+						for _, ecInfo := range ecVolumeMap {
+							vs.EcShardDetails = append(vs.EcShardDetails, *ecInfo)
+							vs.EcVolumes++
 						}
 					}
 				}
