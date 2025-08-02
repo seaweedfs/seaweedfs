@@ -96,15 +96,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					shardDiskIDs = append(shardDiskIDs, plan.TargetDisk)
 				}
 
-				// Find source disk by looking up volume location in topology
-				// Default to disk 0 if not found (common case for single-disk nodes)
-				sourceDisk := uint32(0)
-				nodeDisks := clusterInfo.ActiveTopology.GetNodeDisks(metric.Server)
-				if len(nodeDisks) > 0 {
-					// For now, use the first disk. In the future, this could be improved
-					// to find the actual disk containing the volume
-					sourceDisk = nodeDisks[0].DiskID
-				}
+				// Find the actual disk containing the volume on the source server
+				sourceDisk := findVolumeDisk(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection, metric.Server)
 
 				err = clusterInfo.ActiveTopology.AddPendingECShardTask(
 					taskID,
@@ -468,6 +461,38 @@ func checkECPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC str
 	}
 
 	return conflicts
+}
+
+// findVolumeDisk finds the disk ID where a specific volume is located on a given server
+func findVolumeDisk(activeTopology *topology.ActiveTopology, volumeID uint32, collection string, serverID string) uint32 {
+	if activeTopology == nil {
+		return 0
+	}
+
+	topologyInfo := activeTopology.GetTopologyInfo()
+	if topologyInfo == nil {
+		return 0
+	}
+
+	// Iterate through all nodes to find the specific server and volume
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, nodeInfo := range rack.DataNodeInfos {
+				if nodeInfo.Id == serverID {
+					for _, diskInfo := range nodeInfo.DiskInfos {
+						for _, volumeInfo := range diskInfo.VolumeInfos {
+							if volumeInfo.Id == volumeID && volumeInfo.Collection == collection {
+								return diskInfo.DiskId
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Default to disk 0 if not found (common case for single-disk nodes)
+	return 0
 }
 
 // findVolumeReplicas finds all servers that have replicas of the specified volume

@@ -125,8 +125,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		// Add pending balance task to ActiveTopology for capacity management
 		taskID := fmt.Sprintf("balance_vol_%d_%d", selectedVolume.VolumeID, time.Now().Unix())
 
-		// Get source disk (assume disk 0 for now, could be improved to find actual disk)
-		sourceDisk := uint32(0)
+		// Find the actual disk containing the volume on the source server
+		sourceDisk := findVolumeDisk(clusterInfo.ActiveTopology, selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
 		targetDisk := destinationPlan.TargetDisk
 
 		clusterInfo.ActiveTopology.AddPendingTaskForTaskType(
@@ -252,4 +252,36 @@ func checkPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC strin
 	}
 
 	return conflicts
+}
+
+// findVolumeDisk finds the disk ID where a specific volume is located on a given server
+func findVolumeDisk(activeTopology *topology.ActiveTopology, volumeID uint32, collection string, serverID string) uint32 {
+	if activeTopology == nil {
+		return 0
+	}
+
+	topologyInfo := activeTopology.GetTopologyInfo()
+	if topologyInfo == nil {
+		return 0
+	}
+
+	// Iterate through all nodes to find the specific server and volume
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, nodeInfo := range rack.DataNodeInfos {
+				if nodeInfo.Id == serverID {
+					for _, diskInfo := range nodeInfo.DiskInfos {
+						for _, volumeInfo := range diskInfo.VolumeInfos {
+							if volumeInfo.Id == volumeID && volumeInfo.Collection == collection {
+								return diskInfo.DiskId
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Default to disk 0 if not found (common case for single-disk nodes)
+	return 0
 }

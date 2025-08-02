@@ -126,6 +126,18 @@ func (at *ActiveTopology) AddPendingTaskForTaskType(taskID string, taskType Task
 }
 
 // AddPendingECShardTask adds a pending EC shard task with specific shard-level impact
+//
+// IMPORTANT: This function creates multiple internal tasks with derived IDs:
+// - One source task: taskID+"_source"
+// - Multiple shard tasks: taskID+"_shard_"+i
+//
+// The caller only provides a single taskID but should be aware that this creates
+// multiple internal tracking entries. This design allows for granular capacity
+// management but means the caller cannot directly manage the sub-tasks.
+//
+// TODO: Consider refactoring to either:
+// 1. Return the list of generated task IDs to the caller, or
+// 2. Redesign taskState to support multiple destinations in a single task
 func (at *ActiveTopology) AddPendingECShardTask(taskID string, volumeID uint32, sourceServer string, sourceDisk uint32,
 	shardDestinations []string, shardDiskIDs []uint32, shardCount int32, expectedShardSize int64, originalVolumeSize int64) error {
 
@@ -133,9 +145,13 @@ func (at *ActiveTopology) AddPendingECShardTask(taskID string, volumeID uint32, 
 		return fmt.Errorf("shard destinations and disk IDs must have same length")
 	}
 
+	glog.V(2).Infof("Creating EC task %s with 1 source task + %d shard tasks for volume %d",
+		taskID, len(shardDestinations), volumeID)
+
 	// Source task: removes original volume
 	sourceChange, _ := CalculateTaskStorageImpact(TaskTypeErasureCoding, originalVolumeSize)
-	at.addPendingTaskWithStorageInfo(taskID+"_source", TaskTypeErasureCoding, volumeID,
+	sourceTaskID := taskID + "_source"
+	at.addPendingTaskWithStorageInfo(sourceTaskID, TaskTypeErasureCoding, volumeID,
 		sourceServer, sourceDisk, "", 0, sourceChange, StorageSlotChange{}, originalVolumeSize)
 
 	// Add shard tasks for each destination
@@ -146,6 +162,9 @@ func (at *ActiveTopology) AddPendingECShardTask(taskID string, volumeID uint32, 
 		shardImpact := CalculateECShardStorageImpact(shardsForThisDisk, expectedShardSize)
 		at.addPendingTaskWithStorageInfo(shardTaskID, TaskTypeErasureCoding, volumeID,
 			"", 0, destination, shardDiskIDs[i], StorageSlotChange{}, shardImpact, expectedShardSize)
+
+		glog.V(3).Infof("Created EC shard task %s: volume %d -> %s (disk %d)",
+			shardTaskID, volumeID, destination, shardDiskIDs[i])
 	}
 
 	return nil

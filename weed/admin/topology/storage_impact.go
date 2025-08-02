@@ -1,6 +1,10 @@
 package topology
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+)
 
 // CalculateTaskStorageImpact calculates storage impact for different task types
 func CalculateTaskStorageImpact(taskType TaskType, volumeSize int64) (sourceChange, targetChange StorageSlotChange) {
@@ -27,6 +31,7 @@ func CalculateTaskStorageImpact(taskType TaskType, volumeSize int64) (sourceChan
 
 	default:
 		// Unknown task type, assume minimal impact
+		glog.Warningf("unhandled task type %s in CalculateTaskStorageImpact, assuming default impact", taskType)
 		return StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, StorageSlotChange{VolumeSlots: 1, ShardSlots: 0}
 	}
 }
