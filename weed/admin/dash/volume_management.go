@@ -424,6 +424,12 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 			return err
 		}
 
+		// Get volume size limit from response, default to 30GB if not set
+		volumeSizeLimitMB := resp.VolumeSizeLimitMb
+		if volumeSizeLimitMB == 0 {
+			volumeSizeLimitMB = 30000 // default to 30000MB (30GB)
+		}
+
 		// Build basic topology from the VolumeList response (replaces GetClusterTopology call)
 		volumeServerMap = make(map[string]*VolumeServer)
 
@@ -450,7 +456,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 
 						// Process disk information
 						for _, diskInfo := range node.DiskInfos {
-							vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * 30 * 1024 * 1024 * 1024 // 30GB per volume
+							vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * int64(volumeSizeLimitMB) * 1024 * 1024 // Use actual volume size limit
 
 							// Count regular volumes and calculate disk usage
 							for _, volInfo := range diskInfo.VolumeInfos {

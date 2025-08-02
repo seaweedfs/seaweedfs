@@ -269,13 +269,13 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 			var shardDetails []string
 			for _, shardId := range shardIds {
 				if size, exists := shardSizeMap[uint32(shardId)]; exists {
-					shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, formatBytes(size)))
+					shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, bytesToHumanReadable(size)))
 					totalSize += size
 				} else {
 					shardDetails = append(shardDetails, fmt.Sprintf("%d:?", shardId))
 				}
 			}
-			shardSizeInfo = fmt.Sprintf(" sizes:[%s] total:%s", strings.Join(shardDetails, " "), formatBytes(totalSize))
+			shardSizeInfo = fmt.Sprintf(" sizes:[%s] total:%s", strings.Join(shardDetails, " "), bytesToHumanReadable(totalSize))
 		}
 
 		output(verbosityLevel >= 5, writer, "          ec volume id:%v collection:%v shards:%v%s %s\n",
@@ -332,8 +332,8 @@ func (s statistics) String() string {
 	return fmt.Sprintf("total size:%d file_count:%d", s.Size, s.FileCount)
 }
 
-// formatBytes converts bytes to human readable format
-func formatBytes(bytes int64) string {
+// bytesToHumanReadable converts bytes to human readable format
+func bytesToHumanReadable(bytes int64) string {
 	if bytes == 0 {
 		return "0 B"
 	}
