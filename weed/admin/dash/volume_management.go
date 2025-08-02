@@ -6,7 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
@@ -416,44 +415,52 @@ func (s *AdminServer) VacuumVolume(volumeID int, server string) error {
 
 // GetClusterVolumeServers retrieves cluster volume servers data including EC shard information
 func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, error) {
-	// Get basic topology first
-	topology, err := s.GetClusterTopology()
-	if err != nil {
-		return nil, err
-	}
+	var volumeServerMap map[string]*VolumeServer
 
-	// Create a map for quick lookup and to add EC shard information
-	volumeServerMap := make(map[string]*VolumeServer)
-	for _, vs := range topology.VolumeServers {
-		// Create a copy of the volume server
-		vsCopy := vs
-		vsCopy.EcVolumes = 0
-		vsCopy.EcShards = 0
-		vsCopy.EcShardDetails = []VolumeServerEcInfo{}
-		volumeServerMap[vs.Address] = &vsCopy
-	}
-
-	// Get detailed EC shard information via gRPC
-	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+	// Make only ONE VolumeList call and use it for both topology building AND EC shard processing
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
 
+		// Build basic topology from the VolumeList response (replaces GetClusterTopology call)
+		volumeServerMap = make(map[string]*VolumeServer)
+
 		if resp.TopologyInfo != nil {
+			// Process topology to build basic volume server info (similar to cluster_topology.go logic)
 			for _, dc := range resp.TopologyInfo.DataCenterInfos {
 				for _, rack := range dc.RackInfos {
 					for _, node := range rack.DataNodeInfos {
-						// Find the corresponding volume server
-						vs, exists := volumeServerMap[node.Id]
-						if !exists {
-							continue
+						// Initialize volume server if not exists
+						if volumeServerMap[node.Id] == nil {
+							volumeServerMap[node.Id] = &VolumeServer{
+								Address:        node.Id,
+								DataCenter:     dc.Id,
+								Rack:           rack.Id,
+								Volumes:        0,
+								DiskUsage:      0,
+								DiskCapacity:   0,
+								EcVolumes:      0,
+								EcShards:       0,
+								EcShardDetails: []VolumeServerEcInfo{},
+							}
 						}
+						vs := volumeServerMap[node.Id]
 
-						// Process EC shard information for this server
-						ecVolumeMap := make(map[uint32]*VolumeServerEcInfo)
-
+						// Process disk information
 						for _, diskInfo := range node.DiskInfos {
+							vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * 30 * 1024 * 1024 * 1024 // 30GB per volume
+
+							// Count regular volumes and calculate disk usage
+							for _, volInfo := range diskInfo.VolumeInfos {
+								vs.Volumes++
+								vs.DiskUsage += int64(volInfo.Size)
+							}
+
+							// Process EC shard information for this server (combined with topology building)
+							ecVolumeMap := make(map[uint32]*VolumeServerEcInfo)
+
 							for _, ecShardInfo := range diskInfo.EcShardInfos {
 								volumeId := ecShardInfo.Id
 
@@ -471,33 +478,32 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 								}
 
 								// Count shards and collect shard numbers with sizes
-								shardBits := ecShardInfo.EcIndexBits
+								shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
 
-								// More efficient approach: iterate through ShardSizes directly
+								// More efficient approach: iterate only over set bits (O(k) where k = number of set shards)
 								shardSizeIndex := 0
-								for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
-									if (shardBits & (1 << uint(shardId))) != 0 {
-										ecVolumeMap[volumeId].ShardCount++
-										ecVolumeMap[volumeId].ShardNumbers = append(ecVolumeMap[volumeId].ShardNumbers, shardId)
+								shardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
+									ecVolumeMap[volumeId].ShardCount++
+									ecVolumeMap[volumeId].ShardNumbers = append(ecVolumeMap[volumeId].ShardNumbers, int(shardId))
 
-										// Add shard size if available using direct indexing (O(1) instead of O(n))
-										if shardSizeIndex < len(ecShardInfo.ShardSizes) {
-											shardSize := ecShardInfo.ShardSizes[shardSizeIndex]
-											ecVolumeMap[volumeId].ShardSizes[shardId] = shardSize
-											ecVolumeMap[volumeId].TotalSize += shardSize
-										}
-										shardSizeIndex++
-
-										vs.EcShards++
+									// Add shard size if available using direct indexing (O(1) instead of O(n))
+									if shardSizeIndex < len(ecShardInfo.ShardSizes) {
+										shardSize := ecShardInfo.ShardSizes[shardSizeIndex]
+										ecVolumeMap[volumeId].ShardSizes[int(shardId)] = shardSize
+										ecVolumeMap[volumeId].TotalSize += shardSize
+										vs.DiskUsage += shardSize // Add EC shard size to total disk usage
 									}
-								}
-							}
-						}
+									shardSizeIndex++
 
-						// Convert map to slice and update volume server
-						for _, ecInfo := range ecVolumeMap {
-							vs.EcShardDetails = append(vs.EcShardDetails, *ecInfo)
-							vs.EcVolumes++
+									vs.EcShards++
+								})
+							}
+
+							// Convert EC volume map to slice and update volume server
+							for _, ecInfo := range ecVolumeMap {
+								vs.EcShardDetails = append(vs.EcShardDetails, *ecInfo)
+								vs.EcVolumes++
+							}
 						}
 					}
 				}
@@ -508,17 +514,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 	})
 
 	if err != nil {
-		// If EC shard query fails, continue with basic data but log the error
-		glog.Warningf("Failed to get EC shard information: %v", err)
-	}
-
-	// Add EC shard sizes to each volume server's DiskUsage
-	for _, vs := range volumeServerMap {
-		var ecTotalSizeForServer int64
-		for _, ecInfo := range vs.EcShardDetails {
-			ecTotalSizeForServer += ecInfo.TotalSize
-		}
-		vs.DiskUsage += ecTotalSizeForServer
+		return nil, err
 	}
 
 	// Convert map back to slice

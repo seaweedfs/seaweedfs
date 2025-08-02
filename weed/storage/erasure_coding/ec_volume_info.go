@@ -185,6 +185,19 @@ func (b ShardBits) ShardIdToIndex(shardId ShardId) (index int, found bool) {
 	return index, true
 }
 
+// EachSetIndex iterates over all set shard IDs and calls the provided function for each
+// This is highly efficient using bit manipulation - only iterates over actual set bits
+func (b ShardBits) EachSetIndex(fn func(shardId ShardId)) {
+	bitsValue := uint32(b)
+	for bitsValue != 0 {
+		// Find the position of the least significant set bit
+		shardId := ShardId(bits.TrailingZeros32(bitsValue))
+		fn(shardId)
+		// Clear the least significant set bit
+		bitsValue &= bitsValue - 1
+	}
+}
+
 // IndexToShardId converts an index position in ShardSizes slice to the corresponding shard ID
 // Returns the shard ID and true if valid index, -1 and false if invalid index
 func (b ShardBits) IndexToShardId(index int) (shardId ShardId, found bool) {

@@ -98,4 +98,20 @@ func TestShardBitsHelpers(t *testing.T) {
 	if shardId, found := shardBits.IndexToShardId(3); found {
 		t.Errorf("Should not find shard for index 3, but got shard %d", shardId)
 	}
+
+	// Test EachSetIndex
+	var collectedShards []ShardId
+	shardBits.EachSetIndex(func(shardId ShardId) {
+		collectedShards = append(collectedShards, shardId)
+	})
+	expectedShards := []ShardId{0, 2, 5}
+	if len(collectedShards) != len(expectedShards) {
+		t.Errorf("Expected EachSetIndex to collect %v, got %v", expectedShards, collectedShards)
+	}
+	for i, expected := range expectedShards {
+		if i >= len(collectedShards) || collectedShards[i] != expected {
+			t.Errorf("Expected EachSetIndex to collect %v, got %v", expectedShards, collectedShards)
+			break
+		}
+	}
 }
