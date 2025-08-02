@@ -255,21 +255,10 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 		var totalSize int64
 		var shardSizeInfo string
 
-		// Convert optimized ShardSizes to map for display
-		shardSizeMap := make(map[uint32]int64)
 		if len(ecShardInfo.ShardSizes) > 0 {
-			shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-			for i, size := range ecShardInfo.ShardSizes {
-				if shardId, found := shardBits.IndexToShardId(i); found {
-					shardSizeMap[uint32(shardId)] = size
-				}
-			}
-		}
-
-		if len(shardSizeMap) > 0 {
 			var shardDetails []string
 			for _, shardId := range shardIds {
-				if size, exists := shardSizeMap[uint32(shardId)]; exists {
+				if size, found := erasure_coding.GetShardSize(ecShardInfo, erasure_coding.ShardId(shardId)); found {
 					shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, util.BytesToHumanReadable(uint64(size))))
 					totalSize += size
 				} else {
