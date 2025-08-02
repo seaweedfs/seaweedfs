@@ -129,6 +129,7 @@ message VolumeEcShardInformationMessage {
   string disk_type = 4;
   uint64 expire_at_sec = 5; // used to record the destruction time of ec volume
   uint32 disk_id = 6;
+  map<uint32, int64> shard_id_to_size = 7; // map from shard ID to shard size in bytes
 }
 
 message StorageBackend {

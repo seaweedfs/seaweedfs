@@ -422,15 +422,24 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 										ShardCount:   0,
 										EcIndexBits:  ecShardInfo.EcIndexBits,
 										ShardNumbers: []int{},
+										ShardSizes:   make(map[int]int64),
+										TotalSize:    0,
 									}
 								}
 
-								// Count shards and collect shard numbers
+								// Count shards and collect shard numbers with sizes
 								shardBits := ecShardInfo.EcIndexBits
 								for shardId := 0; shardId < 14; shardId++ { // EC uses 14 shards
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										ecVolumeMap[volumeId].ShardCount++
 										ecVolumeMap[volumeId].ShardNumbers = append(ecVolumeMap[volumeId].ShardNumbers, shardId)
+
+										// Add shard size if available
+										if shardSize, exists := ecShardInfo.ShardIdToSize[uint32(shardId)]; exists {
+											ecVolumeMap[volumeId].ShardSizes[shardId] = shardSize
+											ecVolumeMap[volumeId].TotalSize += shardSize
+										}
+
 										vs.EcShards++
 									}
 								}
