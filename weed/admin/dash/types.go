@@ -44,6 +44,22 @@ type VolumeServer struct {
 	DiskUsage     int64     `json:"disk_usage"`
 	DiskCapacity  int64     `json:"disk_capacity"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
+
+	// EC shard information
+	EcVolumes      int                  `json:"ec_volumes"`       // Number of EC volumes this server has shards for
+	EcShards       int                  `json:"ec_shards"`        // Total number of EC shards on this server
+	EcShardDetails []VolumeServerEcInfo `json:"ec_shard_details"` // Detailed EC shard information
+}
+
+// VolumeServerEcInfo represents EC shard information for a specific volume on a server
+type VolumeServerEcInfo struct {
+	VolumeID     uint32        `json:"volume_id"`
+	Collection   string        `json:"collection"`
+	ShardCount   int           `json:"shard_count"`   // Number of shards this server has for this volume
+	EcIndexBits  uint32        `json:"ec_index_bits"` // Bitmap of which shards this server has
+	ShardNumbers []int         `json:"shard_numbers"` // List of actual shard numbers this server has
+	ShardSizes   map[int]int64 `json:"shard_sizes"`   // Map from shard number to size in bytes
+	TotalSize    int64         `json:"total_size"`    // Total size of all shards on this server for this volume
 }
 
 // S3 Bucket management structures

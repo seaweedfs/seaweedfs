@@ -227,6 +227,9 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 		}
 		prevVolumeId = s.VolumeId
 		m.EcIndexBits = uint32(ShardBits(m.EcIndexBits).AddShardId(s.ShardId))
+
+		// Add shard size information using the optimized format
+		SetShardSize(m, s.ShardId, s.Size())
 	}
 	return
 }

@@ -81,9 +81,6 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 
 	// Use the working directory from task parameters, or fall back to a default
 	baseWorkDir := t.workDir
-	if baseWorkDir == "" {
-		baseWorkDir = "/tmp/seaweedfs_ec_work"
-	}
 
 	// Create unique working directory for this task
 	taskWorkDir := filepath.Join(baseWorkDir, fmt.Sprintf("vol_%d_%d", t.volumeID, time.Now().Unix()))

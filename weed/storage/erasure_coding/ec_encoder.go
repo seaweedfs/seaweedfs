@@ -18,6 +18,7 @@ const (
 	DataShardsCount             = 10
 	ParityShardsCount           = 4
 	TotalShardsCount            = DataShardsCount + ParityShardsCount
+	MinTotalDisks               = TotalShardsCount/ParityShardsCount + 1
 	ErasureCodingLargeBlockSize = 1024 * 1024 * 1024 // 1GB
 	ErasureCodingSmallBlockSize = 1024 * 1024        // 1MB
 )

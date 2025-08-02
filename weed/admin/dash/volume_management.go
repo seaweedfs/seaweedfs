@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 // GetClusterVolumes retrieves cluster volumes data with pagination, sorting, and filtering
@@ -26,6 +27,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	}
 	var volumes []VolumeWithTopology
 	var totalSize int64
+	var cachedTopologyInfo *master_pb.TopologyInfo
 
 	// Get detailed volume information via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
@@ -34,11 +36,15 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 			return err
 		}
 
+		// Cache the topology info for reuse
+		cachedTopologyInfo = resp.TopologyInfo
+
 		if resp.TopologyInfo != nil {
 			for _, dc := range resp.TopologyInfo.DataCenterInfos {
 				for _, rack := range dc.RackInfos {
 					for _, node := range rack.DataNodeInfos {
 						for _, diskInfo := range node.DiskInfos {
+							// Process regular volumes
 							for _, volInfo := range diskInfo.VolumeInfos {
 								volume := VolumeWithTopology{
 									VolumeInformationMessage: volInfo,
@@ -48,6 +54,14 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 								}
 								volumes = append(volumes, volume)
 								totalSize += int64(volInfo.Size)
+							}
+
+							// Process EC shards in the same loop
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								// Add all shard sizes for this EC volume
+								for _, shardSize := range ecShardInfo.ShardSizes {
+									totalSize += shardSize
+								}
 							}
 						}
 					}
@@ -66,6 +80,8 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	if collection != "" {
 		var filteredVolumes []VolumeWithTopology
 		var filteredTotalSize int64
+		var filteredEcTotalSize int64
+
 		for _, volume := range volumes {
 			// Handle "default" collection filtering for empty collections
 			volumeCollection := volume.Collection
@@ -78,8 +94,36 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 				filteredTotalSize += int64(volume.Size)
 			}
 		}
+
+		// Filter EC shard sizes by collection using already processed data
+		// This reuses the topology traversal done above (lines 43-71) to avoid a second pass
+		if cachedTopologyInfo != nil {
+			for _, dc := range cachedTopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								// Handle "default" collection filtering for empty collections
+								ecCollection := ecShardInfo.Collection
+								if ecCollection == "" {
+									ecCollection = "default"
+								}
+
+								if ecCollection == collection {
+									// Add all shard sizes for this EC volume
+									for _, shardSize := range ecShardInfo.ShardSizes {
+										filteredEcTotalSize += shardSize
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		volumes = filteredVolumes
-		totalSize = filteredTotalSize
+		totalSize = filteredTotalSize + filteredEcTotalSize
 	}
 
 	// Calculate unique data center, rack, disk type, collection, and version counts from filtered volumes
@@ -370,23 +414,151 @@ func (s *AdminServer) VacuumVolume(volumeID int, server string) error {
 	})
 }
 
-// GetClusterVolumeServers retrieves cluster volume servers data
+// GetClusterVolumeServers retrieves cluster volume servers data including EC shard information
 func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, error) {
-	topology, err := s.GetClusterTopology()
+	var volumeServerMap map[string]*VolumeServer
+
+	// Make only ONE VolumeList call and use it for both topology building AND EC shard processing
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		// Get volume size limit from response, default to 30GB if not set
+		volumeSizeLimitMB := resp.VolumeSizeLimitMb
+		if volumeSizeLimitMB == 0 {
+			volumeSizeLimitMB = 30000 // default to 30000MB (30GB)
+		}
+
+		// Build basic topology from the VolumeList response (replaces GetClusterTopology call)
+		volumeServerMap = make(map[string]*VolumeServer)
+
+		if resp.TopologyInfo != nil {
+			// Process topology to build basic volume server info (similar to cluster_topology.go logic)
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						// Initialize volume server if not exists
+						if volumeServerMap[node.Id] == nil {
+							volumeServerMap[node.Id] = &VolumeServer{
+								Address:        node.Id,
+								DataCenter:     dc.Id,
+								Rack:           rack.Id,
+								Volumes:        0,
+								DiskUsage:      0,
+								DiskCapacity:   0,
+								EcVolumes:      0,
+								EcShards:       0,
+								EcShardDetails: []VolumeServerEcInfo{},
+							}
+						}
+						vs := volumeServerMap[node.Id]
+
+						// Process EC shard information for this server at volume server level (not per-disk)
+						ecVolumeMap := make(map[uint32]*VolumeServerEcInfo)
+						// Temporary map to accumulate shard info across disks
+						ecShardAccumulator := make(map[uint32][]*master_pb.VolumeEcShardInformationMessage)
+
+						// Process disk information
+						for _, diskInfo := range node.DiskInfos {
+							vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * int64(volumeSizeLimitMB) * 1024 * 1024 // Use actual volume size limit
+
+							// Count regular volumes and calculate disk usage
+							for _, volInfo := range diskInfo.VolumeInfos {
+								vs.Volumes++
+								vs.DiskUsage += int64(volInfo.Size)
+							}
+
+							// Accumulate EC shard information across all disks for this volume server
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								volumeId := ecShardInfo.Id
+								ecShardAccumulator[volumeId] = append(ecShardAccumulator[volumeId], ecShardInfo)
+							}
+						}
+
+						// Process accumulated EC shard information per volume
+						for volumeId, ecShardInfos := range ecShardAccumulator {
+							if len(ecShardInfos) == 0 {
+								continue
+							}
+
+							// Initialize EC volume info
+							ecInfo := &VolumeServerEcInfo{
+								VolumeID:     volumeId,
+								Collection:   ecShardInfos[0].Collection,
+								ShardCount:   0,
+								EcIndexBits:  0,
+								ShardNumbers: []int{},
+								ShardSizes:   make(map[int]int64),
+								TotalSize:    0,
+							}
+
+							// Merge EcIndexBits from all disks and collect shard sizes
+							allShardSizes := make(map[erasure_coding.ShardId]int64)
+							for _, ecShardInfo := range ecShardInfos {
+								ecInfo.EcIndexBits |= ecShardInfo.EcIndexBits
+
+								// Collect shard sizes from this disk
+                                shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+								shardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
+									if size, found := erasure_coding.GetShardSize(ecShardInfo, shardId); found {
+										allShardSizes[shardId] = size
+									}
+								})
+							}
+
+							// Process final merged shard information
+							finalShardBits := erasure_coding.ShardBits(ecInfo.EcIndexBits)
+							finalShardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
+								ecInfo.ShardCount++
+								ecInfo.ShardNumbers = append(ecInfo.ShardNumbers, int(shardId))
+								vs.EcShards++
+
+								// Add shard size if available
+								if shardSize, exists := allShardSizes[shardId]; exists {
+									ecInfo.ShardSizes[int(shardId)] = shardSize
+									ecInfo.TotalSize += shardSize
+									vs.DiskUsage += shardSize // Add EC shard size to total disk usage
+								}
+							})
+
+							ecVolumeMap[volumeId] = ecInfo
+						}
+
+						// Convert EC volume map to slice and update volume server (after processing all disks)
+						for _, ecInfo := range ecVolumeMap {
+							vs.EcShardDetails = append(vs.EcShardDetails, *ecInfo)
+							vs.EcVolumes++
+						}
+					}
+				}
+			}
+		}
+
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
 
+	// Convert map back to slice
+	var volumeServers []VolumeServer
+	for _, vs := range volumeServerMap {
+		volumeServers = append(volumeServers, *vs)
+	}
+
 	var totalCapacity int64
 	var totalVolumes int
-	for _, vs := range topology.VolumeServers {
+	for _, vs := range volumeServers {
 		totalCapacity += vs.DiskCapacity
 		totalVolumes += vs.Volumes
 	}
 
 	return &ClusterVolumeServersData{
-		VolumeServers:      topology.VolumeServers,
-		TotalVolumeServers: len(topology.VolumeServers),
+		VolumeServers:      volumeServers,
+		TotalVolumeServers: len(volumeServers),
 		TotalVolumes:       totalVolumes,
 		TotalCapacity:      totalCapacity,
 		LastUpdated:        time.Now(),

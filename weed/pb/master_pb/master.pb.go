@@ -560,6 +560,7 @@ type VolumeEcShardInformationMessage struct {
 	DiskType      string                 `protobuf:"bytes,4,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
 	ExpireAtSec   uint64                 `protobuf:"varint,5,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // used to record the destruction time of ec volume
 	DiskId        uint32                 `protobuf:"varint,6,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
+	ShardSizes    []int64                `protobuf:"varint,7,rep,packed,name=shard_sizes,json=shardSizes,proto3" json:"shard_sizes,omitempty"` // optimized: sizes for shards in order of set bits in ec_index_bits
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -634,6 +635,13 @@ func (x *VolumeEcShardInformationMessage) GetDiskId() uint32 {
 		return x.DiskId
 	}
 	return 0
+}
+
+func (x *VolumeEcShardInformationMessage) GetShardSizes() []int64 {
+	if x != nil {
+		return x.ShardSizes
+	}
+	return nil
 }
 
 type StorageBackend struct {
@@ -4098,7 +4106,7 @@ const file_master_proto_rawDesc = "" +
 	"\x03ttl\x18\n" +
 	" \x01(\rR\x03ttl\x12\x1b\n" +
 	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
-	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xcf\x01\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xf0\x01\n" +
 	"\x1fVolumeEcShardInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
@@ -4107,7 +4115,9 @@ const file_master_proto_rawDesc = "" +
 	"\rec_index_bits\x18\x03 \x01(\rR\vecIndexBits\x12\x1b\n" +
 	"\tdisk_type\x18\x04 \x01(\tR\bdiskType\x12\"\n" +
 	"\rexpire_at_sec\x18\x05 \x01(\x04R\vexpireAtSec\x12\x17\n" +
-	"\adisk_id\x18\x06 \x01(\rR\x06diskId\"\xbe\x01\n" +
+	"\adisk_id\x18\x06 \x01(\rR\x06diskId\x12\x1f\n" +
+	"\vshard_sizes\x18\a \x03(\x03R\n" +
+	"shardSizes\"\xbe\x01\n" +
 	"\x0eStorageBackend\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12I\n" +

@@ -76,6 +76,13 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 								totalSize += int64(volInfo.Size)
 								totalFiles += int64(volInfo.FileCount)
 							}
+
+							// Sum up EC shard sizes
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								for _, shardSize := range ecShardInfo.ShardSizes {
+									totalSize += shardSize
+								}
+							}
 						}
 
 						vs := VolumeServer{
