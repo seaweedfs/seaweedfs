@@ -187,6 +187,9 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 // planECDestinations plans the destinations for erasure coding operation
 // This function implements EC destination planning logic directly in the detection phase
 func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.VolumeHealthMetrics, ecConfig *Config) (*topology.MultiDestinationPlan, error) {
+	// Calculate expected shard size for EC operation
+	expectedShardSize := uint64(metric.Size) / uint64(erasure_coding.DataShardsCount)
+
 	// Get source node information from topology
 	var sourceRack, sourceDC string
 
@@ -235,7 +238,7 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 			TargetDisk:     disk.DiskID,
 			TargetRack:     disk.Rack,
 			TargetDC:       disk.DataCenter,
-			ExpectedSize:   0, // EC shards don't have predetermined size
+			ExpectedSize:   expectedShardSize, // Set calculated EC shard size
 			PlacementScore: calculateECScore(disk, sourceRack, sourceDC),
 			Conflicts:      checkECPlacementConflicts(disk, sourceRack, sourceDC),
 		}
@@ -253,9 +256,6 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 		effectiveCapacity := activeTopology.GetEffectiveAvailableCapacity(plan.TargetNode, plan.TargetDisk)
 		totalEffectiveCapacity += effectiveCapacity
 	}
-
-	// Calculate expected shard size for logging purposes
-	expectedShardSize := uint64(metric.Size) / uint64(erasure_coding.DataShardsCount)
 
 	glog.V(1).Infof("Planned EC destinations for volume %d (size=%d bytes): expected shard size=%d bytes, %d shards across %d racks, %d DCs, total effective capacity=%d slots",
 		metric.VolumeID, metric.Size, expectedShardSize, len(plans), len(rackCount), len(dcCount), totalEffectiveCapacity)
