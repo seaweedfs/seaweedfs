@@ -210,7 +210,7 @@ func (w *Queue) logDeadLetterMessages() error {
 						key = keyValue
 					}
 				}
-				payload := "empty"
+				payload := ""
 				if msg.Payload != nil {
 					var n filer_pb.EventNotification
 					if err := proto.Unmarshal(msg.Payload, &n); err != nil {
