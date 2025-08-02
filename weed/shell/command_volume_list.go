@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"io"
 )
@@ -269,13 +270,13 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 			var shardDetails []string
 			for _, shardId := range shardIds {
 				if size, exists := shardSizeMap[uint32(shardId)]; exists {
-					shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, bytesToHumanReadable(size)))
+					shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, util.BytesToHumanReadable(uint64(size))))
 					totalSize += size
 				} else {
 					shardDetails = append(shardDetails, fmt.Sprintf("%d:?", shardId))
 				}
 			}
-			shardSizeInfo = fmt.Sprintf(" sizes:[%s] total:%s", strings.Join(shardDetails, " "), bytesToHumanReadable(totalSize))
+			shardSizeInfo = fmt.Sprintf(" sizes:[%s] total:%s", strings.Join(shardDetails, " "), util.BytesToHumanReadable(uint64(totalSize)))
 		}
 
 		output(verbosityLevel >= 5, writer, "          ec volume id:%v collection:%v shards:%v%s %s\n",
@@ -330,25 +331,4 @@ func (s statistics) String() string {
 		return fmt.Sprintf("total size:%d file_count:%d deleted_file:%d deleted_bytes:%d", s.Size, s.FileCount, s.DeletedFileCount, s.DeletedBytes)
 	}
 	return fmt.Sprintf("total size:%d file_count:%d", s.Size, s.FileCount)
-}
-
-// bytesToHumanReadable converts bytes to human readable format
-func bytesToHumanReadable(bytes int64) string {
-	if bytes == 0 {
-		return "0 B"
-	}
-
-	units := []string{"B", "KB", "MB", "GB", "TB", "PB"}
-	var i int
-	value := float64(bytes)
-
-	for value >= 1024 && i < len(units)-1 {
-		value /= 1024
-		i++
-	}
-
-	if i == 0 {
-		return fmt.Sprintf("%.0f %s", value, units[i])
-	}
-	return fmt.Sprintf("%.1f %s", value, units[i])
 }
