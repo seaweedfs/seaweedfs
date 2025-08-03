@@ -1,6 +1,10 @@
 package topology
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+)
 
 // GetEffectiveAvailableCapacity returns the effective available capacity for a disk
 // This considers BOTH pending and assigned tasks for capacity reservation.
@@ -89,14 +93,28 @@ func (at *ActiveTopology) GetDisksWithEffectiveCapacity(taskType TaskType, exclu
 
 			// Only include disks that meet minimum capacity requirement
 			if int64(effectiveCapacity.VolumeSlots) >= minCapacity {
-				// Create a copy with current capacity information
-				diskCopy := *disk.DiskInfo
-				diskCopy.LoadCount = len(disk.pendingTasks) + len(disk.assignedTasks) // Count all tasks
+				// Create a new DiskInfo with current capacity information
+				diskCopy := DiskInfo{
+					NodeID:     disk.DiskInfo.NodeID,
+					DiskID:     disk.DiskInfo.DiskID,
+					DiskType:   disk.DiskInfo.DiskType,
+					DataCenter: disk.DiskInfo.DataCenter,
+					Rack:       disk.DiskInfo.Rack,
+					LoadCount:  len(disk.pendingTasks) + len(disk.assignedTasks), // Count all tasks
+				}
 
-				// Create a copy of the DiskInfo to avoid modifying the original
-				diskInfoCopy := *disk.DiskInfo.DiskInfo
-				diskInfoCopy.VolumeCount = diskInfoCopy.MaxVolumeCount - int64(effectiveCapacity.VolumeSlots)
-				diskCopy.DiskInfo = &diskInfoCopy
+				// Create a new protobuf DiskInfo to avoid modifying the original
+				diskInfoCopy := &master_pb.DiskInfo{
+					DiskId:            disk.DiskInfo.DiskInfo.DiskId,
+					MaxVolumeCount:    disk.DiskInfo.DiskInfo.MaxVolumeCount,
+					VolumeCount:       disk.DiskInfo.DiskInfo.MaxVolumeCount - int64(effectiveCapacity.VolumeSlots),
+					VolumeInfos:       disk.DiskInfo.DiskInfo.VolumeInfos,
+					EcShardInfos:      disk.DiskInfo.DiskInfo.EcShardInfos,
+					RemoteVolumeCount: disk.DiskInfo.DiskInfo.RemoteVolumeCount,
+					ActiveVolumeCount: disk.DiskInfo.DiskInfo.ActiveVolumeCount,
+					FreeVolumeCount:   disk.DiskInfo.DiskInfo.FreeVolumeCount,
+				}
+				diskCopy.DiskInfo = diskInfoCopy
 
 				available = append(available, &diskCopy)
 			}
@@ -125,14 +143,28 @@ func (at *ActiveTopology) GetDisksForPlanning(taskType TaskType, excludeNodeID s
 			planningCapacity := at.getPlanningCapacityUnsafe(disk)
 
 			if int64(planningCapacity.VolumeSlots) >= minCapacity {
-				// Create a copy with planning information
-				diskCopy := *disk.DiskInfo
-				diskCopy.LoadCount = len(disk.pendingTasks) + len(disk.assignedTasks)
+				// Create a new DiskInfo with planning information
+				diskCopy := DiskInfo{
+					NodeID:     disk.DiskInfo.NodeID,
+					DiskID:     disk.DiskInfo.DiskID,
+					DiskType:   disk.DiskInfo.DiskType,
+					DataCenter: disk.DiskInfo.DataCenter,
+					Rack:       disk.DiskInfo.Rack,
+					LoadCount:  len(disk.pendingTasks) + len(disk.assignedTasks),
+				}
 
-				// Create a copy of the DiskInfo to avoid modifying the original
-				diskInfoCopy := *disk.DiskInfo.DiskInfo
-				diskInfoCopy.VolumeCount = diskInfoCopy.MaxVolumeCount - int64(planningCapacity.VolumeSlots)
-				diskCopy.DiskInfo = &diskInfoCopy
+				// Create a new protobuf DiskInfo to avoid modifying the original
+				diskInfoCopy := &master_pb.DiskInfo{
+					DiskId:            disk.DiskInfo.DiskInfo.DiskId,
+					MaxVolumeCount:    disk.DiskInfo.DiskInfo.MaxVolumeCount,
+					VolumeCount:       disk.DiskInfo.DiskInfo.MaxVolumeCount - int64(planningCapacity.VolumeSlots),
+					VolumeInfos:       disk.DiskInfo.DiskInfo.VolumeInfos,
+					EcShardInfos:      disk.DiskInfo.DiskInfo.EcShardInfos,
+					RemoteVolumeCount: disk.DiskInfo.DiskInfo.RemoteVolumeCount,
+					ActiveVolumeCount: disk.DiskInfo.DiskInfo.ActiveVolumeCount,
+					FreeVolumeCount:   disk.DiskInfo.DiskInfo.FreeVolumeCount,
+				}
+				diskCopy.DiskInfo = diskInfoCopy
 
 				available = append(available, &diskCopy)
 			}
@@ -301,12 +333,4 @@ func (at *ActiveTopology) getEffectiveAvailableCapacityUnsafe(disk *activeDisk) 
 		VolumeSlots: int32(availableVolumeSlots),
 		ShardSlots:  -netImpact.ShardSlots, // Available shard capacity (negative impact becomes positive availability)
 	}
-}
-
-// abs returns absolute value for int32
-func abs(x int32) int32 {
-	if x < 0 {
-		return -x
-	}
-	return x
 }
