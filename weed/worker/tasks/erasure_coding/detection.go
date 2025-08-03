@@ -255,7 +255,7 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 	// Get available disks for EC placement with effective capacity consideration (includes pending tasks)
 	// For EC, we typically need 1 volume slot per shard, so use minimum capacity of 1
 	// For EC, we need at least 1 available volume slot on a disk to consider it for placement.
-	availableDisks := activeTopology.GetAvailableDisks(topology.TaskTypeErasureCoding, metric.Server)
+	availableDisks := activeTopology.GetDisksWithEffectiveCapacity(topology.TaskTypeErasureCoding, metric.Server, 1)
 	if len(availableDisks) < erasure_coding.MinTotalDisks {
 		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d (considering pending/active tasks)", erasure_coding.MinTotalDisks, len(availableDisks))
 	}
