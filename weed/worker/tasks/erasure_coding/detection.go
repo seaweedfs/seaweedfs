@@ -490,76 +490,44 @@ type VolumeReplica struct {
 }
 
 // findVolumeReplicaLocations finds all replica locations (server + disk) for the specified volume
-// Note: This function scans the entire topology. For better performance on large clusters,
-// consider implementing a volume index in ActiveTopology for O(1) lookups.
+// Uses O(1) indexed lookup for optimal performance on large clusters.
 func findVolumeReplicaLocations(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []VolumeReplica {
 	if activeTopology == nil {
 		return []VolumeReplica{}
 	}
 
-	topologyInfo := activeTopology.GetTopologyInfo()
-	if topologyInfo == nil {
-		return []VolumeReplica{}
-	}
+	// Use the new O(1) lookup method with built-in indexes
+	topologyReplicas := activeTopology.GetVolumeLocations(volumeID, collection)
 
+	// Convert topology.VolumeReplica to local VolumeReplica type
 	var replicas []VolumeReplica
-
-	// Iterate through all nodes to find volume replicas
-	// TODO: Optimize with volume index for O(1) lookup instead of O(N) scan
-	for _, dc := range topologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for _, nodeInfo := range rack.DataNodeInfos {
-				for _, diskInfo := range nodeInfo.DiskInfos {
-					for _, volumeInfo := range diskInfo.VolumeInfos {
-						if volumeInfo.Id == volumeID && volumeInfo.Collection == collection {
-							replicas = append(replicas, VolumeReplica{
-								ServerID: nodeInfo.Id,
-								DiskID:   diskInfo.DiskId,
-							})
-							break // Found volume on this disk, move to next disk
-						}
-					}
-				}
-			}
-		}
+	for _, replica := range topologyReplicas {
+		replicas = append(replicas, VolumeReplica{
+			ServerID: replica.ServerID,
+			DiskID:   replica.DiskID,
+		})
 	}
 
 	return replicas
 }
 
 // findExistingECShards finds existing EC shards for a volume (from previous failed EC attempts)
-// Note: This function scans the entire topology. For better performance on large clusters,
-// consider implementing an EC shard index in ActiveTopology for O(1) lookups.
+// Uses O(1) indexed lookup for optimal performance on large clusters.
 func findExistingECShards(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []VolumeReplica {
 	if activeTopology == nil {
 		return []VolumeReplica{}
 	}
 
-	topologyInfo := activeTopology.GetTopologyInfo()
-	if topologyInfo == nil {
-		return []VolumeReplica{}
-	}
+	// Use the new O(1) lookup method with built-in indexes
+	topologyShards := activeTopology.GetECShardLocations(volumeID, collection)
 
+	// Convert topology.VolumeReplica to local VolumeReplica type
 	var ecShards []VolumeReplica
-
-	// Iterate through all nodes to find existing EC shards
-	// TODO: Optimize with EC shard index for O(1) lookup instead of O(N) scan
-	for _, dc := range topologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for _, nodeInfo := range rack.DataNodeInfos {
-				for _, diskInfo := range nodeInfo.DiskInfos {
-					for _, ecShardInfo := range diskInfo.EcShardInfos {
-						if ecShardInfo.Id == volumeID && ecShardInfo.Collection == collection {
-							ecShards = append(ecShards, VolumeReplica{
-								ServerID: nodeInfo.Id,
-								DiskID:   diskInfo.DiskId,
-							})
-							break // Found EC shards on this disk, move to next disk
-						}
-					}
-				}
-			}
-		}
+	for _, shard := range topologyShards {
+		ecShards = append(ecShards, VolumeReplica{
+			ServerID: shard.ServerID,
+			DiskID:   shard.DiskID,
+		})
 	}
 
 	return ecShards

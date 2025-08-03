@@ -78,6 +78,10 @@ type ActiveTopology struct {
 	nodes map[string]*activeNode // NodeID -> activeNode
 	disks map[string]*activeDisk // "NodeID:DiskID" -> activeDisk
 
+	// Performance indexes for O(1) lookups (private)
+	volumeIndex  map[uint32][]string // VolumeID -> list of "NodeID:DiskID" where volume replicas exist
+	ecShardIndex map[uint32][]string // VolumeID -> list of "NodeID:DiskID" where EC shards exist
+
 	// Task states affecting the topology (private)
 	pendingTasks  map[string]*taskState
 	assignedTasks map[string]*taskState
@@ -107,4 +111,10 @@ type MultiDestinationPlan struct {
 	TotalShards    int                `json:"total_shards"`
 	SuccessfulRack int                `json:"successful_racks"`
 	SuccessfulDCs  int                `json:"successful_dcs"`
+}
+
+// VolumeReplica represents a replica location with server and disk information
+type VolumeReplica struct {
+	ServerID string `json:"server_id"`
+	DiskID   uint32 `json:"disk_id"`
 }

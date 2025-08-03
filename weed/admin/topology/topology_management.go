@@ -54,10 +54,14 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 		}
 	}
 
+	// Rebuild performance indexes for O(1) lookups
+	at.rebuildIndexes()
+
 	// Reassign task states to updated topology
 	at.reassignTaskStates()
 
-	glog.V(1).Infof("ActiveTopology updated: %d nodes, %d disks", len(at.nodes), len(at.disks))
+	glog.V(1).Infof("ActiveTopology updated: %d nodes, %d disks, %d volume entries, %d EC shard entries",
+		len(at.nodes), len(at.disks), len(at.volumeIndex), len(at.ecShardIndex))
 	return nil
 }
 
@@ -136,4 +140,114 @@ func (at *ActiveTopology) GetNodeDisks(nodeID string) []*DiskInfo {
 	}
 
 	return disks
+}
+
+// rebuildIndexes rebuilds the volume and EC shard indexes for O(1) lookups
+func (at *ActiveTopology) rebuildIndexes() {
+	// Clear existing indexes
+	at.volumeIndex = make(map[uint32][]string)
+	at.ecShardIndex = make(map[uint32][]string)
+
+	// Rebuild indexes from current topology
+	for _, dc := range at.topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, nodeInfo := range rack.DataNodeInfos {
+				for _, diskInfo := range nodeInfo.DiskInfos {
+					diskKey := fmt.Sprintf("%s:%d", nodeInfo.Id, diskInfo.DiskId)
+
+					// Index volumes
+					for _, volumeInfo := range diskInfo.VolumeInfos {
+						volumeID := volumeInfo.Id
+						at.volumeIndex[volumeID] = append(at.volumeIndex[volumeID], diskKey)
+					}
+
+					// Index EC shards
+					for _, ecShardInfo := range diskInfo.EcShardInfos {
+						volumeID := ecShardInfo.Id
+						at.ecShardIndex[volumeID] = append(at.ecShardIndex[volumeID], diskKey)
+					}
+				}
+			}
+		}
+	}
+}
+
+// GetVolumeLocations returns the disk locations for a volume using O(1) lookup
+func (at *ActiveTopology) GetVolumeLocations(volumeID uint32, collection string) []VolumeReplica {
+	at.mutex.RLock()
+	defer at.mutex.RUnlock()
+
+	diskKeys, exists := at.volumeIndex[volumeID]
+	if !exists {
+		return []VolumeReplica{}
+	}
+
+	var replicas []VolumeReplica
+	for _, diskKey := range diskKeys {
+		if disk, diskExists := at.disks[diskKey]; diskExists {
+			// Verify collection matches (since index doesn't include collection)
+			if at.volumeMatchesCollection(disk, volumeID, collection) {
+				replicas = append(replicas, VolumeReplica{
+					ServerID: disk.NodeID,
+					DiskID:   disk.DiskID,
+				})
+			}
+		}
+	}
+
+	return replicas
+}
+
+// GetECShardLocations returns the disk locations for EC shards using O(1) lookup
+func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string) []VolumeReplica {
+	at.mutex.RLock()
+	defer at.mutex.RUnlock()
+
+	diskKeys, exists := at.ecShardIndex[volumeID]
+	if !exists {
+		return []VolumeReplica{}
+	}
+
+	var ecShards []VolumeReplica
+	for _, diskKey := range diskKeys {
+		if disk, diskExists := at.disks[diskKey]; diskExists {
+			// Verify collection matches (since index doesn't include collection)
+			if at.ecShardMatchesCollection(disk, volumeID, collection) {
+				ecShards = append(ecShards, VolumeReplica{
+					ServerID: disk.NodeID,
+					DiskID:   disk.DiskID,
+				})
+			}
+		}
+	}
+
+	return ecShards
+}
+
+// volumeMatchesCollection checks if a volume on a disk matches the given collection
+func (at *ActiveTopology) volumeMatchesCollection(disk *activeDisk, volumeID uint32, collection string) bool {
+	if disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
+		return false
+	}
+
+	for _, volumeInfo := range disk.DiskInfo.DiskInfo.VolumeInfos {
+		if volumeInfo.Id == volumeID && volumeInfo.Collection == collection {
+			return true
+		}
+	}
+	return false
+}
+
+// ecShardMatchesCollection checks if EC shards on a disk match the given collection
+func (at *ActiveTopology) ecShardMatchesCollection(disk *activeDisk, volumeID uint32, collection string) bool {
+	if disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
+		return false
+	}
+
+	for _, ecShardInfo := range disk.DiskInfo.DiskInfo.EcShardInfos {
+		if ecShardInfo.Id == volumeID && ecShardInfo.Collection == collection {
+			return true
+		}
+	}
+	return false
 }

@@ -9,6 +9,8 @@ func NewActiveTopology(recentTaskWindowSeconds int) *ActiveTopology {
 	return &ActiveTopology{
 		nodes:                   make(map[string]*activeNode),
 		disks:                   make(map[string]*activeDisk),
+		volumeIndex:             make(map[uint32][]string),
+		ecShardIndex:            make(map[uint32][]string),
 		pendingTasks:            make(map[string]*taskState),
 		assignedTasks:           make(map[string]*taskState),
 		recentTasks:             make(map[string]*taskState),
