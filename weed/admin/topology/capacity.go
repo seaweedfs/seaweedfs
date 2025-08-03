@@ -202,38 +202,9 @@ func (at *ActiveTopology) getPlanningCapacityUnsafe(disk *activeDisk) StorageSlo
 	}
 
 	baseAvailableVolumes := disk.DiskInfo.DiskInfo.MaxVolumeCount - disk.DiskInfo.DiskInfo.VolumeCount
-	totalImpact := StorageSlotChange{}
 
-	// Count both pending and active tasks for planning purposes
-	for _, task := range disk.pendingTasks {
-		// Count impact from all sources
-		for _, source := range task.Sources {
-			if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
-				totalImpact.AddInPlace(source.StorageChange)
-			}
-		}
-		// Count impact from all destinations
-		for _, dest := range task.Destinations {
-			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
-				totalImpact.AddInPlace(dest.StorageChange)
-			}
-		}
-	}
-
-	for _, task := range disk.assignedTasks {
-		// Count impact from all sources
-		for _, source := range task.Sources {
-			if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
-				totalImpact.AddInPlace(source.StorageChange)
-			}
-		}
-		// Count impact from all destinations
-		for _, dest := range task.Destinations {
-			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
-				totalImpact.AddInPlace(dest.StorageChange)
-			}
-		}
-	}
+	// Use the centralized helper function to calculate task storage impact
+	totalImpact := at.calculateTaskStorageImpact(disk)
 
 	// Calculate available capacity considering impact (negative impact reduces availability)
 	availableVolumeSlots := baseAvailableVolumes - totalImpact.TotalImpact()
@@ -266,51 +237,44 @@ func (at *ActiveTopology) isDiskAvailableForPlanning(disk *activeDisk, taskType 
 	return true
 }
 
-// getEffectiveCapacityUnsafe returns effective capacity impact without locking (for internal use)
-// Returns StorageSlotChange representing the net impact from all tasks
-func (at *ActiveTopology) getEffectiveCapacityUnsafe(disk *activeDisk) StorageSlotChange {
+// calculateTaskStorageImpact is a helper function that calculates the total storage impact
+// from all tasks (pending and assigned) on a given disk. This eliminates code duplication
+// between multiple capacity calculation functions.
+func (at *ActiveTopology) calculateTaskStorageImpact(disk *activeDisk) StorageSlotChange {
 	if disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
 		return StorageSlotChange{}
 	}
 
-	// Calculate net capacity impact from BOTH pending and assigned tasks using StorageSlotChange
-	netImpact := StorageSlotChange{}
+	totalImpact := StorageSlotChange{}
 
-	// Count pending tasks for capacity impact
-	for _, task := range disk.pendingTasks {
-		// Calculate impact for all source locations
-		for _, source := range task.Sources {
-			if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
-				netImpact.AddInPlace(source.StorageChange)
+	// Process both pending and assigned tasks with identical logic
+	taskLists := [][]*taskState{disk.pendingTasks, disk.assignedTasks}
+
+	for _, taskList := range taskLists {
+		for _, task := range taskList {
+			// Calculate impact for all source locations
+			for _, source := range task.Sources {
+				if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
+					totalImpact.AddInPlace(source.StorageChange)
+				}
 			}
-		}
 
-		// Calculate impact for all destination locations
-		for _, dest := range task.Destinations {
-			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
-				netImpact.AddInPlace(dest.StorageChange)
-			}
-		}
-	}
-
-	// Count assigned tasks for capacity impact
-	for _, task := range disk.assignedTasks {
-		// Calculate impact for all source locations
-		for _, source := range task.Sources {
-			if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
-				netImpact.AddInPlace(source.StorageChange)
-			}
-		}
-
-		// Calculate impact for all destination locations
-		for _, dest := range task.Destinations {
-			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
-				netImpact.AddInPlace(dest.StorageChange)
+			// Calculate impact for all destination locations
+			for _, dest := range task.Destinations {
+				if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
+					totalImpact.AddInPlace(dest.StorageChange)
+				}
 			}
 		}
 	}
 
-	return netImpact
+	return totalImpact
+}
+
+// getEffectiveCapacityUnsafe returns effective capacity impact without locking (for internal use)
+// Returns StorageSlotChange representing the net impact from all tasks
+func (at *ActiveTopology) getEffectiveCapacityUnsafe(disk *activeDisk) StorageSlotChange {
+	return at.calculateTaskStorageImpact(disk)
 }
 
 // getEffectiveAvailableCapacityUnsafe returns detailed available capacity as StorageSlotChange
