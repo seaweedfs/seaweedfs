@@ -96,8 +96,6 @@ enableUpsert = true
 upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
 
 [postgres] # or cockroachdb, YugabyteDB
-# For full SSL certificate verification with sslmode=verify-full, 
-# configure the SSL certificate options below.
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT,
 #   name        VARCHAR(65535),
@@ -133,8 +131,6 @@ upsertQuery = """
 """
 
 [postgres2]
-# For full SSL certificate verification with sslmode=verify-full, 
-# configure the SSL certificate options below.
 enabled = false
 createTable = """
   CREATE TABLE IF NOT EXISTS "%s" (
