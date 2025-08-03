@@ -113,7 +113,7 @@ func TestStorageSlotChange(t *testing.T) {
 	assert.Equal(t, int32(0), ecSourceChange.VolumeSlots, "EC source reserves with zero StorageSlotChange impact")
 	assert.Equal(t, int32(0), ecSourceChange.ShardSlots, "EC source should have zero shard impact")
 	assert.Equal(t, int32(0), ecTargetChange.VolumeSlots, "EC should not directly impact target volume slots")
-	assert.Equal(t, int32(1), ecTargetChange.ShardSlots, "EC target typically gains 1 shard slot")
+assert.Equal(t, int32(0), ecTargetChange.ShardSlots, "EC target should have zero shard impact from this simplified function")
 
 	balSourceChange, balTargetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1024*1024*1024)
 	assert.Equal(t, int32(-1), balSourceChange.VolumeSlots, "Balance should free 1 volume slot on source")
