@@ -45,6 +45,7 @@ require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
+	github.com/jackc/pgx/v5 v5.7.5
 	github.com/jcmturner/gofork v1.7.6 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jinzhu/copier v0.4.0
@@ -54,7 +55,6 @@ require (
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/reedsolomon v1.12.5
 	github.com/kurin/blazer v0.5.3
-	github.com/lib/pq v1.10.9
 	github.com/linxGnu/grocksdb v1.10.1
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-ieproxy v0.0.11 // indirect
@@ -164,6 +164,9 @@ require github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // ind
 
 require (
 	github.com/cenkalti/backoff/v3 v3.2.2 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 )
 
