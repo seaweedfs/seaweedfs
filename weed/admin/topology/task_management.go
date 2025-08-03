@@ -60,17 +60,10 @@ func (at *ActiveTopology) AssignTask(taskID string) error {
 		if targetDisk, exists := at.disks[targetKey]; exists {
 			availableCapacity := at.getEffectiveAvailableCapacityUnsafe(targetDisk)
 
-			// Check if we have enough volume slots for volume-based requirements
-			if dest.StorageChange.VolumeSlots > 0 && int64(availableCapacity.VolumeSlots) < int64(dest.StorageChange.VolumeSlots) {
-				return fmt.Errorf("insufficient volume capacity on target disk %s:%d: available=%d volume slots, required=%d volume slots",
-					dest.TargetServer, dest.TargetDisk, availableCapacity.VolumeSlots, dest.StorageChange.VolumeSlots)
-			}
-
-			// Check if we have enough total capacity using unified comparison
+			// Check if we have enough total capacity using the improved unified comparison
 			if !availableCapacity.CanAccommodate(dest.StorageChange) {
-				requiredCapacity := dest.StorageChange.ToVolumeSlots()
-				return fmt.Errorf("insufficient total capacity on target disk %s:%d: available=%d volume slots, required=%d equivalent slots",
-					dest.TargetServer, dest.TargetDisk, availableCapacity.ToVolumeSlots(), requiredCapacity)
+				return fmt.Errorf("insufficient capacity on target disk %s:%d. Available: %+v, Required: %+v",
+					dest.TargetServer, dest.TargetDisk, availableCapacity, dest.StorageChange)
 			}
 		} else if dest.TargetServer != "" {
 			// Fail fast if destination disk is not found in topology
