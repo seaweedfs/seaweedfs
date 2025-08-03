@@ -66,11 +66,11 @@ func (at *ActiveTopology) AssignTask(taskID string) error {
 					dest.TargetServer, dest.TargetDisk, availableCapacity.VolumeSlots, dest.StorageChange.VolumeSlots)
 			}
 
-			// Check if we have enough total capacity (volume slots) for mixed requirements
-			requiredCapacity := int64(dest.StorageChange.VolumeSlots) + int64(dest.StorageChange.ShardSlots)/10
-			if requiredCapacity > 0 && int64(availableCapacity.VolumeSlots) < requiredCapacity {
+			// Check if we have enough total capacity using unified comparison
+			if !availableCapacity.CanAccommodate(dest.StorageChange) {
+				requiredCapacity := dest.StorageChange.ToVolumeSlots()
 				return fmt.Errorf("insufficient total capacity on target disk %s:%d: available=%d volume slots, required=%d equivalent slots",
-					dest.TargetServer, dest.TargetDisk, availableCapacity.VolumeSlots, requiredCapacity)
+					dest.TargetServer, dest.TargetDisk, availableCapacity.ToVolumeSlots(), requiredCapacity)
 			}
 		}
 	}

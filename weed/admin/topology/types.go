@@ -1,5 +1,7 @@
 package topology
 
+import "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+
 // TaskType represents different types of maintenance operations
 type TaskType string
 
@@ -60,7 +62,26 @@ func (s StorageSlotChange) IsZero() bool {
 	return s.VolumeSlots == 0 && s.ShardSlots == 0
 }
 
-// TotalImpact returns the total capacity impact as int64 (VolumeSlots + ShardSlots/10)
+// ShardsPerVolumeSlot defines how many EC shards are equivalent to one volume slot
+const ShardsPerVolumeSlot = erasure_coding.DataShardsCount
+
+// TotalImpact returns the total capacity impact as int64 (VolumeSlots + ShardSlots/ShardsPerVolumeSlot)
 func (s StorageSlotChange) TotalImpact() int64 {
-	return int64(s.VolumeSlots) + int64(s.ShardSlots)/10
+	return int64(s.VolumeSlots) + int64(s.ShardSlots)/ShardsPerVolumeSlot
+}
+
+// ToVolumeSlots converts the entire StorageSlotChange to equivalent volume slots
+func (s StorageSlotChange) ToVolumeSlots() int64 {
+	return int64(s.VolumeSlots) + int64(s.ShardSlots)/ShardsPerVolumeSlot
+}
+
+// ToShardSlots converts the entire StorageSlotChange to equivalent shard slots
+func (s StorageSlotChange) ToShardSlots() int32 {
+	return s.ShardSlots + s.VolumeSlots*ShardsPerVolumeSlot
+}
+
+// CanAccommodate checks if this StorageSlotChange can accommodate the required StorageSlotChange
+// Both are converted to volume slots for comparison
+func (s StorageSlotChange) CanAccommodate(required StorageSlotChange) bool {
+	return s.ToShardSlots() >= required.ToShardSlots()
 }

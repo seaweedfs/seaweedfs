@@ -5,7 +5,7 @@ import "fmt"
 // GetEffectiveAvailableCapacity returns the effective available capacity for a disk
 // This considers BOTH pending and assigned tasks for capacity reservation.
 //
-// Formula: BaseAvailable - (VolumeSlots + ShardSlots/10) from all tasks
+// Formula: BaseAvailable - (VolumeSlots + ShardSlots/ShardsPerVolumeSlot) from all tasks
 //
 // The calculation includes:
 // - Pending tasks: Reserve capacity immediately when added
