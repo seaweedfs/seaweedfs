@@ -490,6 +490,8 @@ type VolumeReplica struct {
 }
 
 // findVolumeReplicaLocations finds all replica locations (server + disk) for the specified volume
+// Note: This function scans the entire topology. For better performance on large clusters,
+// consider implementing a volume index in ActiveTopology for O(1) lookups.
 func findVolumeReplicaLocations(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []VolumeReplica {
 	if activeTopology == nil {
 		return []VolumeReplica{}
@@ -503,6 +505,7 @@ func findVolumeReplicaLocations(activeTopology *topology.ActiveTopology, volumeI
 	var replicas []VolumeReplica
 
 	// Iterate through all nodes to find volume replicas
+	// TODO: Optimize with volume index for O(1) lookup instead of O(N) scan
 	for _, dc := range topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, nodeInfo := range rack.DataNodeInfos {
@@ -525,6 +528,8 @@ func findVolumeReplicaLocations(activeTopology *topology.ActiveTopology, volumeI
 }
 
 // findExistingECShards finds existing EC shards for a volume (from previous failed EC attempts)
+// Note: This function scans the entire topology. For better performance on large clusters,
+// consider implementing an EC shard index in ActiveTopology for O(1) lookups.
 func findExistingECShards(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []VolumeReplica {
 	if activeTopology == nil {
 		return []VolumeReplica{}
@@ -538,6 +543,7 @@ func findExistingECShards(activeTopology *topology.ActiveTopology, volumeID uint
 	var ecShards []VolumeReplica
 
 	// Iterate through all nodes to find existing EC shards
+	// TODO: Optimize with EC shard index for O(1) lookup instead of O(N) scan
 	for _, dc := range topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, nodeInfo := range rack.DataNodeInfos {

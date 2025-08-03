@@ -81,7 +81,7 @@ func (s StorageSlotChange) ToShardSlots() int32 {
 }
 
 // CanAccommodate checks if this StorageSlotChange can accommodate the required StorageSlotChange
-// Both are converted to volume slots for comparison
+// Both are converted to shard slots for a more precise comparison
 func (s StorageSlotChange) CanAccommodate(required StorageSlotChange) bool {
 	return s.ToShardSlots() >= required.ToShardSlots()
 }

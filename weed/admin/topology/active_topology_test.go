@@ -9,6 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Helper function to find a disk by ID for testing - reduces code duplication
+func findDiskByID(disks []*DiskInfo, diskID uint32) *DiskInfo {
+	for _, disk := range disks {
+		if disk.DiskID == diskID {
+			return disk
+		}
+	}
+	return nil
+}
+
 // TestActiveTopologyBasicOperations tests basic topology management
 func TestActiveTopologyBasicOperations(t *testing.T) {
 	topology := NewActiveTopology(10)
@@ -272,13 +282,7 @@ func TestDiskLoadCalculation(t *testing.T) {
 
 	// Initially no load
 	disks := topology.GetNodeDisks("10.0.0.1:8080")
-	var targetDisk *DiskInfo
-	for _, disk := range disks {
-		if disk.DiskID == 0 {
-			targetDisk = disk
-			break
-		}
-	}
+	targetDisk := findDiskByID(disks, 0)
 	require.NotNil(t, targetDisk, "Should find disk with ID 0")
 	assert.Equal(t, 0, targetDisk.LoadCount)
 
@@ -289,12 +293,7 @@ func TestDiskLoadCalculation(t *testing.T) {
 
 	// Check load increased
 	disks = topology.GetNodeDisks("10.0.0.1:8080")
-	for _, disk := range disks {
-		if disk.DiskID == 0 {
-			targetDisk = disk
-			break
-		}
-	}
+	targetDisk = findDiskByID(disks, 0)
 	assert.Equal(t, 1, targetDisk.LoadCount)
 
 	// Add another task to same disk
@@ -303,12 +302,7 @@ func TestDiskLoadCalculation(t *testing.T) {
 		"10.0.0.1:8080", 0, "", 0, sourceChange2, targetChange2, 0)
 
 	disks = topology.GetNodeDisks("10.0.0.1:8080")
-	for _, disk := range disks {
-		if disk.DiskID == 0 {
-			targetDisk = disk
-			break
-		}
-	}
+	targetDisk = findDiskByID(disks, 0)
 	assert.Equal(t, 2, targetDisk.LoadCount)
 
 	// Move one task to assigned
@@ -316,12 +310,7 @@ func TestDiskLoadCalculation(t *testing.T) {
 
 	// Load should still be 2 (1 pending + 1 assigned)
 	disks = topology.GetNodeDisks("10.0.0.1:8080")
-	for _, disk := range disks {
-		if disk.DiskID == 0 {
-			targetDisk = disk
-			break
-		}
-	}
+	targetDisk = findDiskByID(disks, 0)
 	assert.Equal(t, 2, targetDisk.LoadCount)
 
 	// Complete one task
@@ -329,12 +318,7 @@ func TestDiskLoadCalculation(t *testing.T) {
 
 	// Load should decrease to 1
 	disks = topology.GetNodeDisks("10.0.0.1:8080")
-	for _, disk := range disks {
-		if disk.DiskID == 0 {
-			targetDisk = disk
-			break
-		}
-	}
+	targetDisk = findDiskByID(disks, 0)
 	assert.Equal(t, 1, targetDisk.LoadCount)
 }
 
