@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 // CalculateTaskStorageImpact calculates storage impact for different task types
@@ -46,10 +47,8 @@ func CalculateECShardStorageImpact(shardCount int32, expectedShardSize int64) St
 // CalculateECShardCleanupImpact calculates storage impact for cleaning up existing EC shards
 func CalculateECShardCleanupImpact(originalVolumeSize int64) StorageSlotChange {
 	// Cleaning up existing EC shards frees shard slots
-	// Estimate how many shards existed based on original volume size
-	// Typically EC creates 14 shards (10 data + 4 parity), but we use a conservative estimate
-	estimatedShardCount := int32(14)                                           // Standard EC configuration
-	return StorageSlotChange{VolumeSlots: 0, ShardSlots: -estimatedShardCount} // Negative = freed capacity
+	// Use the actual EC configuration constants for accurate shard count
+	return StorageSlotChange{VolumeSlots: 0, ShardSlots: -int32(erasure_coding.TotalShardsCount)} // Negative = freed capacity
 }
 
 // GetDiskStorageImpact returns comprehensive storage impact information for a specific disk

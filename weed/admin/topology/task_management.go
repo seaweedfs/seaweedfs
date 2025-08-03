@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 // addPendingTaskWithStorageInfo adds a pending task with detailed storage impact information
@@ -207,7 +208,7 @@ func (at *ActiveTopology) AddPendingECShardTask(taskID string, volumeID uint32,
 		case CleanupECShards:
 			// Cleaning up existing EC shards frees shard slots
 			storageImpact = CalculateECShardCleanupImpact(originalVolumeSize)
-			estimatedSize = originalVolumeSize / 14 // Estimate shard size
+			estimatedSize = originalVolumeSize / int64(erasure_coding.TotalShardsCount) // Estimate shard size
 			cleanupDesc = "existing EC shards"
 		default:
 			// Default to volume replica cleanup

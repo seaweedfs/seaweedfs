@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -297,7 +298,7 @@ func TestECMultipleTargets(t *testing.T) {
 	sourceServer := "10.0.0.1:8080"
 	sourceDisk := uint32(0)
 
-	// EC typically distributes 14 shards across multiple targets
+	// EC typically distributes shards across multiple targets
 	shardDestinations := []string{
 		"10.0.0.2:8080", "10.0.0.2:8080", "10.0.0.2:8080", "10.0.0.2:8080", "10.0.0.2:8080", // 5 shards to target 1
 		"10.0.0.3:8080", "10.0.0.3:8080", "10.0.0.3:8080", "10.0.0.3:8080", "10.0.0.3:8080", // 5 shards to target 2
@@ -522,7 +523,7 @@ func TestReplicatedVolumeECOperations(t *testing.T) {
 		{ServerID: "10.0.0.3:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Replica 3
 	}
 
-	// EC destinations (14 shards distributed across different servers than sources)
+	// EC destinations (shards distributed across different servers than sources)
 	shardDestinations := []string{
 		"10.0.0.4:8080", "10.0.0.4:8080", "10.0.0.4:8080", "10.0.0.4:8080", "10.0.0.4:8080", // 5 shards
 		"10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", // 5 shards
@@ -689,7 +690,7 @@ func TestECWithOldShardCleanup(t *testing.T) {
 		source := sourceLocations[i]
 		plannedVol, _, plannedShard, _, estimatedSize := activeTopology.GetDiskStorageImpact(source.ServerID, source.DiskID)
 		assert.Equal(t, int64(0), plannedVol, fmt.Sprintf("EC shard source %d should have zero volume slot impact", i+1))
-		assert.Equal(t, int32(-14), plannedShard, fmt.Sprintf("EC shard source %d should free 14 shard slots", i+1))
+		assert.Equal(t, int32(-erasure_coding.TotalShardsCount), plannedShard, fmt.Sprintf("EC shard source %d should free %d shard slots", i+1, erasure_coding.TotalShardsCount))
 		assert.True(t, estimatedSize > 0, fmt.Sprintf("EC shard source %d should have positive estimated size", i+1))
 	}
 
@@ -709,8 +710,8 @@ func TestECWithOldShardCleanup(t *testing.T) {
 	capacity6 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.6:8080", 0) // Receiving new EC shards
 
 	// Servers freeing old EC shards should have INCREASED capacity (freed shard slots provide capacity)
-	assert.Equal(t, int64(98), capacity3, "Server 3: 100 - 3 (current) + 1 (freeing 14 shards) = 98")
-	assert.Equal(t, int64(94), capacity4, "Server 4: 100 - 7 (current) + 1 (freeing 14 shards) = 94")
+	assert.Equal(t, int64(98), capacity3, fmt.Sprintf("Server 3: 100 - 3 (current) + 1 (freeing %d shards) = 98", erasure_coding.TotalShardsCount))
+	assert.Equal(t, int64(94), capacity4, fmt.Sprintf("Server 4: 100 - 7 (current) + 1 (freeing %d shards) = 94", erasure_coding.TotalShardsCount))
 
 	// Servers receiving new EC shards should have slightly reduced capacity
 	assert.Equal(t, int64(80), capacity5, "Server 5: 100 - 20 (current) - 0 (9 shards < 10) = 80")
