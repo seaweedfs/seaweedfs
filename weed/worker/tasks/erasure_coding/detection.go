@@ -449,30 +449,6 @@ func calculateECScore(disk *topology.DiskInfo, sourceRack, sourceDC string) floa
 	return score
 }
 
-// calculateECScoreWithSize calculates placement score for EC operations with shard size consideration
-func calculateECScoreWithSize(disk *topology.DiskInfo, sourceRack, sourceDC string, expectedShardSize uint64) float64 {
-	baseScore := calculateECScore(disk, sourceRack, sourceDC)
-
-	// Additional scoring based on effective available space vs expected shard size
-	if disk.DiskInfo != nil && expectedShardSize > 0 {
-		// Use effective available capacity (MaxVolumeCount - VolumeCount already accounts for tasks)
-		// The GetDisksWithEffectiveCapacity method adjusts VolumeCount to reflect effective capacity
-		effectiveAvailableSlots := disk.DiskInfo.MaxVolumeCount - disk.DiskInfo.VolumeCount
-		if effectiveAvailableSlots > 0 {
-			// Bonus for having plenty of space for the expected shard
-			// This is a heuristic - each volume slot can theoretically hold any size
-			baseScore += float64(effectiveAvailableSlots) * 2.0 // Up to 2 points per available slot
-		}
-
-		// Additional penalty if load count is high (many pending/active tasks)
-		if disk.LoadCount > 1 {
-			baseScore -= float64(disk.LoadCount) * 1.0 // 1 point penalty per high load
-		}
-	}
-
-	return baseScore
-}
-
 // isDiskSuitableForEC checks if a disk is suitable for EC placement
 func isDiskSuitableForEC(disk *topology.DiskInfo) bool {
 	if disk.DiskInfo == nil {
@@ -505,38 +481,6 @@ func checkECPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC str
 	}
 
 	return conflicts
-}
-
-// findVolumeDisk finds the disk ID where a specific volume is located on a given server
-func findVolumeDisk(activeTopology *topology.ActiveTopology, volumeID uint32, collection string, serverID string) uint32 {
-	if activeTopology == nil {
-		return 0
-	}
-
-	topologyInfo := activeTopology.GetTopologyInfo()
-	if topologyInfo == nil {
-		return 0
-	}
-
-	// Iterate through all nodes to find the specific server and volume
-	for _, dc := range topologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for _, nodeInfo := range rack.DataNodeInfos {
-				if nodeInfo.Id == serverID {
-					for _, diskInfo := range nodeInfo.DiskInfos {
-						for _, volumeInfo := range diskInfo.VolumeInfos {
-							if volumeInfo.Id == volumeID && volumeInfo.Collection == collection {
-								return diskInfo.DiskId
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Default to disk 0 if not found (common case for single-disk nodes)
-	return 0
 }
 
 // VolumeReplica represents a replica location with server and disk information
