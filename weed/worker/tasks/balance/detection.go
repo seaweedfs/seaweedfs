@@ -130,7 +130,11 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		// Add pending balance task to ActiveTopology for capacity management
 
 		// Find the actual disk containing the volume on the source server
-		sourceDisk := findVolumeDisk(clusterInfo.ActiveTopology, selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
+		sourceDisk, found := findVolumeDisk(clusterInfo.ActiveTopology, selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
+		if !found {
+			return nil, fmt.Errorf("BALANCE: Could not find volume %d (collection: %s) on source server %s - unable to create balance task",
+				selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
+		}
 		targetDisk := destinationPlan.TargetDisk
 
 		clusterInfo.ActiveTopology.AddPendingTaskForTaskType(
@@ -144,8 +148,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			int64(selectedVolume.Size),
 		)
 
-		glog.V(2).Infof("Added pending balance task %s to ActiveTopology for volume %d: %s -> %s",
-			taskID, selectedVolume.VolumeID, selectedVolume.Server, destinationPlan.TargetNode)
+		glog.V(2).Infof("Added pending balance task %s to ActiveTopology for volume %d: %s:%d -> %s:%d",
+			taskID, selectedVolume.VolumeID, selectedVolume.Server, sourceDisk, destinationPlan.TargetNode, targetDisk)
 	} else {
 		glog.Warningf("No ActiveTopology available for destination planning in balance detection")
 		return nil, nil
@@ -259,16 +263,17 @@ func checkPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC strin
 }
 
 // findVolumeDisk finds the disk ID where a specific volume is located on a given server
+// Returns the disk ID and a boolean indicating whether the volume was found
 // Optimized to directly query the specific node instead of iterating through entire topology
-func findVolumeDisk(activeTopology *topology.ActiveTopology, volumeID uint32, collection string, serverID string) uint32 {
+func findVolumeDisk(activeTopology *topology.ActiveTopology, volumeID uint32, collection string, serverID string) (uint32, bool) {
 	if activeTopology == nil {
-		return 0
+		return 0, false
 	}
 
 	// Use optimized approach: directly get disks for the specific node
 	nodeDisks := activeTopology.GetNodeDisks(serverID)
 	if nodeDisks == nil {
-		return 0
+		return 0, false
 	}
 
 	// Search through the node's disks only (much more efficient than full topology scan)
@@ -276,12 +281,12 @@ func findVolumeDisk(activeTopology *topology.ActiveTopology, volumeID uint32, co
 		if diskInfo.DiskInfo != nil {
 			for _, volumeInfo := range diskInfo.DiskInfo.VolumeInfos {
 				if volumeInfo.Id == volumeID && volumeInfo.Collection == collection {
-					return diskInfo.DiskID
+					return diskInfo.DiskID, true
 				}
 			}
 		}
 	}
 
-	// Default to disk 0 if not found (common case for single-disk nodes)
-	return 0
+	// Volume not found on this server
+	return 0, false
 }
