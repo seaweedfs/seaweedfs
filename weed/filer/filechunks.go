@@ -178,7 +178,10 @@ func (cv *ChunkView) Clone() IntervalValue {
 }
 
 func (cv *ChunkView) IsFullChunk() bool {
-	return cv.ViewSize == cv.ChunkSize
+	// IsFullChunk returns true if the view covers the entire chunk from the beginning.
+	// This prevents bandwidth amplification when range requests happen to align
+	// with chunk boundaries but don't actually want the full chunk.
+	return cv.OffsetInChunk == 0 && cv.ViewSize == cv.ChunkSize
 }
 
 func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
