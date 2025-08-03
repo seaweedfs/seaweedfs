@@ -106,21 +106,47 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					continue
 				}
 
-				// Convert to TaskSourceLocation format
-				sourceLocations := make([]topology.TaskSourceLocation, len(replicaLocations))
-				for i, replica := range replicaLocations {
-					sourceLocations[i] = topology.TaskSourceLocation{
-						ServerID: replica.ServerID,
-						DiskID:   replica.DiskID,
+				// Find existing EC shards from previous failed attempts
+				existingECShards := findExistingECShards(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
+
+				// Combine volume replicas and existing EC shards for cleanup
+				var allSourceLocations []topology.TaskSourceLocation
+
+				// Add volume replicas (will free volume slots)
+				for _, replica := range replicaLocations {
+					allSourceLocations = append(allSourceLocations, topology.TaskSourceLocation{
+						ServerID:    replica.ServerID,
+						DiskID:      replica.DiskID,
+						CleanupType: topology.CleanupVolumeReplica,
+					})
+				}
+
+				// Add existing EC shards (will free shard slots)
+				duplicateCheck := make(map[string]bool)
+				for _, replica := range replicaLocations {
+					key := fmt.Sprintf("%s:%d", replica.ServerID, replica.DiskID)
+					duplicateCheck[key] = true
+				}
+
+				for _, shard := range existingECShards {
+					key := fmt.Sprintf("%s:%d", shard.ServerID, shard.DiskID)
+					if !duplicateCheck[key] { // Avoid duplicates if EC shards are on same disk as volume replicas
+						allSourceLocations = append(allSourceLocations, topology.TaskSourceLocation{
+							ServerID:    shard.ServerID,
+							DiskID:      shard.DiskID,
+							CleanupType: topology.CleanupECShards,
+						})
+						duplicateCheck[key] = true
 					}
 				}
 
-				glog.V(2).Infof("Found %d replica locations for volume %d: %+v", len(replicaLocations), metric.VolumeID, replicaLocations)
+				glog.V(2).Infof("Found %d volume replicas and %d existing EC shards for volume %d (total %d cleanup sources)",
+					len(replicaLocations), len(existingECShards), metric.VolumeID, len(allSourceLocations))
 
 				err = clusterInfo.ActiveTopology.AddPendingECShardTask(
 					taskID,
 					metric.VolumeID,
-					sourceLocations,
+					allSourceLocations,
 					shardDestinations,
 					shardDiskIDs,
 					int32(len(multiPlan.Plans)),
@@ -132,8 +158,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					continue // Skip this volume if topology task addition fails
 				}
 
-				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d source replicas and %d shard destinations",
-					taskID, metric.VolumeID, len(sourceLocations), len(multiPlan.Plans))
+				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d cleanup sources and %d shard destinations",
+					taskID, metric.VolumeID, len(allSourceLocations), len(multiPlan.Plans))
 
 				// Find all volume replicas from topology (for legacy worker compatibility)
 				replicas := findVolumeReplicas(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
@@ -552,6 +578,41 @@ func findVolumeReplicaLocations(activeTopology *topology.ActiveTopology, volumeI
 	}
 
 	return replicas
+}
+
+// findExistingECShards finds existing EC shards for a volume (from previous failed EC attempts)
+func findExistingECShards(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []VolumeReplica {
+	if activeTopology == nil {
+		return []VolumeReplica{}
+	}
+
+	topologyInfo := activeTopology.GetTopologyInfo()
+	if topologyInfo == nil {
+		return []VolumeReplica{}
+	}
+
+	var ecShards []VolumeReplica
+
+	// Iterate through all nodes to find existing EC shards
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, nodeInfo := range rack.DataNodeInfos {
+				for _, diskInfo := range nodeInfo.DiskInfos {
+					for _, ecShardInfo := range diskInfo.EcShardInfos {
+						if ecShardInfo.Id == volumeID && ecShardInfo.Collection == collection {
+							ecShards = append(ecShards, VolumeReplica{
+								ServerID: nodeInfo.Id,
+								DiskID:   diskInfo.DiskId,
+							})
+							break // Found EC shards on this disk, move to next disk
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return ecShards
 }
 
 // findVolumeReplicas finds all servers that have replicas of the specified volume

@@ -156,10 +156,19 @@ func (at *ActiveTopology) AddPendingTaskForTaskType(taskID string, taskType Task
 		targetServer, targetDisk, sourceChange, targetChange, volumeSize)
 }
 
+// SourceCleanupType indicates what type of data needs to be cleaned up from a source
+type SourceCleanupType int
+
+const (
+	CleanupVolumeReplica SourceCleanupType = iota // Clean up volume replica (frees volume slots)
+	CleanupECShards                               // Clean up existing EC shards (frees shard slots)
+)
+
 // TaskSourceLocation represents a source location for task creation
 type TaskSourceLocation struct {
-	ServerID string
-	DiskID   uint32
+	ServerID    string
+	DiskID      uint32
+	CleanupType SourceCleanupType // What type of cleanup is needed
 }
 
 // AddPendingECShardTask adds a pending EC shard task with multiple sources and destinations
@@ -182,21 +191,40 @@ func (at *ActiveTopology) AddPendingECShardTask(taskID string, volumeID uint32,
 	glog.V(2).Infof("Creating single EC task %s with %d sources and %d destinations for volume %d",
 		taskID, len(sourceLocations), len(shardDestinations), volumeID)
 
-	// Calculate source storage impact (EC frees the original volume from each replica)
-	sourceImpact, _ := CalculateTaskStorageImpact(TaskTypeErasureCoding, originalVolumeSize)
-
-	// Build sources array for the EC task (all replicas to be cleaned up)
+	// Build sources array for the EC task (volumes and existing EC shards to be cleaned up)
 	sources := make([]TaskSource, len(sourceLocations))
 	for i, sourceLocation := range sourceLocations {
+		var storageImpact StorageSlotChange
+		var estimatedSize int64
+		var cleanupDesc string
+
+		switch sourceLocation.CleanupType {
+		case CleanupVolumeReplica:
+			// Cleaning up volume replica frees volume slots
+			storageImpact, _ = CalculateTaskStorageImpact(TaskTypeErasureCoding, originalVolumeSize)
+			estimatedSize = originalVolumeSize
+			cleanupDesc = "volume replica"
+		case CleanupECShards:
+			// Cleaning up existing EC shards frees shard slots
+			storageImpact = CalculateECShardCleanupImpact(originalVolumeSize)
+			estimatedSize = originalVolumeSize / 14 // Estimate shard size
+			cleanupDesc = "existing EC shards"
+		default:
+			// Default to volume replica cleanup
+			storageImpact, _ = CalculateTaskStorageImpact(TaskTypeErasureCoding, originalVolumeSize)
+			estimatedSize = originalVolumeSize
+			cleanupDesc = "unknown (default to volume)"
+		}
+
 		sources[i] = TaskSource{
 			SourceServer:  sourceLocation.ServerID,
 			SourceDisk:    sourceLocation.DiskID,
-			StorageChange: sourceImpact,
-			EstimatedSize: originalVolumeSize,
+			StorageChange: storageImpact,
+			EstimatedSize: estimatedSize,
 		}
 
-		glog.V(3).Infof("EC source %d: volume %d from %s (disk %d, impact: %+v)",
-			i, volumeID, sourceLocation.ServerID, sourceLocation.DiskID, sourceImpact)
+		glog.V(3).Infof("EC source %d: volume %d from %s (disk %d, cleanup: %s, impact: %+v)",
+			i, volumeID, sourceLocation.ServerID, sourceLocation.DiskID, cleanupDesc, storageImpact)
 	}
 
 	// Build destinations array for the EC task

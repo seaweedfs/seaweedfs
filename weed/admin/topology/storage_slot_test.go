@@ -120,7 +120,7 @@ func TestStorageSlotChange(t *testing.T) {
 
 	// Create source locations (single replica in this test)
 	sourceLocations := []TaskSourceLocation{
-		{ServerID: sourceServer, DiskID: sourceDisk},
+		{ServerID: sourceServer, DiskID: sourceDisk, CleanupType: CleanupVolumeReplica},
 	}
 
 	err := activeTopology.AddPendingECShardTask("ec_test", 100, sourceLocations,
@@ -310,7 +310,7 @@ func TestECMultipleTargets(t *testing.T) {
 
 	// Create source locations (single replica in this test)
 	sourceLocations := []TaskSourceLocation{
-		{ServerID: sourceServer, DiskID: sourceDisk},
+		{ServerID: sourceServer, DiskID: sourceDisk, CleanupType: CleanupVolumeReplica},
 	}
 
 	err := activeTopology.AddPendingECShardTask("ec_multi_target", 200, sourceLocations,
@@ -517,9 +517,9 @@ func TestReplicatedVolumeECOperations(t *testing.T) {
 
 	// Create source locations for replicated volume (3 replicas)
 	sourceLocations := []TaskSourceLocation{
-		{ServerID: "10.0.0.1:8080", DiskID: 0}, // Replica 1
-		{ServerID: "10.0.0.2:8080", DiskID: 0}, // Replica 2
-		{ServerID: "10.0.0.3:8080", DiskID: 0}, // Replica 3
+		{ServerID: "10.0.0.1:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Replica 1
+		{ServerID: "10.0.0.2:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Replica 2
+		{ServerID: "10.0.0.3:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Replica 3
 	}
 
 	// EC destinations (14 shards distributed across different servers than sources)
@@ -586,4 +586,137 @@ func TestReplicatedVolumeECOperations(t *testing.T) {
 	t.Logf("Replicated volume EC operation: %d source replicas, %d EC shards distributed across %d destinations",
 		len(sourceLocations), len(shardDestinations), len(destinationCounts))
 	t.Logf("Each source replica reserves with zero capacity impact, destinations receive EC shards")
+}
+
+// TestECWithOldShardCleanup tests EC operations that need to clean up old shards from previous failed attempts
+func TestECWithOldShardCleanup(t *testing.T) {
+	activeTopology := NewActiveTopology(10)
+
+	// Setup cluster with servers
+	activeTopology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "10.0.0.1:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 10},
+								},
+							},
+							{
+								Id: "10.0.0.2:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 5},
+								},
+							},
+							{
+								Id: "10.0.0.3:8080", // Had old EC shards from previous failed attempt
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 3},
+								},
+							},
+							{
+								Id: "10.0.0.4:8080", // Had old EC shards from previous failed attempt
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 7},
+								},
+							},
+							{
+								Id: "10.0.0.5:8080", // New EC destination
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 20},
+								},
+							},
+							{
+								Id: "10.0.0.6:8080", // New EC destination
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 25},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	// Test: EC operation that needs to clean up both volume replicas AND old EC shards
+	volumeID := uint32(400)
+	originalVolumeSize := int64(1024 * 1024 * 1024) // 1GB
+
+	// Create source locations: volume replicas + old EC shard locations
+	sourceLocations := []TaskSourceLocation{
+		{ServerID: "10.0.0.1:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Volume replica 1
+		{ServerID: "10.0.0.2:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Volume replica 2
+		{ServerID: "10.0.0.3:8080", DiskID: 0, CleanupType: CleanupECShards},      // Old EC shards from failed attempt
+		{ServerID: "10.0.0.4:8080", DiskID: 0, CleanupType: CleanupECShards},      // Old EC shards from failed attempt
+	}
+
+	// EC destinations (new complete set of shards)
+	shardDestinations := []string{
+		"10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", // 5 shards
+		"10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", // 4 more shards (9 total)
+		"10.0.0.6:8080", "10.0.0.6:8080", "10.0.0.6:8080", "10.0.0.6:8080", "10.0.0.6:8080", // 5 shards
+	}
+	shardDiskIDs := make([]uint32, len(shardDestinations))
+	for i := range shardDiskIDs {
+		shardDiskIDs[i] = 0
+	}
+
+	expectedShardSize := int64(50 * 1024 * 1024) // 50MB per shard
+	shardCount := int32(len(shardDestinations))
+
+	// Create EC task that cleans up both volume replicas and old EC shards
+	err := activeTopology.AddPendingECShardTask("ec_cleanup", volumeID, sourceLocations,
+		shardDestinations, shardDiskIDs, shardCount, expectedShardSize, originalVolumeSize)
+	assert.NoError(t, err, "Should successfully create EC task with mixed cleanup types")
+
+	// Verify capacity impact on volume replica sources (zero impact for EC)
+	for i := 0; i < 2; i++ {
+		source := sourceLocations[i]
+		plannedVol, _, plannedShard, _, estimatedSize := activeTopology.GetDiskStorageImpact(source.ServerID, source.DiskID)
+		assert.Equal(t, int64(0), plannedVol, fmt.Sprintf("Volume replica source %d should have zero volume slot impact", i+1))
+		assert.Equal(t, int32(0), plannedShard, fmt.Sprintf("Volume replica source %d should have zero shard slot impact", i+1))
+		assert.Equal(t, originalVolumeSize, estimatedSize, fmt.Sprintf("Volume replica source %d should track original volume size", i+1))
+	}
+
+	// Verify capacity impact on old EC shard sources (should free shard slots)
+	for i := 2; i < 4; i++ {
+		source := sourceLocations[i]
+		plannedVol, _, plannedShard, _, estimatedSize := activeTopology.GetDiskStorageImpact(source.ServerID, source.DiskID)
+		assert.Equal(t, int64(0), plannedVol, fmt.Sprintf("EC shard source %d should have zero volume slot impact", i+1))
+		assert.Equal(t, int32(-14), plannedShard, fmt.Sprintf("EC shard source %d should free 14 shard slots", i+1))
+		assert.True(t, estimatedSize > 0, fmt.Sprintf("EC shard source %d should have positive estimated size", i+1))
+	}
+
+	// Verify capacity impact on new EC destinations
+	destPlan5, _, destShard5, _, _ := activeTopology.GetDiskStorageImpact("10.0.0.5:8080", 0)
+	destPlan6, _, destShard6, _, _ := activeTopology.GetDiskStorageImpact("10.0.0.6:8080", 0)
+
+	assert.Equal(t, int64(0), destPlan5, "New EC destination 5 should have no planned volume slots")
+	assert.Equal(t, int32(9), destShard5, "New EC destination 5 should plan to receive 9 shards")
+	assert.Equal(t, int64(0), destPlan6, "New EC destination 6 should have no planned volume slots")
+	assert.Equal(t, int32(5), destShard6, "New EC destination 6 should plan to receive 5 shards")
+
+	// Verify effective capacity calculation shows proper impact
+	capacity3 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.3:8080", 0) // Freeing old EC shards
+	capacity4 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.4:8080", 0) // Freeing old EC shards
+	capacity5 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.5:8080", 0) // Receiving new EC shards
+	capacity6 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.6:8080", 0) // Receiving new EC shards
+
+	// Servers freeing old EC shards should have INCREASED capacity (freed shard slots provide capacity)
+	assert.Equal(t, int64(98), capacity3, "Server 3: 100 - 3 (current) + 1 (freeing 14 shards) = 98")
+	assert.Equal(t, int64(94), capacity4, "Server 4: 100 - 7 (current) + 1 (freeing 14 shards) = 94")
+
+	// Servers receiving new EC shards should have slightly reduced capacity
+	assert.Equal(t, int64(80), capacity5, "Server 5: 100 - 20 (current) - 0 (9 shards < 10) = 80")
+	assert.Equal(t, int64(75), capacity6, "Server 6: 100 - 25 (current) - 0 (5 shards < 10) = 75")
+
+	t.Logf("EC operation with cleanup: %d volume replicas + %d old EC shard locations → %d new EC shards",
+		2, 2, len(shardDestinations))
+	t.Logf("Volume sources have zero impact, old EC shard sources free capacity, new destinations consume shard slots")
 }

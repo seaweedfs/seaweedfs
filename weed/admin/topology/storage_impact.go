@@ -43,6 +43,15 @@ func CalculateECShardStorageImpact(shardCount int32, expectedShardSize int64) St
 	return StorageSlotChange{VolumeSlots: 0, ShardSlots: shardCount}
 }
 
+// CalculateECShardCleanupImpact calculates storage impact for cleaning up existing EC shards
+func CalculateECShardCleanupImpact(originalVolumeSize int64) StorageSlotChange {
+	// Cleaning up existing EC shards frees shard slots
+	// Estimate how many shards existed based on original volume size
+	// Typically EC creates 14 shards (10 data + 4 parity), but we use a conservative estimate
+	estimatedShardCount := int32(14)                                           // Standard EC configuration
+	return StorageSlotChange{VolumeSlots: 0, ShardSlots: -estimatedShardCount} // Negative = freed capacity
+}
+
 // GetDiskStorageImpact returns comprehensive storage impact information for a specific disk
 // Returns separate counts for planned (pending) vs reserved (active) capacity
 func (at *ActiveTopology) GetDiskStorageImpact(nodeID string, diskID uint32) (plannedVolumeSlots, reservedVolumeSlots int64, plannedShardSlots, reservedShardSlots int32, estimatedSize int64) {
