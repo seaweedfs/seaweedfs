@@ -162,7 +162,14 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					taskID, metric.VolumeID, len(allSourceLocations), len(multiPlan.Plans))
 
 				// Find all volume replicas from topology (for legacy worker compatibility)
-				replicas := findVolumeReplicas(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
+				var replicas []string
+				serverSet := make(map[string]struct{})
+				for _, loc := range replicaLocations {
+					if _, found := serverSet[loc.ServerID]; !found {
+						replicas = append(replicas, loc.ServerID)
+						serverSet[loc.ServerID] = struct{}{}
+					}
+				}
 				glog.V(1).Infof("Found %d replicas for volume %d: %v", len(replicas), metric.VolumeID, replicas)
 
 				// Create typed parameters with EC destination information and replicas

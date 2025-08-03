@@ -34,40 +34,33 @@ func (at *ActiveTopology) reassignTaskStates() {
 func (at *ActiveTopology) assignTaskToDisk(task *taskState) {
 	addedDisks := make(map[string]bool)
 
-	// Assign to all source disks
-	for _, source := range task.Sources {
-		sourceKey := fmt.Sprintf("%s:%d", source.SourceServer, source.SourceDisk)
-		if !addedDisks[sourceKey] {
-			if sourceDisk, exists := at.disks[sourceKey]; exists {
-				switch task.Status {
-				case TaskStatusPending:
-					sourceDisk.pendingTasks = append(sourceDisk.pendingTasks, task)
-				case TaskStatusInProgress:
-					sourceDisk.assignedTasks = append(sourceDisk.assignedTasks, task)
-				case TaskStatusCompleted:
-					sourceDisk.recentTasks = append(sourceDisk.recentTasks, task)
-				}
-				addedDisks[sourceKey] = true
+	// Local helper function to assign task to a disk and avoid code duplication
+	assign := func(server string, diskID uint32) {
+		key := fmt.Sprintf("%s:%d", server, diskID)
+		if server == "" || addedDisks[key] {
+			return
+		}
+		if disk, exists := at.disks[key]; exists {
+			switch task.Status {
+			case TaskStatusPending:
+				disk.pendingTasks = append(disk.pendingTasks, task)
+			case TaskStatusInProgress:
+				disk.assignedTasks = append(disk.assignedTasks, task)
+			case TaskStatusCompleted:
+				disk.recentTasks = append(disk.recentTasks, task)
 			}
+			addedDisks[key] = true
 		}
 	}
 
-	// Assign to all destination disks (avoid duplicates with sources)
+	// Assign to all source disks
+	for _, source := range task.Sources {
+		assign(source.SourceServer, source.SourceDisk)
+	}
+
+	// Assign to all destination disks (duplicates automatically avoided by helper)
 	for _, dest := range task.Destinations {
-		destKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
-		if !addedDisks[destKey] {
-			if destDisk, exists := at.disks[destKey]; exists {
-				switch task.Status {
-				case TaskStatusPending:
-					destDisk.pendingTasks = append(destDisk.pendingTasks, task)
-				case TaskStatusInProgress:
-					destDisk.assignedTasks = append(destDisk.assignedTasks, task)
-				case TaskStatusCompleted:
-					destDisk.recentTasks = append(destDisk.recentTasks, task)
-				}
-				addedDisks[destKey] = true
-			}
-		}
+		assign(dest.TargetServer, dest.TargetDisk)
 	}
 }
 
