@@ -721,3 +721,64 @@ func TestECWithOldShardCleanup(t *testing.T) {
 		2, 2, len(shardDestinations))
 	t.Logf("Volume sources have zero impact, old EC shard sources free capacity, new destinations consume shard slots")
 }
+
+// TestDetailedCapacityCalculations tests the new StorageSlotChange-based capacity calculation functions
+func TestDetailedCapacityCalculations(t *testing.T) {
+	activeTopology := NewActiveTopology(10)
+
+	// Setup cluster
+	activeTopology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "10.0.0.1:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 20},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	// Test: Add an EC task and check detailed capacity
+	sourceLocations := []TaskSourceLocation{
+		{ServerID: "10.0.0.1:8080", DiskID: 0, CleanupType: CleanupVolumeReplica},
+	}
+
+	shardDestinations := []string{"10.0.0.1:8080", "10.0.0.1:8080", "10.0.0.1:8080", "10.0.0.1:8080", "10.0.0.1:8080"}
+	shardDiskIDs := []uint32{0, 0, 0, 0, 0}
+
+	err := activeTopology.AddPendingECShardTask("detailed_test", 500, sourceLocations,
+		shardDestinations, shardDiskIDs, 5, 50*1024*1024, 1024*1024*1024)
+	assert.NoError(t, err, "Should add EC task successfully")
+
+	// Test the new detailed capacity function
+	detailedCapacity := activeTopology.GetEffectiveAvailableCapacityDetailed("10.0.0.1:8080", 0)
+	simpleCapacity := activeTopology.GetEffectiveAvailableCapacity("10.0.0.1:8080", 0)
+
+	// The simple capacity should match the volume slots from detailed capacity
+	assert.Equal(t, int64(detailedCapacity.VolumeSlots), simpleCapacity, "Simple capacity should match detailed volume slots")
+
+	// Verify detailed capacity has both volume and shard information
+	assert.Equal(t, int32(79), detailedCapacity.VolumeSlots, "Should have 79 available volume slots (100 - 20 current - 1 EC impact)")
+	assert.Equal(t, int32(-10), detailedCapacity.ShardSlots, "Should show -10 available shard slots (5 destination shards + EC overhead)")
+
+	// Verify capacity impact
+	capacityImpact := activeTopology.GetEffectiveCapacityImpact("10.0.0.1:8080", 0)
+	assert.Equal(t, int32(0), capacityImpact.VolumeSlots, "EC source should have zero volume slot impact")
+	assert.Equal(t, int32(10), capacityImpact.ShardSlots, "Should have positive shard slot impact (consuming shards)")
+
+	t.Logf("Detailed capacity calculation: VolumeSlots=%d, ShardSlots=%d",
+		detailedCapacity.VolumeSlots, detailedCapacity.ShardSlots)
+	t.Logf("Capacity impact: VolumeSlots=%d, ShardSlots=%d",
+		capacityImpact.VolumeSlots, capacityImpact.ShardSlots)
+	t.Logf("Simple capacity (backward compatible): %d", simpleCapacity)
+}

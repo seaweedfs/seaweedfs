@@ -58,12 +58,19 @@ func (at *ActiveTopology) AssignTask(taskID string) error {
 	for _, dest := range task.Destinations {
 		targetKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
 		if targetDisk, exists := at.disks[targetKey]; exists {
-			currentCapacity := at.getEffectiveAvailableCapacityUnsafe(targetDisk)
-			requiredCapacity := int64(dest.StorageChange.VolumeSlots) + int64(dest.StorageChange.ShardSlots)/10
+			availableCapacity := at.getEffectiveAvailableCapacityUnsafe(targetDisk)
 
-			if currentCapacity < requiredCapacity {
-				return fmt.Errorf("insufficient capacity on target disk %s:%d: available=%d, required=%d",
-					dest.TargetServer, dest.TargetDisk, currentCapacity, requiredCapacity)
+			// Check if we have enough volume slots for volume-based requirements
+			if dest.StorageChange.VolumeSlots > 0 && int64(availableCapacity.VolumeSlots) < int64(dest.StorageChange.VolumeSlots) {
+				return fmt.Errorf("insufficient volume capacity on target disk %s:%d: available=%d volume slots, required=%d volume slots",
+					dest.TargetServer, dest.TargetDisk, availableCapacity.VolumeSlots, dest.StorageChange.VolumeSlots)
+			}
+
+			// Check if we have enough total capacity (volume slots) for mixed requirements
+			requiredCapacity := int64(dest.StorageChange.VolumeSlots) + int64(dest.StorageChange.ShardSlots)/10
+			if requiredCapacity > 0 && int64(availableCapacity.VolumeSlots) < requiredCapacity {
+				return fmt.Errorf("insufficient total capacity on target disk %s:%d: available=%d volume slots, required=%d equivalent slots",
+					dest.TargetServer, dest.TargetDisk, availableCapacity.VolumeSlots, requiredCapacity)
 			}
 		}
 	}

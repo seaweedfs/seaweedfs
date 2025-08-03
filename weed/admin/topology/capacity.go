@@ -26,6 +26,26 @@ func (at *ActiveTopology) GetEffectiveAvailableCapacity(nodeID string, diskID ui
 	}
 
 	// Use the same logic as getEffectiveAvailableCapacityUnsafe but with locking
+	capacity := at.getEffectiveAvailableCapacityUnsafe(disk)
+	return int64(capacity.VolumeSlots)
+}
+
+// GetEffectiveAvailableCapacityDetailed returns detailed available capacity as StorageSlotChange
+// This provides granular information about available volume slots and shard slots
+func (at *ActiveTopology) GetEffectiveAvailableCapacityDetailed(nodeID string, diskID uint32) StorageSlotChange {
+	at.mutex.RLock()
+	defer at.mutex.RUnlock()
+
+	diskKey := fmt.Sprintf("%s:%d", nodeID, diskID)
+	disk, exists := at.disks[diskKey]
+	if !exists {
+		return StorageSlotChange{}
+	}
+
+	if disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
+		return StorageSlotChange{}
+	}
+
 	return at.getEffectiveAvailableCapacityUnsafe(disk)
 }
 
@@ -68,14 +88,14 @@ func (at *ActiveTopology) GetDisksWithEffectiveCapacity(taskType TaskType, exclu
 			effectiveCapacity := at.getEffectiveAvailableCapacityUnsafe(disk)
 
 			// Only include disks that meet minimum capacity requirement
-			if effectiveCapacity >= minCapacity {
+			if int64(effectiveCapacity.VolumeSlots) >= minCapacity {
 				// Create a copy with current capacity information
 				diskCopy := *disk.DiskInfo
 				diskCopy.LoadCount = len(disk.pendingTasks) + len(disk.assignedTasks) // Count all tasks
 
 				// Create a copy of the DiskInfo to avoid modifying the original
 				diskInfoCopy := *disk.DiskInfo.DiskInfo
-				diskInfoCopy.VolumeCount = diskInfoCopy.MaxVolumeCount - effectiveCapacity
+				diskInfoCopy.VolumeCount = diskInfoCopy.MaxVolumeCount - int64(effectiveCapacity.VolumeSlots)
 				diskCopy.DiskInfo = &diskInfoCopy
 
 				available = append(available, &diskCopy)
@@ -104,14 +124,14 @@ func (at *ActiveTopology) GetDisksForPlanning(taskType TaskType, excludeNodeID s
 			// Check if disk can accommodate new task considering pending tasks
 			planningCapacity := at.getPlanningCapacityUnsafe(disk)
 
-			if planningCapacity >= minCapacity {
+			if int64(planningCapacity.VolumeSlots) >= minCapacity {
 				// Create a copy with planning information
 				diskCopy := *disk.DiskInfo
 				diskCopy.LoadCount = len(disk.pendingTasks) + len(disk.assignedTasks)
 
 				// Create a copy of the DiskInfo to avoid modifying the original
 				diskInfoCopy := *disk.DiskInfo.DiskInfo
-				diskInfoCopy.VolumeCount = diskInfoCopy.MaxVolumeCount - planningCapacity
+				diskInfoCopy.VolumeCount = diskInfoCopy.MaxVolumeCount - int64(planningCapacity.VolumeSlots)
 				diskCopy.DiskInfo = &diskInfoCopy
 
 				available = append(available, &diskCopy)
@@ -140,32 +160,30 @@ func (at *ActiveTopology) CanAccommodateTask(nodeID string, diskID uint32, taskT
 
 	// Check effective capacity
 	effectiveCapacity := at.getEffectiveAvailableCapacityUnsafe(disk)
-	return effectiveCapacity >= volumesNeeded
+	return int64(effectiveCapacity.VolumeSlots) >= volumesNeeded
 }
 
 // getPlanningCapacityUnsafe considers both pending and active tasks for planning
-func (at *ActiveTopology) getPlanningCapacityUnsafe(disk *activeDisk) int64 {
+func (at *ActiveTopology) getPlanningCapacityUnsafe(disk *activeDisk) StorageSlotChange {
 	if disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
-		return 0
+		return StorageSlotChange{}
 	}
 
-	baseAvailable := disk.DiskInfo.DiskInfo.MaxVolumeCount - disk.DiskInfo.DiskInfo.VolumeCount
-	plannedSlots := int64(0)
+	baseAvailableVolumes := disk.DiskInfo.DiskInfo.MaxVolumeCount - disk.DiskInfo.DiskInfo.VolumeCount
+	totalImpact := StorageSlotChange{}
 
 	// Count both pending and active tasks for planning purposes
 	for _, task := range disk.pendingTasks {
 		// Count impact from all sources
 		for _, source := range task.Sources {
 			if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
-				plannedSlots += int64(abs(source.StorageChange.VolumeSlots))
-				plannedSlots += int64(source.StorageChange.ShardSlots) / 10
+				totalImpact.AddInPlace(source.StorageChange)
 			}
 		}
 		// Count impact from all destinations
 		for _, dest := range task.Destinations {
 			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
-				plannedSlots += int64(dest.StorageChange.VolumeSlots)
-				plannedSlots += int64(dest.StorageChange.ShardSlots) / 10
+				totalImpact.AddInPlace(dest.StorageChange)
 			}
 		}
 	}
@@ -174,25 +192,28 @@ func (at *ActiveTopology) getPlanningCapacityUnsafe(disk *activeDisk) int64 {
 		// Count impact from all sources
 		for _, source := range task.Sources {
 			if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
-				plannedSlots += int64(abs(source.StorageChange.VolumeSlots))
-				plannedSlots += int64(source.StorageChange.ShardSlots) / 10
+				totalImpact.AddInPlace(source.StorageChange)
 			}
 		}
 		// Count impact from all destinations
 		for _, dest := range task.Destinations {
 			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
-				plannedSlots += int64(dest.StorageChange.VolumeSlots)
-				plannedSlots += int64(dest.StorageChange.ShardSlots) / 10
+				totalImpact.AddInPlace(dest.StorageChange)
 			}
 		}
 	}
 
-	planningCapacity := baseAvailable - plannedSlots
-	if planningCapacity < 0 {
-		planningCapacity = 0
+	// Calculate available capacity considering impact (negative impact reduces availability)
+	availableVolumeSlots := baseAvailableVolumes - totalImpact.TotalImpact()
+	if availableVolumeSlots < 0 {
+		availableVolumeSlots = 0
 	}
 
-	return planningCapacity
+	// Return detailed capacity information
+	return StorageSlotChange{
+		VolumeSlots: int32(availableVolumeSlots),
+		ShardSlots:  -totalImpact.ShardSlots, // Available shard capacity (negative impact becomes positive availability)
+	}
 }
 
 // isDiskAvailableForPlanning checks if disk can accept new tasks considering pending load
@@ -260,22 +281,26 @@ func (at *ActiveTopology) getEffectiveCapacityUnsafe(disk *activeDisk) StorageSl
 	return netImpact
 }
 
-// getEffectiveAvailableCapacityUnsafe converts StorageSlotChange to int64 available capacity
-func (at *ActiveTopology) getEffectiveAvailableCapacityUnsafe(disk *activeDisk) int64 {
+// getEffectiveAvailableCapacityUnsafe returns detailed available capacity as StorageSlotChange
+func (at *ActiveTopology) getEffectiveAvailableCapacityUnsafe(disk *activeDisk) StorageSlotChange {
 	if disk.DiskInfo == nil || disk.DiskInfo.DiskInfo == nil {
-		return 0
+		return StorageSlotChange{}
 	}
 
 	baseAvailable := disk.DiskInfo.DiskInfo.MaxVolumeCount - disk.DiskInfo.DiskInfo.VolumeCount
 	netImpact := at.getEffectiveCapacityUnsafe(disk)
 
-	// Convert StorageSlotChange to capacity impact (negative values reduce available capacity)
-	effectiveAvailable := baseAvailable - netImpact.TotalImpact()
-	if effectiveAvailable < 0 {
-		effectiveAvailable = 0
+	// Calculate available volume slots (negative impact reduces availability)
+	availableVolumeSlots := baseAvailable - netImpact.TotalImpact()
+	if availableVolumeSlots < 0 {
+		availableVolumeSlots = 0
 	}
 
-	return effectiveAvailable
+	// Return detailed capacity information
+	return StorageSlotChange{
+		VolumeSlots: int32(availableVolumeSlots),
+		ShardSlots:  -netImpact.ShardSlots, // Available shard capacity (negative impact becomes positive availability)
+	}
 }
 
 // abs returns absolute value for int32
