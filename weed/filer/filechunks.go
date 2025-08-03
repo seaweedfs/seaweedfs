@@ -178,8 +178,8 @@ func (cv *ChunkView) Clone() IntervalValue {
 }
 
 func (cv *ChunkView) IsFullChunk() bool {
-	// Fixed: Only return true if we're reading the ENTIRE chunk from the beginning.
-	// This prevents bandwidth amplification when range requests happen to align 
+	// IsFullChunk returns true if the view covers the entire chunk from the beginning.
+	// This prevents bandwidth amplification when range requests happen to align
 	// with chunk boundaries but don't actually want the full chunk.
 	return cv.OffsetInChunk == 0 && cv.ViewSize == cv.ChunkSize
 }
