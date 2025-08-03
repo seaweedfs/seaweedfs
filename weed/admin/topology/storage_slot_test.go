@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -117,7 +118,12 @@ func TestStorageSlotChange(t *testing.T) {
 	expectedShardSize := int64(50 * 1024 * 1024)    // 50MB per shard
 	originalVolumeSize := int64(1024 * 1024 * 1024) // 1GB original
 
-	err := activeTopology.AddPendingECShardTask("ec_test", 100, sourceServer, sourceDisk,
+	// Create source locations (single replica in this test)
+	sourceLocations := []TaskSourceLocation{
+		{ServerID: sourceServer, DiskID: sourceDisk},
+	}
+
+	err := activeTopology.AddPendingECShardTask("ec_test", 100, sourceLocations,
 		shardDestinations, shardDiskIDs, shardCount, expectedShardSize, originalVolumeSize)
 	assert.NoError(t, err, "Should add EC shard task successfully")
 
@@ -302,7 +308,12 @@ func TestECMultipleTargets(t *testing.T) {
 		shardDiskIDs[i] = 0
 	}
 
-	err := activeTopology.AddPendingECShardTask("ec_multi_target", 200, sourceServer, sourceDisk,
+	// Create source locations (single replica in this test)
+	sourceLocations := []TaskSourceLocation{
+		{ServerID: sourceServer, DiskID: sourceDisk},
+	}
+
+	err := activeTopology.AddPendingECShardTask("ec_multi_target", 200, sourceLocations,
 		shardDestinations, shardDiskIDs, int32(len(shardDestinations)), 50*1024*1024, 1*1024*1024*1024)
 	assert.NoError(t, err, "Should add multi-target EC task successfully")
 
@@ -442,4 +453,137 @@ func TestCapacityReservationCycle(t *testing.T) {
 	t.Logf("Capacity lifecycle with StorageSlotChange: Pending -> Assigned -> Released -> Applied")
 	t.Logf("Source: 10 -> 11 -> 11 -> 10 -> 11 (freed by pending balance, then applied)")
 	t.Logf("Target: 10 -> 9 -> 9 -> 10 -> 9 (reserved by pending, then applied)")
+}
+
+// TestReplicatedVolumeECOperations tests EC operations on replicated volumes
+func TestReplicatedVolumeECOperations(t *testing.T) {
+	activeTopology := NewActiveTopology(10)
+
+	// Setup cluster with multiple servers for replicated volumes
+	activeTopology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "10.0.0.1:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 10},
+								},
+							},
+							{
+								Id: "10.0.0.2:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 5},
+								},
+							},
+							{
+								Id: "10.0.0.3:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 3},
+								},
+							},
+							{
+								Id: "10.0.0.4:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 15},
+								},
+							},
+							{
+								Id: "10.0.0.5:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 20},
+								},
+							},
+							{
+								Id: "10.0.0.6:8080",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"0": {DiskId: 0, Type: "hdd", MaxVolumeCount: 100, VolumeCount: 25},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	// Test: EC operation on replicated volume (3 replicas)
+	volumeID := uint32(300)
+	originalVolumeSize := int64(1024 * 1024 * 1024) // 1GB
+
+	// Create source locations for replicated volume (3 replicas)
+	sourceLocations := []TaskSourceLocation{
+		{ServerID: "10.0.0.1:8080", DiskID: 0}, // Replica 1
+		{ServerID: "10.0.0.2:8080", DiskID: 0}, // Replica 2
+		{ServerID: "10.0.0.3:8080", DiskID: 0}, // Replica 3
+	}
+
+	// EC destinations (14 shards distributed across different servers than sources)
+	shardDestinations := []string{
+		"10.0.0.4:8080", "10.0.0.4:8080", "10.0.0.4:8080", "10.0.0.4:8080", "10.0.0.4:8080", // 5 shards
+		"10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", "10.0.0.5:8080", // 5 shards
+		"10.0.0.6:8080", "10.0.0.6:8080", "10.0.0.6:8080", "10.0.0.6:8080", // 4 shards
+	}
+	shardDiskIDs := make([]uint32, len(shardDestinations))
+	for i := range shardDiskIDs {
+		shardDiskIDs[i] = 0
+	}
+
+	expectedShardSize := int64(50 * 1024 * 1024) // 50MB per shard
+	shardCount := int32(len(shardDestinations))
+
+	// Create EC task for replicated volume
+	err := activeTopology.AddPendingECShardTask("ec_replicated", volumeID, sourceLocations,
+		shardDestinations, shardDiskIDs, shardCount, expectedShardSize, originalVolumeSize)
+	assert.NoError(t, err, "Should successfully create EC task for replicated volume")
+
+	// Verify capacity impact on all source replicas (each should reserve with zero impact)
+	for i, source := range sourceLocations {
+		plannedVol, reservedVol, plannedShard, reservedShard, estimatedSize := activeTopology.GetDiskStorageImpact(source.ServerID, source.DiskID)
+		assert.Equal(t, int64(0), plannedVol, fmt.Sprintf("Source replica %d should reserve with zero volume slot impact", i+1))
+		assert.Equal(t, int64(0), reservedVol, fmt.Sprintf("Source replica %d should have no active volume slots", i+1))
+		assert.Equal(t, int32(0), plannedShard, fmt.Sprintf("Source replica %d should have no planned shard slots", i+1))
+		assert.Equal(t, int32(0), reservedShard, fmt.Sprintf("Source replica %d should have no active shard slots", i+1))
+		assert.Equal(t, originalVolumeSize, estimatedSize, fmt.Sprintf("Source replica %d should track original volume size", i+1))
+	}
+
+	// Verify capacity impact on EC destinations
+	destinationCounts := make(map[string]int)
+	for _, dest := range shardDestinations {
+		destinationCounts[dest]++
+	}
+
+	for serverID, expectedShards := range destinationCounts {
+		plannedVol, _, plannedShard, _, _ := activeTopology.GetDiskStorageImpact(serverID, 0)
+		assert.Equal(t, int64(0), plannedVol, fmt.Sprintf("Destination %s should have no planned volume slots", serverID))
+		assert.Equal(t, int32(expectedShards), plannedShard, fmt.Sprintf("Destination %s should plan to receive %d shards", serverID, expectedShards))
+	}
+
+	// Verify effective capacity calculation for sources (should have zero EC impact)
+	sourceCapacity1 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.1:8080", 0)
+	sourceCapacity2 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.2:8080", 0)
+	sourceCapacity3 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.3:8080", 0)
+
+	// All sources should have same capacity as baseline (EC source reserves with zero impact)
+	assert.Equal(t, int64(90), sourceCapacity1, "Source 1: 100 - 10 (current) - 0 (EC source impact) = 90")
+	assert.Equal(t, int64(95), sourceCapacity2, "Source 2: 100 - 5 (current) - 0 (EC source impact) = 95")
+	assert.Equal(t, int64(97), sourceCapacity3, "Source 3: 100 - 3 (current) - 0 (EC source impact) = 97")
+
+	// Verify effective capacity calculation for destinations (should be reduced by shard slots)
+	destCapacity4 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.4:8080", 0)
+	destCapacity5 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.5:8080", 0)
+	destCapacity6 := activeTopology.GetEffectiveAvailableCapacity("10.0.0.6:8080", 0)
+
+	// Destinations should be reduced by shard impact (5 shards = ~0.5 volumes, 4 shards = ~0.4 volumes)
+	assert.Equal(t, int64(85), destCapacity4, "Dest 4: 100 - 15 (current) - 0 (5 shards < 10) = 85")
+	assert.Equal(t, int64(80), destCapacity5, "Dest 5: 100 - 20 (current) - 0 (5 shards < 10) = 80")
+	assert.Equal(t, int64(75), destCapacity6, "Dest 6: 100 - 25 (current) - 0 (4 shards < 10) = 75")
+
+	t.Logf("Replicated volume EC operation: %d source replicas, %d EC shards distributed across %d destinations",
+		len(sourceLocations), len(shardDestinations), len(destinationCounts))
+	t.Logf("Each source replica reserves with zero capacity impact, destinations receive EC shards")
 }

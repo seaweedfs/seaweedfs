@@ -32,30 +32,40 @@ func (at *ActiveTopology) reassignTaskStates() {
 
 // assignTaskToDisk assigns a task to the appropriate disk(s)
 func (at *ActiveTopology) assignTaskToDisk(task *taskState) {
-	// Assign to source disk
-	sourceKey := fmt.Sprintf("%s:%d", task.SourceServer, task.SourceDisk)
-	if sourceDisk, exists := at.disks[sourceKey]; exists {
-		switch task.Status {
-		case TaskStatusPending:
-			sourceDisk.pendingTasks = append(sourceDisk.pendingTasks, task)
-		case TaskStatusInProgress:
-			sourceDisk.assignedTasks = append(sourceDisk.assignedTasks, task)
-		case TaskStatusCompleted:
-			sourceDisk.recentTasks = append(sourceDisk.recentTasks, task)
+	addedDisks := make(map[string]bool)
+
+	// Assign to all source disks
+	for _, source := range task.Sources {
+		sourceKey := fmt.Sprintf("%s:%d", source.SourceServer, source.SourceDisk)
+		if !addedDisks[sourceKey] {
+			if sourceDisk, exists := at.disks[sourceKey]; exists {
+				switch task.Status {
+				case TaskStatusPending:
+					sourceDisk.pendingTasks = append(sourceDisk.pendingTasks, task)
+				case TaskStatusInProgress:
+					sourceDisk.assignedTasks = append(sourceDisk.assignedTasks, task)
+				case TaskStatusCompleted:
+					sourceDisk.recentTasks = append(sourceDisk.recentTasks, task)
+				}
+				addedDisks[sourceKey] = true
+			}
 		}
 	}
 
-	// Assign to target disk if it exists and is different from source
-	if task.TargetServer != "" && (task.TargetServer != task.SourceServer || task.TargetDisk != task.SourceDisk) {
-		targetKey := fmt.Sprintf("%s:%d", task.TargetServer, task.TargetDisk)
-		if targetDisk, exists := at.disks[targetKey]; exists {
-			switch task.Status {
-			case TaskStatusPending:
-				targetDisk.pendingTasks = append(targetDisk.pendingTasks, task)
-			case TaskStatusInProgress:
-				targetDisk.assignedTasks = append(targetDisk.assignedTasks, task)
-			case TaskStatusCompleted:
-				targetDisk.recentTasks = append(targetDisk.recentTasks, task)
+	// Assign to all destination disks (avoid duplicates with sources)
+	for _, dest := range task.Destinations {
+		destKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
+		if !addedDisks[destKey] {
+			if destDisk, exists := at.disks[destKey]; exists {
+				switch task.Status {
+				case TaskStatusPending:
+					destDisk.pendingTasks = append(destDisk.pendingTasks, task)
+				case TaskStatusInProgress:
+					destDisk.assignedTasks = append(destDisk.assignedTasks, task)
+				case TaskStatusCompleted:
+					destDisk.recentTasks = append(destDisk.recentTasks, task)
+				}
+				addedDisks[destKey] = true
 			}
 		}
 	}

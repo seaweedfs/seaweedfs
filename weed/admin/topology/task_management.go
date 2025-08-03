@@ -14,18 +14,29 @@ func (at *ActiveTopology) addPendingTaskWithStorageInfo(taskID string, taskType 
 	at.mutex.Lock()
 	defer at.mutex.Unlock()
 
+	// Create task using unified structure (single source, single destination)
 	task := &taskState{
-		VolumeID:            volumeID,
-		TaskType:            taskType,
-		SourceServer:        sourceServer,
-		SourceDisk:          sourceDisk,
-		TargetServer:        targetServer,
-		TargetDisk:          targetDisk,
-		Status:              TaskStatusPending,
-		StartedAt:           time.Now(),
-		SourceStorageChange: sourceStorageChange,
-		TargetStorageChange: targetStorageChange,
-		EstimatedSize:       estimatedSize,
+		VolumeID:      volumeID,
+		TaskType:      taskType,
+		Status:        TaskStatusPending,
+		StartedAt:     time.Now(),
+		EstimatedSize: estimatedSize,
+		Sources: []TaskSource{
+			{
+				SourceServer:  sourceServer,
+				SourceDisk:    sourceDisk,
+				StorageChange: sourceStorageChange,
+				EstimatedSize: estimatedSize,
+			},
+		},
+		Destinations: []TaskDestination{
+			{
+				TargetServer:  targetServer,
+				TargetDisk:    targetDisk,
+				StorageChange: targetStorageChange,
+				EstimatedSize: estimatedSize,
+			},
+		},
 	}
 
 	at.pendingTasks[taskID] = task
@@ -42,16 +53,16 @@ func (at *ActiveTopology) AssignTask(taskID string) error {
 		return fmt.Errorf("pending task %s not found", taskID)
 	}
 
-	// Check if target disk has sufficient capacity to reserve
-	if task.TargetServer != "" {
-		targetKey := fmt.Sprintf("%s:%d", task.TargetServer, task.TargetDisk)
+	// Check if all destination disks have sufficient capacity to reserve
+	for _, dest := range task.Destinations {
+		targetKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
 		if targetDisk, exists := at.disks[targetKey]; exists {
 			currentCapacity := at.getEffectiveAvailableCapacityUnsafe(targetDisk)
-			requiredCapacity := int64(task.TargetStorageChange.VolumeSlots) + int64(task.TargetStorageChange.ShardSlots)/10
+			requiredCapacity := int64(dest.StorageChange.VolumeSlots) + int64(dest.StorageChange.ShardSlots)/10
 
 			if currentCapacity < requiredCapacity {
 				return fmt.Errorf("insufficient capacity on target disk %s:%d: available=%d, required=%d",
-					task.TargetServer, task.TargetDisk, currentCapacity, requiredCapacity)
+					dest.TargetServer, dest.TargetDisk, currentCapacity, requiredCapacity)
 			}
 		}
 	}
@@ -62,9 +73,19 @@ func (at *ActiveTopology) AssignTask(taskID string) error {
 	at.assignedTasks[taskID] = task
 	at.reassignTaskStates()
 
-	glog.V(2).Infof("Task %s assigned and capacity reserved: source_change={VolumeSlots:%d, ShardSlots:%d}, target_change={VolumeSlots:%d, ShardSlots:%d}",
-		taskID, task.SourceStorageChange.VolumeSlots, task.SourceStorageChange.ShardSlots,
-		task.TargetStorageChange.VolumeSlots, task.TargetStorageChange.ShardSlots)
+	// Log capacity reservation information for all sources and destinations
+	totalSourceImpact := StorageSlotChange{}
+	totalDestImpact := StorageSlotChange{}
+	for _, source := range task.Sources {
+		totalSourceImpact.AddInPlace(source.StorageChange)
+	}
+	for _, dest := range task.Destinations {
+		totalDestImpact.AddInPlace(dest.StorageChange)
+	}
+
+	glog.V(2).Infof("Task %s assigned and capacity reserved: %d sources (VolumeSlots:%d, ShardSlots:%d), %d destinations (VolumeSlots:%d, ShardSlots:%d)",
+		taskID, len(task.Sources), totalSourceImpact.VolumeSlots, totalSourceImpact.ShardSlots,
+		len(task.Destinations), totalDestImpact.VolumeSlots, totalDestImpact.ShardSlots)
 
 	return nil
 }
@@ -88,9 +109,19 @@ func (at *ActiveTopology) CompleteTask(taskID string) error {
 	at.recentTasks[taskID] = task
 	at.reassignTaskStates()
 
-	glog.V(2).Infof("Task %s completed and capacity released: source_change={VolumeSlots:%d, ShardSlots:%d}, target_change={VolumeSlots:%d, ShardSlots:%d}",
-		taskID, task.SourceStorageChange.VolumeSlots, task.SourceStorageChange.ShardSlots,
-		task.TargetStorageChange.VolumeSlots, task.TargetStorageChange.ShardSlots)
+	// Log capacity release information for all sources and destinations
+	totalSourceImpact := StorageSlotChange{}
+	totalDestImpact := StorageSlotChange{}
+	for _, source := range task.Sources {
+		totalSourceImpact.AddInPlace(source.StorageChange)
+	}
+	for _, dest := range task.Destinations {
+		totalDestImpact.AddInPlace(dest.StorageChange)
+	}
+
+	glog.V(2).Infof("Task %s completed and capacity released: %d sources (VolumeSlots:%d, ShardSlots:%d), %d destinations (VolumeSlots:%d, ShardSlots:%d)",
+		taskID, len(task.Sources), totalSourceImpact.VolumeSlots, totalSourceImpact.ShardSlots,
+		len(task.Destinations), totalDestImpact.VolumeSlots, totalDestImpact.ShardSlots)
 
 	// Clean up old recent tasks
 	at.cleanupRecentTasks()
@@ -125,23 +156,48 @@ func (at *ActiveTopology) AddPendingTaskForTaskType(taskID string, taskType Task
 		targetServer, targetDisk, sourceChange, targetChange, volumeSize)
 }
 
-// AddPendingECShardTask adds a pending EC shard task with multiple destinations
+// TaskSourceLocation represents a source location for task creation
+type TaskSourceLocation struct {
+	ServerID string
+	DiskID   uint32
+}
+
+// AddPendingECShardTask adds a pending EC shard task with multiple sources and destinations
 //
 // This function creates a single task that represents the entire EC operation with
-// multiple destinations. This is cleaner than creating multiple sub-tasks and allows
-// proper task lifecycle management with a single task ID.
-func (at *ActiveTopology) AddPendingECShardTask(taskID string, volumeID uint32, sourceServer string, sourceDisk uint32,
-	shardDestinations []string, shardDiskIDs []uint32, shardCount int32, expectedShardSize int64, originalVolumeSize int64) error {
+// multiple sources (for replicated volume cleanup) and multiple destinations (for EC shards).
+// This is cleaner than creating multiple sub-tasks and allows proper task lifecycle management with a single task ID.
+func (at *ActiveTopology) AddPendingECShardTask(taskID string, volumeID uint32,
+	sourceLocations []TaskSourceLocation, shardDestinations []string, shardDiskIDs []uint32,
+	shardCount int32, expectedShardSize int64, originalVolumeSize int64) error {
 
 	if len(shardDestinations) != len(shardDiskIDs) {
 		return fmt.Errorf("shard destinations and disk IDs must have same length")
 	}
 
-	glog.V(2).Infof("Creating single EC task %s with %d destinations for volume %d",
-		taskID, len(shardDestinations), volumeID)
+	if len(sourceLocations) == 0 {
+		return fmt.Errorf("at least one source location is required")
+	}
 
-	// Calculate source storage impact (EC frees the original volume)
-	sourceChange, _ := CalculateTaskStorageImpact(TaskTypeErasureCoding, originalVolumeSize)
+	glog.V(2).Infof("Creating single EC task %s with %d sources and %d destinations for volume %d",
+		taskID, len(sourceLocations), len(shardDestinations), volumeID)
+
+	// Calculate source storage impact (EC frees the original volume from each replica)
+	sourceImpact, _ := CalculateTaskStorageImpact(TaskTypeErasureCoding, originalVolumeSize)
+
+	// Build sources array for the EC task (all replicas to be cleaned up)
+	sources := make([]TaskSource, len(sourceLocations))
+	for i, sourceLocation := range sourceLocations {
+		sources[i] = TaskSource{
+			SourceServer:  sourceLocation.ServerID,
+			SourceDisk:    sourceLocation.DiskID,
+			StorageChange: sourceImpact,
+			EstimatedSize: originalVolumeSize,
+		}
+
+		glog.V(3).Infof("EC source %d: volume %d from %s (disk %d, impact: %+v)",
+			i, volumeID, sourceLocation.ServerID, sourceLocation.DiskID, sourceImpact)
+	}
 
 	// Build destinations array for the EC task
 	destinations := make([]TaskDestination, len(shardDestinations))
@@ -160,55 +216,59 @@ func (at *ActiveTopology) AddPendingECShardTask(taskID string, volumeID uint32, 
 			i, volumeID, destination, shardDiskIDs[i], shardImpact)
 	}
 
-	// Create a single EC task with multiple destinations
-	at.addPendingTaskWithMultipleDestinations(taskID, TaskTypeErasureCoding, volumeID,
-		sourceServer, sourceDisk, sourceChange, destinations, originalVolumeSize)
+	// Create a single EC task with multiple sources and destinations
+	at.addPendingTaskWithMultipleSourcesAndDestinations(taskID, TaskTypeErasureCoding, volumeID,
+		sources, destinations, originalVolumeSize)
 
-	glog.V(2).Infof("EC task %s created for volume %d: source=%s:%d, %d destinations",
-		taskID, volumeID, sourceServer, sourceDisk, len(destinations))
+	glog.V(2).Infof("EC task %s created for volume %d: %d sources, %d destinations",
+		taskID, volumeID, len(sources), len(destinations))
 
 	return nil
 }
 
-// addPendingTaskWithMultipleDestinations adds a pending task with multiple destinations (for EC operations)
-func (at *ActiveTopology) addPendingTaskWithMultipleDestinations(taskID string, taskType TaskType, volumeID uint32,
-	sourceServer string, sourceDisk uint32, sourceChange StorageSlotChange, destinations []TaskDestination, estimatedSize int64) {
+// addPendingTaskWithMultipleSourcesAndDestinations adds a pending task with multiple sources and destinations (for EC operations on replicated volumes)
+func (at *ActiveTopology) addPendingTaskWithMultipleSourcesAndDestinations(taskID string, taskType TaskType, volumeID uint32,
+	sources []TaskSource, destinations []TaskDestination, estimatedSize int64) {
 
 	at.mutex.Lock()
 	defer at.mutex.Unlock()
 
 	task := &taskState{
-		VolumeID:            volumeID,
-		TaskType:            taskType,
-		SourceServer:        sourceServer,
-		SourceDisk:          sourceDisk,
-		Status:              TaskStatusPending,
-		StartedAt:           time.Now(),
-		SourceStorageChange: sourceChange,
-		EstimatedSize:       estimatedSize,
-		Destinations:        destinations, // Multiple destinations for EC
+		VolumeID:      volumeID,
+		TaskType:      taskType,
+		Status:        TaskStatusPending,
+		StartedAt:     time.Now(),
+		EstimatedSize: estimatedSize,
+		Sources:       sources,      // Multiple sources for replica cleanup
+		Destinations:  destinations, // Multiple destinations for EC shards
 	}
 
 	at.pendingTasks[taskID] = task
 
-	// Apply capacity impact to source disk
-	sourceDiskKey := fmt.Sprintf("%s:%d", sourceServer, sourceDisk)
-	if sourceDiskObj, exists := at.disks[sourceDiskKey]; exists {
-		sourceDiskObj.pendingTasks = append(sourceDiskObj.pendingTasks, task)
-	}
-
-	// Apply capacity impact to all destination disks (avoid duplicates for same disk)
-	addedToDisks := make(map[string]bool)
-	for _, dest := range destinations {
-		destDiskKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
-		if !addedToDisks[destDiskKey] {
-			if destDiskObj, exists := at.disks[destDiskKey]; exists {
-				destDiskObj.pendingTasks = append(destDiskObj.pendingTasks, task)
-				addedToDisks[destDiskKey] = true
+	// Apply capacity impact to all source disks (avoid duplicates for same disk)
+	addedSourceDisks := make(map[string]bool)
+	for _, source := range sources {
+		sourceDiskKey := fmt.Sprintf("%s:%d", source.SourceServer, source.SourceDisk)
+		if !addedSourceDisks[sourceDiskKey] {
+			if sourceDiskObj, exists := at.disks[sourceDiskKey]; exists {
+				sourceDiskObj.pendingTasks = append(sourceDiskObj.pendingTasks, task)
+				addedSourceDisks[sourceDiskKey] = true
 			}
 		}
 	}
 
-	glog.V(2).Infof("Added pending %s task %s: volume %d, source %s:%d, %d destinations",
-		taskType, taskID, volumeID, sourceServer, sourceDisk, len(destinations))
+	// Apply capacity impact to all destination disks (avoid duplicates for same disk)
+	addedDestDisks := make(map[string]bool)
+	for _, dest := range destinations {
+		destDiskKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
+		if !addedDestDisks[destDiskKey] {
+			if destDiskObj, exists := at.disks[destDiskKey]; exists {
+				destDiskObj.pendingTasks = append(destDiskObj.pendingTasks, task)
+				addedDestDisks[destDiskKey] = true
+			}
+		}
+	}
+
+	glog.V(2).Infof("Added pending %s task %s: volume %d, %d sources, %d destinations",
+		taskType, taskID, volumeID, len(sources), len(destinations))
 }

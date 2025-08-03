@@ -154,20 +154,36 @@ func (at *ActiveTopology) getPlanningCapacityUnsafe(disk *activeDisk) int64 {
 
 	// Count both pending and active tasks for planning purposes
 	for _, task := range disk.pendingTasks {
-		if task.TargetServer == disk.NodeID && task.TargetDisk == disk.DiskID {
-			plannedSlots += int64(task.TargetStorageChange.VolumeSlots)
-			plannedSlots += int64(task.TargetStorageChange.ShardSlots) / 10
+		// Count impact from all sources
+		for _, source := range task.Sources {
+			if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
+				plannedSlots += int64(abs(source.StorageChange.VolumeSlots))
+				plannedSlots += int64(source.StorageChange.ShardSlots) / 10
+			}
+		}
+		// Count impact from all destinations
+		for _, dest := range task.Destinations {
+			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
+				plannedSlots += int64(dest.StorageChange.VolumeSlots)
+				plannedSlots += int64(dest.StorageChange.ShardSlots) / 10
+			}
 		}
 	}
 
 	for _, task := range disk.assignedTasks {
-		if task.SourceServer == disk.NodeID && task.SourceDisk == disk.DiskID {
-			plannedSlots += int64(abs(task.SourceStorageChange.VolumeSlots))
-			plannedSlots += int64(task.SourceStorageChange.ShardSlots) / 10
+		// Count impact from all sources
+		for _, source := range task.Sources {
+			if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
+				plannedSlots += int64(abs(source.StorageChange.VolumeSlots))
+				plannedSlots += int64(source.StorageChange.ShardSlots) / 10
+			}
 		}
-		if task.TargetServer == disk.NodeID && task.TargetDisk == disk.DiskID {
-			plannedSlots += int64(task.TargetStorageChange.VolumeSlots)
-			plannedSlots += int64(task.TargetStorageChange.ShardSlots) / 10
+		// Count impact from all destinations
+		for _, dest := range task.Destinations {
+			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
+				plannedSlots += int64(dest.StorageChange.VolumeSlots)
+				plannedSlots += int64(dest.StorageChange.ShardSlots) / 10
+			}
 		}
 	}
 
@@ -209,17 +225,14 @@ func (at *ActiveTopology) getEffectiveCapacityUnsafe(disk *activeDisk) StorageSl
 
 	// Count pending tasks for capacity impact
 	for _, task := range disk.pendingTasks {
-		// Calculate impact using StorageSlotChange for source disk
-		if task.SourceServer == disk.NodeID && task.SourceDisk == disk.DiskID {
-			netImpact.AddInPlace(task.SourceStorageChange)
+		// Calculate impact for all source locations
+		for _, source := range task.Sources {
+			if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
+				netImpact.AddInPlace(source.StorageChange)
+			}
 		}
 
-		// Calculate impact for single-destination tasks (balance, vacuum, replication)
-		if task.TargetServer == disk.NodeID && task.TargetDisk == disk.DiskID {
-			netImpact.AddInPlace(task.TargetStorageChange)
-		}
-
-		// Calculate impact for multi-destination tasks (EC)
+		// Calculate impact for all destination locations
 		for _, dest := range task.Destinations {
 			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
 				netImpact.AddInPlace(dest.StorageChange)
@@ -229,17 +242,14 @@ func (at *ActiveTopology) getEffectiveCapacityUnsafe(disk *activeDisk) StorageSl
 
 	// Count assigned tasks for capacity impact
 	for _, task := range disk.assignedTasks {
-		// Calculate impact using StorageSlotChange for source disk
-		if task.SourceServer == disk.NodeID && task.SourceDisk == disk.DiskID {
-			netImpact.AddInPlace(task.SourceStorageChange)
+		// Calculate impact for all source locations
+		for _, source := range task.Sources {
+			if source.SourceServer == disk.NodeID && source.SourceDisk == disk.DiskID {
+				netImpact.AddInPlace(source.StorageChange)
+			}
 		}
 
-		// Calculate impact for single-destination tasks (balance, vacuum, replication)
-		if task.TargetServer == disk.NodeID && task.TargetDisk == disk.DiskID {
-			netImpact.AddInPlace(task.TargetStorageChange)
-		}
-
-		// Calculate impact for multi-destination tasks (EC)
+		// Calculate impact for all destination locations
 		for _, dest := range task.Destinations {
 			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
 				netImpact.AddInPlace(dest.StorageChange)

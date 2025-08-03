@@ -63,19 +63,16 @@ func (at *ActiveTopology) GetDiskStorageImpact(nodeID string, diskID uint32) (pl
 
 	// Calculate PLANNED impact from pending tasks (not yet consuming capacity)
 	for _, task := range disk.pendingTasks {
-		if task.SourceServer == nodeID && task.SourceDisk == diskID {
-			plannedVolumeSlots += int64(task.SourceStorageChange.VolumeSlots)
-			plannedShardSlots += task.SourceStorageChange.ShardSlots
-			estimatedSize += task.EstimatedSize
+		// Handle all source locations
+		for _, source := range task.Sources {
+			if source.SourceServer == nodeID && source.SourceDisk == diskID {
+				plannedVolumeSlots += int64(source.StorageChange.VolumeSlots)
+				plannedShardSlots += source.StorageChange.ShardSlots
+				estimatedSize += source.EstimatedSize
+			}
 		}
 
-		// Handle single-destination tasks (balance, vacuum, replication)
-		if task.TargetServer == nodeID && task.TargetDisk == diskID {
-			plannedVolumeSlots += int64(task.TargetStorageChange.VolumeSlots)
-			plannedShardSlots += task.TargetStorageChange.ShardSlots
-		}
-
-		// Handle multi-destination tasks (EC)
+		// Handle all destination locations
 		for _, dest := range task.Destinations {
 			if dest.TargetServer == nodeID && dest.TargetDisk == diskID {
 				plannedVolumeSlots += int64(dest.StorageChange.VolumeSlots)
@@ -86,19 +83,16 @@ func (at *ActiveTopology) GetDiskStorageImpact(nodeID string, diskID uint32) (pl
 
 	// Calculate RESERVED impact from active tasks (currently consuming capacity)
 	for _, task := range disk.assignedTasks {
-		if task.SourceServer == nodeID && task.SourceDisk == diskID {
-			reservedVolumeSlots += int64(task.SourceStorageChange.VolumeSlots)
-			reservedShardSlots += task.SourceStorageChange.ShardSlots
-			estimatedSize += task.EstimatedSize
+		// Handle all source locations
+		for _, source := range task.Sources {
+			if source.SourceServer == nodeID && source.SourceDisk == diskID {
+				reservedVolumeSlots += int64(source.StorageChange.VolumeSlots)
+				reservedShardSlots += source.StorageChange.ShardSlots
+				estimatedSize += source.EstimatedSize
+			}
 		}
 
-		// Handle single-destination tasks (balance, vacuum, replication)
-		if task.TargetServer == nodeID && task.TargetDisk == diskID {
-			reservedVolumeSlots += int64(task.TargetStorageChange.VolumeSlots)
-			reservedShardSlots += task.TargetStorageChange.ShardSlots
-		}
-
-		// Handle multi-destination tasks (EC)
+		// Handle all destination locations
 		for _, dest := range task.Destinations {
 			if dest.TargetServer == nodeID && dest.TargetDisk == diskID {
 				reservedVolumeSlots += int64(dest.StorageChange.VolumeSlots)

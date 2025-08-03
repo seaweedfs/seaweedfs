@@ -99,14 +99,28 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					shardDiskIDs = append(shardDiskIDs, plan.TargetDisk)
 				}
 
-				// Find the actual disk containing the volume on the source server
-				sourceDisk := findVolumeDisk(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection, metric.Server)
+				// Find all volume replica locations (server + disk) from topology
+				replicaLocations := findVolumeReplicaLocations(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
+				if len(replicaLocations) == 0 {
+					glog.Warningf("No replica locations found for volume %d, skipping EC", metric.VolumeID)
+					continue
+				}
+
+				// Convert to TaskSourceLocation format
+				sourceLocations := make([]topology.TaskSourceLocation, len(replicaLocations))
+				for i, replica := range replicaLocations {
+					sourceLocations[i] = topology.TaskSourceLocation{
+						ServerID: replica.ServerID,
+						DiskID:   replica.DiskID,
+					}
+				}
+
+				glog.V(2).Infof("Found %d replica locations for volume %d: %+v", len(replicaLocations), metric.VolumeID, replicaLocations)
 
 				err = clusterInfo.ActiveTopology.AddPendingECShardTask(
 					taskID,
 					metric.VolumeID,
-					metric.Server,
-					sourceDisk,
+					sourceLocations,
 					shardDestinations,
 					shardDiskIDs,
 					int32(len(multiPlan.Plans)),
@@ -118,10 +132,10 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					continue // Skip this volume if topology task addition fails
 				}
 
-				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d shard destinations",
-					taskID, metric.VolumeID, len(multiPlan.Plans))
+				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d source replicas and %d shard destinations",
+					taskID, metric.VolumeID, len(sourceLocations), len(multiPlan.Plans))
 
-				// Find all volume replicas from topology
+				// Find all volume replicas from topology (for legacy worker compatibility)
 				replicas := findVolumeReplicas(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
 				glog.V(1).Infof("Found %d replicas for volume %d: %v", len(replicas), metric.VolumeID, replicas)
 
@@ -497,6 +511,47 @@ func findVolumeDisk(activeTopology *topology.ActiveTopology, volumeID uint32, co
 
 	// Default to disk 0 if not found (common case for single-disk nodes)
 	return 0
+}
+
+// VolumeReplica represents a replica location with server and disk information
+type VolumeReplica struct {
+	ServerID string
+	DiskID   uint32
+}
+
+// findVolumeReplicaLocations finds all replica locations (server + disk) for the specified volume
+func findVolumeReplicaLocations(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []VolumeReplica {
+	if activeTopology == nil {
+		return []VolumeReplica{}
+	}
+
+	topologyInfo := activeTopology.GetTopologyInfo()
+	if topologyInfo == nil {
+		return []VolumeReplica{}
+	}
+
+	var replicas []VolumeReplica
+
+	// Iterate through all nodes to find volume replicas
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, nodeInfo := range rack.DataNodeInfos {
+				for _, diskInfo := range nodeInfo.DiskInfos {
+					for _, volumeInfo := range diskInfo.VolumeInfos {
+						if volumeInfo.Id == volumeID && volumeInfo.Collection == collection {
+							replicas = append(replicas, VolumeReplica{
+								ServerID: nodeInfo.Id,
+								DiskID:   diskInfo.DiskId,
+							})
+							break // Found volume on this disk, move to next disk
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return replicas
 }
 
 // findVolumeReplicas finds all servers that have replicas of the specified volume
