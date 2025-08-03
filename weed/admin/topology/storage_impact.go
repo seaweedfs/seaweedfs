@@ -85,6 +85,7 @@ func (at *ActiveTopology) GetDiskStorageImpact(nodeID string, diskID uint32) (pl
 			if dest.TargetServer == nodeID && dest.TargetDisk == diskID {
 				plannedVolumeSlots += int64(dest.StorageChange.VolumeSlots)
 				plannedShardSlots += dest.StorageChange.ShardSlots
+				estimatedSize += dest.EstimatedSize
 			}
 		}
 	}
@@ -105,6 +106,7 @@ func (at *ActiveTopology) GetDiskStorageImpact(nodeID string, diskID uint32) (pl
 			if dest.TargetServer == nodeID && dest.TargetDisk == diskID {
 				reservedVolumeSlots += int64(dest.StorageChange.VolumeSlots)
 				reservedShardSlots += dest.StorageChange.ShardSlots
+				estimatedSize += dest.EstimatedSize
 			}
 		}
 	}
