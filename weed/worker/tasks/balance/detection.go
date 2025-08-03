@@ -130,7 +130,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		// Add pending balance task to ActiveTopology for capacity management
 
 		// Find the actual disk containing the volume on the source server
-		sourceDisk, found := findVolumeDisk(clusterInfo.ActiveTopology, selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
+		sourceDisk, found := base.FindVolumeDisk(clusterInfo.ActiveTopology, selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
 		if !found {
 			return nil, fmt.Errorf("BALANCE: Could not find volume %d (collection: %s) on source server %s - unable to create balance task",
 				selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
@@ -262,22 +262,4 @@ func checkPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC strin
 	return conflicts
 }
 
-// findVolumeDisk finds the disk ID where a specific volume is located on a given server
-// Returns the disk ID and a boolean indicating whether the volume was found
-// Uses O(1) indexed lookup for optimal performance on large clusters
-func findVolumeDisk(activeTopology *topology.ActiveTopology, volumeID uint32, collection string, serverID string) (uint32, bool) {
-	if activeTopology == nil {
-		return 0, false
-	}
 
-	// Use the new O(1) indexed lookup for better performance
-	locations := activeTopology.GetVolumeLocations(volumeID, collection)
-	for _, loc := range locations {
-		if loc.ServerID == serverID {
-			return loc.DiskID, true
-		}
-	}
-
-	// Volume not found on this server
-	return 0, false
-}
