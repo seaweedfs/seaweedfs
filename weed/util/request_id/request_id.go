@@ -24,3 +24,11 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 		req.Header.Set(AmzRequestIDHeader, Get(ctx))
 	}
 }
+
+func CloneRequestID(ctx context.Context) context.Context {
+	requestId := Get(ctx)
+	if requestId == "" {
+		return context.Background()
+	}
+	return Set(context.Background(), requestId)
+}
