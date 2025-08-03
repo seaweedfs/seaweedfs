@@ -791,13 +791,13 @@ func TestDetailedCapacityCalculations(t *testing.T) {
 	assert.Equal(t, int64(detailedCapacity.VolumeSlots), simpleCapacity, "Simple capacity should match detailed volume slots")
 
 	// Verify detailed capacity has both volume and shard information
-	assert.Equal(t, int32(79), detailedCapacity.VolumeSlots, "Should have 79 available volume slots (100 - 20 current - 1 EC impact)")
-	assert.Equal(t, int32(-10), detailedCapacity.ShardSlots, "Should show -10 available shard slots (5 destination shards + EC overhead)")
+	assert.Equal(t, int32(80), detailedCapacity.VolumeSlots, "Should have 80 available volume slots (100 - 20 current, no volume impact from EC)")
+	assert.Equal(t, int32(-5), detailedCapacity.ShardSlots, "Should show -5 available shard slots (5 destination shards)")
 
 	// Verify capacity impact
 	capacityImpact := activeTopology.GetEffectiveCapacityImpact("10.0.0.1:8080", 0)
 	assert.Equal(t, int32(0), capacityImpact.VolumeSlots, "EC source should have zero volume slot impact")
-	assert.Equal(t, int32(10), capacityImpact.ShardSlots, "Should have positive shard slot impact (consuming shards)")
+	assert.Equal(t, int32(5), capacityImpact.ShardSlots, "Should have positive shard slot impact (consuming 5 shards)")
 
 	t.Logf("Detailed capacity calculation: VolumeSlots=%d, ShardSlots=%d",
 		detailedCapacity.VolumeSlots, detailedCapacity.ShardSlots)

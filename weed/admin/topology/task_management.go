@@ -281,29 +281,9 @@ func (at *ActiveTopology) addPendingTaskWithMultipleSourcesAndDestinations(taskI
 
 	at.pendingTasks[taskID] = task
 
-	// Apply capacity impact to all source disks (avoid duplicates for same disk)
-	addedSourceDisks := make(map[string]bool)
-	for _, source := range sources {
-		sourceDiskKey := fmt.Sprintf("%s:%d", source.SourceServer, source.SourceDisk)
-		if !addedSourceDisks[sourceDiskKey] {
-			if sourceDiskObj, exists := at.disks[sourceDiskKey]; exists {
-				sourceDiskObj.pendingTasks = append(sourceDiskObj.pendingTasks, task)
-				addedSourceDisks[sourceDiskKey] = true
-			}
-		}
-	}
-
-	// Apply capacity impact to all destination disks (avoid duplicates for same disk)
-	addedDestDisks := make(map[string]bool)
-	for _, dest := range destinations {
-		destDiskKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
-		if !addedDestDisks[destDiskKey] {
-			if destDiskObj, exists := at.disks[destDiskKey]; exists {
-				destDiskObj.pendingTasks = append(destDiskObj.pendingTasks, task)
-				addedDestDisks[destDiskKey] = true
-			}
-		}
-	}
+	// Use the centralized task assignment logic which handles duplicate prevention
+	// and ensures consistency with other task management operations
+	at.assignTaskToDisk(task)
 
 	glog.V(2).Infof("Added pending %s task %s: volume %d, %d sources, %d destinations",
 		taskType, taskID, volumeID, len(sources), len(destinations))
