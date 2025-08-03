@@ -23,6 +23,21 @@ const (
 	TaskStatusCompleted  TaskStatus = "completed"
 )
 
+// Task and capacity management configuration constants
+const (
+	// MaxConcurrentTasksPerDisk defines the maximum number of concurrent tasks per disk
+	// This prevents overloading a single disk with too many simultaneous operations
+	MaxConcurrentTasksPerDisk = 2
+
+	// MaxTotalTaskLoadPerDisk defines the maximum total task load (pending + active) per disk
+	// This allows more tasks to be queued but limits the total pipeline depth
+	MaxTotalTaskLoadPerDisk = 3
+
+	// MaxTaskLoadForECPlacement defines the maximum task load to consider a disk for EC placement
+	// This threshold ensures disks aren't overloaded when planning EC operations
+	MaxTaskLoadForECPlacement = 10
+)
+
 // StorageSlotChange represents storage impact at both volume and shard levels
 type StorageSlotChange struct {
 	VolumeSlots int32 `json:"volume_slots"` // Volume-level slot changes (full volumes)

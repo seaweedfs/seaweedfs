@@ -75,7 +75,7 @@ func (at *ActiveTopology) assignTaskToDisk(task *taskState) {
 func (at *ActiveTopology) isDiskAvailable(disk *activeDisk, taskType TaskType) bool {
 	// Check if disk has too many active tasks
 	activeLoad := len(disk.pendingTasks) + len(disk.assignedTasks)
-	if activeLoad >= 2 { // Max 2 concurrent tasks per disk
+	if activeLoad >= MaxConcurrentTasksPerDisk {
 		return false
 	}
 

@@ -463,7 +463,7 @@ func isDiskSuitableForEC(disk *topology.DiskInfo) bool {
 	}
 
 	// Check if disk is not overloaded with tasks
-	if disk.LoadCount > 10 { // Arbitrary threshold for total task load
+	if disk.LoadCount > topology.MaxTaskLoadForECPlacement {
 		return false
 	}
 
