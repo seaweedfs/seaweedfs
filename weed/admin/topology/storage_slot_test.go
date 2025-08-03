@@ -46,13 +46,13 @@ func TestStorageSlotChangeArithmetic(t *testing.T) {
 
 	// Test ToVolumeSlots conversion
 	impact1 := StorageSlotChange{VolumeSlots: 5, ShardSlots: 10}
-	assert.Equal(t, int64(6), impact1.ToVolumeSlots(), "ToVolumeSlots should be 5 + 10/10 = 6")
+	assert.Equal(t, int64(6), impact1.ToVolumeSlots(), fmt.Sprintf("ToVolumeSlots should be 5 + 10/%d = 6", erasure_coding.DataShardsCount))
 
 	impact2 := StorageSlotChange{VolumeSlots: -2, ShardSlots: 25}
-	assert.Equal(t, int64(0), impact2.ToVolumeSlots(), "ToVolumeSlots should be -2 + 25/10 = 0")
+	assert.Equal(t, int64(0), impact2.ToVolumeSlots(), fmt.Sprintf("ToVolumeSlots should be -2 + 25/%d = 0", erasure_coding.DataShardsCount))
 
 	impact3 := StorageSlotChange{VolumeSlots: 3, ShardSlots: 7}
-	assert.Equal(t, int64(3), impact3.ToVolumeSlots(), "ToVolumeSlots should be 3 + 7/10 = 3 (integer division)")
+	assert.Equal(t, int64(3), impact3.ToVolumeSlots(), fmt.Sprintf("ToVolumeSlots should be 3 + 7/%d = 3 (integer division)", erasure_coding.DataShardsCount))
 }
 
 // TestStorageSlotChange tests the new dual-level storage slot tracking
