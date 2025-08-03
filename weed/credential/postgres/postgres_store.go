@@ -8,7 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func init() {
@@ -52,11 +52,12 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 		sslmode = "disable"
 	}
 
-	// Build connection string
+	// Build pgx-optimized connection string
+	// Note: prefer_simple_protocol=true is only needed for PgBouncer, not direct PostgreSQL connections
 	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s search_path=%s",
 		hostname, port, username, password, database, sslmode, schema)
 
-	db, err := sql.Open("postgres", connStr)
+	db, err := sql.Open("pgx", connStr)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}

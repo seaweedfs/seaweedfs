@@ -3,7 +3,7 @@ package postgres
 import (
 	"fmt"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 )
 
