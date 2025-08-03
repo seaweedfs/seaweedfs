@@ -72,6 +72,9 @@ func (at *ActiveTopology) AssignTask(taskID string) error {
 				return fmt.Errorf("insufficient total capacity on target disk %s:%d: available=%d volume slots, required=%d equivalent slots",
 					dest.TargetServer, dest.TargetDisk, availableCapacity.ToVolumeSlots(), requiredCapacity)
 			}
+		} else if dest.TargetServer != "" {
+			// Fail fast if destination disk is not found in topology
+			return fmt.Errorf("destination disk %s not found in topology", targetKey)
 		}
 	}
 
