@@ -456,13 +456,6 @@ func isDiskSuitableForEC(disk *topology.DiskInfo) bool {
 		return false
 	}
 
-	// Check if disk has effective capacity (accounting for pending/active tasks)
-	// The GetDisksWithEffectiveCapacity method already adjusts VolumeCount to reflect effective capacity
-	effectiveAvailableSlots := disk.DiskInfo.MaxVolumeCount - disk.DiskInfo.VolumeCount
-	if effectiveAvailableSlots <= 0 {
-		return false
-	}
-
 	// Check if disk is not overloaded with tasks
 	if disk.LoadCount > topology.MaxTaskLoadForECPlacement {
 		return false
