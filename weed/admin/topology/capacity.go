@@ -213,9 +213,17 @@ func (at *ActiveTopology) getEffectiveCapacityUnsafe(disk *activeDisk) StorageSl
 		if task.SourceServer == disk.NodeID && task.SourceDisk == disk.DiskID {
 			netImpact.AddInPlace(task.SourceStorageChange)
 		}
-		// Calculate impact using StorageSlotChange for target disk
+
+		// Calculate impact for single-destination tasks (balance, vacuum, replication)
 		if task.TargetServer == disk.NodeID && task.TargetDisk == disk.DiskID {
 			netImpact.AddInPlace(task.TargetStorageChange)
+		}
+
+		// Calculate impact for multi-destination tasks (EC)
+		for _, dest := range task.Destinations {
+			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
+				netImpact.AddInPlace(dest.StorageChange)
+			}
 		}
 	}
 
@@ -225,9 +233,17 @@ func (at *ActiveTopology) getEffectiveCapacityUnsafe(disk *activeDisk) StorageSl
 		if task.SourceServer == disk.NodeID && task.SourceDisk == disk.DiskID {
 			netImpact.AddInPlace(task.SourceStorageChange)
 		}
-		// Calculate impact using StorageSlotChange for target disk
+
+		// Calculate impact for single-destination tasks (balance, vacuum, replication)
 		if task.TargetServer == disk.NodeID && task.TargetDisk == disk.DiskID {
 			netImpact.AddInPlace(task.TargetStorageChange)
+		}
+
+		// Calculate impact for multi-destination tasks (EC)
+		for _, dest := range task.Destinations {
+			if dest.TargetServer == disk.NodeID && dest.TargetDisk == disk.DiskID {
+				netImpact.AddInPlace(dest.StorageChange)
+			}
 		}
 	}
 

@@ -7,22 +7,36 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
+// TaskDestination represents a single destination in a multi-destination task
+type TaskDestination struct {
+	TargetServer  string            `json:"target_server"`
+	TargetDisk    uint32            `json:"target_disk"`
+	StorageChange StorageSlotChange `json:"storage_change"` // Storage impact on this destination
+	EstimatedSize int64             `json:"estimated_size"` // Estimated size for this destination
+}
+
 // taskState represents the current state of tasks affecting the topology (internal)
+// Supports both single-destination tasks (balance, vacuum) and multi-destination tasks (EC)
 type taskState struct {
 	VolumeID     uint32     `json:"volume_id"`
 	TaskType     TaskType   `json:"task_type"`
 	SourceServer string     `json:"source_server"`
 	SourceDisk   uint32     `json:"source_disk"`
-	TargetServer string     `json:"target_server,omitempty"`
-	TargetDisk   uint32     `json:"target_disk,omitempty"`
 	Status       TaskStatus `json:"status"`
 	StartedAt    time.Time  `json:"started_at"`
 	CompletedAt  time.Time  `json:"completed_at,omitempty"`
 
-	// Storage impact information
+	// Storage impact information for source
 	SourceStorageChange StorageSlotChange `json:"source_storage_change"` // Change in storage on source disk
-	TargetStorageChange StorageSlotChange `json:"target_storage_change"` // Change in storage on target disk
-	EstimatedSize       int64             `json:"estimated_size"`        // Estimated size of data being processed
+	EstimatedSize       int64             `json:"estimated_size"`        // Total estimated size of task
+
+	// Single-destination fields (for balance, vacuum, replication tasks)
+	TargetServer        string            `json:"target_server,omitempty"` // Single target server
+	TargetDisk          uint32            `json:"target_disk,omitempty"`   // Single target disk
+	TargetStorageChange StorageSlotChange `json:"target_storage_change"`   // Single target storage impact
+
+	// Multi-destination fields (for EC tasks)
+	Destinations []TaskDestination `json:"destinations,omitempty"` // Multiple destinations for EC shards
 }
 
 // DiskInfo represents a disk with its current state and ongoing tasks (public for external access)

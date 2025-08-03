@@ -68,9 +68,19 @@ func (at *ActiveTopology) GetDiskStorageImpact(nodeID string, diskID uint32) (pl
 			plannedShardSlots += task.SourceStorageChange.ShardSlots
 			estimatedSize += task.EstimatedSize
 		}
+
+		// Handle single-destination tasks (balance, vacuum, replication)
 		if task.TargetServer == nodeID && task.TargetDisk == diskID {
 			plannedVolumeSlots += int64(task.TargetStorageChange.VolumeSlots)
 			plannedShardSlots += task.TargetStorageChange.ShardSlots
+		}
+
+		// Handle multi-destination tasks (EC)
+		for _, dest := range task.Destinations {
+			if dest.TargetServer == nodeID && dest.TargetDisk == diskID {
+				plannedVolumeSlots += int64(dest.StorageChange.VolumeSlots)
+				plannedShardSlots += dest.StorageChange.ShardSlots
+			}
 		}
 	}
 
@@ -81,9 +91,19 @@ func (at *ActiveTopology) GetDiskStorageImpact(nodeID string, diskID uint32) (pl
 			reservedShardSlots += task.SourceStorageChange.ShardSlots
 			estimatedSize += task.EstimatedSize
 		}
+
+		// Handle single-destination tasks (balance, vacuum, replication)
 		if task.TargetServer == nodeID && task.TargetDisk == diskID {
 			reservedVolumeSlots += int64(task.TargetStorageChange.VolumeSlots)
 			reservedShardSlots += task.TargetStorageChange.ShardSlots
+		}
+
+		// Handle multi-destination tasks (EC)
+		for _, dest := range task.Destinations {
+			if dest.TargetServer == nodeID && dest.TargetDisk == diskID {
+				reservedVolumeSlots += int64(dest.StorageChange.VolumeSlots)
+				reservedShardSlots += dest.StorageChange.ShardSlots
+			}
 		}
 	}
 
