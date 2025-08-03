@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -68,9 +69,19 @@ func TestTaskLifecycle(t *testing.T) {
 	taskID := "balance-001"
 
 	// 1. Add pending task
-	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1024*1024*1024)
-	topology.addPendingTaskWithStorageInfo(taskID, TaskTypeBalance, 1001,
-		"10.0.0.1:8080", 0, "10.0.0.2:8080", 1, sourceChange, targetChange, 1024*1024*1024)
+	err := topology.AddPendingTask(TaskSpec{
+		TaskID:     taskID,
+		TaskType:   TaskTypeBalance,
+		VolumeID:   1001,
+		VolumeSize: 1024 * 1024 * 1024,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.2:8080", DiskID: 1},
+		},
+	})
+	assert.NoError(t, err, "Should add pending task successfully")
 
 	// Verify pending state
 	assert.Equal(t, 1, len(topology.pendingTasks))
@@ -88,7 +99,7 @@ func TestTaskLifecycle(t *testing.T) {
 	assert.Equal(t, 1, len(targetDisk.pendingTasks))
 
 	// 2. Assign task
-	err := topology.AssignTask(taskID)
+	err = topology.AssignTask(taskID)
 	require.NoError(t, err)
 
 	// Verify assigned state
@@ -287,9 +298,19 @@ func TestDiskLoadCalculation(t *testing.T) {
 	assert.Equal(t, 0, targetDisk.LoadCount)
 
 	// Add pending task
-	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1024*1024*1024)
-	topology.addPendingTaskWithStorageInfo("task1", TaskTypeBalance, 1001,
-		"10.0.0.1:8080", 0, "10.0.0.2:8080", 1, sourceChange, targetChange, 1024*1024*1024)
+	err := topology.AddPendingTask(TaskSpec{
+		TaskID:     "task1",
+		TaskType:   TaskTypeBalance,
+		VolumeID:   1001,
+		VolumeSize: 1024 * 1024 * 1024,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.2:8080", DiskID: 1},
+		},
+	})
+	assert.NoError(t, err, "Should add pending task successfully")
 
 	// Check load increased
 	disks = topology.GetNodeDisks("10.0.0.1:8080")
@@ -297,9 +318,19 @@ func TestDiskLoadCalculation(t *testing.T) {
 	assert.Equal(t, 1, targetDisk.LoadCount)
 
 	// Add another task to same disk
-	sourceChange2, targetChange2 := CalculateTaskStorageImpact(TaskTypeVacuum, 0)
-	topology.addPendingTaskWithStorageInfo("task2", TaskTypeVacuum, 1002,
-		"10.0.0.1:8080", 0, "", 0, sourceChange2, targetChange2, 0)
+	err = topology.AddPendingTask(TaskSpec{
+		TaskID:     "task2",
+		TaskType:   TaskTypeVacuum,
+		VolumeID:   1002,
+		VolumeSize: 0,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "", DiskID: 0}, // Vacuum doesn't have a destination
+		},
+	})
+	assert.NoError(t, err, "Should add vacuum task successfully")
 
 	disks = topology.GetNodeDisks("10.0.0.1:8080")
 	targetDisk = findDiskByID(disks, 0)
@@ -328,9 +359,19 @@ func TestTaskConflictDetection(t *testing.T) {
 	topology.UpdateTopology(createSampleTopology())
 
 	// Add a balance task
-	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1024*1024*1024)
-	topology.addPendingTaskWithStorageInfo("balance1", TaskTypeBalance, 1001,
-		"10.0.0.1:8080", 0, "10.0.0.2:8080", 1, sourceChange, targetChange, 1024*1024*1024)
+	err := topology.AddPendingTask(TaskSpec{
+		TaskID:     "balance1",
+		TaskType:   TaskTypeBalance,
+		VolumeID:   1001,
+		VolumeSize: 1024 * 1024 * 1024,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.2:8080", DiskID: 1},
+		},
+	})
+	assert.NoError(t, err, "Should add balance task successfully")
 	topology.AssignTask("balance1")
 
 	// Try to get available disks for vacuum (conflicts with balance)
@@ -467,9 +508,22 @@ func createTopologyWithLoad() *ActiveTopology {
 	topology.UpdateTopology(createSampleTopology())
 
 	// Add some existing tasks to create load
-	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeVacuum, 0)
-	topology.addPendingTaskWithStorageInfo("existing1", TaskTypeVacuum, 2001,
-		"10.0.0.1:8080", 0, "", 0, sourceChange, targetChange, 0)
+	err := topology.AddPendingTask(TaskSpec{
+		TaskID:     "existing1",
+		TaskType:   TaskTypeVacuum,
+		VolumeID:   2001,
+		VolumeSize: 0,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "", DiskID: 0}, // Vacuum doesn't have a destination
+		},
+	})
+	if err != nil {
+		// In test helper function, just log error instead of failing
+		fmt.Printf("Warning: Failed to add existing task: %v\n", err)
+	}
 	topology.AssignTask("existing1")
 
 	return topology
@@ -486,14 +540,38 @@ func createTopologyWithConflicts() *ActiveTopology {
 	topology.UpdateTopology(createSampleTopology())
 
 	// Add conflicting tasks
-	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1024*1024*1024)
-	topology.addPendingTaskWithStorageInfo("balance1", TaskTypeBalance, 3001,
-		"10.0.0.1:8080", 0, "10.0.0.2:8080", 0, sourceChange, targetChange, 1024*1024*1024)
+	err := topology.AddPendingTask(TaskSpec{
+		TaskID:     "balance1",
+		TaskType:   TaskTypeBalance,
+		VolumeID:   3001,
+		VolumeSize: 1024 * 1024 * 1024,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.2:8080", DiskID: 0},
+		},
+	})
+	if err != nil {
+		fmt.Printf("Warning: Failed to add balance task: %v\n", err)
+	}
 	topology.AssignTask("balance1")
 
-	sourceChange2, targetChange2 := CalculateTaskStorageImpact(TaskTypeErasureCoding, 1024*1024*1024)
-	topology.addPendingTaskWithStorageInfo("ec1", TaskTypeErasureCoding, 3002,
-		"10.0.0.1:8080", 1, "", 0, sourceChange2, targetChange2, 1024*1024*1024)
+	err = topology.AddPendingTask(TaskSpec{
+		TaskID:     "ec1",
+		TaskType:   TaskTypeErasureCoding,
+		VolumeID:   3002,
+		VolumeSize: 1024 * 1024 * 1024,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 1},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "", DiskID: 0}, // EC doesn't have single destination
+		},
+	})
+	if err != nil {
+		fmt.Printf("Warning: Failed to add EC task: %v\n", err)
+	}
 	topology.AssignTask("ec1")
 
 	return topology

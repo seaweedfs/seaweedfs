@@ -5,44 +5,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
-
-// addPendingTaskWithStorageInfo adds a pending task with detailed storage impact information
-func (at *ActiveTopology) addPendingTaskWithStorageInfo(taskID string, taskType TaskType, volumeID uint32,
-	sourceServer string, sourceDisk uint32, targetServer string, targetDisk uint32,
-	sourceStorageChange, targetStorageChange StorageSlotChange, estimatedSize int64) {
-	at.mutex.Lock()
-	defer at.mutex.Unlock()
-
-	// Create task using unified structure (single source, single destination)
-	task := &taskState{
-		VolumeID:      volumeID,
-		TaskType:      taskType,
-		Status:        TaskStatusPending,
-		StartedAt:     time.Now(),
-		EstimatedSize: estimatedSize,
-		Sources: []TaskSource{
-			{
-				SourceServer:  sourceServer,
-				SourceDisk:    sourceDisk,
-				StorageChange: sourceStorageChange,
-				EstimatedSize: estimatedSize,
-			},
-		},
-		Destinations: []TaskDestination{
-			{
-				TargetServer:  targetServer,
-				TargetDisk:    targetDisk,
-				StorageChange: targetStorageChange,
-				EstimatedSize: estimatedSize,
-			},
-		},
-	}
-
-	at.pendingTasks[taskID] = task
-	at.assignTaskToDisk(task)
-}
 
 // AssignTask moves a task from pending to assigned and reserves capacity
 func (at *ActiveTopology) AssignTask(taskID string) error {
@@ -149,15 +112,113 @@ func (at *ActiveTopology) ApplyActualStorageChange(nodeID string, diskID uint32,
 	}
 }
 
-// AddPendingTaskForTaskType is a convenience method for simple single-target tasks
-// For EC tasks with multiple targets, use AddPendingECShardTask instead.
-func (at *ActiveTopology) AddPendingTaskForTaskType(taskID string, taskType TaskType, volumeID uint32,
-	sourceServer string, sourceDisk uint32, targetServer string, targetDisk uint32,
-	volumeSize int64) {
+// AddPendingTask is the unified function that handles both simple and complex task creation
+func (at *ActiveTopology) AddPendingTask(spec TaskSpec) error {
+	// Validation
+	if len(spec.Sources) == 0 {
+		return fmt.Errorf("at least one source is required")
+	}
+	if len(spec.Destinations) == 0 {
+		return fmt.Errorf("at least one destination is required")
+	}
 
-	sourceChange, targetChange := CalculateTaskStorageImpact(taskType, volumeSize)
-	at.addPendingTaskWithStorageInfo(taskID, taskType, volumeID, sourceServer, sourceDisk,
-		targetServer, targetDisk, sourceChange, targetChange, volumeSize)
+	at.mutex.Lock()
+	defer at.mutex.Unlock()
+
+	// Build sources array
+	sources := make([]TaskSource, len(spec.Sources))
+	for i, sourceSpec := range spec.Sources {
+		var storageImpact StorageSlotChange
+		var estimatedSize int64
+
+		if sourceSpec.StorageImpact != nil {
+			// Use manually specified impact
+			storageImpact = *sourceSpec.StorageImpact
+		} else {
+			// Auto-calculate based on task type and cleanup type
+			storageImpact = at.calculateSourceStorageImpact(spec.TaskType, sourceSpec.CleanupType, spec.VolumeSize)
+		}
+
+		if sourceSpec.EstimatedSize != nil {
+			estimatedSize = *sourceSpec.EstimatedSize
+		} else {
+			estimatedSize = spec.VolumeSize // Default to volume size
+		}
+
+		sources[i] = TaskSource{
+			SourceServer:  sourceSpec.ServerID,
+			SourceDisk:    sourceSpec.DiskID,
+			StorageChange: storageImpact,
+			EstimatedSize: estimatedSize,
+		}
+	}
+
+	// Build destinations array
+	destinations := make([]TaskDestination, len(spec.Destinations))
+	for i, destSpec := range spec.Destinations {
+		var storageImpact StorageSlotChange
+		var estimatedSize int64
+
+		if destSpec.StorageImpact != nil {
+			// Use manually specified impact
+			storageImpact = *destSpec.StorageImpact
+		} else {
+			// Auto-calculate based on task type
+			_, storageImpact = CalculateTaskStorageImpact(spec.TaskType, spec.VolumeSize)
+		}
+
+		if destSpec.EstimatedSize != nil {
+			estimatedSize = *destSpec.EstimatedSize
+		} else {
+			estimatedSize = spec.VolumeSize // Default to volume size
+		}
+
+		destinations[i] = TaskDestination{
+			TargetServer:  destSpec.ServerID,
+			TargetDisk:    destSpec.DiskID,
+			StorageChange: storageImpact,
+			EstimatedSize: estimatedSize,
+		}
+	}
+
+	// Create the task
+	task := &taskState{
+		VolumeID:      spec.VolumeID,
+		TaskType:      spec.TaskType,
+		Status:        TaskStatusPending,
+		StartedAt:     time.Now(),
+		EstimatedSize: spec.VolumeSize,
+		Sources:       sources,
+		Destinations:  destinations,
+	}
+
+	at.pendingTasks[spec.TaskID] = task
+	at.assignTaskToDisk(task)
+
+	glog.V(2).Infof("Added pending %s task %s: volume %d, %d sources, %d destinations",
+		spec.TaskType, spec.TaskID, spec.VolumeID, len(sources), len(destinations))
+
+	return nil
+}
+
+// calculateSourceStorageImpact calculates storage impact for sources based on task type and cleanup type
+func (at *ActiveTopology) calculateSourceStorageImpact(taskType TaskType, cleanupType SourceCleanupType, volumeSize int64) StorageSlotChange {
+	switch taskType {
+	case TaskTypeErasureCoding:
+		switch cleanupType {
+		case CleanupVolumeReplica:
+			impact, _ := CalculateTaskStorageImpact(TaskTypeErasureCoding, volumeSize)
+			return impact
+		case CleanupECShards:
+			return CalculateECShardCleanupImpact(volumeSize)
+		default:
+			impact, _ := CalculateTaskStorageImpact(TaskTypeErasureCoding, volumeSize)
+			return impact
+		}
+	default:
+		impact, _ := CalculateTaskStorageImpact(taskType, volumeSize)
+		return impact
+	}
 }
 
 // SourceCleanupType indicates what type of data needs to be cleaned up from a source
@@ -168,119 +229,36 @@ const (
 	CleanupECShards                               // Clean up existing EC shards (frees shard slots)
 )
 
-// TaskSourceLocation represents a source location for task creation
+// TaskSourceSpec represents a source specification for task creation
+type TaskSourceSpec struct {
+	ServerID      string
+	DiskID        uint32
+	CleanupType   SourceCleanupType  // For EC: volume replica vs existing shards
+	StorageImpact *StorageSlotChange // Optional: manual override
+	EstimatedSize *int64             // Optional: manual override
+}
+
+// TaskDestinationSpec represents a destination specification for task creation
+type TaskDestinationSpec struct {
+	ServerID      string
+	DiskID        uint32
+	StorageImpact *StorageSlotChange // Optional: manual override
+	EstimatedSize *int64             // Optional: manual override
+}
+
+// TaskSpec represents a complete task specification
+type TaskSpec struct {
+	TaskID       string
+	TaskType     TaskType
+	VolumeID     uint32
+	VolumeSize   int64                 // Used for auto-calculation when manual impacts not provided
+	Sources      []TaskSourceSpec      // Can be single or multiple
+	Destinations []TaskDestinationSpec // Can be single or multiple
+}
+
+// TaskSourceLocation represents a source location for task creation (DEPRECATED: use TaskSourceSpec)
 type TaskSourceLocation struct {
 	ServerID    string
 	DiskID      uint32
 	CleanupType SourceCleanupType // What type of cleanup is needed
-}
-
-// AddPendingECShardTask adds a pending EC shard task with multiple sources and destinations
-//
-// This function creates a single task that represents the entire EC operation with
-// multiple sources (for replicated volume cleanup) and multiple destinations (for EC shards).
-// This is cleaner than creating multiple sub-tasks and allows proper task lifecycle management with a single task ID.
-func (at *ActiveTopology) AddPendingECShardTask(taskID string, volumeID uint32,
-	sourceLocations []TaskSourceLocation, shardDestinations []string, shardDiskIDs []uint32,
-	shardCount int32, expectedShardSize int64, originalVolumeSize int64) error {
-
-	if len(shardDestinations) != len(shardDiskIDs) {
-		return fmt.Errorf("shard destinations and disk IDs must have same length")
-	}
-
-	if len(sourceLocations) == 0 {
-		return fmt.Errorf("at least one source location is required")
-	}
-
-	glog.V(2).Infof("Creating single EC task %s with %d sources and %d destinations for volume %d",
-		taskID, len(sourceLocations), len(shardDestinations), volumeID)
-
-	// Build sources array for the EC task (volumes and existing EC shards to be cleaned up)
-	sources := make([]TaskSource, len(sourceLocations))
-	for i, sourceLocation := range sourceLocations {
-		var storageImpact StorageSlotChange
-		var estimatedSize int64
-		var cleanupDesc string
-
-		switch sourceLocation.CleanupType {
-		case CleanupVolumeReplica:
-			// Cleaning up volume replica frees volume slots
-			storageImpact, _ = CalculateTaskStorageImpact(TaskTypeErasureCoding, originalVolumeSize)
-			estimatedSize = originalVolumeSize
-			cleanupDesc = "volume replica"
-		case CleanupECShards:
-			// Cleaning up existing EC shards frees shard slots
-			storageImpact = CalculateECShardCleanupImpact(originalVolumeSize)
-			estimatedSize = originalVolumeSize / int64(erasure_coding.TotalShardsCount) // Estimate shard size
-			cleanupDesc = "existing EC shards"
-		default:
-			// Default to volume replica cleanup
-			storageImpact, _ = CalculateTaskStorageImpact(TaskTypeErasureCoding, originalVolumeSize)
-			estimatedSize = originalVolumeSize
-			cleanupDesc = "unknown (default to volume)"
-		}
-
-		sources[i] = TaskSource{
-			SourceServer:  sourceLocation.ServerID,
-			SourceDisk:    sourceLocation.DiskID,
-			StorageChange: storageImpact,
-			EstimatedSize: estimatedSize,
-		}
-
-		glog.V(3).Infof("EC source %d: volume %d from %s (disk %d, cleanup: %s, impact: %+v)",
-			i, volumeID, sourceLocation.ServerID, sourceLocation.DiskID, cleanupDesc, storageImpact)
-	}
-
-	// Build destinations array for the EC task
-	destinations := make([]TaskDestination, len(shardDestinations))
-	for i, destination := range shardDestinations {
-		shardsForThisDisk := int32(1) // Typically 1 shard per destination
-		shardImpact := CalculateECShardStorageImpact(shardsForThisDisk, expectedShardSize)
-
-		destinations[i] = TaskDestination{
-			TargetServer:  destination,
-			TargetDisk:    shardDiskIDs[i],
-			StorageChange: shardImpact,
-			EstimatedSize: expectedShardSize,
-		}
-
-		glog.V(3).Infof("EC destination %d: volume %d -> %s (disk %d, impact: %+v)",
-			i, volumeID, destination, shardDiskIDs[i], shardImpact)
-	}
-
-	// Create a single EC task with multiple sources and destinations
-	at.addPendingTaskWithMultipleSourcesAndDestinations(taskID, TaskTypeErasureCoding, volumeID,
-		sources, destinations, originalVolumeSize)
-
-	glog.V(2).Infof("EC task %s created for volume %d: %d sources, %d destinations",
-		taskID, volumeID, len(sources), len(destinations))
-
-	return nil
-}
-
-// addPendingTaskWithMultipleSourcesAndDestinations adds a pending task with multiple sources and destinations (for EC operations on replicated volumes)
-func (at *ActiveTopology) addPendingTaskWithMultipleSourcesAndDestinations(taskID string, taskType TaskType, volumeID uint32,
-	sources []TaskSource, destinations []TaskDestination, estimatedSize int64) {
-
-	at.mutex.Lock()
-	defer at.mutex.Unlock()
-
-	task := &taskState{
-		VolumeID:      volumeID,
-		TaskType:      taskType,
-		Status:        TaskStatusPending,
-		StartedAt:     time.Now(),
-		EstimatedSize: estimatedSize,
-		Sources:       sources,      // Multiple sources for replica cleanup
-		Destinations:  destinations, // Multiple destinations for EC shards
-	}
-
-	at.pendingTasks[taskID] = task
-
-	// Use the centralized task assignment logic which handles duplicate prevention
-	// and ensures consistency with other task management operations
-	at.assignTaskToDisk(task)
-
-	glog.V(2).Infof("Added pending %s task %s: volume %d, %d sources, %d destinations",
-		taskType, taskID, volumeID, len(sources), len(destinations))
 }

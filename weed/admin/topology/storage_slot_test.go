@@ -113,7 +113,7 @@ func TestStorageSlotChange(t *testing.T) {
 	assert.Equal(t, int32(0), ecSourceChange.VolumeSlots, "EC source reserves with zero StorageSlotChange impact")
 	assert.Equal(t, int32(0), ecSourceChange.ShardSlots, "EC source should have zero shard impact")
 	assert.Equal(t, int32(0), ecTargetChange.VolumeSlots, "EC should not directly impact target volume slots")
-assert.Equal(t, int32(0), ecTargetChange.ShardSlots, "EC target should have zero shard impact from this simplified function")
+	assert.Equal(t, int32(0), ecTargetChange.ShardSlots, "EC target should have zero shard impact from this simplified function")
 
 	balSourceChange, balTargetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1024*1024*1024)
 	assert.Equal(t, int32(-1), balSourceChange.VolumeSlots, "Balance should free 1 volume slot on source")
@@ -129,17 +129,35 @@ assert.Equal(t, int32(0), ecTargetChange.ShardSlots, "EC target should have zero
 	sourceDisk := uint32(0)
 	shardDestinations := []string{"10.0.0.2:8080", "10.0.0.2:8080"}
 	shardDiskIDs := []uint32{0, 0}
-	shardCount := int32(2)
+
 	expectedShardSize := int64(50 * 1024 * 1024)    // 50MB per shard
 	originalVolumeSize := int64(1024 * 1024 * 1024) // 1GB original
 
-	// Create source locations (single replica in this test)
-	sourceLocations := []TaskSourceLocation{
+	// Create source specs (single replica in this test)
+	sources := []TaskSourceSpec{
 		{ServerID: sourceServer, DiskID: sourceDisk, CleanupType: CleanupVolumeReplica},
 	}
 
-	err := activeTopology.AddPendingECShardTask("ec_test", 100, sourceLocations,
-		shardDestinations, shardDiskIDs, shardCount, expectedShardSize, originalVolumeSize)
+	// Create destination specs
+	destinations := make([]TaskDestinationSpec, len(shardDestinations))
+	shardImpact = CalculateECShardStorageImpact(1, expectedShardSize)
+	for i, dest := range shardDestinations {
+		destinations[i] = TaskDestinationSpec{
+			ServerID:      dest,
+			DiskID:        shardDiskIDs[i],
+			StorageImpact: &shardImpact,
+			EstimatedSize: &expectedShardSize,
+		}
+	}
+
+	err := activeTopology.AddPendingTask(TaskSpec{
+		TaskID:       "ec_test",
+		TaskType:     TaskTypeErasureCoding,
+		VolumeID:     100,
+		VolumeSize:   originalVolumeSize,
+		Sources:      sources,
+		Destinations: destinations,
+	})
 	assert.NoError(t, err, "Should add EC shard task successfully")
 
 	// Test 4: Check storage impact on source (EC reserves with zero impact)
@@ -163,9 +181,19 @@ assert.Equal(t, int32(0), ecTargetChange.ShardSlots, "EC target should have zero
 	assert.Equal(t, int64(7), targetCapacity, "Target should have 7 available slots (minimal shard impact)")
 
 	// Test 7: Add traditional balance task for comparison
-	balanceSourceChange, balanceTargetChange := CalculateTaskStorageImpact(TaskTypeBalance, 512*1024*1024)
-	activeTopology.addPendingTaskWithStorageInfo("balance_test", TaskTypeBalance, 101,
-		"10.0.0.1:8080", 0, "10.0.0.2:8080", 0, balanceSourceChange, balanceTargetChange, 512*1024*1024)
+	err = activeTopology.AddPendingTask(TaskSpec{
+		TaskID:     "balance_test",
+		TaskType:   TaskTypeBalance,
+		VolumeID:   101,
+		VolumeSize: 512 * 1024 * 1024,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.2:8080", DiskID: 0},
+		},
+	})
+	assert.NoError(t, err, "Should add balance task successfully")
 
 	// Check updated impacts after adding balance task
 	finalSourceImpact := activeTopology.GetEffectiveCapacityImpact("10.0.0.1:8080", 0)
@@ -214,11 +242,21 @@ func TestStorageSlotChangeCapacityCalculation(t *testing.T) {
 	assert.Equal(t, int64(90), initialCapacity, "Should start with 90 available slots")
 
 	// Add tasks with different shard slot impacts
-	activeTopology.addPendingTaskWithStorageInfo("shard_test_1", TaskTypeErasureCoding, 100,
-		"", 0, "10.0.0.1:8080", 0,
-		StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, // Source change (not applicable here)
-		StorageSlotChange{VolumeSlots: 0, ShardSlots: 5}, // Target gains 5 shards
-		100*1024*1024)
+	targetImpact1 := StorageSlotChange{VolumeSlots: 0, ShardSlots: 5} // Target gains 5 shards
+	estimatedSize1 := int64(100 * 1024 * 1024)
+	err := activeTopology.AddPendingTask(TaskSpec{
+		TaskID:     "shard_test_1",
+		TaskType:   TaskTypeErasureCoding,
+		VolumeID:   100,
+		VolumeSize: estimatedSize1,
+		Sources: []TaskSourceSpec{
+			{ServerID: "", DiskID: 0}, // Source not applicable here
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0, StorageImpact: &targetImpact1, EstimatedSize: &estimatedSize1},
+		},
+	})
+	assert.NoError(t, err, "Should add shard test 1 successfully")
 
 	// Capacity should be reduced by pending tasks via StorageSlotChange
 	capacityAfterShards := activeTopology.GetEffectiveAvailableCapacity("10.0.0.1:8080", 0)
@@ -227,12 +265,22 @@ func TestStorageSlotChangeCapacityCalculation(t *testing.T) {
 	assert.Equal(t, int64(90-expectedImpact5), capacityAfterShards, fmt.Sprintf("5 shard slots should consume %d volume slot equivalent (5/%d = %d)", expectedImpact5, erasure_coding.DataShardsCount, expectedImpact5))
 
 	// Add more shards to reach threshold
-	additionalShards := int32(erasure_coding.DataShardsCount) // Add exactly one volume worth of shards
-	activeTopology.addPendingTaskWithStorageInfo("shard_test_2", TaskTypeErasureCoding, 101,
-		"", 0, "10.0.0.1:8080", 0,
-		StorageSlotChange{VolumeSlots: 0, ShardSlots: 0},
-		StorageSlotChange{VolumeSlots: 0, ShardSlots: additionalShards}, // Target gains additional shards
-		100*1024*1024)
+	additionalShards := int32(erasure_coding.DataShardsCount)                        // Add exactly one volume worth of shards
+	targetImpact2 := StorageSlotChange{VolumeSlots: 0, ShardSlots: additionalShards} // Target gains additional shards
+	estimatedSize2 := int64(100 * 1024 * 1024)
+	err = activeTopology.AddPendingTask(TaskSpec{
+		TaskID:     "shard_test_2",
+		TaskType:   TaskTypeErasureCoding,
+		VolumeID:   101,
+		VolumeSize: estimatedSize2,
+		Sources: []TaskSourceSpec{
+			{ServerID: "", DiskID: 0}, // Source not applicable here
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0, StorageImpact: &targetImpact2, EstimatedSize: &estimatedSize2},
+		},
+	})
+	assert.NoError(t, err, "Should add shard test 2 successfully")
 
 	// Dynamic calculation: (5 + DataShardsCount) shards should consume 1 volume slot
 	totalShards := 5 + erasure_coding.DataShardsCount
@@ -241,11 +289,21 @@ func TestStorageSlotChangeCapacityCalculation(t *testing.T) {
 	assert.Equal(t, int64(90-expectedImpact15), capacityAfterMoreShards, fmt.Sprintf("%d shard slots should consume %d volume slot equivalent (%d/%d = %d)", totalShards, expectedImpact15, totalShards, erasure_coding.DataShardsCount, expectedImpact15))
 
 	// Add a full volume task
-	activeTopology.addPendingTaskWithStorageInfo("volume_test", TaskTypeBalance, 102,
-		"", 0, "10.0.0.1:8080", 0,
-		StorageSlotChange{VolumeSlots: 0, ShardSlots: 0},
-		StorageSlotChange{VolumeSlots: 1, ShardSlots: 0}, // Target gains 1 volume
-		1024*1024*1024)
+	targetImpact3 := StorageSlotChange{VolumeSlots: 1, ShardSlots: 0} // Target gains 1 volume
+	estimatedSize3 := int64(1024 * 1024 * 1024)
+	err = activeTopology.AddPendingTask(TaskSpec{
+		TaskID:     "volume_test",
+		TaskType:   TaskTypeBalance,
+		VolumeID:   102,
+		VolumeSize: estimatedSize3,
+		Sources: []TaskSourceSpec{
+			{ServerID: "", DiskID: 0}, // Source not applicable here
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0, StorageImpact: &targetImpact3, EstimatedSize: &estimatedSize3},
+		},
+	})
+	assert.NoError(t, err, "Should add volume test successfully")
 
 	// Capacity should be reduced by 1 more volume slot
 	finalCapacity := activeTopology.GetEffectiveAvailableCapacity("10.0.0.1:8080", 0)
@@ -308,9 +366,9 @@ func TestECMultipleTargets(t *testing.T) {
 	// Demonstrate why CalculateTaskStorageImpact is insufficient for EC
 	sourceChange, targetChange := CalculateTaskStorageImpact(TaskTypeErasureCoding, 1*1024*1024*1024)
 	assert.Equal(t, StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, sourceChange, "Source reserves with zero StorageSlotChange")
-	assert.Equal(t, StorageSlotChange{VolumeSlots: 0, ShardSlots: 1}, targetChange, "Target change only represents typical single shard")
+	assert.Equal(t, StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, targetChange, "Target has zero impact from simplified function - insufficient for multi-target EC")
 
-	// Proper way: Use AddPendingECShardTask for multiple targets
+	// Proper way: Use AddPendingTask for multiple targets
 	sourceServer := "10.0.0.1:8080"
 	sourceDisk := uint32(0)
 
@@ -325,13 +383,32 @@ func TestECMultipleTargets(t *testing.T) {
 		shardDiskIDs[i] = 0
 	}
 
-	// Create source locations (single replica in this test)
-	sourceLocations := []TaskSourceLocation{
+	// Create source specs (single replica in this test)
+	sources := []TaskSourceSpec{
 		{ServerID: sourceServer, DiskID: sourceDisk, CleanupType: CleanupVolumeReplica},
 	}
 
-	err := activeTopology.AddPendingECShardTask("ec_multi_target", 200, sourceLocations,
-		shardDestinations, shardDiskIDs, int32(len(shardDestinations)), 50*1024*1024, 1*1024*1024*1024)
+	// Create destination specs
+	destinations := make([]TaskDestinationSpec, len(shardDestinations))
+	expectedShardSize := int64(50 * 1024 * 1024)
+	shardImpact := CalculateECShardStorageImpact(1, expectedShardSize)
+	for i, dest := range shardDestinations {
+		destinations[i] = TaskDestinationSpec{
+			ServerID:      dest,
+			DiskID:        shardDiskIDs[i],
+			StorageImpact: &shardImpact,
+			EstimatedSize: &expectedShardSize,
+		}
+	}
+
+	err := activeTopology.AddPendingTask(TaskSpec{
+		TaskID:       "ec_multi_target",
+		TaskType:     TaskTypeErasureCoding,
+		VolumeID:     200,
+		VolumeSize:   1 * 1024 * 1024 * 1024,
+		Sources:      sources,
+		Destinations: destinations,
+	})
 	assert.NoError(t, err, "Should add multi-target EC task successfully")
 
 	// Verify source impact (EC reserves with zero StorageSlotChange)
@@ -422,9 +499,19 @@ func TestCapacityReservationCycle(t *testing.T) {
 	assert.Equal(t, int64(10), targetCapacity, "Target initial capacity")
 
 	// Step 1: Add pending task (should reserve capacity via StorageSlotChange)
-	balanceSourceChange, balanceTargetChange := CalculateTaskStorageImpact(TaskTypeBalance, 1*1024*1024*1024)
-	activeTopology.addPendingTaskWithStorageInfo("balance_test", TaskTypeBalance, 123,
-		"10.0.0.1:8080", 0, "10.0.0.2:8080", 0, balanceSourceChange, balanceTargetChange, 1*1024*1024*1024)
+	err := activeTopology.AddPendingTask(TaskSpec{
+		TaskID:     "balance_test",
+		TaskType:   TaskTypeBalance,
+		VolumeID:   123,
+		VolumeSize: 1 * 1024 * 1024 * 1024,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.2:8080", DiskID: 0},
+		},
+	})
+	assert.NoError(t, err, "Should add balance test successfully")
 
 	sourceCapacityAfterPending := activeTopology.GetEffectiveAvailableCapacity("10.0.0.1:8080", 0)
 	targetCapacityAfterPending := activeTopology.GetEffectiveAvailableCapacity("10.0.0.2:8080", 0)
@@ -436,7 +523,7 @@ func TestCapacityReservationCycle(t *testing.T) {
 	assert.Len(t, planningDisks, 2, "Both disks should be available for planning")
 
 	// Step 2: Assign task (capacity already reserved by pending task)
-	err := activeTopology.AssignTask("balance_test")
+	err = activeTopology.AssignTask("balance_test")
 	assert.NoError(t, err, "Should assign task successfully")
 
 	sourceCapacityAfterAssign := activeTopology.GetEffectiveAvailableCapacity("10.0.0.1:8080", 0)
@@ -532,8 +619,8 @@ func TestReplicatedVolumeECOperations(t *testing.T) {
 	volumeID := uint32(300)
 	originalVolumeSize := int64(1024 * 1024 * 1024) // 1GB
 
-	// Create source locations for replicated volume (3 replicas)
-	sourceLocations := []TaskSourceLocation{
+	// Create source specs for replicated volume (3 replicas)
+	sources := []TaskSourceSpec{
 		{ServerID: "10.0.0.1:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Replica 1
 		{ServerID: "10.0.0.2:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Replica 2
 		{ServerID: "10.0.0.3:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Replica 3
@@ -551,15 +638,32 @@ func TestReplicatedVolumeECOperations(t *testing.T) {
 	}
 
 	expectedShardSize := int64(50 * 1024 * 1024) // 50MB per shard
-	shardCount := int32(len(shardDestinations))
+
+	// Create destination specs
+	destinations := make([]TaskDestinationSpec, len(shardDestinations))
+	shardImpact := CalculateECShardStorageImpact(1, expectedShardSize)
+	for i, dest := range shardDestinations {
+		destinations[i] = TaskDestinationSpec{
+			ServerID:      dest,
+			DiskID:        shardDiskIDs[i],
+			StorageImpact: &shardImpact,
+			EstimatedSize: &expectedShardSize,
+		}
+	}
 
 	// Create EC task for replicated volume
-	err := activeTopology.AddPendingECShardTask("ec_replicated", volumeID, sourceLocations,
-		shardDestinations, shardDiskIDs, shardCount, expectedShardSize, originalVolumeSize)
+	err := activeTopology.AddPendingTask(TaskSpec{
+		TaskID:       "ec_replicated",
+		TaskType:     TaskTypeErasureCoding,
+		VolumeID:     volumeID,
+		VolumeSize:   originalVolumeSize,
+		Sources:      sources,
+		Destinations: destinations,
+	})
 	assert.NoError(t, err, "Should successfully create EC task for replicated volume")
 
 	// Verify capacity impact on all source replicas (each should reserve with zero impact)
-	for i, source := range sourceLocations {
+	for i, source := range sources {
 		plannedVol, reservedVol, plannedShard, reservedShard, _ := testGetDiskStorageImpact(activeTopology, source.ServerID, source.DiskID)
 		assert.Equal(t, int64(0), plannedVol, fmt.Sprintf("Source replica %d should reserve with zero volume slot impact", i+1))
 		assert.Equal(t, int64(0), reservedVol, fmt.Sprintf("Source replica %d should have no active volume slots", i+1))
@@ -606,7 +710,7 @@ func TestReplicatedVolumeECOperations(t *testing.T) {
 	assert.Equal(t, int64(75-dest6ShardImpact), destCapacity6, fmt.Sprintf("Dest 6: 100 - 25 (current) - %d (4 shards/%d = %d impact) = %d", dest6ShardImpact, erasure_coding.DataShardsCount, dest6ShardImpact, 75-dest6ShardImpact))
 
 	t.Logf("Replicated volume EC operation: %d source replicas, %d EC shards distributed across %d destinations",
-		len(sourceLocations), len(shardDestinations), len(destinationCounts))
+		len(sources), len(shardDestinations), len(destinationCounts))
 	t.Logf("Each source replica reserves with zero capacity impact, destinations receive EC shards")
 }
 
@@ -670,8 +774,8 @@ func TestECWithOldShardCleanup(t *testing.T) {
 	volumeID := uint32(400)
 	originalVolumeSize := int64(1024 * 1024 * 1024) // 1GB
 
-	// Create source locations: volume replicas + old EC shard locations
-	sourceLocations := []TaskSourceLocation{
+	// Create source specs: volume replicas + old EC shard locations
+	sources := []TaskSourceSpec{
 		{ServerID: "10.0.0.1:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Volume replica 1
 		{ServerID: "10.0.0.2:8080", DiskID: 0, CleanupType: CleanupVolumeReplica}, // Volume replica 2
 		{ServerID: "10.0.0.3:8080", DiskID: 0, CleanupType: CleanupECShards},      // Old EC shards from failed attempt
@@ -690,16 +794,33 @@ func TestECWithOldShardCleanup(t *testing.T) {
 	}
 
 	expectedShardSize := int64(50 * 1024 * 1024) // 50MB per shard
-	shardCount := int32(len(shardDestinations))
+
+	// Create destination specs
+	destinations := make([]TaskDestinationSpec, len(shardDestinations))
+	shardImpact := CalculateECShardStorageImpact(1, expectedShardSize)
+	for i, dest := range shardDestinations {
+		destinations[i] = TaskDestinationSpec{
+			ServerID:      dest,
+			DiskID:        shardDiskIDs[i],
+			StorageImpact: &shardImpact,
+			EstimatedSize: &expectedShardSize,
+		}
+	}
 
 	// Create EC task that cleans up both volume replicas and old EC shards
-	err := activeTopology.AddPendingECShardTask("ec_cleanup", volumeID, sourceLocations,
-		shardDestinations, shardDiskIDs, shardCount, expectedShardSize, originalVolumeSize)
+	err := activeTopology.AddPendingTask(TaskSpec{
+		TaskID:       "ec_cleanup",
+		TaskType:     TaskTypeErasureCoding,
+		VolumeID:     volumeID,
+		VolumeSize:   originalVolumeSize,
+		Sources:      sources,
+		Destinations: destinations,
+	})
 	assert.NoError(t, err, "Should successfully create EC task with mixed cleanup types")
 
 	// Verify capacity impact on volume replica sources (zero impact for EC)
 	for i := 0; i < 2; i++ {
-		source := sourceLocations[i]
+		source := sources[i]
 		plannedVol, _, plannedShard, _, _ := testGetDiskStorageImpact(activeTopology, source.ServerID, source.DiskID)
 		assert.Equal(t, int64(0), plannedVol, fmt.Sprintf("Volume replica source %d should have zero volume slot impact", i+1))
 		assert.Equal(t, int32(0), plannedShard, fmt.Sprintf("Volume replica source %d should have zero shard slot impact", i+1))
@@ -708,7 +829,7 @@ func TestECWithOldShardCleanup(t *testing.T) {
 
 	// Verify capacity impact on old EC shard sources (should free shard slots)
 	for i := 2; i < 4; i++ {
-		source := sourceLocations[i]
+		source := sources[i]
 		plannedVol, _, plannedShard, _, _ := testGetDiskStorageImpact(activeTopology, source.ServerID, source.DiskID)
 		assert.Equal(t, int64(0), plannedVol, fmt.Sprintf("EC shard source %d should have zero volume slot impact", i+1))
 		assert.Equal(t, int32(-erasure_coding.TotalShardsCount), plannedShard, fmt.Sprintf("EC shard source %d should free %d shard slots", i+1, erasure_coding.TotalShardsCount))
@@ -773,15 +894,34 @@ func TestDetailedCapacityCalculations(t *testing.T) {
 	})
 
 	// Test: Add an EC task and check detailed capacity
-	sourceLocations := []TaskSourceLocation{
+	sources := []TaskSourceSpec{
 		{ServerID: "10.0.0.1:8080", DiskID: 0, CleanupType: CleanupVolumeReplica},
 	}
 
 	shardDestinations := []string{"10.0.0.1:8080", "10.0.0.1:8080", "10.0.0.1:8080", "10.0.0.1:8080", "10.0.0.1:8080"}
 	shardDiskIDs := []uint32{0, 0, 0, 0, 0}
 
-	err := activeTopology.AddPendingECShardTask("detailed_test", 500, sourceLocations,
-		shardDestinations, shardDiskIDs, 5, 50*1024*1024, 1024*1024*1024)
+	// Create destination specs
+	destinations := make([]TaskDestinationSpec, len(shardDestinations))
+	expectedShardSize := int64(50 * 1024 * 1024)
+	shardImpact := CalculateECShardStorageImpact(1, expectedShardSize)
+	for i, dest := range shardDestinations {
+		destinations[i] = TaskDestinationSpec{
+			ServerID:      dest,
+			DiskID:        shardDiskIDs[i],
+			StorageImpact: &shardImpact,
+			EstimatedSize: &expectedShardSize,
+		}
+	}
+
+	err := activeTopology.AddPendingTask(TaskSpec{
+		TaskID:       "detailed_test",
+		TaskType:     TaskTypeErasureCoding,
+		VolumeID:     500,
+		VolumeSize:   1024 * 1024 * 1024,
+		Sources:      sources,
+		Destinations: destinations,
+	})
 	assert.NoError(t, err, "Should add EC task successfully")
 
 	// Test the new detailed capacity function

@@ -143,16 +143,37 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				glog.V(2).Infof("Found %d volume replicas and %d existing EC shards for volume %d (total %d cleanup sources)",
 					len(replicaLocations), len(existingECShards), metric.VolumeID, len(allSourceLocations))
 
-				err = clusterInfo.ActiveTopology.AddPendingECShardTask(
-					taskID,
-					metric.VolumeID,
-					allSourceLocations,
-					shardDestinations,
-					shardDiskIDs,
-					int32(len(multiPlan.Plans)),
-					int64(expectedShardSize),
-					int64(metric.Size),
-				)
+				// Convert TaskSourceLocation to TaskSourceSpec
+				sources := make([]topology.TaskSourceSpec, len(allSourceLocations))
+				for i, srcLoc := range allSourceLocations {
+					sources[i] = topology.TaskSourceSpec{
+						ServerID:    srcLoc.ServerID,
+						DiskID:      srcLoc.DiskID,
+						CleanupType: srcLoc.CleanupType,
+					}
+				}
+
+				// Convert shard destinations to TaskDestinationSpec
+				destinations := make([]topology.TaskDestinationSpec, len(shardDestinations))
+				shardImpact := topology.CalculateECShardStorageImpact(1, int64(expectedShardSize)) // 1 shard per destination
+				shardSize := int64(expectedShardSize)
+				for i, dest := range shardDestinations {
+					destinations[i] = topology.TaskDestinationSpec{
+						ServerID:      dest,
+						DiskID:        shardDiskIDs[i],
+						StorageImpact: &shardImpact,
+						EstimatedSize: &shardSize,
+					}
+				}
+
+				err = clusterInfo.ActiveTopology.AddPendingTask(topology.TaskSpec{
+					TaskID:       taskID,
+					TaskType:     topology.TaskTypeErasureCoding,
+					VolumeID:     metric.VolumeID,
+					VolumeSize:   int64(metric.Size),
+					Sources:      sources,
+					Destinations: destinations,
+				})
 				if err != nil {
 					glog.Warningf("Failed to add pending EC shard task to ActiveTopology for volume %d: %v", metric.VolumeID, err)
 					continue // Skip this volume if topology task addition fails

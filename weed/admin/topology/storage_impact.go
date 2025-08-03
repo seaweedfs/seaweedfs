@@ -11,8 +11,8 @@ func CalculateTaskStorageImpact(taskType TaskType, volumeSize int64) (sourceChan
 	case TaskTypeErasureCoding:
 		// EC task: distributes shards to MULTIPLE targets, source reserves with zero impact
 		// Source reserves capacity but with zero StorageSlotChange (no actual capacity consumption during planning)
-		// WARNING: EC has multiple targets! Use AddPendingECShardTask for proper multi-target handling
-		// This function only returns source impact; target impact is meaningless for EC
+		// WARNING: EC has multiple targets! Use AddPendingTask with multiple destinations for proper multi-target handling
+		// This simplified function returns zero impact; real EC requires specialized multi-destination calculation
 		return StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}
 
 	case TaskTypeBalance:

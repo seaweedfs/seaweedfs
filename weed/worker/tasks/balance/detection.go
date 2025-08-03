@@ -137,16 +137,21 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		}
 		targetDisk := destinationPlan.TargetDisk
 
-		clusterInfo.ActiveTopology.AddPendingTaskForTaskType(
-			taskID,
-			topology.TaskTypeBalance,
-			selectedVolume.VolumeID,
-			selectedVolume.Server,
-			sourceDisk,
-			destinationPlan.TargetNode,
-			targetDisk,
-			int64(selectedVolume.Size),
-		)
+		err = clusterInfo.ActiveTopology.AddPendingTask(topology.TaskSpec{
+			TaskID:     taskID,
+			TaskType:   topology.TaskTypeBalance,
+			VolumeID:   selectedVolume.VolumeID,
+			VolumeSize: int64(selectedVolume.Size),
+			Sources: []topology.TaskSourceSpec{
+				{ServerID: selectedVolume.Server, DiskID: sourceDisk},
+			},
+			Destinations: []topology.TaskDestinationSpec{
+				{ServerID: destinationPlan.TargetNode, DiskID: targetDisk},
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("BALANCE: Failed to add pending task for volume %d: %v", selectedVolume.VolumeID, err)
+		}
 
 		glog.V(2).Infof("Added pending balance task %s to ActiveTopology for volume %d: %s:%d -> %s:%d",
 			taskID, selectedVolume.VolumeID, selectedVolume.Server, sourceDisk, destinationPlan.TargetNode, targetDisk)
