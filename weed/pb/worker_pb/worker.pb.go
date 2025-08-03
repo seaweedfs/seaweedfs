@@ -804,6 +804,7 @@ func (x *TaskAssignment) GetMetadata() map[string]string {
 // TaskParams contains task-specific parameters with typed variants
 type TaskParams struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
+	TaskId     string                 `protobuf:"bytes,12,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"` // ActiveTopology task ID for lifecycle management
 	VolumeId   uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	Server     string                 `protobuf:"bytes,2,opt,name=server,proto3" json:"server,omitempty"`
 	Collection string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
@@ -852,6 +853,13 @@ func (x *TaskParams) ProtoReflect() protoreflect.Message {
 // Deprecated: Use TaskParams.ProtoReflect.Descriptor instead.
 func (*TaskParams) Descriptor() ([]byte, []int) {
 	return file_worker_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *TaskParams) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
 }
 
 func (x *TaskParams) GetVolumeId() uint32 {
@@ -2869,9 +2877,10 @@ const file_worker_proto_rawDesc = "" +
 	"\bmetadata\x18\x06 \x03(\v2'.worker_pb.TaskAssignment.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9a\x04\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb3\x04\n" +
 	"\n" +
-	"TaskParams\x12\x1b\n" +
+	"TaskParams\x12\x17\n" +
+	"\atask_id\x18\f \x01(\tR\x06taskId\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x16\n" +
 	"\x06server\x18\x02 \x01(\tR\x06server\x12\x1e\n" +
 	"\n" +

@@ -94,6 +94,7 @@ message TaskAssignment {
 
 // TaskParams contains task-specific parameters with typed variants
 message TaskParams {
+  string task_id = 12;    // ActiveTopology task ID for lifecycle management
   uint32 volume_id = 1;
   string server = 2;
   string collection = 3;
