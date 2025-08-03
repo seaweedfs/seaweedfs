@@ -80,11 +80,6 @@ func (s StorageSlotChange) IsZero() bool {
 // ShardsPerVolumeSlot defines how many EC shards are equivalent to one volume slot
 const ShardsPerVolumeSlot = erasure_coding.DataShardsCount
 
-// TotalImpact returns the total capacity impact as int64 (VolumeSlots + ShardSlots/ShardsPerVolumeSlot)
-func (s StorageSlotChange) TotalImpact() int64 {
-	return int64(s.VolumeSlots) + int64(s.ShardSlots)/ShardsPerVolumeSlot
-}
-
 // ToVolumeSlots converts the entire StorageSlotChange to equivalent volume slots
 func (s StorageSlotChange) ToVolumeSlots() int64 {
 	return int64(s.VolumeSlots) + int64(s.ShardSlots)/ShardsPerVolumeSlot

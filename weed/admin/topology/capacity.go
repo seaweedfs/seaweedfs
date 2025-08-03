@@ -207,7 +207,7 @@ func (at *ActiveTopology) getPlanningCapacityUnsafe(disk *activeDisk) StorageSlo
 	totalImpact := at.calculateTaskStorageImpact(disk)
 
 	// Calculate available capacity considering impact (negative impact reduces availability)
-	availableVolumeSlots := baseAvailableVolumes - totalImpact.TotalImpact()
+	availableVolumeSlots := baseAvailableVolumes - totalImpact.ToVolumeSlots()
 	if availableVolumeSlots < 0 {
 		availableVolumeSlots = 0
 	}
@@ -287,7 +287,7 @@ func (at *ActiveTopology) getEffectiveAvailableCapacityUnsafe(disk *activeDisk) 
 	netImpact := at.getEffectiveCapacityUnsafe(disk)
 
 	// Calculate available volume slots (negative impact reduces availability)
-	availableVolumeSlots := baseAvailable - netImpact.TotalImpact()
+	availableVolumeSlots := baseAvailable - netImpact.ToVolumeSlots()
 	if availableVolumeSlots < 0 {
 		availableVolumeSlots = 0
 	}

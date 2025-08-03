@@ -44,15 +44,15 @@ func TestStorageSlotChangeArithmetic(t *testing.T) {
 	assert.True(t, zero.IsZero(), "Zero struct should return true for IsZero")
 	assert.False(t, nonZero.IsZero(), "Non-zero struct should return false for IsZero")
 
-	// Test TotalImpact
+	// Test ToVolumeSlots conversion
 	impact1 := StorageSlotChange{VolumeSlots: 5, ShardSlots: 10}
-	assert.Equal(t, int64(6), impact1.TotalImpact(), "TotalImpact should be 5 + 10/10 = 6")
+	assert.Equal(t, int64(6), impact1.ToVolumeSlots(), "ToVolumeSlots should be 5 + 10/10 = 6")
 
 	impact2 := StorageSlotChange{VolumeSlots: -2, ShardSlots: 25}
-	assert.Equal(t, int64(0), impact2.TotalImpact(), "TotalImpact should be -2 + 25/10 = 0")
+	assert.Equal(t, int64(0), impact2.ToVolumeSlots(), "ToVolumeSlots should be -2 + 25/10 = 0")
 
 	impact3 := StorageSlotChange{VolumeSlots: 3, ShardSlots: 7}
-	assert.Equal(t, int64(3), impact3.TotalImpact(), "TotalImpact should be 3 + 7/10 = 3 (integer division)")
+	assert.Equal(t, int64(3), impact3.ToVolumeSlots(), "ToVolumeSlots should be 3 + 7/10 = 3 (integer division)")
 }
 
 // TestStorageSlotChange tests the new dual-level storage slot tracking
