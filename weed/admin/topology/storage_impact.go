@@ -13,7 +13,7 @@ func CalculateTaskStorageImpact(taskType TaskType, volumeSize int64) (sourceChan
 		// Source reserves capacity but with zero StorageSlotChange (no actual capacity consumption during planning)
 		// WARNING: EC has multiple targets! Use AddPendingECShardTask for proper multi-target handling
 		// This function only returns source impact; target impact is meaningless for EC
-		return StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, StorageSlotChange{VolumeSlots: 0, ShardSlots: 1}
+return StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}
 
 	case TaskTypeBalance:
 		// Balance task: moves volume from source to target
