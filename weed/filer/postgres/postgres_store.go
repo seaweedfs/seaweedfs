@@ -35,13 +35,17 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 		configuration.GetString(prefix+"database"),
 		configuration.GetString(prefix+"schema"),
 		configuration.GetString(prefix+"sslmode"),
+		configuration.GetString(prefix+"sslcert"),
+		configuration.GetString(prefix+"sslkey"),
+		configuration.GetString(prefix+"sslrootcert"),
+		configuration.GetString(prefix+"sslcrl"),
 		configuration.GetInt(prefix+"connection_max_idle"),
 		configuration.GetInt(prefix+"connection_max_open"),
 		configuration.GetInt(prefix+"connection_max_lifetime_seconds"),
 	)
 }
 
-func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
+func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = false
 	if !enableUpsert {
@@ -62,6 +66,18 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 	}
 	if sslmode != "" {
 		sqlUrl += " sslmode=" + sslmode
+	}
+	if sslcert != "" {
+		sqlUrl += " sslcert=" + sslcert
+	}
+	if sslkey != "" {
+		sqlUrl += " sslkey=" + sslkey
+	}
+	if sslrootcert != "" {
+		sqlUrl += " sslrootcert=" + sslrootcert
+	}
+	if sslcrl != "" {
+		sqlUrl += " sslcrl=" + sslcrl
 	}
 	if user != "" {
 		sqlUrl += " user=" + user

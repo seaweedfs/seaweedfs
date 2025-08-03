@@ -96,6 +96,8 @@ enableUpsert = true
 upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
 
 [postgres] # or cockroachdb, YugabyteDB
+# For full SSL certificate verification with sslmode=verify-full, 
+# configure the SSL certificate options below.
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT,
 #   name        VARCHAR(65535),
@@ -111,6 +113,12 @@ password = ""
 database = "postgres"          # create or use an existing database
 schema = ""
 sslmode = "disable"
+# SSL certificate options for secure connections
+# For sslmode=verify-full, uncomment and configure the following:
+# sslcert = "/path/to/client.crt"     # client certificate file
+# sslkey = "/path/to/client.key"      # client private key file
+# sslrootcert = "/path/to/ca.crt"     # CA certificate file
+# sslcrl = "/path/to/client.crl"      # certificate revocation list (optional)
 connection_max_idle = 100
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
@@ -125,6 +133,8 @@ upsertQuery = """
 """
 
 [postgres2]
+# For full SSL certificate verification with sslmode=verify-full, 
+# configure the SSL certificate options below.
 enabled = false
 createTable = """
   CREATE TABLE IF NOT EXISTS "%s" (
@@ -142,6 +152,12 @@ password = ""
 database = "postgres"          # create or use an existing database
 schema = ""
 sslmode = "disable"
+# SSL certificate options for secure connections
+# For sslmode=verify-full, uncomment and configure the following:
+# sslcert = "/path/to/client.crt"     # client certificate file
+# sslkey = "/path/to/client.key"      # client private key file
+# sslrootcert = "/path/to/ca.crt"     # CA certificate file
+# sslcrl = "/path/to/client.crl"      # certificate revocation list (optional)
 connection_max_idle = 100
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
