@@ -264,26 +264,17 @@ func checkPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC strin
 
 // findVolumeDisk finds the disk ID where a specific volume is located on a given server
 // Returns the disk ID and a boolean indicating whether the volume was found
-// Optimized to directly query the specific node instead of iterating through entire topology
+// Uses O(1) indexed lookup for optimal performance on large clusters
 func findVolumeDisk(activeTopology *topology.ActiveTopology, volumeID uint32, collection string, serverID string) (uint32, bool) {
 	if activeTopology == nil {
 		return 0, false
 	}
 
-	// Use optimized approach: directly get disks for the specific node
-	nodeDisks := activeTopology.GetNodeDisks(serverID)
-	if nodeDisks == nil {
-		return 0, false
-	}
-
-	// Search through the node's disks only (much more efficient than full topology scan)
-	for _, diskInfo := range nodeDisks {
-		if diskInfo.DiskInfo != nil {
-			for _, volumeInfo := range diskInfo.DiskInfo.VolumeInfos {
-				if volumeInfo.Id == volumeID && volumeInfo.Collection == collection {
-					return diskInfo.DiskID, true
-				}
-			}
+	// Use the new O(1) indexed lookup for better performance
+	locations := activeTopology.GetVolumeLocations(volumeID, collection)
+	for _, loc := range locations {
+		if loc.ServerID == serverID {
+			return loc.DiskID, true
 		}
 	}
 
