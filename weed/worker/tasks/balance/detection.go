@@ -261,5 +261,3 @@ func checkPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC strin
 
 	return conflicts
 }
-
-
