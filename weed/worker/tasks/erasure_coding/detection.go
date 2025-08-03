@@ -484,54 +484,22 @@ func checkECPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC str
 	return conflicts
 }
 
-// VolumeReplica represents a replica location with server and disk information
-type VolumeReplica struct {
-	ServerID string
-	DiskID   uint32
-}
-
 // findVolumeReplicaLocations finds all replica locations (server + disk) for the specified volume
 // Uses O(1) indexed lookup for optimal performance on large clusters.
-func findVolumeReplicaLocations(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []VolumeReplica {
+func findVolumeReplicaLocations(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []topology.VolumeReplica {
 	if activeTopology == nil {
-		return []VolumeReplica{}
+		return nil
 	}
-
-	// Use the new O(1) lookup method with built-in indexes
-	topologyReplicas := activeTopology.GetVolumeLocations(volumeID, collection)
-
-	// Convert topology.VolumeReplica to local VolumeReplica type
-	var replicas []VolumeReplica
-	for _, replica := range topologyReplicas {
-		replicas = append(replicas, VolumeReplica{
-			ServerID: replica.ServerID,
-			DiskID:   replica.DiskID,
-		})
-	}
-
-	return replicas
+	return activeTopology.GetVolumeLocations(volumeID, collection)
 }
 
 // findExistingECShards finds existing EC shards for a volume (from previous failed EC attempts)
 // Uses O(1) indexed lookup for optimal performance on large clusters.
-func findExistingECShards(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []VolumeReplica {
+func findExistingECShards(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []topology.VolumeReplica {
 	if activeTopology == nil {
-		return []VolumeReplica{}
+		return nil
 	}
-
-	// Use the new O(1) lookup method with built-in indexes
-	topologyShards := activeTopology.GetECShardLocations(volumeID, collection)
-
-	// Convert topology.VolumeReplica to local VolumeReplica type
-	var ecShards []VolumeReplica
-	for _, shard := range topologyShards {
-		ecShards = append(ecShards, VolumeReplica{
-			ServerID: shard.ServerID,
-			DiskID:   shard.DiskID,
-		})
-	}
-
-	return ecShards
+	return activeTopology.GetECShardLocations(volumeID, collection)
 }
 
 // findVolumeReplicas finds all servers that have replicas of the specified volume
