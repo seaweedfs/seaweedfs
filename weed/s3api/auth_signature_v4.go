@@ -23,6 +23,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"path"
 	"regexp"
@@ -140,6 +141,17 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	signV4Values, errCode := parseSignV4(v4Auth)
 	if errCode != s3err.ErrNone {
 		return nil, errCode
+	}
+
+	// Get hashed Payload - restore missing logic for non-S3 services
+	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
+		buf, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewBuffer(buf))
+		b, _ := io.ReadAll(bytes.NewBuffer(buf))
+		if len(b) != 0 {
+			bodyHash := sha256.Sum256(b)
+			hashedPayload = hex.EncodeToString(bodyHash[:])
+		}
 	}
 
 	// Extract all the signed headers along with its values.
@@ -495,7 +507,7 @@ func extractHostHeader(r *http.Request) string {
 			// Determine the protocol to check for standard ports
 			proto := r.Header.Get("X-Forwarded-Proto")
 			// Only add port if it's not the standard port for the protocol
-            if (proto == "https" && forwardedPort != "443") || (proto != "https" && forwardedPort != "80") {
+			if (proto == "https" && forwardedPort != "443") || (proto != "https" && forwardedPort != "80") {
 				return forwardedHost + ":" + forwardedPort
 			}
 		}
