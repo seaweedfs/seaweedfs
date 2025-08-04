@@ -23,6 +23,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"path"
 	"regexp"
@@ -53,7 +54,33 @@ const (
 	streamingContentSHA256   = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
 	streamingUnsignedPayload = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
 	unsignedPayload          = "UNSIGNED-PAYLOAD"
+	// Limit for IAM/STS request body size to prevent DoS attacks
+	iamRequestBodyLimit = 10 * (1 << 20) // 10 MiB
 )
+
+// streamHashRequestBody computes SHA256 hash incrementally while preserving the body.
+func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
+	if r.Body == nil {
+		return emptySHA256, nil
+	}
+
+	limitedReader := io.LimitReader(r.Body, sizeLimit)
+	hasher := sha256.New()
+	var bodyBuffer bytes.Buffer
+
+	// Use io.Copy with an io.MultiWriter to hash and buffer the body simultaneously.
+	if _, err := io.Copy(io.MultiWriter(hasher, &bodyBuffer), limitedReader); err != nil {
+		return "", err
+	}
+
+	r.Body = io.NopCloser(&bodyBuffer)
+
+	if bodyBuffer.Len() == 0 {
+		return emptySHA256, nil
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
 
 // getContentSha256Cksum retrieves the "x-amz-content-sha256" header value.
 func getContentSha256Cksum(r *http.Request) string {
@@ -127,7 +154,7 @@ func parseSignV4(v4Auth string) (sv signValues, aec s3err.ErrorCode) {
 	return signV4Values, s3err.ErrNone
 }
 
-// Wrapper to verify if request came with a valid signature.
+// doesSignatureMatch verifies the request signature.
 func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r *http.Request) (*Identity, s3err.ErrorCode) {
 
 	// Copy request
@@ -140,6 +167,15 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	signV4Values, errCode := parseSignV4(v4Auth)
 	if errCode != s3err.ErrNone {
 		return nil, errCode
+	}
+
+	// Compute payload hash for non-S3 services
+	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
+		var err error
+		hashedPayload, err = streamHashRequestBody(r, iamRequestBodyLimit)
+		if err != nil {
+			return nil, s3err.ErrInternalError
+		}
 	}
 
 	// Extract all the signed headers along with its values.
@@ -495,7 +531,7 @@ func extractHostHeader(r *http.Request) string {
 			// Determine the protocol to check for standard ports
 			proto := r.Header.Get("X-Forwarded-Proto")
 			// Only add port if it's not the standard port for the protocol
-            if (proto == "https" && forwardedPort != "443") || (proto != "https" && forwardedPort != "80") {
+			if (proto == "https" && forwardedPort != "443") || (proto != "https" && forwardedPort != "80") {
 				return forwardedHost + ":" + forwardedPort
 			}
 		}
