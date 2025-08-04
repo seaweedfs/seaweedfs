@@ -18,7 +18,6 @@
 package s3api
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -66,35 +65,21 @@ func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
 	}
 
 	limitedReader := io.LimitReader(r.Body, sizeLimit)
-	bufferedReader := bufio.NewReader(limitedReader)
 	hasher := sha256.New()
 	var bodyBuffer bytes.Buffer
 
-	const chunkSize = 8192 // 8KB chunks
-	chunk := make([]byte, chunkSize)
-
-	for {
-		n, err := bufferedReader.Read(chunk)
-		if n > 0 {
-			hasher.Write(chunk[:n])
-			bodyBuffer.Write(chunk[:n])
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return "", err
-		}
+	// Use io.Copy with an io.MultiWriter to hash and buffer the body simultaneously.
+	if _, err := io.Copy(io.MultiWriter(hasher, &bodyBuffer), limitedReader); err != nil {
+		return "", err
 	}
 
-	r.Body = io.NopCloser(bytes.NewReader(bodyBuffer.Bytes()))
+	r.Body = io.NopCloser(&bodyBuffer)
 
 	if bodyBuffer.Len() == 0 {
 		return emptySHA256, nil
 	}
 
-	hashSum := hasher.Sum(nil)
-	return hex.EncodeToString(hashSum), nil
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 // getContentSha256Cksum retrieves the "x-amz-content-sha256" header value.
