@@ -202,8 +202,8 @@ func doEcEncode(commandEnv *CommandEnv, collection string, volumeIds []needle.Vo
 	}
 
 	ewg.Reset()
-	for _, vid := range volumeIds {
-		target := locations[vid][0]
+	for i, vid := range volumeIds {
+		target := locations[vid][i%len(locations[vid])]
 		ewg.Add(func() error {
 			if err := mountEcShards(commandEnv.option.GrpcDialOption, collection, vid, target.ServerAddress(), shardIds); err != nil {
 				return fmt.Errorf("mount ec shards for volume %d on %s: %v", vid, target.Url, err)
