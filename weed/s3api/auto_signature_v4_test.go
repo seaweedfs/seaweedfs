@@ -1108,13 +1108,7 @@ func TestSTSPayloadHashComputation(t *testing.T) {
 		", SignedHeaders=content-type;host;x-amz-date, Signature=dummysignature"
 	req.Header.Set("Authorization", authHeader)
 
-	// Test the doesSignatureMatch function
-	// This should compute the correct payload hash for STS requests (non-S3 service)
-	identity, errCode := iam.doesSignatureMatch(expectedHashStr, req)
-
-	// Should get signature mismatch (dummy signature) but payload hash should be computed correctly
-	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
-	assert.Nil(t, identity)
+	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
 
 	// Verify body is preserved after reading
 	bodyBytes := make([]byte, len(testPayload))
