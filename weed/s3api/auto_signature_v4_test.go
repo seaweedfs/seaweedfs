@@ -406,7 +406,7 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 
 			// Sign the request with the expected host header
 			// We need to temporarily modify the Host header for signing
-            signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", r.URL.Path)
+			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", r.URL.Path)
 
 			// Test signature verification
 			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
@@ -899,7 +899,7 @@ func TestIAMPayloadHashComputation(t *testing.T) {
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
-	
+
 	// Load test configuration with a user
 	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
@@ -919,42 +919,42 @@ func TestIAMPayloadHashComputation(t *testing.T) {
 
 	// Test payload for IAM request (typical CreateAccessKey request)
 	testPayload := "Action=CreateAccessKey&UserName=testuser&Version=2010-05-08"
-	
+
 	// Create request with body (typical IAM request)
 	req, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(testPayload))
 	assert.NoError(t, err)
-	
+
 	// Set required headers for IAM request
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 	req.Header.Set("Host", "localhost:8111")
-	
+
 	// Compute expected payload hash
 	expectedHash := sha256.Sum256([]byte(testPayload))
 	expectedHashStr := hex.EncodeToString(expectedHash[:])
-	
+
 	// Create an IAM-style authorization header with "iam" service instead of "s3"
 	now := time.Now().UTC()
 	dateStr := now.Format("20060102T150405Z")
 	credentialScope := now.Format("20060102") + "/us-east-1/iam/aws4_request"
-	
+
 	req.Header.Set("X-Amz-Date", dateStr)
-	
+
 	// Create authorization header with "iam" service (this is the key difference from S3)
-	authHeader := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/" + credentialScope + 
+	authHeader := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/" + credentialScope +
 		", SignedHeaders=content-type;host;x-amz-date, Signature=dummysignature"
 	req.Header.Set("Authorization", authHeader)
-	
+
 	// Test the doesSignatureMatch function directly
 	// This should now compute the correct payload hash for IAM requests
 	identity, errCode := iam.doesSignatureMatch(expectedHashStr, req)
-	
-	// Even though the signature will fail (dummy signature), 
+
+	// Even though the signature will fail (dummy signature),
 	// the fact that we get past the credential parsing means the payload hash was computed correctly
-	// We expect ErrSignatureDoesNotMatch because we used a dummy signature, 
+	// We expect ErrSignatureDoesNotMatch because we used a dummy signature,
 	// but NOT ErrAccessDenied or other auth errors
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
 	assert.Nil(t, identity)
-	
+
 	// More importantly, test that the request body is preserved after reading
 	// The fix should restore the body after reading it
 	bodyBytes := make([]byte, len(testPayload))
@@ -971,7 +971,7 @@ func TestS3PayloadHashNoRegression(t *testing.T) {
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
-	
+
 	// Load test configuration
 	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
@@ -992,24 +992,24 @@ func TestS3PayloadHashNoRegression(t *testing.T) {
 	// Create S3 request (no body, should use emptySHA256)
 	req, err := http.NewRequest("GET", "http://localhost:8333/bucket/object", nil)
 	assert.NoError(t, err)
-	
+
 	req.Header.Set("Host", "localhost:8333")
-	
+
 	// Create S3-style authorization header with "s3" service
 	now := time.Now().UTC()
 	dateStr := now.Format("20060102T150405Z")
 	credentialScope := now.Format("20060102") + "/us-east-1/s3/aws4_request"
-	
+
 	req.Header.Set("X-Amz-Date", dateStr)
 	req.Header.Set("X-Amz-Content-Sha256", emptySHA256)
-	
-	authHeader := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/" + credentialScope + 
+
+	authHeader := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/" + credentialScope +
 		", SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=dummysignature"
 	req.Header.Set("Authorization", authHeader)
-	
+
 	// This should use the emptySHA256 hash and not try to read the body
 	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
-	
+
 	// Should get signature mismatch (because of dummy signature) but not other errors
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
 	assert.Nil(t, identity)
@@ -1022,7 +1022,7 @@ func TestIAMEmptyBodyPayloadHash(t *testing.T) {
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
-	
+
 	// Load test configuration
 	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
@@ -1043,24 +1043,24 @@ func TestIAMEmptyBodyPayloadHash(t *testing.T) {
 	// Create IAM request with empty body
 	req, err := http.NewRequest("POST", "http://localhost:8111/", bytes.NewReader([]byte{}))
 	assert.NoError(t, err)
-	
+
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 	req.Header.Set("Host", "localhost:8111")
-	
+
 	// Create IAM-style authorization header
 	now := time.Now().UTC()
 	dateStr := now.Format("20060102T150405Z")
 	credentialScope := now.Format("20060102") + "/us-east-1/iam/aws4_request"
-	
+
 	req.Header.Set("X-Amz-Date", dateStr)
-	
-	authHeader := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/" + credentialScope + 
+
+	authHeader := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/" + credentialScope +
 		", SignedHeaders=content-type;host;x-amz-date, Signature=dummysignature"
 	req.Header.Set("Authorization", authHeader)
-	
+
 	// Even with an IAM request, empty body should result in emptySHA256
 	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
-	
+
 	// Should get signature mismatch (because of dummy signature) but not other errors
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
 	assert.Nil(t, identity)
@@ -1073,7 +1073,7 @@ func TestSTSPayloadHashComputation(t *testing.T) {
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
-	
+
 	// Load test configuration
 	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
@@ -1093,38 +1093,38 @@ func TestSTSPayloadHashComputation(t *testing.T) {
 
 	// Test payload for STS request (AssumeRole request)
 	testPayload := "Action=AssumeRole&RoleArn=arn:aws:iam::123456789012:role/TestRole&RoleSessionName=test&Version=2011-06-15"
-	
+
 	// Create request with body (typical STS request)
 	req, err := http.NewRequest("POST", "http://localhost:8112/", strings.NewReader(testPayload))
 	assert.NoError(t, err)
-	
+
 	// Set required headers for STS request
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 	req.Header.Set("Host", "localhost:8112")
-	
+
 	// Compute expected payload hash
 	expectedHash := sha256.Sum256([]byte(testPayload))
 	expectedHashStr := hex.EncodeToString(expectedHash[:])
-	
+
 	// Create an STS-style authorization header with "sts" service
 	now := time.Now().UTC()
 	dateStr := now.Format("20060102T150405Z")
 	credentialScope := now.Format("20060102") + "/us-east-1/sts/aws4_request"
-	
+
 	req.Header.Set("X-Amz-Date", dateStr)
-	
-	authHeader := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/" + credentialScope + 
+
+	authHeader := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/" + credentialScope +
 		", SignedHeaders=content-type;host;x-amz-date, Signature=dummysignature"
 	req.Header.Set("Authorization", authHeader)
-	
+
 	// Test the doesSignatureMatch function
 	// This should compute the correct payload hash for STS requests (non-S3 service)
 	identity, errCode := iam.doesSignatureMatch(expectedHashStr, req)
-	
+
 	// Should get signature mismatch (dummy signature) but payload hash should be computed correctly
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
 	assert.Nil(t, identity)
-	
+
 	// Verify body is preserved after reading
 	bodyBytes := make([]byte, len(testPayload))
 	n, err := req.Body.Read(bodyBytes)
@@ -1140,7 +1140,7 @@ func TestGitHubIssue7080Scenario(t *testing.T) {
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 	}
-	
+
 	// Load test configuration matching the issue scenario
 	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
@@ -1160,40 +1160,238 @@ func TestGitHubIssue7080Scenario(t *testing.T) {
 
 	// Simulate the payload from the GitHub issue (CreateAccessKey request)
 	testPayload := "Action=CreateAccessKey&UserName=admin&Version=2010-05-08"
-	
+
 	// Create the request that was failing
 	req, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(testPayload))
 	assert.NoError(t, err)
-	
+
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 	req.Header.Set("Host", "localhost:8111")
-	
+
 	// Create authorization header with IAM service (this was the failing case)
 	now := time.Now().UTC()
 	dateStr := now.Format("20060102T150405Z")
 	credentialScope := now.Format("20060102") + "/us-east-1/iam/aws4_request"
-	
+
 	req.Header.Set("X-Amz-Date", dateStr)
-	
-	authHeader := "AWS4-HMAC-SHA256 Credential=testkey/" + credentialScope + 
+
+	authHeader := "AWS4-HMAC-SHA256 Credential=testkey/" + credentialScope +
 		", SignedHeaders=content-type;host;x-amz-date, Signature=testsignature"
 	req.Header.Set("Authorization", authHeader)
-	
+
 	// Before the fix, this would have failed with payload hash mismatch
 	// After the fix, it should properly compute the payload hash and proceed to signature verification
-	
+
 	// Since we're using a dummy signature, we expect signature mismatch, but the important
 	// thing is that it doesn't fail earlier due to payload hash computation issues
 	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
-	
+
 	// The error should be signature mismatch, not payload related
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
 	assert.Nil(t, identity)
-	
+
 	// Verify the request body is still accessible (fix preserves body)
 	bodyBytes := make([]byte, len(testPayload))
 	n, err := req.Body.Read(bodyBytes)
 	assert.NoError(t, err)
 	assert.Equal(t, len(testPayload), n)
 	assert.Equal(t, testPayload, string(bodyBytes))
+}
+
+// Test that large IAM request bodies are truncated for security (DoS prevention)
+func TestIAMLargeBodySecurityLimit(t *testing.T) {
+	// Create test IAM instance
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+
+	// Load test configuration
+	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "testuser",
+				Credentials: []*iam_pb.Credential{
+					{
+						AccessKey: "AKIAIOSFODNN7EXAMPLE",
+						SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+					},
+				},
+				Actions: []string{"Admin"},
+			},
+		},
+	})
+	assert.NoError(t, err)
+
+	// Create a payload larger than the 10 MiB limit
+	largePayload := strings.Repeat("A", 11*(1<<20)) // 11 MiB
+
+	// Create IAM request with large body
+	req, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(largePayload))
+	assert.NoError(t, err)
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	req.Header.Set("Host", "localhost:8111")
+
+	// Create IAM-style authorization header
+	now := time.Now().UTC()
+	dateStr := now.Format("20060102T150405Z")
+	credentialScope := now.Format("20060102") + "/us-east-1/iam/aws4_request"
+
+	req.Header.Set("X-Amz-Date", dateStr)
+
+	authHeader := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/" + credentialScope +
+		", SignedHeaders=content-type;host;x-amz-date, Signature=dummysignature"
+	req.Header.Set("Authorization", authHeader)
+
+	// The function should complete successfully but limit the body to 10 MiB
+	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
+
+	// Should get signature mismatch (dummy signature) but not internal error
+	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
+	assert.Nil(t, identity)
+
+	// Verify the body was truncated to the limit (10 MiB)
+	bodyBytes, err := io.ReadAll(req.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, 10*(1<<20), len(bodyBytes))                         // Should be exactly 10 MiB
+	assert.Equal(t, strings.Repeat("A", 10*(1<<20)), string(bodyBytes)) // All As, but truncated
+}
+
+// Test the streaming hash implementation directly
+func TestStreamHashRequestBody(t *testing.T) {
+	testCases := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "empty body",
+			payload: "",
+		},
+		{
+			name:    "small payload",
+			payload: "Action=CreateAccessKey&UserName=testuser&Version=2010-05-08",
+		},
+		{
+			name:    "medium payload",
+			payload: strings.Repeat("A", 1024), // 1KB
+		},
+		{
+			name:    "large payload within limit",
+			payload: strings.Repeat("B", 1<<20), // 1MB
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create request with the test payload
+			req, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(tc.payload))
+			assert.NoError(t, err)
+
+			// Compute expected hash directly for comparison
+			expectedHashStr := emptySHA256
+			if tc.payload != "" {
+				expectedHash := sha256.Sum256([]byte(tc.payload))
+				expectedHashStr = hex.EncodeToString(expectedHash[:])
+			}
+
+			// Test the streaming function
+			hash, err := streamHashRequestBody(req, iamRequestBodyLimit)
+			assert.NoError(t, err)
+			assert.Equal(t, expectedHashStr, hash)
+
+			// Verify the body is preserved and readable
+			bodyBytes, err := io.ReadAll(req.Body)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.payload, string(bodyBytes))
+		})
+	}
+}
+
+// Test streaming vs non-streaming approach produces identical results
+func TestStreamingVsNonStreamingConsistency(t *testing.T) {
+	testPayloads := []string{
+		"",
+		"small",
+		"Action=CreateAccessKey&UserName=testuser&Version=2010-05-08",
+		strings.Repeat("X", 8192),  // Exactly one chunk
+		strings.Repeat("Y", 16384), // Two chunks
+		strings.Repeat("Z", 12345), // Non-aligned chunks
+	}
+
+	for i, payload := range testPayloads {
+		t.Run(fmt.Sprintf("payload_%d", i), func(t *testing.T) {
+			// Test streaming approach
+			req1, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(payload))
+			assert.NoError(t, err)
+
+			streamHash, err := streamHashRequestBody(req1, iamRequestBodyLimit)
+			assert.NoError(t, err)
+
+			// Test direct approach for comparison
+			directHashStr := emptySHA256
+			if payload != "" {
+				directHash := sha256.Sum256([]byte(payload))
+				directHashStr = hex.EncodeToString(directHash[:])
+			}
+
+			// Both approaches should produce identical results
+			assert.Equal(t, directHashStr, streamHash)
+
+			// Verify body preservation
+			bodyBytes, err := io.ReadAll(req1.Body)
+			assert.NoError(t, err)
+			assert.Equal(t, payload, string(bodyBytes))
+		})
+	}
+}
+
+// Test streaming with size limit enforcement
+func TestStreamingWithSizeLimit(t *testing.T) {
+	// Create a payload larger than the limit
+	largePayload := strings.Repeat("A", 11*(1<<20)) // 11 MiB
+
+	req, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(largePayload))
+	assert.NoError(t, err)
+
+	// Stream with the limit
+	hash, err := streamHashRequestBody(req, iamRequestBodyLimit)
+	assert.NoError(t, err)
+
+	// Verify the hash is computed for the truncated content (10 MiB)
+	truncatedPayload := strings.Repeat("A", 10*(1<<20))
+	expectedHash := sha256.Sum256([]byte(truncatedPayload))
+	expectedHashStr := hex.EncodeToString(expectedHash[:])
+
+	assert.Equal(t, expectedHashStr, hash)
+
+	// Verify the body was truncated
+	bodyBytes, err := io.ReadAll(req.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, 10*(1<<20), len(bodyBytes))
+	assert.Equal(t, truncatedPayload, string(bodyBytes))
+}
+
+// Benchmark streaming vs non-streaming memory usage
+func BenchmarkStreamingVsNonStreaming(b *testing.B) {
+	// Test with 1MB payload to show memory efficiency
+	payload := strings.Repeat("A", 1<<20) // 1MB
+
+	b.Run("streaming", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			req, _ := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(payload))
+			streamHashRequestBody(req, iamRequestBodyLimit)
+		}
+	})
+
+	b.Run("direct", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			// Simulate the old approach of reading all at once
+			req, _ := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(payload))
+			io.ReadAll(req.Body)
+			sha256.Sum256([]byte(payload))
+		}
+	})
 }
