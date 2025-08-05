@@ -123,14 +123,14 @@ const (
 )
 
 // FIXME: needa tests
-func (group *ChunkGroup) SearchChunks(offset, fileSize int64, whence uint32) (found bool, out int64) {
+func (group *ChunkGroup) SearchChunks(ctx context.Context, offset, fileSize int64, whence uint32) (found bool, out int64) {
 	group.sectionsLock.RLock()
 	defer group.sectionsLock.RUnlock()
 
-	return group.doSearchChunks(offset, fileSize, whence)
+	return group.doSearchChunks(ctx, offset, fileSize, whence)
 }
 
-func (group *ChunkGroup) doSearchChunks(offset, fileSize int64, whence uint32) (found bool, out int64) {
+func (group *ChunkGroup) doSearchChunks(ctx context.Context, offset, fileSize int64, whence uint32) (found bool, out int64) {
 
 	sectionIndex, maxSectionIndex := SectionIndex(offset/SectionSize), SectionIndex(fileSize/SectionSize)
 	if whence == SEEK_DATA {

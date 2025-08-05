@@ -128,7 +128,7 @@ func TestChunkGroup_doSearchChunks(t *testing.T) {
 			group := &ChunkGroup{
 				sections: tt.fields.sections,
 			}
-			gotFound, gotOut := group.doSearchChunks(tt.args.offset, tt.args.fileSize, tt.args.whence)
+			gotFound, gotOut := group.doSearchChunks(context.Background(), tt.args.offset, tt.args.fileSize, tt.args.whence)
 			assert.Equalf(t, tt.wantFound, gotFound, "doSearchChunks(%v, %v, %v)", tt.args.offset, tt.args.fileSize, tt.args.whence)
 			assert.Equalf(t, tt.wantOut, gotOut, "doSearchChunks(%v, %v, %v)", tt.args.offset, tt.args.fileSize, tt.args.whence)
 		})

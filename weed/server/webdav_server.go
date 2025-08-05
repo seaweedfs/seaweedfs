@@ -127,6 +127,7 @@ type WebDavFile struct {
 	visibleIntervals *filer.IntervalList[*filer.VisibleInterval]
 	reader           io.ReaderAt
 	bufWriter        *buffered_writer.BufferedWriteCloser
+	ctx              context.Context
 }
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
@@ -270,6 +271,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 			name:        fullFilePath,
 			isDirectory: false,
 			bufWriter:   buffered_writer.NewBufferedWriteCloser(fs.option.MaxMB * 1024 * 1024),
+			ctx:         ctx,
 		}, nil
 	}
 
@@ -278,7 +280,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		if err == os.ErrNotExist {
 			return nil, err
 		}
-		return &WebDavFile{fs: fs}, nil
+		return &WebDavFile{fs: fs, ctx: ctx}, nil
 	}
 	if !strings.HasSuffix(fullFilePath, "/") && fi.IsDir() {
 		fullFilePath += "/"
@@ -289,6 +291,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		name:        fullFilePath,
 		isDirectory: false,
 		bufWriter:   buffered_writer.NewBufferedWriteCloser(fs.option.MaxMB * 1024 * 1024),
+		ctx:         ctx,
 	}, nil
 
 }
@@ -558,12 +561,12 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		return 0, io.EOF
 	}
 	if f.visibleIntervals == nil {
-		f.visibleIntervals, _ = filer.NonOverlappingVisibleIntervals(context.Background(), filer.LookupFn(f.fs), f.entry.GetChunks(), 0, fileSize)
+		f.visibleIntervals, _ = filer.NonOverlappingVisibleIntervals(f.ctx, filer.LookupFn(f.fs), f.entry.GetChunks(), 0, fileSize)
 		f.reader = nil
 	}
 	if f.reader == nil {
 		chunkViews := filer.ViewFromVisibleIntervals(f.visibleIntervals, 0, fileSize)
-		f.reader = filer.NewChunkReaderAtFromClient(context.Background(), f.fs.readerCache, chunkViews, fileSize)
+		f.reader = filer.NewChunkReaderAtFromClient(f.ctx, f.fs.readerCache, chunkViews, fileSize)
 	}
 
 	readSize, err = f.reader.ReadAt(p, f.off)
