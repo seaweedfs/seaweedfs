@@ -6,12 +6,12 @@ toolchain go1.24.1
 
 require (
 	cloud.google.com/go v0.121.4 // indirect
-	cloud.google.com/go/pubsub v1.49.0
+	cloud.google.com/go/pubsub v1.50.0
 	cloud.google.com/go/storage v1.56.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.38.1
-	github.com/aws/aws-sdk-go v1.55.7
+	github.com/aws/aws-sdk-go v1.55.8
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cenkalti/backoff/v4 v4.3.0
@@ -67,9 +67,9 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/posener/complete v1.2.3
 	github.com/pquerna/cachecontrol v0.2.0
-	github.com/prometheus/client_golang v1.22.0
+	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.64.0 // indirect
+	github.com/prometheus/common v0.65.0 // indirect
 	github.com/prometheus/procfs v0.17.0
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -116,7 +116,7 @@ require (
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/mathutil v1.7.1
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.38.1
+	modernc.org/sqlite v1.38.2
 	modernc.org/strutil v1.2.1
 )
 
@@ -135,7 +135,7 @@ require (
 	github.com/getsentry/sentry-go v0.34.1
 	github.com/gin-contrib/sessions v1.0.4
 	github.com/gin-gonic/gin v1.10.1
-	github.com/golang-jwt/jwt/v5 v5.2.3
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
 	github.com/hanwen/go-fuse/v2 v2.8.0
 	github.com/hashicorp/raft v1.7.3
@@ -153,7 +153,7 @@ require (
 	github.com/tarantool/go-tarantool/v2 v2.4.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.113.2
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.113.4
 	go.etcd.io/etcd/client/pkg/v3 v3.6.4
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.16.0
@@ -163,6 +163,7 @@ require (
 require github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
 
 require (
+	cloud.google.com/go/pubsub/v2 v2.0.0 // indirect
 	github.com/cenkalti/backoff/v3 v3.2.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

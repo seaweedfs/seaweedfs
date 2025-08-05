@@ -21,7 +21,7 @@ jobs:
       -
         name: Docker meta
         id: docker_meta
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v3
+        uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v3
         with:
           images: |
             chrislusf/seaweedfs
@@ -42,7 +42,7 @@ jobs:
       -
         name: Login to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v1
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
