@@ -192,11 +192,14 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 		}
 		if err != nil && shouldRetry {
 			glog.V(0).InfofCtx(ctx, "retry reading in %v", waitTime)
-			// Check for context cancellation before sleep
+			// Sleep with proper context cancellation and timer cleanup
+			timer := time.NewTimer(waitTime)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return ctx.Err()
-			case <-time.After(waitTime):
+			case <-timer.C:
+				// Continue with retry
 			}
 		} else {
 			break

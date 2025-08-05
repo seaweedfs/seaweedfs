@@ -360,7 +360,7 @@ func ReadUrlAsStreamAuthenticated(ctx context.Context, fileUrl, jwt string, ciph
 		// Check for context cancellation before each read
 		select {
 		case <-ctx.Done():
-			return true, ctx.Err()
+			return false, ctx.Err()
 		default:
 		}
 
@@ -533,11 +533,14 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 		}
 		if err != nil && shouldRetry {
 			glog.V(0).InfofCtx(ctx, "retry reading in %v", waitTime)
-			// Check for context cancellation before sleep
+			// Sleep with proper context cancellation and timer cleanup
+			timer := time.NewTimer(waitTime)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return n, ctx.Err()
-			case <-time.After(waitTime):
+			case <-timer.C:
+				// Continue with retry
 			}
 		} else {
 			break
