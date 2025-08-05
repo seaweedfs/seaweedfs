@@ -56,7 +56,7 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 		return ENXIO
 	}
 
-	// Create context from cancel channel for cancellation support
+	// Create a context that will be cancelled when the cancel channel receives a signal
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	go func() {
 		select {
