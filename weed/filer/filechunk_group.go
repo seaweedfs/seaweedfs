@@ -139,7 +139,7 @@ func (group *ChunkGroup) doSearchChunks(offset, fileSize int64, whence uint32) (
 			if !foundSection {
 				continue
 			}
-			sectionStart := section.DataStartOffset(context.Background(), group, offset, fileSize)
+			sectionStart := section.DataStartOffset(ctx, group, offset, fileSize)
 			if sectionStart == -1 {
 				continue
 			}
