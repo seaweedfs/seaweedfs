@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"context"
 	"io"
 	"testing"
 
@@ -25,7 +26,7 @@ func TestChunkGroup_ReadDataAt_ErrorHandling(t *testing.T) {
 		offset := int64(0)
 
 		// With an empty ChunkGroup, we should get no error
-		n, tsNs, err := group.ReadDataAt(fileSize, buff, offset)
+		n, tsNs, err := group.ReadDataAt(context.Background(), fileSize, buff, offset)
 
 		// Should return 100 (length of buffer) and no error since there are no sections
 		// and missing sections are filled with zeros
@@ -44,7 +45,7 @@ func TestChunkGroup_ReadDataAt_ErrorHandling(t *testing.T) {
 		fileSize := int64(50) // File smaller than buffer
 		offset := int64(0)
 
-		n, tsNs, err := group.ReadDataAt(fileSize, buff, offset)
+		n, tsNs, err := group.ReadDataAt(context.Background(), fileSize, buff, offset)
 
 		// Should return 50 (file size) and no error
 		assert.Equal(t, 50, n)
@@ -57,7 +58,7 @@ func TestChunkGroup_ReadDataAt_ErrorHandling(t *testing.T) {
 		fileSize := int64(50)
 		offset := int64(100) // Offset beyond file size
 
-		n, tsNs, err := group.ReadDataAt(fileSize, buff, offset)
+		n, tsNs, err := group.ReadDataAt(context.Background(), fileSize, buff, offset)
 
 		assert.Equal(t, 0, n)
 		assert.Equal(t, int64(0), tsNs)
@@ -80,19 +81,19 @@ func TestChunkGroup_ReadDataAt_ErrorHandling(t *testing.T) {
 		fileSize := int64(1000)
 
 		// Test 1: Normal operation with no sections (filled with zeros)
-		n, tsNs, err := group.ReadDataAt(fileSize, buff, int64(0))
+		n, tsNs, err := group.ReadDataAt(context.Background(), fileSize, buff, int64(0))
 		assert.Equal(t, 100, n, "should read full buffer")
 		assert.Equal(t, int64(0), tsNs, "timestamp should be zero for missing sections")
 		assert.NoError(t, err, "should not error for missing sections")
 
 		// Test 2: Reading beyond file size should return io.EOF immediately
-		n, tsNs, err = group.ReadDataAt(fileSize, buff, fileSize+1)
+		n, tsNs, err = group.ReadDataAt(context.Background(), fileSize, buff, fileSize+1)
 		assert.Equal(t, 0, n, "should not read any bytes when beyond file size")
 		assert.Equal(t, int64(0), tsNs, "timestamp should be zero")
 		assert.Equal(t, io.EOF, err, "should return io.EOF when reading beyond file size")
 
 		// Test 3: Reading at exact file boundary
-		n, tsNs, err = group.ReadDataAt(fileSize, buff, fileSize)
+		n, tsNs, err = group.ReadDataAt(context.Background(), fileSize, buff, fileSize)
 		assert.Equal(t, 0, n, "should not read any bytes at exact file size boundary")
 		assert.Equal(t, int64(0), tsNs, "timestamp should be zero")
 		assert.Equal(t, io.EOF, err, "should return io.EOF at file boundary")

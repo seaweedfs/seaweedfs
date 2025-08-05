@@ -15,15 +15,13 @@ type ChunkGroup struct {
 	sections     map[SectionIndex]*FileChunkSection
 	sectionsLock sync.RWMutex
 	readerCache  *ReaderCache
-	ctx          context.Context
 }
 
-func NewChunkGroup(ctx context.Context, lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk) (*ChunkGroup, error) {
+func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk) (*ChunkGroup, error) {
 	group := &ChunkGroup{
 		lookupFn:    lookupFn,
 		sections:    make(map[SectionIndex]*FileChunkSection),
 		readerCache: NewReaderCache(32, chunkCache, lookupFn),
-		ctx:         ctx,
 	}
 
 	err := group.SetChunks(chunks)
@@ -48,15 +46,10 @@ func (group *ChunkGroup) AddChunk(chunk *filer_pb.FileChunk) error {
 }
 
 func (group *ChunkGroup) ReadDataAtWithContext(ctx context.Context, fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
-	// Update context for this operation
-	oldCtx := group.ctx
-	group.ctx = ctx
-	defer func() { group.ctx = oldCtx }()
-
-	return group.ReadDataAt(fileSize, buff, offset)
+	return group.ReadDataAt(ctx, fileSize, buff, offset)
 }
 
-func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
+func (group *ChunkGroup) ReadDataAt(ctx context.Context, fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
 	if offset >= fileSize {
 		return 0, 0, io.EOF
 	}
@@ -79,7 +72,7 @@ func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (
 			n = int(int64(n) + rangeStop - rangeStart)
 			continue
 		}
-		xn, xTsNs, xErr := section.readDataAt(group, fileSize, buff[rangeStart-offset:rangeStop-offset], rangeStart)
+		xn, xTsNs, xErr := section.readDataAt(ctx, group, fileSize, buff[rangeStart-offset:rangeStop-offset], rangeStart)
 		if xErr != nil {
 			return n + xn, max(tsNs, xTsNs), xErr
 		}
@@ -150,7 +143,7 @@ func (group *ChunkGroup) doSearchChunks(offset, fileSize int64, whence uint32) (
 			if !foundSection {
 				continue
 			}
-			sectionStart := section.DataStartOffset(group, offset, fileSize)
+			sectionStart := section.DataStartOffset(context.Background(), group, offset, fileSize)
 			if sectionStart == -1 {
 				continue
 			}
@@ -164,7 +157,7 @@ func (group *ChunkGroup) doSearchChunks(offset, fileSize int64, whence uint32) (
 			if !foundSection {
 				return true, offset
 			}
-			holeStart := section.NextStopOffset(group, offset, fileSize)
+			holeStart := section.NextStopOffset(context.Background(), group, offset, fileSize)
 			if holeStart%SectionSize == 0 {
 				continue
 			}

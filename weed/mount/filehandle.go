@@ -1,7 +1,6 @@
 package mount
 
 import (
-	"context"
 	"os"
 	"sync"
 
@@ -77,7 +76,7 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 		fileSize := filer.FileSize(entry)
 		entry.Attributes.FileSize = fileSize
 		var resolveManifestErr error
-		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(context.Background(), fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks)
+		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks)
 		if resolveManifestErr != nil {
 			glog.Warningf("failed to resolve manifest chunks in %+v", entry)
 		}
