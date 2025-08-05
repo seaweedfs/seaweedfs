@@ -116,13 +116,13 @@ func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileI
 	return nil
 }
 
-func fetchChunkRange(buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64) (int, error) {
-	urlStrings, err := lookupFileIdFn(context.Background(), fileId)
+func fetchChunkRange(ctx context.Context, buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64) (int, error) {
+	urlStrings, err := lookupFileIdFn(ctx, fileId)
 	if err != nil {
-		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
+		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", fileId, err)
 		return 0, err
 	}
-	return util_http.RetriedFetchChunkData(context.Background(), buffer, urlStrings, cipherKey, isGzipped, false, offset, fileId)
+	return util_http.RetriedFetchChunkData(ctx, buffer, urlStrings, cipherKey, isGzipped, false, offset, fileId)
 }
 
 func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrings []string, jwt string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) (err error) {
@@ -131,12 +131,34 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 	var totalWritten int
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
+		// Check for context cancellation before starting retry loop
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		retriedCnt := 0
 		for _, urlString := range urlStrings {
+			// Check for context cancellation before each volume server request
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
 			retriedCnt++
 			var localProcessed int
 			var writeErr error
 			shouldRetry, err = util_http.ReadUrlAsStreamAuthenticated(ctx, urlString+"?readDeleted=true", jwt, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
+				// Check for context cancellation during data processing
+				select {
+				case <-ctx.Done():
+					writeErr = ctx.Err()
+					return
+				default:
+				}
+
 				if totalWritten > localProcessed {
 					toBeSkipped := totalWritten - localProcessed
 					if len(data) <= toBeSkipped {
@@ -170,7 +192,12 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 		}
 		if err != nil && shouldRetry {
 			glog.V(0).InfofCtx(ctx, "retry reading in %v", waitTime)
-			time.Sleep(waitTime)
+			// Check for context cancellation before sleep
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(waitTime):
+			}
 		} else {
 			break
 		}

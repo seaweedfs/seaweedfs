@@ -357,6 +357,13 @@ func ReadUrlAsStreamAuthenticated(ctx context.Context, fileUrl, jwt string, ciph
 	defer mem.Free(buf)
 
 	for {
+		// Check for context cancellation before each read
+		select {
+		case <-ctx.Done():
+			return true, ctx.Err()
+		default:
+		}
+
 		m, err = reader.Read(buf)
 		if m > 0 {
 			fn(buf[:m])
@@ -482,12 +489,34 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 	var shouldRetry bool
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
+		// Check for context cancellation before starting retry loop
+		select {
+		case <-ctx.Done():
+			return n, ctx.Err()
+		default:
+		}
+
 		for _, urlString := range urlStrings {
+			// Check for context cancellation before each volume server request
+			select {
+			case <-ctx.Done():
+				return n, ctx.Err()
+			default:
+			}
+
 			n = 0
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
 			shouldRetry, err = ReadUrlAsStreamAuthenticated(ctx, urlString+"?readDeleted=true", string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+				// Check for context cancellation during data processing
+				select {
+				case <-ctx.Done():
+					// Stop processing data when context is cancelled
+					return
+				default:
+				}
+
 				if n < len(buffer) {
 					x := copy(buffer[n:], data)
 					n += x
@@ -504,7 +533,12 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 		}
 		if err != nil && shouldRetry {
 			glog.V(0).InfofCtx(ctx, "retry reading in %v", waitTime)
-			time.Sleep(waitTime)
+			// Check for context cancellation before sleep
+			select {
+			case <-ctx.Done():
+				return n, ctx.Err()
+			case <-time.After(waitTime):
+			}
 		} else {
 			break
 		}
