@@ -20,7 +20,7 @@ type ChunkReadAt struct {
 	readerCache   *ReaderCache
 	readerPattern *ReaderPattern
 	lastChunkFid  string
-	ctx           context.Context // Store context for chunk operations
+	ctx           context.Context // Context used for cancellation during chunk read operations
 }
 
 var _ = io.ReaderAt(&ChunkReadAt{})
