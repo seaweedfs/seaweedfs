@@ -21,3 +21,5 @@ jobs:
           target_dir: helm
           branch: gh-pages
           helm_version: v3.18.4
+          commit_username: chrislusf
+          commit_email: chrislusf@users.noreply.github.com
