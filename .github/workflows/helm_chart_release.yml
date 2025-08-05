@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633
       - name: Publish Helm charts
-        uses: stefanprodan/helm-gh-pages@master
+        uses: stefanprodan/helm-gh-pages@v1.7.0
         with:          
           token: ${{ secrets.GITHUB_TOKEN }}
           charts_dir: k8s/charts
