@@ -84,7 +84,7 @@ func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64)
 	}
 
 	if section.reader == nil {
-		section.reader = NewChunkReaderAtFromClient(group.readerCache, section.chunkViews, min(int64(section.sectionIndex+1)*SectionSize, fileSize))
+		section.reader = NewChunkReaderAtFromClient(group.ctx, group.readerCache, section.chunkViews, min(int64(section.sectionIndex+1)*SectionSize, fileSize))
 	}
 
 	section.isPrepared = true

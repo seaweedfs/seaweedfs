@@ -71,6 +71,46 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, int64, e
 	return int64(totalRead), ts, err
 }
 
+func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte, offset int64) (int64, int64, error) {
+	fh.entryLock.RLock()
+	defer fh.entryLock.RUnlock()
+
+	fileFullPath := fh.FullPath()
+
+	entry := fh.GetEntry()
+
+	if entry.IsInRemoteOnly() {
+		glog.V(4).Infof("download remote entry %s", fileFullPath)
+		err := fh.downloadRemoteEntry(entry)
+		if err != nil {
+			glog.V(1).Infof("download remote entry %s: %v", fileFullPath, err)
+			return 0, 0, err
+		}
+	}
+
+	fileSize := int64(entry.Attributes.FileSize)
+	if fileSize == 0 {
+		glog.V(1).Infof("empty fh %v", fileFullPath)
+		return 0, 0, nil
+	}
+
+	if len(entry.Content) > 0 && offset < int64(len(entry.Content)) {
+		totalRead := copy(buff, entry.Content[offset:])
+		glog.V(4).Infof("file handle read cached %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
+		return int64(totalRead), 0, nil
+	}
+
+	totalRead, ts, err := fh.entryChunkGroup.ReadDataAtWithContext(ctx, fileSize, buff, offset)
+
+	if err != nil && err != io.EOF {
+		glog.Errorf("file handle read %s: %v", fileFullPath, err)
+	}
+
+	// glog.V(4).Infof("file handle read %s [%d,%d] %d : %v", fileFullPath, offset, offset+int64(totalRead), totalRead, err)
+
+	return int64(totalRead), ts, err
+}
+
 func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 
 	fileFullPath := fh.FullPath()

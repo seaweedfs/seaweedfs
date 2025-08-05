@@ -15,13 +15,15 @@ type ChunkGroup struct {
 	sections     map[SectionIndex]*FileChunkSection
 	sectionsLock sync.RWMutex
 	readerCache  *ReaderCache
+	ctx          context.Context
 }
 
-func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk) (*ChunkGroup, error) {
+func NewChunkGroup(ctx context.Context, lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk) (*ChunkGroup, error) {
 	group := &ChunkGroup{
 		lookupFn:    lookupFn,
 		sections:    make(map[SectionIndex]*FileChunkSection),
 		readerCache: NewReaderCache(32, chunkCache, lookupFn),
+		ctx:         ctx,
 	}
 
 	err := group.SetChunks(chunks)
@@ -43,6 +45,15 @@ func (group *ChunkGroup) AddChunk(chunk *filer_pb.FileChunk) error {
 		section.addChunk(chunk)
 	}
 	return nil
+}
+
+func (group *ChunkGroup) ReadDataAtWithContext(ctx context.Context, fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
+	// Update context for this operation
+	oldCtx := group.ctx
+	group.ctx = ctx
+	defer func() { group.ctx = oldCtx }()
+
+	return group.ReadDataAt(fileSize, buff, offset)
 }
 
 func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {

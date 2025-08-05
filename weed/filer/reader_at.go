@@ -20,6 +20,7 @@ type ChunkReadAt struct {
 	readerCache   *ReaderCache
 	readerPattern *ReaderPattern
 	lastChunkFid  string
+	ctx           context.Context // Store context for chunk operations
 }
 
 var _ = io.ReaderAt(&ChunkReadAt{})
@@ -87,13 +88,14 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 	}
 }
 
-func NewChunkReaderAtFromClient(readerCache *ReaderCache, chunkViews *IntervalList[*ChunkView], fileSize int64) *ChunkReadAt {
+func NewChunkReaderAtFromClient(ctx context.Context, readerCache *ReaderCache, chunkViews *IntervalList[*ChunkView], fileSize int64) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews:    chunkViews,
 		fileSize:      fileSize,
 		readerCache:   readerCache,
 		readerPattern: NewReaderPattern(),
+		ctx:           ctx,
 	}
 }
 
@@ -199,7 +201,7 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 		if n > 0 {
 			return n, err
 		}
-		return fetchChunkRange(context.Background(), buffer, c.readerCache.lookupFileIdFn, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset))
+		return fetchChunkRange(c.ctx, buffer, c.readerCache.lookupFileIdFn, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset))
 	}
 
 	shouldCache := (uint64(chunkView.ViewOffset) + chunkView.ChunkSize) <= c.readerCache.chunkCache.GetMaxFilePartSizeInCache()

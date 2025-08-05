@@ -1,12 +1,14 @@
 package mount
 
 import (
+	"context"
+	"os"
+	"sync"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"os"
-	"sync"
 )
 
 type FileHandleId uint64
@@ -75,7 +77,7 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 		fileSize := filer.FileSize(entry)
 		entry.Attributes.FileSize = fileSize
 		var resolveManifestErr error
-		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks)
+		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(context.Background(), fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks)
 		if resolveManifestErr != nil {
 			glog.Warningf("failed to resolve manifest chunks in %+v", entry)
 		}

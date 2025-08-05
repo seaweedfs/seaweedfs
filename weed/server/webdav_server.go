@@ -3,12 +3,13 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"io"
 	"os"
 	"path"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/buffered_writer"
 	"golang.org/x/net/webdav"
@@ -562,7 +563,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	}
 	if f.reader == nil {
 		chunkViews := filer.ViewFromVisibleIntervals(f.visibleIntervals, 0, fileSize)
-		f.reader = filer.NewChunkReaderAtFromClient(f.fs.readerCache, chunkViews, fileSize)
+		f.reader = filer.NewChunkReaderAtFromClient(context.Background(), f.fs.readerCache, chunkViews, fileSize)
 	}
 
 	readSize, err = f.reader.ReadAt(p, f.off)
