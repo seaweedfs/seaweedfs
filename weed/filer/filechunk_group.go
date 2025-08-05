@@ -153,7 +153,7 @@ func (group *ChunkGroup) doSearchChunks(offset, fileSize int64, whence uint32) (
 			if !foundSection {
 				return true, offset
 			}
-			holeStart := section.NextStopOffset(context.Background(), group, offset, fileSize)
+			holeStart := section.NextStopOffset(ctx, group, offset, fileSize)
 			if holeStart%SectionSize == 0 {
 				continue
 			}
