@@ -62,7 +62,6 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 		select {
 		case <-cancel:
 			cancelFunc()
-		case <-ctx.Done():
 		}
 	}()
 
