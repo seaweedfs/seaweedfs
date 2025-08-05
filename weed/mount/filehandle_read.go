@@ -64,7 +64,7 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 		return int64(totalRead), 0, nil
 	}
 
-	totalRead, ts, err := fh.entryChunkGroup.ReadDataAtWithContext(ctx, fileSize, buff, offset)
+	totalRead, ts, err := fh.entryChunkGroup.ReadDataAt(ctx, fileSize, buff, offset)
 
 	if err != nil && err != io.EOF {
 		glog.Errorf("file handle read %s: %v", fileFullPath, err)

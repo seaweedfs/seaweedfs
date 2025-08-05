@@ -45,10 +45,6 @@ func (group *ChunkGroup) AddChunk(chunk *filer_pb.FileChunk) error {
 	return nil
 }
 
-func (group *ChunkGroup) ReadDataAtWithContext(ctx context.Context, fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
-	return group.ReadDataAt(ctx, fileSize, buff, offset)
-}
-
 func (group *ChunkGroup) ReadDataAt(ctx context.Context, fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
 	if offset >= fileSize {
 		return 0, 0, io.EOF

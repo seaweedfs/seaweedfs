@@ -2,7 +2,6 @@ package mount
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 
@@ -84,23 +83,6 @@ func readDataByFileHandle(buff []byte, fhIn *FileHandle, offset int64) (int64, e
 	defer fhIn.unlockForRead(offset, size)
 
 	n, tsNs, err := fhIn.readFromChunks(buff, offset)
-	if err == nil || err == io.EOF {
-		maxStop := fhIn.readFromDirtyPages(buff, offset, tsNs)
-		n = max(maxStop-offset, n)
-	}
-	if err == io.EOF {
-		err = nil
-	}
-	return n, err
-}
-
-func readDataByFileHandleWithContext(ctx context.Context, buff []byte, fhIn *FileHandle, offset int64) (int64, error) {
-	// read data from source file
-	size := len(buff)
-	fhIn.lockForRead(offset, size)
-	defer fhIn.unlockForRead(offset, size)
-
-	n, tsNs, err := fhIn.readFromChunksWithContext(ctx, buff, offset)
 	if err == nil || err == io.EOF {
 		maxStop := fhIn.readFromDirtyPages(buff, offset, tsNs)
 		n = max(maxStop-offset, n)
