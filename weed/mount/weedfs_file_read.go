@@ -47,19 +47,11 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("Read", fh.fh, util.SharedLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
-	// Create context from cancel channel for this operation
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	defer cancelFunc()
-	go func() {
-		select {
-		case <-cancel:
-			cancelFunc()
-		case <-ctx.Done():
-		}
-	}()
-
 	offset := int64(in.Offset)
-	totalRead, err := readDataByFileHandleWithContext(ctx, buff, fh, offset)
+
+	// Use context.Background() for normal operations to avoid unnecessary overhead
+	// Context cancellation was primarily designed for long-running streaming operations
+	totalRead, err := readDataByFileHandle(buff, fh, offset)
 	if err != nil {
 		glog.Warningf("file handle read %s %d: %v", fh.FullPath(), totalRead, err)
 		return nil, fuse.EIO
@@ -72,7 +64,7 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		if bytes.Compare(mirrorData, buff[:totalRead]) != 0 {
 
 			againBuff := make([]byte, len(buff))
-			againRead, _ := readDataByFileHandleWithContext(ctx, againBuff, fh, offset)
+			againRead, _ := readDataByFileHandle(againBuff, fh, offset)
 			againCorrect := bytes.Compare(mirrorData, againBuff[:againRead]) == 0
 			againSame := bytes.Compare(buff[:totalRead], againBuff[:againRead]) == 0
 
