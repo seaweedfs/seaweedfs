@@ -116,7 +116,7 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 	defer c.chunkViews.Lock.RUnlock()
 
 	// glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
-	n, _, err = c.doReadAt(context.Background(), p, offset)
+	n, _, err = c.doReadAt(c.ctx, p, offset)
 	return
 }
 
