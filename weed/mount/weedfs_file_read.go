@@ -47,7 +47,7 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("Read", fh.fh, util.SharedLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
-	// Create context from cancel channel for cancellation support
+	// Create a context that will be cancelled when the cancel channel receives a signal
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	go func() {
 		select {
