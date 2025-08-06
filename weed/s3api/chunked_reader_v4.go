@@ -46,7 +46,7 @@ import (
 //
 // returns signature, error otherwise if the signature mismatches or any other
 // error while parsing and validating.
-func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cred *Credential, signature string, region string, date time.Time, errCode s3err.ErrorCode) {
+func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cred *Credential, signature string, region string, service string, date time.Time, errCode s3err.ErrorCode) {
 
 	// Copy request.
 	req := *r
@@ -57,7 +57,7 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	// Parse signature version '4' header.
 	signV4Values, errCode := parseSignV4(v4Auth)
 	if errCode != s3err.ErrNone {
-		return nil, "", "", time.Time{}, errCode
+		return nil, "", "", "", time.Time{}, errCode
 	}
 
 	contentSha256Header := req.Header.Get("X-Amz-Content-Sha256")
@@ -69,7 +69,7 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	case streamingUnsignedPayload:
 		glog.V(3).Infof("streaming unsigned payload")
 	default:
-		return nil, "", "", time.Time{}, s3err.ErrContentSHA256Mismatch
+		return nil, "", "", "", time.Time{}, s3err.ErrContentSHA256Mismatch
 	}
 
 	// Payload streaming.
@@ -78,12 +78,12 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	// Extract all the signed headers along with its values.
 	extractedSignedHeaders, errCode := extractSignedHeaders(signV4Values.SignedHeaders, r)
 	if errCode != s3err.ErrNone {
-		return nil, "", "", time.Time{}, errCode
+		return nil, "", "", "", time.Time{}, errCode
 	}
 	// Verify if the access key id matches.
 	identity, cred, found := iam.lookupByAccessKey(signV4Values.Credential.accessKey)
 	if !found {
-		return nil, "", "", time.Time{}, s3err.ErrInvalidAccessKeyID
+		return nil, "", "", "", time.Time{}, s3err.ErrInvalidAccessKeyID
 	}
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
@@ -99,14 +99,14 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	var dateStr string
 	if dateStr = req.Header.Get(http.CanonicalHeaderKey("x-amz-date")); dateStr == "" {
 		if dateStr = r.Header.Get("Date"); dateStr == "" {
-			return nil, "", "", time.Time{}, s3err.ErrMissingDateHeader
+			return nil, "", "", "", time.Time{}, s3err.ErrMissingDateHeader
 		}
 	}
 
 	// Parse date header.
 	date, err := time.Parse(iso8601Format, dateStr)
 	if err != nil {
-		return nil, "", "", time.Time{}, s3err.ErrMalformedDate
+		return nil, "", "", "", time.Time{}, s3err.ErrMalformedDate
 	}
 	// Query string.
 	queryStr := req.URL.Query().Encode()
@@ -118,18 +118,18 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	stringToSign := getStringToSign(canonicalRequest, date, signV4Values.Credential.getScope())
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), region, "s3")
+	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), region, signV4Values.Credential.scope.service)
 
 	// Calculate signature.
 	newSignature := getSignature(signingKey, stringToSign)
 
 	// Verify if signature match.
 	if !compareSignatureV4(newSignature, signV4Values.Signature) {
-		return nil, "", "", time.Time{}, s3err.ErrSignatureDoesNotMatch
+		return nil, "", "", "", time.Time{}, s3err.ErrSignatureDoesNotMatch
 	}
 
 	// Return calculated signature.
-	return cred, newSignature, region, date, s3err.ErrNone
+	return cred, newSignature, region, signV4Values.Credential.scope.service, date, s3err.ErrNone
 }
 
 const maxLineLength = 4 * humanize.KiByte // assumed <= bufio.defaultBufSize 4KiB
@@ -150,7 +150,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	authorizationHeader := req.Header.Get("Authorization")
 
 	var ident *Credential
-	var seedSignature, region string
+	var seedSignature, region, service string
 	var seedDate time.Time
 	var errCode s3err.ErrorCode
 
@@ -158,7 +158,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
 	case streamingContentSHA256:
 		glog.V(3).Infof("streaming content sha256")
-		ident, seedSignature, region, seedDate, errCode = iam.calculateSeedSignature(req)
+		ident, seedSignature, region, service, seedDate, errCode = iam.calculateSeedSignature(req)
 		if errCode != s3err.ErrNone {
 			return nil, errCode
 		}
@@ -167,7 +167,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 		if authorizationHeader != "" {
 			// We do not need to pass the seed signature to the Reader as each chunk is not signed,
 			// but we do compute it to verify the caller has the correct permissions.
-			_, _, _, _, errCode = iam.calculateSeedSignature(req)
+			_, _, _, _, _, errCode = iam.calculateSeedSignature(req)
 			if errCode != s3err.ErrNone {
 				return nil, errCode
 			}
@@ -191,6 +191,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 		seedSignature:     seedSignature,
 		seedDate:          seedDate,
 		region:            region,
+		service:           service,
 		chunkSHA256Writer: sha256.New(),
 		checkSumAlgorithm: checksumAlgorithm.String(),
 		checkSumWriter:    checkSumWriter,
@@ -227,6 +228,7 @@ type s3ChunkedReader struct {
 	seedSignature     string
 	seedDate          time.Time
 	region            string
+	service           string // Service from credential scope (e.g., "s3", "iam")
 	state             chunkState
 	lastChunk         bool
 	chunkSignature    string // Empty string if unsigned streaming upload.
@@ -467,13 +469,13 @@ func (cr *s3ChunkedReader) getChunkSignature(hashedChunk string) string {
 	// Calculate string to sign.
 	stringToSign := signV4Algorithm + "-PAYLOAD" + "\n" +
 		cr.seedDate.Format(iso8601Format) + "\n" +
-		getScope(cr.seedDate, cr.region) + "\n" +
+		getScope(cr.seedDate, cr.region, cr.service) + "\n" +
 		cr.seedSignature + "\n" +
 		emptySHA256 + "\n" +
 		hashedChunk
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(cr.cred.SecretKey, cr.seedDate.Format(yyyymmdd), cr.region, "s3")
+	signingKey := getSigningKey(cr.cred.SecretKey, cr.seedDate.Format(yyyymmdd), cr.region, cr.service)
 
 	// Calculate and return signature.
 	return getSignature(signingKey, stringToSign)

@@ -240,7 +240,7 @@ func (iam *IdentityAccessManagement) verifySignatureWithPath(extractedSignedHead
 	stringToSign := getStringToSign(canonicalRequest, t, signV4Values.Credential.getScope())
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(secretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), signV4Values.Credential.scope.region, "s3")
+	signingKey := getSigningKey(secretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), signV4Values.Credential.scope.region, signV4Values.Credential.scope.service)
 
 	// Calculate signature.
 	newSignature := getSignature(signingKey, stringToSign)
@@ -262,7 +262,7 @@ func (iam *IdentityAccessManagement) verifyPresignedSignatureWithPath(extractedS
 	stringToSign := getStringToSign(canonicalRequest, t, credHeader.getScope())
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(secretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
+	signingKey := getSigningKey(secretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, credHeader.scope.service)
 
 	// Calculate expected signature.
 	expectedSignature := getSignature(signingKey, stringToSign)
@@ -485,7 +485,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 	}
 
 	// Get signing key.
-	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
+	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, credHeader.scope.service)
 
 	// Get signature.
 	newSignature := getSignature(signingKey, formValues.Get("Policy"))
@@ -552,11 +552,11 @@ func extractHostHeader(r *http.Request) string {
 }
 
 // getScope generate a string of a specific date, an AWS region, and a service.
-func getScope(t time.Time, region string) string {
+func getScope(t time.Time, region string, service string) string {
 	scope := strings.Join([]string{
 		t.Format(yyyymmdd),
 		region,
-		"s3",
+		service,
 		"aws4_request",
 	}, "/")
 	return scope
