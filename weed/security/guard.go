@@ -110,9 +110,9 @@ func GetActualRemoteHost(r *http.Request) string {
 	host = strings.TrimSpace(r.RemoteAddr)
 	// It might be an IPv6 address without a port, but with brackets.
 	// e.g. "[::1]"
-if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-	host = host[1 : len(host)-1]
-}
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
 
 	// Return the host (can be IP or hostname, just like headers)
 	return host
