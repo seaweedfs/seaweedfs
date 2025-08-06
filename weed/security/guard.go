@@ -78,6 +78,7 @@ func (g *Guard) WhiteList(f http.HandlerFunc) http.HandlerFunc {
 
 func GetActualRemoteHost(r *http.Request) (host string, err error) {
 	// Check X-Forwarded-For headers first (may contain comma-separated IPs)
+	// HTTP_X_FORWARDED_FOR is used for SeaweedFS internal communication when master proxies to leader
 	host = r.Header.Get("HTTP_X_FORWARDED_FOR")
 	if host == "" {
 		host = r.Header.Get("X-FORWARDED-FOR")
@@ -97,30 +98,29 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 		return host, nil
 	}
 
-	if host == "" {
-		host, _, err = net.SplitHostPort(r.RemoteAddr)
-		if err == nil {
-			return
-		}
-
-		// If SplitHostPort fails, it may be because of a missing port.
-		// We try to parse RemoteAddr as a raw IP address.
-		host = strings.TrimSpace(r.RemoteAddr)
-		// It might be an IPv6 address without a port, but with brackets.
-		// e.g. "[::1]"
-		if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
-			host = host[1 : len(host)-1]
-		}
-
-		// Validate that the result is a valid IP address.
-		if net.ParseIP(host) == nil {
-			host = ""
-			err = fmt.Errorf("invalid remote address format: %s", r.RemoteAddr)
-			return
-		}
-
-		err = nil
+	// If no host from headers, extract from RemoteAddr
+	host, _, err = net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return
 	}
+
+	// If SplitHostPort fails, it may be because of a missing port.
+	// We try to parse RemoteAddr as a raw IP address.
+	host = strings.TrimSpace(r.RemoteAddr)
+	// It might be an IPv6 address without a port, but with brackets.
+	// e.g. "[::1]"
+	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
+		host = host[1 : len(host)-1]
+	}
+
+	// Validate that the result is a valid IP address.
+	if net.ParseIP(host) == nil {
+		host = ""
+		err = fmt.Errorf("invalid remote address format: %s", r.RemoteAddr)
+		return
+	}
+
+	err = nil
 	return
 }
 
