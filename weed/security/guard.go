@@ -77,34 +77,7 @@ func (g *Guard) WhiteList(f http.HandlerFunc) http.HandlerFunc {
 }
 
 func GetActualRemoteHost(r *http.Request) string {
-	// Check X-Forwarded-For headers first (may contain comma-separated IPs)
-	// HTTP_X_FORWARDED_FOR is used for SeaweedFS internal communication when master proxies to leader
-	host := r.Header.Get("HTTP_X_FORWARDED_FOR")
-	if host == "" {
-		host = r.Header.Get("X-FORWARDED-FOR")
-	}
-	if host != "" {
-		for _, ipStr := range strings.Split(host, ",") {
-			host = strings.TrimSpace(ipStr)
-			if host != "" {
-				break
-			}
-		}
-	}
-
-	// If no valid IP from X-Forwarded-For, try X-Real-IP (single IP)
-	if host == "" {
-		host = r.Header.Get("X-Real-IP")
-	}
-
-	// If we got a host from headers, use it (can be IP or hostname)
-	if host != "" {
-		if host = strings.TrimSpace(host); host != "" {
-			return host
-		}
-	}
-
-	// If no host from headers, extract from RemoteAddr
+	// Extract from RemoteAddr
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		return host
