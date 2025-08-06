@@ -106,7 +106,7 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 	}
 
 	// If SplitHostPort fails, it may be because of a missing port.
-	// We try to parse RemoteAddr as a raw IP address.
+	// We try to parse RemoteAddr as a raw host (IP or hostname).
 	host = strings.TrimSpace(r.RemoteAddr)
 	// It might be an IPv6 address without a port, but with brackets.
 	// e.g. "[::1]"
@@ -114,13 +114,7 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 		host = host[1 : len(host)-1]
 	}
 
-	// Validate that the result is a valid IP address.
-	if net.ParseIP(host) == nil {
-		host = ""
-		err = fmt.Errorf("invalid remote address format: %s", r.RemoteAddr)
-		return
-	}
-
+	// Return the host (can be IP or hostname, just like headers)
 	err = nil
 	return
 }
