@@ -91,16 +91,10 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 		host = r.Header.Get("X-Real-IP")
 	}
 
-	// If we got a host from headers, validate it's a valid IP
+	// If we got a host from headers, use it (can be IP or hostname)
 	if host != "" {
 		host = strings.TrimSpace(host)
-		// Validate that the result is a valid IP address.
-		if net.ParseIP(host) == nil {
-			// If header contains invalid IP, fall back to RemoteAddr
-			host = ""
-		} else {
-			return host, nil
-		}
+		return host, nil
 	}
 
 	if host == "" {
@@ -141,22 +135,20 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("get actual remote host %s in checkWhiteList failed: %v", r.RemoteAddr, err)
 	}
 
-	// Additional validation: ensure host is a valid IP address
-	if net.ParseIP(host) == nil {
-		glog.V(0).Infof("Invalid IP address extracted: %s (original RemoteAddr: %s)", host, r.RemoteAddr)
-		return fmt.Errorf("invalid IP address format: %s", host)
-	}
-
+	// Check exact match first (works for both IPs and hostnames)
 	if _, ok := g.whiteListIp[host]; ok {
 		return nil
 	}
 
-	for _, cidrnet := range g.whiteListCIDR {
-		// If the whitelist entry contains a "/" it
-		// is a CIDR range, and we should check the
-		remote := net.ParseIP(host)
-		if remote != nil && cidrnet.Contains(remote) {
-			return nil
+	// Check CIDR ranges (only for valid IP addresses)
+	remote := net.ParseIP(host)
+	if remote != nil {
+		for _, cidrnet := range g.whiteListCIDR {
+			// If the whitelist entry contains a "/" it
+			// is a CIDR range, and we should check the
+			if cidrnet.Contains(remote) {
+				return nil
+			}
 		}
 	}
 
