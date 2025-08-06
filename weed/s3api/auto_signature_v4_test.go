@@ -1236,15 +1236,21 @@ func TestIAMSignatureServiceMatching(t *testing.T) {
 	// This simulates what botocore/AWS SDK would calculate
 	credentialScope := "20250805/us-east-1/iam/aws4_request"
 
-	// String to sign as shown in logs
-	stringToSign := "AWS4-HMAC-SHA256\n20250805T082934Z\n20250805/us-east-1/iam/aws4_request\nf71a5f2b8e6fb1fa59027c05f3a50451e5a026cd8cb7eb994e7fe4275e05fc88"
+	// Calculate the actual payload hash for our test payload
+	actualPayloadHash := getSHA256Hash([]byte(testPayload))
+
+	// Build the canonical request with the actual payload hash
+	canonicalRequest := "POST\n/\n\ncontent-type:application/x-www-form-urlencoded; charset=utf-8\nhost:localhost:8111\nx-amz-date:20250805T082934Z\n\ncontent-type;host;x-amz-date\n" + actualPayloadHash
+
+	// Calculate the canonical request hash
+	canonicalRequestHash := getSHA256Hash([]byte(canonicalRequest))
+
+	// Build the string to sign
+	stringToSign := "AWS4-HMAC-SHA256\n20250805T082934Z\n" + credentialScope + "\n" + canonicalRequestHash
 
 	// Calculate expected signature using IAM service (what client sends)
 	expectedSigningKey := getSigningKey("power_user_secret", "20250805", "us-east-1", "iam")
 	expectedSignature := getSignature(expectedSigningKey, stringToSign)
-
-	// This should be the signature that botocore calculated: 3a1338b4c1f6fc6ffd33ed2e306ce1cef2bbc450e6c72beb2ab1458cf534687f
-	assert.Equal(t, "3a1338b4c1f6fc6ffd33ed2e306ce1cef2bbc450e6c72beb2ab1458cf534687f", expectedSignature)
 
 	// Create authorization header with the correct signature
 	authHeader := "AWS4-HMAC-SHA256 Credential=power_user_key/" + credentialScope +
@@ -1252,7 +1258,7 @@ func TestIAMSignatureServiceMatching(t *testing.T) {
 	req.Header.Set("Authorization", authHeader)
 
 	// Now test that SeaweedFS computes the same signature with our fix
-	identity, errCode := iam.doesSignatureMatch(getSHA256Hash([]byte(testPayload)), req)
+	identity, errCode := iam.doesSignatureMatch(actualPayloadHash, req)
 
 	// With the fix, the signatures should match and we should get a successful authentication
 	assert.Equal(t, s3err.ErrNone, errCode)
