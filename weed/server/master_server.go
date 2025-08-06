@@ -259,10 +259,8 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 		proxy := httputil.NewSingleHostReverseProxy(targetUrl)
 		director := proxy.Director
 		proxy.Director = func(req *http.Request) {
-			actualHost, err := security.GetActualRemoteHost(req)
-			if err == nil {
-				req.Header.Set("HTTP_X_FORWARDED_FOR", actualHost)
-			}
+			actualHost := security.GetActualRemoteHost(req)
+			req.Header.Set("HTTP_X_FORWARDED_FOR", actualHost)
 			director(req)
 		}
 		proxy.Transport = util_http.GetGlobalHttpClient().GetClientTransport()
