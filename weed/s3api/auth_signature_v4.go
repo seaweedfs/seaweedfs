@@ -552,11 +552,11 @@ func extractHostHeader(r *http.Request) string {
 }
 
 // getScope generate a string of a specific date, an AWS region, and a service.
-func getScope(t time.Time, region string) string {
+func getScope(t time.Time, region string, service string) string {
 	scope := strings.Join([]string{
 		t.Format(yyyymmdd),
 		region,
-		"s3",
+		service,
 		"aws4_request",
 	}, "/")
 	return scope
