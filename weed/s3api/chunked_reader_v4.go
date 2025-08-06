@@ -118,7 +118,7 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	stringToSign := getStringToSign(canonicalRequest, date, signV4Values.Credential.getScope())
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), region, "s3")
+	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), region, signV4Values.Credential.scope.service)
 
 	// Calculate signature.
 	newSignature := getSignature(signingKey, stringToSign)
