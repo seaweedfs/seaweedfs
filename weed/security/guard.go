@@ -83,8 +83,8 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 	if host == "" {
 		host = r.Header.Get("X-FORWARDED-FOR")
 	}
-	if strings.Contains(host, ",") {
-		host = host[0:strings.Index(host, ",")]
+	if i := strings.Index(host, ","); i >= 0 {
+		host = host[:i]
 	}
 
 	// If no valid IP from X-Forwarded-For, try X-Real-IP (single IP)
