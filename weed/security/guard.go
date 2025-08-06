@@ -77,7 +77,8 @@ func (g *Guard) WhiteList(f http.HandlerFunc) http.HandlerFunc {
 }
 
 func GetActualRemoteHost(r *http.Request) string {
-	// Extract from RemoteAddr
+	// For security reasons, only use RemoteAddr to determine the client's IP address.
+	// Do not trust headers like X-Forwarded-For, as they can be easily spoofed by clients.
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		return host
