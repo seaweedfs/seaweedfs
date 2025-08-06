@@ -1252,7 +1252,7 @@ func TestIAMSignatureServiceMatching(t *testing.T) {
 	req.Header.Set("Authorization", authHeader)
 
 	// Now test that SeaweedFS computes the same signature with our fix
-identity, errCode := iam.doesSignatureMatch(getSHA256Hash([]byte(testPayload)), req)
+	identity, errCode := iam.doesSignatureMatch(getSHA256Hash([]byte(testPayload)), req)
 
 	// With the fix, the signatures should match and we should get a successful authentication
 	assert.Equal(t, s3err.ErrNone, errCode)
