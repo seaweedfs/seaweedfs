@@ -77,6 +77,7 @@ func (g *Guard) WhiteList(f http.HandlerFunc) http.HandlerFunc {
 }
 
 func GetActualRemoteHost(r *http.Request) (host string, err error) {
+	// Check X-Forwarded-For headers first (may contain comma-separated IPs)
 	host = r.Header.Get("HTTP_X_FORWARDED_FOR")
 	if host == "" {
 		host = r.Header.Get("X-FORWARDED-FOR")
@@ -84,6 +85,24 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 	if strings.Contains(host, ",") {
 		host = host[0:strings.Index(host, ",")]
 	}
+
+	// If no valid IP from X-Forwarded-For, try X-Real-IP (single IP)
+	if host == "" {
+		host = r.Header.Get("X-Real-IP")
+	}
+
+	// If we got a host from headers, validate it's a valid IP
+	if host != "" {
+		host = strings.TrimSpace(host)
+		// Validate that the result is a valid IP address.
+		if net.ParseIP(host) == nil {
+			// If header contains invalid IP, fall back to RemoteAddr
+			host = ""
+		} else {
+			return host, nil
+		}
+	}
+
 	if host == "" {
 		host, _, err = net.SplitHostPort(r.RemoteAddr)
 		if err == nil {
