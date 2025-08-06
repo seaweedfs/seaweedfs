@@ -3,10 +3,11 @@ package security
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 var (
@@ -85,6 +86,17 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 	}
 	if host == "" {
 		host, _, err = net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			// If SplitHostPort fails, try to use RemoteAddr directly as host
+			// This handles cases where RemoteAddr might not be in host:port format
+			host = r.RemoteAddr
+			// Try to parse as IP to validate
+			if parsed := net.ParseIP(host); parsed != nil {
+				err = nil
+			} else {
+				err = fmt.Errorf("invalid remote address format: %s", r.RemoteAddr)
+			}
+		}
 	}
 	return
 }
@@ -96,6 +108,7 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 
 	host, err := GetActualRemoteHost(r)
 	if err != nil {
+		glog.V(0).Infof("Failed to extract host from RemoteAddr %s: %v", r.RemoteAddr, err)
 		return fmt.Errorf("get actual remote host %s in checkWhiteList failed: %v", r.RemoteAddr, err)
 	}
 
@@ -112,8 +125,8 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	glog.V(0).Infof("Not in whitelist: %s", r.RemoteAddr)
-	return fmt.Errorf("Not in whitelist: %s", r.RemoteAddr)
+	glog.V(0).Infof("Not in whitelist: %s (original RemoteAddr: %s)", host, r.RemoteAddr)
+	return fmt.Errorf("Not in whitelist: %s", host)
 }
 
 func (g *Guard) UpdateWhiteList(whiteList []string) {
