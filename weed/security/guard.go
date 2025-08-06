@@ -95,7 +95,7 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 		host = r.RemoteAddr
 		// It might be an IPv6 address without a port, but with brackets.
 		// e.g. "[::1]"
-		if len(host) > 1 && host[0] == '[' && host[len(host)-1] == ']' {
+		if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
 			host = host[1 : len(host)-1]
 		}
 
