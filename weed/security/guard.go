@@ -141,6 +141,12 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("get actual remote host %s in checkWhiteList failed: %v", r.RemoteAddr, err)
 	}
 
+	// Additional validation: ensure host is a valid IP address
+	if net.ParseIP(host) == nil {
+		glog.V(0).Infof("Invalid IP address extracted: %s (original RemoteAddr: %s)", host, r.RemoteAddr)
+		return fmt.Errorf("invalid IP address format: %s", host)
+	}
+
 	if _, ok := g.whiteListIp[host]; ok {
 		return nil
 	}
@@ -149,7 +155,7 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 		// If the whitelist entry contains a "/" it
 		// is a CIDR range, and we should check the
 		remote := net.ParseIP(host)
-		if cidrnet.Contains(remote) {
+		if remote != nil && cidrnet.Contains(remote) {
 			return nil
 		}
 	}
