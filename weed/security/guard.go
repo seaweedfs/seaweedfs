@@ -94,8 +94,9 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 
 	// If we got a host from headers, use it (can be IP or hostname)
 	if host != "" {
-		host = strings.TrimSpace(host)
-		return host, nil
+		if host = strings.TrimSpace(host); host != "" {
+			return host, nil
+		}
 	}
 
 	// If no host from headers, extract from RemoteAddr
