@@ -76,10 +76,10 @@ func (g *Guard) WhiteList(f http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func GetActualRemoteHost(r *http.Request) (host string, err error) {
+func GetActualRemoteHost(r *http.Request) string {
 	// Check X-Forwarded-For headers first (may contain comma-separated IPs)
 	// HTTP_X_FORWARDED_FOR is used for SeaweedFS internal communication when master proxies to leader
-	host = r.Header.Get("HTTP_X_FORWARDED_FOR")
+	host := r.Header.Get("HTTP_X_FORWARDED_FOR")
 	if host == "" {
 		host = r.Header.Get("X-FORWARDED-FOR")
 	}
@@ -95,14 +95,14 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 	// If we got a host from headers, use it (can be IP or hostname)
 	if host != "" {
 		if host = strings.TrimSpace(host); host != "" {
-			return host, nil
+			return host
 		}
 	}
 
 	// If no host from headers, extract from RemoteAddr
-	host, _, err = net.SplitHostPort(r.RemoteAddr)
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
-		return
+		return host
 	}
 
 	// If SplitHostPort fails, it may be because of a missing port.
@@ -115,8 +115,7 @@ func GetActualRemoteHost(r *http.Request) (host string, err error) {
 	}
 
 	// Return the host (can be IP or hostname, just like headers)
-	err = nil
-	return
+	return host
 }
 
 func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
@@ -124,11 +123,7 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 
-	host, err := GetActualRemoteHost(r)
-	if err != nil {
-		glog.V(0).Infof("Failed to extract host from RemoteAddr %s: %v", r.RemoteAddr, err)
-		return fmt.Errorf("get actual remote host %s in checkWhiteList failed: %v", r.RemoteAddr, err)
-	}
+	host := GetActualRemoteHost(r)
 
 	// Check exact match first (works for both IPs and hostnames)
 	if _, ok := g.whiteListIp[host]; ok {
