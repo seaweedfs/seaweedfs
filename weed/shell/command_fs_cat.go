@@ -3,10 +3,11 @@ package shell
 import (
 	"context"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"io"
 )
 
 func init() {

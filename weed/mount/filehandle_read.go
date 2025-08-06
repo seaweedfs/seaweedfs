@@ -23,6 +23,10 @@ func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64, tsNs in
 }
 
 func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, int64, error) {
+	return fh.readFromChunksWithContext(context.Background(), buff, offset)
+}
+
+func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte, offset int64) (int64, int64, error) {
 	fh.entryLock.RLock()
 	defer fh.entryLock.RUnlock()
 
@@ -60,7 +64,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, int64, e
 		return int64(totalRead), 0, nil
 	}
 
-	totalRead, ts, err := fh.entryChunkGroup.ReadDataAt(fileSize, buff, offset)
+	totalRead, ts, err := fh.entryChunkGroup.ReadDataAt(ctx, fileSize, buff, offset)
 
 	if err != nil && err != io.EOF {
 		glog.Errorf("file handle read %s: %v", fileFullPath, err)

@@ -1,12 +1,13 @@
 package mount
 
 import (
+	"os"
+	"sync"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"os"
-	"sync"
 )
 
 type FileHandleId uint64
