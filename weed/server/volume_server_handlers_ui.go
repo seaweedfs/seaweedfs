@@ -1,11 +1,13 @@
 package weed_server
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"path/filepath"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	ui "github.com/seaweedfs/seaweedfs/weed/server/volume_server_ui"
@@ -53,5 +55,8 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		infos,
 		serverStats,
 	}
-	ui.StatusTpl.Execute(w, args)
+	if err := ui.StatusTpl.Execute(w, args); err != nil {
+		glog.Errorf("template execution error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
 }

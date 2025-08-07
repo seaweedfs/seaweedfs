@@ -178,9 +178,11 @@ func (ev *EcVolume) ShardSize() uint64 {
 	return 0
 }
 
-func (ev *EcVolume) Size() (size int64) {
+func (ev *EcVolume) Size() (size uint64) {
 	for _, shard := range ev.Shards {
-		size += shard.Size()
+		if shardSize := shard.Size(); shardSize > 0 {
+			size += uint64(shardSize)
+		}
 	}
 	return
 }
@@ -198,15 +200,18 @@ func (ev *EcVolume) ShardIdList() (shardIds []ShardId) {
 
 type ShardInfo struct {
 	ShardId ShardId
-	Size    int64
+	Size    uint64
 }
 
 func (ev *EcVolume) ShardDetails() (shards []ShardInfo) {
 	for _, s := range ev.Shards {
-		shards = append(shards, ShardInfo{
-			ShardId: s.ShardId,
-			Size:    s.Size(),
-		})
+		shardSize := s.Size()
+		if shardSize > 0 {
+			shards = append(shards, ShardInfo{
+				ShardId: s.ShardId,
+				Size:    uint64(shardSize),
+			})
+		}
 	}
 	return
 }
