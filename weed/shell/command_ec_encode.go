@@ -36,8 +36,8 @@ func (c *commandEcEncode) Name() string {
 func (c *commandEcEncode) Help() string {
 	return `apply erasure coding to a volume
 
-	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h]
-	ec.encode [-collection=""] [-volumeId=<volume_id>]
+	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h] [-verbose]
+	ec.encode [-collection=""] [-volumeId=<volume_id>] [-verbose]
 
 	This command will:
 	1. freeze one volume
@@ -52,6 +52,9 @@ func (c *commandEcEncode) Help() string {
 
 	If you only have less than 4 volume servers, with erasure coding, at least you can afford to
 	have 4 corrupted shard files.
+
+	Options:
+	  -verbose: show detailed reasons why volumes are not selected for encoding
 
 	Re-balancing algorithm:
 	` + ecBalanceAlgorithmDescription
@@ -72,6 +75,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
 	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	applyBalancing := encodeCommand.Bool("rebalance", false, "re-balance EC shards after creation")
+	verbose := encodeCommand.Bool("verbose", false, "show detailed reasons why volumes are not selected for encoding")
 
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
@@ -109,7 +113,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		balanceCollections = collectCollectionsForVolumeIds(topologyInfo, volumeIds)
 	} else {
 		// apply to all volumes for the given collection
-		volumeIds, err = collectVolumeIdsForEcEncode(commandEnv, *collection, nil, *fullPercentage, *quietPeriod)
+		volumeIds, err = collectVolumeIdsForEcEncode(commandEnv, *collection, nil, *fullPercentage, *quietPeriod, *verbose)
 		if err != nil {
 			return err
 		}
@@ -266,7 +270,7 @@ func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, 
 
 }
 
-func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, sourceDiskType *types.DiskType, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
+func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, sourceDiskType *types.DiskType, fullPercentage float64, quietPeriod time.Duration, verbose bool) (vids []needle.VolumeId, err error) {
 	// collect topology information
 	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
@@ -278,32 +282,107 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 
 	fmt.Printf("collect volumes quiet for: %d seconds and %.1f%% full\n", quietSeconds, fullPercentage)
 
+	// Statistics for verbose mode
+	var (
+		totalVolumes    int
+		remoteVolumes   int
+		wrongCollection int
+		wrongDiskType   int
+		tooRecent       int
+		tooSmall        int
+		noFreeDisk      int
+		selectedVolumes int
+	)
+
 	vidMap := make(map[uint32]bool)
 	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
+				totalVolumes++
+
 				// ignore remote volumes
 				if v.RemoteStorageName != "" && v.RemoteStorageKey != "" {
+					remoteVolumes++
+					if verbose {
+						fmt.Printf("skip volume %d on %s: remote volume (storage: %s, key: %s)\n",
+							v.Id, dn.Id, v.RemoteStorageName, v.RemoteStorageKey)
+					}
 					continue
 				}
-				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds &&
-					(sourceDiskType == nil || types.ToDiskType(v.DiskType) == *sourceDiskType) {
-					if float64(v.Size) > fullPercentage/100*float64(volumeSizeLimitMb)*1024*1024 {
-						if good, found := vidMap[v.Id]; found {
-							if good {
-								if diskInfo.FreeVolumeCount < 2 {
-									glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
-									vidMap[v.Id] = false
-								}
+
+				// check collection
+				if v.Collection != selectedCollection {
+					wrongCollection++
+					if verbose {
+						fmt.Printf("skip volume %d on %s: wrong collection (expected: %s, actual: %s)\n",
+							v.Id, dn.Id, selectedCollection, v.Collection)
+					}
+					continue
+				}
+
+				// check disk type
+				if sourceDiskType != nil && types.ToDiskType(v.DiskType) != *sourceDiskType {
+					wrongDiskType++
+					if verbose {
+						fmt.Printf("skip volume %d on %s: wrong disk type (expected: %s, actual: %s)\n",
+							v.Id, dn.Id, sourceDiskType.ReadableString(), types.ToDiskType(v.DiskType).ReadableString())
+					}
+					continue
+				}
+
+				// check quiet period
+				if v.ModifiedAtSecond+quietSeconds >= nowUnixSeconds {
+					tooRecent++
+					if verbose {
+						fmt.Printf("skip volume %d on %s: too recently modified (last modified: %d seconds ago, required: %d seconds)\n",
+							v.Id, dn.Id, nowUnixSeconds-v.ModifiedAtSecond, quietSeconds)
+					}
+					continue
+				}
+
+				// check size
+				sizeThreshold := fullPercentage / 100 * float64(volumeSizeLimitMb) * 1024 * 1024
+				if float64(v.Size) <= sizeThreshold {
+					tooSmall++
+					if verbose {
+						fmt.Printf("skip volume %d on %s: too small (size: %.1f MB, threshold: %.1f MB, %.1f%% full)\n",
+							v.Id, dn.Id, float64(v.Size)/(1024*1024), sizeThreshold/(1024*1024),
+							float64(v.Size)/sizeThreshold*100)
+					}
+					continue
+				}
+
+				// check free disk space
+				if good, found := vidMap[v.Id]; found {
+					if good {
+						if diskInfo.FreeVolumeCount < 2 {
+							glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
+							if verbose {
+								fmt.Printf("skip volume %d on %s: insufficient free disk space (free volumes: %d, required: 2)\n",
+									v.Id, dn.Id, diskInfo.FreeVolumeCount)
 							}
-						} else {
-							if diskInfo.FreeVolumeCount < 2 {
-								glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
-								vidMap[v.Id] = false
-							} else {
-								vidMap[v.Id] = true
-							}
+							vidMap[v.Id] = false
+							noFreeDisk++
 						}
+					}
+				} else {
+					if diskInfo.FreeVolumeCount < 2 {
+						glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
+						if verbose {
+							fmt.Printf("skip volume %d on %s: insufficient free disk space (free volumes: %d, required: 2)\n",
+								v.Id, dn.Id, diskInfo.FreeVolumeCount)
+						}
+						vidMap[v.Id] = false
+						noFreeDisk++
+					} else {
+						if verbose {
+							fmt.Printf("selected volume %d on %s: size %.1f MB (%.1f%% full), last modified %d seconds ago, free volumes: %d\n",
+								v.Id, dn.Id, float64(v.Size)/(1024*1024),
+								float64(v.Size)/sizeThreshold*100,
+								nowUnixSeconds-v.ModifiedAtSecond, diskInfo.FreeVolumeCount)
+						}
+						vidMap[v.Id] = true
+						selectedVolumes++
 					}
 				}
 			}
@@ -314,6 +393,36 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 		if good {
 			vids = append(vids, needle.VolumeId(vid))
 		}
+	}
+
+	// Print summary statistics in verbose mode or when no volumes selected
+	if verbose || len(vids) == 0 {
+		fmt.Printf("\nVolume selection summary:\n")
+		fmt.Printf("  Total volumes examined: %d\n", totalVolumes)
+		fmt.Printf("  Selected for encoding: %d\n", len(vids))
+
+		if totalVolumes > 0 {
+			fmt.Printf("\nReasons for exclusion:\n")
+			if remoteVolumes > 0 {
+				fmt.Printf("  Remote volumes: %d\n", remoteVolumes)
+			}
+			if wrongCollection > 0 {
+				fmt.Printf("  Wrong collection: %d\n", wrongCollection)
+			}
+			if wrongDiskType > 0 {
+				fmt.Printf("  Wrong disk type: %d\n", wrongDiskType)
+			}
+			if tooRecent > 0 {
+				fmt.Printf("  Too recently modified: %d\n", tooRecent)
+			}
+			if tooSmall > 0 {
+				fmt.Printf("  Too small (< %.1f%% full): %d\n", fullPercentage, tooSmall)
+			}
+			if noFreeDisk > 0 {
+				fmt.Printf("  Insufficient free disk space: %d\n", noFreeDisk)
+			}
+		}
+		fmt.Println()
 	}
 
 	return
