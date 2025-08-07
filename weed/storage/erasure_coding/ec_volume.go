@@ -206,7 +206,7 @@ type ShardInfo struct {
 func (ev *EcVolume) ShardDetails() (shards []ShardInfo) {
 	for _, s := range ev.Shards {
 		shardSize := s.Size()
-		if shardSize > 0 {
+		if shardSize >= 0 {
 			shards = append(shards, ShardInfo{
 				ShardId: s.ShardId,
 				Size:    uint64(shardSize),
