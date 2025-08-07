@@ -932,8 +932,8 @@ func (ecb *ecBalancer) pickEcNodeToBalanceShardsInto(vid needle.VolumeId, existi
 		}
 
 		shards := nodeShards[node]
-		if ecb.replicaPlacement != nil && shards > ecb.replicaPlacement.SameRackCount {
-			details += fmt.Sprintf("  Skipped %s because shards %d > replica placement limit for the rack (%d)\n", node.info.Id, shards, ecb.replicaPlacement.SameRackCount)
+		if ecb.replicaPlacement != nil && shards > ecb.replicaPlacement.SameRackCount+1 {
+			details += fmt.Sprintf("  Skipped %s because shards %d > replica placement limit for the rack (%d + 1)\n", node.info.Id, shards, ecb.replicaPlacement.SameRackCount)
 			continue
 		}
 
