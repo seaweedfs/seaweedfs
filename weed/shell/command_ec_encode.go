@@ -291,7 +291,6 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 		tooRecent       int
 		tooSmall        int
 		noFreeDisk      int
-		selectedVolumes int
 	)
 
 	vidMap := make(map[uint32]bool)
@@ -347,7 +346,7 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 					if verbose {
 						fmt.Printf("skip volume %d on %s: too small (size: %.1f MB, threshold: %.1f MB, %.1f%% full)\n",
 							v.Id, dn.Id, float64(v.Size)/(1024*1024), sizeThreshold/(1024*1024),
-							float64(v.Size)/sizeThreshold*100)
+							float64(v.Size)*100/(float64(volumeSizeLimitMb)*1024*1024))
 					}
 					continue
 				}
@@ -378,11 +377,10 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 						if verbose {
 							fmt.Printf("selected volume %d on %s: size %.1f MB (%.1f%% full), last modified %d seconds ago, free volumes: %d\n",
 								v.Id, dn.Id, float64(v.Size)/(1024*1024),
-								float64(v.Size)/sizeThreshold*100,
+								float64(v.Size)*100/(float64(volumeSizeLimitMb)*1024*1024),
 								nowUnixSeconds-v.ModifiedAtSecond, diskInfo.FreeVolumeCount)
 						}
 						vidMap[v.Id] = true
-						selectedVolumes++
 					}
 				}
 			}
