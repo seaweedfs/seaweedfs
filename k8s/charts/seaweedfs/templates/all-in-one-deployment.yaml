@@ -15,7 +15,7 @@ metadata:
     {{- toYaml .Values.allInOne.annotations | nindent 4 }}
   {{- end }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.allInOne.replicas | default 1 }}
   strategy:
     type: Recreate
   selector:
