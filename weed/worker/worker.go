@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,43 +77,39 @@ func GenerateOrLoadWorkerID(workingDir string) (string, error) {
 		}
 	}
 
-	// Generate new unique worker ID with host information
+	// Generate simplified worker ID
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "unknown"
 	}
 
-	// Get local IP address for better host identification
-	var hostIP string
-	if addrs, err := net.InterfaceAddrs(); err == nil {
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-				if ipnet.IP.To4() != nil {
-					hostIP = ipnet.IP.String()
-					break
-				}
+	// Use short hostname - take first 6 chars or last part after dots
+	shortHostname := hostname
+	if len(hostname) > 6 {
+		if parts := strings.Split(hostname, "."); len(parts) > 1 {
+			// Use last part before domain (e.g., "worker1" from "worker1.example.com")
+			shortHostname = parts[0]
+			if len(shortHostname) > 6 {
+				shortHostname = shortHostname[:6]
 			}
+		} else {
+			// Use first 6 characters
+			shortHostname = hostname[:6]
 		}
 	}
-	if hostIP == "" {
-		hostIP = "noip"
-	}
 
-	// Create host identifier combining hostname and IP
-	hostID := fmt.Sprintf("%s@%s", hostname, hostIP)
-
-	// Generate random component for uniqueness
-	randomBytes := make([]byte, 4)
+	// Generate random component for uniqueness (2 bytes = 4 hex chars)
+	randomBytes := make([]byte, 2)
 	var workerID string
 	if _, err := rand.Read(randomBytes); err != nil {
-		// Fallback to timestamp if crypto/rand fails
-		workerID = fmt.Sprintf("worker-%s-%d", hostID, time.Now().Unix())
+		// Fallback to short timestamp if crypto/rand fails
+		timestamp := time.Now().Unix() % 10000 // last 4 digits
+		workerID = fmt.Sprintf("w-%s-%04d", shortHostname, timestamp)
 		glog.Infof("Generated fallback worker ID: %s", workerID)
 	} else {
-		// Use random bytes + timestamp for uniqueness
+		// Use random hex for uniqueness
 		randomHex := fmt.Sprintf("%x", randomBytes)
-		timestamp := time.Now().Unix()
-		workerID = fmt.Sprintf("worker-%s-%s-%d", hostID, randomHex, timestamp)
+		workerID = fmt.Sprintf("w-%s-%s", shortHostname, randomHex)
 		glog.Infof("Generated new worker ID: %s", workerID)
 	}
 
