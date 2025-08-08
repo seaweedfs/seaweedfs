@@ -42,6 +42,9 @@ func RegisterErasureCodingTask() {
 			if params == nil {
 				return nil, fmt.Errorf("task parameters are required")
 			}
+			if len(params.Sources) == 0 {
+				return nil, fmt.Errorf("at least one source is required for erasure coding task")
+			}
 			return NewErasureCodingTask(
 				fmt.Sprintf("erasure_coding-%d", params.VolumeId),
 				params.Sources[0].Node, // Use first source node

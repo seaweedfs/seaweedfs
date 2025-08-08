@@ -80,9 +80,12 @@ func (t *TypedTask) EstimateTimeTyped(params *worker_pb.TaskParams) time.Duratio
 	}
 
 	// Estimate based on volume size from sources (1 minute per GB)
-	if len(params.Sources) > 0 && params.Sources[0].EstimatedSize > 0 {
-		gbSize := params.Sources[0].EstimatedSize / (1024 * 1024 * 1024)
-		return time.Duration(gbSize) * time.Minute
+	if len(params.Sources) > 0 {
+		source := params.Sources[0]
+		if source.EstimatedSize > 0 {
+			gbSize := source.EstimatedSize / (1024 * 1024 * 1024)
+			return time.Duration(gbSize) * time.Minute
+		}
 	}
 
 	// Default estimation

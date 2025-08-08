@@ -361,7 +361,7 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 		}
 
 		// Convert storage impact to estimated size
-		if source.StorageImpact != nil {
+		if source.EstimatedSize != nil {
 			pbSource.EstimatedSize = uint64(*source.EstimatedSize)
 		}
 
