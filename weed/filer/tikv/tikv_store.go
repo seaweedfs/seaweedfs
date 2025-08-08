@@ -271,7 +271,10 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 				break
 			}
 		}
-		return err
+		if decodeErr != nil {
+			return decodeErr
+		}
+		return nil
 	})
 	if err != nil {
 		return lastFileName, fmt.Errorf("prefix list %s : %v", dirPath, err)
