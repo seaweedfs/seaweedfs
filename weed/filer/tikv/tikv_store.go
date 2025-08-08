@@ -230,11 +230,6 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 		defer iter.Close()
 		i := int64(0)
 		for iter.Valid() {
-			// Check limit before processing entry (consistent with original behavior)
-			if limit > 0 && i >= limit {
-				break
-			}
-
 			key := iter.Key()
 			if !bytes.HasPrefix(key, directoryPrefix) {
 				break
@@ -252,6 +247,12 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 				}
 				continue
 			}
+
+			// Check limit only before processing valid entries
+			if limit > 0 && i >= limit {
+				break
+			}
+
 			lastFileName = fileName
 			entry := &filer.Entry{
 				FullPath: util.NewFullPath(string(dirPath), fileName),
@@ -271,10 +272,7 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 				break
 			}
 		}
-		if decodeErr != nil {
-			return decodeErr
-		}
-		return nil
+		return err
 	})
 	if err != nil {
 		return lastFileName, fmt.Errorf("prefix list %s : %v", dirPath, err)
