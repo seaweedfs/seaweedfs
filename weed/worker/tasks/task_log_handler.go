@@ -55,7 +55,7 @@ func (h *TaskLogHandler) HandleLogRequest(request *worker_pb.TaskLogRequest) *wo
 				Fields:    map[string]string{"source": "task_log_handler"},
 			},
 		}
-		response.Success = true // Set to true so we can return diagnostic info
+		// response.Success remains false to indicate logs were not found
 		return response
 	}
 
