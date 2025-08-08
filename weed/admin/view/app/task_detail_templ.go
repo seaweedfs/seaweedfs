@@ -1021,12 +1021,51 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if data.Task.Status == maintenance.TaskStatusPending || data.Task.Status == maintenance.TaskStatusAssigned {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 121, "<button type=\"button\" class=\"btn btn-danger me-2\" onclick=\"cancelTask('{data.Task.ID}')\"><i class=\"fas fa-times me-1\"></i> Cancel Task</button> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 121, "<button type=\"button\" class=\"btn btn-danger me-2\" data-task-id=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var49 string
+			templ_7745c5c3_Var49, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 502, Col: 104}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var49))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 122, "\" onclick=\"cancelTask(this.getAttribute('data-task-id'))\"><i class=\"fas fa-times me-1\"></i> Cancel Task</button> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 122, "<button type=\"button\" class=\"btn btn-secondary me-2\" onclick=\"refreshTaskLogs('{data.Task.ID}')\"><i class=\"fas fa-sync-alt me-1\"></i> Refresh Logs</button> <button type=\"button\" class=\"btn btn-info\" onclick=\"exportTaskDetail('{data.Task.ID}')\"><i class=\"fas fa-download me-1\"></i> Export Details</button></div></div></div></div></div><script>\n    function refreshPage() {\n        location.reload();\n    }\n\n    function cancelTask(taskId) {\n        if (confirm('Are you sure you want to cancel this task?')) {\n            fetch(`/api/maintenance/tasks/${taskId}/cancel`, {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Task cancelled successfully');\n                    location.reload();\n                } else {\n                    alert('Error cancelling task: ' + data.error);\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                alert('Error cancelling task');\n            });\n        }\n    }\n\n    function refreshTaskLogs(taskId) {\n        fetch(`/api/maintenance/tasks/${taskId}/detail`)\n        .then(response => response.json())\n        .then(data => {\n            location.reload();\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error refreshing logs');\n        });\n    }\n\n    function exportTaskDetail(taskId) {\n        fetch(`/api/maintenance/tasks/${taskId}/detail`)\n        .then(response => response.json())\n        .then(data => {\n            const dataStr = JSON.stringify(data, null, 2);\n            const dataBlob = new Blob([dataStr], {type: 'application/json'});\n            const url = URL.createObjectURL(dataBlob);\n            const link = document.createElement('a');\n            link.href = url;\n            link.download = `task-${taskId}-detail.json`;\n            link.click();\n            URL.revokeObjectURL(url);\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error exporting task detail');\n        });\n    }\n\n    // Auto-refresh every 30 seconds for active tasks\n    if ('{string(data.Task.Status)}' === 'in_progress') {\n        setInterval(refreshPage, 30000);\n    }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 123, "<button type=\"button\" class=\"btn btn-secondary me-2\" data-task-id=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var50 string
+		templ_7745c5c3_Var50, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 507, Col: 103}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var50))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 124, "\" onclick=\"refreshTaskLogs(this.getAttribute('data-task-id'))\"><i class=\"fas fa-sync-alt me-1\"></i> Refresh Logs</button> <button type=\"button\" class=\"btn btn-info\" data-task-id=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var51 string
+		templ_7745c5c3_Var51, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 511, Col: 93}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var51))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 125, "\" onclick=\"exportTaskDetail(this.getAttribute('data-task-id'))\"><i class=\"fas fa-download me-1\"></i> Export Details</button></div></div></div></div></div><script>\n    function refreshPage() {\n        location.reload();\n    }\n\n    function cancelTask(taskId) {\n        if (confirm('Are you sure you want to cancel this task?')) {\n            fetch(`/api/maintenance/tasks/${taskId}/cancel`, {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Task cancelled successfully');\n                    location.reload();\n                } else {\n                    alert('Error cancelling task: ' + data.error);\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                alert('Error cancelling task');\n            });\n        }\n    }\n\n    function refreshTaskLogs(taskId) {\n        fetch(`/api/maintenance/tasks/${taskId}/detail`)\n        .then(response => response.json())\n        .then(data => {\n            location.reload();\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error refreshing logs');\n        });\n    }\n\n    function exportTaskDetail(taskId) {\n        fetch(`/api/maintenance/tasks/${taskId}/detail`)\n        .then(response => response.json())\n        .then(data => {\n            const dataStr = JSON.stringify(data, null, 2);\n            const dataBlob = new Blob([dataStr], {type: 'application/json'});\n            const url = URL.createObjectURL(dataBlob);\n            const link = document.createElement('a');\n            link.href = url;\n            link.download = `task-${taskId}-detail.json`;\n            link.click();\n            URL.revokeObjectURL(url);\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error exporting task detail');\n        });\n    }\n\n    // Auto-refresh every 30 seconds for active tasks\n    if ('{string(data.Task.Status)}' === 'in_progress') {\n        setInterval(refreshPage, 30000);\n    }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

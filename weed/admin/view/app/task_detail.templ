@@ -499,16 +499,16 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                     </div>
                     <div class="card-body">
                         if data.Task.Status == maintenance.TaskStatusPending || data.Task.Status == maintenance.TaskStatusAssigned {
-                            <button type="button" class="btn btn-danger me-2" onclick="cancelTask('{data.Task.ID}')">
+                            <button type="button" class="btn btn-danger me-2" data-task-id={data.Task.ID} onclick="cancelTask(this.getAttribute('data-task-id'))">
                                 <i class="fas fa-times me-1"></i>
                                 Cancel Task
                             </button>
                         }
-                        <button type="button" class="btn btn-secondary me-2" onclick="refreshTaskLogs('{data.Task.ID}')">
+                        <button type="button" class="btn btn-secondary me-2" data-task-id={data.Task.ID} onclick="refreshTaskLogs(this.getAttribute('data-task-id'))">
                             <i class="fas fa-sync-alt me-1"></i>
                             Refresh Logs
                         </button>
-                        <button type="button" class="btn btn-info" onclick="exportTaskDetail('{data.Task.ID}')">
+                        <button type="button" class="btn btn-info" data-task-id={data.Task.ID} onclick="exportTaskDetail(this.getAttribute('data-task-id'))">
                             <i class="fas fa-download me-1"></i>
                             Export Details
                         </button>
