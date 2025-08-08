@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
@@ -53,6 +54,35 @@ type (
 	BalanceTaskConfig       = worker_pb.BalanceTaskConfig
 	ReplicationTaskConfig   = worker_pb.ReplicationTaskConfig
 )
+
+// isValidTaskID validates that a task ID is safe for use in file paths
+// This prevents path traversal attacks by ensuring the task ID doesn't contain
+// path separators or parent directory references
+func isValidTaskID(taskID string) bool {
+	if taskID == "" {
+		return false
+	}
+
+	// Reject task IDs with leading or trailing whitespace
+	if strings.TrimSpace(taskID) != taskID {
+		return false
+	}
+
+	// Check for path traversal patterns
+	if strings.Contains(taskID, "/") ||
+		strings.Contains(taskID, "\\") ||
+		strings.Contains(taskID, "..") ||
+		strings.Contains(taskID, ":") {
+		return false
+	}
+
+	// Additional safety: ensure it's not just dots or empty after trim
+	if taskID == "." || taskID == ".." {
+		return false
+	}
+
+	return true
+}
 
 // ConfigPersistence handles saving and loading configuration files
 type ConfigPersistence struct {
@@ -704,6 +734,11 @@ func (cp *ConfigPersistence) SaveTaskDetail(taskID string, detail *maintenance.T
 		return fmt.Errorf("no data directory specified, cannot save task detail")
 	}
 
+	// Validate task ID to prevent path traversal
+	if !isValidTaskID(taskID) {
+		return fmt.Errorf("invalid task ID: %q contains illegal path characters", taskID)
+	}
+
 	taskDetailDir := filepath.Join(cp.dataDir, TaskDetailsSubdir)
 	if err := os.MkdirAll(taskDetailDir, ConfigDirPermissions); err != nil {
 		return fmt.Errorf("failed to create task details directory: %w", err)
@@ -730,6 +765,11 @@ func (cp *ConfigPersistence) LoadTaskDetail(taskID string) (*maintenance.TaskDet
 		return nil, fmt.Errorf("no data directory specified, cannot load task detail")
 	}
 
+	// Validate task ID to prevent path traversal
+	if !isValidTaskID(taskID) {
+		return nil, fmt.Errorf("invalid task ID: %q contains illegal path characters", taskID)
+	}
+
 	taskDetailPath := filepath.Join(cp.dataDir, TaskDetailsSubdir, fmt.Sprintf("%s.json", taskID))
 	if _, err := os.Stat(taskDetailPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("task detail file not found: %s", taskID)
@@ -753,6 +793,11 @@ func (cp *ConfigPersistence) LoadTaskDetail(taskID string) (*maintenance.TaskDet
 func (cp *ConfigPersistence) SaveTaskExecutionLogs(taskID string, logs []*maintenance.TaskExecutionLog) error {
 	if cp.dataDir == "" {
 		return fmt.Errorf("no data directory specified, cannot save task logs")
+	}
+
+	// Validate task ID to prevent path traversal
+	if !isValidTaskID(taskID) {
+		return fmt.Errorf("invalid task ID: %q contains illegal path characters", taskID)
 	}
 
 	taskLogsDir := filepath.Join(cp.dataDir, TaskLogsSubdir)
@@ -788,6 +833,11 @@ func (cp *ConfigPersistence) LoadTaskExecutionLogs(taskID string) ([]*maintenanc
 		return nil, fmt.Errorf("no data directory specified, cannot load task logs")
 	}
 
+	// Validate task ID to prevent path traversal
+	if !isValidTaskID(taskID) {
+		return nil, fmt.Errorf("invalid task ID: %q contains illegal path characters", taskID)
+	}
+
 	taskLogsPath := filepath.Join(cp.dataDir, TaskLogsSubdir, fmt.Sprintf("%s.json", taskID))
 	if _, err := os.Stat(taskLogsPath); os.IsNotExist(err) {
 		// Return empty slice if logs don't exist yet
@@ -815,6 +865,11 @@ func (cp *ConfigPersistence) LoadTaskExecutionLogs(taskID string) ([]*maintenanc
 func (cp *ConfigPersistence) DeleteTaskDetail(taskID string) error {
 	if cp.dataDir == "" {
 		return fmt.Errorf("no data directory specified, cannot delete task detail")
+	}
+
+	// Validate task ID to prevent path traversal
+	if !isValidTaskID(taskID) {
+		return fmt.Errorf("invalid task ID: %q contains illegal path characters", taskID)
 	}
 
 	// Delete task detail file
@@ -912,6 +967,11 @@ func (cp *ConfigPersistence) SaveTaskState(task *maintenance.MaintenanceTask) er
 		return fmt.Errorf("no data directory specified, cannot save task state")
 	}
 
+	// Validate task ID to prevent path traversal
+	if !isValidTaskID(task.ID) {
+		return fmt.Errorf("invalid task ID: %q contains illegal path characters", task.ID)
+	}
+
 	tasksDir := filepath.Join(cp.dataDir, TasksSubdir)
 	if err := os.MkdirAll(tasksDir, ConfigDirPermissions); err != nil {
 		return fmt.Errorf("failed to create tasks directory: %w", err)
@@ -944,6 +1004,11 @@ func (cp *ConfigPersistence) SaveTaskState(task *maintenance.MaintenanceTask) er
 func (cp *ConfigPersistence) LoadTaskState(taskID string) (*maintenance.MaintenanceTask, error) {
 	if cp.dataDir == "" {
 		return nil, fmt.Errorf("no data directory specified, cannot load task state")
+	}
+
+	// Validate task ID to prevent path traversal
+	if !isValidTaskID(taskID) {
+		return nil, fmt.Errorf("invalid task ID: %q contains illegal path characters", taskID)
 	}
 
 	taskFilePath := filepath.Join(cp.dataDir, TasksSubdir, fmt.Sprintf("%s.pb", taskID))
@@ -1005,6 +1070,11 @@ func (cp *ConfigPersistence) LoadAllTaskStates() ([]*maintenance.MaintenanceTask
 func (cp *ConfigPersistence) DeleteTaskState(taskID string) error {
 	if cp.dataDir == "" {
 		return fmt.Errorf("no data directory specified, cannot delete task state")
+	}
+
+	// Validate task ID to prevent path traversal
+	if !isValidTaskID(taskID) {
+		return fmt.Errorf("invalid task ID: %q contains illegal path characters", taskID)
 	}
 
 	taskFilePath := filepath.Join(cp.dataDir, TasksSubdir, fmt.Sprintf("%s.pb", taskID))
