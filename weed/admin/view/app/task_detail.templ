@@ -88,16 +88,6 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                             <span class="badge bg-secondary">Low</span>
                                         }
                                     </dd>
-                                    
-                                    if data.Task.VolumeID != 0 {
-                                        <dt class="col-sm-4">Volume ID:</dt>
-                                        <dd class="col-sm-8">{fmt.Sprintf("%d", data.Task.VolumeID)}</dd>
-                                    }
-                                    
-                                    if data.Task.Server != "" {
-                                        <dt class="col-sm-4">Server:</dt>
-                                        <dd class="col-sm-8"><code>{data.Task.Server}</code></dd>
-                                    }
                                 </dl>
                             </div>
                             <div class="col-md-6">
@@ -172,6 +162,106 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                 </div>
             </div>
         </div>
+
+        <!-- Task Configuration Card -->
+        if data.Task.TypedParams != nil {
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-cog me-2"></i>
+                                Task Configuration
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <!-- Generic Task Parameters -->
+                            <div class="row mb-4">
+                                <div class="col-lg-8">
+                                    <div class="row text-center">
+                                        if data.Task.TypedParams.VolumeSize > 0 {
+                                            <div class="col-md-4">
+                                                <div class="border rounded p-2">
+                                                    <h4 class="text-primary mb-1">{fmt.Sprintf("%.1f", float64(data.Task.TypedParams.VolumeSize)/(1024*1024*1024))}</h4>
+                                                    <small class="text-muted">GB volume size</small>
+                                                </div>
+                                            </div>
+                                        }
+                                        if data.Task.TypedParams.Collection != "" {
+                                            <div class="col-md-4">
+                                                <div class="border rounded p-2">
+                                                    <h4 class="text-info mb-1"><i class="fas fa-folder"></i></h4>
+                                                    <small class="text-muted">{data.Task.TypedParams.Collection}</small>
+                                                </div>
+                                            </div>
+                                        }
+                                        if data.Task.TypedParams.DataCenter != "" {
+                                            <div class="col-md-4">
+                                                <div class="border rounded p-2">
+                                                    <h4 class="text-success mb-1"><i class="fas fa-building"></i></h4>
+                                                    <small class="text-muted">{data.Task.TypedParams.DataCenter}</small>
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Source Servers (Generic) -->
+                            if len(data.Task.TypedParams.Replicas) > 0 {
+                                <div class="mb-4">
+                                    <h6 class="text-info d-flex align-items-center">
+                                        <i class="fas fa-server me-2"></i>
+                                        Source Servers
+                                        <span class="badge bg-info ms-2">{fmt.Sprintf("%d", len(data.Task.TypedParams.Replicas))}</span>
+                                    </h6>
+                                    <div class="bg-light p-3 rounded">
+                                        <div class="d-flex flex-column gap-2">
+                                            for i, replica := range data.Task.TypedParams.Replicas {
+                                                <div class="d-flex align-items-center">
+                                                    <span class="badge bg-primary me-2">{fmt.Sprintf("#%d", i+1)}</span>
+                                                    <code class="flex-grow-1">{replica}</code>
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+
+                            <!-- Task Flow Indicator -->
+                            if data.Task.TypedParams.Server != "" || len(data.Task.TypedParams.Replicas) > 0 {
+                                <div class="text-center mb-3">
+                                    <i class="fas fa-arrow-down text-primary" style="font-size: 1.5rem;"></i>
+                                    <br/>
+                                    <small class="text-muted">Task: {string(data.Task.Type)}</small>
+                                </div>
+                            }
+
+                            <!-- Target/Destination (Generic) -->
+                            if data.Task.TypedParams.Server != "" {
+                                <div class="mb-4">
+                                    <h6 class="text-success d-flex align-items-center">
+                                        <i class="fas fa-bullseye me-2"></i>
+                                        Target Server
+                                    </h6>
+                                    <div class="bg-light p-3 rounded">
+                                        <div class="d-flex align-items-center">
+                                            <span class="badge bg-success me-2">#1</span>
+                                            <code class="flex-grow-1">{data.Task.TypedParams.Server}</code>
+                                            if data.Task.TypedParams.Rack != "" {
+                                                <small class="text-muted ms-2">
+                                                    <i class="fas fa-server me-1"></i>{data.Task.TypedParams.Rack}
+                                                </small>
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
 
         <!-- Worker Information Card -->
         if data.WorkerInfo != nil {
