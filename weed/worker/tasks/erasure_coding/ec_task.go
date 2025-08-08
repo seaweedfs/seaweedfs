@@ -663,6 +663,8 @@ func (t *ErasureCodingTask) getReplicas() []string {
 	var replicas []string
 	for _, source := range t.sources {
 		// Only include volume replica sources (not EC shard sources)
+		// Assumption: VolumeId == 0 is considered invalid and should be excluded.
+		// If volume ID 0 is valid in some contexts, update this check accordingly.
 		if source.VolumeId > 0 {
 			replicas = append(replicas, source.Node)
 		}
