@@ -88,6 +88,13 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                             <span class="badge bg-secondary">Low</span>
                                         }
                                     </dd>
+                                    
+                                    if data.Task.Reason != "" {
+                                        <dt class="col-sm-4">Reason:</dt>
+                                        <dd class="col-sm-8">
+                                            <span class="text-muted">{data.Task.Reason}</span>
+                                        </dd>
+                                    }
                                 </dl>
                             </div>
                             <div class="col-md-6">
@@ -239,14 +246,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                             </div>
                         </div>
                         
-                        if data.Task.Reason != "" {
-                            <div class="row mt-3">
-                                <div class="col-12">
-                                    <h6>Reason:</h6>
-                                    <p class="text-muted">{data.Task.Reason}</p>
-                                </div>
-                            </div>
-                        }
+
                         
                         if data.Task.DetailedReason != "" {
                             <div class="row mt-3">
@@ -459,7 +459,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                                     if assignment.UnassignedAt != nil {
                                                         {assignment.UnassignedAt.Format("2006-01-02 15:04:05")}
                                                     } else {
-                                                        <span class="text-muted">Still assigned</span>
+                                                        <span class="text-muted">—</span>
                                                     }
                                                 </td>
                                                 <td>{assignment.Reason}</td>
