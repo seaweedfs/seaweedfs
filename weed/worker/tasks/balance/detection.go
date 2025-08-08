@@ -114,12 +114,11 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			VolumeSize: selectedVolume.Size, // Store original volume size for tracking changes
 			TaskParams: &worker_pb.TaskParams_BalanceParams{
 				BalanceParams: &worker_pb.BalanceTaskParams{
-					DestNode:           destinationPlan.TargetNode,
-					EstimatedSize:      destinationPlan.ExpectedSize,
-					PlacementScore:     destinationPlan.PlacementScore,
-					PlacementConflicts: destinationPlan.Conflicts,
-					ForceMove:          false,
-					TimeoutSeconds:     600, // 10 minutes default
+					DestNode:       destinationPlan.TargetNode,
+					EstimatedSize:  destinationPlan.ExpectedSize,
+					PlacementScore: destinationPlan.PlacementScore,
+					ForceMove:      false,
+					TimeoutSeconds: 600, // 10 minutes default
 				},
 			},
 		}

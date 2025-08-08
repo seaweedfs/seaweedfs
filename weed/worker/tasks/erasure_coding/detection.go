@@ -355,17 +355,10 @@ func createECTaskParams(multiPlan *topology.MultiDestinationPlan) *worker_pb.Era
 		destinations = append(destinations, destination)
 	}
 
-	// Collect placement conflicts from all destinations
-	var placementConflicts []string
-	for _, plan := range multiPlan.Plans {
-		placementConflicts = append(placementConflicts, plan.Conflicts...)
-	}
-
 	return &worker_pb.ErasureCodingTaskParams{
-		Destinations:       destinations,
-		DataShards:         erasure_coding.DataShardsCount,   // Standard data shards
-		ParityShards:       erasure_coding.ParityShardsCount, // Standard parity shards
-		PlacementConflicts: placementConflicts,
+		Destinations: destinations,
+		DataShards:   erasure_coding.DataShardsCount,   // Standard data shards
+		ParityShards: erasure_coding.ParityShardsCount, // Standard parity shards
 	}
 }
 

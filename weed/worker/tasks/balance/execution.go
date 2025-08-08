@@ -15,15 +15,14 @@ type TypedTask struct {
 	*base.BaseTypedTask
 
 	// Task state from protobuf
-	sourceServer       string
-	destNode           string
-	volumeID           uint32
-	collection         string
-	estimatedSize      uint64
-	placementScore     float64
-	forceMove          bool
-	timeoutSeconds     int32
-	placementConflicts []string
+	sourceServer   string
+	destNode       string
+	volumeID       uint32
+	collection     string
+	estimatedSize  uint64
+	placementScore float64
+	forceMove      bool
+	timeoutSeconds int32
 }
 
 // NewTypedTask creates a new typed balance task
@@ -100,7 +99,6 @@ func (t *TypedTask) ExecuteTyped(params *worker_pb.TaskParams) error {
 		t.placementScore = balanceParams.PlacementScore
 		t.forceMove = balanceParams.ForceMove
 		t.timeoutSeconds = balanceParams.TimeoutSeconds
-		t.placementConflicts = balanceParams.PlacementConflicts
 	}
 
 	glog.Infof("Starting typed balance task for volume %d: %s -> %s (collection: %s, size: %d bytes)",
@@ -109,13 +107,6 @@ func (t *TypedTask) ExecuteTyped(params *worker_pb.TaskParams) error {
 	// Log placement information
 	if t.placementScore > 0 {
 		glog.V(1).Infof("Placement score: %.2f", t.placementScore)
-	}
-	if len(t.placementConflicts) > 0 {
-		glog.V(1).Infof("Placement conflicts: %v", t.placementConflicts)
-		if !t.forceMove {
-			return fmt.Errorf("placement conflicts detected and force_move is false: %v", t.placementConflicts)
-		}
-		glog.Warningf("Proceeding with balance despite conflicts (force_move=true): %v", t.placementConflicts)
 	}
 
 	// Simulate balance operation with progress updates

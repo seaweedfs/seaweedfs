@@ -129,7 +129,6 @@ message ErasureCodingTaskParams {
   string working_dir = 6;                 // Working directory for EC processing
   string master_client = 7;               // Master server address
   bool cleanup_source = 8;                // Whether to cleanup source volume after EC
-  repeated string placement_conflicts = 9; // Any placement rule conflicts
   repeated ECDestination destinations = 10; // Planned destinations with disk information
   repeated ExistingECShardLocation existing_shard_locations = 11; // Existing EC shards to cleanup
 }
@@ -156,7 +155,6 @@ message BalanceTaskParams {
   string dest_rack = 3;                   // Destination rack for placement rules
   string dest_dc = 4;                     // Destination data center
   double placement_score = 5;             // Quality score of the planned placement
-  repeated string placement_conflicts = 6; // Any placement rule conflicts
   bool force_move = 7;                    // Force move even with conflicts
   int32 timeout_seconds = 8;              // Operation timeout
 }
@@ -168,7 +166,6 @@ message ReplicationTaskParams {
   string dest_rack = 3;                   // Destination rack for placement rules
   string dest_dc = 4;                     // Destination data center
   double placement_score = 5;             // Quality score of the planned placement
-  repeated string placement_conflicts = 6; // Any placement rule conflicts
   int32 replica_count = 7;                // Target replica count
   bool verify_consistency = 8;            // Verify replica consistency after creation
 }
