@@ -98,15 +98,18 @@ func (t *TypedTask) ExecuteTyped(params *worker_pb.TaskParams) error {
 	t.volumeID = params.VolumeId
 	t.collection = params.Collection
 
-	// Extract source and target information
-	if len(params.Sources) > 0 {
-		t.sourceServer = params.Sources[0].Node
-		t.estimatedSize = params.Sources[0].EstimatedSize
+	// Ensure sources and targets are present (should be guaranteed by validation)
+	if len(params.Sources) == 0 {
+		return fmt.Errorf("at least one source is required for balance task (ExecuteTyped)")
 	}
-	if len(params.Targets) > 0 {
-		t.destNode = params.Targets[0].Node
+	if len(params.Targets) == 0 {
+		return fmt.Errorf("at least one target is required for balance task (ExecuteTyped)")
 	}
 
+	// Extract source and target information
+	t.sourceServer = params.Sources[0].Node
+	t.estimatedSize = params.Sources[0].EstimatedSize
+	t.destNode = params.Targets[0].Node
 	// Extract balance-specific parameters
 	balanceParams := params.GetBalanceParams()
 	if balanceParams != nil {
