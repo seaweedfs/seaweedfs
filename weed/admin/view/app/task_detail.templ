@@ -91,28 +91,116 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                 </dl>
                             </div>
                             <div class="col-md-6">
-                                <dl class="row">
-                                    <dt class="col-sm-4">Created:</dt>
-                                    <dd class="col-sm-8">{data.Task.CreatedAt.Format("2006-01-02 15:04:05")}</dd>
-                                    
-                                    <dt class="col-sm-4">Scheduled:</dt>
-                                    <dd class="col-sm-8">{data.Task.ScheduledAt.Format("2006-01-02 15:04:05")}</dd>
-                                    
-                                    if data.Task.StartedAt != nil {
-                                        <dt class="col-sm-4">Started:</dt>
-                                        <dd class="col-sm-8">{data.Task.StartedAt.Format("2006-01-02 15:04:05")}</dd>
-                                    }
-                                    
-                                    if data.Task.CompletedAt != nil {
-                                        <dt class="col-sm-4">Completed:</dt>
-                                        <dd class="col-sm-8">{data.Task.CompletedAt.Format("2006-01-02 15:04:05")}</dd>
-                                    }
-                                    
-                                    if data.Task.WorkerID != "" {
+                                <!-- Task Timeline -->
+                                <div class="mb-3">
+                                    <h6 class="text-primary mb-3">
+                                        <i class="fas fa-clock me-1"></i>Task Timeline
+                                    </h6>
+                                    <div class="timeline-container">
+                                        <div class="timeline-progress">
+                                            <div class="timeline-step" data-step="created">
+                                                <div class="timeline-circle completed">
+                                                    <i class="fas fa-plus"></i>
+                                                </div>
+                                                <div class="timeline-connector completed"></div>
+                                                <div class="timeline-label">
+                                                    <strong>Created</strong>
+                                                    <small class="d-block text-muted">{data.Task.CreatedAt.Format("01-02 15:04:05")}</small>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="timeline-step" data-step="scheduled">
+                                                <div class="timeline-circle completed">
+                                                    <i class="fas fa-calendar"></i>
+                                                </div>
+                                                if data.Task.StartedAt != nil {
+                                                    <div class="timeline-connector completed"></div>
+                                                } else {
+                                                    <div class="timeline-connector"></div>
+                                                }
+                                                <div class="timeline-label">
+                                                    <strong>Scheduled</strong>
+                                                    <small class="d-block text-muted">{data.Task.ScheduledAt.Format("01-02 15:04:05")}</small>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="timeline-step" data-step="started">
+                                                if data.Task.StartedAt != nil {
+                                                    <div class="timeline-circle completed">
+                                                        <i class="fas fa-play"></i>
+                                                    </div>
+                                                } else {
+                                                    <div class="timeline-circle pending">
+                                                        <i class="fas fa-clock"></i>
+                                                    </div>
+                                                }
+                                                if data.Task.CompletedAt != nil {
+                                                    <div class="timeline-connector completed"></div>
+                                                } else {
+                                                    <div class="timeline-connector"></div>
+                                                }
+                                                <div class="timeline-label">
+                                                    <strong>Started</strong>
+                                                    <small class="d-block text-muted">
+                                                        if data.Task.StartedAt != nil {
+                                                            {data.Task.StartedAt.Format("01-02 15:04:05")}
+                                                        } else {
+                                                            —
+                                                        }
+                                                    </small>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="timeline-step" data-step="completed">
+                                                if data.Task.CompletedAt != nil {
+                                                    <div class="timeline-circle completed">
+                                                        if data.Task.Status == maintenance.TaskStatusCompleted {
+                                                            <i class="fas fa-check"></i>
+                                                        } else if data.Task.Status == maintenance.TaskStatusFailed {
+                                                            <i class="fas fa-times"></i>
+                                                        } else {
+                                                            <i class="fas fa-stop"></i>
+                                                        }
+                                                    </div>
+                                                } else {
+                                                    <div class="timeline-circle pending">
+                                                        <i class="fas fa-hourglass-half"></i>
+                                                    </div>
+                                                }
+                                                <div class="timeline-label">
+                                                    <strong>
+                                                        if data.Task.Status == maintenance.TaskStatusCompleted {
+                                                            Completed
+                                                        } else if data.Task.Status == maintenance.TaskStatusFailed {
+                                                            Failed
+                                                        } else if data.Task.Status == maintenance.TaskStatusCancelled {
+                                                            Cancelled
+                                                        } else {
+                                                            Pending
+                                                        }
+                                                    </strong>
+                                                    <small class="d-block text-muted">
+                                                        if data.Task.CompletedAt != nil {
+                                                            {data.Task.CompletedAt.Format("01-02 15:04:05")}
+                                                        } else {
+                                                            —
+                                                        }
+                                                    </small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Additional Info -->
+                                if data.Task.WorkerID != "" {
+                                    <dl class="row">
                                         <dt class="col-sm-4">Worker:</dt>
                                         <dd class="col-sm-8"><code>{data.Task.WorkerID}</code></dd>
-                                    }
+                                    </dl>
+                                }
                                     
+                                <dl class="row">
                                     if data.Task.TypedParams != nil && data.Task.TypedParams.VolumeSize > 0 {
                                         <dt class="col-sm-4">Volume Size:</dt>
                                         <dd class="col-sm-8">
@@ -130,7 +218,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                     if data.Task.TypedParams != nil && data.Task.TypedParams.DataCenter != "" {
                                         <dt class="col-sm-4">Data Center:</dt>
                                         <dd class="col-sm-8">
-                                            <span class="badge bg-success"><i class="fas fa-building me-1"></i>{data.Task.TypedParams.DataCenter}</span>
+                                            <span class="badge bg-secondary"><i class="fas fa-building me-1"></i>{data.Task.TypedParams.DataCenter}</span>
                                         </dd>
                                     }
                                     
@@ -537,6 +625,121 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
         </div>
     </div>
 
+    <style>
+    .timeline-container {
+        position: relative;
+        padding: 20px 0;
+    }
+    
+    .timeline-progress {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        position: relative;
+        max-width: 100%;
+    }
+    
+    .timeline-step {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        flex: 1;
+        position: relative;
+    }
+    
+    .timeline-circle {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        z-index: 2;
+        position: relative;
+    }
+    
+    .timeline-circle.completed {
+        background-color: #28a745;
+        border: 3px solid #1e7e34;
+    }
+    
+    .timeline-circle.pending {
+        background-color: #6c757d;
+        border: 3px solid #495057;
+    }
+    
+    .timeline-connector {
+        position: absolute;
+        top: 20px;
+        left: 50%;
+        right: -50%;
+        height: 4px;
+        z-index: 1;
+        margin-left: 20px;
+        margin-right: 20px;
+    }
+    
+    .timeline-connector.completed {
+        background-color: #28a745;
+    }
+    
+    .timeline-connector:not(.completed) {
+        background-color: #dee2e6;
+    }
+    
+    .timeline-step:last-child .timeline-connector {
+        display: none;
+    }
+    
+    .timeline-label {
+        margin-top: 15px;
+        text-align: center;
+        min-height: 60px;
+    }
+    
+    .timeline-label strong {
+        display: block;
+        font-size: 0.9rem;
+        margin-bottom: 4px;
+    }
+    
+    .timeline-label small {
+        font-size: 0.75rem;
+        line-height: 1.2;
+    }
+    
+    @media (max-width: 768px) {
+        .timeline-progress {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        
+        .timeline-step {
+            flex-direction: row;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .timeline-circle {
+            margin-right: 15px;
+            flex-shrink: 0;
+        }
+        
+        .timeline-connector {
+            display: none;
+        }
+        
+        .timeline-label {
+            text-align: left;
+            margin-top: 0;
+            min-height: auto;
+        }
+    }
+    </style>
+    
     <script>
     function refreshPage() {
         location.reload();
