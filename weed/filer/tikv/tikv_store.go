@@ -230,11 +230,9 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 		defer iter.Close()
 		i := int64(0)
 		for iter.Valid() {
-			if limit > 0 {
-				i++
-				if i > limit {
-					break
-				}
+			// Check limit before processing entry (consistent with original behavior)
+			if limit > 0 && i >= limit {
+				break
 			}
 
 			key := iter.Key()
@@ -265,11 +263,15 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 				glog.V(0).InfofCtx(ctx, "list %s : %v", entry.FullPath, err)
 				break
 			}
+
+			// Only increment counter after successful processing
+			i++
+
 			if err := iter.Next(); !eachEntryFunc(entry) || err != nil {
 				break
 			}
 		}
-		return nil
+		return err
 	})
 	if err != nil {
 		return lastFileName, fmt.Errorf("prefix list %s : %v", dirPath, err)
