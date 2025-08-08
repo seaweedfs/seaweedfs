@@ -329,4 +329,75 @@ message BalanceTaskConfig {
 // ReplicationTaskConfig contains replication-specific configuration
 message ReplicationTaskConfig {
   int32 target_replica_count = 1;   // Target number of replicas
+}
+
+// ========== Task Persistence Messages ==========
+
+// MaintenanceTaskData represents complete task state for persistence
+message MaintenanceTaskData {
+  string id = 1;
+  string type = 2;
+  string priority = 3;
+  string status = 4;
+  uint32 volume_id = 5;
+  string server = 6;
+  string collection = 7;
+  TaskParams typed_params = 8;
+  string reason = 9;
+  int64 created_at = 10;
+  int64 scheduled_at = 11;
+  int64 started_at = 12;
+  int64 completed_at = 13;
+  string worker_id = 14;
+  string error = 15;
+  double progress = 16;
+  int32 retry_count = 17;
+  int32 max_retries = 18;
+
+  // Enhanced fields for detailed task tracking
+  string created_by = 19;
+  string creation_context = 20;
+  repeated TaskAssignmentRecord assignment_history = 21;
+  string detailed_reason = 22;
+  map<string, string> tags = 23;
+  TaskCreationMetrics creation_metrics = 24;
+}
+
+// TaskAssignmentRecord tracks worker assignments for a task
+message TaskAssignmentRecord {
+  string worker_id = 1;
+  string worker_address = 2;
+  int64 assigned_at = 3;
+  int64 unassigned_at = 4;  // Optional: when worker was unassigned
+  string reason = 5;        // Reason for assignment/unassignment
+}
+
+// TaskCreationMetrics tracks why and how a task was created
+message TaskCreationMetrics {
+  string trigger_metric = 1;           // Name of metric that triggered creation
+  double metric_value = 2;             // Value that triggered creation
+  double threshold = 3;                // Threshold that was exceeded
+  VolumeHealthMetrics volume_metrics = 4; // Volume health at creation time
+  map<string, string> additional_data = 5; // Additional context data
+}
+
+// VolumeHealthMetrics captures volume state at task creation
+message VolumeHealthMetrics {
+  uint64 total_size = 1;
+  uint64 used_size = 2;
+  uint64 garbage_size = 3;
+  double garbage_ratio = 4;
+  int32 file_count = 5;
+  int32 deleted_file_count = 6;
+  int64 last_modified = 7;
+  int32 replica_count = 8;
+  bool is_ec_volume = 9;
+  string collection = 10;
+}
+
+// TaskStateFile wraps task data with metadata for persistence
+message TaskStateFile {
+  MaintenanceTaskData task = 1;
+  int64 last_updated = 2;
+  string admin_version = 3;
 } 

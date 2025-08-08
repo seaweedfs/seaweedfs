@@ -27,6 +27,102 @@ func (mq *MaintenanceQueue) SetIntegration(integration *MaintenanceIntegration) 
 	glog.V(1).Infof("Maintenance queue configured with integration")
 }
 
+// SetPersistence sets the task persistence interface
+func (mq *MaintenanceQueue) SetPersistence(persistence TaskPersistence) {
+	mq.persistence = persistence
+	glog.V(1).Infof("Maintenance queue configured with task persistence")
+}
+
+// LoadTasksFromPersistence loads tasks from persistent storage on startup
+func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
+	if mq.persistence == nil {
+		glog.V(1).Infof("No task persistence configured, skipping task loading")
+		return nil
+	}
+
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+
+	glog.Infof("Loading tasks from persistence...")
+
+	tasks, err := mq.persistence.LoadAllTaskStates()
+	if err != nil {
+		return fmt.Errorf("failed to load task states: %w", err)
+	}
+
+	glog.Infof("DEBUG LoadTasksFromPersistence: Found %d tasks in persistence", len(tasks))
+
+	// Reset task maps
+	mq.tasks = make(map[string]*MaintenanceTask)
+	mq.pendingTasks = make([]*MaintenanceTask, 0)
+
+	// Load tasks by status
+	for _, task := range tasks {
+		glog.Infof("DEBUG LoadTasksFromPersistence: Loading task %s (type: %s, status: %s, scheduled: %v)", task.ID, task.Type, task.Status, task.ScheduledAt)
+		mq.tasks[task.ID] = task
+
+		switch task.Status {
+		case TaskStatusPending:
+			glog.Infof("DEBUG LoadTasksFromPersistence: Adding task %s to pending queue", task.ID)
+			mq.pendingTasks = append(mq.pendingTasks, task)
+		case TaskStatusAssigned, TaskStatusInProgress:
+			// For assigned/in-progress tasks, we need to check if the worker is still available
+			// If not, we should fail them and make them eligible for retry
+			if task.WorkerID != "" {
+				if _, exists := mq.workers[task.WorkerID]; !exists {
+					glog.Warningf("Task %s was assigned to unavailable worker %s, marking as failed", task.ID, task.WorkerID)
+					task.Status = TaskStatusFailed
+					task.Error = "Worker unavailable after restart"
+					completedTime := time.Now()
+					task.CompletedAt = &completedTime
+
+					// Check if it should be retried
+					if task.RetryCount < task.MaxRetries {
+						task.RetryCount++
+						task.Status = TaskStatusPending
+						task.WorkerID = ""
+						task.StartedAt = nil
+						task.CompletedAt = nil
+						task.Error = ""
+						task.ScheduledAt = time.Now().Add(1 * time.Minute) // Retry after restart delay
+						glog.Infof("DEBUG LoadTasksFromPersistence: Retrying task %s, adding to pending queue", task.ID)
+						mq.pendingTasks = append(mq.pendingTasks, task)
+					}
+				}
+			}
+		}
+	}
+
+	// Sort pending tasks by priority and schedule time
+	sort.Slice(mq.pendingTasks, func(i, j int) bool {
+		if mq.pendingTasks[i].Priority != mq.pendingTasks[j].Priority {
+			return mq.pendingTasks[i].Priority > mq.pendingTasks[j].Priority
+		}
+		return mq.pendingTasks[i].ScheduledAt.Before(mq.pendingTasks[j].ScheduledAt)
+	})
+
+	glog.Infof("Loaded %d tasks from persistence (%d pending)", len(tasks), len(mq.pendingTasks))
+	return nil
+}
+
+// saveTaskState saves a task to persistent storage
+func (mq *MaintenanceQueue) saveTaskState(task *MaintenanceTask) {
+	if mq.persistence != nil {
+		if err := mq.persistence.SaveTaskState(task); err != nil {
+			glog.Errorf("Failed to save task state for %s: %v", task.ID, err)
+		}
+	}
+}
+
+// cleanupCompletedTasks removes old completed tasks beyond the retention limit
+func (mq *MaintenanceQueue) cleanupCompletedTasks() {
+	if mq.persistence != nil {
+		if err := mq.persistence.CleanupCompletedTasks(); err != nil {
+			glog.Errorf("Failed to cleanup completed tasks: %v", err)
+		}
+	}
+}
+
 // AddTask adds a new maintenance task to the queue with deduplication
 func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 	mq.mutex.Lock()
@@ -66,6 +162,9 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 		}
 		return mq.pendingTasks[i].ScheduledAt.Before(mq.pendingTasks[j].ScheduledAt)
 	})
+
+	// Save task state to persistence
+	mq.saveTaskState(task)
 
 	scheduleInfo := ""
 	if !task.ScheduledAt.IsZero() && time.Until(task.ScheduledAt) > time.Minute {
@@ -220,6 +319,9 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 	// Track pending operation
 	mq.trackPendingOperation(selectedTask)
 
+	// Save task state after assignment
+	mq.saveTaskState(selectedTask)
+
 	glog.Infof("Task assigned: %s (%s) → worker %s (volume %d, server %s)",
 		selectedTask.ID, selectedTask.Type, workerID, selectedTask.VolumeID, selectedTask.Server)
 
@@ -272,6 +374,8 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 			task.ScheduledAt = time.Now().Add(15 * time.Minute) // Retry delay
 
 			mq.pendingTasks = append(mq.pendingTasks, task)
+			// Save task state after retry setup
+			mq.saveTaskState(task)
 			glog.Warningf("Task failed, scheduling retry: %s (%s) attempt %d/%d, worker %s, duration %v, error: %s",
 				taskID, task.Type, task.RetryCount, task.MaxRetries, task.WorkerID, duration, error)
 		} else {
@@ -285,12 +389,16 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 				}
 			}
 
+			// Save task state after permanent failure
+			mq.saveTaskState(task)
 			glog.Errorf("Task failed permanently: %s (%s) worker %s, duration %v, after %d retries: %s",
 				taskID, task.Type, task.WorkerID, duration, task.MaxRetries, error)
 		}
 	} else {
 		task.Status = TaskStatusCompleted
 		task.Progress = 100
+		// Save task state after successful completion
+		mq.saveTaskState(task)
 		glog.Infof("Task completed: %s (%s) worker %s, duration %v, volume %d",
 			taskID, task.Type, task.WorkerID, duration, task.VolumeID)
 	}
@@ -309,6 +417,14 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 	// Remove pending operation (unless it's being retried)
 	if task.Status != TaskStatusPending {
 		mq.removePendingOperation(taskID)
+	}
+
+	// Periodically cleanup old completed tasks (every 10th completion)
+	if task.Status == TaskStatusCompleted {
+		// Simple counter-based trigger for cleanup
+		if len(mq.tasks)%10 == 0 {
+			go mq.cleanupCompletedTasks()
+		}
 	}
 }
 
@@ -336,6 +452,9 @@ func (mq *MaintenanceQueue) UpdateTaskProgress(taskID string, progress float64) 
 			glog.V(1).Infof("Task progress: %s (%s) worker %s, %.1f%% complete",
 				taskID, task.Type, task.WorkerID, progress)
 		}
+
+		// Save task state after progress update
+		mq.saveTaskState(task)
 	} else {
 		glog.V(2).Infof("Progress update for unknown task: %s (%.1f%%)", taskID, progress)
 	}

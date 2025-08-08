@@ -1492,6 +1492,20 @@ func (s *AdminServer) GetWorkerGrpcServer() *WorkerGrpcServer {
 // InitMaintenanceManager initializes the maintenance manager
 func (s *AdminServer) InitMaintenanceManager(config *maintenance.MaintenanceConfig) {
 	s.maintenanceManager = maintenance.NewMaintenanceManager(s, config)
+
+	// Set up task persistence if config persistence is available
+	if s.configPersistence != nil {
+		queue := s.maintenanceManager.GetQueue()
+		if queue != nil {
+			queue.SetPersistence(s.configPersistence)
+
+			// Load tasks from persistence on startup
+			if err := queue.LoadTasksFromPersistence(); err != nil {
+				glog.Errorf("Failed to load tasks from persistence: %v", err)
+			}
+		}
+	}
+
 	glog.V(1).Infof("Maintenance manager initialized (enabled: %v)", config.Enabled)
 }
 

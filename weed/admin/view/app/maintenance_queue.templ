@@ -103,7 +103,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                     <tbody>
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "pending" {
-                                                <tr class="clickable-row" onclick={fmt.Sprintf("window.location.href='/maintenance/tasks/%s'", task.ID)} style="cursor: pointer;">
+                                                <tr class="clickable-row" data-task-id={task.ID} onclick="navigateToTask(this)" style="cursor: pointer;">
                                                     <td>
                                                         @TaskTypeIcon(task.Type)
                                                         {string(task.Type)}
@@ -158,7 +158,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                     <tbody>
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "assigned" || string(task.Status) == "in_progress" {
-                                                <tr class="clickable-row" onclick={fmt.Sprintf("window.location.href='/maintenance/tasks/%s'", task.ID)} style="cursor: pointer;">
+                                                <tr class="clickable-row" data-task-id={task.ID} onclick="navigateToTask(this)" style="cursor: pointer;">
                                                     <td>
                                                         @TaskTypeIcon(task.Type)
                                                         {string(task.Type)}
@@ -226,7 +226,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "completed" || string(task.Status) == "failed" || string(task.Status) == "cancelled" {
                                                 if string(task.Status) == "failed" {
-                                                    <tr class="table-danger clickable-row" onclick={fmt.Sprintf("window.location.href='/maintenance/tasks/%s'", task.ID)} style="cursor: pointer;">
+                                                    <tr class="table-danger clickable-row" data-task-id={task.ID} onclick="navigateToTask(this)" style="cursor: pointer;">
                                                         <td>
                                                             @TaskTypeIcon(task.Type)
                                                             {string(task.Type)}
@@ -256,7 +256,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                                         </td>
                                                     </tr>
                                                 } else {
-                                                    <tr class="clickable-row" onclick={fmt.Sprintf("window.location.href='/maintenance/tasks/%s'", task.ID)} style="cursor: pointer;">
+                                                    <tr class="clickable-row" data-task-id={task.ID} onclick="navigateToTask(this)" style="cursor: pointer;">
                                                         <td>
                                                             @TaskTypeIcon(task.Type)
                                                             {string(task.Type)}
@@ -334,6 +334,13 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
         window.refreshPage = function() {
             console.log("refreshPage called");
             window.location.reload();
+        };
+
+        window.navigateToTask = function(element) {
+            const taskId = element.getAttribute('data-task-id');
+            if (taskId) {
+                window.location.href = '/maintenance/tasks/' + taskId;
+            }
         };
     </script>
 }

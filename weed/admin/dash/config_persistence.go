@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
@@ -35,12 +36,14 @@ const (
 	BalanceTaskConfigJSONFile     = "task_balance.json"
 	ReplicationTaskConfigJSONFile = "task_replication.json"
 
-	ConfigDirPermissions  = 0755
-	ConfigFilePermissions = 0644
-
-	// Task detail storage
+	// Task persistence subdirectories and settings
+	TasksSubdir       = "tasks"
 	TaskDetailsSubdir = "task_details"
 	TaskLogsSubdir    = "task_logs"
+	MaxCompletedTasks = 10 // Only keep last 10 completed tasks
+
+	ConfigDirPermissions  = 0755
+	ConfigFilePermissions = 0644
 )
 
 // Task configuration types
@@ -855,4 +858,308 @@ func (cp *ConfigPersistence) ListTaskDetails() ([]string, error) {
 	}
 
 	return taskIDs, nil
+}
+
+// CleanupCompletedTasks removes old completed tasks beyond the retention limit
+func (cp *ConfigPersistence) CleanupCompletedTasks() error {
+	if cp.dataDir == "" {
+		return fmt.Errorf("no data directory specified, cannot cleanup completed tasks")
+	}
+
+	tasksDir := filepath.Join(cp.dataDir, TasksSubdir)
+	if _, err := os.Stat(tasksDir); os.IsNotExist(err) {
+		return nil // No tasks directory, nothing to cleanup
+	}
+
+	// Load all tasks and find completed/failed ones
+	allTasks, err := cp.LoadAllTaskStates()
+	if err != nil {
+		return fmt.Errorf("failed to load tasks for cleanup: %w", err)
+	}
+
+	// Filter completed and failed tasks, sort by completion time
+	var completedTasks []*maintenance.MaintenanceTask
+	for _, task := range allTasks {
+		if (task.Status == maintenance.TaskStatusCompleted || task.Status == maintenance.TaskStatusFailed) && task.CompletedAt != nil {
+			completedTasks = append(completedTasks, task)
+		}
+	}
+
+	// Sort by completion time (most recent first)
+	sort.Slice(completedTasks, func(i, j int) bool {
+		return completedTasks[i].CompletedAt.After(*completedTasks[j].CompletedAt)
+	})
+
+	// Keep only the most recent MaxCompletedTasks, delete the rest
+	if len(completedTasks) > MaxCompletedTasks {
+		tasksToDelete := completedTasks[MaxCompletedTasks:]
+		for _, task := range tasksToDelete {
+			if err := cp.DeleteTaskState(task.ID); err != nil {
+				glog.Warningf("Failed to delete old completed task %s: %v", task.ID, err)
+			} else {
+				glog.V(2).Infof("Cleaned up old completed task %s (completed: %v)", task.ID, task.CompletedAt)
+			}
+		}
+		glog.V(1).Infof("Cleaned up %d old completed tasks (keeping %d most recent)", len(tasksToDelete), MaxCompletedTasks)
+	}
+
+	return nil
+}
+
+// SaveTaskState saves a task state to protobuf file
+func (cp *ConfigPersistence) SaveTaskState(task *maintenance.MaintenanceTask) error {
+	if cp.dataDir == "" {
+		return fmt.Errorf("no data directory specified, cannot save task state")
+	}
+
+	tasksDir := filepath.Join(cp.dataDir, TasksSubdir)
+	if err := os.MkdirAll(tasksDir, ConfigDirPermissions); err != nil {
+		return fmt.Errorf("failed to create tasks directory: %w", err)
+	}
+
+	taskFilePath := filepath.Join(tasksDir, fmt.Sprintf("%s.pb", task.ID))
+
+	// Convert task to protobuf
+	pbTask := cp.maintenanceTaskToProtobuf(task)
+	taskStateFile := &worker_pb.TaskStateFile{
+		Task:         pbTask,
+		LastUpdated:  time.Now().Unix(),
+		AdminVersion: "unknown", // TODO: add version info
+	}
+
+	pbData, err := proto.Marshal(taskStateFile)
+	if err != nil {
+		return fmt.Errorf("failed to marshal task state protobuf: %w", err)
+	}
+
+	if err := os.WriteFile(taskFilePath, pbData, ConfigFilePermissions); err != nil {
+		return fmt.Errorf("failed to write task state file: %w", err)
+	}
+
+	glog.V(2).Infof("Saved task state for task %s to %s", task.ID, taskFilePath)
+	return nil
+}
+
+// LoadTaskState loads a task state from protobuf file
+func (cp *ConfigPersistence) LoadTaskState(taskID string) (*maintenance.MaintenanceTask, error) {
+	if cp.dataDir == "" {
+		return nil, fmt.Errorf("no data directory specified, cannot load task state")
+	}
+
+	taskFilePath := filepath.Join(cp.dataDir, TasksSubdir, fmt.Sprintf("%s.pb", taskID))
+	if _, err := os.Stat(taskFilePath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("task state file not found: %s", taskID)
+	}
+
+	pbData, err := os.ReadFile(taskFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read task state file: %w", err)
+	}
+
+	var taskStateFile worker_pb.TaskStateFile
+	if err := proto.Unmarshal(pbData, &taskStateFile); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal task state protobuf: %w", err)
+	}
+
+	// Convert protobuf to maintenance task
+	task := cp.protobufToMaintenanceTask(taskStateFile.Task)
+
+	glog.V(2).Infof("Loaded task state for task %s from %s", taskID, taskFilePath)
+	return task, nil
+}
+
+// LoadAllTaskStates loads all task states from disk
+func (cp *ConfigPersistence) LoadAllTaskStates() ([]*maintenance.MaintenanceTask, error) {
+	if cp.dataDir == "" {
+		return []*maintenance.MaintenanceTask{}, nil
+	}
+
+	tasksDir := filepath.Join(cp.dataDir, TasksSubdir)
+	if _, err := os.Stat(tasksDir); os.IsNotExist(err) {
+		return []*maintenance.MaintenanceTask{}, nil
+	}
+
+	entries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tasks directory: %w", err)
+	}
+
+	var tasks []*maintenance.MaintenanceTask
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".pb" {
+			taskID := entry.Name()[:len(entry.Name())-3] // Remove .pb extension
+			task, err := cp.LoadTaskState(taskID)
+			if err != nil {
+				glog.Warningf("Failed to load task state for %s: %v", taskID, err)
+				continue
+			}
+			tasks = append(tasks, task)
+		}
+	}
+
+	glog.V(1).Infof("Loaded %d task states from disk", len(tasks))
+	return tasks, nil
+}
+
+// DeleteTaskState removes a task state file from disk
+func (cp *ConfigPersistence) DeleteTaskState(taskID string) error {
+	if cp.dataDir == "" {
+		return fmt.Errorf("no data directory specified, cannot delete task state")
+	}
+
+	taskFilePath := filepath.Join(cp.dataDir, TasksSubdir, fmt.Sprintf("%s.pb", taskID))
+	if err := os.Remove(taskFilePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete task state file: %w", err)
+	}
+
+	glog.V(2).Infof("Deleted task state for task %s", taskID)
+	return nil
+}
+
+// maintenanceTaskToProtobuf converts a MaintenanceTask to protobuf format
+func (cp *ConfigPersistence) maintenanceTaskToProtobuf(task *maintenance.MaintenanceTask) *worker_pb.MaintenanceTaskData {
+	pbTask := &worker_pb.MaintenanceTaskData{
+		Id:              task.ID,
+		Type:            string(task.Type),
+		Priority:        cp.priorityToString(task.Priority),
+		Status:          string(task.Status),
+		VolumeId:        task.VolumeID,
+		Server:          task.Server,
+		Collection:      task.Collection,
+		Reason:          task.Reason,
+		CreatedAt:       task.CreatedAt.Unix(),
+		ScheduledAt:     task.ScheduledAt.Unix(),
+		WorkerId:        task.WorkerID,
+		Error:           task.Error,
+		Progress:        task.Progress,
+		RetryCount:      int32(task.RetryCount),
+		MaxRetries:      int32(task.MaxRetries),
+		CreatedBy:       task.CreatedBy,
+		CreationContext: task.CreationContext,
+		DetailedReason:  task.DetailedReason,
+		Tags:            task.Tags,
+	}
+
+	// Handle optional timestamps
+	if task.StartedAt != nil {
+		pbTask.StartedAt = task.StartedAt.Unix()
+	}
+	if task.CompletedAt != nil {
+		pbTask.CompletedAt = task.CompletedAt.Unix()
+	}
+
+	// Convert assignment history
+	if task.AssignmentHistory != nil {
+		for _, record := range task.AssignmentHistory {
+			pbRecord := &worker_pb.TaskAssignmentRecord{
+				WorkerId:      record.WorkerID,
+				WorkerAddress: record.WorkerAddress,
+				AssignedAt:    record.AssignedAt.Unix(),
+				Reason:        record.Reason,
+			}
+			if record.UnassignedAt != nil {
+				pbRecord.UnassignedAt = record.UnassignedAt.Unix()
+			}
+			pbTask.AssignmentHistory = append(pbTask.AssignmentHistory, pbRecord)
+		}
+	}
+
+	// Convert typed parameters if available
+	if task.TypedParams != nil {
+		pbTask.TypedParams = task.TypedParams
+	}
+
+	return pbTask
+}
+
+// protobufToMaintenanceTask converts protobuf format to MaintenanceTask
+func (cp *ConfigPersistence) protobufToMaintenanceTask(pbTask *worker_pb.MaintenanceTaskData) *maintenance.MaintenanceTask {
+	task := &maintenance.MaintenanceTask{
+		ID:              pbTask.Id,
+		Type:            maintenance.MaintenanceTaskType(pbTask.Type),
+		Priority:        cp.stringToPriority(pbTask.Priority),
+		Status:          maintenance.MaintenanceTaskStatus(pbTask.Status),
+		VolumeID:        pbTask.VolumeId,
+		Server:          pbTask.Server,
+		Collection:      pbTask.Collection,
+		Reason:          pbTask.Reason,
+		CreatedAt:       time.Unix(pbTask.CreatedAt, 0),
+		ScheduledAt:     time.Unix(pbTask.ScheduledAt, 0),
+		WorkerID:        pbTask.WorkerId,
+		Error:           pbTask.Error,
+		Progress:        pbTask.Progress,
+		RetryCount:      int(pbTask.RetryCount),
+		MaxRetries:      int(pbTask.MaxRetries),
+		CreatedBy:       pbTask.CreatedBy,
+		CreationContext: pbTask.CreationContext,
+		DetailedReason:  pbTask.DetailedReason,
+		Tags:            pbTask.Tags,
+	}
+
+	// Handle optional timestamps
+	if pbTask.StartedAt > 0 {
+		startTime := time.Unix(pbTask.StartedAt, 0)
+		task.StartedAt = &startTime
+	}
+	if pbTask.CompletedAt > 0 {
+		completedTime := time.Unix(pbTask.CompletedAt, 0)
+		task.CompletedAt = &completedTime
+	}
+
+	// Convert assignment history
+	if pbTask.AssignmentHistory != nil {
+		task.AssignmentHistory = make([]*maintenance.TaskAssignmentRecord, 0, len(pbTask.AssignmentHistory))
+		for _, pbRecord := range pbTask.AssignmentHistory {
+			record := &maintenance.TaskAssignmentRecord{
+				WorkerID:      pbRecord.WorkerId,
+				WorkerAddress: pbRecord.WorkerAddress,
+				AssignedAt:    time.Unix(pbRecord.AssignedAt, 0),
+				Reason:        pbRecord.Reason,
+			}
+			if pbRecord.UnassignedAt > 0 {
+				unassignedTime := time.Unix(pbRecord.UnassignedAt, 0)
+				record.UnassignedAt = &unassignedTime
+			}
+			task.AssignmentHistory = append(task.AssignmentHistory, record)
+		}
+	}
+
+	// Convert typed parameters if available
+	if pbTask.TypedParams != nil {
+		task.TypedParams = pbTask.TypedParams
+	}
+
+	return task
+}
+
+// priorityToString converts MaintenanceTaskPriority to string for protobuf storage
+func (cp *ConfigPersistence) priorityToString(priority maintenance.MaintenanceTaskPriority) string {
+	switch priority {
+	case maintenance.PriorityLow:
+		return "low"
+	case maintenance.PriorityNormal:
+		return "normal"
+	case maintenance.PriorityHigh:
+		return "high"
+	case maintenance.PriorityCritical:
+		return "critical"
+	default:
+		return "normal"
+	}
+}
+
+// stringToPriority converts string from protobuf to MaintenanceTaskPriority
+func (cp *ConfigPersistence) stringToPriority(priorityStr string) maintenance.MaintenanceTaskPriority {
+	switch priorityStr {
+	case "low":
+		return maintenance.PriorityLow
+	case "normal":
+		return maintenance.PriorityNormal
+	case "high":
+		return maintenance.PriorityHigh
+	case "critical":
+		return maintenance.PriorityCritical
+	default:
+		return maintenance.PriorityNormal
+	}
 }

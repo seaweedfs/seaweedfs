@@ -2,7 +2,6 @@ package app
 
 import (
     "fmt"
-    "time"
     "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 )
 
@@ -79,10 +78,12 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                     
                                     <dt class="col-sm-4">Priority:</dt>
                                     <dd class="col-sm-8">
-                                        if data.Task.Priority == maintenance.TaskPriorityHigh {
+                                        if data.Task.Priority == maintenance.PriorityHigh {
                                             <span class="badge bg-danger">High</span>
-                                        } else if data.Task.Priority == maintenance.TaskPriorityMedium {
-                                            <span class="badge bg-warning">Medium</span>
+                                        } else if data.Task.Priority == maintenance.PriorityCritical {
+                                            <span class="badge bg-danger">Critical</span>
+                                        } else if data.Task.Priority == maintenance.PriorityNormal {
+                                            <span class="badge bg-warning">Normal</span>
                                         } else {
                                             <span class="badge bg-secondary">Low</span>
                                         }

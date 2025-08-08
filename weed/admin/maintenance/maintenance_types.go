@@ -168,6 +168,15 @@ type MaintenancePolicy = worker_pb.MaintenancePolicy
 // DEPRECATED: Use worker_pb.TaskPolicy instead
 type TaskPolicy = worker_pb.TaskPolicy
 
+// TaskPersistence interface for task state persistence
+type TaskPersistence interface {
+	SaveTaskState(task *MaintenanceTask) error
+	LoadTaskState(taskID string) (*MaintenanceTask, error)
+	LoadAllTaskStates() ([]*MaintenanceTask, error)
+	DeleteTaskState(taskID string) error
+	CleanupCompletedTasks() error
+}
+
 // Default configuration values
 func DefaultMaintenanceConfig() *MaintenanceConfig {
 	return DefaultMaintenanceConfigProto()
@@ -319,6 +328,7 @@ type MaintenanceQueue struct {
 	mutex        sync.RWMutex
 	policy       *MaintenancePolicy
 	integration  *MaintenanceIntegration
+	persistence  TaskPersistence // Interface for task persistence
 }
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks
