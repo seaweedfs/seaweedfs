@@ -228,18 +228,31 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 			return err
 		}
 		defer iter.Close()
-		for i := int64(0); i < limit && iter.Valid(); i++ {
+		i := int64(0)
+		for iter.Valid() {
+			if limit > 0 {
+				i++
+				if i > limit {
+					break
+				}
+			}
+
 			key := iter.Key()
 			if !bytes.HasPrefix(key, directoryPrefix) {
 				break
 			}
 			fileName := getNameFromKey(key)
-			if fileName == "" || fileName == startFileName && !includeStartFile {
+			if fileName == "" {
 				if err := iter.Next(); err != nil {
 					break
-				} else {
-					continue
 				}
+				continue
+			}
+			if fileName == startFileName && !includeStartFile {
+				if err := iter.Next(); err != nil {
+					break
+				}
+				continue
 			}
 			lastFileName = fileName
 			entry := &filer.Entry{
