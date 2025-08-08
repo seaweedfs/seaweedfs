@@ -61,6 +61,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 		// Check quiet duration and fullness criteria
 		if metric.Age >= quietThreshold && metric.FullnessRatio >= ecConfig.FullnessRatio {
+			glog.Infof("EC Detection: Volume %d meets all criteria, attempting to create task", metric.VolumeID)
+
 			// Generate task ID for ActiveTopology integration
 			taskID := fmt.Sprintf("ec_vol_%d_%d", metric.VolumeID, now.Unix())
 
@@ -79,11 +81,13 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 			// Plan EC destinations if ActiveTopology is available
 			if clusterInfo.ActiveTopology != nil {
+				glog.Infof("EC Detection: ActiveTopology available, planning destinations for volume %d", metric.VolumeID)
 				multiPlan, err := planECDestinations(clusterInfo.ActiveTopology, metric, ecConfig)
 				if err != nil {
 					glog.Warningf("Failed to plan EC destinations for volume %d: %v", metric.VolumeID, err)
 					continue // Skip this volume if destination planning fails
 				}
+				glog.Infof("EC Detection: Successfully planned %d destinations for volume %d", len(multiPlan.Plans), metric.VolumeID)
 
 				// Calculate expected shard size for EC operation
 				// Each data shard will be approximately volumeSize / dataShards
@@ -100,11 +104,13 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				}
 
 				// Find all volume replica locations (server + disk) from topology
+				glog.Infof("EC Detection: Looking for replica locations for volume %d", metric.VolumeID)
 				replicaLocations := findVolumeReplicaLocations(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
 				if len(replicaLocations) == 0 {
 					glog.Warningf("No replica locations found for volume %d, skipping EC", metric.VolumeID)
 					continue
 				}
+				glog.Infof("EC Detection: Found %d replica locations for volume %d", len(replicaLocations), metric.VolumeID)
 
 				// Find existing EC shards from previous failed attempts
 				existingECShards := findExistingECShards(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
@@ -180,7 +186,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					VolumeSize: metric.Size, // Store original volume size for tracking changes
 
 					// Unified sources - all sources that will be processed/cleaned up
-					Sources: convertTaskSourcesToProtobuf(sources),
+					Sources: convertTaskSourcesToProtobuf(sources, metric.VolumeID),
 
 					// Unified targets - all EC shard destinations
 					Targets: createECTargets(multiPlan),
@@ -197,6 +203,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				continue // Skip this volume if no topology available
 			}
 
+			glog.Infof("EC Detection: Successfully created EC task for volume %d, adding to results", metric.VolumeID)
 			results = append(results, result)
 		} else {
 			// Count debug reasons
@@ -344,7 +351,7 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.Task
 }
 
 // convertTaskSourcesToProtobuf converts topology.TaskSourceSpec to worker_pb.TaskSource
-func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec) []*worker_pb.TaskSource {
+func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID uint32) []*worker_pb.TaskSource {
 	var protobufSources []*worker_pb.TaskSource
 
 	for _, source := range sources {
@@ -361,11 +368,12 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec) []*worker_p
 		// Set appropriate volume ID or shard IDs based on cleanup type
 		switch source.CleanupType {
 		case topology.CleanupVolumeReplica:
-			// This is a volume replica, so we need volume ID
-			pbSource.VolumeId = uint32(source.DiskID) // This might need adjustment based on actual volume ID
+			// This is a volume replica, use the actual volume ID
+			pbSource.VolumeId = volumeID
 		case topology.CleanupECShards:
-			// This is EC shards, so we need shard IDs (would need to be passed from context)
-			// For now, leaving empty - this would need more context about which shards
+			// This is EC shards, also use the volume ID for consistency
+			pbSource.VolumeId = volumeID
+			// Note: ShardIds would need to be passed separately if we need specific shard info
 		}
 
 		protobufSources = append(protobufSources, pbSource)
