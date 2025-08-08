@@ -53,7 +53,7 @@ spec:
         {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace .Values.filer.s3.existingConfigSecret) | default dict }}
         checksum/s3config: {{ $configSecret | toYaml | sha256sum }}
       {{- else }}
-        checksum/s3config: {{ include (print .Template.BasePath "/s3-secret.yaml") . | sha256sum }}
+        checksum/s3config: {{ include (print .Template.BasePath "/s3/s3-secret.yaml") . | sha256sum }}
       {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.filer.restartPolicy }}
