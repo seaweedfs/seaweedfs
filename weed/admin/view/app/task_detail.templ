@@ -611,15 +611,77 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                 Cancel Task
                             </button>
                         }
-                        <button type="button" class="btn btn-secondary me-2" data-task-id={data.Task.ID} onclick="refreshTaskLogs(this.getAttribute('data-task-id'))">
-                            <i class="fas fa-sync-alt me-1"></i>
-                            Refresh Logs
-                        </button>
+                        if data.Task.WorkerID != "" {
+                            <button type="button" class="btn btn-primary me-2" data-task-id={data.Task.ID} data-worker-id={data.Task.WorkerID} onclick="showTaskLogs(this.getAttribute('data-task-id'), this.getAttribute('data-worker-id'))">
+                                <i class="fas fa-file-text me-1"></i>
+                                Show Task Logs
+                            </button>
+                        }
                         <button type="button" class="btn btn-info" data-task-id={data.Task.ID} onclick="exportTaskDetail(this.getAttribute('data-task-id'))">
                             <i class="fas fa-download me-1"></i>
                             Export Details
                         </button>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Logs Modal -->
+    <div class="modal fade" id="taskLogsModal" tabindex="-1" aria-labelledby="taskLogsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="taskLogsModalLabel">
+                        <i class="fas fa-file-text me-2"></i>Task Logs
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="logsLoadingSpinner" class="text-center py-4" style="display: none;">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading logs...</span>
+                        </div>
+                        <p class="mt-2">Fetching logs from worker...</p>
+                    </div>
+                    
+                    <div id="logsError" class="alert alert-danger" style="display: none;">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <span id="logsErrorMessage"></span>
+                    </div>
+                    
+                    <div id="logsContent" style="display: none;">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <strong>Task:</strong> <span id="logsTaskId"></span> | 
+                                <strong>Worker:</strong> <span id="logsWorkerId"></span> |
+                                <strong>Entries:</strong> <span id="logsCount"></span>
+                            </div>
+                            <div class="btn-group">
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="refreshModalLogs()">
+                                    <i class="fas fa-sync-alt me-1"></i>Refresh
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-success" onclick="downloadTaskLogs()">
+                                    <i class="fas fa-download me-1"></i>Download
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span>Log Entries (Last 100)</span>
+                                    <small class="text-muted">Newest entries first</small>
+                                </div>
+                            </div>
+                            <div class="card-body p-0">
+                                <pre id="logsDisplay" class="bg-dark text-light p-3 mb-0" style="max-height: 400px; overflow-y: auto; font-size: 0.85rem; line-height: 1.4;"></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                 </div>
             </div>
         </div>
@@ -741,8 +803,138 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
     </style>
     
     <script>
+    // Global variables for current logs modal
+    let currentTaskId = '';
+    let currentWorkerId = '';
+
     function refreshPage() {
         location.reload();
+    }
+
+    function showTaskLogs(taskId, workerId) {
+        currentTaskId = taskId;
+        currentWorkerId = workerId;
+        
+        // Show the modal
+        const modal = new bootstrap.Modal(document.getElementById('taskLogsModal'));
+        modal.show();
+        
+        // Load logs
+        loadTaskLogs(taskId, workerId);
+    }
+
+    function loadTaskLogs(taskId, workerId) {
+        // Show loading spinner
+        document.getElementById('logsLoadingSpinner').style.display = 'block';
+        document.getElementById('logsError').style.display = 'none';
+        document.getElementById('logsContent').style.display = 'none';
+        
+        // Update modal info
+        document.getElementById('logsTaskId').textContent = taskId;
+        document.getElementById('logsWorkerId').textContent = workerId;
+        
+        // Fetch logs from the API
+        fetch(`/api/maintenance/workers/${workerId}/logs?taskId=${taskId}&maxEntries=100`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('logsLoadingSpinner').style.display = 'none';
+            
+            if (data.error) {
+                showLogsError(data.error);
+                return;
+            }
+            
+            // Display logs
+            displayLogs(data.logs, data.count || 0);
+        })
+        .catch(error => {
+            document.getElementById('logsLoadingSpinner').style.display = 'none';
+            showLogsError('Failed to fetch logs: ' + error.message);
+        });
+    }
+
+    function displayLogs(logs, count) {
+        document.getElementById('logsError').style.display = 'none';
+        document.getElementById('logsContent').style.display = 'block';
+        document.getElementById('logsCount').textContent = count;
+        
+        const logsDisplay = document.getElementById('logsDisplay');
+        
+        if (!logs || logs.length === 0) {
+            logsDisplay.textContent = 'No logs found for this task.';
+            return;
+        }
+        
+        // Format and display logs
+        let logText = '';
+        logs.forEach(entry => {
+            const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+            const level = entry.level || 'INFO';
+            const message = entry.message || '';
+            
+            logText += `[${timestamp}] ${level}: ${message}\n`;
+        });
+        
+        logsDisplay.textContent = logText;
+        
+        // Scroll to top
+        logsDisplay.scrollTop = 0;
+    }
+
+    function showLogsError(errorMessage) {
+        document.getElementById('logsError').style.display = 'block';
+        document.getElementById('logsContent').style.display = 'none';
+        document.getElementById('logsErrorMessage').textContent = errorMessage;
+    }
+
+    function refreshModalLogs() {
+        if (currentTaskId && currentWorkerId) {
+            loadTaskLogs(currentTaskId, currentWorkerId);
+        }
+    }
+
+    function downloadTaskLogs() {
+        if (!currentTaskId || !currentWorkerId) {
+            alert('No task logs to download');
+            return;
+        }
+        
+        // Download all logs (without maxEntries limit)
+        const downloadUrl = `/api/maintenance/workers/${currentWorkerId}/logs?taskId=${currentTaskId}&maxEntries=0`;
+        
+        fetch(downloadUrl)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                alert('Error downloading logs: ' + data.error);
+                return;
+            }
+            
+            // Convert logs to text format
+            let logContent = '';
+            if (data.logs && data.logs.length > 0) {
+                data.logs.forEach(entry => {
+                    const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+                    const level = entry.level || 'INFO';
+                    const message = entry.message || '';
+                    logContent += `[${timestamp}] ${level}: ${message}\n`;
+                });
+            } else {
+                logContent = 'No logs found for this task.';
+            }
+            
+            // Create and download file
+            const blob = new Blob([logContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `task-${currentTaskId}-logs.txt`;
+            link.click();
+            URL.revokeObjectURL(url);
+        })
+        .catch(error => {
+            alert('Error downloading logs: ' + error.message);
+        });
     }
 
     function cancelTask(taskId) {

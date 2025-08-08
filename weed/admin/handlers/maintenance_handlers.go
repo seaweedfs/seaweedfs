@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -63,33 +64,59 @@ func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 
 // ShowMaintenanceQueue displays the maintenance queue page
 func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
-	data, err := h.getMaintenanceQueueData()
-	if err != nil {
-		glog.Infof("DEBUG ShowMaintenanceQueue: error getting data: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// Add timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	// Use a channel to handle timeout for data retrieval
+	type result struct {
+		data *maintenance.MaintenanceQueueData
+		err  error
+	}
+	resultChan := make(chan result, 1)
+
+	go func() {
+		data, err := h.getMaintenanceQueueData()
+		resultChan <- result{data: data, err: err}
+	}()
+
+	select {
+	case res := <-resultChan:
+		if res.err != nil {
+			glog.Infof("DEBUG ShowMaintenanceQueue: error getting data: %v", res.err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": res.err.Error()})
+			return
+		}
+
+		glog.Infof("DEBUG ShowMaintenanceQueue: got data with %d tasks", len(res.data.Tasks))
+		if res.data.Stats != nil {
+			glog.Infof("DEBUG ShowMaintenanceQueue: stats = {pending: %d, running: %d, completed: %d}",
+				res.data.Stats.PendingTasks, res.data.Stats.RunningTasks, res.data.Stats.CompletedToday)
+		} else {
+			glog.Infof("DEBUG ShowMaintenanceQueue: stats is nil")
+		}
+
+		// Render HTML template
+		c.Header("Content-Type", "text/html")
+		maintenanceComponent := app.MaintenanceQueue(res.data)
+		layoutComponent := layout.Layout(c, maintenanceComponent)
+		err := layoutComponent.Render(ctx, c.Writer)
+		if err != nil {
+			glog.Infof("DEBUG ShowMaintenanceQueue: render error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+			return
+		}
+
+		glog.Infof("DEBUG ShowMaintenanceQueue: template rendered successfully")
+
+	case <-ctx.Done():
+		glog.Warningf("DEBUG ShowMaintenanceQueue: timeout waiting for data")
+		c.JSON(http.StatusRequestTimeout, gin.H{
+			"error":      "Request timeout - maintenance data retrieval took too long. This may indicate a system issue.",
+			"suggestion": "Try refreshing the page or contact system administrator if the problem persists.",
+		})
 		return
 	}
-
-	glog.Infof("DEBUG ShowMaintenanceQueue: got data with %d tasks", len(data.Tasks))
-	if data.Stats != nil {
-		glog.Infof("DEBUG ShowMaintenanceQueue: stats = {pending: %d, running: %d, completed: %d}",
-			data.Stats.PendingTasks, data.Stats.RunningTasks, data.Stats.CompletedToday)
-	} else {
-		glog.Infof("DEBUG ShowMaintenanceQueue: stats is nil")
-	}
-
-	// Render HTML template
-	c.Header("Content-Type", "text/html")
-	maintenanceComponent := app.MaintenanceQueue(data)
-	layoutComponent := layout.Layout(c, maintenanceComponent)
-	err = layoutComponent.Render(c.Request.Context(), c.Writer)
-	if err != nil {
-		glog.Infof("DEBUG ShowMaintenanceQueue: render error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
-		return
-	}
-
-	glog.Infof("DEBUG ShowMaintenanceQueue: template rendered successfully")
 }
 
 // ShowMaintenanceWorkers displays the maintenance workers page

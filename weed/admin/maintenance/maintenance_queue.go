@@ -253,7 +253,11 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 
 		// Check if this task type needs a cooldown period
 		if !mq.canScheduleTaskNow(task) {
-			glog.V(3).Infof("Task %s (%s) skipped for worker %s: scheduling constraints not met", task.ID, task.Type, workerID)
+			// Add detailed diagnostic information
+			runningCount := mq.GetRunningTaskCount(task.Type)
+			maxConcurrent := mq.getMaxConcurrentForTaskType(task.Type)
+			glog.V(2).Infof("Task %s (%s) skipped for worker %s: scheduling constraints not met (running: %d, max: %d)",
+				task.ID, task.Type, workerID, runningCount, maxConcurrent)
 			continue
 		}
 
@@ -781,7 +785,10 @@ func (mq *MaintenanceQueue) canExecuteTaskType(taskType MaintenanceTaskType) boo
 	runningCount := mq.GetRunningTaskCount(taskType)
 	maxConcurrent := mq.getMaxConcurrentForTaskType(taskType)
 
-	return runningCount < maxConcurrent
+	canExecute := runningCount < maxConcurrent
+	glog.V(3).Infof("canExecuteTaskType for %s: running=%d, max=%d, canExecute=%v", taskType, runningCount, maxConcurrent, canExecute)
+
+	return canExecute
 }
 
 // getMaxConcurrentForTaskType returns the maximum concurrent tasks allowed for a task type

@@ -1212,7 +1212,34 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 					}
 					taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, maintenanceLog)
 				}
+			} else if err != nil {
+				// Add a diagnostic log entry when worker logs cannot be retrieved
+				diagnosticLog := &maintenance.TaskExecutionLog{
+					Timestamp: time.Now(),
+					Level:     "WARNING",
+					Message:   fmt.Sprintf("Failed to retrieve worker logs: %v", err),
+					Source:    "admin",
+					TaskID:    taskID,
+					WorkerID:  task.WorkerID,
+				}
+				taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, diagnosticLog)
+				glog.V(1).Infof("Failed to get worker logs for task %s from worker %s: %v", taskID, task.WorkerID, err)
 			}
+		} else {
+			// Add diagnostic information when worker is not available
+			reason := "worker gRPC server not available"
+			if task.WorkerID == "" {
+				reason = "no worker assigned to task"
+			}
+			diagnosticLog := &maintenance.TaskExecutionLog{
+				Timestamp: time.Now(),
+				Level:     "INFO",
+				Message:   fmt.Sprintf("Worker logs not available: %s", reason),
+				Source:    "admin",
+				TaskID:    taskID,
+				WorkerID:  task.WorkerID,
+			}
+			taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, diagnosticLog)
 		}
 	}
 
