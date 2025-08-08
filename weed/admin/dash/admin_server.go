@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -1081,27 +1082,65 @@ func (as *AdminServer) getMaintenanceQueueStats() (*maintenance.QueueStats, erro
 // getMaintenanceTasks returns all maintenance tasks
 func (as *AdminServer) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
 	if as.maintenanceManager == nil {
-		return []*MaintenanceTask{}, nil
+		return []*maintenance.MaintenanceTask{}, nil
 	}
-	return as.maintenanceManager.GetTasks(maintenance.TaskStatusPending, "", 0), nil
+
+	// Collect all tasks from memory across all statuses
+	allTasks := []*maintenance.MaintenanceTask{}
+	statuses := []maintenance.MaintenanceTaskStatus{
+		maintenance.TaskStatusPending,
+		maintenance.TaskStatusAssigned,
+		maintenance.TaskStatusInProgress,
+		maintenance.TaskStatusCompleted,
+		maintenance.TaskStatusFailed,
+		maintenance.TaskStatusCancelled,
+	}
+
+	for _, status := range statuses {
+		tasks := as.maintenanceManager.GetTasks(status, "", 0)
+		allTasks = append(allTasks, tasks...)
+	}
+
+	// Also load any persisted tasks that might not be in memory
+	if as.configPersistence != nil {
+		persistedTasks, err := as.configPersistence.LoadAllTaskStates()
+		if err == nil {
+			// Add any persisted tasks not already in memory
+			for _, persistedTask := range persistedTasks {
+				found := false
+				for _, memoryTask := range allTasks {
+					if memoryTask.ID == persistedTask.ID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					allTasks = append(allTasks, persistedTask)
+				}
+			}
+		}
+	}
+
+	return allTasks, nil
 }
 
 // getMaintenanceTask returns a specific maintenance task
-func (as *AdminServer) getMaintenanceTask(taskID string) (*MaintenanceTask, error) {
+func (as *AdminServer) getMaintenanceTask(taskID string) (*maintenance.MaintenanceTask, error) {
 	if as.maintenanceManager == nil {
 		return nil, fmt.Errorf("maintenance manager not initialized")
 	}
 
 	// Search for the task across all statuses since we don't know which status it has
-	statuses := []MaintenanceTaskStatus{
-		TaskStatusPending,
-		TaskStatusAssigned,
-		TaskStatusInProgress,
-		TaskStatusCompleted,
-		TaskStatusFailed,
-		TaskStatusCancelled,
+	statuses := []maintenance.MaintenanceTaskStatus{
+		maintenance.TaskStatusPending,
+		maintenance.TaskStatusAssigned,
+		maintenance.TaskStatusInProgress,
+		maintenance.TaskStatusCompleted,
+		maintenance.TaskStatusFailed,
+		maintenance.TaskStatusCancelled,
 	}
 
+	// First, search for the task in memory across all statuses
 	for _, status := range statuses {
 		tasks := as.maintenanceManager.GetTasks(status, "", 0) // Get all tasks with this status
 		for _, task := range tasks {
@@ -1109,6 +1148,16 @@ func (as *AdminServer) getMaintenanceTask(taskID string) (*MaintenanceTask, erro
 				return task, nil
 			}
 		}
+	}
+
+	// If not found in memory, try to load from persistent storage
+	if as.configPersistence != nil {
+		task, err := as.configPersistence.LoadTaskState(taskID)
+		if err == nil {
+			glog.V(2).Infof("Loaded task %s from persistent storage", taskID)
+			return task, nil
+		}
+		glog.V(2).Infof("Task %s not found in persistent storage: %v", taskID, err)
 	}
 
 	return nil, fmt.Errorf("task %s not found", taskID)
@@ -1122,21 +1171,17 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 		return nil, err
 	}
 
-	// Try to load existing task detail from disk
-	taskDetail, err := as.configPersistence.LoadTaskDetail(taskID)
-	if err != nil {
-		// If not found on disk, create new detail structure
-		taskDetail = &maintenance.TaskDetailData{
-			Task:              task,
-			AssignmentHistory: []*maintenance.TaskAssignmentRecord{},
-			ExecutionLogs:     []*maintenance.TaskExecutionLog{},
-			RelatedTasks:      []*maintenance.MaintenanceTask{},
-			LastUpdated:       time.Now(),
-		}
-	} else {
-		// Update the task with current information
-		taskDetail.Task = task
-		taskDetail.LastUpdated = time.Now()
+	// Create task detail structure from the loaded task
+	taskDetail := &maintenance.TaskDetailData{
+		Task:              task,
+		AssignmentHistory: task.AssignmentHistory, // Use assignment history from persisted task
+		ExecutionLogs:     []*maintenance.TaskExecutionLog{},
+		RelatedTasks:      []*maintenance.MaintenanceTask{},
+		LastUpdated:       time.Now(),
+	}
+
+	if taskDetail.AssignmentHistory == nil {
+		taskDetail.AssignmentHistory = []*maintenance.TaskAssignmentRecord{}
 	}
 
 	// Get worker information if task is assigned
@@ -1151,7 +1196,7 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 	}
 
 	// Get execution logs from worker if task is active/completed and worker is connected
-	if task.Status == TaskStatusInProgress || task.Status == TaskStatusCompleted {
+	if task.Status == maintenance.TaskStatusInProgress || task.Status == maintenance.TaskStatusCompleted {
 		if as.workerGrpcServer != nil && task.WorkerID != "" {
 			workerLogs, err := as.workerGrpcServer.RequestTaskLogs(task.WorkerID, taskID, 100, "")
 			if err == nil && len(workerLogs) > 0 {
@@ -1271,6 +1316,34 @@ func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDeta
 		},
 		LastUpdated: time.Now(),
 	}, nil
+}
+
+// GetWorkerLogs fetches logs from a specific worker for a task
+func (as *AdminServer) GetWorkerLogs(c *gin.Context) {
+	workerID := c.Param("id")
+	taskID := c.Query("taskId")
+	maxEntriesStr := c.DefaultQuery("maxEntries", "100")
+	logLevel := c.DefaultQuery("logLevel", "")
+
+	maxEntries := int32(100)
+	if maxEntriesStr != "" {
+		if parsed, err := strconv.ParseInt(maxEntriesStr, 10, 32); err == nil {
+			maxEntries = int32(parsed)
+		}
+	}
+
+	if as.workerGrpcServer == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Worker gRPC server not available"})
+		return
+	}
+
+	logs, err := as.workerGrpcServer.RequestTaskLogs(workerID, taskID, maxEntries, logLevel)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Failed to get logs from worker: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"worker_id": workerID, "task_id": taskID, "logs": logs, "count": len(logs)})
 }
 
 // getMaintenanceStats returns maintenance statistics
