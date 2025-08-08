@@ -255,10 +255,3 @@ type TaskSpec struct {
 	Sources      []TaskSourceSpec      // Can be single or multiple
 	Destinations []TaskDestinationSpec // Can be single or multiple
 }
-
-// TaskSourceLocation represents a source location for task creation (DEPRECATED: use TaskSourceSpec)
-type TaskSourceLocation struct {
-	ServerID    string
-	DiskID      uint32
-	CleanupType SourceCleanupType // What type of cleanup is needed
-}

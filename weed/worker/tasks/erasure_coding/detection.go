@@ -110,11 +110,11 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				existingECShards := findExistingECShards(clusterInfo.ActiveTopology, metric.VolumeID, metric.Collection)
 
 				// Combine volume replicas and existing EC shards for cleanup
-				var allSourceLocations []topology.TaskSourceLocation
+				var sources []topology.TaskSourceSpec
 
 				// Add volume replicas (will free volume slots)
 				for _, replica := range replicaLocations {
-					allSourceLocations = append(allSourceLocations, topology.TaskSourceLocation{
+					sources = append(sources, topology.TaskSourceSpec{
 						ServerID:    replica.ServerID,
 						DiskID:      replica.DiskID,
 						CleanupType: topology.CleanupVolumeReplica,
@@ -131,7 +131,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				for _, shard := range existingECShards {
 					key := fmt.Sprintf("%s:%d", shard.ServerID, shard.DiskID)
 					if !duplicateCheck[key] { // Avoid duplicates if EC shards are on same disk as volume replicas
-						allSourceLocations = append(allSourceLocations, topology.TaskSourceLocation{
+						sources = append(sources, topology.TaskSourceSpec{
 							ServerID:    shard.ServerID,
 							DiskID:      shard.DiskID,
 							CleanupType: topology.CleanupECShards,
@@ -141,17 +141,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				}
 
 				glog.V(2).Infof("Found %d volume replicas and %d existing EC shards for volume %d (total %d cleanup sources)",
-					len(replicaLocations), len(existingECShards), metric.VolumeID, len(allSourceLocations))
-
-				// Convert TaskSourceLocation to TaskSourceSpec
-				sources := make([]topology.TaskSourceSpec, len(allSourceLocations))
-				for i, srcLoc := range allSourceLocations {
-					sources[i] = topology.TaskSourceSpec{
-						ServerID:    srcLoc.ServerID,
-						DiskID:      srcLoc.DiskID,
-						CleanupType: srcLoc.CleanupType,
-					}
-				}
+					len(replicaLocations), len(existingECShards), metric.VolumeID, len(sources))
 
 				// Convert shard destinations to TaskDestinationSpec
 				destinations := make([]topology.TaskDestinationSpec, len(shardDestinations))
@@ -180,7 +170,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				}
 
 				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d cleanup sources and %d shard destinations",
-					taskID, metric.VolumeID, len(allSourceLocations), len(multiPlan.Plans))
+					taskID, metric.VolumeID, len(sources), len(multiPlan.Plans))
 
 				// Find all volume replicas from topology (for legacy worker compatibility)
 				var replicas []string
