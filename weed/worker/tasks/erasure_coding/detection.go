@@ -335,13 +335,13 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.TaskTarget {
 	var targets []*worker_pb.TaskTarget
 
-	for i, plan := range multiPlan.Plans {
+	for _, plan := range multiPlan.Plans {
 		target := &worker_pb.TaskTarget{
 			Node:          plan.TargetNode,
 			DiskId:        plan.TargetDisk,
 			Rack:          plan.TargetRack,
 			DataCenter:    plan.TargetDC,
-			ShardIds:      []uint32{uint32(i)}, // Each target gets one shard ID
+			ShardIds:      nil, // Shard IDs will be assigned during execution by createShardAssignment()
 			EstimatedSize: plan.ExpectedSize,
 		}
 		targets = append(targets, target)
