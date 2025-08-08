@@ -208,19 +208,37 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                             </div>
 
                             <!-- Source Servers (Generic) -->
-                            if len(data.Task.TypedParams.Replicas) > 0 {
+                            if len(data.Task.TypedParams.Replicas) > 0 || data.Task.TypedParams.Server != "" {
                                 <div class="mb-4">
                                     <h6 class="text-info d-flex align-items-center">
                                         <i class="fas fa-server me-2"></i>
                                         Source Servers
-                                        <span class="badge bg-info ms-2">{fmt.Sprintf("%d", len(data.Task.TypedParams.Replicas))}</span>
+                                        if len(data.Task.TypedParams.Replicas) > 0 {
+                                            <span class="badge bg-info ms-2">{fmt.Sprintf("%d", len(data.Task.TypedParams.Replicas))}</span>
+                                        } else {
+                                            <span class="badge bg-info ms-2">1</span>
+                                        }
                                     </h6>
                                     <div class="bg-light p-3 rounded">
                                         <div class="d-flex flex-column gap-2">
-                                            for i, replica := range data.Task.TypedParams.Replicas {
+                                            if len(data.Task.TypedParams.Replicas) > 0 {
+                                                <!-- Multiple sources (EC tasks) -->
+                                                for i, replica := range data.Task.TypedParams.Replicas {
+                                                    <div class="d-flex align-items-center">
+                                                        <span class="badge bg-primary me-2">{fmt.Sprintf("#%d", i+1)}</span>
+                                                        <code class="flex-grow-1">{replica}</code>
+                                                    </div>
+                                                }
+                                            } else if data.Task.TypedParams.Server != "" {
+                                                <!-- Single source (Balance tasks) -->
                                                 <div class="d-flex align-items-center">
-                                                    <span class="badge bg-primary me-2">{fmt.Sprintf("#%d", i+1)}</span>
-                                                    <code class="flex-grow-1">{replica}</code>
+                                                    <span class="badge bg-primary me-2">#1</span>
+                                                    <code class="flex-grow-1">{data.Task.TypedParams.Server}</code>
+                                                    if data.Task.TypedParams.Rack != "" {
+                                                        <small class="text-muted ms-2">
+                                                            <i class="fas fa-server me-1"></i>{data.Task.TypedParams.Rack}
+                                                        </small>
+                                                    }
                                                 </div>
                                             }
                                         </div>
@@ -238,24 +256,46 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                             }
 
                             <!-- Target/Destination (Generic) -->
-                            if data.Task.TypedParams.Server != "" {
-                                <div class="mb-4">
-                                    <h6 class="text-success d-flex align-items-center">
-                                        <i class="fas fa-bullseye me-2"></i>
-                                        Target Server
-                                    </h6>
-                                    <div class="bg-light p-3 rounded">
-                                        <div class="d-flex align-items-center">
-                                            <span class="badge bg-success me-2">#1</span>
-                                            <code class="flex-grow-1">{data.Task.TypedParams.Server}</code>
-                                            if data.Task.TypedParams.Rack != "" {
-                                                <small class="text-muted ms-2">
-                                                    <i class="fas fa-server me-1"></i>{data.Task.TypedParams.Rack}
-                                                </small>
-                                            }
+                            if data.Task.TypedParams.TaskParams != nil {
+                                if balanceParams := data.Task.TypedParams.GetBalanceParams(); balanceParams != nil && balanceParams.DestNode != "" {
+                                    <!-- Balance task destination -->
+                                    <div class="mb-4">
+                                        <h6 class="text-success d-flex align-items-center">
+                                            <i class="fas fa-bullseye me-2"></i>
+                                            Target Server
+                                        </h6>
+                                        <div class="bg-light p-3 rounded">
+                                            <div class="d-flex align-items-center">
+                                                <span class="badge bg-success me-2">#1</span>
+                                                <code class="flex-grow-1">{balanceParams.DestNode}</code>
+                                                if balanceParams.DestRack != "" {
+                                                    <small class="text-muted ms-2">
+                                                        <i class="fas fa-server me-1"></i>{balanceParams.DestRack}
+                                                    </small>
+                                                }
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
+                                } else if replicationParams := data.Task.TypedParams.GetReplicationParams(); replicationParams != nil && replicationParams.DestNode != "" {
+                                    <!-- Replication task destination -->
+                                    <div class="mb-4">
+                                        <h6 class="text-success d-flex align-items-center">
+                                            <i class="fas fa-bullseye me-2"></i>
+                                            Target Server
+                                        </h6>
+                                        <div class="bg-light p-3 rounded">
+                                            <div class="d-flex align-items-center">
+                                                <span class="badge bg-success me-2">#1</span>
+                                                <code class="flex-grow-1">{replicationParams.DestNode}</code>
+                                                if replicationParams.DestRack != "" {
+                                                    <small class="text-muted ms-2">
+                                                        <i class="fas fa-server me-1"></i>{replicationParams.DestRack}
+                                                    </small>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
                             }
                         </div>
                     </div>
