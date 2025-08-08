@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -351,6 +350,7 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 }
 
 // distributeEcShards distributes locally generated EC shards to destination servers
+// using pre-assigned shard IDs from planning phase
 func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) error {
 	if len(t.targets) == 0 {
 		return fmt.Errorf("no targets specified for EC shard distribution")
@@ -360,10 +360,37 @@ func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) err
 		return fmt.Errorf("no shard files available for distribution")
 	}
 
-	// Create shard assignment: assign specific shards to specific destinations
-	shardAssignment := t.createShardAssignment(shardFiles)
+	// Build shard assignment from pre-assigned target shard IDs (from planning phase)
+	shardAssignment := make(map[string][]string)
+
+	for _, target := range t.targets {
+		if len(target.ShardIds) == 0 {
+			continue // Skip targets with no assigned shards
+		}
+
+		var assignedShards []string
+
+		// Convert shard IDs to shard file names (e.g., 0 → "ec00", 1 → "ec01")
+		for _, shardId := range target.ShardIds {
+			shardType := fmt.Sprintf("ec%02d", shardId)
+			assignedShards = append(assignedShards, shardType)
+		}
+
+		// Add metadata files (.ecx, .vif) to targets that have shards
+		if len(assignedShards) > 0 {
+			if _, hasEcx := shardFiles["ecx"]; hasEcx {
+				assignedShards = append(assignedShards, "ecx")
+			}
+			if _, hasVif := shardFiles["vif"]; hasVif {
+				assignedShards = append(assignedShards, "vif")
+			}
+		}
+
+		shardAssignment[target.Node] = assignedShards
+	}
+
 	if len(shardAssignment) == 0 {
-		return fmt.Errorf("failed to create shard assignment")
+		return fmt.Errorf("no shard assignments found from planning phase")
 	}
 
 	// Store assignment for use during mounting
@@ -374,7 +401,7 @@ func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) err
 		t.GetLogger().WithFields(map[string]interface{}{
 			"destination":     destNode,
 			"assigned_shards": len(assignedShards),
-			"shard_ids":       assignedShards,
+			"shard_types":     assignedShards,
 		}).Info("Distributing assigned EC shards to destination")
 
 		// Send only the assigned shards to this destination
@@ -392,82 +419,6 @@ func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) err
 
 	glog.V(1).Infof("Successfully distributed EC shards to %d destinations", len(shardAssignment))
 	return nil
-}
-
-// createShardAssignment assigns specific EC shards to specific destination servers
-// Each destination gets a subset of shards based on availability and placement rules
-func (t *ErasureCodingTask) createShardAssignment(shardFiles map[string]string) map[string][]string {
-	assignment := make(map[string][]string)
-
-	// Collect all available EC shards (ec00-ec13)
-	var availableShards []string
-	for shardType := range shardFiles {
-		if strings.HasPrefix(shardType, "ec") && len(shardType) == 4 {
-			availableShards = append(availableShards, shardType)
-		}
-	}
-
-	// Sort shards for consistent assignment
-	sort.Strings(availableShards)
-
-	if len(availableShards) == 0 {
-		glog.Warningf("No EC shards found for assignment")
-		return assignment
-	}
-
-	// Calculate shards per destination
-	numTargets := len(t.targets)
-	if numTargets == 0 {
-		return assignment
-	}
-
-	// Strategy: Distribute shards as evenly as possible across targets
-	// With 14 shards and N targets, some targets get ⌈14/N⌉ shards, others get ⌊14/N⌋
-	shardsPerDest := len(availableShards) / numTargets
-	extraShards := len(availableShards) % numTargets
-
-	shardIndex := 0
-	for i, target := range t.targets {
-		var destShards []string
-
-		// Assign base number of shards
-		shardsToAssign := shardsPerDest
-
-		// Assign one extra shard to first 'extraShards' destinations
-		if i < extraShards {
-			shardsToAssign++
-		}
-
-		// Assign the shards
-		for j := 0; j < shardsToAssign && shardIndex < len(availableShards); j++ {
-			destShards = append(destShards, availableShards[shardIndex])
-			shardIndex++
-		}
-
-		assignment[target.Node] = destShards
-
-		glog.V(2).Infof("Assigned shards %v to target %s", destShards, target.Node)
-	}
-
-	// Assign metadata files (.ecx, .vif) to each destination that has shards
-	// Note: .ecj files are created during mount, not during initial generation
-	for destNode, destShards := range assignment {
-		if len(destShards) > 0 {
-			// Add .ecx file if available
-			if _, hasEcx := shardFiles["ecx"]; hasEcx {
-				assignment[destNode] = append(assignment[destNode], "ecx")
-			}
-
-			// Add .vif file if available
-			if _, hasVif := shardFiles["vif"]; hasVif {
-				assignment[destNode] = append(assignment[destNode], "vif")
-			}
-
-			glog.V(2).Infof("Assigned metadata files (.ecx, .vif) to destination %s", destNode)
-		}
-	}
-
-	return assignment
 }
 
 // sendShardFileToDestination sends a single shard file to a destination server using ReceiveFile API

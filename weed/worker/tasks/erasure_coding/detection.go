@@ -332,21 +332,53 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 }
 
 // createECTargets creates unified TaskTarget structures from the multi-destination plan
+// with proper shard ID assignment during planning phase
 func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.TaskTarget {
 	var targets []*worker_pb.TaskTarget
+	numTargets := len(multiPlan.Plans)
 
-	for _, plan := range multiPlan.Plans {
+	// Create shard assignment arrays for each target (round-robin distribution)
+	targetShards := make([][]uint32, numTargets)
+	for i := range targetShards {
+		targetShards[i] = make([]uint32, 0)
+	}
+
+	// Distribute shards in round-robin fashion to spread both data and parity shards
+	// This ensures each target gets a mix of data shards (0-9) and parity shards (10-13)
+	for shardId := uint32(0); shardId < uint32(erasure_coding.TotalShardsCount); shardId++ {
+		targetIndex := int(shardId) % numTargets
+		targetShards[targetIndex] = append(targetShards[targetIndex], shardId)
+	}
+
+	// Create targets with assigned shard IDs
+	for i, plan := range multiPlan.Plans {
 		target := &worker_pb.TaskTarget{
 			Node:          plan.TargetNode,
 			DiskId:        plan.TargetDisk,
 			Rack:          plan.TargetRack,
 			DataCenter:    plan.TargetDC,
-			ShardIds:      nil, // Shard IDs will be assigned during execution by createShardAssignment()
+			ShardIds:      targetShards[i], // Round-robin assigned shards
 			EstimatedSize: plan.ExpectedSize,
 		}
 		targets = append(targets, target)
+
+		// Log shard assignment with data/parity classification
+		dataShards := make([]uint32, 0)
+		parityShards := make([]uint32, 0)
+		for _, shardId := range targetShards[i] {
+			if shardId < uint32(erasure_coding.DataShardsCount) {
+				dataShards = append(dataShards, shardId)
+			} else {
+				parityShards = append(parityShards, shardId)
+			}
+		}
+		glog.V(2).Infof("EC planning: target %s assigned shards %v (data: %v, parity: %v)", 
+			plan.TargetNode, targetShards[i], dataShards, parityShards)
 	}
 
+	glog.V(1).Infof("EC planning: distributed %d shards across %d targets using round-robin (data shards 0-%d, parity shards %d-%d)", 
+		erasure_coding.TotalShardsCount, numTargets, 
+		erasure_coding.DataShardsCount-1, erasure_coding.DataShardsCount, erasure_coding.TotalShardsCount-1)
 	return targets
 }
 
