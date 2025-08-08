@@ -44,6 +44,18 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 	task.CreatedAt = time.Now()
 	task.MaxRetries = 3 // Default retry count
 
+	// Initialize assignment history and set creation context
+	task.AssignmentHistory = make([]*TaskAssignmentRecord, 0)
+	if task.CreatedBy == "" {
+		task.CreatedBy = "maintenance-system"
+	}
+	if task.CreationContext == "" {
+		task.CreationContext = "Automatic task creation based on system monitoring"
+	}
+	if task.Tags == nil {
+		task.Tags = make(map[string]string)
+	}
+
 	mq.tasks[task.ID] = task
 	mq.pendingTasks = append(mq.pendingTasks, task)
 
@@ -172,6 +184,26 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 		return nil
 	}
 
+	// Record assignment history
+	workerAddress := ""
+	if worker, exists := mq.workers[workerID]; exists {
+		workerAddress = worker.Address
+	}
+
+	// Create assignment record
+	assignmentRecord := &TaskAssignmentRecord{
+		WorkerID:      workerID,
+		WorkerAddress: workerAddress,
+		AssignedAt:    now,
+		Reason:        "Task assigned to available worker",
+	}
+
+	// Initialize assignment history if nil
+	if selectedTask.AssignmentHistory == nil {
+		selectedTask.AssignmentHistory = make([]*TaskAssignmentRecord, 0)
+	}
+	selectedTask.AssignmentHistory = append(selectedTask.AssignmentHistory, assignmentRecord)
+
 	// Assign the task
 	selectedTask.Status = TaskStatusAssigned
 	selectedTask.WorkerID = workerID
@@ -220,6 +252,17 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 
 		// Check if task should be retried
 		if task.RetryCount < task.MaxRetries {
+			// Record unassignment due to failure/retry
+			if task.WorkerID != "" && len(task.AssignmentHistory) > 0 {
+				lastAssignment := task.AssignmentHistory[len(task.AssignmentHistory)-1]
+				if lastAssignment.UnassignedAt == nil {
+					unassignedTime := completedTime
+					lastAssignment.UnassignedAt = &unassignedTime
+					lastAssignment.Reason = fmt.Sprintf("Task failed, scheduling retry (attempt %d/%d): %s",
+						task.RetryCount+1, task.MaxRetries, error)
+				}
+			}
+
 			task.RetryCount++
 			task.Status = TaskStatusPending
 			task.WorkerID = ""
@@ -232,6 +275,16 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 			glog.Warningf("Task failed, scheduling retry: %s (%s) attempt %d/%d, worker %s, duration %v, error: %s",
 				taskID, task.Type, task.RetryCount, task.MaxRetries, task.WorkerID, duration, error)
 		} else {
+			// Record unassignment due to permanent failure
+			if task.WorkerID != "" && len(task.AssignmentHistory) > 0 {
+				lastAssignment := task.AssignmentHistory[len(task.AssignmentHistory)-1]
+				if lastAssignment.UnassignedAt == nil {
+					unassignedTime := completedTime
+					lastAssignment.UnassignedAt = &unassignedTime
+					lastAssignment.Reason = fmt.Sprintf("Task failed permanently after %d retries: %s", task.MaxRetries, error)
+				}
+			}
+
 			glog.Errorf("Task failed permanently: %s (%s) worker %s, duration %v, after %d retries: %s",
 				taskID, task.Type, task.WorkerID, duration, task.MaxRetries, error)
 		}
@@ -489,9 +542,19 @@ func (mq *MaintenanceQueue) RemoveStaleWorkers(timeout time.Duration) int {
 
 	for id, worker := range mq.workers {
 		if worker.LastHeartbeat.Before(cutoff) {
-			// Mark any assigned tasks as failed
+			// Mark any assigned tasks as failed and record unassignment
 			for _, task := range mq.tasks {
 				if task.WorkerID == id && (task.Status == TaskStatusAssigned || task.Status == TaskStatusInProgress) {
+					// Record unassignment due to worker becoming unavailable
+					if len(task.AssignmentHistory) > 0 {
+						lastAssignment := task.AssignmentHistory[len(task.AssignmentHistory)-1]
+						if lastAssignment.UnassignedAt == nil {
+							unassignedTime := time.Now()
+							lastAssignment.UnassignedAt = &unassignedTime
+							lastAssignment.Reason = "Worker became unavailable (stale heartbeat)"
+						}
+					}
+
 					task.Status = TaskStatusFailed
 					task.Error = "Worker became unavailable"
 					completedTime := time.Now()

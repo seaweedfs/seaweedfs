@@ -94,6 +94,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.POST("/maintenance/config", h.maintenanceHandlers.UpdateMaintenanceConfig)
 		protected.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
 		protected.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
+		protected.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
 
 		// API routes for AJAX calls
 		api := r.Group("/api")

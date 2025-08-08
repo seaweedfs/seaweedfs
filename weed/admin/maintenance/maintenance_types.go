@@ -108,6 +108,52 @@ type MaintenanceTask struct {
 	Progress    float64                 `json:"progress"` // 0-100
 	RetryCount  int                     `json:"retry_count"`
 	MaxRetries  int                     `json:"max_retries"`
+
+	// Enhanced fields for detailed task tracking
+	CreatedBy         string                  `json:"created_by,omitempty"`         // Who/what created this task
+	CreationContext   string                  `json:"creation_context,omitempty"`   // Additional context about creation
+	AssignmentHistory []*TaskAssignmentRecord `json:"assignment_history,omitempty"` // History of worker assignments
+	DetailedReason    string                  `json:"detailed_reason,omitempty"`    // More detailed explanation than Reason
+	Tags              map[string]string       `json:"tags,omitempty"`               // Additional metadata tags
+}
+
+// TaskAssignmentRecord tracks when a task was assigned to a worker
+type TaskAssignmentRecord struct {
+	WorkerID      string     `json:"worker_id"`
+	WorkerAddress string     `json:"worker_address"`
+	AssignedAt    time.Time  `json:"assigned_at"`
+	UnassignedAt  *time.Time `json:"unassigned_at,omitempty"`
+	Reason        string     `json:"reason"` // Why was it assigned/unassigned
+}
+
+// TaskExecutionLog represents a log entry from task execution
+type TaskExecutionLog struct {
+	Timestamp time.Time `json:"timestamp"`
+	Level     string    `json:"level"` // "info", "warn", "error", "debug"
+	Message   string    `json:"message"`
+	Source    string    `json:"source"` // Which component logged this
+	TaskID    string    `json:"task_id"`
+	WorkerID  string    `json:"worker_id"`
+}
+
+// TaskDetailData represents comprehensive information about a task for the detail view
+type TaskDetailData struct {
+	Task              *MaintenanceTask        `json:"task"`
+	AssignmentHistory []*TaskAssignmentRecord `json:"assignment_history"`
+	ExecutionLogs     []*TaskExecutionLog     `json:"execution_logs"`
+	RelatedTasks      []*MaintenanceTask      `json:"related_tasks,omitempty"`    // Other tasks on same volume/server
+	WorkerInfo        *MaintenanceWorker      `json:"worker_info,omitempty"`      // Current or last assigned worker
+	CreationMetrics   *TaskCreationMetrics    `json:"creation_metrics,omitempty"` // Metrics that led to task creation
+	LastUpdated       time.Time               `json:"last_updated"`
+}
+
+// TaskCreationMetrics holds metrics that led to the task being created
+type TaskCreationMetrics struct {
+	TriggerMetric  string                 `json:"trigger_metric"` // What metric triggered this task
+	MetricValue    float64                `json:"metric_value"`   // Value of the trigger metric
+	Threshold      float64                `json:"threshold"`      // Threshold that was exceeded
+	VolumeMetrics  *VolumeHealthMetrics   `json:"volume_metrics,omitempty"`
+	AdditionalData map[string]interface{} `json:"additional_data,omitempty"`
 }
 
 // MaintenanceConfig holds configuration for the maintenance system

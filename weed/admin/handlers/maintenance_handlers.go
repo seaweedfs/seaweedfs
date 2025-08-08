@@ -34,6 +34,11 @@ func NewMaintenanceHandlers(adminServer *dash.AdminServer) *MaintenanceHandlers 
 	}
 }
 
+// ShowTaskDetail displays the task detail page
+func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
+	h.adminServer.ShowMaintenanceTaskDetail(c)
+}
+
 // ShowMaintenanceQueue displays the maintenance queue page
 func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
 	data, err := h.getMaintenanceQueueData()

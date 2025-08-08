@@ -878,6 +878,46 @@ func (as *AdminServer) GetMaintenanceTask(c *gin.Context) {
 	c.JSON(http.StatusOK, task)
 }
 
+// GetMaintenanceTaskDetailAPI returns detailed task information via API
+func (as *AdminServer) GetMaintenanceTaskDetailAPI(c *gin.Context) {
+	taskID := c.Param("id")
+	taskDetail, err := as.GetMaintenanceTaskDetail(taskID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task detail not found", "details": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, taskDetail)
+}
+
+// ShowMaintenanceTaskDetail renders the task detail page
+func (as *AdminServer) ShowMaintenanceTaskDetail(c *gin.Context) {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin" // Default fallback
+	}
+
+	taskID := c.Param("id")
+	taskDetail, err := as.GetMaintenanceTaskDetail(taskID)
+	if err != nil {
+		c.HTML(http.StatusNotFound, "error.html", gin.H{
+			"error":   "Task not found",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Prepare data for template
+	data := gin.H{
+		"username":   username,
+		"task":       taskDetail.Task,
+		"taskDetail": taskDetail,
+		"title":      fmt.Sprintf("Task Detail - %s", taskID),
+	}
+
+	c.HTML(http.StatusOK, "task_detail.html", data)
+}
+
 // CancelMaintenanceTask cancels a pending maintenance task
 func (as *AdminServer) CancelMaintenanceTask(c *gin.Context) {
 	taskID := c.Param("id")
@@ -1072,6 +1112,82 @@ func (as *AdminServer) getMaintenanceTask(taskID string) (*MaintenanceTask, erro
 	}
 
 	return nil, fmt.Errorf("task %s not found", taskID)
+}
+
+// GetMaintenanceTaskDetail returns comprehensive task details including logs and assignment history
+func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.TaskDetailData, error) {
+	// Get basic task information
+	task, err := as.getMaintenanceTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try to load existing task detail from disk
+	taskDetail, err := as.configPersistence.LoadTaskDetail(taskID)
+	if err != nil {
+		// If not found on disk, create new detail structure
+		taskDetail = &maintenance.TaskDetailData{
+			Task:              task,
+			AssignmentHistory: []*maintenance.TaskAssignmentRecord{},
+			ExecutionLogs:     []*maintenance.TaskExecutionLog{},
+			RelatedTasks:      []*maintenance.MaintenanceTask{},
+			LastUpdated:       time.Now(),
+		}
+	} else {
+		// Update the task with current information
+		taskDetail.Task = task
+		taskDetail.LastUpdated = time.Now()
+	}
+
+	// Get worker information if task is assigned
+	if task.WorkerID != "" {
+		workers := as.maintenanceManager.GetWorkers()
+		for _, worker := range workers {
+			if worker.ID == task.WorkerID {
+				taskDetail.WorkerInfo = worker
+				break
+			}
+		}
+	}
+
+	// Get execution logs from worker if task is active/completed and worker is connected
+	if task.Status == TaskStatusInProgress || task.Status == TaskStatusCompleted {
+		if as.workerGrpcServer != nil && task.WorkerID != "" {
+			workerLogs, err := as.workerGrpcServer.RequestTaskLogs(task.WorkerID, taskID, 100, "")
+			if err == nil && len(workerLogs) > 0 {
+				// Convert worker logs to maintenance logs
+				for _, workerLog := range workerLogs {
+					maintenanceLog := &maintenance.TaskExecutionLog{
+						Timestamp: time.Unix(workerLog.Timestamp, 0),
+						Level:     workerLog.Level,
+						Message:   workerLog.Message,
+						Source:    "worker",
+						TaskID:    taskID,
+						WorkerID:  task.WorkerID,
+					}
+					taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, maintenanceLog)
+				}
+			}
+		}
+	}
+
+	// Get related tasks (other tasks on same volume/server)
+	if task.VolumeID != 0 || task.Server != "" {
+		allTasks := as.maintenanceManager.GetTasks("", "", 50) // Get recent tasks
+		for _, relatedTask := range allTasks {
+			if relatedTask.ID != taskID &&
+				(relatedTask.VolumeID == task.VolumeID || relatedTask.Server == task.Server) {
+				taskDetail.RelatedTasks = append(taskDetail.RelatedTasks, relatedTask)
+			}
+		}
+	}
+
+	// Save updated task detail to disk
+	if err := as.configPersistence.SaveTaskDetail(taskID, taskDetail); err != nil {
+		glog.V(1).Infof("Failed to save task detail for %s: %v", taskID, err)
+	}
+
+	return taskDetail, nil
 }
 
 // getMaintenanceWorkers returns all maintenance workers

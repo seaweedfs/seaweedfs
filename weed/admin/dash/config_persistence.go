@@ -1,11 +1,13 @@
 package dash
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
@@ -35,6 +37,10 @@ const (
 
 	ConfigDirPermissions  = 0755
 	ConfigFilePermissions = 0644
+
+	// Task detail storage
+	TaskDetailsSubdir = "task_details"
+	TaskLogsSubdir    = "task_logs"
 )
 
 // Task configuration types
@@ -687,4 +693,166 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 
 	glog.V(1).Infof("Built maintenance policy from separate task configs - %d task policies loaded", len(policy.TaskPolicies))
 	return policy
+}
+
+// SaveTaskDetail saves detailed task information to disk
+func (cp *ConfigPersistence) SaveTaskDetail(taskID string, detail *maintenance.TaskDetailData) error {
+	if cp.dataDir == "" {
+		return fmt.Errorf("no data directory specified, cannot save task detail")
+	}
+
+	taskDetailDir := filepath.Join(cp.dataDir, TaskDetailsSubdir)
+	if err := os.MkdirAll(taskDetailDir, ConfigDirPermissions); err != nil {
+		return fmt.Errorf("failed to create task details directory: %w", err)
+	}
+
+	// Save task detail as JSON for easy reading and debugging
+	taskDetailPath := filepath.Join(taskDetailDir, fmt.Sprintf("%s.json", taskID))
+	jsonData, err := json.MarshalIndent(detail, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal task detail to JSON: %w", err)
+	}
+
+	if err := os.WriteFile(taskDetailPath, jsonData, ConfigFilePermissions); err != nil {
+		return fmt.Errorf("failed to write task detail file: %w", err)
+	}
+
+	glog.V(2).Infof("Saved task detail for task %s to %s", taskID, taskDetailPath)
+	return nil
+}
+
+// LoadTaskDetail loads detailed task information from disk
+func (cp *ConfigPersistence) LoadTaskDetail(taskID string) (*maintenance.TaskDetailData, error) {
+	if cp.dataDir == "" {
+		return nil, fmt.Errorf("no data directory specified, cannot load task detail")
+	}
+
+	taskDetailPath := filepath.Join(cp.dataDir, TaskDetailsSubdir, fmt.Sprintf("%s.json", taskID))
+	if _, err := os.Stat(taskDetailPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("task detail file not found: %s", taskID)
+	}
+
+	jsonData, err := os.ReadFile(taskDetailPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read task detail file: %w", err)
+	}
+
+	var detail maintenance.TaskDetailData
+	if err := json.Unmarshal(jsonData, &detail); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal task detail JSON: %w", err)
+	}
+
+	glog.V(2).Infof("Loaded task detail for task %s from %s", taskID, taskDetailPath)
+	return &detail, nil
+}
+
+// SaveTaskExecutionLogs saves execution logs for a task
+func (cp *ConfigPersistence) SaveTaskExecutionLogs(taskID string, logs []*maintenance.TaskExecutionLog) error {
+	if cp.dataDir == "" {
+		return fmt.Errorf("no data directory specified, cannot save task logs")
+	}
+
+	taskLogsDir := filepath.Join(cp.dataDir, TaskLogsSubdir)
+	if err := os.MkdirAll(taskLogsDir, ConfigDirPermissions); err != nil {
+		return fmt.Errorf("failed to create task logs directory: %w", err)
+	}
+
+	// Save logs as JSON for easy reading
+	taskLogsPath := filepath.Join(taskLogsDir, fmt.Sprintf("%s.json", taskID))
+	logsData := struct {
+		TaskID string                          `json:"task_id"`
+		Logs   []*maintenance.TaskExecutionLog `json:"logs"`
+	}{
+		TaskID: taskID,
+		Logs:   logs,
+	}
+	jsonData, err := json.MarshalIndent(logsData, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal task logs to JSON: %w", err)
+	}
+
+	if err := os.WriteFile(taskLogsPath, jsonData, ConfigFilePermissions); err != nil {
+		return fmt.Errorf("failed to write task logs file: %w", err)
+	}
+
+	glog.V(2).Infof("Saved %d execution logs for task %s to %s", len(logs), taskID, taskLogsPath)
+	return nil
+}
+
+// LoadTaskExecutionLogs loads execution logs for a task
+func (cp *ConfigPersistence) LoadTaskExecutionLogs(taskID string) ([]*maintenance.TaskExecutionLog, error) {
+	if cp.dataDir == "" {
+		return nil, fmt.Errorf("no data directory specified, cannot load task logs")
+	}
+
+	taskLogsPath := filepath.Join(cp.dataDir, TaskLogsSubdir, fmt.Sprintf("%s.json", taskID))
+	if _, err := os.Stat(taskLogsPath); os.IsNotExist(err) {
+		// Return empty slice if logs don't exist yet
+		return []*maintenance.TaskExecutionLog{}, nil
+	}
+
+	jsonData, err := os.ReadFile(taskLogsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read task logs file: %w", err)
+	}
+
+	var logsData struct {
+		TaskID string                          `json:"task_id"`
+		Logs   []*maintenance.TaskExecutionLog `json:"logs"`
+	}
+	if err := json.Unmarshal(jsonData, &logsData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal task logs JSON: %w", err)
+	}
+
+	glog.V(2).Infof("Loaded %d execution logs for task %s from %s", len(logsData.Logs), taskID, taskLogsPath)
+	return logsData.Logs, nil
+}
+
+// DeleteTaskDetail removes task detail and logs from disk
+func (cp *ConfigPersistence) DeleteTaskDetail(taskID string) error {
+	if cp.dataDir == "" {
+		return fmt.Errorf("no data directory specified, cannot delete task detail")
+	}
+
+	// Delete task detail file
+	taskDetailPath := filepath.Join(cp.dataDir, TaskDetailsSubdir, fmt.Sprintf("%s.json", taskID))
+	if err := os.Remove(taskDetailPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete task detail file: %w", err)
+	}
+
+	// Delete task logs file
+	taskLogsPath := filepath.Join(cp.dataDir, TaskLogsSubdir, fmt.Sprintf("%s.json", taskID))
+	if err := os.Remove(taskLogsPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete task logs file: %w", err)
+	}
+
+	glog.V(2).Infof("Deleted task detail and logs for task %s", taskID)
+	return nil
+}
+
+// ListTaskDetails returns a list of all task IDs that have stored details
+func (cp *ConfigPersistence) ListTaskDetails() ([]string, error) {
+	if cp.dataDir == "" {
+		return nil, fmt.Errorf("no data directory specified, cannot list task details")
+	}
+
+	taskDetailDir := filepath.Join(cp.dataDir, TaskDetailsSubdir)
+	if _, err := os.Stat(taskDetailDir); os.IsNotExist(err) {
+		return []string{}, nil
+	}
+
+	entries, err := os.ReadDir(taskDetailDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read task details directory: %w", err)
+	}
+
+	var taskIDs []string
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+			taskID := entry.Name()[:len(entry.Name())-5] // Remove .json extension
+			taskIDs = append(taskIDs, taskID)
+		}
+	}
+
+	return taskIDs, nil
 }

@@ -1,0 +1,495 @@
+package app
+
+import (
+    "fmt"
+    "time"
+    "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+)
+
+templ TaskDetail(data *maintenance.TaskDetailData) {
+    <div class="container-fluid">
+        <!-- Header -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <nav aria-label="breadcrumb">
+                            <ol class="breadcrumb mb-1">
+                                <li class="breadcrumb-item"><a href="/maintenance">Maintenance</a></li>
+                                <li class="breadcrumb-item active" aria-current="page">Task Detail</li>
+                            </ol>
+                        </nav>
+                        <h2 class="mb-0">
+                            <i class="fas fa-tasks me-2"></i>
+                            Task Detail: {data.Task.ID}
+                        </h2>
+                    </div>
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-secondary" onclick="history.back()">
+                            <i class="fas fa-arrow-left me-1"></i>
+                            Back
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="refreshPage()">
+                            <i class="fas fa-sync-alt me-1"></i>
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Task Overview Card -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Task Overview
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <dl class="row">
+                                    <dt class="col-sm-4">Task ID:</dt>
+                                    <dd class="col-sm-8"><code>{data.Task.ID}</code></dd>
+                                    
+                                    <dt class="col-sm-4">Type:</dt>
+                                    <dd class="col-sm-8">
+                                        <span class="badge bg-info">{string(data.Task.Type)}</span>
+                                    </dd>
+                                    
+                                    <dt class="col-sm-4">Status:</dt>
+                                    <dd class="col-sm-8">
+                                        if data.Task.Status == maintenance.TaskStatusPending {
+                                            <span class="badge bg-secondary">Pending</span>
+                                        } else if data.Task.Status == maintenance.TaskStatusAssigned {
+                                            <span class="badge bg-info">Assigned</span>
+                                        } else if data.Task.Status == maintenance.TaskStatusInProgress {
+                                            <span class="badge bg-warning">In Progress</span>
+                                        } else if data.Task.Status == maintenance.TaskStatusCompleted {
+                                            <span class="badge bg-success">Completed</span>
+                                        } else if data.Task.Status == maintenance.TaskStatusFailed {
+                                            <span class="badge bg-danger">Failed</span>
+                                        } else if data.Task.Status == maintenance.TaskStatusCancelled {
+                                            <span class="badge bg-dark">Cancelled</span>
+                                        }
+                                    </dd>
+                                    
+                                    <dt class="col-sm-4">Priority:</dt>
+                                    <dd class="col-sm-8">
+                                        if data.Task.Priority == maintenance.TaskPriorityHigh {
+                                            <span class="badge bg-danger">High</span>
+                                        } else if data.Task.Priority == maintenance.TaskPriorityMedium {
+                                            <span class="badge bg-warning">Medium</span>
+                                        } else {
+                                            <span class="badge bg-secondary">Low</span>
+                                        }
+                                    </dd>
+                                    
+                                    if data.Task.VolumeID != 0 {
+                                        <dt class="col-sm-4">Volume ID:</dt>
+                                        <dd class="col-sm-8">{fmt.Sprintf("%d", data.Task.VolumeID)}</dd>
+                                    }
+                                    
+                                    if data.Task.Server != "" {
+                                        <dt class="col-sm-4">Server:</dt>
+                                        <dd class="col-sm-8"><code>{data.Task.Server}</code></dd>
+                                    }
+                                </dl>
+                            </div>
+                            <div class="col-md-6">
+                                <dl class="row">
+                                    <dt class="col-sm-4">Created:</dt>
+                                    <dd class="col-sm-8">{data.Task.CreatedAt.Format("2006-01-02 15:04:05")}</dd>
+                                    
+                                    <dt class="col-sm-4">Scheduled:</dt>
+                                    <dd class="col-sm-8">{data.Task.ScheduledAt.Format("2006-01-02 15:04:05")}</dd>
+                                    
+                                    if data.Task.StartedAt != nil {
+                                        <dt class="col-sm-4">Started:</dt>
+                                        <dd class="col-sm-8">{data.Task.StartedAt.Format("2006-01-02 15:04:05")}</dd>
+                                    }
+                                    
+                                    if data.Task.CompletedAt != nil {
+                                        <dt class="col-sm-4">Completed:</dt>
+                                        <dd class="col-sm-8">{data.Task.CompletedAt.Format("2006-01-02 15:04:05")}</dd>
+                                    }
+                                    
+                                    if data.Task.WorkerID != "" {
+                                        <dt class="col-sm-4">Worker:</dt>
+                                        <dd class="col-sm-8"><code>{data.Task.WorkerID}</code></dd>
+                                    }
+                                    
+                                    if data.Task.Progress > 0 {
+                                        <dt class="col-sm-4">Progress:</dt>
+                                        <dd class="col-sm-8">
+                                            <div class="progress" style="height: 20px;">
+                                                <div class="progress-bar" role="progressbar" 
+                                                     style={fmt.Sprintf("width: %.1f%%", data.Task.Progress)}
+                                                     aria-valuenow={fmt.Sprintf("%.1f", data.Task.Progress)} 
+                                                     aria-valuemin="0" aria-valuemax="100">
+                                                    {fmt.Sprintf("%.1f%%", data.Task.Progress)}
+                                                </div>
+                                            </div>
+                                        </dd>
+                                    }
+                                </dl>
+                            </div>
+                        </div>
+                        
+                        if data.Task.Reason != "" {
+                            <div class="row mt-3">
+                                <div class="col-12">
+                                    <h6>Reason:</h6>
+                                    <p class="text-muted">{data.Task.Reason}</p>
+                                </div>
+                            </div>
+                        }
+                        
+                        if data.Task.DetailedReason != "" {
+                            <div class="row mt-3">
+                                <div class="col-12">
+                                    <h6>Detailed Reason:</h6>
+                                    <p class="text-muted">{data.Task.DetailedReason}</p>
+                                </div>
+                            </div>
+                        }
+                        
+                        if data.Task.Error != "" {
+                            <div class="row mt-3">
+                                <div class="col-12">
+                                    <h6>Error:</h6>
+                                    <div class="alert alert-danger">
+                                        <code>{data.Task.Error}</code>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Worker Information Card -->
+        if data.WorkerInfo != nil {
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-server me-2"></i>
+                                Worker Information
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <dl class="row">
+                                        <dt class="col-sm-4">Worker ID:</dt>
+                                        <dd class="col-sm-8"><code>{data.WorkerInfo.ID}</code></dd>
+                                        
+                                        <dt class="col-sm-4">Address:</dt>
+                                        <dd class="col-sm-8"><code>{data.WorkerInfo.Address}</code></dd>
+                                        
+                                        <dt class="col-sm-4">Status:</dt>
+                                        <dd class="col-sm-8">
+                                            if data.WorkerInfo.Status == "active" {
+                                                <span class="badge bg-success">Active</span>
+                                            } else if data.WorkerInfo.Status == "busy" {
+                                                <span class="badge bg-warning">Busy</span>
+                                            } else {
+                                                <span class="badge bg-secondary">Inactive</span>
+                                            }
+                                        </dd>
+                                    </dl>
+                                </div>
+                                <div class="col-md-6">
+                                    <dl class="row">
+                                        <dt class="col-sm-4">Last Heartbeat:</dt>
+                                        <dd class="col-sm-8">{data.WorkerInfo.LastHeartbeat.Format("2006-01-02 15:04:05")}</dd>
+                                        
+                                        <dt class="col-sm-4">Current Load:</dt>
+                                        <dd class="col-sm-8">{fmt.Sprintf("%d/%d", data.WorkerInfo.CurrentLoad, data.WorkerInfo.MaxConcurrent)}</dd>
+                                        
+                                        <dt class="col-sm-4">Capabilities:</dt>
+                                        <dd class="col-sm-8">
+                                            for _, capability := range data.WorkerInfo.Capabilities {
+                                                <span class="badge bg-info me-1">{string(capability)}</span>
+                                            }
+                                        </dd>
+                                    </dl>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- Assignment History Card -->
+        if len(data.AssignmentHistory) > 0 {
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-history me-2"></i>
+                                Assignment History
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>Worker ID</th>
+                                            <th>Worker Address</th>
+                                            <th>Assigned At</th>
+                                            <th>Unassigned At</th>
+                                            <th>Reason</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, assignment := range data.AssignmentHistory {
+                                            <tr>
+                                                <td><code>{assignment.WorkerID}</code></td>
+                                                <td><code>{assignment.WorkerAddress}</code></td>
+                                                <td>{assignment.AssignedAt.Format("2006-01-02 15:04:05")}</td>
+                                                <td>
+                                                    if assignment.UnassignedAt != nil {
+                                                        {assignment.UnassignedAt.Format("2006-01-02 15:04:05")}
+                                                    } else {
+                                                        <span class="text-muted">Still assigned</span>
+                                                    }
+                                                </td>
+                                                <td>{assignment.Reason}</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- Execution Logs Card -->
+        if len(data.ExecutionLogs) > 0 {
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-file-alt me-2"></i>
+                                Execution Logs
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th width="150">Timestamp</th>
+                                            <th width="80">Level</th>
+                                            <th width="100">Source</th>
+                                            <th>Message</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, log := range data.ExecutionLogs {
+                                            <tr>
+                                                <td><small>{log.Timestamp.Format("15:04:05")}</small></td>
+                                                <td>
+                                                    if log.Level == "error" {
+                                                        <span class="badge bg-danger">{log.Level}</span>
+                                                    } else if log.Level == "warn" {
+                                                        <span class="badge bg-warning">{log.Level}</span>
+                                                    } else if log.Level == "info" {
+                                                        <span class="badge bg-info">{log.Level}</span>
+                                                    } else {
+                                                        <span class="badge bg-secondary">{log.Level}</span>
+                                                    }
+                                                </td>
+                                                <td><small>{log.Source}</small></td>
+                                                <td><code>{log.Message}</code></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- Related Tasks Card -->
+        if len(data.RelatedTasks) > 0 {
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-link me-2"></i>
+                                Related Tasks
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>Task ID</th>
+                                            <th>Type</th>
+                                            <th>Status</th>
+                                            <th>Volume ID</th>
+                                            <th>Server</th>
+                                            <th>Created</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, relatedTask := range data.RelatedTasks {
+                                            <tr>
+                                                <td>
+                                                    <a href={fmt.Sprintf("/maintenance/tasks/%s", relatedTask.ID)}>
+                                                        <code>{relatedTask.ID}</code>
+                                                    </a>
+                                                </td>
+                                                <td><span class="badge bg-info">{string(relatedTask.Type)}</span></td>
+                                                <td>
+                                                    if relatedTask.Status == maintenance.TaskStatusCompleted {
+                                                        <span class="badge bg-success">Completed</span>
+                                                    } else if relatedTask.Status == maintenance.TaskStatusFailed {
+                                                        <span class="badge bg-danger">Failed</span>
+                                                    } else if relatedTask.Status == maintenance.TaskStatusInProgress {
+                                                        <span class="badge bg-warning">In Progress</span>
+                                                    } else {
+                                                        <span class="badge bg-secondary">{string(relatedTask.Status)}</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    if relatedTask.VolumeID != 0 {
+                                                        {fmt.Sprintf("%d", relatedTask.VolumeID)}
+                                                    } else {
+                                                        <span class="text-muted">-</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    if relatedTask.Server != "" {
+                                                        <code>{relatedTask.Server}</code>
+                                                    } else {
+                                                        <span class="text-muted">-</span>
+                                                    }
+                                                </td>
+                                                <td><small>{relatedTask.CreatedAt.Format("2006-01-02 15:04:05")}</small></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- Actions Card -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-cogs me-2"></i>
+                            Actions
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        if data.Task.Status == maintenance.TaskStatusPending || data.Task.Status == maintenance.TaskStatusAssigned {
+                            <button type="button" class="btn btn-danger me-2" onclick="cancelTask('{data.Task.ID}')">
+                                <i class="fas fa-times me-1"></i>
+                                Cancel Task
+                            </button>
+                        }
+                        <button type="button" class="btn btn-secondary me-2" onclick="refreshTaskLogs('{data.Task.ID}')">
+                            <i class="fas fa-sync-alt me-1"></i>
+                            Refresh Logs
+                        </button>
+                        <button type="button" class="btn btn-info" onclick="exportTaskDetail('{data.Task.ID}')">
+                            <i class="fas fa-download me-1"></i>
+                            Export Details
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function refreshPage() {
+        location.reload();
+    }
+
+    function cancelTask(taskId) {
+        if (confirm('Are you sure you want to cancel this task?')) {
+            fetch(`/api/maintenance/tasks/${taskId}/cancel`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Task cancelled successfully');
+                    location.reload();
+                } else {
+                    alert('Error cancelling task: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error cancelling task');
+            });
+        }
+    }
+
+    function refreshTaskLogs(taskId) {
+        fetch(`/api/maintenance/tasks/${taskId}/detail`)
+        .then(response => response.json())
+        .then(data => {
+            location.reload();
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error refreshing logs');
+        });
+    }
+
+    function exportTaskDetail(taskId) {
+        fetch(`/api/maintenance/tasks/${taskId}/detail`)
+        .then(response => response.json())
+        .then(data => {
+            const dataStr = JSON.stringify(data, null, 2);
+            const dataBlob = new Blob([dataStr], {type: 'application/json'});
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `task-${taskId}-detail.json`;
+            link.click();
+            URL.revokeObjectURL(url);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error exporting task detail');
+        });
+    }
+
+    // Auto-refresh every 30 seconds for active tasks
+    if ('{string(data.Task.Status)}' === 'in_progress') {
+        setInterval(refreshPage, 30000);
+    }
+    </script>
+}

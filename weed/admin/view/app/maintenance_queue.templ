@@ -103,7 +103,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                     <tbody>
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "pending" {
-                                                <tr>
+                                                <tr class="clickable-row" onclick={fmt.Sprintf("window.location.href='/maintenance/tasks/%s'", task.ID)} style="cursor: pointer;">
                                                     <td>
                                                         @TaskTypeIcon(task.Type)
                                                         {string(task.Type)}
@@ -158,7 +158,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                     <tbody>
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "assigned" || string(task.Status) == "in_progress" {
-                                                <tr>
+                                                <tr class="clickable-row" onclick={fmt.Sprintf("window.location.href='/maintenance/tasks/%s'", task.ID)} style="cursor: pointer;">
                                                     <td>
                                                         @TaskTypeIcon(task.Type)
                                                         {string(task.Type)}
@@ -226,7 +226,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "completed" || string(task.Status) == "failed" || string(task.Status) == "cancelled" {
                                                 if string(task.Status) == "failed" {
-                                                    <tr class="table-danger">
+                                                    <tr class="table-danger clickable-row" onclick={fmt.Sprintf("window.location.href='/maintenance/tasks/%s'", task.ID)} style="cursor: pointer;">
                                                         <td>
                                                             @TaskTypeIcon(task.Type)
                                                             {string(task.Type)}
@@ -256,7 +256,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                                         </td>
                                                     </tr>
                                                 } else {
-                                                    <tr>
+                                                    <tr class="clickable-row" onclick={fmt.Sprintf("window.location.href='/maintenance/tasks/%s'", task.ID)} style="cursor: pointer;">
                                                         <td>
                                                             @TaskTypeIcon(task.Type)
                                                             {string(task.Type)}

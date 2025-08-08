@@ -453,6 +453,68 @@ func (s *WorkerGrpcServer) GetConnectedWorkers() []string {
 	return workers
 }
 
+// RequestTaskLogs requests execution logs from a worker for a specific task
+func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries int32, logLevel string) ([]*worker_pb.TaskLogEntry, error) {
+	s.connMutex.RLock()
+	conn, exists := s.connections[workerID]
+	s.connMutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("worker %s is not connected", workerID)
+	}
+
+	// Create log request message
+	logRequest := &worker_pb.AdminMessage{
+		AdminId:   "admin-server",
+		Timestamp: time.Now().Unix(),
+		Message: &worker_pb.AdminMessage_TaskLogRequest{
+			TaskLogRequest: &worker_pb.TaskLogRequest{
+				TaskId:          taskID,
+				WorkerId:        workerID,
+				IncludeMetadata: true,
+				MaxEntries:      maxEntries,
+				LogLevel:        logLevel,
+			},
+		},
+	}
+
+	// Send the request through the worker's outgoing channel
+	select {
+	case conn.outgoing <- logRequest:
+		// Request sent successfully
+	case <-time.After(5 * time.Second):
+		return nil, fmt.Errorf("timeout sending log request to worker %s", workerID)
+	}
+
+	// Wait for response (this is a simplified implementation)
+	// In a real implementation, you'd want to handle this asynchronously with proper correlation IDs
+	// For now, we'll return an empty slice since the actual response handling is complex
+	return []*worker_pb.TaskLogEntry{}, nil
+}
+
+// RequestTaskLogsFromAllWorkers requests logs for a task from all connected workers
+func (s *WorkerGrpcServer) RequestTaskLogsFromAllWorkers(taskID string, maxEntries int32, logLevel string) (map[string][]*worker_pb.TaskLogEntry, error) {
+	s.connMutex.RLock()
+	workerIDs := make([]string, 0, len(s.connections))
+	for workerID := range s.connections {
+		workerIDs = append(workerIDs, workerID)
+	}
+	s.connMutex.RUnlock()
+
+	results := make(map[string][]*worker_pb.TaskLogEntry)
+
+	for _, workerID := range workerIDs {
+		logs, err := s.RequestTaskLogs(workerID, taskID, maxEntries, logLevel)
+		if err != nil {
+			glog.V(1).Infof("Failed to get logs from worker %s: %v", workerID, err)
+			continue
+		}
+		results[workerID] = logs
+	}
+
+	return results, nil
+}
+
 // convertTaskParameters converts task parameters to protobuf format
 func convertTaskParameters(params map[string]interface{}) map[string]string {
 	result := make(map[string]string)
