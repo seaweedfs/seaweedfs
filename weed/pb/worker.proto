@@ -94,21 +94,23 @@ message TaskAssignment {
 
 // TaskParams contains task-specific parameters with typed variants
 message TaskParams {
-  string task_id = 12;    // ActiveTopology task ID for lifecycle management
-  uint32 volume_id = 1;
-  string server = 2;
-  string collection = 3;
-  string data_center = 4;
-  string rack = 5;
-  repeated string replicas = 6;
-  uint64 volume_size = 11;  // Original volume size in bytes for tracking size changes
+  string task_id = 1;                   // ActiveTopology task ID for lifecycle management
+  uint32 volume_id = 2;                 // Primary volume ID for the task
+  string collection = 3;                // Collection name
+  string data_center = 4;               // Primary data center
+  string rack = 5;                      // Primary rack
+  uint64 volume_size = 6;               // Original volume size in bytes for tracking size changes
+  
+  // Unified source and target arrays for all task types
+  repeated TaskSource sources = 7;      // Source locations (volume replicas, EC shards, etc.)
+  repeated TaskTarget targets = 8;      // Target locations (destinations, new replicas, etc.)
   
   // Typed task parameters
   oneof task_params {
-    VacuumTaskParams vacuum_params = 7;
-    ErasureCodingTaskParams erasure_coding_params = 8;
-    BalanceTaskParams balance_params = 9;
-    ReplicationTaskParams replication_params = 10;
+    VacuumTaskParams vacuum_params = 9;
+    ErasureCodingTaskParams erasure_coding_params = 10;
+    BalanceTaskParams balance_params = 11;
+    ReplicationTaskParams replication_params = 12;
   }
 }
 
@@ -123,51 +125,48 @@ message VacuumTaskParams {
 
 // ErasureCodingTaskParams for EC encoding operations
 message ErasureCodingTaskParams {
-  uint64 estimated_shard_size = 3;        // Estimated size per shard
-  int32 data_shards = 4;                  // Number of data shards (default: 10)
-  int32 parity_shards = 5;                // Number of parity shards (default: 4)
-  string working_dir = 6;                 // Working directory for EC processing
-  string master_client = 7;               // Master server address
-  bool cleanup_source = 8;                // Whether to cleanup source volume after EC
-  repeated ECDestination destinations = 10; // Planned destinations with disk information
-  repeated ExistingECShardLocation existing_shard_locations = 11; // Existing EC shards to cleanup
+  uint64 estimated_shard_size = 1;        // Estimated size per shard
+  int32 data_shards = 2;                  // Number of data shards (default: 10)
+  int32 parity_shards = 3;                // Number of parity shards (default: 4)
+  string working_dir = 4;                 // Working directory for EC processing
+  string master_client = 5;               // Master server address
+  bool cleanup_source = 6;                // Whether to cleanup source volume after EC
 }
 
-// ECDestination represents a planned destination for EC shards with disk information
-message ECDestination {
+// TaskSource represents a unified source location for any task type
+message TaskSource {
+  string node = 1;                        // Source server address
+  uint32 disk_id = 2;                     // Source disk ID
+  string rack = 3;                        // Source rack for tracking
+  string data_center = 4;                 // Source data center for tracking
+  uint32 volume_id = 5;                   // Volume ID (for volume operations)
+  repeated uint32 shard_ids = 6;          // Shard IDs (for EC shard operations)
+  uint64 estimated_size = 7;              // Estimated size to be processed
+}
+
+// TaskTarget represents a unified target location for any task type
+message TaskTarget {
   string node = 1;                        // Target server address
-  uint32 disk_id = 2;                     // Target disk ID
-  string rack = 3;                        // Target rack for placement tracking
-  string data_center = 4;                 // Target data center for placement tracking
-  double placement_score = 5;             // Quality score of the placement
+  uint32 disk_id = 2;                     // Target disk ID  
+  string rack = 3;                        // Target rack for tracking
+  string data_center = 4;                 // Target data center for tracking
+  uint32 volume_id = 5;                   // Volume ID (for volume operations)
+  repeated uint32 shard_ids = 6;          // Shard IDs (for EC shard operations)
+  uint64 estimated_size = 7;              // Estimated size to be created
 }
 
-// ExistingECShardLocation represents existing EC shards that need cleanup
-message ExistingECShardLocation {
-  string node = 1;                        // Server address with existing shards
-  repeated uint32 shard_ids = 2;          // List of shard IDs on this server
-}
+
 
 // BalanceTaskParams for volume balancing operations
 message BalanceTaskParams {
-  string dest_node = 1;                   // Planned destination node
-  uint64 estimated_size = 2;              // Estimated volume size
-  string dest_rack = 3;                   // Destination rack for placement rules
-  string dest_dc = 4;                     // Destination data center
-  double placement_score = 5;             // Quality score of the planned placement
-  bool force_move = 7;                    // Force move even with conflicts
-  int32 timeout_seconds = 8;              // Operation timeout
+  bool force_move = 1;                    // Force move even with conflicts
+  int32 timeout_seconds = 2;              // Operation timeout
 }
 
 // ReplicationTaskParams for adding replicas
 message ReplicationTaskParams {
-  string dest_node = 1;                   // Planned destination node for new replica
-  uint64 estimated_size = 2;              // Estimated replica size
-  string dest_rack = 3;                   // Destination rack for placement rules
-  string dest_dc = 4;                     // Destination data center
-  double placement_score = 5;             // Quality score of the planned placement
-  int32 replica_count = 7;                // Target replica count
-  bool verify_consistency = 8;            // Verify replica consistency after creation
+  int32 replica_count = 1;                // Target replica count
+  bool verify_consistency = 2;            // Verify replica consistency after creation
 }
 
 // TaskUpdate reports task progress

@@ -44,7 +44,7 @@ func RegisterErasureCodingTask() {
 			}
 			return NewErasureCodingTask(
 				fmt.Sprintf("erasure_coding-%d", params.VolumeId),
-				params.Server,
+				params.Sources[0].Node, // Use first source node
 				params.VolumeId,
 				params.Collection,
 			), nil

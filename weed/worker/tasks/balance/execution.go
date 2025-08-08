@@ -20,7 +20,6 @@ type TypedTask struct {
 	volumeID       uint32
 	collection     string
 	estimatedSize  uint64
-	placementScore float64
 	forceMove      bool
 	timeoutSeconds int32
 }
@@ -46,14 +45,20 @@ func (t *TypedTask) ValidateTyped(params *worker_pb.TaskParams) error {
 		return fmt.Errorf("balance_params is required for balance task")
 	}
 
-	// Validate destination node
-	if balanceParams.DestNode == "" {
-		return fmt.Errorf("dest_node is required for balance task")
+	// Validate sources and targets
+	if len(params.Sources) == 0 {
+		return fmt.Errorf("at least one source is required for balance task")
+	}
+	if len(params.Targets) == 0 {
+		return fmt.Errorf("at least one target is required for balance task")
 	}
 
-	// Validate estimated size
-	if balanceParams.EstimatedSize == 0 {
-		return fmt.Errorf("estimated_size must be greater than 0")
+	// Validate that source and target have volume IDs
+	if params.Sources[0].VolumeId == 0 {
+		return fmt.Errorf("source volume_id is required for balance task")
+	}
+	if params.Targets[0].VolumeId == 0 {
+		return fmt.Errorf("target volume_id is required for balance task")
 	}
 
 	// Validate timeout
@@ -72,12 +77,12 @@ func (t *TypedTask) EstimateTimeTyped(params *worker_pb.TaskParams) time.Duratio
 		if balanceParams.TimeoutSeconds > 0 {
 			return time.Duration(balanceParams.TimeoutSeconds) * time.Second
 		}
+	}
 
-		// Estimate based on volume size (1 minute per GB)
-		if balanceParams.EstimatedSize > 0 {
-			gbSize := balanceParams.EstimatedSize / (1024 * 1024 * 1024)
-			return time.Duration(gbSize) * time.Minute
-		}
+	// Estimate based on volume size from sources (1 minute per GB)
+	if len(params.Sources) > 0 && params.Sources[0].EstimatedSize > 0 {
+		gbSize := params.Sources[0].EstimatedSize / (1024 * 1024 * 1024)
+		return time.Duration(gbSize) * time.Minute
 	}
 
 	// Default estimation
@@ -88,26 +93,26 @@ func (t *TypedTask) EstimateTimeTyped(params *worker_pb.TaskParams) time.Duratio
 func (t *TypedTask) ExecuteTyped(params *worker_pb.TaskParams) error {
 	// Extract basic parameters
 	t.volumeID = params.VolumeId
-	t.sourceServer = params.Server
 	t.collection = params.Collection
+
+	// Extract source and target information
+	if len(params.Sources) > 0 {
+		t.sourceServer = params.Sources[0].Node
+		t.estimatedSize = params.Sources[0].EstimatedSize
+	}
+	if len(params.Targets) > 0 {
+		t.destNode = params.Targets[0].Node
+	}
 
 	// Extract balance-specific parameters
 	balanceParams := params.GetBalanceParams()
 	if balanceParams != nil {
-		t.destNode = balanceParams.DestNode
-		t.estimatedSize = balanceParams.EstimatedSize
-		t.placementScore = balanceParams.PlacementScore
 		t.forceMove = balanceParams.ForceMove
 		t.timeoutSeconds = balanceParams.TimeoutSeconds
 	}
 
 	glog.Infof("Starting typed balance task for volume %d: %s -> %s (collection: %s, size: %d bytes)",
 		t.volumeID, t.sourceServer, t.destNode, t.collection, t.estimatedSize)
-
-	// Log placement information
-	if t.placementScore > 0 {
-		glog.V(1).Infof("Placement score: %.2f", t.placementScore)
-	}
 
 	// Simulate balance operation with progress updates
 	steps := []struct {

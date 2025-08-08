@@ -341,8 +341,13 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 			// Create basic params if none exist
 			taskParams = &worker_pb.TaskParams{
 				VolumeId:   task.VolumeID,
-				Server:     task.Server,
 				Collection: task.Collection,
+				Sources: []*worker_pb.TaskSource{
+					{
+						Node:     task.Server,
+						VolumeId: task.VolumeID,
+					},
+				},
 			}
 		}
 

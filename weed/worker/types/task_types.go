@@ -64,7 +64,6 @@ type TaskInput struct {
 // TaskParams represents parameters for task execution
 type TaskParams struct {
 	VolumeID       uint32                `json:"volume_id,omitempty"`
-	Server         string                `json:"server,omitempty"`
 	Collection     string                `json:"collection,omitempty"`
 	WorkingDir     string                `json:"working_dir,omitempty"`
 	TypedParams    *worker_pb.TaskParams `json:"typed_params,omitempty"`

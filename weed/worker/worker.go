@@ -696,7 +696,7 @@ func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
 			Type:        types.TaskType(taskAssign.TaskType),
 			Status:      types.TaskStatusAssigned,
 			VolumeID:    taskAssign.Params.VolumeId,
-			Server:      taskAssign.Params.Server,
+			Server:      getServerFromParams(taskAssign.Params),
 			Collection:  taskAssign.Params.Collection,
 			Priority:    types.TaskPriority(taskAssign.Priority),
 			CreatedAt:   time.Unix(taskAssign.CreatedTime, 0),

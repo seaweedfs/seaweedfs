@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
 // NewMaintenanceQueue creates a new maintenance queue
@@ -866,40 +865,28 @@ func (mq *MaintenanceQueue) trackPendingOperation(task *MaintenanceTask) {
 		opType = OpTypeVolumeMove
 	}
 
-	// Determine destination node and estimated size from typed parameters
+	// Determine destination node and estimated size from unified targets
 	destNode := ""
 	estimatedSize := uint64(1024 * 1024 * 1024) // Default 1GB estimate
 
-	switch params := task.TypedParams.TaskParams.(type) {
-	case *worker_pb.TaskParams_ErasureCodingParams:
-		if params.ErasureCodingParams != nil {
-			if len(params.ErasureCodingParams.Destinations) > 0 {
-				destNode = params.ErasureCodingParams.Destinations[0].Node
-			}
-			if params.ErasureCodingParams.EstimatedShardSize > 0 {
-				estimatedSize = params.ErasureCodingParams.EstimatedShardSize
-			}
+	// Use unified targets array - the only source of truth
+	if len(task.TypedParams.Targets) > 0 {
+		destNode = task.TypedParams.Targets[0].Node
+		if task.TypedParams.Targets[0].EstimatedSize > 0 {
+			estimatedSize = task.TypedParams.Targets[0].EstimatedSize
 		}
-	case *worker_pb.TaskParams_BalanceParams:
-		if params.BalanceParams != nil {
-			destNode = params.BalanceParams.DestNode
-			if params.BalanceParams.EstimatedSize > 0 {
-				estimatedSize = params.BalanceParams.EstimatedSize
-			}
-		}
-	case *worker_pb.TaskParams_ReplicationParams:
-		if params.ReplicationParams != nil {
-			destNode = params.ReplicationParams.DestNode
-			if params.ReplicationParams.EstimatedSize > 0 {
-				estimatedSize = params.ReplicationParams.EstimatedSize
-			}
-		}
+	}
+
+	// Determine source node from unified sources
+	sourceNode := ""
+	if len(task.TypedParams.Sources) > 0 {
+		sourceNode = task.TypedParams.Sources[0].Node
 	}
 
 	operation := &PendingOperation{
 		VolumeID:      task.VolumeID,
 		OperationType: opType,
-		SourceNode:    task.Server,
+		SourceNode:    sourceNode,
 		DestNode:      destNode,
 		TaskID:        task.ID,
 		StartTime:     time.Now(),

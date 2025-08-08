@@ -99,13 +99,22 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 		// to the protobuf definition if they should be configurable
 	}
 
-	// Create typed protobuf parameters
+	// Create typed protobuf parameters with unified sources
 	return &worker_pb.TaskParams{
 		TaskId:     task.TaskID, // Link to ActiveTopology pending task (if integrated)
 		VolumeId:   task.VolumeID,
-		Server:     task.Server,
 		Collection: task.Collection,
 		VolumeSize: metric.Size, // Store original volume size for tracking changes
+
+		// Unified sources array
+		Sources: []*worker_pb.TaskSource{
+			{
+				Node:          task.Server,
+				VolumeId:      task.VolumeID,
+				EstimatedSize: metric.Size,
+			},
+		},
+
 		TaskParams: &worker_pb.TaskParams_VacuumParams{
 			VacuumParams: &worker_pb.VacuumTaskParams{
 				GarbageThreshold: garbageThreshold,

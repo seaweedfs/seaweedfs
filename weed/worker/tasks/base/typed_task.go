@@ -200,8 +200,8 @@ func (bt *BaseTypedTask) ValidateTyped(params *worker_pb.TaskParams) error {
 	if params.VolumeId == 0 {
 		return errors.New("volume_id is required")
 	}
-	if params.Server == "" {
-		return errors.New("server is required")
+	if len(params.Sources) == 0 {
+		return errors.New("at least one source is required")
 	}
 	return nil
 }

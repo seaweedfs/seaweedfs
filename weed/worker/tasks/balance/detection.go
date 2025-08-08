@@ -105,35 +105,50 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			return nil, nil // Skip this task if destination planning fails
 		}
 
-		// Create typed parameters with destination information
-		task.TypedParams = &worker_pb.TaskParams{
-			TaskId:     taskID, // Link to ActiveTopology pending task
-			VolumeId:   selectedVolume.VolumeID,
-			Server:     selectedVolume.Server,
-			Collection: selectedVolume.Collection,
-			VolumeSize: selectedVolume.Size, // Store original volume size for tracking changes
-			TaskParams: &worker_pb.TaskParams_BalanceParams{
-				BalanceParams: &worker_pb.BalanceTaskParams{
-					DestNode:       destinationPlan.TargetNode,
-					EstimatedSize:  destinationPlan.ExpectedSize,
-					PlacementScore: destinationPlan.PlacementScore,
-					ForceMove:      false,
-					TimeoutSeconds: 600, // 10 minutes default
-				},
-			},
-		}
-
-		glog.V(1).Infof("Planned balance destination for volume %d: %s -> %s (score: %.2f)",
-			selectedVolume.VolumeID, selectedVolume.Server, destinationPlan.TargetNode, destinationPlan.PlacementScore)
-
-		// Add pending balance task to ActiveTopology for capacity management
-
 		// Find the actual disk containing the volume on the source server
 		sourceDisk, found := base.FindVolumeDisk(clusterInfo.ActiveTopology, selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
 		if !found {
 			return nil, fmt.Errorf("BALANCE: Could not find volume %d (collection: %s) on source server %s - unable to create balance task",
 				selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
 		}
+
+		// Create typed parameters with unified source and target information
+		task.TypedParams = &worker_pb.TaskParams{
+			TaskId:     taskID, // Link to ActiveTopology pending task
+			VolumeId:   selectedVolume.VolumeID,
+			Collection: selectedVolume.Collection,
+			VolumeSize: selectedVolume.Size, // Store original volume size for tracking changes
+
+			// Unified sources and targets - the only way to specify locations
+			Sources: []*worker_pb.TaskSource{
+				{
+					Node:          selectedVolume.Server,
+					DiskId:        sourceDisk,
+					VolumeId:      selectedVolume.VolumeID,
+					EstimatedSize: selectedVolume.Size,
+				},
+			},
+			Targets: []*worker_pb.TaskTarget{
+				{
+					Node:          destinationPlan.TargetNode,
+					DiskId:        destinationPlan.TargetDisk,
+					VolumeId:      selectedVolume.VolumeID,
+					EstimatedSize: destinationPlan.ExpectedSize,
+				},
+			},
+
+			TaskParams: &worker_pb.TaskParams_BalanceParams{
+				BalanceParams: &worker_pb.BalanceTaskParams{
+					ForceMove:      false,
+					TimeoutSeconds: 600, // 10 minutes default
+				},
+			},
+		}
+
+		glog.V(1).Infof("Planned balance destination for volume %d: %s -> %s",
+			selectedVolume.VolumeID, selectedVolume.Server, destinationPlan.TargetNode)
+
+		// Add pending balance task to ActiveTopology for capacity management
 		targetDisk := destinationPlan.TargetDisk
 
 		err = clusterInfo.ActiveTopology.AddPendingTask(topology.TaskSpec{

@@ -44,7 +44,7 @@ func RegisterVacuumTask() {
 			}
 			return NewVacuumTask(
 				fmt.Sprintf("vacuum-%d", params.VolumeId),
-				params.Server,
+				params.Sources[0].Node, // Use first source node
 				params.VolumeId,
 				params.Collection,
 			), nil

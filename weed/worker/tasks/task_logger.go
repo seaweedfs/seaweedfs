@@ -127,7 +127,7 @@ func NewTaskLogger(taskID string, taskType types.TaskType, workerID string, para
 		Status:      "started",
 		Progress:    0.0,
 		VolumeID:    params.VolumeID,
-		Server:      params.Server,
+		Server:      getServerFromSources(params.TypedParams.Sources),
 		Collection:  params.Collection,
 		CustomData:  make(map[string]interface{}),
 		LogFilePath: logFilePath,
@@ -149,7 +149,7 @@ func NewTaskLogger(taskID string, taskType types.TaskType, workerID string, para
 	logger.Info("Task logger initialized for %s (type: %s, worker: %s)", taskID, taskType, workerID)
 	logger.LogWithFields("INFO", "Task parameters", map[string]interface{}{
 		"volume_id":  params.VolumeID,
-		"server":     params.Server,
+		"server":     getServerFromSources(params.TypedParams.Sources),
 		"collection": params.Collection,
 	})
 

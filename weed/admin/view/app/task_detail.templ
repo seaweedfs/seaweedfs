@@ -207,36 +207,33 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                 </div>
                             </div>
 
-                            <!-- Source Servers (Generic) -->
-                            if len(data.Task.TypedParams.Replicas) > 0 || data.Task.TypedParams.Server != "" {
+                            <!-- Source Servers (Unified) -->
+                            if len(data.Task.TypedParams.Sources) > 0 {
                                 <div class="mb-4">
                                     <h6 class="text-info d-flex align-items-center">
                                         <i class="fas fa-server me-2"></i>
                                         Source Servers
-                                        if len(data.Task.TypedParams.Replicas) > 0 {
-                                            <span class="badge bg-info ms-2">{fmt.Sprintf("%d", len(data.Task.TypedParams.Replicas))}</span>
-                                        } else {
-                                            <span class="badge bg-info ms-2">1</span>
-                                        }
+                                        <span class="badge bg-info ms-2">{fmt.Sprintf("%d", len(data.Task.TypedParams.Sources))}</span>
                                     </h6>
                                     <div class="bg-light p-3 rounded">
                                         <div class="d-flex flex-column gap-2">
-                                            if len(data.Task.TypedParams.Replicas) > 0 {
-                                                <!-- Multiple sources (EC tasks) -->
-                                                for i, replica := range data.Task.TypedParams.Replicas {
-                                                    <div class="d-flex align-items-center">
-                                                        <span class="badge bg-primary me-2">{fmt.Sprintf("#%d", i+1)}</span>
-                                                        <code class="flex-grow-1">{replica}</code>
-                                                    </div>
-                                                }
-                                            } else if data.Task.TypedParams.Server != "" {
-                                                <!-- Single source (Balance tasks) -->
+                                            for i, source := range data.Task.TypedParams.Sources {
                                                 <div class="d-flex align-items-center">
-                                                    <span class="badge bg-primary me-2">#1</span>
-                                                    <code class="flex-grow-1">{data.Task.TypedParams.Server}</code>
-                                                    if data.Task.TypedParams.Rack != "" {
+                                                    <span class="badge bg-primary me-2">{fmt.Sprintf("#%d", i+1)}</span>
+                                                    <code class="flex-grow-1">{source.Node}</code>
+                                                    if source.Rack != "" {
                                                         <small class="text-muted ms-2">
-                                                            <i class="fas fa-server me-1"></i>{data.Task.TypedParams.Rack}
+                                                            <i class="fas fa-server me-1"></i>{source.Rack}
+                                                        </small>
+                                                    }
+                                                    if source.VolumeId > 0 {
+                                                        <small class="text-muted ms-2">
+                                                            <i class="fas fa-hdd me-1"></i>Vol:{fmt.Sprintf("%d", source.VolumeId)}
+                                                        </small>
+                                                    }
+                                                    if len(source.ShardIds) > 0 {
+                                                        <small class="text-muted ms-2">
+                                                            <i class="fas fa-puzzle-piece me-1"></i>Shards:{fmt.Sprintf("%d", len(source.ShardIds))}
                                                         </small>
                                                     }
                                                 </div>
@@ -247,7 +244,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                             }
 
                             <!-- Task Flow Indicator -->
-                            if data.Task.TypedParams.Server != "" || len(data.Task.TypedParams.Replicas) > 0 {
+                            if len(data.Task.TypedParams.Sources) > 0 || len(data.Task.TypedParams.Targets) > 0 {
                                 <div class="text-center mb-3">
                                     <i class="fas fa-arrow-down text-primary" style="font-size: 1.5rem;"></i>
                                     <br/>
@@ -256,46 +253,39 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                             }
 
                             <!-- Target/Destination (Generic) -->
-                            if data.Task.TypedParams.TaskParams != nil {
-                                if balanceParams := data.Task.TypedParams.GetBalanceParams(); balanceParams != nil && balanceParams.DestNode != "" {
-                                    <!-- Balance task destination -->
-                                    <div class="mb-4">
-                                        <h6 class="text-success d-flex align-items-center">
-                                            <i class="fas fa-bullseye me-2"></i>
-                                            Target Server
-                                        </h6>
-                                        <div class="bg-light p-3 rounded">
-                                            <div class="d-flex align-items-center">
-                                                <span class="badge bg-success me-2">#1</span>
-                                                <code class="flex-grow-1">{balanceParams.DestNode}</code>
-                                                if balanceParams.DestRack != "" {
-                                                    <small class="text-muted ms-2">
-                                                        <i class="fas fa-server me-1"></i>{balanceParams.DestRack}
-                                                    </small>
-                                                }
-                                            </div>
+                            if len(data.Task.TypedParams.Targets) > 0 {
+                                <div class="mb-4">
+                                    <h6 class="text-success d-flex align-items-center">
+                                        <i class="fas fa-bullseye me-2"></i>
+                                        Target Servers
+                                        <span class="badge bg-success ms-2">{fmt.Sprintf("%d", len(data.Task.TypedParams.Targets))}</span>
+                                    </h6>
+                                    <div class="bg-light p-3 rounded">
+                                        <div class="d-flex flex-column gap-2">
+                                            for i, target := range data.Task.TypedParams.Targets {
+                                                <div class="d-flex align-items-center">
+                                                    <span class="badge bg-success me-2">{fmt.Sprintf("#%d", i+1)}</span>
+                                                    <code class="flex-grow-1">{target.Node}</code>
+                                                    if target.Rack != "" {
+                                                        <small class="text-muted ms-2">
+                                                            <i class="fas fa-server me-1"></i>{target.Rack}
+                                                        </small>
+                                                    }
+                                                    if target.VolumeId > 0 {
+                                                        <small class="text-muted ms-2">
+                                                            <i class="fas fa-hdd me-1"></i>Vol:{fmt.Sprintf("%d", target.VolumeId)}
+                                                        </small>
+                                                    }
+                                                    if len(target.ShardIds) > 0 {
+                                                        <small class="text-muted ms-2">
+                                                            <i class="fas fa-puzzle-piece me-1"></i>Shards:{fmt.Sprintf("%d", len(target.ShardIds))}
+                                                        </small>
+                                                    }
+                                                </div>
+                                            }
                                         </div>
                                     </div>
-                                } else if replicationParams := data.Task.TypedParams.GetReplicationParams(); replicationParams != nil && replicationParams.DestNode != "" {
-                                    <!-- Replication task destination -->
-                                    <div class="mb-4">
-                                        <h6 class="text-success d-flex align-items-center">
-                                            <i class="fas fa-bullseye me-2"></i>
-                                            Target Server
-                                        </h6>
-                                        <div class="bg-light p-3 rounded">
-                                            <div class="d-flex align-items-center">
-                                                <span class="badge bg-success me-2">#1</span>
-                                                <code class="flex-grow-1">{replicationParams.DestNode}</code>
-                                                if replicationParams.DestRack != "" {
-                                                    <small class="text-muted ms-2">
-                                                        <i class="fas fa-server me-1"></i>{replicationParams.DestRack}
-                                                    </small>
-                                                }
-                                            </div>
-                                        </div>
-                                    </div>
-                                }
+                                </div>
                             }
                         </div>
                     </div>

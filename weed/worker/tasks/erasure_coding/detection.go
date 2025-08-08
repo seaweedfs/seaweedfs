@@ -172,25 +172,19 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d cleanup sources and %d shard destinations",
 					taskID, metric.VolumeID, len(sources), len(multiPlan.Plans))
 
-				// Find all volume replicas from topology (for legacy worker compatibility)
-				var replicas []string
-				serverSet := make(map[string]struct{})
-				for _, loc := range replicaLocations {
-					if _, found := serverSet[loc.ServerID]; !found {
-						replicas = append(replicas, loc.ServerID)
-						serverSet[loc.ServerID] = struct{}{}
-					}
-				}
-				glog.V(1).Infof("Found %d replicas for volume %d: %v", len(replicas), metric.VolumeID, replicas)
-
-				// Create typed parameters with EC destination information and replicas
+				// Create unified sources and targets for EC task
 				result.TypedParams = &worker_pb.TaskParams{
 					TaskId:     taskID, // Link to ActiveTopology pending task
 					VolumeId:   metric.VolumeID,
-					Server:     metric.Server,
 					Collection: metric.Collection,
 					VolumeSize: metric.Size, // Store original volume size for tracking changes
-					Replicas:   replicas,    // Include all volume replicas for deletion
+
+					// Unified sources - all sources that will be processed/cleaned up
+					Sources: convertTaskSourcesToProtobuf(sources),
+
+					// Unified targets - all EC shard destinations
+					Targets: createECTargets(multiPlan),
+
 					TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
 						ErasureCodingParams: createECTaskParams(multiPlan),
 					},
@@ -330,23 +324,59 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 	}, nil
 }
 
-// createECTaskParams creates EC task parameters from the multi-destination plan
-func createECTaskParams(multiPlan *topology.MultiDestinationPlan) *worker_pb.ErasureCodingTaskParams {
-	var destinations []*worker_pb.ECDestination
+// createECTargets creates unified TaskTarget structures from the multi-destination plan
+func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.TaskTarget {
+	var targets []*worker_pb.TaskTarget
 
-	for _, plan := range multiPlan.Plans {
-		destination := &worker_pb.ECDestination{
-			Node:           plan.TargetNode,
-			DiskId:         plan.TargetDisk,
-			Rack:           plan.TargetRack,
-			DataCenter:     plan.TargetDC,
-			PlacementScore: plan.PlacementScore,
+	for i, plan := range multiPlan.Plans {
+		target := &worker_pb.TaskTarget{
+			Node:          plan.TargetNode,
+			DiskId:        plan.TargetDisk,
+			Rack:          plan.TargetRack,
+			DataCenter:    plan.TargetDC,
+			ShardIds:      []uint32{uint32(i)}, // Each target gets one shard ID
+			EstimatedSize: plan.ExpectedSize,
 		}
-		destinations = append(destinations, destination)
+		targets = append(targets, target)
 	}
 
+	return targets
+}
+
+// convertTaskSourcesToProtobuf converts topology.TaskSourceSpec to worker_pb.TaskSource
+func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec) []*worker_pb.TaskSource {
+	var protobufSources []*worker_pb.TaskSource
+
+	for _, source := range sources {
+		pbSource := &worker_pb.TaskSource{
+			Node:   source.ServerID,
+			DiskId: source.DiskID,
+		}
+
+		// Convert storage impact to estimated size
+		if source.StorageImpact != nil {
+			pbSource.EstimatedSize = uint64(*source.EstimatedSize)
+		}
+
+		// Set appropriate volume ID or shard IDs based on cleanup type
+		switch source.CleanupType {
+		case topology.CleanupVolumeReplica:
+			// This is a volume replica, so we need volume ID
+			pbSource.VolumeId = uint32(source.DiskID) // This might need adjustment based on actual volume ID
+		case topology.CleanupECShards:
+			// This is EC shards, so we need shard IDs (would need to be passed from context)
+			// For now, leaving empty - this would need more context about which shards
+		}
+
+		protobufSources = append(protobufSources, pbSource)
+	}
+
+	return protobufSources
+}
+
+// createECTaskParams creates clean EC task parameters (destinations now in unified targets)
+func createECTaskParams(multiPlan *topology.MultiDestinationPlan) *worker_pb.ErasureCodingTaskParams {
 	return &worker_pb.ErasureCodingTaskParams{
-		Destinations: destinations,
 		DataShards:   erasure_coding.DataShardsCount,   // Standard data shards
 		ParityShards: erasure_coding.ParityShardsCount, // Standard parity shards
 	}

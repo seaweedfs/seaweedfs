@@ -36,9 +36,9 @@ type ErasureCodingTask struct {
 	// EC parameters
 	dataShards      int32
 	parityShards    int32
-	destinations    []*worker_pb.ECDestination
-	shardAssignment map[string][]string // destination -> assigned shard types
-	replicas        []string            // volume replica servers for deletion
+	targets         []*worker_pb.TaskTarget // Unified targets for EC shards
+	sources         []*worker_pb.TaskSource // Unified sources for cleanup
+	shardAssignment map[string][]string     // destination -> assigned shard types
 }
 
 // NewErasureCodingTask creates a new unified EC task instance
@@ -67,8 +67,8 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.dataShards = ecParams.DataShards
 	t.parityShards = ecParams.ParityShards
 	t.workDir = ecParams.WorkingDir
-	t.destinations = ecParams.Destinations
-	t.replicas = params.Replicas // Get replicas from task parameters
+	t.targets = params.Targets // Get unified targets
+	t.sources = params.Sources // Get unified sources
 
 	t.GetLogger().WithFields(map[string]interface{}{
 		"volume_id":     t.volumeID,
@@ -76,7 +76,8 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		"collection":    t.collection,
 		"data_shards":   t.dataShards,
 		"parity_shards": t.parityShards,
-		"destinations":  len(t.destinations),
+		"targets":       len(t.targets),
+		"sources":       len(t.sources),
 	}).Info("Starting erasure coding task")
 
 	// Use the working directory from task parameters, or fall back to a default
@@ -177,8 +178,16 @@ func (t *ErasureCodingTask) Validate(params *worker_pb.TaskParams) error {
 		return fmt.Errorf("volume ID mismatch: expected %d, got %d", t.volumeID, params.VolumeId)
 	}
 
-	if params.Server != t.server {
-		return fmt.Errorf("source server mismatch: expected %s, got %s", t.server, params.Server)
+	// Validate that at least one source matches our server
+	found := false
+	for _, source := range params.Sources {
+		if source.Node == t.server {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("no source matches expected server %s", t.server)
 	}
 
 	if ecParams.DataShards < 1 {
@@ -189,8 +198,8 @@ func (t *ErasureCodingTask) Validate(params *worker_pb.TaskParams) error {
 		return fmt.Errorf("invalid parity shards: %d (must be >= 1)", ecParams.ParityShards)
 	}
 
-	if len(ecParams.Destinations) < int(ecParams.DataShards+ecParams.ParityShards) {
-		return fmt.Errorf("insufficient destinations: got %d, need %d", len(ecParams.Destinations), ecParams.DataShards+ecParams.ParityShards)
+	if len(params.Targets) < int(ecParams.DataShards+ecParams.ParityShards) {
+		return fmt.Errorf("insufficient targets: got %d, need %d", len(params.Targets), ecParams.DataShards+ecParams.ParityShards)
 	}
 
 	return nil
@@ -343,8 +352,8 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 
 // distributeEcShards distributes locally generated EC shards to destination servers
 func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) error {
-	if len(t.destinations) == 0 {
-		return fmt.Errorf("no destinations specified for EC shard distribution")
+	if len(t.targets) == 0 {
+		return fmt.Errorf("no targets specified for EC shard distribution")
 	}
 
 	if len(shardFiles) == 0 {
@@ -407,18 +416,18 @@ func (t *ErasureCodingTask) createShardAssignment(shardFiles map[string]string) 
 	}
 
 	// Calculate shards per destination
-	numDestinations := len(t.destinations)
-	if numDestinations == 0 {
+	numTargets := len(t.targets)
+	if numTargets == 0 {
 		return assignment
 	}
 
-	// Strategy: Distribute shards as evenly as possible across destinations
-	// With 14 shards and N destinations, some destinations get ⌈14/N⌉ shards, others get ⌊14/N⌋
-	shardsPerDest := len(availableShards) / numDestinations
-	extraShards := len(availableShards) % numDestinations
+	// Strategy: Distribute shards as evenly as possible across targets
+	// With 14 shards and N targets, some targets get ⌈14/N⌉ shards, others get ⌊14/N⌋
+	shardsPerDest := len(availableShards) / numTargets
+	extraShards := len(availableShards) % numTargets
 
 	shardIndex := 0
-	for i, dest := range t.destinations {
+	for i, target := range t.targets {
 		var destShards []string
 
 		// Assign base number of shards
@@ -435,9 +444,9 @@ func (t *ErasureCodingTask) createShardAssignment(shardFiles map[string]string) 
 			shardIndex++
 		}
 
-		assignment[dest.Node] = destShards
+		assignment[target.Node] = destShards
 
-		glog.V(2).Infof("Assigned shards %v to destination %s", destShards, dest.Node)
+		glog.V(2).Infof("Assigned shards %v to target %s", destShards, target.Node)
 	}
 
 	// Assign metadata files (.ecx, .vif) to each destination that has shards
@@ -649,9 +658,14 @@ func (t *ErasureCodingTask) deleteOriginalVolume() error {
 	return nil
 }
 
-// getReplicas extracts replica servers from task parameters
+// getReplicas extracts replica servers from unified sources
 func (t *ErasureCodingTask) getReplicas() []string {
-	// Access replicas from the parameters passed during Execute
-	// We'll need to store these during Execute - let me add a field to the task
-	return t.replicas
+	var replicas []string
+	for _, source := range t.sources {
+		// Only include volume replica sources (not EC shard sources)
+		if source.VolumeId > 0 {
+			replicas = append(replicas, source.Node)
+		}
+	}
+	return replicas
 }

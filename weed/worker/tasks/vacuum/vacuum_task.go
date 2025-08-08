@@ -114,8 +114,16 @@ func (t *VacuumTask) Validate(params *worker_pb.TaskParams) error {
 		return fmt.Errorf("volume ID mismatch: expected %d, got %d", t.volumeID, params.VolumeId)
 	}
 
-	if params.Server != t.server {
-		return fmt.Errorf("source server mismatch: expected %s, got %s", t.server, params.Server)
+	// Validate that at least one source matches our server
+	found := false
+	for _, source := range params.Sources {
+		if source.Node == t.server {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("no source matches expected server %s", t.server)
 	}
 
 	if vacuumParams.GarbageThreshold < 0 || vacuumParams.GarbageThreshold > 1.0 {

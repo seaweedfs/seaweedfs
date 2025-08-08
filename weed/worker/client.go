@@ -651,7 +651,7 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 					Type:       types.TaskType(taskAssign.TaskType),
 					Status:     types.TaskStatusAssigned,
 					VolumeID:   taskAssign.Params.VolumeId,
-					Server:     taskAssign.Params.Server,
+					Server:     getServerFromParams(taskAssign.Params),
 					Collection: taskAssign.Params.Collection,
 					Priority:   types.TaskPriority(taskAssign.Priority),
 					CreatedAt:  time.Unix(taskAssign.CreatedTime, 0),
@@ -933,4 +933,12 @@ func (m *MockAdminClient) AddMockTask(task *types.TaskInput) {
 // CreateAdminClient creates an admin client with the provided dial option
 func CreateAdminClient(adminServer string, workerID string, dialOption grpc.DialOption) (AdminClient, error) {
 	return NewGrpcAdminClient(adminServer, workerID, dialOption), nil
+}
+
+// getServerFromParams extracts server address from unified sources
+func getServerFromParams(params *worker_pb.TaskParams) string {
+	if len(params.Sources) > 0 {
+		return params.Sources[0].Node
+	}
+	return ""
 }

@@ -804,14 +804,15 @@ func (x *TaskAssignment) GetMetadata() map[string]string {
 // TaskParams contains task-specific parameters with typed variants
 type TaskParams struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
-	TaskId     string                 `protobuf:"bytes,12,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"` // ActiveTopology task ID for lifecycle management
-	VolumeId   uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Server     string                 `protobuf:"bytes,2,opt,name=server,proto3" json:"server,omitempty"`
-	Collection string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
-	DataCenter string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
-	Rack       string                 `protobuf:"bytes,5,opt,name=rack,proto3" json:"rack,omitempty"`
-	Replicas   []string               `protobuf:"bytes,6,rep,name=replicas,proto3" json:"replicas,omitempty"`
-	VolumeSize uint64                 `protobuf:"varint,11,opt,name=volume_size,json=volumeSize,proto3" json:"volume_size,omitempty"` // Original volume size in bytes for tracking size changes
+	TaskId     string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`              // ActiveTopology task ID for lifecycle management
+	VolumeId   uint32                 `protobuf:"varint,2,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`       // Primary volume ID for the task
+	Collection string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`                    // Collection name
+	DataCenter string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`  // Primary data center
+	Rack       string                 `protobuf:"bytes,5,opt,name=rack,proto3" json:"rack,omitempty"`                                // Primary rack
+	VolumeSize uint64                 `protobuf:"varint,6,opt,name=volume_size,json=volumeSize,proto3" json:"volume_size,omitempty"` // Original volume size in bytes for tracking size changes
+	// Unified source and target arrays for all task types
+	Sources []*TaskSource `protobuf:"bytes,7,rep,name=sources,proto3" json:"sources,omitempty"` // Source locations (volume replicas, EC shards, etc.)
+	Targets []*TaskTarget `protobuf:"bytes,8,rep,name=targets,proto3" json:"targets,omitempty"` // Target locations (destinations, new replicas, etc.)
 	// Typed task parameters
 	//
 	// Types that are valid to be assigned to TaskParams:
@@ -869,13 +870,6 @@ func (x *TaskParams) GetVolumeId() uint32 {
 	return 0
 }
 
-func (x *TaskParams) GetServer() string {
-	if x != nil {
-		return x.Server
-	}
-	return ""
-}
-
 func (x *TaskParams) GetCollection() string {
 	if x != nil {
 		return x.Collection
@@ -897,18 +891,25 @@ func (x *TaskParams) GetRack() string {
 	return ""
 }
 
-func (x *TaskParams) GetReplicas() []string {
-	if x != nil {
-		return x.Replicas
-	}
-	return nil
-}
-
 func (x *TaskParams) GetVolumeSize() uint64 {
 	if x != nil {
 		return x.VolumeSize
 	}
 	return 0
+}
+
+func (x *TaskParams) GetSources() []*TaskSource {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
+}
+
+func (x *TaskParams) GetTargets() []*TaskTarget {
+	if x != nil {
+		return x.Targets
+	}
+	return nil
 }
 
 func (x *TaskParams) GetTaskParams() isTaskParams_TaskParams {
@@ -959,19 +960,19 @@ type isTaskParams_TaskParams interface {
 }
 
 type TaskParams_VacuumParams struct {
-	VacuumParams *VacuumTaskParams `protobuf:"bytes,7,opt,name=vacuum_params,json=vacuumParams,proto3,oneof"`
+	VacuumParams *VacuumTaskParams `protobuf:"bytes,9,opt,name=vacuum_params,json=vacuumParams,proto3,oneof"`
 }
 
 type TaskParams_ErasureCodingParams struct {
-	ErasureCodingParams *ErasureCodingTaskParams `protobuf:"bytes,8,opt,name=erasure_coding_params,json=erasureCodingParams,proto3,oneof"`
+	ErasureCodingParams *ErasureCodingTaskParams `protobuf:"bytes,10,opt,name=erasure_coding_params,json=erasureCodingParams,proto3,oneof"`
 }
 
 type TaskParams_BalanceParams struct {
-	BalanceParams *BalanceTaskParams `protobuf:"bytes,9,opt,name=balance_params,json=balanceParams,proto3,oneof"`
+	BalanceParams *BalanceTaskParams `protobuf:"bytes,11,opt,name=balance_params,json=balanceParams,proto3,oneof"`
 }
 
 type TaskParams_ReplicationParams struct {
-	ReplicationParams *ReplicationTaskParams `protobuf:"bytes,10,opt,name=replication_params,json=replicationParams,proto3,oneof"`
+	ReplicationParams *ReplicationTaskParams `protobuf:"bytes,12,opt,name=replication_params,json=replicationParams,proto3,oneof"`
 }
 
 func (*TaskParams_VacuumParams) isTaskParams_TaskParams() {}
@@ -1061,17 +1062,15 @@ func (x *VacuumTaskParams) GetVerifyChecksum() bool {
 
 // ErasureCodingTaskParams for EC encoding operations
 type ErasureCodingTaskParams struct {
-	state                  protoimpl.MessageState     `protogen:"open.v1"`
-	EstimatedShardSize     uint64                     `protobuf:"varint,3,opt,name=estimated_shard_size,json=estimatedShardSize,proto3" json:"estimated_shard_size,omitempty"`             // Estimated size per shard
-	DataShards             int32                      `protobuf:"varint,4,opt,name=data_shards,json=dataShards,proto3" json:"data_shards,omitempty"`                                       // Number of data shards (default: 10)
-	ParityShards           int32                      `protobuf:"varint,5,opt,name=parity_shards,json=parityShards,proto3" json:"parity_shards,omitempty"`                                 // Number of parity shards (default: 4)
-	WorkingDir             string                     `protobuf:"bytes,6,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`                                        // Working directory for EC processing
-	MasterClient           string                     `protobuf:"bytes,7,opt,name=master_client,json=masterClient,proto3" json:"master_client,omitempty"`                                  // Master server address
-	CleanupSource          bool                       `protobuf:"varint,8,opt,name=cleanup_source,json=cleanupSource,proto3" json:"cleanup_source,omitempty"`                              // Whether to cleanup source volume after EC
-	Destinations           []*ECDestination           `protobuf:"bytes,10,rep,name=destinations,proto3" json:"destinations,omitempty"`                                                     // Planned destinations with disk information
-	ExistingShardLocations []*ExistingECShardLocation `protobuf:"bytes,11,rep,name=existing_shard_locations,json=existingShardLocations,proto3" json:"existing_shard_locations,omitempty"` // Existing EC shards to cleanup
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	EstimatedShardSize uint64                 `protobuf:"varint,1,opt,name=estimated_shard_size,json=estimatedShardSize,proto3" json:"estimated_shard_size,omitempty"` // Estimated size per shard
+	DataShards         int32                  `protobuf:"varint,2,opt,name=data_shards,json=dataShards,proto3" json:"data_shards,omitempty"`                           // Number of data shards (default: 10)
+	ParityShards       int32                  `protobuf:"varint,3,opt,name=parity_shards,json=parityShards,proto3" json:"parity_shards,omitempty"`                     // Number of parity shards (default: 4)
+	WorkingDir         string                 `protobuf:"bytes,4,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`                            // Working directory for EC processing
+	MasterClient       string                 `protobuf:"bytes,5,opt,name=master_client,json=masterClient,proto3" json:"master_client,omitempty"`                      // Master server address
+	CleanupSource      bool                   `protobuf:"varint,6,opt,name=cleanup_source,json=cleanupSource,proto3" json:"cleanup_source,omitempty"`                  // Whether to cleanup source volume after EC
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ErasureCodingTaskParams) Reset() {
@@ -1146,46 +1145,34 @@ func (x *ErasureCodingTaskParams) GetCleanupSource() bool {
 	return false
 }
 
-func (x *ErasureCodingTaskParams) GetDestinations() []*ECDestination {
-	if x != nil {
-		return x.Destinations
-	}
-	return nil
+// TaskSource represents a unified source location for any task type
+type TaskSource struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`                                         // Source server address
+	DiskId        uint32                 `protobuf:"varint,2,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`                      // Source disk ID
+	Rack          string                 `protobuf:"bytes,3,opt,name=rack,proto3" json:"rack,omitempty"`                                         // Source rack for tracking
+	DataCenter    string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`           // Source data center for tracking
+	VolumeId      uint32                 `protobuf:"varint,5,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`                // Volume ID (for volume operations)
+	ShardIds      []uint32               `protobuf:"varint,6,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`         // Shard IDs (for EC shard operations)
+	EstimatedSize uint64                 `protobuf:"varint,7,opt,name=estimated_size,json=estimatedSize,proto3" json:"estimated_size,omitempty"` // Estimated size to be processed
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ErasureCodingTaskParams) GetExistingShardLocations() []*ExistingECShardLocation {
-	if x != nil {
-		return x.ExistingShardLocations
-	}
-	return nil
-}
-
-// ECDestination represents a planned destination for EC shards with disk information
-type ECDestination struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Node           string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`                                             // Target server address
-	DiskId         uint32                 `protobuf:"varint,2,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`                          // Target disk ID
-	Rack           string                 `protobuf:"bytes,3,opt,name=rack,proto3" json:"rack,omitempty"`                                             // Target rack for placement tracking
-	DataCenter     string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`               // Target data center for placement tracking
-	PlacementScore float64                `protobuf:"fixed64,5,opt,name=placement_score,json=placementScore,proto3" json:"placement_score,omitempty"` // Quality score of the placement
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
-}
-
-func (x *ECDestination) Reset() {
-	*x = ECDestination{}
+func (x *TaskSource) Reset() {
+	*x = TaskSource{}
 	mi := &file_worker_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ECDestination) String() string {
+func (x *TaskSource) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ECDestination) ProtoMessage() {}
+func (*TaskSource) ProtoMessage() {}
 
-func (x *ECDestination) ProtoReflect() protoreflect.Message {
+func (x *TaskSource) ProtoReflect() protoreflect.Message {
 	mi := &file_worker_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1197,69 +1184,88 @@ func (x *ECDestination) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ECDestination.ProtoReflect.Descriptor instead.
-func (*ECDestination) Descriptor() ([]byte, []int) {
+// Deprecated: Use TaskSource.ProtoReflect.Descriptor instead.
+func (*TaskSource) Descriptor() ([]byte, []int) {
 	return file_worker_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *ECDestination) GetNode() string {
+func (x *TaskSource) GetNode() string {
 	if x != nil {
 		return x.Node
 	}
 	return ""
 }
 
-func (x *ECDestination) GetDiskId() uint32 {
+func (x *TaskSource) GetDiskId() uint32 {
 	if x != nil {
 		return x.DiskId
 	}
 	return 0
 }
 
-func (x *ECDestination) GetRack() string {
+func (x *TaskSource) GetRack() string {
 	if x != nil {
 		return x.Rack
 	}
 	return ""
 }
 
-func (x *ECDestination) GetDataCenter() string {
+func (x *TaskSource) GetDataCenter() string {
 	if x != nil {
 		return x.DataCenter
 	}
 	return ""
 }
 
-func (x *ECDestination) GetPlacementScore() float64 {
+func (x *TaskSource) GetVolumeId() uint32 {
 	if x != nil {
-		return x.PlacementScore
+		return x.VolumeId
 	}
 	return 0
 }
 
-// ExistingECShardLocation represents existing EC shards that need cleanup
-type ExistingECShardLocation struct {
+func (x *TaskSource) GetShardIds() []uint32 {
+	if x != nil {
+		return x.ShardIds
+	}
+	return nil
+}
+
+func (x *TaskSource) GetEstimatedSize() uint64 {
+	if x != nil {
+		return x.EstimatedSize
+	}
+	return 0
+}
+
+// TaskTarget represents a unified target location for any task type
+type TaskTarget struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`                                 // Server address with existing shards
-	ShardIds      []uint32               `protobuf:"varint,2,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"` // List of shard IDs on this server
+	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`                                         // Target server address
+	DiskId        uint32                 `protobuf:"varint,2,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`                      // Target disk ID
+	Rack          string                 `protobuf:"bytes,3,opt,name=rack,proto3" json:"rack,omitempty"`                                         // Target rack for tracking
+	DataCenter    string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`           // Target data center for tracking
+	VolumeId      uint32                 `protobuf:"varint,5,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`                // Volume ID (for volume operations)
+	ShardIds      []uint32               `protobuf:"varint,6,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`         // Shard IDs (for EC shard operations)
+	EstimatedSize uint64                 `protobuf:"varint,7,opt,name=estimated_size,json=estimatedSize,proto3" json:"estimated_size,omitempty"` // Estimated size to be created
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ExistingECShardLocation) Reset() {
-	*x = ExistingECShardLocation{}
+func (x *TaskTarget) Reset() {
+	*x = TaskTarget{}
 	mi := &file_worker_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ExistingECShardLocation) String() string {
+func (x *TaskTarget) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ExistingECShardLocation) ProtoMessage() {}
+func (*TaskTarget) ProtoMessage() {}
 
-func (x *ExistingECShardLocation) ProtoReflect() protoreflect.Message {
+func (x *TaskTarget) ProtoReflect() protoreflect.Message {
 	mi := &file_worker_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1271,35 +1277,65 @@ func (x *ExistingECShardLocation) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ExistingECShardLocation.ProtoReflect.Descriptor instead.
-func (*ExistingECShardLocation) Descriptor() ([]byte, []int) {
+// Deprecated: Use TaskTarget.ProtoReflect.Descriptor instead.
+func (*TaskTarget) Descriptor() ([]byte, []int) {
 	return file_worker_proto_rawDescGZIP(), []int{12}
 }
 
-func (x *ExistingECShardLocation) GetNode() string {
+func (x *TaskTarget) GetNode() string {
 	if x != nil {
 		return x.Node
 	}
 	return ""
 }
 
-func (x *ExistingECShardLocation) GetShardIds() []uint32 {
+func (x *TaskTarget) GetDiskId() uint32 {
+	if x != nil {
+		return x.DiskId
+	}
+	return 0
+}
+
+func (x *TaskTarget) GetRack() string {
+	if x != nil {
+		return x.Rack
+	}
+	return ""
+}
+
+func (x *TaskTarget) GetDataCenter() string {
+	if x != nil {
+		return x.DataCenter
+	}
+	return ""
+}
+
+func (x *TaskTarget) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *TaskTarget) GetShardIds() []uint32 {
 	if x != nil {
 		return x.ShardIds
 	}
 	return nil
 }
 
+func (x *TaskTarget) GetEstimatedSize() uint64 {
+	if x != nil {
+		return x.EstimatedSize
+	}
+	return 0
+}
+
 // BalanceTaskParams for volume balancing operations
 type BalanceTaskParams struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	DestNode       string                 `protobuf:"bytes,1,opt,name=dest_node,json=destNode,proto3" json:"dest_node,omitempty"`                     // Planned destination node
-	EstimatedSize  uint64                 `protobuf:"varint,2,opt,name=estimated_size,json=estimatedSize,proto3" json:"estimated_size,omitempty"`     // Estimated volume size
-	DestRack       string                 `protobuf:"bytes,3,opt,name=dest_rack,json=destRack,proto3" json:"dest_rack,omitempty"`                     // Destination rack for placement rules
-	DestDc         string                 `protobuf:"bytes,4,opt,name=dest_dc,json=destDc,proto3" json:"dest_dc,omitempty"`                           // Destination data center
-	PlacementScore float64                `protobuf:"fixed64,5,opt,name=placement_score,json=placementScore,proto3" json:"placement_score,omitempty"` // Quality score of the planned placement
-	ForceMove      bool                   `protobuf:"varint,7,opt,name=force_move,json=forceMove,proto3" json:"force_move,omitempty"`                 // Force move even with conflicts
-	TimeoutSeconds int32                  `protobuf:"varint,8,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`  // Operation timeout
+	ForceMove      bool                   `protobuf:"varint,1,opt,name=force_move,json=forceMove,proto3" json:"force_move,omitempty"`                // Force move even with conflicts
+	TimeoutSeconds int32                  `protobuf:"varint,2,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"` // Operation timeout
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1334,41 +1370,6 @@ func (*BalanceTaskParams) Descriptor() ([]byte, []int) {
 	return file_worker_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *BalanceTaskParams) GetDestNode() string {
-	if x != nil {
-		return x.DestNode
-	}
-	return ""
-}
-
-func (x *BalanceTaskParams) GetEstimatedSize() uint64 {
-	if x != nil {
-		return x.EstimatedSize
-	}
-	return 0
-}
-
-func (x *BalanceTaskParams) GetDestRack() string {
-	if x != nil {
-		return x.DestRack
-	}
-	return ""
-}
-
-func (x *BalanceTaskParams) GetDestDc() string {
-	if x != nil {
-		return x.DestDc
-	}
-	return ""
-}
-
-func (x *BalanceTaskParams) GetPlacementScore() float64 {
-	if x != nil {
-		return x.PlacementScore
-	}
-	return 0
-}
-
 func (x *BalanceTaskParams) GetForceMove() bool {
 	if x != nil {
 		return x.ForceMove
@@ -1386,13 +1387,8 @@ func (x *BalanceTaskParams) GetTimeoutSeconds() int32 {
 // ReplicationTaskParams for adding replicas
 type ReplicationTaskParams struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	DestNode          string                 `protobuf:"bytes,1,opt,name=dest_node,json=destNode,proto3" json:"dest_node,omitempty"`                             // Planned destination node for new replica
-	EstimatedSize     uint64                 `protobuf:"varint,2,opt,name=estimated_size,json=estimatedSize,proto3" json:"estimated_size,omitempty"`             // Estimated replica size
-	DestRack          string                 `protobuf:"bytes,3,opt,name=dest_rack,json=destRack,proto3" json:"dest_rack,omitempty"`                             // Destination rack for placement rules
-	DestDc            string                 `protobuf:"bytes,4,opt,name=dest_dc,json=destDc,proto3" json:"dest_dc,omitempty"`                                   // Destination data center
-	PlacementScore    float64                `protobuf:"fixed64,5,opt,name=placement_score,json=placementScore,proto3" json:"placement_score,omitempty"`         // Quality score of the planned placement
-	ReplicaCount      int32                  `protobuf:"varint,7,opt,name=replica_count,json=replicaCount,proto3" json:"replica_count,omitempty"`                // Target replica count
-	VerifyConsistency bool                   `protobuf:"varint,8,opt,name=verify_consistency,json=verifyConsistency,proto3" json:"verify_consistency,omitempty"` // Verify replica consistency after creation
+	ReplicaCount      int32                  `protobuf:"varint,1,opt,name=replica_count,json=replicaCount,proto3" json:"replica_count,omitempty"`                // Target replica count
+	VerifyConsistency bool                   `protobuf:"varint,2,opt,name=verify_consistency,json=verifyConsistency,proto3" json:"verify_consistency,omitempty"` // Verify replica consistency after creation
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1425,41 +1421,6 @@ func (x *ReplicationTaskParams) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ReplicationTaskParams.ProtoReflect.Descriptor instead.
 func (*ReplicationTaskParams) Descriptor() ([]byte, []int) {
 	return file_worker_proto_rawDescGZIP(), []int{14}
-}
-
-func (x *ReplicationTaskParams) GetDestNode() string {
-	if x != nil {
-		return x.DestNode
-	}
-	return ""
-}
-
-func (x *ReplicationTaskParams) GetEstimatedSize() uint64 {
-	if x != nil {
-		return x.EstimatedSize
-	}
-	return 0
-}
-
-func (x *ReplicationTaskParams) GetDestRack() string {
-	if x != nil {
-		return x.DestRack
-	}
-	return ""
-}
-
-func (x *ReplicationTaskParams) GetDestDc() string {
-	if x != nil {
-		return x.DestDc
-	}
-	return ""
-}
-
-func (x *ReplicationTaskParams) GetPlacementScore() float64 {
-	if x != nil {
-		return x.PlacementScore
-	}
-	return 0
 }
 
 func (x *ReplicationTaskParams) GetReplicaCount() int32 {
@@ -3415,26 +3376,26 @@ const file_worker_proto_rawDesc = "" +
 	"\bmetadata\x18\x06 \x03(\v2'.worker_pb.TaskAssignment.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb3\x04\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe1\x04\n" +
 	"\n" +
 	"TaskParams\x12\x17\n" +
-	"\atask_id\x18\f \x01(\tR\x06taskId\x12\x1b\n" +
-	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x16\n" +
-	"\x06server\x18\x02 \x01(\tR\x06server\x12\x1e\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1b\n" +
+	"\tvolume_id\x18\x02 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x03 \x01(\tR\n" +
 	"collection\x12\x1f\n" +
 	"\vdata_center\x18\x04 \x01(\tR\n" +
 	"dataCenter\x12\x12\n" +
-	"\x04rack\x18\x05 \x01(\tR\x04rack\x12\x1a\n" +
-	"\breplicas\x18\x06 \x03(\tR\breplicas\x12\x1f\n" +
-	"\vvolume_size\x18\v \x01(\x04R\n" +
-	"volumeSize\x12B\n" +
-	"\rvacuum_params\x18\a \x01(\v2\x1b.worker_pb.VacuumTaskParamsH\x00R\fvacuumParams\x12X\n" +
-	"\x15erasure_coding_params\x18\b \x01(\v2\".worker_pb.ErasureCodingTaskParamsH\x00R\x13erasureCodingParams\x12E\n" +
-	"\x0ebalance_params\x18\t \x01(\v2\x1c.worker_pb.BalanceTaskParamsH\x00R\rbalanceParams\x12Q\n" +
-	"\x12replication_params\x18\n" +
-	" \x01(\v2 .worker_pb.ReplicationTaskParamsH\x00R\x11replicationParamsB\r\n" +
+	"\x04rack\x18\x05 \x01(\tR\x04rack\x12\x1f\n" +
+	"\vvolume_size\x18\x06 \x01(\x04R\n" +
+	"volumeSize\x12/\n" +
+	"\asources\x18\a \x03(\v2\x15.worker_pb.TaskSourceR\asources\x12/\n" +
+	"\atargets\x18\b \x03(\v2\x15.worker_pb.TaskTargetR\atargets\x12B\n" +
+	"\rvacuum_params\x18\t \x01(\v2\x1b.worker_pb.VacuumTaskParamsH\x00R\fvacuumParams\x12X\n" +
+	"\x15erasure_coding_params\x18\n" +
+	" \x01(\v2\".worker_pb.ErasureCodingTaskParamsH\x00R\x13erasureCodingParams\x12E\n" +
+	"\x0ebalance_params\x18\v \x01(\v2\x1c.worker_pb.BalanceTaskParamsH\x00R\rbalanceParams\x12Q\n" +
+	"\x12replication_params\x18\f \x01(\v2 .worker_pb.ReplicationTaskParamsH\x00R\x11replicationParamsB\r\n" +
 	"\vtask_params\"\xcb\x01\n" +
 	"\x10VacuumTaskParams\x12+\n" +
 	"\x11garbage_threshold\x18\x01 \x01(\x01R\x10garbageThreshold\x12!\n" +
@@ -3443,46 +3404,43 @@ const file_worker_proto_rawDesc = "" +
 	"batch_size\x18\x03 \x01(\x05R\tbatchSize\x12\x1f\n" +
 	"\vworking_dir\x18\x04 \x01(\tR\n" +
 	"workingDir\x12'\n" +
-	"\x0fverify_checksum\x18\x05 \x01(\bR\x0everifyChecksum\"\x9a\x03\n" +
+	"\x0fverify_checksum\x18\x05 \x01(\bR\x0everifyChecksum\"\xfe\x01\n" +
 	"\x17ErasureCodingTaskParams\x120\n" +
-	"\x14estimated_shard_size\x18\x03 \x01(\x04R\x12estimatedShardSize\x12\x1f\n" +
-	"\vdata_shards\x18\x04 \x01(\x05R\n" +
+	"\x14estimated_shard_size\x18\x01 \x01(\x04R\x12estimatedShardSize\x12\x1f\n" +
+	"\vdata_shards\x18\x02 \x01(\x05R\n" +
 	"dataShards\x12#\n" +
-	"\rparity_shards\x18\x05 \x01(\x05R\fparityShards\x12\x1f\n" +
-	"\vworking_dir\x18\x06 \x01(\tR\n" +
+	"\rparity_shards\x18\x03 \x01(\x05R\fparityShards\x12\x1f\n" +
+	"\vworking_dir\x18\x04 \x01(\tR\n" +
 	"workingDir\x12#\n" +
-	"\rmaster_client\x18\a \x01(\tR\fmasterClient\x12%\n" +
-	"\x0ecleanup_source\x18\b \x01(\bR\rcleanupSource\x12<\n" +
-	"\fdestinations\x18\n" +
-	" \x03(\v2\x18.worker_pb.ECDestinationR\fdestinations\x12\\\n" +
-	"\x18existing_shard_locations\x18\v \x03(\v2\".worker_pb.ExistingECShardLocationR\x16existingShardLocations\"\x9a\x01\n" +
-	"\rECDestination\x12\x12\n" +
+	"\rmaster_client\x18\x05 \x01(\tR\fmasterClient\x12%\n" +
+	"\x0ecleanup_source\x18\x06 \x01(\bR\rcleanupSource\"\xcf\x01\n" +
+	"\n" +
+	"TaskSource\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x17\n" +
 	"\adisk_id\x18\x02 \x01(\rR\x06diskId\x12\x12\n" +
 	"\x04rack\x18\x03 \x01(\tR\x04rack\x12\x1f\n" +
 	"\vdata_center\x18\x04 \x01(\tR\n" +
-	"dataCenter\x12'\n" +
-	"\x0fplacement_score\x18\x05 \x01(\x01R\x0eplacementScore\"J\n" +
-	"\x17ExistingECShardLocation\x12\x12\n" +
-	"\x04node\x18\x01 \x01(\tR\x04node\x12\x1b\n" +
-	"\tshard_ids\x18\x02 \x03(\rR\bshardIds\"\xfe\x01\n" +
-	"\x11BalanceTaskParams\x12\x1b\n" +
-	"\tdest_node\x18\x01 \x01(\tR\bdestNode\x12%\n" +
-	"\x0eestimated_size\x18\x02 \x01(\x04R\restimatedSize\x12\x1b\n" +
-	"\tdest_rack\x18\x03 \x01(\tR\bdestRack\x12\x17\n" +
-	"\adest_dc\x18\x04 \x01(\tR\x06destDc\x12'\n" +
-	"\x0fplacement_score\x18\x05 \x01(\x01R\x0eplacementScore\x12\x1d\n" +
+	"dataCenter\x12\x1b\n" +
+	"\tvolume_id\x18\x05 \x01(\rR\bvolumeId\x12\x1b\n" +
+	"\tshard_ids\x18\x06 \x03(\rR\bshardIds\x12%\n" +
+	"\x0eestimated_size\x18\a \x01(\x04R\restimatedSize\"\xcf\x01\n" +
 	"\n" +
-	"force_move\x18\a \x01(\bR\tforceMove\x12'\n" +
-	"\x0ftimeout_seconds\x18\b \x01(\x05R\x0etimeoutSeconds\"\x8e\x02\n" +
-	"\x15ReplicationTaskParams\x12\x1b\n" +
-	"\tdest_node\x18\x01 \x01(\tR\bdestNode\x12%\n" +
-	"\x0eestimated_size\x18\x02 \x01(\x04R\restimatedSize\x12\x1b\n" +
-	"\tdest_rack\x18\x03 \x01(\tR\bdestRack\x12\x17\n" +
-	"\adest_dc\x18\x04 \x01(\tR\x06destDc\x12'\n" +
-	"\x0fplacement_score\x18\x05 \x01(\x01R\x0eplacementScore\x12#\n" +
-	"\rreplica_count\x18\a \x01(\x05R\freplicaCount\x12-\n" +
-	"\x12verify_consistency\x18\b \x01(\bR\x11verifyConsistency\"\x8e\x02\n" +
+	"TaskTarget\x12\x12\n" +
+	"\x04node\x18\x01 \x01(\tR\x04node\x12\x17\n" +
+	"\adisk_id\x18\x02 \x01(\rR\x06diskId\x12\x12\n" +
+	"\x04rack\x18\x03 \x01(\tR\x04rack\x12\x1f\n" +
+	"\vdata_center\x18\x04 \x01(\tR\n" +
+	"dataCenter\x12\x1b\n" +
+	"\tvolume_id\x18\x05 \x01(\rR\bvolumeId\x12\x1b\n" +
+	"\tshard_ids\x18\x06 \x03(\rR\bshardIds\x12%\n" +
+	"\x0eestimated_size\x18\a \x01(\x04R\restimatedSize\"[\n" +
+	"\x11BalanceTaskParams\x12\x1d\n" +
+	"\n" +
+	"force_move\x18\x01 \x01(\bR\tforceMove\x12'\n" +
+	"\x0ftimeout_seconds\x18\x02 \x01(\x05R\x0etimeoutSeconds\"k\n" +
+	"\x15ReplicationTaskParams\x12#\n" +
+	"\rreplica_count\x18\x01 \x01(\x05R\freplicaCount\x12-\n" +
+	"\x12verify_consistency\x18\x02 \x01(\bR\x11verifyConsistency\"\x8e\x02\n" +
 	"\n" +
 	"TaskUpdate\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1b\n" +
@@ -3713,8 +3671,8 @@ var file_worker_proto_goTypes = []any{
 	(*TaskParams)(nil),              // 8: worker_pb.TaskParams
 	(*VacuumTaskParams)(nil),        // 9: worker_pb.VacuumTaskParams
 	(*ErasureCodingTaskParams)(nil), // 10: worker_pb.ErasureCodingTaskParams
-	(*ECDestination)(nil),           // 11: worker_pb.ECDestination
-	(*ExistingECShardLocation)(nil), // 12: worker_pb.ExistingECShardLocation
+	(*TaskSource)(nil),              // 11: worker_pb.TaskSource
+	(*TaskTarget)(nil),              // 12: worker_pb.TaskTarget
 	(*BalanceTaskParams)(nil),       // 13: worker_pb.BalanceTaskParams
 	(*ReplicationTaskParams)(nil),   // 14: worker_pb.ReplicationTaskParams
 	(*TaskUpdate)(nil),              // 15: worker_pb.TaskUpdate
@@ -3765,12 +3723,12 @@ var file_worker_proto_depIdxs = []int32{
 	36, // 13: worker_pb.WorkerRegistration.metadata:type_name -> worker_pb.WorkerRegistration.MetadataEntry
 	8,  // 14: worker_pb.TaskAssignment.params:type_name -> worker_pb.TaskParams
 	37, // 15: worker_pb.TaskAssignment.metadata:type_name -> worker_pb.TaskAssignment.MetadataEntry
-	9,  // 16: worker_pb.TaskParams.vacuum_params:type_name -> worker_pb.VacuumTaskParams
-	10, // 17: worker_pb.TaskParams.erasure_coding_params:type_name -> worker_pb.ErasureCodingTaskParams
-	13, // 18: worker_pb.TaskParams.balance_params:type_name -> worker_pb.BalanceTaskParams
-	14, // 19: worker_pb.TaskParams.replication_params:type_name -> worker_pb.ReplicationTaskParams
-	11, // 20: worker_pb.ErasureCodingTaskParams.destinations:type_name -> worker_pb.ECDestination
-	12, // 21: worker_pb.ErasureCodingTaskParams.existing_shard_locations:type_name -> worker_pb.ExistingECShardLocation
+	11, // 16: worker_pb.TaskParams.sources:type_name -> worker_pb.TaskSource
+	12, // 17: worker_pb.TaskParams.targets:type_name -> worker_pb.TaskTarget
+	9,  // 18: worker_pb.TaskParams.vacuum_params:type_name -> worker_pb.VacuumTaskParams
+	10, // 19: worker_pb.TaskParams.erasure_coding_params:type_name -> worker_pb.ErasureCodingTaskParams
+	13, // 20: worker_pb.TaskParams.balance_params:type_name -> worker_pb.BalanceTaskParams
+	14, // 21: worker_pb.TaskParams.replication_params:type_name -> worker_pb.ReplicationTaskParams
 	38, // 22: worker_pb.TaskUpdate.metadata:type_name -> worker_pb.TaskUpdate.MetadataEntry
 	39, // 23: worker_pb.TaskComplete.result_metadata:type_name -> worker_pb.TaskComplete.ResultMetadataEntry
 	22, // 24: worker_pb.TaskLogResponse.metadata:type_name -> worker_pb.TaskLogMetadata

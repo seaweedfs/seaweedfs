@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -273,7 +274,7 @@ func (t *BaseTask) ExecuteTask(ctx context.Context, params types.TaskParams, exe
 	if t.logger != nil {
 		t.logger.LogWithFields("INFO", "Task execution started", map[string]interface{}{
 			"volume_id":  params.VolumeID,
-			"server":     params.Server,
+			"server":     getServerFromSources(params.TypedParams.Sources),
 			"collection": params.Collection,
 		})
 	}
@@ -362,7 +363,7 @@ func ValidateParams(params types.TaskParams, requiredFields ...string) error {
 				return &ValidationError{Field: field, Message: "volume_id is required"}
 			}
 		case "server":
-			if params.Server == "" {
+			if len(params.TypedParams.Sources) == 0 {
 				return &ValidationError{Field: field, Message: "server is required"}
 			}
 		case "collection":
@@ -382,4 +383,12 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string {
 	return e.Field + ": " + e.Message
+}
+
+// getServerFromSources extracts the server address from unified sources
+func getServerFromSources(sources []*worker_pb.TaskSource) string {
+	if len(sources) > 0 {
+		return sources[0].Node
+	}
+	return ""
 }
