@@ -1088,7 +1088,6 @@ allInOne:
   enabled: false
   imageOverride: null
   restartPolicy: Always
-  replicas: 1
 
   # Core configuration
   idleTimeout: 30  # Connection idle seconds
