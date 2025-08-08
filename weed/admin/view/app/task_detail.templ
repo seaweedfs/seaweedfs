@@ -310,7 +310,17 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                                     }
                                                     if len(source.ShardIds) > 0 {
                                                         <small class="text-muted ms-2">
-                                                            <i class="fas fa-puzzle-piece me-1"></i>Shards:{fmt.Sprintf("%d", len(source.ShardIds))}
+                                                            <i class="fas fa-puzzle-piece me-1"></i>Shards:
+                                                            for j, shardId := range source.ShardIds {
+                                                                if j > 0 {
+                                                                    <span>,</span>
+                                                                }
+                                                                if shardId < 10 {
+                                                                    <span class="badge badge-sm bg-primary ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Data shard %d", shardId)}>{fmt.Sprintf("%d", shardId)}</span>
+                                                                } else {
+                                                                    <span class="badge badge-sm bg-warning text-dark ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Parity shard %d", shardId)}>{fmt.Sprintf("P%d", shardId-10)}</span>
+                                                                }
+                                                            }
                                                         </small>
                                                     }
                                                 </div>
@@ -355,7 +365,17 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                                     }
                                                     if len(target.ShardIds) > 0 {
                                                         <small class="text-muted ms-2">
-                                                            <i class="fas fa-puzzle-piece me-1"></i>Shards:{fmt.Sprintf("%d", len(target.ShardIds))}
+                                                            <i class="fas fa-puzzle-piece me-1"></i>Shards:
+                                                            for j, shardId := range target.ShardIds {
+                                                                if j > 0 {
+                                                                    <span>,</span>
+                                                                }
+                                                                if shardId < 10 {
+                                                                    <span class="badge badge-sm bg-primary ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Data shard %d", shardId)}>{fmt.Sprintf("%d", shardId)}</span>
+                                                                } else {
+                                                                    <span class="badge badge-sm bg-warning text-dark ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Parity shard %d", shardId)}>{fmt.Sprintf("P%d", shardId-10)}</span>
+                                                                }
+                                                            }
                                                         </small>
                                                     }
                                                 </div>
