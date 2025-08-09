@@ -450,6 +450,13 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 	// Task execution uses the new unified Task interface
 	glog.V(2).Infof("Executing task %s in working directory: %s", task.ID, taskWorkingDir)
 
+	// If we have a file logger, adapt it so task WithFields logs are captured into file
+	if fileLogger != nil {
+		if withLogger, ok := taskInstance.(interface{ SetLogger(types.Logger) }); ok {
+			withLogger.SetLogger(newTaskLoggerAdapter(fileLogger))
+		}
+	}
+
 	// Set progress callback that reports to admin server
 	taskInstance.SetProgressCallback(func(progress float64, stage string) {
 		// Report progress updates to admin server

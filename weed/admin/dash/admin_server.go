@@ -1210,6 +1210,21 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 						TaskID:    taskID,
 						WorkerID:  task.WorkerID,
 					}
+					// carry structured fields if present
+					if len(workerLog.Fields) > 0 {
+						maintenanceLog.Fields = make(map[string]string, len(workerLog.Fields))
+						for k, v := range workerLog.Fields {
+							maintenanceLog.Fields[k] = v
+						}
+					}
+					// carry optional progress/status
+					if workerLog.Progress != 0 {
+						p := float64(workerLog.Progress)
+						maintenanceLog.Progress = &p
+					}
+					if workerLog.Status != "" {
+						maintenanceLog.Status = workerLog.Status
+					}
 					taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, maintenanceLog)
 				}
 			} else if err != nil {

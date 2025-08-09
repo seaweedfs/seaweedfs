@@ -540,6 +540,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                             <th width="80">Level</th>
                                             <th width="100">Source</th>
                                             <th>Message</th>
+                                            <th>Details</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -559,6 +560,26 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                                 </td>
                                                 <td><small>{log.Source}</small></td>
                                                 <td><code>{log.Message}</code></td>
+                                                <td>
+                                                    if log.Fields != nil && len(log.Fields) > 0 {
+                                                        <small>
+                                                            for k, v := range log.Fields {
+                                                                <span class="badge bg-light text-dark me-1">{k}=<i>{v}</i></span>
+                                                            }
+                                                        </small>
+                                                    } else if log.Progress != nil || log.Status != "" {
+                                                        <small>
+                                                            if log.Progress != nil {
+                                                                <span class="badge bg-secondary me-1">progress=<i>{fmt.Sprintf("%.0f%%", *log.Progress)}</i></span>
+                                                            }
+                                                            if log.Status != "" {
+                                                                <span class="badge bg-secondary">status=<i>{log.Status}</i></span>
+                                                            }
+                                                        </small>
+                                                    } else {
+                                                        <span class="text-muted">-</span>
+                                                    }
+                                                </td>
                                             </tr>
                                         }
                                     </tbody>

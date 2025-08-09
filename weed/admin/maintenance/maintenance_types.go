@@ -134,6 +134,11 @@ type TaskExecutionLog struct {
 	Source    string    `json:"source"` // Which component logged this
 	TaskID    string    `json:"task_id"`
 	WorkerID  string    `json:"worker_id"`
+	// Optional structured fields carried from worker logs
+	Fields map[string]string `json:"fields,omitempty"`
+	// Optional progress/status carried from worker logs
+	Progress *float64 `json:"progress,omitempty"`
+	Status   string   `json:"status,omitempty"`
 }
 
 // TaskDetailData represents comprehensive information about a task for the detail view
