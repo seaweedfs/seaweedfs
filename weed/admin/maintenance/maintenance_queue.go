@@ -457,7 +457,9 @@ func (mq *MaintenanceQueue) UpdateTaskProgress(taskID string, progress float64) 
 		}
 
 		// Save task state after progress update
-		mq.saveTaskState(task)
+		if progress == 0 || progress >= 100 || progress-oldProgress >= 10 {
+			mq.saveTaskState(task)
+		}
 	} else {
 		glog.V(2).Infof("Progress update for unknown task: %s (%.1f%%)", taskID, progress)
 	}
