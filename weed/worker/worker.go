@@ -140,6 +140,10 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 
 	// Initialize task log handler
 	logDir := filepath.Join(config.BaseWorkingDir, "task_logs")
+	// Ensure the base task log directory exists to avoid errors when admin requests logs
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		glog.Warningf("Failed to create task log base directory %s: %v", logDir, err)
+	}
 	taskLogHandler := tasks.NewTaskLogHandler(logDir)
 
 	worker := &Worker{
@@ -402,6 +406,26 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 	// Use new task execution system with unified Task interface
 	glog.V(1).Infof("Executing task %s with typed protobuf parameters", task.ID)
 
+	// Initialize a file-based task logger so admin can retrieve logs
+	// Build minimal params for logger metadata
+	loggerParams := types.TaskParams{
+		VolumeID:    task.VolumeID,
+		Collection:  task.Collection,
+		TypedParams: task.TypedParams,
+	}
+	loggerConfig := w.getTaskLoggerConfig()
+	fileLogger, logErr := tasks.NewTaskLogger(task.ID, task.Type, w.id, loggerParams, loggerConfig)
+	if logErr != nil {
+		glog.Warningf("Failed to initialize file logger for task %s: %v", task.ID, logErr)
+	} else {
+		defer func() {
+			if err := fileLogger.Close(); err != nil {
+				glog.V(1).Infof("Failed to close task logger for %s: %v", task.ID, err)
+			}
+		}()
+		fileLogger.Info("Task %s started (type=%s, server=%s, collection=%s)", task.ID, task.Type, task.Server, task.Collection)
+	}
+
 	taskFactory := w.registry.Get(task.Type)
 	if taskFactory == nil {
 		w.completeTask(task.ID, false, fmt.Sprintf("task factory not available for %s: task type not found", task.Type))
@@ -433,6 +457,9 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 		if err := w.adminClient.UpdateTaskProgress(task.ID, progress); err != nil {
 			glog.V(1).Infof("Failed to report task progress to admin: %v", err)
 		}
+		if fileLogger != nil {
+			fileLogger.LogProgress(progress, "progress update")
+		}
 	})
 
 	// Execute task with context
@@ -444,10 +471,18 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 		w.completeTask(task.ID, false, err.Error())
 		w.tasksFailed++
 		glog.Errorf("Worker %s failed to execute task %s: %v", w.id, task.ID, err)
+		if fileLogger != nil {
+			fileLogger.LogStatus("failed", err.Error())
+			fileLogger.Error("Task %s failed: %v", task.ID, err)
+		}
 	} else {
 		w.completeTask(task.ID, true, "")
 		w.tasksCompleted++
 		glog.Infof("Worker %s completed task %s successfully", w.id, task.ID)
+		if fileLogger != nil {
+			fileLogger.LogStatus("completed", "Task completed successfully")
+			fileLogger.Info("Task %s completed successfully", task.ID)
+		}
 	}
 }
 

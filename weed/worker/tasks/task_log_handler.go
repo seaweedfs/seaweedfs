@@ -21,6 +21,10 @@ func NewTaskLogHandler(baseLogDir string) *TaskLogHandler {
 	if baseLogDir == "" {
 		baseLogDir = "/tmp/seaweedfs/task_logs"
 	}
+	// Best-effort ensure the base directory exists so reads don't fail due to missing dir
+	if err := os.MkdirAll(baseLogDir, 0755); err != nil {
+		glog.Warningf("Failed to create base task log directory %s: %v", baseLogDir, err)
+	}
 	return &TaskLogHandler{
 		baseLogDir: baseLogDir,
 	}
