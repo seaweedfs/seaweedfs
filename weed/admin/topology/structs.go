@@ -114,6 +114,8 @@ type MultiDestinationPlan struct {
 
 // VolumeReplica represents a replica location with server and disk information
 type VolumeReplica struct {
-	ServerID string `json:"server_id"`
-	DiskID   uint32 `json:"disk_id"`
+	ServerID   string `json:"server_id"`
+	DiskID     uint32 `json:"disk_id"`
+	DataCenter string `json:"data_center"`
+	Rack       string `json:"rack"`
 }

@@ -294,37 +294,50 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                     </h6>
                                     <div class="bg-light p-3 rounded">
                                         <div class="d-flex flex-column gap-2">
-                                            for i, source := range data.Task.TypedParams.Sources {
-                                                <div class="d-flex align-items-center">
-                                                    <span class="badge bg-primary me-2">{fmt.Sprintf("#%d", i+1)}</span>
-                                                    <code class="flex-grow-1">{source.Node}</code>
-                                                    if source.Rack != "" {
-                                                        <small class="text-muted ms-2">
-                                                            <i class="fas fa-server me-1"></i>{source.Rack}
-                                                        </small>
+                                                                        for i, source := range data.Task.TypedParams.Sources {
+                                <div class="d-grid" style="grid-template-columns: auto 1fr auto auto auto auto; gap: 0.5rem; align-items: center;">
+                                    <span class="badge bg-primary">{fmt.Sprintf("#%d", i+1)}</span>
+                                    <code>{source.Node}</code>
+                                    <div>
+                                        if source.DataCenter != "" {
+                                            <small class="text-muted">
+                                                <i class="fas fa-building me-1"></i>{source.DataCenter}
+                                            </small>
+                                        }
+                                    </div>
+                                    <div>
+                                        if source.Rack != "" {
+                                            <small class="text-muted">
+                                                <i class="fas fa-server me-1"></i>{source.Rack}
+                                            </small>
+                                        }
+                                    </div>
+                                    <div>
+                                        if source.VolumeId > 0 {
+                                            <small class="text-muted">
+                                                <i class="fas fa-hdd me-1"></i>Vol:{fmt.Sprintf("%d", source.VolumeId)}
+                                            </small>
+                                        }
+                                    </div>
+                                    <div>
+                                        if len(source.ShardIds) > 0 {
+                                            <small class="text-muted">
+                                                <i class="fas fa-puzzle-piece me-1"></i>Shards:
+                                                for j, shardId := range source.ShardIds {
+                                                    if j > 0 {
+                                                        <span>, </span>
                                                     }
-                                                    if source.VolumeId > 0 {
-                                                        <small class="text-muted ms-2">
-                                                            <i class="fas fa-hdd me-1"></i>Vol:{fmt.Sprintf("%d", source.VolumeId)}
-                                                        </small>
+                                                    if shardId < 10 {
+                                                        <span class="badge badge-sm bg-primary ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Data shard %d", shardId)}>{fmt.Sprintf("%d", shardId)}</span>
+                                                    } else {
+                                                        <span class="badge badge-sm bg-warning text-dark ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Parity shard %d", shardId)}>{fmt.Sprintf("P%d", shardId-10)}</span>
                                                     }
-                                                    if len(source.ShardIds) > 0 {
-                                                        <small class="text-muted ms-2">
-                                                            <i class="fas fa-puzzle-piece me-1"></i>Shards:
-                                                            for j, shardId := range source.ShardIds {
-                                                                if j > 0 {
-                                                                    <span>,</span>
-                                                                }
-                                                                if shardId < 10 {
-                                                                    <span class="badge badge-sm bg-primary ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Data shard %d", shardId)}>{fmt.Sprintf("%d", shardId)}</span>
-                                                                } else {
-                                                                    <span class="badge badge-sm bg-warning text-dark ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Parity shard %d", shardId)}>{fmt.Sprintf("P%d", shardId-10)}</span>
-                                                                }
-                                                            }
-                                                        </small>
-                                                    }
-                                                </div>
-                                            }
+                                                }
+                                            </small>
+                                        }
+                                    </div>
+                                </div>
+                            }
                                         </div>
                                     </div>
                                 </div>
@@ -349,37 +362,50 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                     </h6>
                                     <div class="bg-light p-3 rounded">
                                         <div class="d-flex flex-column gap-2">
-                                            for i, target := range data.Task.TypedParams.Targets {
-                                                <div class="d-flex align-items-center">
-                                                    <span class="badge bg-success me-2">{fmt.Sprintf("#%d", i+1)}</span>
-                                                    <code class="flex-grow-1">{target.Node}</code>
-                                                    if target.Rack != "" {
-                                                        <small class="text-muted ms-2">
-                                                            <i class="fas fa-server me-1"></i>{target.Rack}
-                                                        </small>
+                                                                        for i, target := range data.Task.TypedParams.Targets {
+                                <div class="d-grid" style="grid-template-columns: auto 1fr auto auto auto auto; gap: 0.5rem; align-items: center;">
+                                    <span class="badge bg-success">{fmt.Sprintf("#%d", i+1)}</span>
+                                    <code>{target.Node}</code>
+                                    <div>
+                                        if target.DataCenter != "" {
+                                            <small class="text-muted">
+                                                <i class="fas fa-building me-1"></i>{target.DataCenter}
+                                            </small>
+                                        }
+                                    </div>
+                                    <div>
+                                        if target.Rack != "" {
+                                            <small class="text-muted">
+                                                <i class="fas fa-server me-1"></i>{target.Rack}
+                                            </small>
+                                        }
+                                    </div>
+                                    <div>
+                                        if target.VolumeId > 0 {
+                                            <small class="text-muted">
+                                                <i class="fas fa-hdd me-1"></i>Vol:{fmt.Sprintf("%d", target.VolumeId)}
+                                            </small>
+                                        }
+                                    </div>
+                                    <div>
+                                        if len(target.ShardIds) > 0 {
+                                            <small class="text-muted">
+                                                <i class="fas fa-puzzle-piece me-1"></i>Shards:
+                                                for j, shardId := range target.ShardIds {
+                                                    if j > 0 {
+                                                        <span>, </span>
                                                     }
-                                                    if target.VolumeId > 0 {
-                                                        <small class="text-muted ms-2">
-                                                            <i class="fas fa-hdd me-1"></i>Vol:{fmt.Sprintf("%d", target.VolumeId)}
-                                                        </small>
+                                                    if shardId < 10 {
+                                                        <span class="badge badge-sm bg-primary ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Data shard %d", shardId)}>{fmt.Sprintf("%d", shardId)}</span>
+                                                    } else {
+                                                        <span class="badge badge-sm bg-warning text-dark ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Parity shard %d", shardId)}>{fmt.Sprintf("P%d", shardId-10)}</span>
                                                     }
-                                                    if len(target.ShardIds) > 0 {
-                                                        <small class="text-muted ms-2">
-                                                            <i class="fas fa-puzzle-piece me-1"></i>Shards:
-                                                            for j, shardId := range target.ShardIds {
-                                                                if j > 0 {
-                                                                    <span>,</span>
-                                                                }
-                                                                if shardId < 10 {
-                                                                    <span class="badge badge-sm bg-primary ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Data shard %d", shardId)}>{fmt.Sprintf("%d", shardId)}</span>
-                                                                } else {
-                                                                    <span class="badge badge-sm bg-warning text-dark ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Parity shard %d", shardId)}>{fmt.Sprintf("P%d", shardId-10)}</span>
-                                                                }
-                                                            }
-                                                        </small>
-                                                    }
-                                                </div>
-                                            }
+                                                }
+                                            </small>
+                                        }
+                                    </div>
+                                </div>
+                            }
                                         </div>
                                     </div>
                                 </div>

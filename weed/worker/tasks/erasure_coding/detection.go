@@ -123,6 +123,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					sources = append(sources, topology.TaskSourceSpec{
 						ServerID:    replica.ServerID,
 						DiskID:      replica.DiskID,
+						DataCenter:  replica.DataCenter,
+						Rack:        replica.Rack,
 						CleanupType: topology.CleanupVolumeReplica,
 					})
 				}
@@ -140,6 +142,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 						sources = append(sources, topology.TaskSourceSpec{
 							ServerID:    shard.ServerID,
 							DiskID:      shard.DiskID,
+							DataCenter:  shard.DataCenter,
+							Rack:        shard.Rack,
 							CleanupType: topology.CleanupECShards,
 						})
 						duplicateCheck[key] = true
@@ -388,8 +392,10 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 
 	for _, source := range sources {
 		pbSource := &worker_pb.TaskSource{
-			Node:   source.ServerID,
-			DiskId: source.DiskID,
+			Node:       source.ServerID,
+			DiskId:     source.DiskID,
+			DataCenter: source.DataCenter,
+			Rack:       source.Rack,
 		}
 
 		// Convert storage impact to estimated size

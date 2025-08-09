@@ -126,6 +126,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					DiskId:        sourceDisk,
 					VolumeId:      selectedVolume.VolumeID,
 					EstimatedSize: selectedVolume.Size,
+					DataCenter:    selectedVolume.DataCenter,
+					Rack:          selectedVolume.Rack,
 				},
 			},
 			Targets: []*worker_pb.TaskTarget{
@@ -134,6 +136,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					DiskId:        destinationPlan.TargetDisk,
 					VolumeId:      selectedVolume.VolumeID,
 					EstimatedSize: destinationPlan.ExpectedSize,
+					DataCenter:    destinationPlan.TargetDC,
+					Rack:          destinationPlan.TargetRack,
 				},
 			},
 

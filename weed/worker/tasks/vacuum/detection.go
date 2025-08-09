@@ -47,7 +47,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			}
 
 			// Create typed parameters for vacuum task
-			result.TypedParams = createVacuumTaskParams(result, metric, vacuumConfig)
+			result.TypedParams = createVacuumTaskParams(result, metric, vacuumConfig, clusterInfo)
 			results = append(results, result)
 		} else {
 			// Debug why volume was not selected
@@ -85,7 +85,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 // createVacuumTaskParams creates typed parameters for vacuum tasks
 // This function is moved from MaintenanceIntegration.createVacuumTaskParams to the detection logic
-func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.VolumeHealthMetrics, vacuumConfig *Config) *worker_pb.TaskParams {
+func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.VolumeHealthMetrics, vacuumConfig *Config, clusterInfo *types.ClusterInfo) *worker_pb.TaskParams {
 	// Use configured values or defaults
 	garbageThreshold := 0.3                    // Default 30%
 	verifyChecksum := true                     // Default to verify
@@ -98,6 +98,9 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 		// Other fields like VerifyChecksum, BatchSize, WorkingDir would need to be added
 		// to the protobuf definition if they should be configurable
 	}
+
+	// Use DC and rack information directly from VolumeHealthMetrics
+	sourceDC, sourceRack := metric.DataCenter, metric.Rack
 
 	// Create typed protobuf parameters with unified sources
 	return &worker_pb.TaskParams{
@@ -112,6 +115,8 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 				Node:          task.Server,
 				VolumeId:      task.VolumeID,
 				EstimatedSize: metric.Size,
+				DataCenter:    sourceDC,
+				Rack:          sourceRack,
 			},
 		},
 

@@ -357,8 +357,10 @@ type TaskDetectionResult struct {
 type VolumeHealthMetrics struct {
 	VolumeID         uint32        `json:"volume_id"`
 	Server           string        `json:"server"`
-	DiskType         string        `json:"disk_type"` // Disk type (e.g., "hdd", "ssd") or disk path (e.g., "/data1")
-	DiskId           uint32        `json:"disk_id"`   // ID of the disk in Store.Locations array
+	DiskType         string        `json:"disk_type"`   // Disk type (e.g., "hdd", "ssd") or disk path (e.g., "/data1")
+	DiskId           uint32        `json:"disk_id"`     // ID of the disk in Store.Locations array
+	DataCenter       string        `json:"data_center"` // Data center of the server
+	Rack             string        `json:"rack"`        // Rack of the server
 	Collection       string        `json:"collection"`
 	Size             uint64        `json:"size"`
 	DeletedBytes     uint64        `json:"deleted_bytes"`
