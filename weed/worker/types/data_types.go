@@ -21,6 +21,8 @@ type VolumeHealthMetrics struct {
 	Server           string
 	DiskType         string // Disk type (e.g., "hdd", "ssd") or disk path (e.g., "/data1")
 	DiskId           uint32 // ID of the disk in Store.Locations array
+	DataCenter       string // Data center of the server
+	Rack             string // Rack of the server
 	Collection       string
 	Size             uint64
 	DeletedBytes     uint64

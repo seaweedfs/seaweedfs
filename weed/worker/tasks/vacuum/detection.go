@@ -47,7 +47,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			}
 
 			// Create typed parameters for vacuum task
-			result.TypedParams = createVacuumTaskParams(result, metric, vacuumConfig)
+			result.TypedParams = createVacuumTaskParams(result, metric, vacuumConfig, clusterInfo)
 			results = append(results, result)
 		} else {
 			// Debug why volume was not selected
@@ -85,7 +85,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 // createVacuumTaskParams creates typed parameters for vacuum tasks
 // This function is moved from MaintenanceIntegration.createVacuumTaskParams to the detection logic
-func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.VolumeHealthMetrics, vacuumConfig *Config) *worker_pb.TaskParams {
+func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.VolumeHealthMetrics, vacuumConfig *Config, clusterInfo *types.ClusterInfo) *worker_pb.TaskParams {
 	// Use configured values or defaults
 	garbageThreshold := 0.3                    // Default 30%
 	verifyChecksum := true                     // Default to verify
@@ -99,13 +99,27 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 		// to the protobuf definition if they should be configurable
 	}
 
-	// Create typed protobuf parameters
+	// Use DC and rack information directly from VolumeHealthMetrics
+	sourceDC, sourceRack := metric.DataCenter, metric.Rack
+
+	// Create typed protobuf parameters with unified sources
 	return &worker_pb.TaskParams{
 		TaskId:     task.TaskID, // Link to ActiveTopology pending task (if integrated)
 		VolumeId:   task.VolumeID,
-		Server:     task.Server,
 		Collection: task.Collection,
 		VolumeSize: metric.Size, // Store original volume size for tracking changes
+
+		// Unified sources array
+		Sources: []*worker_pb.TaskSource{
+			{
+				Node:          task.Server,
+				VolumeId:      task.VolumeID,
+				EstimatedSize: metric.Size,
+				DataCenter:    sourceDC,
+				Rack:          sourceRack,
+			},
+		},
+
 		TaskParams: &worker_pb.TaskParams_VacuumParams{
 			VacuumParams: &worker_pb.VacuumTaskParams{
 				GarbageThreshold: garbageThreshold,

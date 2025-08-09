@@ -12,9 +12,10 @@ import (
 type BaseTask struct {
 	id               string
 	taskType         types.TaskType
-	progressCallback func(float64)
+	progressCallback func(float64, string) // Modified to include stage description
 	logger           types.Logger
 	cancelled        bool
+	currentStage     string
 }
 
 // NewBaseTask creates a new base task
@@ -37,15 +38,33 @@ func (t *BaseTask) Type() types.TaskType {
 }
 
 // SetProgressCallback sets the progress callback
-func (t *BaseTask) SetProgressCallback(callback func(float64)) {
+func (t *BaseTask) SetProgressCallback(callback func(float64, string)) {
 	t.progressCallback = callback
 }
 
 // ReportProgress reports current progress through the callback
 func (t *BaseTask) ReportProgress(progress float64) {
 	if t.progressCallback != nil {
-		t.progressCallback(progress)
+		t.progressCallback(progress, t.currentStage)
 	}
+}
+
+// ReportProgressWithStage reports current progress with a specific stage description
+func (t *BaseTask) ReportProgressWithStage(progress float64, stage string) {
+	t.currentStage = stage
+	if t.progressCallback != nil {
+		t.progressCallback(progress, stage)
+	}
+}
+
+// SetCurrentStage sets the current stage description
+func (t *BaseTask) SetCurrentStage(stage string) {
+	t.currentStage = stage
+}
+
+// GetCurrentStage returns the current stage description
+func (t *BaseTask) GetCurrentStage() string {
+	return t.currentStage
 }
 
 // GetProgress returns current progress

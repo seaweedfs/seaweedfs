@@ -117,6 +117,8 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 								Server:           node.Id,
 								DiskType:         diskType,       // Track which disk this volume is on
 								DiskId:           volInfo.DiskId, // Use disk ID from volume info
+								DataCenter:       dc.Id,          // Data center from current loop
+								Rack:             rack.Id,        // Rack from current loop
 								Collection:       volInfo.Collection,
 								Size:             volInfo.Size,
 								DeletedBytes:     volInfo.DeletedByteCount,
@@ -207,6 +209,8 @@ func (ms *MaintenanceScanner) convertToTaskMetrics(metrics []*VolumeHealthMetric
 			Server:           metric.Server,
 			DiskType:         metric.DiskType,
 			DiskId:           metric.DiskId,
+			DataCenter:       metric.DataCenter,
+			Rack:             metric.Rack,
 			Collection:       metric.Collection,
 			Size:             metric.Size,
 			DeletedBytes:     metric.DeletedBytes,

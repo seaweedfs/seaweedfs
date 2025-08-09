@@ -98,7 +98,6 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                         <table class="table table-hover" id="hostsTable">
                             <thead>
                                 <tr>
-                                    <th>Server ID</th>
                                     <th>Address</th>
                                     <th>Data Center</th>
                                     <th>Rack</th>
@@ -113,9 +112,6 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                             <tbody>
                                 for _, host := range data.VolumeServers {
                                     <tr>
-                                        <td>
-                                            <code>{host.ID}</code>
-                                        </td>
                                         <td>
                                             <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", host.PublicURL))} target="_blank" class="text-decoration-none">
                                                 {host.Address}

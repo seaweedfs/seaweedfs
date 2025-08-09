@@ -188,8 +188,10 @@ func (at *ActiveTopology) GetVolumeLocations(volumeID uint32, collection string)
 			// Verify collection matches (since index doesn't include collection)
 			if at.volumeMatchesCollection(disk, volumeID, collection) {
 				replicas = append(replicas, VolumeReplica{
-					ServerID: disk.NodeID,
-					DiskID:   disk.DiskID,
+					ServerID:   disk.NodeID,
+					DiskID:     disk.DiskID,
+					DataCenter: disk.DataCenter,
+					Rack:       disk.Rack,
 				})
 			}
 		}
@@ -214,8 +216,10 @@ func (at *ActiveTopology) GetECShardLocations(volumeID uint32, collection string
 			// Verify collection matches (since index doesn't include collection)
 			if at.ecShardMatchesCollection(disk, volumeID, collection) {
 				ecShards = append(ecShards, VolumeReplica{
-					ServerID: disk.NodeID,
-					DiskID:   disk.DiskID,
+					ServerID:   disk.NodeID,
+					DiskID:     disk.DiskID,
+					DataCenter: disk.DataCenter,
+					Rack:       disk.Rack,
 				})
 			}
 		}

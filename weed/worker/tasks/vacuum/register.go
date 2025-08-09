@@ -42,9 +42,12 @@ func RegisterVacuumTask() {
 			if params == nil {
 				return nil, fmt.Errorf("task parameters are required")
 			}
+			if len(params.Sources) == 0 {
+				return nil, fmt.Errorf("at least one source is required for vacuum task")
+			}
 			return NewVacuumTask(
 				fmt.Sprintf("vacuum-%d", params.VolumeId),
-				params.Server,
+				params.Sources[0].Node, // Use first source node
 				params.VolumeId,
 				params.Collection,
 			), nil

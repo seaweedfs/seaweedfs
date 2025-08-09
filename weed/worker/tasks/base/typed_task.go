@@ -16,7 +16,8 @@ type BaseTypedTask struct {
 	taskType         types.TaskType
 	taskID           string
 	progress         float64
-	progressCallback func(float64)
+	progressCallback func(float64, string)
+	currentStage     string
 	cancelled        bool
 	mutex            sync.RWMutex
 
@@ -75,19 +76,47 @@ func (bt *BaseTypedTask) GetProgress() float64 {
 func (bt *BaseTypedTask) SetProgress(progress float64) {
 	bt.mutex.Lock()
 	callback := bt.progressCallback
+	stage := bt.currentStage
 	bt.progress = progress
 	bt.mutex.Unlock()
 
 	if callback != nil {
-		callback(progress)
+		callback(progress, stage)
 	}
 }
 
 // SetProgressCallback sets the progress callback function
-func (bt *BaseTypedTask) SetProgressCallback(callback func(float64)) {
+func (bt *BaseTypedTask) SetProgressCallback(callback func(float64, string)) {
 	bt.mutex.Lock()
 	defer bt.mutex.Unlock()
 	bt.progressCallback = callback
+}
+
+// SetProgressWithStage sets the current progress with a stage description
+func (bt *BaseTypedTask) SetProgressWithStage(progress float64, stage string) {
+	bt.mutex.Lock()
+	callback := bt.progressCallback
+	bt.progress = progress
+	bt.currentStage = stage
+	bt.mutex.Unlock()
+
+	if callback != nil {
+		callback(progress, stage)
+	}
+}
+
+// SetCurrentStage sets the current stage description
+func (bt *BaseTypedTask) SetCurrentStage(stage string) {
+	bt.mutex.Lock()
+	defer bt.mutex.Unlock()
+	bt.currentStage = stage
+}
+
+// GetCurrentStage returns the current stage description
+func (bt *BaseTypedTask) GetCurrentStage() string {
+	bt.mutex.RLock()
+	defer bt.mutex.RUnlock()
+	return bt.currentStage
 }
 
 // SetLoggerConfig sets the logger configuration for this task
@@ -200,8 +229,8 @@ func (bt *BaseTypedTask) ValidateTyped(params *worker_pb.TaskParams) error {
 	if params.VolumeId == 0 {
 		return errors.New("volume_id is required")
 	}
-	if params.Server == "" {
-		return errors.New("server is required")
+	if len(params.Sources) == 0 {
+		return errors.New("at least one source is required")
 	}
 	return nil
 }
