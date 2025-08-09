@@ -69,15 +69,39 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.targets = params.Targets // Get unified targets
 	t.sources = params.Sources // Get unified sources
 
+	// Log detailed task information
 	t.GetLogger().WithFields(map[string]interface{}{
 		"volume_id":     t.volumeID,
 		"server":        t.server,
 		"collection":    t.collection,
 		"data_shards":   t.dataShards,
 		"parity_shards": t.parityShards,
+		"total_shards":  t.dataShards + t.parityShards,
 		"targets":       len(t.targets),
 		"sources":       len(t.sources),
 	}).Info("Starting erasure coding task")
+
+	// Log detailed target server assignments
+	for i, target := range t.targets {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"target_index": i,
+			"server":       target.Node,
+			"shard_ids":    target.ShardIds,
+			"shard_count":  len(target.ShardIds),
+		}).Info("Target server shard assignment")
+	}
+
+	// Log source information
+	for i, source := range t.sources {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"source_index": i,
+			"server":       source.Node,
+			"volume_id":    source.VolumeId,
+			"disk_id":      source.DiskId,
+			"rack":         source.Rack,
+			"data_center":  source.DataCenter,
+		}).Info("Source server information")
+	}
 
 	// Use the working directory from task parameters, or fall back to a default
 	baseWorkDir := t.workDir
@@ -232,6 +256,12 @@ func (t *ErasureCodingTask) markVolumeReadonly() error {
 func (t *ErasureCodingTask) copyVolumeFilesToWorker(workDir string) (map[string]string, error) {
 	localFiles := make(map[string]string)
 
+	t.GetLogger().WithFields(map[string]interface{}{
+		"volume_id":   t.volumeID,
+		"source":      t.server,
+		"working_dir": workDir,
+	}).Info("Starting volume file copy from source server")
+
 	// Copy .dat file
 	datFile := filepath.Join(workDir, fmt.Sprintf("%d.dat", t.volumeID))
 	if err := t.copyFileFromSource(".dat", datFile); err != nil {
@@ -239,12 +269,32 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(workDir string) (map[string]
 	}
 	localFiles["dat"] = datFile
 
+	// Log .dat file size
+	if info, err := os.Stat(datFile); err == nil {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"file_type":  ".dat",
+			"file_path":  datFile,
+			"size_bytes": info.Size(),
+			"size_mb":    float64(info.Size()) / (1024 * 1024),
+		}).Info("Volume data file copied successfully")
+	}
+
 	// Copy .idx file
 	idxFile := filepath.Join(workDir, fmt.Sprintf("%d.idx", t.volumeID))
 	if err := t.copyFileFromSource(".idx", idxFile); err != nil {
 		return nil, fmt.Errorf("failed to copy .idx file: %v", err)
 	}
 	localFiles["idx"] = idxFile
+
+	// Log .idx file size
+	if info, err := os.Stat(idxFile); err == nil {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"file_type":  ".idx",
+			"file_path":  idxFile,
+			"size_bytes": info.Size(),
+			"size_mb":    float64(info.Size()) / (1024 * 1024),
+		}).Info("Volume index file copied successfully")
+	}
 
 	return localFiles, nil
 }
@@ -320,18 +370,38 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 		return nil, fmt.Errorf("failed to generate .ecx file: %v", err)
 	}
 
-	// Collect generated shard file paths
+	// Collect generated shard file paths and log details
+	var generatedShards []string
+	var totalShardSize int64
+
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
 		shardFile := fmt.Sprintf("%s.ec%02d", baseName, i)
-		if _, err := os.Stat(shardFile); err == nil {
-			shardFiles[fmt.Sprintf("ec%02d", i)] = shardFile
+		if info, err := os.Stat(shardFile); err == nil {
+			shardKey := fmt.Sprintf("ec%02d", i)
+			shardFiles[shardKey] = shardFile
+			generatedShards = append(generatedShards, shardKey)
+			totalShardSize += info.Size()
+
+			// Log individual shard details
+			t.GetLogger().WithFields(map[string]interface{}{
+				"shard_id":   i,
+				"shard_type": shardKey,
+				"file_path":  shardFile,
+				"size_bytes": info.Size(),
+				"size_kb":    float64(info.Size()) / 1024,
+			}).Info("EC shard generated")
 		}
 	}
 
 	// Add metadata files
 	ecxFile := baseName + ".ecx"
-	if _, err := os.Stat(ecxFile); err == nil {
+	if info, err := os.Stat(ecxFile); err == nil {
 		shardFiles["ecx"] = ecxFile
+		t.GetLogger().WithFields(map[string]interface{}{
+			"file_type":  "ecx",
+			"file_path":  ecxFile,
+			"size_bytes": info.Size(),
+		}).Info("EC index file generated")
 	}
 
 	// Generate .vif file (volume info)
@@ -343,9 +413,22 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 		glog.Warningf("Failed to create .vif file: %v", err)
 	} else {
 		shardFiles["vif"] = vifFile
+		if info, err := os.Stat(vifFile); err == nil {
+			t.GetLogger().WithFields(map[string]interface{}{
+				"file_type":  "vif",
+				"file_path":  vifFile,
+				"size_bytes": info.Size(),
+			}).Info("Volume info file generated")
+		}
 	}
 
-	glog.V(1).Infof("Generated %d EC files locally", len(shardFiles))
+	// Log summary of generation
+	t.GetLogger().WithFields(map[string]interface{}{
+		"total_files":         len(shardFiles),
+		"ec_shards":           len(generatedShards),
+		"generated_shards":    generatedShards,
+		"total_shard_size_mb": float64(totalShardSize) / (1024 * 1024),
+	}).Info("EC shard generation completed")
 	return shardFiles, nil
 }
 
@@ -402,19 +485,45 @@ func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) err
 			"destination":     destNode,
 			"assigned_shards": len(assignedShards),
 			"shard_types":     assignedShards,
-		}).Info("Distributing assigned EC shards to destination")
+		}).Info("Starting shard distribution to destination server")
 
 		// Send only the assigned shards to this destination
+		var transferredBytes int64
 		for _, shardType := range assignedShards {
 			filePath, exists := shardFiles[shardType]
 			if !exists {
 				return fmt.Errorf("shard file %s not found for destination %s", shardType, destNode)
 			}
 
+			// Log file size before transfer
+			if info, err := os.Stat(filePath); err == nil {
+				transferredBytes += info.Size()
+				t.GetLogger().WithFields(map[string]interface{}{
+					"destination": destNode,
+					"shard_type":  shardType,
+					"file_path":   filePath,
+					"size_bytes":  info.Size(),
+					"size_kb":     float64(info.Size()) / 1024,
+				}).Info("Starting shard file transfer")
+			}
+
 			if err := t.sendShardFileToDestination(destNode, filePath, shardType); err != nil {
 				return fmt.Errorf("failed to send %s to %s: %v", shardType, destNode, err)
 			}
+
+			t.GetLogger().WithFields(map[string]interface{}{
+				"destination": destNode,
+				"shard_type":  shardType,
+			}).Info("Shard file transfer completed")
 		}
+
+		// Log summary for this destination
+		t.GetLogger().WithFields(map[string]interface{}{
+			"destination":        destNode,
+			"shards_transferred": len(assignedShards),
+			"total_bytes":        transferredBytes,
+			"total_mb":           float64(transferredBytes) / (1024 * 1024),
+		}).Info("All shards distributed to destination server")
 	}
 
 	glog.V(1).Infof("Successfully distributed EC shards to %d destinations", len(shardAssignment))
@@ -525,6 +634,8 @@ func (t *ErasureCodingTask) mountEcShards() error {
 	for destNode, assignedShards := range t.shardAssignment {
 		// Convert shard names to shard IDs for mounting
 		var shardIds []uint32
+		var metadataFiles []string
+
 		for _, shardType := range assignedShards {
 			// Skip metadata files (.ecx, .vif) - only mount EC shards
 			if strings.HasPrefix(shardType, "ec") && len(shardType) == 4 {
@@ -533,15 +644,25 @@ func (t *ErasureCodingTask) mountEcShards() error {
 				if _, err := fmt.Sscanf(shardType[2:], "%d", &shardId); err == nil {
 					shardIds = append(shardIds, shardId)
 				}
+			} else {
+				metadataFiles = append(metadataFiles, shardType)
 			}
 		}
 
+		t.GetLogger().WithFields(map[string]interface{}{
+			"destination":    destNode,
+			"shard_ids":      shardIds,
+			"shard_count":    len(shardIds),
+			"metadata_files": metadataFiles,
+		}).Info("Starting EC shard mount operation")
+
 		if len(shardIds) == 0 {
-			glog.V(1).Infof("No EC shards to mount on %s (only metadata files)", destNode)
+			t.GetLogger().WithFields(map[string]interface{}{
+				"destination":    destNode,
+				"metadata_files": metadataFiles,
+			}).Info("No EC shards to mount (only metadata files)")
 			continue
 		}
-
-		glog.V(1).Infof("Mounting shards %v on %s", shardIds, destNode)
 
 		err := operation.WithVolumeServerClient(false, pb.ServerAddress(destNode), grpc.WithInsecure(),
 			func(client volume_server_pb.VolumeServerClient) error {
@@ -554,9 +675,18 @@ func (t *ErasureCodingTask) mountEcShards() error {
 			})
 
 		if err != nil {
-			glog.Warningf("Failed to mount shards %v on %s: %v", shardIds, destNode, err)
+			t.GetLogger().WithFields(map[string]interface{}{
+				"destination": destNode,
+				"shard_ids":   shardIds,
+				"error":       err.Error(),
+			}).Error("Failed to mount EC shards")
 		} else {
-			glog.V(1).Infof("Successfully mounted EC shards %v on %s", shardIds, destNode)
+			t.GetLogger().WithFields(map[string]interface{}{
+				"destination": destNode,
+				"shard_ids":   shardIds,
+				"volume_id":   t.volumeID,
+				"collection":  t.collection,
+			}).Info("Successfully mounted EC shards")
 		}
 	}
 
@@ -573,13 +703,24 @@ func (t *ErasureCodingTask) deleteOriginalVolume() error {
 		replicas = []string{t.server}
 	}
 
-	glog.V(1).Infof("Deleting volume %d from %d replica servers: %v", t.volumeID, len(replicas), replicas)
+	t.GetLogger().WithFields(map[string]interface{}{
+		"volume_id":       t.volumeID,
+		"replica_count":   len(replicas),
+		"replica_servers": replicas,
+	}).Info("Starting original volume deletion from replica servers")
 
 	// Delete volume from all replica locations
 	var deleteErrors []string
 	successCount := 0
 
-	for _, replicaServer := range replicas {
+	for i, replicaServer := range replicas {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"replica_index":  i + 1,
+			"total_replicas": len(replicas),
+			"server":         replicaServer,
+			"volume_id":      t.volumeID,
+		}).Info("Deleting volume from replica server")
+
 		err := operation.WithVolumeServerClient(false, pb.ServerAddress(replicaServer), grpc.WithInsecure(),
 			func(client volume_server_pb.VolumeServerClient) error {
 				_, err := client.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{
@@ -591,19 +732,37 @@ func (t *ErasureCodingTask) deleteOriginalVolume() error {
 
 		if err != nil {
 			deleteErrors = append(deleteErrors, fmt.Sprintf("failed to delete volume %d from %s: %v", t.volumeID, replicaServer, err))
-			glog.Warningf("Failed to delete volume %d from replica server %s: %v", t.volumeID, replicaServer, err)
+			t.GetLogger().WithFields(map[string]interface{}{
+				"server":    replicaServer,
+				"volume_id": t.volumeID,
+				"error":     err.Error(),
+			}).Error("Failed to delete volume from replica server")
 		} else {
 			successCount++
-			glog.V(1).Infof("Successfully deleted volume %d from replica server %s", t.volumeID, replicaServer)
+			t.GetLogger().WithFields(map[string]interface{}{
+				"server":    replicaServer,
+				"volume_id": t.volumeID,
+			}).Info("Successfully deleted volume from replica server")
 		}
 	}
 
 	// Report results
 	if len(deleteErrors) > 0 {
-		glog.Warningf("Some volume deletions failed (%d/%d successful): %v", successCount, len(replicas), deleteErrors)
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":      t.volumeID,
+			"successful":     successCount,
+			"failed":         len(deleteErrors),
+			"total_replicas": len(replicas),
+			"success_rate":   float64(successCount) / float64(len(replicas)) * 100,
+			"errors":         deleteErrors,
+		}).Warning("Some volume deletions failed")
 		// Don't return error - EC task should still be considered successful if shards are mounted
 	} else {
-		glog.V(1).Infof("Successfully deleted volume %d from all %d replica servers", t.volumeID, len(replicas))
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":       t.volumeID,
+			"replica_count":   len(replicas),
+			"replica_servers": replicas,
+		}).Info("Successfully deleted volume from all replica servers")
 	}
 
 	return nil

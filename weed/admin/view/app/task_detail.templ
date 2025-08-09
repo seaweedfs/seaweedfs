@@ -911,14 +911,34 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
             return;
         }
         
-        // Format and display logs
+        // Format and display logs with structured fields
         let logText = '';
         logs.forEach(entry => {
             const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
             const level = entry.level || 'INFO';
             const message = entry.message || '';
             
-            logText += `[${timestamp}] ${level}: ${message}\n`;
+            logText += `[${timestamp}] ${level}: ${message}`;
+            
+            // Add structured fields if they exist
+            if (entry.fields && Object.keys(entry.fields).length > 0) {
+                const fieldsStr = Object.entries(entry.fields)
+                    .map(([key, value]) => `${key}=${value}`)
+                    .join(', ');
+                logText += ` | ${fieldsStr}`;
+            }
+            
+            // Add progress if available
+            if (entry.progress !== undefined && entry.progress !== null) {
+                logText += ` | progress=${entry.progress}%`;
+            }
+            
+            // Add status if available
+            if (entry.status) {
+                logText += ` | status=${entry.status}`;
+            }
+            
+            logText += '\n';
         });
         
         logsDisplay.textContent = logText;
@@ -956,14 +976,35 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                 return;
             }
             
-            // Convert logs to text format
+            // Convert logs to text format with structured fields
             let logContent = '';
             if (data.logs && data.logs.length > 0) {
                 data.logs.forEach(entry => {
                     const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
                     const level = entry.level || 'INFO';
                     const message = entry.message || '';
-                    logContent += `[${timestamp}] ${level}: ${message}\n`;
+                    
+                    logContent += `[${timestamp}] ${level}: ${message}`;
+                    
+                    // Add structured fields if they exist
+                    if (entry.fields && Object.keys(entry.fields).length > 0) {
+                        const fieldsStr = Object.entries(entry.fields)
+                            .map(([key, value]) => `${key}=${value}`)
+                            .join(', ');
+                        logContent += ` | ${fieldsStr}`;
+                    }
+                    
+                    // Add progress if available
+                    if (entry.progress !== undefined && entry.progress !== null) {
+                        logContent += ` | progress=${entry.progress}%`;
+                    }
+                    
+                    // Add status if available
+                    if (entry.status) {
+                        logContent += ` | status=${entry.status}`;
+                    }
+                    
+                    logContent += '\n';
                 });
             } else {
                 logContent = 'No logs found for this task.';
