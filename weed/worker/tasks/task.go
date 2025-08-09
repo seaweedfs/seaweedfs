@@ -22,7 +22,8 @@ type BaseTask struct {
 	estimatedDuration time.Duration
 	logger            TaskLogger
 	loggerConfig      TaskLoggerConfig
-	progressCallback  func(float64) // Callback function for progress updates
+	progressCallback  func(float64, string) // Callback function for progress updates
+	currentStage      string                // Current stage description
 }
 
 // NewBaseTask creates a new base task
@@ -91,18 +92,62 @@ func (t *BaseTask) SetProgress(progress float64) {
 	}
 	oldProgress := t.progress
 	callback := t.progressCallback
+	stage := t.currentStage
 	t.progress = progress
 	t.mutex.Unlock()
 
 	// Log progress change
 	if t.logger != nil && progress != oldProgress {
-		t.logger.LogProgress(progress, fmt.Sprintf("Progress updated from %.1f%% to %.1f%%", oldProgress, progress))
+		message := stage
+		if message == "" {
+			message = fmt.Sprintf("Progress updated from %.1f%% to %.1f%%", oldProgress, progress)
+		}
+		t.logger.LogProgress(progress, message)
 	}
 
 	// Call progress callback if set
 	if callback != nil && progress != oldProgress {
-		callback(progress)
+		callback(progress, stage)
 	}
+}
+
+// SetProgressWithStage sets the current progress with a stage description
+func (t *BaseTask) SetProgressWithStage(progress float64, stage string) {
+	t.mutex.Lock()
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 100 {
+		progress = 100
+	}
+	callback := t.progressCallback
+	t.progress = progress
+	t.currentStage = stage
+	t.mutex.Unlock()
+
+	// Log progress change
+	if t.logger != nil {
+		t.logger.LogProgress(progress, stage)
+	}
+
+	// Call progress callback if set
+	if callback != nil {
+		callback(progress, stage)
+	}
+}
+
+// SetCurrentStage sets the current stage description
+func (t *BaseTask) SetCurrentStage(stage string) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	t.currentStage = stage
+}
+
+// GetCurrentStage returns the current stage description
+func (t *BaseTask) GetCurrentStage() string {
+	t.mutex.RLock()
+	defer t.mutex.RUnlock()
+	return t.currentStage
 }
 
 // Cancel cancels the task
@@ -171,7 +216,7 @@ func (t *BaseTask) GetEstimatedDuration() time.Duration {
 }
 
 // SetProgressCallback sets the progress callback function
-func (t *BaseTask) SetProgressCallback(callback func(float64)) {
+func (t *BaseTask) SetProgressCallback(callback func(float64, string)) {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 	t.progressCallback = callback

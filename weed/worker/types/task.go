@@ -28,7 +28,7 @@ type Task interface {
 
 	// Progress
 	GetProgress() float64
-	SetProgressCallback(func(float64))
+	SetProgressCallback(func(float64, string))
 }
 
 // TaskWithLogging extends Task with logging capabilities
@@ -127,9 +127,10 @@ type LoggerFactory interface {
 type UnifiedBaseTask struct {
 	id               string
 	taskType         TaskType
-	progressCallback func(float64)
+	progressCallback func(float64, string)
 	logger           Logger
 	cancelled        bool
+	currentStage     string
 }
 
 // NewBaseTask creates a new base task
@@ -151,15 +152,33 @@ func (t *UnifiedBaseTask) Type() TaskType {
 }
 
 // SetProgressCallback sets the progress callback
-func (t *UnifiedBaseTask) SetProgressCallback(callback func(float64)) {
+func (t *UnifiedBaseTask) SetProgressCallback(callback func(float64, string)) {
 	t.progressCallback = callback
 }
 
 // ReportProgress reports current progress through the callback
 func (t *UnifiedBaseTask) ReportProgress(progress float64) {
 	if t.progressCallback != nil {
-		t.progressCallback(progress)
+		t.progressCallback(progress, t.currentStage)
 	}
+}
+
+// ReportProgressWithStage reports current progress with a specific stage description
+func (t *UnifiedBaseTask) ReportProgressWithStage(progress float64, stage string) {
+	t.currentStage = stage
+	if t.progressCallback != nil {
+		t.progressCallback(progress, stage)
+	}
+}
+
+// SetCurrentStage sets the current stage description
+func (t *UnifiedBaseTask) SetCurrentStage(stage string) {
+	t.currentStage = stage
+}
+
+// GetCurrentStage returns the current stage description
+func (t *UnifiedBaseTask) GetCurrentStage() string {
+	return t.currentStage
 }
 
 // Cancel marks the task as cancelled

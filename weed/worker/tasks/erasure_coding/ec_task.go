@@ -112,14 +112,14 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	}()
 
 	// Step 1: Mark volume readonly
-	t.ReportProgress(10.0)
+	t.ReportProgressWithStage(10.0, "Marking volume readonly")
 	t.GetLogger().Info("Marking volume readonly")
 	if err := t.markVolumeReadonly(); err != nil {
 		return fmt.Errorf("failed to mark volume readonly: %v", err)
 	}
 
 	// Step 2: Copy volume files to worker
-	t.ReportProgress(25.0)
+	t.ReportProgressWithStage(25.0, "Copying volume files to worker")
 	t.GetLogger().Info("Copying volume files to worker")
 	localFiles, err := t.copyVolumeFilesToWorker(taskWorkDir)
 	if err != nil {
@@ -127,7 +127,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	}
 
 	// Step 3: Generate EC shards locally
-	t.ReportProgress(40.0)
+	t.ReportProgressWithStage(40.0, "Generating EC shards locally")
 	t.GetLogger().Info("Generating EC shards locally")
 	shardFiles, err := t.generateEcShardsLocally(localFiles, taskWorkDir)
 	if err != nil {
@@ -135,27 +135,27 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	}
 
 	// Step 4: Distribute shards to destinations
-	t.ReportProgress(60.0)
+	t.ReportProgressWithStage(60.0, "Distributing EC shards to destinations")
 	t.GetLogger().Info("Distributing EC shards to destinations")
 	if err := t.distributeEcShards(shardFiles); err != nil {
 		return fmt.Errorf("failed to distribute EC shards: %v", err)
 	}
 
 	// Step 5: Mount EC shards
-	t.ReportProgress(80.0)
+	t.ReportProgressWithStage(80.0, "Mounting EC shards")
 	t.GetLogger().Info("Mounting EC shards")
 	if err := t.mountEcShards(); err != nil {
 		return fmt.Errorf("failed to mount EC shards: %v", err)
 	}
 
 	// Step 6: Delete original volume
-	t.ReportProgress(90.0)
+	t.ReportProgressWithStage(90.0, "Deleting original volume")
 	t.GetLogger().Info("Deleting original volume")
 	if err := t.deleteOriginalVolume(); err != nil {
 		return fmt.Errorf("failed to delete original volume: %v", err)
 	}
 
-	t.ReportProgress(100.0)
+	t.ReportProgressWithStage(100.0, "EC processing complete")
 	glog.Infof("EC task completed successfully: volume %d from %s with %d shards distributed",
 		t.volumeID, t.server, len(shardFiles))
 

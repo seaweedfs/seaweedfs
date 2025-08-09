@@ -451,14 +451,19 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 	glog.V(2).Infof("Executing task %s in working directory: %s", task.ID, taskWorkingDir)
 
 	// Set progress callback that reports to admin server
-	taskInstance.SetProgressCallback(func(progress float64) {
+	taskInstance.SetProgressCallback(func(progress float64, stage string) {
 		// Report progress updates to admin server
-		glog.V(2).Infof("Task %s progress: %.1f%%", task.ID, progress)
+		glog.V(2).Infof("Task %s progress: %.1f%% - %s", task.ID, progress, stage)
 		if err := w.adminClient.UpdateTaskProgress(task.ID, progress); err != nil {
 			glog.V(1).Infof("Failed to report task progress to admin: %v", err)
 		}
 		if fileLogger != nil {
-			fileLogger.LogProgress(progress, "progress update")
+			// Use meaningful stage description or fallback to generic message
+			message := stage
+			if message == "" {
+				message = fmt.Sprintf("Progress: %.1f%%", progress)
+			}
+			fileLogger.LogProgress(progress, message)
 		}
 	})
 
@@ -480,7 +485,6 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 		w.tasksCompleted++
 		glog.Infof("Worker %s completed task %s successfully", w.id, task.ID)
 		if fileLogger != nil {
-			fileLogger.LogStatus("completed", "Task completed successfully")
 			fileLogger.Info("Task %s completed successfully", task.ID)
 		}
 	}
