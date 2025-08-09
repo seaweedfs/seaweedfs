@@ -274,7 +274,8 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 	// Get available disks for EC placement with effective capacity consideration (includes pending tasks)
 	// For EC, we typically need 1 volume slot per shard, so use minimum capacity of 1
 	// For EC, we need at least 1 available volume slot on a disk to consider it for placement.
-	availableDisks := activeTopology.GetDisksWithEffectiveCapacity(topology.TaskTypeErasureCoding, metric.Server, 1)
+	// Note: We don't exclude the source server since the original volume will be deleted after EC conversion
+	availableDisks := activeTopology.GetDisksWithEffectiveCapacity(topology.TaskTypeErasureCoding, "", 1)
 	if len(availableDisks) < erasure_coding.MinTotalDisks {
 		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d (considering pending/active tasks)", erasure_coding.MinTotalDisks, len(availableDisks))
 	}
@@ -297,7 +298,6 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 			TargetDC:       disk.DataCenter,
 			ExpectedSize:   expectedShardSize, // Set calculated EC shard size
 			PlacementScore: calculateECScore(disk, sourceRack, sourceDC),
-			Conflicts:      checkECPlacementConflicts(disk, sourceRack, sourceDC),
 		}
 		plans = append(plans, plan)
 
@@ -372,12 +372,12 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.Task
 				parityShards = append(parityShards, shardId)
 			}
 		}
-		glog.V(2).Infof("EC planning: target %s assigned shards %v (data: %v, parity: %v)", 
+		glog.V(2).Infof("EC planning: target %s assigned shards %v (data: %v, parity: %v)",
 			plan.TargetNode, targetShards[i], dataShards, parityShards)
 	}
 
-	glog.V(1).Infof("EC planning: distributed %d shards across %d targets using round-robin (data shards 0-%d, parity shards %d-%d)", 
-		erasure_coding.TotalShardsCount, numTargets, 
+	glog.V(1).Infof("EC planning: distributed %d shards across %d targets using round-robin (data shards 0-%d, parity shards %d-%d)",
+		erasure_coding.TotalShardsCount, numTargets,
 		erasure_coding.DataShardsCount-1, erasure_coding.DataShardsCount, erasure_coding.TotalShardsCount-1)
 	return targets
 }
@@ -509,24 +509,18 @@ func calculateECScore(disk *topology.DiskInfo, sourceRack, sourceDC string) floa
 
 	score := 0.0
 
-	// Prefer disks with available capacity
+	// Prefer disks with available capacity (primary factor)
 	if disk.DiskInfo.MaxVolumeCount > 0 {
 		utilization := float64(disk.DiskInfo.VolumeCount) / float64(disk.DiskInfo.MaxVolumeCount)
-		score += (1.0 - utilization) * 50.0 // Up to 50 points for available capacity
+		score += (1.0 - utilization) * 60.0 // Up to 60 points for available capacity
 	}
 
-	// Prefer different racks for better distribution
-	if disk.Rack != sourceRack {
-		score += 30.0
-	}
-
-	// Prefer different data centers for better distribution
-	if disk.DataCenter != sourceDC {
-		score += 20.0
-	}
-
-	// Consider current load
+	// Consider current load (secondary factor)
 	score += (10.0 - float64(disk.LoadCount)) // Up to 10 points for low load
+
+	// Note: We don't penalize placing shards on the same rack/DC as source
+	// since the original volume will be deleted after EC conversion.
+	// This allows for better network efficiency and storage utilization.
 
 	return score
 }
@@ -543,19 +537,6 @@ func isDiskSuitableForEC(disk *topology.DiskInfo) bool {
 	}
 
 	return true
-}
-
-// checkECPlacementConflicts checks for placement rule conflicts in EC operations
-func checkECPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC string) []string {
-	var conflicts []string
-
-	// For EC, being on the same rack as source is often acceptable
-	// but we note it as potential conflict for monitoring
-	if disk.Rack == sourceRack && disk.DataCenter == sourceDC {
-		conflicts = append(conflicts, "same_rack_as_source")
-	}
-
-	return conflicts
 }
 
 // findVolumeReplicaLocations finds all replica locations (server + disk) for the specified volume

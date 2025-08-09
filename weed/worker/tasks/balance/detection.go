@@ -234,7 +234,6 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 		TargetDC:       bestDisk.DataCenter,
 		ExpectedSize:   selectedVolume.Size,
 		PlacementScore: bestScore,
-		Conflicts:      checkPlacementConflicts(bestDisk, sourceRack, sourceDC),
 	}, nil
 }
 
@@ -266,17 +265,4 @@ func calculateBalanceScore(disk *topology.DiskInfo, sourceRack, sourceDC string,
 	score += (10.0 - float64(disk.LoadCount)) // Up to 10 points for low load
 
 	return score
-}
-
-// checkPlacementConflicts checks for placement rule conflicts
-func checkPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC string) []string {
-	var conflicts []string
-
-	// For now, implement basic conflict detection
-	// This could be extended with more sophisticated placement rules
-	if disk.Rack == sourceRack && disk.DataCenter == sourceDC {
-		conflicts = append(conflicts, "same_rack_as_source")
-	}
-
-	return conflicts
 }

@@ -96,13 +96,12 @@ type ActiveTopology struct {
 
 // DestinationPlan represents a planned destination for a volume/shard operation
 type DestinationPlan struct {
-	TargetNode     string   `json:"target_node"`
-	TargetDisk     uint32   `json:"target_disk"`
-	TargetRack     string   `json:"target_rack"`
-	TargetDC       string   `json:"target_dc"`
-	ExpectedSize   uint64   `json:"expected_size"`
-	PlacementScore float64  `json:"placement_score"`
-	Conflicts      []string `json:"conflicts"`
+	TargetNode     string  `json:"target_node"`
+	TargetDisk     uint32  `json:"target_disk"`
+	TargetRack     string  `json:"target_rack"`
+	TargetDC       string  `json:"target_dc"`
+	ExpectedSize   uint64  `json:"expected_size"`
+	PlacementScore float64 `json:"placement_score"`
 }
 
 // MultiDestinationPlan represents multiple planned destinations for operations like EC
