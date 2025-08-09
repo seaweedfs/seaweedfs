@@ -11,7 +11,18 @@ import templruntime "github.com/a-h/templ/runtime"
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+	"sort"
 )
+
+// sortedKeys returns the sorted keys for a string map
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
@@ -41,7 +52,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 23, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 34, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -54,7 +65,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 55, Col: 76}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 66, Col: 76}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -67,7 +78,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(string(data.Task.Type))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 59, Col: 91}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 70, Col: 91}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -145,7 +156,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.Reason)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 95, Col: 86}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 106, Col: 86}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -163,7 +174,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.CreatedAt.Format("01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 115, Col: 131}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 126, Col: 131}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -191,7 +202,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ScheduledAt.Format("01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 130, Col: 133}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 141, Col: 133}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -231,7 +242,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.StartedAt.Format("01-02 15:04:05"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 153, Col: 105}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 164, Col: 105}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -311,7 +322,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.CompletedAt.Format("01-02 15:04:05"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 191, Col: 107}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 202, Col: 107}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -335,7 +346,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.WorkerID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 206, Col: 86}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 217, Col: 86}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
@@ -358,7 +369,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(int64(data.Task.TypedParams.VolumeSize)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 214, Col: 128}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 225, Col: 128}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -377,7 +388,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.TypedParams.Collection)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 221, Col: 139}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 232, Col: 139}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -396,7 +407,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.TypedParams.DataCenter)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 228, Col: 146}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 239, Col: 146}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -415,7 +426,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("width: %.1f%%", data.Task.Progress))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 237, Col: 108}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 248, Col: 108}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -428,7 +439,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1f", data.Task.Progress))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 238, Col: 107}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 249, Col: 107}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
@@ -441,7 +452,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1f%%", data.Task.Progress))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 240, Col: 94}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 251, Col: 94}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -464,7 +475,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.DetailedReason)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 255, Col: 83}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 266, Col: 83}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -483,7 +494,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.Error)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 265, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 276, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 			if templ_7745c5c3_Err != nil {
@@ -511,7 +522,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var19 string
 				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Task.TypedParams.Sources)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 293, Col: 127}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 304, Col: 127}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
@@ -529,7 +540,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var20 string
 					templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("#%d", i+1))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 299, Col: 91}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 310, Col: 91}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 					if templ_7745c5c3_Err != nil {
@@ -542,7 +553,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var21 string
 					templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(source.Node)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 300, Col: 54}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 311, Col: 54}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 					if templ_7745c5c3_Err != nil {
@@ -560,7 +571,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var22 string
 						templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(source.DataCenter)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 304, Col: 102}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 315, Col: 102}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 						if templ_7745c5c3_Err != nil {
@@ -583,7 +594,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var23 string
 						templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(source.Rack)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 311, Col: 94}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 322, Col: 94}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 						if templ_7745c5c3_Err != nil {
@@ -606,7 +617,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var24 string
 						templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", source.VolumeId))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 318, Col: 118}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 329, Col: 118}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 						if templ_7745c5c3_Err != nil {
@@ -645,7 +656,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var25 string
 								templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Data shard %d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 331, Col: 173}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 342, Col: 173}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 								if templ_7745c5c3_Err != nil {
@@ -658,7 +669,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var26 string
 								templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 331, Col: 202}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 342, Col: 202}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 								if templ_7745c5c3_Err != nil {
@@ -676,7 +687,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var27 string
 								templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Parity shard %d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 333, Col: 185}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 344, Col: 185}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 								if templ_7745c5c3_Err != nil {
@@ -689,7 +700,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var28 string
 								templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("P%d", shardId-10))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 333, Col: 218}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 344, Col: 218}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 								if templ_7745c5c3_Err != nil {
@@ -728,7 +739,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var29 string
 				templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(string(data.Task.Type))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 351, Col: 91}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 362, Col: 91}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 				if templ_7745c5c3_Err != nil {
@@ -751,7 +762,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var30 string
 				templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Task.TypedParams.Targets)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 361, Col: 130}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 372, Col: 130}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 				if templ_7745c5c3_Err != nil {
@@ -769,7 +780,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var31 string
 					templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("#%d", i+1))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 367, Col: 91}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 378, Col: 91}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 					if templ_7745c5c3_Err != nil {
@@ -782,7 +793,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var32 string
 					templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(target.Node)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 368, Col: 54}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 379, Col: 54}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 					if templ_7745c5c3_Err != nil {
@@ -800,7 +811,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var33 string
 						templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(target.DataCenter)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 372, Col: 102}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 383, Col: 102}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 						if templ_7745c5c3_Err != nil {
@@ -823,7 +834,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var34 string
 						templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(target.Rack)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 379, Col: 94}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 390, Col: 94}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 						if templ_7745c5c3_Err != nil {
@@ -846,7 +857,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var35 string
 						templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", target.VolumeId))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 386, Col: 118}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 397, Col: 118}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 						if templ_7745c5c3_Err != nil {
@@ -885,7 +896,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var36 string
 								templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Data shard %d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 399, Col: 173}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 410, Col: 173}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 								if templ_7745c5c3_Err != nil {
@@ -898,7 +909,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var37 string
 								templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 399, Col: 202}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 410, Col: 202}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 								if templ_7745c5c3_Err != nil {
@@ -916,7 +927,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var38 string
 								templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Parity shard %d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 401, Col: 185}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 412, Col: 185}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 								if templ_7745c5c3_Err != nil {
@@ -929,7 +940,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var39 string
 								templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("P%d", shardId-10))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 401, Col: 218}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 412, Col: 218}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 								if templ_7745c5c3_Err != nil {
@@ -973,7 +984,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var40 string
 			templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinStringErrs(data.WorkerInfo.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 435, Col: 86}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 446, Col: 86}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
 			if templ_7745c5c3_Err != nil {
@@ -986,7 +997,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var41 string
 			templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(data.WorkerInfo.Address)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 438, Col: 91}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 449, Col: 91}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 			if templ_7745c5c3_Err != nil {
@@ -1019,7 +1030,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var42 string
 			templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(data.WorkerInfo.LastHeartbeat.Format("2006-01-02 15:04:05"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 455, Col: 121}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 466, Col: 121}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 			if templ_7745c5c3_Err != nil {
@@ -1032,7 +1043,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var43 string
 			templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/%d", data.WorkerInfo.CurrentLoad, data.WorkerInfo.MaxConcurrent))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 458, Col: 142}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 469, Col: 142}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 			if templ_7745c5c3_Err != nil {
@@ -1050,7 +1061,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var44 string
 				templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(string(capability))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 463, Col: 100}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 474, Col: 100}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 				if templ_7745c5c3_Err != nil {
@@ -1083,7 +1094,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var45 string
 				templ_7745c5c3_Var45, templ_7745c5c3_Err = templ.JoinStringErrs(assignment.WorkerID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 501, Col: 78}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 512, Col: 78}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var45))
 				if templ_7745c5c3_Err != nil {
@@ -1096,7 +1107,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var46 string
 				templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.JoinStringErrs(assignment.WorkerAddress)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 502, Col: 83}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 513, Col: 83}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var46))
 				if templ_7745c5c3_Err != nil {
@@ -1109,7 +1120,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var47 string
 				templ_7745c5c3_Var47, templ_7745c5c3_Err = templ.JoinStringErrs(assignment.AssignedAt.Format("2006-01-02 15:04:05"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 503, Col: 104}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 514, Col: 104}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var47))
 				if templ_7745c5c3_Err != nil {
@@ -1123,7 +1134,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var48 string
 					templ_7745c5c3_Var48, templ_7745c5c3_Err = templ.JoinStringErrs(assignment.UnassignedAt.Format("2006-01-02 15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 506, Col: 110}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 517, Col: 110}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var48))
 					if templ_7745c5c3_Err != nil {
@@ -1142,7 +1153,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var49 string
 				templ_7745c5c3_Var49, templ_7745c5c3_Err = templ.JoinStringErrs(assignment.Reason)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 511, Col: 70}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 522, Col: 70}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var49))
 				if templ_7745c5c3_Err != nil {
@@ -1163,7 +1174,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if len(data.ExecutionLogs) > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 147, "<div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-file-alt me-2\"></i> Execution Logs</h5></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-striped table-sm\"><thead><tr><th width=\"150\">Timestamp</th><th width=\"80\">Level</th><th width=\"100\">Source</th><th>Message</th><th>Details</th></tr></thead> <tbody>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 147, "<div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-file-alt me-2\"></i> Execution Logs</h5></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-striped table-sm\"><thead><tr><th width=\"150\">Timestamp</th><th width=\"80\">Level</th><th>Message</th><th>Details</th></tr></thead> <tbody>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1175,7 +1186,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var50 string
 				templ_7745c5c3_Var50, templ_7745c5c3_Err = templ.JoinStringErrs(log.Timestamp.Format("15:04:05"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 549, Col: 92}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 559, Col: 92}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var50))
 				if templ_7745c5c3_Err != nil {
@@ -1193,7 +1204,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var51 string
 					templ_7745c5c3_Var51, templ_7745c5c3_Err = templ.JoinStringErrs(log.Level)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 552, Col: 96}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 562, Col: 96}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var51))
 					if templ_7745c5c3_Err != nil {
@@ -1211,7 +1222,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var52 string
 					templ_7745c5c3_Var52, templ_7745c5c3_Err = templ.JoinStringErrs(log.Level)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 554, Col: 97}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 564, Col: 97}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var52))
 					if templ_7745c5c3_Err != nil {
@@ -1229,7 +1240,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var53 string
 					templ_7745c5c3_Var53, templ_7745c5c3_Err = templ.JoinStringErrs(log.Level)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 556, Col: 94}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 566, Col: 94}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var53))
 					if templ_7745c5c3_Err != nil {
@@ -1247,7 +1258,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var54 string
 					templ_7745c5c3_Var54, templ_7745c5c3_Err = templ.JoinStringErrs(log.Level)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 558, Col: 99}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 568, Col: 99}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var54))
 					if templ_7745c5c3_Err != nil {
@@ -1258,367 +1269,354 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 158, "</td><td><small>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 158, "</td><td><code>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var55 string
-				templ_7745c5c3_Var55, templ_7745c5c3_Err = templ.JoinStringErrs(log.Source)
+				templ_7745c5c3_Var55, templ_7745c5c3_Err = templ.JoinStringErrs(log.Message)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 561, Col: 70}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 571, Col: 70}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var55))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 159, "</small></td><td><code>")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var56 string
-				templ_7745c5c3_Var56, templ_7745c5c3_Err = templ.JoinStringErrs(log.Message)
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 562, Col: 70}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var56))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 160, "</code></td><td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 159, "</code></td><td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				if log.Fields != nil && len(log.Fields) > 0 {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 161, "<small>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 160, "<small>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					for k, v := range log.Fields {
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 162, "<span class=\"badge bg-light text-dark me-1\">")
+					for _, k := range sortedKeys(log.Fields) {
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 161, "<span class=\"badge bg-light text-dark me-1\">")
+						if templ_7745c5c3_Err != nil {
+							return templ_7745c5c3_Err
+						}
+						var templ_7745c5c3_Var56 string
+						templ_7745c5c3_Var56, templ_7745c5c3_Err = templ.JoinStringErrs(k)
+						if templ_7745c5c3_Err != nil {
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 576, Col: 110}
+						}
+						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var56))
+						if templ_7745c5c3_Err != nil {
+							return templ_7745c5c3_Err
+						}
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 162, "=<i>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var57 string
-						templ_7745c5c3_Var57, templ_7745c5c3_Err = templ.JoinStringErrs(k)
+						templ_7745c5c3_Var57, templ_7745c5c3_Err = templ.JoinStringErrs(log.Fields[k])
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 567, Col: 110}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 576, Col: 129}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var57))
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 163, "=<i>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 163, "</i></span>")
+						if templ_7745c5c3_Err != nil {
+							return templ_7745c5c3_Err
+						}
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 164, "</small>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				} else if log.Progress != nil || log.Status != "" {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 165, "<small>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					if log.Progress != nil {
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 166, "<span class=\"badge bg-secondary me-1\">progress=<i>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var58 string
-						templ_7745c5c3_Var58, templ_7745c5c3_Err = templ.JoinStringErrs(v)
+						templ_7745c5c3_Var58, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f%%", *log.Progress))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 567, Col: 117}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 582, Col: 151}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var58))
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 164, "</i></span>")
-						if templ_7745c5c3_Err != nil {
-							return templ_7745c5c3_Err
-						}
-					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 165, "</small>")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-				} else if log.Progress != nil || log.Status != "" {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 166, "<small>")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					if log.Progress != nil {
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 167, "<span class=\"badge bg-secondary me-1\">progress=<i>")
-						if templ_7745c5c3_Err != nil {
-							return templ_7745c5c3_Err
-						}
-						var templ_7745c5c3_Var59 string
-						templ_7745c5c3_Var59, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f%%", *log.Progress))
-						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 573, Col: 151}
-						}
-						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var59))
-						if templ_7745c5c3_Err != nil {
-							return templ_7745c5c3_Err
-						}
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 168, "</i></span> ")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 167, "</i></span> ")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
 					}
 					if log.Status != "" {
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 169, "<span class=\"badge bg-secondary\">status=<i>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 168, "<span class=\"badge bg-secondary\">status=<i>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						var templ_7745c5c3_Var60 string
-						templ_7745c5c3_Var60, templ_7745c5c3_Err = templ.JoinStringErrs(log.Status)
+						var templ_7745c5c3_Var59 string
+						templ_7745c5c3_Var59, templ_7745c5c3_Err = templ.JoinStringErrs(log.Status)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 576, Col: 118}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 585, Col: 118}
 						}
-						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var60))
+						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var59))
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 170, "</i></span>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 169, "</i></span>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 171, "</small>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 170, "</small>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 172, "<span class=\"text-muted\">-</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 171, "<span class=\"text-muted\">-</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 173, "</td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 172, "</td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 174, "</tbody></table></div></div></div></div></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 173, "</tbody></table></div></div></div></div></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 175, "<!-- Related Tasks Card -->")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 174, "<!-- Related Tasks Card -->")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if len(data.RelatedTasks) > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 176, "<div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-link me-2\"></i> Related Tasks</h5></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-striped\"><thead><tr><th>Task ID</th><th>Type</th><th>Status</th><th>Volume ID</th><th>Server</th><th>Created</th></tr></thead> <tbody>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 175, "<div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-link me-2\"></i> Related Tasks</h5></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-striped\"><thead><tr><th>Task ID</th><th>Type</th><th>Status</th><th>Volume ID</th><th>Server</th><th>Created</th></tr></thead> <tbody>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			for _, relatedTask := range data.RelatedTasks {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 177, "<tr><td><a href=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 176, "<tr><td><a href=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var61 templ.SafeURL
-				templ_7745c5c3_Var61, templ_7745c5c3_Err = templ.JoinURLErrs(fmt.Sprintf("/maintenance/tasks/%s", relatedTask.ID))
+				var templ_7745c5c3_Var60 templ.SafeURL
+				templ_7745c5c3_Var60, templ_7745c5c3_Err = templ.JoinURLErrs(fmt.Sprintf("/maintenance/tasks/%s", relatedTask.ID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 622, Col: 113}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 631, Col: 113}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var60))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 177, "\"><code>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var61 string
+				templ_7745c5c3_Var61, templ_7745c5c3_Err = templ.JoinStringErrs(relatedTask.ID)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 632, Col: 77}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var61))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 178, "\"><code>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 178, "</code></a></td><td><span class=\"badge bg-info\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var62 string
-				templ_7745c5c3_Var62, templ_7745c5c3_Err = templ.JoinStringErrs(relatedTask.ID)
+				templ_7745c5c3_Var62, templ_7745c5c3_Err = templ.JoinStringErrs(string(relatedTask.Type))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 623, Col: 77}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 635, Col: 105}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var62))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 179, "</code></a></td><td><span class=\"badge bg-info\">")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var63 string
-				templ_7745c5c3_Var63, templ_7745c5c3_Err = templ.JoinStringErrs(string(relatedTask.Type))
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 626, Col: 105}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var63))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 180, "</span></td><td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 179, "</span></td><td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				if relatedTask.Status == maintenance.TaskStatusCompleted {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 181, "<span class=\"badge bg-success\">Completed</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 180, "<span class=\"badge bg-success\">Completed</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else if relatedTask.Status == maintenance.TaskStatusFailed {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 182, "<span class=\"badge bg-danger\">Failed</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 181, "<span class=\"badge bg-danger\">Failed</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else if relatedTask.Status == maintenance.TaskStatusInProgress {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 183, "<span class=\"badge bg-warning\">In Progress</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 182, "<span class=\"badge bg-warning\">In Progress</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 184, "<span class=\"badge bg-secondary\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 183, "<span class=\"badge bg-secondary\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					var templ_7745c5c3_Var64 string
-					templ_7745c5c3_Var64, templ_7745c5c3_Err = templ.JoinStringErrs(string(relatedTask.Status))
+					var templ_7745c5c3_Var63 string
+					templ_7745c5c3_Var63, templ_7745c5c3_Err = templ.JoinStringErrs(string(relatedTask.Status))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 635, Col: 116}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 644, Col: 116}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var63))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 184, "</span>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 185, "</td><td>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				if relatedTask.VolumeID != 0 {
+					var templ_7745c5c3_Var64 string
+					templ_7745c5c3_Var64, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", relatedTask.VolumeID))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 649, Col: 96}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var64))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 185, "</span>")
+				} else {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 186, "<span class=\"text-muted\">-</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 186, "</td><td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 187, "</td><td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				if relatedTask.VolumeID != 0 {
-					var templ_7745c5c3_Var65 string
-					templ_7745c5c3_Var65, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", relatedTask.VolumeID))
+				if relatedTask.Server != "" {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 188, "<code>")
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 640, Col: 96}
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var65 string
+					templ_7745c5c3_Var65, templ_7745c5c3_Err = templ.JoinStringErrs(relatedTask.Server)
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 656, Col: 81}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var65))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 187, "<span class=\"text-muted\">-</span>")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 188, "</td><td>")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				if relatedTask.Server != "" {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 189, "<code>")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					var templ_7745c5c3_Var66 string
-					templ_7745c5c3_Var66, templ_7745c5c3_Err = templ.JoinStringErrs(relatedTask.Server)
-					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 647, Col: 81}
-					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var66))
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 190, "</code>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 189, "</code>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 191, "<span class=\"text-muted\">-</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 190, "<span class=\"text-muted\">-</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 192, "</td><td><small>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 191, "</td><td><small>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var67 string
-				templ_7745c5c3_Var67, templ_7745c5c3_Err = templ.JoinStringErrs(relatedTask.CreatedAt.Format("2006-01-02 15:04:05"))
+				var templ_7745c5c3_Var66 string
+				templ_7745c5c3_Var66, templ_7745c5c3_Err = templ.JoinStringErrs(relatedTask.CreatedAt.Format("2006-01-02 15:04:05"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 652, Col: 111}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 661, Col: 111}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var67))
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var66))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 193, "</small></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 192, "</small></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 194, "</tbody></table></div></div></div></div></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 193, "</tbody></table></div></div></div></div></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 195, "<!-- Actions Card --><div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-cogs me-2\"></i> Actions</h5></div><div class=\"card-body\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 194, "<!-- Actions Card --><div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card\"><div class=\"card-header\"><h5 class=\"mb-0\"><i class=\"fas fa-cogs me-2\"></i> Actions</h5></div><div class=\"card-body\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if data.Task.Status == maintenance.TaskStatusPending || data.Task.Status == maintenance.TaskStatusAssigned {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 196, "<button type=\"button\" class=\"btn btn-danger me-2\" data-task-id=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 195, "<button type=\"button\" class=\"btn btn-danger me-2\" data-task-id=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var67 string
+			templ_7745c5c3_Var67, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 685, Col: 104}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var67))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 196, "\" onclick=\"cancelTask(this.getAttribute('data-task-id'))\"><i class=\"fas fa-times me-1\"></i> Cancel Task</button> ")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		if data.Task.WorkerID != "" {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 197, "<button type=\"button\" class=\"btn btn-primary me-2\" data-task-id=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var68 string
 			templ_7745c5c3_Var68, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 676, Col: 104}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 691, Col: 105}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var68))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 197, "\" onclick=\"cancelTask(this.getAttribute('data-task-id'))\"><i class=\"fas fa-times me-1\"></i> Cancel Task</button> ")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		}
-		if data.Task.WorkerID != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 198, "<button type=\"button\" class=\"btn btn-primary me-2\" data-task-id=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 198, "\" data-worker-id=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var69 string
-			templ_7745c5c3_Var69, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
+			templ_7745c5c3_Var69, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.WorkerID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 682, Col: 105}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 691, Col: 141}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var69))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 199, "\" data-worker-id=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var70 string
-			templ_7745c5c3_Var70, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.WorkerID)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 682, Col: 141}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var70))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 200, "\" onclick=\"showTaskLogs(this.getAttribute('data-task-id'), this.getAttribute('data-worker-id'))\"><i class=\"fas fa-file-text me-1\"></i> Show Task Logs</button> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 199, "\" onclick=\"showTaskLogs(this.getAttribute('data-task-id'), this.getAttribute('data-worker-id'))\"><i class=\"fas fa-file-text me-1\"></i> Show Task Logs</button> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 201, "<button type=\"button\" class=\"btn btn-info\" data-task-id=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 200, "<button type=\"button\" class=\"btn btn-info\" data-task-id=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var71 string
-		templ_7745c5c3_Var71, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
+		var templ_7745c5c3_Var70 string
+		templ_7745c5c3_Var70, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 687, Col: 93}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_detail.templ`, Line: 696, Col: 93}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var71))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var70))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 202, "\" onclick=\"exportTaskDetail(this.getAttribute('data-task-id'))\"><i class=\"fas fa-download me-1\"></i> Export Details</button></div></div></div></div></div><!-- Task Logs Modal --><div class=\"modal fade\" id=\"taskLogsModal\" tabindex=\"-1\" aria-labelledby=\"taskLogsModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-xl\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"taskLogsModalLabel\"><i class=\"fas fa-file-text me-2\"></i>Task Logs</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><div id=\"logsLoadingSpinner\" class=\"text-center py-4\" style=\"display: none;\"><div class=\"spinner-border text-primary\" role=\"status\"><span class=\"visually-hidden\">Loading logs...</span></div><p class=\"mt-2\">Fetching logs from worker...</p></div><div id=\"logsError\" class=\"alert alert-danger\" style=\"display: none;\"><i class=\"fas fa-exclamation-triangle me-2\"></i> <span id=\"logsErrorMessage\"></span></div><div id=\"logsContent\" style=\"display: none;\"><div class=\"d-flex justify-content-between align-items-center mb-3\"><div><strong>Task:</strong> <span id=\"logsTaskId\"></span> |  <strong>Worker:</strong> <span id=\"logsWorkerId\"></span> | <strong>Entries:</strong> <span id=\"logsCount\"></span></div><div class=\"btn-group\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"refreshModalLogs()\"><i class=\"fas fa-sync-alt me-1\"></i>Refresh</button> <button type=\"button\" class=\"btn btn-sm btn-outline-success\" onclick=\"downloadTaskLogs()\"><i class=\"fas fa-download me-1\"></i>Download</button></div></div><div class=\"card\"><div class=\"card-header\"><div class=\"d-flex justify-content-between align-items-center\"><span>Log Entries (Last 100)</span> <small class=\"text-muted\">Newest entries first</small></div></div><div class=\"card-body p-0\"><pre id=\"logsDisplay\" class=\"bg-dark text-light p-3 mb-0\" style=\"max-height: 400px; overflow-y: auto; font-size: 0.85rem; line-height: 1.4;\"></pre></div></div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button></div></div></div></div><style>\n    .timeline-container {\n        position: relative;\n        padding: 20px 0;\n    }\n    \n    .timeline-progress {\n        display: flex;\n        justify-content: space-between;\n        align-items: flex-start;\n        position: relative;\n        max-width: 100%;\n    }\n    \n    .timeline-step {\n        display: flex;\n        flex-direction: column;\n        align-items: center;\n        flex: 1;\n        position: relative;\n    }\n    \n    .timeline-circle {\n        width: 40px;\n        height: 40px;\n        border-radius: 50%;\n        display: flex;\n        align-items: center;\n        justify-content: center;\n        color: white;\n        font-weight: bold;\n        box-shadow: 0 2px 4px rgba(0,0,0,0.1);\n        z-index: 2;\n        position: relative;\n    }\n    \n    .timeline-circle.completed {\n        background-color: #28a745;\n        border: 3px solid #1e7e34;\n    }\n    \n    .timeline-circle.pending {\n        background-color: #6c757d;\n        border: 3px solid #495057;\n    }\n    \n    .timeline-connector {\n        position: absolute;\n        top: 20px;\n        left: 50%;\n        right: -50%;\n        height: 4px;\n        z-index: 1;\n        margin-left: 20px;\n        margin-right: 20px;\n    }\n    \n    .timeline-connector.completed {\n        background-color: #28a745;\n    }\n    \n    .timeline-connector:not(.completed) {\n        background-color: #dee2e6;\n    }\n    \n    .timeline-step:last-child .timeline-connector {\n        display: none;\n    }\n    \n    .timeline-label {\n        margin-top: 15px;\n        text-align: center;\n        min-height: 60px;\n    }\n    \n    .timeline-label strong {\n        display: block;\n        font-size: 0.9rem;\n        margin-bottom: 4px;\n    }\n    \n    .timeline-label small {\n        font-size: 0.75rem;\n        line-height: 1.2;\n    }\n    \n    @media (max-width: 768px) {\n        .timeline-progress {\n            flex-direction: column;\n            align-items: stretch;\n        }\n        \n        .timeline-step {\n            flex-direction: row;\n            align-items: center;\n            margin-bottom: 20px;\n        }\n        \n        .timeline-circle {\n            margin-right: 15px;\n            flex-shrink: 0;\n        }\n        \n        .timeline-connector {\n            display: none;\n        }\n        \n        .timeline-label {\n            text-align: left;\n            margin-top: 0;\n            min-height: auto;\n        }\n    }\n    </style><script>\n    // Global variables for current logs modal\n    let currentTaskId = '';\n    let currentWorkerId = '';\n\n    function refreshPage() {\n        location.reload();\n    }\n\n    function showTaskLogs(taskId, workerId) {\n        currentTaskId = taskId;\n        currentWorkerId = workerId;\n        \n        // Show the modal\n        const modal = new bootstrap.Modal(document.getElementById('taskLogsModal'));\n        modal.show();\n        \n        // Load logs\n        loadTaskLogs(taskId, workerId);\n    }\n\n    function loadTaskLogs(taskId, workerId) {\n        // Show loading spinner\n        document.getElementById('logsLoadingSpinner').style.display = 'block';\n        document.getElementById('logsError').style.display = 'none';\n        document.getElementById('logsContent').style.display = 'none';\n        \n        // Update modal info\n        document.getElementById('logsTaskId').textContent = taskId;\n        document.getElementById('logsWorkerId').textContent = workerId;\n        \n        // Fetch logs from the API\n        fetch(`/api/maintenance/workers/${workerId}/logs?taskId=${taskId}&maxEntries=100`)\n        .then(response => response.json())\n        .then(data => {\n            document.getElementById('logsLoadingSpinner').style.display = 'none';\n            \n            if (data.error) {\n                showLogsError(data.error);\n                return;\n            }\n            \n            // Display logs\n            displayLogs(data.logs, data.count || 0);\n        })\n        .catch(error => {\n            document.getElementById('logsLoadingSpinner').style.display = 'none';\n            showLogsError('Failed to fetch logs: ' + error.message);\n        });\n    }\n\n    function displayLogs(logs, count) {\n        document.getElementById('logsError').style.display = 'none';\n        document.getElementById('logsContent').style.display = 'block';\n        document.getElementById('logsCount').textContent = count;\n        \n        const logsDisplay = document.getElementById('logsDisplay');\n        \n        if (!logs || logs.length === 0) {\n            logsDisplay.textContent = 'No logs found for this task.';\n            return;\n        }\n        \n        // Format and display logs with structured fields\n        let logText = '';\n        logs.forEach(entry => {\n            const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';\n            const level = entry.level || 'INFO';\n            const message = entry.message || '';\n            \n            logText += `[${timestamp}] ${level}: ${message}`;\n            \n            // Add structured fields if they exist\n            if (entry.fields && Object.keys(entry.fields).length > 0) {\n                const fieldsStr = Object.entries(entry.fields)\n                    .map(([key, value]) => `${key}=${value}`)\n                    .join(', ');\n                logText += ` | ${fieldsStr}`;\n            }\n            \n            // Add progress if available\n            if (entry.progress !== undefined && entry.progress !== null) {\n                logText += ` | progress=${entry.progress}%`;\n            }\n            \n            // Add status if available\n            if (entry.status) {\n                logText += ` | status=${entry.status}`;\n            }\n            \n            logText += '\\n';\n        });\n        \n        logsDisplay.textContent = logText;\n        \n        // Scroll to top\n        logsDisplay.scrollTop = 0;\n    }\n\n    function showLogsError(errorMessage) {\n        document.getElementById('logsError').style.display = 'block';\n        document.getElementById('logsContent').style.display = 'none';\n        document.getElementById('logsErrorMessage').textContent = errorMessage;\n    }\n\n    function refreshModalLogs() {\n        if (currentTaskId && currentWorkerId) {\n            loadTaskLogs(currentTaskId, currentWorkerId);\n        }\n    }\n\n    function downloadTaskLogs() {\n        if (!currentTaskId || !currentWorkerId) {\n            alert('No task logs to download');\n            return;\n        }\n        \n        // Download all logs (without maxEntries limit)\n        const downloadUrl = `/api/maintenance/workers/${currentWorkerId}/logs?taskId=${currentTaskId}&maxEntries=0`;\n        \n        fetch(downloadUrl)\n        .then(response => response.json())\n        .then(data => {\n            if (data.error) {\n                alert('Error downloading logs: ' + data.error);\n                return;\n            }\n            \n            // Convert logs to text format with structured fields\n            let logContent = '';\n            if (data.logs && data.logs.length > 0) {\n                data.logs.forEach(entry => {\n                    const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';\n                    const level = entry.level || 'INFO';\n                    const message = entry.message || '';\n                    \n                    logContent += `[${timestamp}] ${level}: ${message}`;\n                    \n                    // Add structured fields if they exist\n                    if (entry.fields && Object.keys(entry.fields).length > 0) {\n                        const fieldsStr = Object.entries(entry.fields)\n                            .map(([key, value]) => `${key}=${value}`)\n                            .join(', ');\n                        logContent += ` | ${fieldsStr}`;\n                    }\n                    \n                    // Add progress if available\n                    if (entry.progress !== undefined && entry.progress !== null) {\n                        logContent += ` | progress=${entry.progress}%`;\n                    }\n                    \n                    // Add status if available\n                    if (entry.status) {\n                        logContent += ` | status=${entry.status}`;\n                    }\n                    \n                    logContent += '\\n';\n                });\n            } else {\n                logContent = 'No logs found for this task.';\n            }\n            \n            // Create and download file\n            const blob = new Blob([logContent], { type: 'text/plain' });\n            const url = URL.createObjectURL(blob);\n            const link = document.createElement('a');\n            link.href = url;\n            link.download = `task-${currentTaskId}-logs.txt`;\n            link.click();\n            URL.revokeObjectURL(url);\n        })\n        .catch(error => {\n            alert('Error downloading logs: ' + error.message);\n        });\n    }\n\n    function cancelTask(taskId) {\n        if (confirm('Are you sure you want to cancel this task?')) {\n            fetch(`/api/maintenance/tasks/${taskId}/cancel`, {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Task cancelled successfully');\n                    location.reload();\n                } else {\n                    alert('Error cancelling task: ' + data.error);\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                alert('Error cancelling task');\n            });\n        }\n    }\n\n    function refreshTaskLogs(taskId) {\n        fetch(`/api/maintenance/tasks/${taskId}/detail`)\n        .then(response => response.json())\n        .then(data => {\n            location.reload();\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error refreshing logs');\n        });\n    }\n\n    function exportTaskDetail(taskId) {\n        fetch(`/api/maintenance/tasks/${taskId}/detail`)\n        .then(response => response.json())\n        .then(data => {\n            const dataStr = JSON.stringify(data, null, 2);\n            const dataBlob = new Blob([dataStr], {type: 'application/json'});\n            const url = URL.createObjectURL(dataBlob);\n            const link = document.createElement('a');\n            link.href = url;\n            link.download = `task-${taskId}-detail.json`;\n            link.click();\n            URL.revokeObjectURL(url);\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error exporting task detail');\n        });\n    }\n\n    // Auto-refresh every 30 seconds for active tasks\n    if ('{string(data.Task.Status)}' === 'in_progress') {\n        setInterval(refreshPage, 30000);\n    }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 201, "\" onclick=\"exportTaskDetail(this.getAttribute('data-task-id'))\"><i class=\"fas fa-download me-1\"></i> Export Details</button></div></div></div></div></div><!-- Task Logs Modal --><div class=\"modal fade\" id=\"taskLogsModal\" tabindex=\"-1\" aria-labelledby=\"taskLogsModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-xl\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"taskLogsModalLabel\"><i class=\"fas fa-file-text me-2\"></i>Task Logs</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><div id=\"logsLoadingSpinner\" class=\"text-center py-4\" style=\"display: none;\"><div class=\"spinner-border text-primary\" role=\"status\"><span class=\"visually-hidden\">Loading logs...</span></div><p class=\"mt-2\">Fetching logs from worker...</p></div><div id=\"logsError\" class=\"alert alert-danger\" style=\"display: none;\"><i class=\"fas fa-exclamation-triangle me-2\"></i> <span id=\"logsErrorMessage\"></span></div><div id=\"logsContent\" style=\"display: none;\"><div class=\"d-flex justify-content-between align-items-center mb-3\"><div><strong>Task:</strong> <span id=\"logsTaskId\"></span> |  <strong>Worker:</strong> <span id=\"logsWorkerId\"></span> | <strong>Entries:</strong> <span id=\"logsCount\"></span></div><div class=\"btn-group\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"refreshModalLogs()\"><i class=\"fas fa-sync-alt me-1\"></i>Refresh</button> <button type=\"button\" class=\"btn btn-sm btn-outline-success\" onclick=\"downloadTaskLogs()\"><i class=\"fas fa-download me-1\"></i>Download</button></div></div><div class=\"card\"><div class=\"card-header\"><div class=\"d-flex justify-content-between align-items-center\"><span>Log Entries (Last 100)</span> <small class=\"text-muted\">Newest entries first</small></div></div><div class=\"card-body p-0\"><pre id=\"logsDisplay\" class=\"bg-dark text-light p-3 mb-0\" style=\"max-height: 400px; overflow-y: auto; font-size: 0.85rem; line-height: 1.4;\"></pre></div></div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button></div></div></div></div><style>\n    .timeline-container {\n        position: relative;\n        padding: 20px 0;\n    }\n    \n    .timeline-progress {\n        display: flex;\n        justify-content: space-between;\n        align-items: flex-start;\n        position: relative;\n        max-width: 100%;\n    }\n    \n    .timeline-step {\n        display: flex;\n        flex-direction: column;\n        align-items: center;\n        flex: 1;\n        position: relative;\n    }\n    \n    .timeline-circle {\n        width: 40px;\n        height: 40px;\n        border-radius: 50%;\n        display: flex;\n        align-items: center;\n        justify-content: center;\n        color: white;\n        font-weight: bold;\n        box-shadow: 0 2px 4px rgba(0,0,0,0.1);\n        z-index: 2;\n        position: relative;\n    }\n    \n    .timeline-circle.completed {\n        background-color: #28a745;\n        border: 3px solid #1e7e34;\n    }\n    \n    .timeline-circle.pending {\n        background-color: #6c757d;\n        border: 3px solid #495057;\n    }\n    \n    .timeline-connector {\n        position: absolute;\n        top: 20px;\n        left: 50%;\n        right: -50%;\n        height: 4px;\n        z-index: 1;\n        margin-left: 20px;\n        margin-right: 20px;\n    }\n    \n    .timeline-connector.completed {\n        background-color: #28a745;\n    }\n    \n    .timeline-connector:not(.completed) {\n        background-color: #dee2e6;\n    }\n    \n    .timeline-step:last-child .timeline-connector {\n        display: none;\n    }\n    \n    .timeline-label {\n        margin-top: 15px;\n        text-align: center;\n        min-height: 60px;\n    }\n    \n    .timeline-label strong {\n        display: block;\n        font-size: 0.9rem;\n        margin-bottom: 4px;\n    }\n    \n    .timeline-label small {\n        font-size: 0.75rem;\n        line-height: 1.2;\n    }\n    \n    @media (max-width: 768px) {\n        .timeline-progress {\n            flex-direction: column;\n            align-items: stretch;\n        }\n        \n        .timeline-step {\n            flex-direction: row;\n            align-items: center;\n            margin-bottom: 20px;\n        }\n        \n        .timeline-circle {\n            margin-right: 15px;\n            flex-shrink: 0;\n        }\n        \n        .timeline-connector {\n            display: none;\n        }\n        \n        .timeline-label {\n            text-align: left;\n            margin-top: 0;\n            min-height: auto;\n        }\n    }\n    </style><script>\n    // Global variables for current logs modal\n    let currentTaskId = '';\n    let currentWorkerId = '';\n\n    function refreshPage() {\n        location.reload();\n    }\n\n    function showTaskLogs(taskId, workerId) {\n        currentTaskId = taskId;\n        currentWorkerId = workerId;\n        \n        // Show the modal\n        const modal = new bootstrap.Modal(document.getElementById('taskLogsModal'));\n        modal.show();\n        \n        // Load logs\n        loadTaskLogs(taskId, workerId);\n    }\n\n    function loadTaskLogs(taskId, workerId) {\n        // Show loading spinner\n        document.getElementById('logsLoadingSpinner').style.display = 'block';\n        document.getElementById('logsError').style.display = 'none';\n        document.getElementById('logsContent').style.display = 'none';\n        \n        // Update modal info\n        document.getElementById('logsTaskId').textContent = taskId;\n        document.getElementById('logsWorkerId').textContent = workerId;\n        \n        // Fetch logs from the API\n        fetch(`/api/maintenance/workers/${workerId}/logs?taskId=${taskId}&maxEntries=100`)\n        .then(response => response.json())\n        .then(data => {\n            document.getElementById('logsLoadingSpinner').style.display = 'none';\n            \n            if (data.error) {\n                showLogsError(data.error);\n                return;\n            }\n            \n            // Display logs\n            displayLogs(data.logs, data.count || 0);\n        })\n        .catch(error => {\n            document.getElementById('logsLoadingSpinner').style.display = 'none';\n            showLogsError('Failed to fetch logs: ' + error.message);\n        });\n    }\n\n    function displayLogs(logs, count) {\n        document.getElementById('logsError').style.display = 'none';\n        document.getElementById('logsContent').style.display = 'block';\n        document.getElementById('logsCount').textContent = count;\n        \n        const logsDisplay = document.getElementById('logsDisplay');\n        \n        if (!logs || logs.length === 0) {\n            logsDisplay.textContent = 'No logs found for this task.';\n            return;\n        }\n        \n        // Format and display logs with structured fields\n        let logText = '';\n        logs.forEach(entry => {\n            const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';\n            const level = entry.level || 'INFO';\n            const message = entry.message || '';\n            \n            logText += `[${timestamp}] ${level}: ${message}`;\n            \n            // Add structured fields if they exist\n            if (entry.fields && Object.keys(entry.fields).length > 0) {\n                const fieldsStr = Object.entries(entry.fields)\n                    .map(([key, value]) => `${key}=${value}`)\n                    .join(', ');\n                logText += ` | ${fieldsStr}`;\n            }\n            \n            // Add progress if available\n            if (entry.progress !== undefined && entry.progress !== null) {\n                logText += ` | progress=${entry.progress}%`;\n            }\n            \n            // Add status if available\n            if (entry.status) {\n                logText += ` | status=${entry.status}`;\n            }\n            \n            logText += '\\n';\n        });\n        \n        logsDisplay.textContent = logText;\n        \n        // Scroll to top\n        logsDisplay.scrollTop = 0;\n    }\n\n    function showLogsError(errorMessage) {\n        document.getElementById('logsError').style.display = 'block';\n        document.getElementById('logsContent').style.display = 'none';\n        document.getElementById('logsErrorMessage').textContent = errorMessage;\n    }\n\n    function refreshModalLogs() {\n        if (currentTaskId && currentWorkerId) {\n            loadTaskLogs(currentTaskId, currentWorkerId);\n        }\n    }\n\n    function downloadTaskLogs() {\n        if (!currentTaskId || !currentWorkerId) {\n            alert('No task logs to download');\n            return;\n        }\n        \n        // Download all logs (without maxEntries limit)\n        const downloadUrl = `/api/maintenance/workers/${currentWorkerId}/logs?taskId=${currentTaskId}&maxEntries=0`;\n        \n        fetch(downloadUrl)\n        .then(response => response.json())\n        .then(data => {\n            if (data.error) {\n                alert('Error downloading logs: ' + data.error);\n                return;\n            }\n            \n            // Convert logs to text format with structured fields\n            let logContent = '';\n            if (data.logs && data.logs.length > 0) {\n                data.logs.forEach(entry => {\n                    const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';\n                    const level = entry.level || 'INFO';\n                    const message = entry.message || '';\n                    \n                    logContent += `[${timestamp}] ${level}: ${message}`;\n                    \n                    // Add structured fields if they exist\n                    if (entry.fields && Object.keys(entry.fields).length > 0) {\n                        const fieldsStr = Object.entries(entry.fields)\n                            .map(([key, value]) => `${key}=${value}`)\n                            .join(', ');\n                        logContent += ` | ${fieldsStr}`;\n                    }\n                    \n                    // Add progress if available\n                    if (entry.progress !== undefined && entry.progress !== null) {\n                        logContent += ` | progress=${entry.progress}%`;\n                    }\n                    \n                    // Add status if available\n                    if (entry.status) {\n                        logContent += ` | status=${entry.status}`;\n                    }\n                    \n                    logContent += '\\n';\n                });\n            } else {\n                logContent = 'No logs found for this task.';\n            }\n            \n            // Create and download file\n            const blob = new Blob([logContent], { type: 'text/plain' });\n            const url = URL.createObjectURL(blob);\n            const link = document.createElement('a');\n            link.href = url;\n            link.download = `task-${currentTaskId}-logs.txt`;\n            link.click();\n            URL.revokeObjectURL(url);\n        })\n        .catch(error => {\n            alert('Error downloading logs: ' + error.message);\n        });\n    }\n\n    function cancelTask(taskId) {\n        if (confirm('Are you sure you want to cancel this task?')) {\n            fetch(`/api/maintenance/tasks/${taskId}/cancel`, {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                },\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Task cancelled successfully');\n                    location.reload();\n                } else {\n                    alert('Error cancelling task: ' + data.error);\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                alert('Error cancelling task');\n            });\n        }\n    }\n\n    function refreshTaskLogs(taskId) {\n        fetch(`/api/maintenance/tasks/${taskId}/detail`)\n        .then(response => response.json())\n        .then(data => {\n            location.reload();\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error refreshing logs');\n        });\n    }\n\n    function exportTaskDetail(taskId) {\n        fetch(`/api/maintenance/tasks/${taskId}/detail`)\n        .then(response => response.json())\n        .then(data => {\n            const dataStr = JSON.stringify(data, null, 2);\n            const dataBlob = new Blob([dataStr], {type: 'application/json'});\n            const url = URL.createObjectURL(dataBlob);\n            const link = document.createElement('a');\n            link.href = url;\n            link.download = `task-${taskId}-detail.json`;\n            link.click();\n            URL.revokeObjectURL(url);\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error exporting task detail');\n        });\n    }\n\n    // Auto-refresh every 30 seconds for active tasks\n    if ('{string(data.Task.Status)}' === 'in_progress') {\n        setInterval(refreshPage, 30000);\n    }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

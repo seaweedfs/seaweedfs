@@ -2,8 +2,19 @@ package app
 
 import (
     "fmt"
+    "sort"
     "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 )
+
+// sortedKeys returns the sorted keys for a string map
+func sortedKeys(m map[string]string) []string {
+    keys := make([]string, 0, len(m))
+    for k := range m {
+        keys = append(keys, k)
+    }
+    sort.Strings(keys)
+    return keys
+}
 
 templ TaskDetail(data *maintenance.TaskDetailData) {
     <div class="container-fluid">
@@ -538,7 +549,6 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                         <tr>
                                             <th width="150">Timestamp</th>
                                             <th width="80">Level</th>
-                                            <th width="100">Source</th>
                                             <th>Message</th>
                                             <th>Details</th>
                                         </tr>
@@ -558,13 +568,12 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                                         <span class="badge bg-secondary">{log.Level}</span>
                                                     }
                                                 </td>
-                                                <td><small>{log.Source}</small></td>
                                                 <td><code>{log.Message}</code></td>
                                                 <td>
                                                     if log.Fields != nil && len(log.Fields) > 0 {
                                                         <small>
-                                                            for k, v := range log.Fields {
-                                                                <span class="badge bg-light text-dark me-1">{k}=<i>{v}</i></span>
+                                                            for _, k := range sortedKeys(log.Fields) {
+                                                                <span class="badge bg-light text-dark me-1">{k}=<i>{log.Fields[k]}</i></span>
                                                             }
                                                         </small>
                                                     } else if log.Progress != nil || log.Status != "" {
