@@ -3341,6 +3341,7 @@ type VolumeEcShardsMountRequest struct {
 	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	Collection    string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
 	ShardIds      []uint32               `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+	Generation    uint32                 `protobuf:"varint,4,opt,name=generation,proto3" json:"generation,omitempty"` // generation of shards to mount, defaults to 0
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3396,6 +3397,13 @@ func (x *VolumeEcShardsMountRequest) GetShardIds() []uint32 {
 	return nil
 }
 
+func (x *VolumeEcShardsMountRequest) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
+}
+
 type VolumeEcShardsMountResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -3436,6 +3444,7 @@ type VolumeEcShardsUnmountRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	ShardIds      []uint32               `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+	Generation    uint32                 `protobuf:"varint,4,opt,name=generation,proto3" json:"generation,omitempty"` // generation of shards to unmount, defaults to 0
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3482,6 +3491,13 @@ func (x *VolumeEcShardsUnmountRequest) GetShardIds() []uint32 {
 		return x.ShardIds
 	}
 	return nil
+}
+
+func (x *VolumeEcShardsUnmountRequest) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
 }
 
 type VolumeEcShardsUnmountResponse struct {
@@ -6330,17 +6346,23 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12\x1b\n" +
 	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\"\x1e\n" +
-	"\x1cVolumeEcShardsDeleteResponse\"v\n" +
+	"\x1cVolumeEcShardsDeleteResponse\"\x96\x01\n" +
 	"\x1aVolumeEcShardsMountRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12\x1b\n" +
-	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\"\x1d\n" +
-	"\x1bVolumeEcShardsMountResponse\"X\n" +
+	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x04 \x01(\rR\n" +
+	"generation\"\x1d\n" +
+	"\x1bVolumeEcShardsMountResponse\"x\n" +
 	"\x1cVolumeEcShardsUnmountRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1b\n" +
-	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\"\x1f\n" +
+	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x04 \x01(\rR\n" +
+	"generation\"\x1f\n" +
 	"\x1dVolumeEcShardsUnmountResponse\"\x99\x01\n" +
 	"\x18VolumeEcShardReadRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x19\n" +
