@@ -60,6 +60,7 @@ func RegisterEcVacuumTask() {
 				params.VolumeId,
 				params.Collection,
 				sourceNodes,
+				0, // default to generation 0 (current generation to vacuum)
 			), nil
 		},
 		DetectionFunc:  Detection,
