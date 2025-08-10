@@ -305,3 +305,36 @@ func (t *Topology) ListEcVolumesWithActiveGeneration() map[needle.VolumeId]uint3
 	}
 	return result
 }
+
+// LookupEcShardsWithFallback looks up EC shards for a volume with intelligent fallback
+// If no specific generation is requested (generation == 0), it uses the active generation
+// If the requested/active generation is not found, it falls back to generation 0
+func (t *Topology) LookupEcShardsWithFallback(vid needle.VolumeId, requestedGeneration uint32) (locations *EcShardLocations, actualGeneration uint32, found bool) {
+	// Determine target generation
+	targetGeneration := requestedGeneration
+	if requestedGeneration == 0 {
+		// Use active generation if available
+		if activeGen, exists := t.GetEcActiveGeneration(vid); exists {
+			targetGeneration = activeGen
+		}
+	}
+
+	// Try the target generation first
+	if locations, found = t.LookupEcShards(vid, targetGeneration); found {
+		return locations, targetGeneration, true
+	}
+
+	// If requested specific generation and not found, don't fallback
+	if requestedGeneration != 0 {
+		return nil, 0, false
+	}
+
+	// Fallback to generation 0 if target generation wasn't found
+	if targetGeneration != 0 {
+		if locations, found = t.LookupEcShards(vid, 0); found {
+			return locations, 0, true
+		}
+	}
+
+	return nil, 0, false
+}

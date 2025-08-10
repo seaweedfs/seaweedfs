@@ -236,32 +236,40 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 	}
 
 	resp := &master_pb.LookupEcVolumeResponse{}
+	volumeId := needle.VolumeId(req.VolumeId)
 
-	// Determine which generation to lookup
-	targetGeneration := req.Generation
-	if targetGeneration == 0 {
-		// If no specific generation requested, use the active generation
-		if activeGen, found := ms.Topo.GetEcActiveGeneration(needle.VolumeId(req.VolumeId)); found {
-			targetGeneration = activeGen
-		}
-		// If no active generation found, fall back to 0 for backward compatibility
-	}
-
-	ecLocations, found := ms.Topo.LookupEcShards(needle.VolumeId(req.VolumeId), targetGeneration)
+	// Use the new helper function for intelligent lookup with fallback
+	ecLocations, actualGeneration, found := ms.Topo.LookupEcShardsWithFallback(volumeId, req.Generation)
 
 	if !found {
-		return resp, fmt.Errorf("ec volume %d not found", req.VolumeId)
+		if req.Generation != 0 {
+			return resp, fmt.Errorf("ec volume %d generation %d not found", req.VolumeId, req.Generation)
+		} else {
+			return resp, fmt.Errorf("ec volume %d not found", req.VolumeId)
+		}
 	}
 
+	glog.V(4).Infof("LookupEcVolume: Found volume %d generation %d (requested: %d)", req.VolumeId, actualGeneration, req.Generation)
+
+	// Set response fields
 	resp.VolumeId = req.VolumeId
-	// Set the active generation from the master's tracking
-	if activeGen, found := ms.Topo.GetEcActiveGeneration(needle.VolumeId(req.VolumeId)); found {
+
+	// Always report the actual active generation, regardless of what was looked up
+	if activeGen, found := ms.Topo.GetEcActiveGeneration(volumeId); found {
 		resp.ActiveGeneration = activeGen
 	} else {
-		resp.ActiveGeneration = ecLocations.Generation // fallback to the generation we found
+		// If no active generation tracked, use the generation we found
+		resp.ActiveGeneration = ecLocations.Generation
+		glog.V(2).Infof("LookupEcVolume: No active generation tracked for volume %d, using found generation %d", req.VolumeId, ecLocations.Generation)
 	}
 
+	// Build shard location response
 	for shardId, shardLocations := range ecLocations.Locations {
+		// Skip empty shard locations
+		if len(shardLocations) == 0 {
+			continue
+		}
+
 		var locations []*master_pb.Location
 		for _, dn := range shardLocations {
 			locations = append(locations, &master_pb.Location{
@@ -273,9 +281,12 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{
 			ShardId:    uint32(shardId),
 			Locations:  locations,
-			Generation: ecLocations.Generation, // set generation for each shard location
+			Generation: ecLocations.Generation, // generation of the actual shards returned
 		})
 	}
+
+	glog.V(4).Infof("LookupEcVolume: Found %d shard locations for volume %d generation %d (active: %d)",
+		len(resp.ShardIdLocations), req.VolumeId, ecLocations.Generation, resp.ActiveGeneration)
 
 	return resp, nil
 }
