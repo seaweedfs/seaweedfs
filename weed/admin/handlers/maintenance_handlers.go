@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -34,35 +35,82 @@ func NewMaintenanceHandlers(adminServer *dash.AdminServer) *MaintenanceHandlers 
 	}
 }
 
-// ShowMaintenanceQueue displays the maintenance queue page
-func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
-	data, err := h.getMaintenanceQueueData()
+// ShowTaskDetail displays the task detail page
+func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
+	taskID := c.Param("id")
+	glog.Infof("DEBUG ShowTaskDetail: Starting for task ID: %s", taskID)
+
+	taskDetail, err := h.adminServer.GetMaintenanceTaskDetail(taskID)
 	if err != nil {
-		glog.Infof("DEBUG ShowMaintenanceQueue: error getting data: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		glog.Errorf("DEBUG ShowTaskDetail: error getting task detail for %s: %v", taskID, err)
+		c.String(http.StatusNotFound, "Task not found: %s (Error: %v)", taskID, err)
 		return
 	}
 
-	glog.Infof("DEBUG ShowMaintenanceQueue: got data with %d tasks", len(data.Tasks))
-	if data.Stats != nil {
-		glog.Infof("DEBUG ShowMaintenanceQueue: stats = {pending: %d, running: %d, completed: %d}",
-			data.Stats.PendingTasks, data.Stats.RunningTasks, data.Stats.CompletedToday)
-	} else {
-		glog.Infof("DEBUG ShowMaintenanceQueue: stats is nil")
-	}
+	glog.Infof("DEBUG ShowTaskDetail: got task detail for %s, task type: %s, status: %s", taskID, taskDetail.Task.Type, taskDetail.Task.Status)
 
-	// Render HTML template
 	c.Header("Content-Type", "text/html")
-	maintenanceComponent := app.MaintenanceQueue(data)
-	layoutComponent := layout.Layout(c, maintenanceComponent)
+	taskDetailComponent := app.TaskDetail(taskDetail)
+	layoutComponent := layout.Layout(c, taskDetailComponent)
 	err = layoutComponent.Render(c.Request.Context(), c.Writer)
 	if err != nil {
-		glog.Infof("DEBUG ShowMaintenanceQueue: render error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		glog.Errorf("DEBUG ShowTaskDetail: render error: %v", err)
+		c.String(http.StatusInternalServerError, "Failed to render template: %v", err)
 		return
 	}
 
-	glog.Infof("DEBUG ShowMaintenanceQueue: template rendered successfully")
+	glog.Infof("DEBUG ShowTaskDetail: template rendered successfully for task %s", taskID)
+}
+
+// ShowMaintenanceQueue displays the maintenance queue page
+func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
+	// Add timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	// Use a channel to handle timeout for data retrieval
+	type result struct {
+		data *maintenance.MaintenanceQueueData
+		err  error
+	}
+	resultChan := make(chan result, 1)
+
+	go func() {
+		data, err := h.getMaintenanceQueueData()
+		resultChan <- result{data: data, err: err}
+	}()
+
+	select {
+	case res := <-resultChan:
+		if res.err != nil {
+			glog.V(1).Infof("ShowMaintenanceQueue: error getting data: %v", res.err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": res.err.Error()})
+			return
+		}
+
+		glog.V(2).Infof("ShowMaintenanceQueue: got data with %d tasks", len(res.data.Tasks))
+
+		// Render HTML template
+		c.Header("Content-Type", "text/html")
+		maintenanceComponent := app.MaintenanceQueue(res.data)
+		layoutComponent := layout.Layout(c, maintenanceComponent)
+		err := layoutComponent.Render(ctx, c.Writer)
+		if err != nil {
+			glog.V(1).Infof("ShowMaintenanceQueue: render error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+			return
+		}
+
+		glog.V(3).Infof("ShowMaintenanceQueue: template rendered successfully")
+
+	case <-ctx.Done():
+		glog.Warningf("ShowMaintenanceQueue: timeout waiting for data")
+		c.JSON(http.StatusRequestTimeout, gin.H{
+			"error":      "Request timeout - maintenance data retrieval took too long. This may indicate a system issue.",
+			"suggestion": "Try refreshing the page or contact system administrator if the problem persists.",
+		})
+		return
+	}
 }
 
 // ShowMaintenanceWorkers displays the maintenance workers page
@@ -479,7 +527,7 @@ func (h *MaintenanceHandlers) getMaintenanceQueueStats() (*maintenance.QueueStat
 }
 
 func (h *MaintenanceHandlers) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
-	// Call the maintenance manager directly to get all tasks
+	// Call the maintenance manager directly to get recent tasks (limit for performance)
 	if h.adminServer == nil {
 		return []*maintenance.MaintenanceTask{}, nil
 	}
@@ -489,8 +537,9 @@ func (h *MaintenanceHandlers) getMaintenanceTasks() ([]*maintenance.MaintenanceT
 		return []*maintenance.MaintenanceTask{}, nil
 	}
 
-	// Get ALL tasks using empty parameters - this should match what the API returns
-	allTasks := manager.GetTasks("", "", 0)
+	// Get recent tasks only (last 100) to prevent slow page loads
+	// Users can view more tasks via pagination if needed
+	allTasks := manager.GetTasks("", "", 100)
 	return allTasks, nil
 }
 

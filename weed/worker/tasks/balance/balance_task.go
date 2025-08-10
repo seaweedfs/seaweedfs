@@ -48,21 +48,32 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 		return fmt.Errorf("balance parameters are required")
 	}
 
-	// Get planned destination
-	destNode := balanceParams.DestNode
+	// Get source and destination from unified arrays
+	if len(params.Sources) == 0 {
+		return fmt.Errorf("source is required for balance task")
+	}
+	if len(params.Targets) == 0 {
+		return fmt.Errorf("target is required for balance task")
+	}
 
+	sourceNode := params.Sources[0].Node
+	destNode := params.Targets[0].Node
+
+	if sourceNode == "" {
+		return fmt.Errorf("source node is required for balance task")
+	}
 	if destNode == "" {
 		return fmt.Errorf("destination node is required for balance task")
 	}
 
 	t.GetLogger().WithFields(map[string]interface{}{
 		"volume_id":   t.volumeID,
-		"source":      t.server,
+		"source":      sourceNode,
 		"destination": destNode,
 		"collection":  t.collection,
 	}).Info("Starting balance task - moving volume")
 
-	sourceServer := pb.ServerAddress(t.server)
+	sourceServer := pb.ServerAddress(sourceNode)
 	targetServer := pb.ServerAddress(destNode)
 	volumeId := needle.VolumeId(t.volumeID)
 
@@ -130,8 +141,16 @@ func (t *BalanceTask) Validate(params *worker_pb.TaskParams) error {
 		return fmt.Errorf("volume ID mismatch: expected %d, got %d", t.volumeID, params.VolumeId)
 	}
 
-	if params.Server != t.server {
-		return fmt.Errorf("source server mismatch: expected %s, got %s", t.server, params.Server)
+	// Validate that at least one source matches our server
+	found := false
+	for _, source := range params.Sources {
+		if source.Node == t.server {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("no source matches expected server %s", t.server)
 	}
 
 	return nil

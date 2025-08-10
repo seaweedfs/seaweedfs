@@ -54,7 +54,7 @@ type TypedTaskInterface interface {
 	GetProgress() float64
 
 	// Set progress callback for progress updates
-	SetProgressCallback(callback func(float64))
+	SetProgressCallback(callback func(float64, string))
 
 	// Logger configuration and initialization (all typed tasks support this)
 	SetLoggerConfig(config TaskLoggerConfig)

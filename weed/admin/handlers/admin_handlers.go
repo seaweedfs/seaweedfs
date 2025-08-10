@@ -94,6 +94,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		protected.POST("/maintenance/config", h.maintenanceHandlers.UpdateMaintenanceConfig)
 		protected.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
 		protected.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
+		protected.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
 
 		// API routes for AJAX calls
 		api := r.Group("/api")
@@ -164,9 +165,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				maintenanceApi.POST("/scan", h.adminServer.TriggerMaintenanceScan)
 				maintenanceApi.GET("/tasks", h.adminServer.GetMaintenanceTasks)
 				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
+				maintenanceApi.GET("/tasks/:id/detail", h.adminServer.GetMaintenanceTaskDetailAPI)
 				maintenanceApi.POST("/tasks/:id/cancel", h.adminServer.CancelMaintenanceTask)
 				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
 				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
+				maintenanceApi.GET("/workers/:id/logs", h.adminServer.GetWorkerLogs)
 				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
 				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
 				maintenanceApi.PUT("/config", h.adminServer.UpdateMaintenanceConfigAPI)
@@ -218,6 +221,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 		r.POST("/maintenance/config", h.maintenanceHandlers.UpdateMaintenanceConfig)
 		r.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
 		r.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
+		r.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
 
 		// API routes for AJAX calls
 		api := r.Group("/api")
@@ -287,9 +291,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				maintenanceApi.POST("/scan", h.adminServer.TriggerMaintenanceScan)
 				maintenanceApi.GET("/tasks", h.adminServer.GetMaintenanceTasks)
 				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
+				maintenanceApi.GET("/tasks/:id/detail", h.adminServer.GetMaintenanceTaskDetailAPI)
 				maintenanceApi.POST("/tasks/:id/cancel", h.adminServer.CancelMaintenanceTask)
 				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
 				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
+				maintenanceApi.GET("/workers/:id/logs", h.adminServer.GetWorkerLogs)
 				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
 				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
 				maintenanceApi.PUT("/config", h.adminServer.UpdateMaintenanceConfigAPI)

@@ -233,6 +233,8 @@ const (
 type TaskSourceSpec struct {
 	ServerID      string
 	DiskID        uint32
+	DataCenter    string             // Data center of the source server
+	Rack          string             // Rack of the source server
 	CleanupType   SourceCleanupType  // For EC: volume replica vs existing shards
 	StorageImpact *StorageSlotChange // Optional: manual override
 	EstimatedSize *int64             // Optional: manual override
@@ -254,11 +256,4 @@ type TaskSpec struct {
 	VolumeSize   int64                 // Used for auto-calculation when manual impacts not provided
 	Sources      []TaskSourceSpec      // Can be single or multiple
 	Destinations []TaskDestinationSpec // Can be single or multiple
-}
-
-// TaskSourceLocation represents a source location for task creation (DEPRECATED: use TaskSourceSpec)
-type TaskSourceLocation struct {
-	ServerID    string
-	DiskID      uint32
-	CleanupType SourceCleanupType // What type of cleanup is needed
 }

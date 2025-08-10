@@ -10,6 +10,7 @@ import (
     "github.com/seaweedfs/seaweedfs/weed/worker/tasks"
     "github.com/seaweedfs/seaweedfs/weed/admin/config"
     "github.com/seaweedfs/seaweedfs/weed/admin/view/components"
+    "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 // Helper function to convert task schema to JSON string
@@ -114,7 +115,7 @@ templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfi
                             } else if schema.TaskName == "erasure_coding" {
                                 <h6 class="alert-heading">Erasure Coding Operations:</h6>
                                 <p class="mb-2"><strong>Performance:</strong> Erasure coding is CPU and I/O intensive. Consider running during off-peak hours.</p>
-                                <p class="mb-2"><strong>Durability:</strong> With 10+4 configuration, can tolerate up to 4 shard failures.</p>
+                                <p class="mb-2"><strong>Durability:</strong> With { fmt.Sprintf("%d+%d", erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount) } configuration, can tolerate up to { fmt.Sprintf("%d", erasure_coding.ParityShardsCount) } shard failures.</p>
                                 <p class="mb-0"><strong>Configuration:</strong> Fullness ratio should be between 0.5 and 1.0 (e.g., 0.90 for 90%).</p>
                             }
                         </div>

@@ -262,6 +262,16 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 						</td>
 					</tr>
 				}
+				
+				// Show message when no volumes found
+				if len(data.RegularVolumes) == 0 && len(data.EcVolumes) == 0 {
+					<tr>
+						<td colspan="6" class="text-center text-muted py-4">
+							<i class="fas fa-info-circle me-2"></i>
+							No volumes found for collection "{data.CollectionName}"
+						</td>
+					</tr>
+				}
 			</tbody>
 		</table>
 	</div>
