@@ -36,6 +36,25 @@ Steps to apply erasure coding to .dat .idx files
 
 */
 
+// isGenerationCompatible checks if requested and actual generations are compatible
+// for mixed-version cluster support
+func isGenerationCompatible(actualGeneration, requestedGeneration uint32) bool {
+	// Exact match is always compatible
+	if actualGeneration == requestedGeneration {
+		return true
+	}
+
+	// Mixed-version compatibility: if client requests generation 0 (default/legacy),
+	// allow access to any generation for backward compatibility
+	if requestedGeneration == 0 {
+		return true
+	}
+
+	// If client requests specific generation but volume has different generation,
+	// this is not compatible (strict generation matching)
+	return false
+}
+
 // VolumeEcShardsGenerate generates the .ecx and .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_server_pb.VolumeEcShardsGenerateRequest) (*volume_server_pb.VolumeEcShardsGenerateResponse, error) {
 
@@ -370,9 +389,9 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 		return fmt.Errorf("VolumeEcShardRead not found ec volume id %d", req.VolumeId)
 	}
 
-	// Validate generation matches the request
+	// Validate generation matches with mixed-version compatibility
 	requestedGeneration := req.Generation
-	if ecVolume.Generation != requestedGeneration {
+	if !isGenerationCompatible(ecVolume.Generation, requestedGeneration) {
 		return fmt.Errorf("VolumeEcShardRead volume %d generation mismatch: requested %d, found %d",
 			req.VolumeId, requestedGeneration, ecVolume.Generation)
 	}

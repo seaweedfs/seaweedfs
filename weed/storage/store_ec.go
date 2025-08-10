@@ -273,11 +273,21 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 
 		ecVolume.ShardLocationsLock.Lock()
 		for _, shardIdLocations := range resp.ShardIdLocations {
-			// Validate that the returned generation matches our request
-			if shardIdLocations.Generation != ecVolume.Generation {
+			// Mixed-version compatibility: be more flexible with generation matching
+			// If we requested generation 0 or if the response has generation 0 (older master),
+			// be more permissive to support rolling upgrades
+			generationMatches := shardIdLocations.Generation == ecVolume.Generation
+			mixedVersionCompatible := (ecVolume.Generation == 0 || shardIdLocations.Generation == 0)
+
+			if !generationMatches && !mixedVersionCompatible {
 				glog.Warningf("received shard locations for generation %d but requested generation %d for volume %d shard %d",
 					shardIdLocations.Generation, ecVolume.Generation, ecVolume.VolumeId, shardIdLocations.ShardId)
 				continue // skip mismatched generation shards
+			}
+
+			if !generationMatches && mixedVersionCompatible {
+				glog.V(1).Infof("accepting shard locations with generation mismatch for mixed-version compatibility: volume %d shard %d response_gen=%d requested_gen=%d",
+					ecVolume.VolumeId, shardIdLocations.ShardId, shardIdLocations.Generation, ecVolume.Generation)
 			}
 
 			shardId := erasure_coding.ShardId(shardIdLocations.ShardId)

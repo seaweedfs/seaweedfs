@@ -307,35 +307,44 @@ func (t *Topology) ListEcVolumesWithActiveGeneration() map[needle.VolumeId]uint3
 }
 
 // LookupEcShardsWithFallback looks up EC shards for a volume with intelligent fallback
+// This function provides mixed-version cluster compatibility by falling back gracefully
 // If no specific generation is requested (generation == 0), it uses the active generation
 // If the requested/active generation is not found, it falls back to generation 0
 func (t *Topology) LookupEcShardsWithFallback(vid needle.VolumeId, requestedGeneration uint32) (locations *EcShardLocations, actualGeneration uint32, found bool) {
 	// Determine target generation
 	targetGeneration := requestedGeneration
 	if requestedGeneration == 0 {
-		// Use active generation if available
+		// Use active generation if available (new behavior)
 		if activeGen, exists := t.GetEcActiveGeneration(vid); exists {
 			targetGeneration = activeGen
+			glog.V(4).Infof("LookupEcShardsWithFallback: using active generation %d for volume %d", activeGen, vid)
 		}
 	}
 
 	// Try the target generation first
 	if locations, found = t.LookupEcShards(vid, targetGeneration); found {
+		if targetGeneration != requestedGeneration {
+			glog.V(3).Infof("LookupEcShardsWithFallback: found volume %d generation %d (requested %d)", vid, targetGeneration, requestedGeneration)
+		}
 		return locations, targetGeneration, true
 	}
 
-	// If requested specific generation and not found, don't fallback
+	// If requested specific generation and not found, don't fallback for strict clients
 	if requestedGeneration != 0 {
+		glog.V(2).Infof("LookupEcShardsWithFallback: volume %d generation %d not found, no fallback for specific request", vid, requestedGeneration)
 		return nil, 0, false
 	}
 
-	// Fallback to generation 0 if target generation wasn't found
+	// Mixed-version compatibility: fallback to generation 0 if target generation wasn't found
+	// This helps during rolling upgrades when some shards might not have generation info yet
 	if targetGeneration != 0 {
 		if locations, found = t.LookupEcShards(vid, 0); found {
+			glog.V(2).Infof("LookupEcShardsWithFallback: falling back to generation 0 for volume %d (target generation %d not found)", vid, targetGeneration)
 			return locations, 0, true
 		}
 	}
 
+	glog.V(2).Infof("LookupEcShardsWithFallback: volume %d not found in any generation", vid)
 	return nil, 0, false
 }
 
