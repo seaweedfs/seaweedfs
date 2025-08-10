@@ -196,6 +196,7 @@ func collectEcShards(commandEnv *CommandEnv, nodeToEcIndexBits map[pb.ServerAddr
 				CopyEcjFile:    true,
 				CopyVifFile:    true,
 				SourceDataNode: string(loc),
+				Generation:     0, // shell commands operate on existing (generation 0) volumes
 			})
 			if copyErr != nil {
 				return fmt.Errorf("copy %d.%v %s => %s : %v\n", vid, needToCopyEcIndexBits.ShardIds(), loc, targetNodeLocation, copyErr)

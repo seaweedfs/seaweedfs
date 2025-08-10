@@ -288,6 +288,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 				CopyEcjFile:    true,
 				CopyVifFile:    true,
 				SourceDataNode: string(existingLocation),
+				Generation:     0, // shell commands operate on existing (generation 0) volumes
 			})
 			if copyErr != nil {
 				return fmt.Errorf("copy %d.%v %s => %s : %v\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id, copyErr)
