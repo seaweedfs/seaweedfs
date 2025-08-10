@@ -300,6 +300,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
 			ShardIds:   shardIdsToCopy,
+			Generation: 0, // shell commands operate on existing (generation 0) volumes
 		})
 		if mountErr != nil {
 			return fmt.Errorf("mount %d.%v on %s : %v\n", volumeId, shardIdsToCopy, targetServer.info.Id, mountErr)
