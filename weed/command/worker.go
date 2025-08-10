@@ -39,7 +39,7 @@ Examples:
 
 var (
 	workerAdminServer         = cmdWorker.Flag.String("admin", "localhost:23646", "admin server address")
-	workerCapabilities        = cmdWorker.Flag.String("capabilities", "vacuum,ec,remote,replication,balance", "comma-separated list of task types this worker can handle")
+	workerCapabilities        = cmdWorker.Flag.String("capabilities", "ec_vacuum,erasure_coding", "comma-separated list of task types this worker can handle")
 	workerMaxConcurrent       = cmdWorker.Flag.Int("maxConcurrent", 2, "maximum number of concurrent tasks")
 	workerHeartbeatInterval   = cmdWorker.Flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	workerTaskRequestInterval = cmdWorker.Flag.Duration("taskInterval", 5*time.Second, "task request interval")
@@ -192,17 +192,6 @@ func parseCapabilities(capabilityStr string) []types.TaskType {
 	for taskType := range typesRegistry.GetAllDetectors() {
 		// Use the task type string directly as the key
 		capabilityMap[strings.ToLower(string(taskType))] = taskType
-	}
-
-	// Add common aliases for convenience
-	if taskType, exists := capabilityMap["erasure_coding"]; exists {
-		capabilityMap["ec"] = taskType
-	}
-	if taskType, exists := capabilityMap["remote_upload"]; exists {
-		capabilityMap["remote"] = taskType
-	}
-	if taskType, exists := capabilityMap["fix_replication"]; exists {
-		capabilityMap["replication"] = taskType
 	}
 
 	var capabilities []types.TaskType
