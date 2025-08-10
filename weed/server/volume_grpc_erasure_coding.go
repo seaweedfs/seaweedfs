@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,31 +45,49 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	if v == nil {
 		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
 	}
-	baseFileName := v.DataFileName()
 
 	if v.Collection != req.Collection {
 		return nil, fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
 	}
+
+	// Generate output filenames with generation suffix
+	generation := req.Generation
+	// Extract base names by removing file extensions
+	dataFileName := v.DataFileName()   // e.g., "/data/collection_123.dat"
+	indexFileName := v.IndexFileName() // e.g., "/index/collection_123.idx"
+
+	// Remove the .dat and .idx extensions to get base filenames
+	dataBaseName := dataFileName[:len(dataFileName)-4]    // removes ".dat"
+	indexBaseName := indexFileName[:len(indexFileName)-4] // removes ".idx"
+
+	// Apply generation naming
+	dataBaseFileName := erasure_coding.EcShardFileNameWithGeneration(v.Collection, filepath.Dir(dataBaseName), int(req.VolumeId), generation)
+	indexBaseFileName := erasure_coding.EcShardFileNameWithGeneration(v.Collection, filepath.Dir(indexBaseName), int(req.VolumeId), generation)
+
+	glog.V(1).Infof("VolumeEcShardsGenerate: generating EC shards with generation %d: data=%s, index=%s",
+		generation, dataBaseFileName, indexBaseFileName)
 
 	shouldCleanup := true
 	defer func() {
 		if !shouldCleanup {
 			return
 		}
+		// Clean up generation-specific files on error
 		for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-			os.Remove(fmt.Sprintf("%s.ec%2d", baseFileName, i))
+			os.Remove(fmt.Sprintf("%s.ec%02d", dataBaseFileName, i))
 		}
-		os.Remove(v.IndexFileName() + ".ecx")
+		os.Remove(indexBaseFileName + ".ecx")
+		os.Remove(dataBaseFileName + ".vif")
 	}()
 
-	// write .ec00 ~ .ec13 files
-	if err := erasure_coding.WriteEcFiles(baseFileName); err != nil {
-		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
+	// write .ec00 ~ .ec13 files with generation-specific names
+	if err := erasure_coding.WriteEcFiles(dataBaseFileName); err != nil {
+		return nil, fmt.Errorf("WriteEcFiles %s: %v", dataBaseFileName, err)
 	}
 
-	// write .ecx file
-	if err := erasure_coding.WriteSortedFileFromIdx(v.IndexFileName(), ".ecx"); err != nil {
-		return nil, fmt.Errorf("WriteSortedFileFromIdx %s: %v", v.IndexFileName(), err)
+	// write .ecx file with generation-specific name
+	if err := erasure_coding.WriteSortedFileFromIdxToTarget(v.IndexFileName(), indexBaseFileName+".ecx"); err != nil {
+		return nil, fmt.Errorf("WriteSortedFileFromIdxToTarget %s: %v", indexBaseFileName, err)
 	}
 
 	// write .vif files
@@ -84,8 +103,8 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 
 	datSize, _, _ := v.FileStat()
 	volumeInfo.DatFileSize = int64(datSize)
-	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
-		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
+	if err := volume_info.SaveVolumeInfo(dataBaseFileName+".vif", volumeInfo); err != nil {
+		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", dataBaseFileName, err)
 	}
 
 	shouldCleanup = false

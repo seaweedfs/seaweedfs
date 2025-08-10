@@ -205,6 +205,7 @@ func (t *EcVacuumTask) encodeVolumeToEcShards(targetNode pb.ServerAddress) error
 		_, err := client.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
 			VolumeId:   t.volumeID,
 			Collection: t.collection,
+			Generation: 1, // TODO: implement proper generation tracking in vacuum task
 		})
 		return err
 	})
