@@ -256,22 +256,30 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 		return nil
 	}
 
-	glog.V(3).Infof("lookup and cache ec volume %d locations", ecVolume.VolumeId)
+	glog.V(3).Infof("lookup and cache ec volume %d generation %d locations", ecVolume.VolumeId, ecVolume.Generation)
 
 	err = operation.WithMasterServerClient(false, s.MasterAddress, s.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 		req := &master_pb.LookupEcVolumeRequest{
-			VolumeId: uint32(ecVolume.VolumeId),
+			VolumeId:   uint32(ecVolume.VolumeId),
+			Generation: ecVolume.Generation, // request specific generation shard locations
 		}
 		resp, err := masterClient.LookupEcVolume(context.Background(), req)
 		if err != nil {
-			return fmt.Errorf("lookup ec volume %d: %v", ecVolume.VolumeId, err)
+			return fmt.Errorf("lookup ec volume %d generation %d: %v", ecVolume.VolumeId, ecVolume.Generation, err)
 		}
 		if len(resp.ShardIdLocations) < erasure_coding.DataShardsCount {
-			return fmt.Errorf("only %d shards found but %d required", len(resp.ShardIdLocations), erasure_coding.DataShardsCount)
+			return fmt.Errorf("only %d shards found but %d required for ec volume %d generation %d", len(resp.ShardIdLocations), erasure_coding.DataShardsCount, ecVolume.VolumeId, ecVolume.Generation)
 		}
 
 		ecVolume.ShardLocationsLock.Lock()
 		for _, shardIdLocations := range resp.ShardIdLocations {
+			// Validate that the returned generation matches our request
+			if shardIdLocations.Generation != ecVolume.Generation {
+				glog.Warningf("received shard locations for generation %d but requested generation %d for volume %d shard %d",
+					shardIdLocations.Generation, ecVolume.Generation, ecVolume.VolumeId, shardIdLocations.ShardId)
+				continue // skip mismatched generation shards
+			}
+
 			shardId := erasure_coding.ShardId(shardIdLocations.ShardId)
 			delete(ecVolume.ShardLocations, shardId)
 			for _, loc := range shardIdLocations.Locations {
