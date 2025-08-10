@@ -338,3 +338,29 @@ func (t *Topology) LookupEcShardsWithFallback(vid needle.VolumeId, requestedGene
 
 	return nil, 0, false
 }
+
+// ValidateEcGenerationReadiness checks if an EC generation has sufficient shards for activation
+// Returns true if the generation has at least erasure_coding.DataShardsCount shards available
+func (t *Topology) ValidateEcGenerationReadiness(vid needle.VolumeId, generation uint32) (ready bool, availableShards int, err error) {
+	t.ecShardMapLock.RLock()
+	defer t.ecShardMapLock.RUnlock()
+
+	key := EcVolumeGenerationKey{VolumeId: vid, Generation: generation}
+	ecLocations, found := t.ecShardMap[key]
+	if !found {
+		return false, 0, fmt.Errorf("generation %d not found for EC volume %d", generation, vid)
+	}
+
+	// Count available shards
+	availableShards = 0
+	for _, locations := range ecLocations.Locations {
+		if len(locations) > 0 {
+			availableShards++
+		}
+	}
+
+	// Need at least DataShardsCount shards to reconstruct data
+	ready = availableShards >= erasure_coding.DataShardsCount
+
+	return ready, availableShards, nil
+}
