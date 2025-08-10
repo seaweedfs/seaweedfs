@@ -27,6 +27,8 @@ service Seaweed {
   }
   rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
   }
+  rpc ActivateEcGeneration (ActivateEcGenerationRequest) returns (ActivateEcGenerationResponse) {
+  }
   rpc VacuumVolume (VacuumVolumeRequest) returns (VacuumVolumeResponse) {
   }
   rpc DisableVacuum (DisableVacuumRequest) returns (DisableVacuumResponse) {
@@ -326,6 +328,16 @@ message LookupEcVolumeResponse {
   }
   repeated EcShardIdLocation shard_id_locations = 2;
   uint32 active_generation = 3; // current active generation for this volume
+}
+
+message ActivateEcGenerationRequest {
+  uint32 volume_id = 1;
+  string collection = 2;
+  uint32 generation = 3; // generation to activate
+}
+message ActivateEcGenerationResponse {
+  bool success = 1;
+  string error = 2; // error message if activation failed
 }
 
 message VacuumVolumeRequest {
