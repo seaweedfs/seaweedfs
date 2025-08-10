@@ -1831,6 +1831,7 @@ type CopyFileRequest struct {
 	Collection               string                 `protobuf:"bytes,5,opt,name=collection,proto3" json:"collection,omitempty"`
 	IsEcVolume               bool                   `protobuf:"varint,6,opt,name=is_ec_volume,json=isEcVolume,proto3" json:"is_ec_volume,omitempty"`
 	IgnoreSourceFileNotFound bool                   `protobuf:"varint,7,opt,name=ignore_source_file_not_found,json=ignoreSourceFileNotFound,proto3" json:"ignore_source_file_not_found,omitempty"`
+	Generation               uint32                 `protobuf:"varint,8,opt,name=generation,proto3" json:"generation,omitempty"` // generation of files to copy, defaults to 0 for backward compatibility
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -1912,6 +1913,13 @@ func (x *CopyFileRequest) GetIgnoreSourceFileNotFound() bool {
 		return x.IgnoreSourceFileNotFound
 	}
 	return false
+}
+
+func (x *CopyFileRequest) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
 }
 
 type CopyFileResponse struct {
@@ -6265,7 +6273,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x12io_byte_per_second\x18\a \x01(\x03R\x0fioBytePerSecond\"h\n" +
 	"\x12VolumeCopyResponse\x12)\n" +
 	"\x11last_append_at_ns\x18\x01 \x01(\x04R\x0elastAppendAtNs\x12'\n" +
-	"\x0fprocessed_bytes\x18\x02 \x01(\x03R\x0eprocessedBytes\"\x94\x02\n" +
+	"\x0fprocessed_bytes\x18\x02 \x01(\x03R\x0eprocessedBytes\"\xb4\x02\n" +
 	"\x0fCopyFileRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x10\n" +
 	"\x03ext\x18\x02 \x01(\tR\x03ext\x12/\n" +
@@ -6277,7 +6285,10 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\x12 \n" +
 	"\fis_ec_volume\x18\x06 \x01(\bR\n" +
 	"isEcVolume\x12>\n" +
-	"\x1cignore_source_file_not_found\x18\a \x01(\bR\x18ignoreSourceFileNotFound\"[\n" +
+	"\x1cignore_source_file_not_found\x18\a \x01(\bR\x18ignoreSourceFileNotFound\x12\x1e\n" +
+	"\n" +
+	"generation\x18\b \x01(\rR\n" +
+	"generation\"[\n" +
 	"\x10CopyFileResponse\x12!\n" +
 	"\ffile_content\x18\x01 \x01(\fR\vfileContent\x12$\n" +
 	"\x0emodified_ts_ns\x18\x02 \x01(\x03R\fmodifiedTsNs\"z\n" +

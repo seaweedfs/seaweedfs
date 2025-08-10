@@ -150,6 +150,7 @@ func (t *EcVacuumTask) collectEcShardsToWorker() (pb.ServerAddress, error) {
 				CopyEcjFile:    true,
 				CopyVifFile:    true,
 				SourceDataNode: string(sourceNode),
+				Generation:     1, // TODO: implement proper generation tracking in vacuum task
 			})
 			if copyErr != nil {
 				return fmt.Errorf("failed to copy shards %v from %s to %s: %w", needToCopyBits.ShardIds(), sourceNode, targetNode, copyErr)
@@ -254,6 +255,7 @@ func (t *EcVacuumTask) distributeNewEcShards(sourceNode pb.ServerAddress) error 
 				CopyEcjFile:    true,
 				CopyVifFile:    true,
 				SourceDataNode: string(sourceNode),
+				Generation:     1, // TODO: implement proper generation tracking in vacuum task
 			})
 			if copyErr != nil {
 				return fmt.Errorf("failed to copy new shards %v from %s to %s: %w", needToDistributeBits.ShardIds(), sourceNode, targetNode, copyErr)

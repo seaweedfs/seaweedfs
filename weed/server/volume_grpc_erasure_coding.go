@@ -187,36 +187,40 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		}
 	}
 
-	dataBaseFileName := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
-	indexBaseFileName := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+	// Generate target filenames with generation awareness
+	generation := req.Generation
+	dataBaseFileName := erasure_coding.EcShardFileNameWithGeneration(req.Collection, location.Directory, int(req.VolumeId), generation)
+	indexBaseFileName := erasure_coding.EcShardFileNameWithGeneration(req.Collection, location.IdxDirectory, int(req.VolumeId), generation)
+
+	glog.V(1).Infof("VolumeEcShardsCopy: copying EC shards with generation %d: data=%s, index=%s",
+		generation, dataBaseFileName, indexBaseFileName)
 
 	err := operation.WithVolumeServerClient(true, pb.ServerAddress(req.SourceDataNode), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
-		// copy ec data slices
+		// copy ec data slices with generation awareness
 		for _, shardId := range req.ShardIds {
-			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, erasure_coding.ToExt(int(shardId)), false, false, nil); err != nil {
+			if _, err := vs.doCopyFileWithGeneration(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, erasure_coding.ToExt(int(shardId)), false, false, nil, generation); err != nil {
 				return err
 			}
 		}
 
 		if req.CopyEcxFile {
-
-			// copy ecx file
-			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecx", false, false, nil); err != nil {
+			// copy ecx file with generation awareness
+			if _, err := vs.doCopyFileWithGeneration(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecx", false, false, nil, generation); err != nil {
 				return err
 			}
 		}
 
 		if req.CopyEcjFile {
-			// copy ecj file
-			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecj", true, true, nil); err != nil {
+			// copy ecj file with generation awareness
+			if _, err := vs.doCopyFileWithGeneration(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecj", true, true, nil, generation); err != nil {
 				return err
 			}
 		}
 
 		if req.CopyVifFile {
-			// copy vif file
-			if _, err := vs.doCopyFile(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, ".vif", false, true, nil); err != nil {
+			// copy vif file with generation awareness
+			if _, err := vs.doCopyFileWithGeneration(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, ".vif", false, true, nil, generation); err != nil {
 				return err
 			}
 		}
