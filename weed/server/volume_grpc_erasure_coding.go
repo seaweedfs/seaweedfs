@@ -303,7 +303,7 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 	glog.V(0).Infof("VolumeEcShardsMount: %v", req)
 
 	for _, shardId := range req.ShardIds {
-		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId))
+		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), req.Generation)
 
 		if err != nil {
 			glog.Errorf("ec shard mount %v: %v", req, err)

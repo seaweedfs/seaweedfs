@@ -25,11 +25,11 @@ type EcVolumeShard struct {
 	DiskType    types.DiskType
 }
 
-func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string, id needle.VolumeId, shardId ShardId) (v *EcVolumeShard, e error) {
+func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string, id needle.VolumeId, shardId ShardId, generation uint32) (v *EcVolumeShard, e error) {
 
 	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: shardId, DiskType: diskType}
 
-	baseFileName := v.FileName()
+	baseFileName := v.FileNameWithGeneration(generation)
 
 	// open ecd file
 	if v.ecdFile, e = os.OpenFile(baseFileName+ToExt(int(shardId)), os.O_RDONLY, 0644); e != nil {
@@ -150,4 +150,25 @@ func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {
 	}
 	return n, err
 
+}
+
+// ParseGenerationFromFileName extracts generation from EC volume filename
+// Returns 0 for files without generation suffix (backward compatibility)
+func ParseGenerationFromFileName(fileName string) uint32 {
+	// Remove extension first
+	baseName := fileName
+	if lastDot := strings.LastIndex(fileName, "."); lastDot >= 0 {
+		baseName = fileName[:lastDot]
+	}
+
+	// Look for _g{N} pattern at the end
+	if gIndex := strings.LastIndex(baseName, "_g"); gIndex >= 0 {
+		generationStr := baseName[gIndex+2:]
+		if generation, err := strconv.ParseUint(generationStr, 10, 32); err == nil {
+			return uint32(generation)
+		}
+	}
+
+	// No generation suffix found, return 0 for backward compatibility
+	return 0
 }

@@ -72,9 +72,9 @@ func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.S
 	return nil, false
 }
 
-func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolume, error) {
+func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, generation uint32) (*erasure_coding.EcVolume, error) {
 
-	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId)
+	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId, generation)
 	if err != nil {
 		if err == os.ErrNotExist {
 			return nil, os.ErrNotExist
@@ -85,7 +85,7 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 	defer l.ecVolumesLock.Unlock()
 	ecVolume, found := l.ecVolumes[vid]
 	if !found {
-		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, l.IdxDirectory, collection, vid)
+		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, l.IdxDirectory, collection, vid, generation)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ec volume %d: %v", vid, err)
 		}
@@ -116,7 +116,7 @@ func (l *DiskLocation) UnloadEcShard(vid needle.VolumeId, shardId erasure_coding
 	return true
 }
 
-func (l *DiskLocation) loadEcShards(shards []string, collection string, vid needle.VolumeId) (err error) {
+func (l *DiskLocation) loadEcShards(shards []string, collection string, vid needle.VolumeId, generation uint32) (err error) {
 
 	for _, shard := range shards {
 		shardId, err := strconv.ParseInt(path.Ext(shard)[3:], 10, 64)
@@ -124,7 +124,7 @@ func (l *DiskLocation) loadEcShards(shards []string, collection string, vid need
 			return fmt.Errorf("failed to parse ec shard name %v: %w", shard, err)
 		}
 
-		_, err = l.LoadEcShard(collection, vid, erasure_coding.ShardId(shardId))
+		_, err = l.LoadEcShard(collection, vid, erasure_coding.ShardId(shardId), generation)
 		if err != nil {
 			return fmt.Errorf("failed to load ec shard %v: %w", shard, err)
 		}
@@ -183,8 +183,13 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 		}
 
 		if ext == ".ecx" && volumeId == prevVolumeId {
-			if err = l.loadEcShards(sameVolumeShards, collection, volumeId); err != nil {
-				return fmt.Errorf("loadEcShards collection:%v volumeId:%d : %v", collection, volumeId, err)
+			// Parse generation from the first shard filename
+			generation := uint32(0)
+			if len(sameVolumeShards) > 0 {
+				generation = erasure_coding.ParseGenerationFromFileName(sameVolumeShards[0])
+			}
+			if err = l.loadEcShards(sameVolumeShards, collection, volumeId, generation); err != nil {
+				return fmt.Errorf("loadEcShards collection:%v volumeId:%d generation:%d : %v", collection, volumeId, generation, err)
 			}
 			prevVolumeId = volumeId
 			continue

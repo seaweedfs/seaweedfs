@@ -27,6 +27,7 @@ var (
 type EcVolume struct {
 	VolumeId                  needle.VolumeId
 	Collection                string
+	Generation                uint32 // generation of this EC volume, defaults to 0 for backward compatibility
 	dir                       string
 	dirIdx                    string
 	ecxFile                   *os.File
@@ -44,11 +45,19 @@ type EcVolume struct {
 	ExpireAtSec               uint64 //ec volume destroy time, calculated from the ec volume was created
 }
 
-func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
-	ev = &EcVolume{dir: dir, dirIdx: dirIdx, Collection: collection, VolumeId: vid, diskType: diskType}
+func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId, generation uint32) (ev *EcVolume, err error) {
+	ev = &EcVolume{
+		dir:        dir,
+		dirIdx:     dirIdx,
+		Collection: collection,
+		VolumeId:   vid,
+		Generation: generation,
+		diskType:   diskType,
+	}
 
-	dataBaseFileName := EcShardFileName(collection, dir, int(vid))
-	indexBaseFileName := EcShardFileName(collection, dirIdx, int(vid))
+	// Use generation-aware filenames
+	dataBaseFileName := EcShardFileNameWithGeneration(collection, dir, int(vid), generation)
+	indexBaseFileName := EcShardFileNameWithGeneration(collection, dirIdx, int(vid), generation)
 
 	// open ecx file
 	if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
@@ -74,7 +83,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		ev.datFileSize = volumeInfo.DatFileSize
 		ev.ExpireAtSec = volumeInfo.ExpireAtSec
 	} else {
-		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, dataBaseFileName)
+		glog.V(1).Infof("vif file not found for volume %d generation %d, creating new one: %s", vid, generation, dataBaseFileName)
 		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
 	}
 
@@ -155,7 +164,7 @@ func (ev *EcVolume) Destroy() {
 }
 
 func (ev *EcVolume) FileName(ext string) string {
-	return ev.FileNameWithGeneration(ext, 0)
+	return ev.FileNameWithGeneration(ext, ev.Generation)
 }
 
 func (ev *EcVolume) FileNameWithGeneration(ext string, generation uint32) string {
@@ -168,7 +177,7 @@ func (ev *EcVolume) FileNameWithGeneration(ext string, generation uint32) string
 }
 
 func (ev *EcVolume) DataBaseFileName() string {
-	return EcShardFileName(ev.Collection, ev.dir, int(ev.VolumeId))
+	return EcShardFileNameWithGeneration(ev.Collection, ev.dir, int(ev.VolumeId), ev.Generation)
 }
 
 func (ev *EcVolume) DataBaseFileNameWithGeneration(generation uint32) string {
@@ -176,7 +185,7 @@ func (ev *EcVolume) DataBaseFileNameWithGeneration(generation uint32) string {
 }
 
 func (ev *EcVolume) IndexBaseFileName() string {
-	return EcShardFileName(ev.Collection, ev.dirIdx, int(ev.VolumeId))
+	return EcShardFileNameWithGeneration(ev.Collection, ev.dirIdx, int(ev.VolumeId), ev.Generation)
 }
 
 func (ev *EcVolume) IndexBaseFileNameWithGeneration(generation uint32) string {
@@ -188,6 +197,20 @@ func (ev *EcVolume) ShardSize() uint64 {
 		return uint64(ev.Shards[0].Size())
 	}
 	return 0
+}
+
+// String returns a string representation of the EC volume including generation
+func (ev *EcVolume) String() string {
+	return fmt.Sprintf("EcVolume{Id:%d, Collection:%s, Generation:%d, Shards:%d}",
+		ev.VolumeId, ev.Collection, ev.Generation, len(ev.Shards))
+}
+
+// Key returns a unique key for this EC volume including generation
+func (ev *EcVolume) Key() string {
+	if ev.Collection == "" {
+		return fmt.Sprintf("%d_g%d", ev.VolumeId, ev.Generation)
+	}
+	return fmt.Sprintf("%s_%d_g%d", ev.Collection, ev.VolumeId, ev.Generation)
 }
 
 func (ev *EcVolume) Size() (size uint64) {
@@ -239,6 +262,7 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 				DiskType:    string(ev.diskType),
 				ExpireAtSec: ev.ExpireAtSec,
 				DiskId:      diskId,
+				Generation:  ev.Generation, // include generation in heartbeat message
 			}
 			messages = append(messages, m)
 		}

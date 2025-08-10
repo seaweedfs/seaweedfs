@@ -48,9 +48,9 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 
 }
 
-func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) error {
+func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, generation uint32) error {
 	for diskId, location := range s.Locations {
-		if ecVolume, err := location.LoadEcShard(collection, vid, shardId); err == nil {
+		if ecVolume, err := location.LoadEcShard(collection, vid, shardId, generation); err == nil {
 			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
 
 			var shardBits erasure_coding.ShardBits
