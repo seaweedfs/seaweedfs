@@ -561,6 +561,7 @@ type VolumeEcShardInformationMessage struct {
 	ExpireAtSec   uint64                 `protobuf:"varint,5,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // used to record the destruction time of ec volume
 	DiskId        uint32                 `protobuf:"varint,6,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
 	ShardSizes    []int64                `protobuf:"varint,7,rep,packed,name=shard_sizes,json=shardSizes,proto3" json:"shard_sizes,omitempty"` // optimized: sizes for shards in order of set bits in ec_index_bits
+	Generation    uint32                 `protobuf:"varint,8,opt,name=generation,proto3" json:"generation,omitempty"`                          // generation of this ec volume, defaults to 0 for backward compatibility
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -642,6 +643,13 @@ func (x *VolumeEcShardInformationMessage) GetShardSizes() []int64 {
 		return x.ShardSizes
 	}
 	return nil
+}
+
+func (x *VolumeEcShardInformationMessage) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
 }
 
 type StorageBackend struct {
@@ -2365,6 +2373,7 @@ func (x *VolumeListResponse) GetVolumeSizeLimitMb() uint64 {
 type LookupEcVolumeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Generation    uint32                 `protobuf:"varint,2,opt,name=generation,proto3" json:"generation,omitempty"` // optional, defaults to 0 for backward compatibility
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2406,10 +2415,18 @@ func (x *LookupEcVolumeRequest) GetVolumeId() uint32 {
 	return 0
 }
 
+func (x *LookupEcVolumeRequest) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
+}
+
 type LookupEcVolumeResponse struct {
 	state            protoimpl.MessageState                      `protogen:"open.v1"`
 	VolumeId         uint32                                      `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	ShardIdLocations []*LookupEcVolumeResponse_EcShardIdLocation `protobuf:"bytes,2,rep,name=shard_id_locations,json=shardIdLocations,proto3" json:"shard_id_locations,omitempty"`
+	ActiveGeneration uint32                                      `protobuf:"varint,3,opt,name=active_generation,json=activeGeneration,proto3" json:"active_generation,omitempty"` // current active generation for this volume
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -2456,6 +2473,13 @@ func (x *LookupEcVolumeResponse) GetShardIdLocations() []*LookupEcVolumeResponse
 		return x.ShardIdLocations
 	}
 	return nil
+}
+
+func (x *LookupEcVolumeResponse) GetActiveGeneration() uint32 {
+	if x != nil {
+		return x.ActiveGeneration
+	}
+	return 0
 }
 
 type VacuumVolumeRequest struct {
@@ -3842,6 +3866,7 @@ type LookupEcVolumeResponse_EcShardIdLocation struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ShardId       uint32                 `protobuf:"varint,1,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
 	Locations     []*Location            `protobuf:"bytes,2,rep,name=locations,proto3" json:"locations,omitempty"`
+	Generation    uint32                 `protobuf:"varint,3,opt,name=generation,proto3" json:"generation,omitempty"` // generation of these shard locations
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3888,6 +3913,13 @@ func (x *LookupEcVolumeResponse_EcShardIdLocation) GetLocations() []*Location {
 		return x.Locations
 	}
 	return nil
+}
+
+func (x *LookupEcVolumeResponse_EcShardIdLocation) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
 }
 
 type ListClusterNodesResponse_ClusterNode struct {
@@ -4106,7 +4138,7 @@ const file_master_proto_rawDesc = "" +
 	"\x03ttl\x18\n" +
 	" \x01(\rR\x03ttl\x12\x1b\n" +
 	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
-	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xf0\x01\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\x90\x02\n" +
 	"\x1fVolumeEcShardInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
@@ -4117,7 +4149,10 @@ const file_master_proto_rawDesc = "" +
 	"\rexpire_at_sec\x18\x05 \x01(\x04R\vexpireAtSec\x12\x17\n" +
 	"\adisk_id\x18\x06 \x01(\rR\x06diskId\x12\x1f\n" +
 	"\vshard_sizes\x18\a \x03(\x03R\n" +
-	"shardSizes\"\xbe\x01\n" +
+	"shardSizes\x12\x1e\n" +
+	"\n" +
+	"generation\x18\b \x01(\rR\n" +
+	"generation\"\xbe\x01\n" +
 	"\x0eStorageBackend\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12I\n" +
@@ -4287,15 +4322,22 @@ const file_master_proto_rawDesc = "" +
 	"\x11VolumeListRequest\"\x83\x01\n" +
 	"\x12VolumeListResponse\x12<\n" +
 	"\rtopology_info\x18\x01 \x01(\v2\x17.master_pb.TopologyInfoR\ftopologyInfo\x12/\n" +
-	"\x14volume_size_limit_mb\x18\x02 \x01(\x04R\x11volumeSizeLimitMb\"4\n" +
+	"\x14volume_size_limit_mb\x18\x02 \x01(\x04R\x11volumeSizeLimitMb\"T\n" +
 	"\x15LookupEcVolumeRequest\x12\x1b\n" +
-	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\xfb\x01\n" +
+	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x02 \x01(\rR\n" +
+	"generation\"\xc9\x02\n" +
 	"\x16LookupEcVolumeResponse\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12a\n" +
-	"\x12shard_id_locations\x18\x02 \x03(\v23.master_pb.LookupEcVolumeResponse.EcShardIdLocationR\x10shardIdLocations\x1aa\n" +
+	"\x12shard_id_locations\x18\x02 \x03(\v23.master_pb.LookupEcVolumeResponse.EcShardIdLocationR\x10shardIdLocations\x12+\n" +
+	"\x11active_generation\x18\x03 \x01(\rR\x10activeGeneration\x1a\x81\x01\n" +
 	"\x11EcShardIdLocation\x12\x19\n" +
 	"\bshard_id\x18\x01 \x01(\rR\ashardId\x121\n" +
-	"\tlocations\x18\x02 \x03(\v2\x13.master_pb.LocationR\tlocations\"\x7f\n" +
+	"\tlocations\x18\x02 \x03(\v2\x13.master_pb.LocationR\tlocations\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x03 \x01(\rR\n" +
+	"generation\"\x7f\n" +
 	"\x13VacuumVolumeRequest\x12+\n" +
 	"\x11garbage_threshold\x18\x01 \x01(\x02R\x10garbageThreshold\x12\x1b\n" +
 	"\tvolume_id\x18\x02 \x01(\rR\bvolumeId\x12\x1e\n" +

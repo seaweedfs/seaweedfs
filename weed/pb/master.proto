@@ -130,6 +130,7 @@ message VolumeEcShardInformationMessage {
   uint64 expire_at_sec = 5; // used to record the destruction time of ec volume
   uint32 disk_id = 6;
   repeated int64 shard_sizes = 7; // optimized: sizes for shards in order of set bits in ec_index_bits
+  uint32 generation = 8; // generation of this ec volume, defaults to 0 for backward compatibility
 }
 
 message StorageBackend {
@@ -314,14 +315,17 @@ message VolumeListResponse {
 
 message LookupEcVolumeRequest {
   uint32 volume_id = 1;
+  uint32 generation = 2; // optional, defaults to 0 for backward compatibility
 }
 message LookupEcVolumeResponse {
   uint32 volume_id = 1;
   message EcShardIdLocation {
     uint32 shard_id = 1;
     repeated Location locations = 2;
+    uint32 generation = 3; // generation of these shard locations
   }
   repeated EcShardIdLocation shard_id_locations = 2;
+  uint32 active_generation = 3; // current active generation for this volume
 }
 
 message VacuumVolumeRequest {
