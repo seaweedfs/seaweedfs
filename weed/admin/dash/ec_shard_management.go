@@ -727,6 +727,20 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 		serverList = append(serverList, server)
 	}
 
+	// Get EC volume health metrics (deletion information)
+	volumeHealth, err := s.getEcVolumeHealthMetrics(volumeID)
+	if err != nil {
+		glog.V(1).Infof("Failed to get EC volume health metrics for volume %d: %v", volumeID, err)
+		// Don't fail the request, just use default values
+		volumeHealth = &EcVolumeHealthInfo{
+			TotalSize:        0,
+			DeletedByteCount: 0,
+			FileCount:        0,
+			DeleteCount:      0,
+			GarbageRatio:     0.0,
+		}
+	}
+
 	data := &EcVolumeDetailsData{
 		VolumeID:      volumeID,
 		Collection:    collection,
@@ -737,9 +751,159 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 		DataCenters:   dcList,
 		Servers:       serverList,
 		LastUpdated:   time.Now(),
-		SortBy:        sortBy,
-		SortOrder:     sortOrder,
+
+		// Volume health metrics (for EC vacuum)
+		TotalSize:        volumeHealth.TotalSize,
+		DeletedByteCount: volumeHealth.DeletedByteCount,
+		FileCount:        volumeHealth.FileCount,
+		DeleteCount:      volumeHealth.DeleteCount,
+		GarbageRatio:     volumeHealth.GarbageRatio,
+
+		SortBy:    sortBy,
+		SortOrder: sortOrder,
 	}
 
 	return data, nil
+}
+
+// getEcVolumeHealthMetrics retrieves health metrics for an EC volume
+func (s *AdminServer) getEcVolumeHealthMetrics(volumeID uint32) (*EcVolumeHealthInfo, error) {
+	// Get list of servers that have shards for this EC volume
+	var servers []string
+
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							// Check if this node has EC shards for our volume
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								if ecShardInfo.Id == volumeID {
+									servers = append(servers, node.Id)
+									goto nextNode // Found shards on this node, move to next node
+								}
+							}
+						}
+					}
+				nextNode:
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get topology info: %v", err)
+	}
+
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("no servers found with EC shards for volume %d", volumeID)
+	}
+
+	// Try to get volume file status from servers that have EC shards
+	// The volume health metrics should be stored with the EC volume metadata
+	for _, server := range servers {
+		healthInfo, err := s.getVolumeHealthFromServer(server, volumeID)
+		if err != nil {
+			glog.V(2).Infof("Failed to get volume health from server %s for volume %d: %v", server, volumeID, err)
+			continue // Try next server
+		}
+		if healthInfo != nil {
+			return healthInfo, nil
+		}
+	}
+
+	// If we can't get the original metrics, try to calculate from EC shards
+	return s.calculateHealthFromEcShards(volumeID, servers)
+}
+
+// getVolumeHealthFromServer gets volume health information from a specific server
+func (s *AdminServer) getVolumeHealthFromServer(server string, volumeID uint32) (*EcVolumeHealthInfo, error) {
+	var healthInfo *EcVolumeHealthInfo
+
+	err := s.WithVolumeServerClient(pb.ServerAddress(server), func(client volume_server_pb.VolumeServerClient) error {
+		// Try to get volume file status (which may include original volume metrics)
+		resp, err := client.ReadVolumeFileStatus(context.Background(), &volume_server_pb.ReadVolumeFileStatusRequest{
+			VolumeId: volumeID,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Extract health metrics from volume info
+		if resp.VolumeInfo != nil {
+			totalSize := uint64(resp.VolumeInfo.DatFileSize)
+			if totalSize > 0 {
+				healthInfo = &EcVolumeHealthInfo{
+					TotalSize:        totalSize,
+					DeletedByteCount: 0, // EC volumes don't track deletions in VolumeInfo
+					FileCount:        resp.FileCount,
+					DeleteCount:      0, // Not available in current API
+					GarbageRatio:     0.0,
+				}
+			}
+		}
+
+		return nil
+	})
+
+	return healthInfo, err
+}
+
+// calculateHealthFromEcShards attempts to calculate health metrics from EC shard information
+func (s *AdminServer) calculateHealthFromEcShards(volumeID uint32, servers []string) (*EcVolumeHealthInfo, error) {
+	var totalShardSize uint64
+	shardCount := 0
+
+	// Get shard sizes from all servers
+	for _, server := range servers {
+		err := s.WithVolumeServerClient(pb.ServerAddress(server), func(client volume_server_pb.VolumeServerClient) error {
+			resp, err := client.VolumeEcShardsInfo(context.Background(), &volume_server_pb.VolumeEcShardsInfoRequest{
+				VolumeId: volumeID,
+			})
+			if err != nil {
+				return err
+			}
+
+			for _, shardInfo := range resp.EcShardInfos {
+				totalShardSize += uint64(shardInfo.Size)
+				shardCount++
+			}
+
+			return nil
+		})
+		if err != nil {
+			glog.V(2).Infof("Failed to get EC shard info from server %s: %v", server, err)
+		}
+	}
+
+	if shardCount == 0 {
+		return nil, fmt.Errorf("no EC shard information found for volume %d", volumeID)
+	}
+
+	// For EC volumes, we can estimate the original size from the data shards
+	// EC uses 10 data shards + 4 parity shards = 14 total
+	// The original volume size is approximately the sum of the 10 data shards
+	dataShardCount := 10 // erasure_coding.DataShardsCount
+	estimatedOriginalSize := totalShardSize
+
+	if shardCount >= dataShardCount {
+		// If we have info from data shards, estimate better
+		avgShardSize := totalShardSize / uint64(shardCount)
+		estimatedOriginalSize = avgShardSize * uint64(dataShardCount)
+	}
+
+	return &EcVolumeHealthInfo{
+		TotalSize:        estimatedOriginalSize,
+		DeletedByteCount: 0, // Cannot determine from EC shards alone
+		FileCount:        0, // Cannot determine from EC shards alone
+		DeleteCount:      0, // Cannot determine from EC shards alone
+		GarbageRatio:     0.0,
+	}, nil
 }

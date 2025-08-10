@@ -33,7 +33,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
 
     <!-- EC Volume Summary -->
     <div class="row mb-4">
-        <div class="col-md-6">
+        <div class="col-md-4">
             <div class="card">
                 <div class="card-header">
                     <h5 class="card-title mb-0">
@@ -111,7 +111,86 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             </div>
         </div>
         
-        <div class="col-md-6">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-database me-2"></i>Volume Health
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <!-- Storage Metrics -->
+                    if data.TotalSize > 0 {
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <div class="text-center">
+                                    <div class="h4 mb-0 font-weight-bold text-success">
+                                        {bytesToHumanReadableUint64(data.TotalSize - data.DeletedByteCount)}
+                                    </div>
+                                    <small class="text-muted">Active Bytes</small>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="text-center">
+                                    <div class="h4 mb-0 font-weight-bold text-danger">
+                                        {bytesToHumanReadableUint64(data.DeletedByteCount)}
+                                    </div>
+                                    <small class="text-muted">Deleted Bytes</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- File Metrics -->
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <div class="text-center">
+                                    <div class="h5 mb-0 text-primary">
+                                        {fmt.Sprintf("%d", data.FileCount - data.DeleteCount)}
+                                    </div>
+                                    <small class="text-muted">Active Files</small>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="text-center">
+                                    <div class="h5 mb-0 text-warning">
+                                        {fmt.Sprintf("%d", data.DeleteCount)}
+                                    </div>
+                                    <small class="text-muted">Deleted Files</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Garbage Ratio for EC Vacuum -->
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <div class="text-center">
+                                    <div class="h4 mb-0 font-weight-bold" style={"color: " + getGarbageRatioColor(data.GarbageRatio)}>
+                                        {fmt.Sprintf("%.1f%%", data.GarbageRatio * 100)}
+                                    </div>
+                                    <small class="text-muted">Garbage Ratio</small>
+                                    if data.GarbageRatio >= 0.3 {
+                                        <div class="mt-1">
+                                            <span class="badge bg-warning">
+                                                <i class="fas fa-broom me-1"></i>EC Vacuum Candidate
+                                            </span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    } else {
+                        <div class="text-center text-muted py-3">
+                            <i class="fas fa-info-circle mb-2"></i>
+                            <div>Volume health metrics not available</div>
+                            <small>This may be normal for newly created EC volumes</small>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        
+        <!-- Third column for Shard Distribution -->
+        <div class="col-md-4">
             <div class="card">
                 <div class="card-header">
                     <h5 class="card-title mb-0">
@@ -310,4 +389,16 @@ func bytesToHumanReadableUint64(bytes uint64) string {
         exp++
     }
     return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// Helper function to get color for garbage ratio display
+func getGarbageRatioColor(ratio float64) string {
+    if ratio >= 0.5 {
+        return "#dc3545" // Red for high garbage ratio
+    } else if ratio >= 0.3 {
+        return "#fd7e14" // Orange for medium garbage ratio
+    } else if ratio >= 0.1 {
+        return "#ffc107" // Yellow for low garbage ratio
+    }
+    return "#28a745" // Green for very low garbage ratio
 } 

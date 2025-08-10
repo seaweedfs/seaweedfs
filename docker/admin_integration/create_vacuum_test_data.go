@@ -472,9 +472,14 @@ type VolumeInfo struct {
 }
 
 type VolumeStatus struct {
-	IsLeader bool         `json:"IsLeader"`
-	Leader   string       `json:"Leader"`
-	Volumes  []VolumeInfo `json:"Volumes"`
+	Version string       `json:"Version"`
+	Volumes VolumeLayout `json:"Volumes"`
+}
+
+type VolumeLayout struct {
+	DataCenters map[string]map[string]map[string][]VolumeInfo `json:"DataCenters"`
+	Free        int                                           `json:"Free"`
+	Max         int                                           `json:"Max"`
 }
 
 func getVolumeStatusForDeletion() []VolumeInfo {
@@ -492,7 +497,20 @@ func getVolumeStatusForDeletion() []VolumeInfo {
 		return nil
 	}
 
-	return volumeStatus.Volumes
+	// Extract all volumes from the nested structure
+	var allVolumes []VolumeInfo
+	for dcName, dataCenter := range volumeStatus.Volumes.DataCenters {
+		log.Printf("Processing data center: %s", dcName)
+		for rackName, rack := range dataCenter {
+			log.Printf("Processing rack: %s", rackName)
+			for serverName, volumes := range rack {
+				log.Printf("Found %d volumes on server %s", len(volumes), serverName)
+				allVolumes = append(allVolumes, volumes...)
+			}
+		}
+	}
+
+	return allVolumes
 }
 
 type StoredFilePaths struct {
