@@ -48,15 +48,22 @@ help: ## Show this help message
 	@echo "🗑️  Vacuum Testing:"
 	@grep -E '^vacuum-.*:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 	@echo ""
+	@echo "🔧 EC Vacuum Testing:"
+	@grep -E '^ec-vacuum-.*:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@echo ""
 	@echo "📜 Monitoring:"
 	@grep -E '^(logs|admin-logs|worker-logs|master-logs|admin-ui):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "🚀 Quick Start:"
 	@echo "  make start           # Start cluster"
-	@echo "  make vacuum-test     # Test vacuum tasks"
-	@echo "  make vacuum-help     # Vacuum testing guide"
+	@echo "  make vacuum-test     # Test regular vacuum tasks"
+	@echo "  make ec-vacuum-test  # Test EC vacuum tasks"
+	@echo "  make vacuum-help     # Regular vacuum guide"
+	@echo "  make ec-vacuum-help  # EC vacuum guide"
 	@echo ""
-	@echo "💡 For detailed vacuum testing: make vacuum-help"
+	@echo "💡 For detailed testing guides:"
+	@echo "  make vacuum-help     # Regular vacuum testing"
+	@echo "  make ec-vacuum-help  # EC vacuum testing"
 
 start: ## Start the complete SeaweedFS cluster with admin and workers
 	@echo "🚀 Starting SeaweedFS cluster with admin and workers..."
@@ -315,6 +322,141 @@ vacuum-clean: ## Clean up vacuum test data (removes all volumes!)
 	@echo "Restarting cluster..."
 	@docker-compose -f $(COMPOSE_FILE) up -d
 	@echo "✅ Clean up complete. Fresh volumes ready for testing."
+
+# EC Vacuum Testing Targets
+ec-vacuum-test: ## Generate EC volumes and test EC vacuum functionality
+	@echo "🧪 SeaweedFS EC Vacuum Task Testing"
+	@echo "===================================="
+	@echo ""
+	@echo "1️⃣ Checking cluster health..."
+	@curl -s http://localhost:9333/cluster/status | jq '.IsLeader' > /dev/null && echo "✅ Master ready" || (echo "❌ Master not ready. Run 'make start' first." && exit 1)
+	@curl -s http://localhost:23646/ | grep -q "Admin" && echo "✅ Admin ready" || (echo "❌ Admin not ready. Run 'make start' first." && exit 1)
+	@echo ""
+	@echo "2️⃣ Generating data to trigger EC encoding..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=generate -files=30 -size=3000
+	@echo ""
+	@echo "3️⃣ Waiting for EC encoding to complete..."
+	@echo "⏳ This may take 2-3 minutes..."
+	@sleep 120
+	@echo ""
+	@echo "4️⃣ Generating deletions on EC volumes..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=delete -delete=0.4
+	@echo ""
+	@echo "5️⃣ Configuration Instructions:"
+	@echo "   Visit: http://localhost:23646/maintenance/config/ec_vacuum"
+	@echo "   Set for testing:"
+	@echo "     • Enable EC Vacuum Tasks: ✅ Checked"
+	@echo "     • Garbage Threshold: 0.30 (30%)"
+	@echo "     • Scan Interval: [60] [Seconds]"
+	@echo "     • Min Volume Age: [2] [Minutes]"
+	@echo "     • Max Concurrent: 2"
+	@echo ""
+	@echo "6️⃣ Monitor EC vacuum tasks at: http://localhost:23646/maintenance"
+	@echo ""
+	@echo "💡 Use 'make ec-vacuum-status' to check EC volume garbage ratios"
+
+ec-vacuum-generate: ## Generate large files to trigger EC encoding
+	@echo "📁 Generating data to trigger EC encoding..."
+	@echo "Creating large files targeting >50MB per volume..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=generate -files=25 -size=3000
+	@echo ""
+	@echo "⏳ Wait 2-3 minutes for EC encoding, then run 'make ec-vacuum-delete'"
+
+ec-vacuum-delete: ## Create deletions on EC volumes to generate garbage
+	@echo "🗑️ Creating deletions on EC volumes..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=delete -delete=$${DELETE:-0.4}
+	@echo ""
+	@echo "💡 Use 'make ec-vacuum-status' to check garbage ratios"
+
+ec-vacuum-status: ## Check EC volume status and garbage ratios
+	@echo "📊 EC Volume Status and Garbage Ratios"
+	@echo "====================================="
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=status
+
+ec-vacuum-continuous: ## Generate continuous EC garbage for testing
+	@echo "🔄 Generating continuous EC garbage for vacuum testing..."
+	@echo "Running 3 rounds with 60-second intervals..."
+	@for i in {1..3}; do \
+		echo "Round $$i: Generating large files..."; \
+		docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=generate -files=15 -size=4000; \
+		echo "Waiting 90 seconds for EC encoding..."; \
+		sleep 90; \
+		echo "Creating deletions..."; \
+		docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=delete -delete=0.5; \
+		echo "Waiting 60 seconds before next round..."; \
+		sleep 60; \
+	done
+	@echo "✅ Continuous EC vacuum test complete. Monitor admin UI for ec_vacuum tasks!"
+
+ec-vacuum-high: ## Create high garbage on EC volumes (should trigger EC vacuum)
+	@echo "📁 Creating high garbage EC volumes (60% garbage)..."
+	@echo "1. Generating files for EC..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=generate -files=20 -size=4000
+	@echo "2. Waiting for EC encoding..."
+	@sleep 120
+	@echo "3. Creating high garbage ratio..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=delete -delete=0.6
+
+ec-vacuum-low: ## Create low garbage on EC volumes (should NOT trigger EC vacuum)
+	@echo "📁 Creating low garbage EC volumes (20% garbage)..."
+	@echo "1. Generating files for EC..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=generate -files=20 -size=4000
+	@echo "2. Waiting for EC encoding..."
+	@sleep 120
+	@echo "3. Creating low garbage ratio..."
+	@docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=delete -delete=0.2
+
+ec-vacuum-monitor: ## Monitor EC vacuum task activity in real-time
+	@echo "📊 Monitoring EC Vacuum Task Activity"
+	@echo "===================================="
+	@echo "Press Ctrl+C to stop monitoring"
+	@echo ""
+	@while true; do \
+		echo "=== $(date) ==="; \
+		docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=status; \
+		echo ""; \
+		echo "🔍 Recent admin logs (EC vacuum activity):"; \
+		docker-compose -f $(COMPOSE_FILE) logs --tail=5 admin | grep -i "ec_vacuum\|vacuum.*ec" || echo "No recent EC vacuum activity"; \
+		echo ""; \
+		sleep 30; \
+	done
+
+ec-vacuum-help: ## Show EC vacuum testing help and examples
+	@echo "🧪 EC Vacuum Testing Commands"
+	@echo "============================="
+	@echo ""
+	@echo "Quick Start:"
+	@echo "  make start                  # Start SeaweedFS cluster"
+	@echo "  make ec-vacuum-test         # Full EC vacuum test cycle"
+	@echo "  make ec-vacuum-status       # Check EC volume status"
+	@echo ""
+	@echo "Manual Testing:"
+	@echo "  make ec-vacuum-generate     # 1. Generate data → trigger EC"
+	@echo "  # Wait 2-3 minutes for EC encoding to complete"
+	@echo "  make ec-vacuum-delete       # 2. Create deletions → garbage"
+	@echo "  make ec-vacuum-status       # 3. Check garbage ratios"
+	@echo ""
+	@echo "Automated Testing:"
+	@echo "  make ec-vacuum-high         # High garbage (should trigger)"
+	@echo "  make ec-vacuum-low          # Low garbage (should NOT trigger)"
+	@echo "  make ec-vacuum-continuous   # Continuous testing cycle"
+	@echo ""
+	@echo "Monitoring:"
+	@echo "  make ec-vacuum-status       # Quick EC volume status"
+	@echo "  make ec-vacuum-monitor      # Real-time monitoring"
+	@echo ""
+	@echo "Configuration:"
+	@echo "  Visit: http://localhost:23646/maintenance/config/ec_vacuum"
+	@echo "  Monitor: http://localhost:23646/maintenance"
+	@echo ""
+	@echo "💡 EC volumes need time to encode after data generation"
+	@echo "💡 Wait 2-3 minutes between generate and delete phases"
+	@echo ""
+	@echo "Understanding EC Vacuum:"
+	@echo "  • Regular volumes → EC volumes (when >50MB)"
+	@echo "  • EC vacuum cleans garbage from EC volumes"
+	@echo "  • Requires different thresholds than regular vacuum"
+	@echo "  • More complex due to shard distribution"
 
 vacuum-help: ## Show vacuum testing help and examples
 	@echo "🧪 Vacuum Testing Commands (Docker-based)"
