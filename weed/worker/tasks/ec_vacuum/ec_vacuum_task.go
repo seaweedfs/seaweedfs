@@ -41,7 +41,7 @@ func NewEcVacuumTask(id string, volumeID uint32, collection string, sourceNodes 
 		sourceNodes:        sourceNodes,
 		sourceGeneration:   sourceGeneration,     // generation to vacuum from (G)
 		targetGeneration:   sourceGeneration + 1, // generation to create (G+1)
-		cleanupGracePeriod: 5 * time.Minute,      // default 5 minute grace period
+		cleanupGracePeriod: 5 * time.Minute,      // default 5 minute grace period (configurable)
 	}
 }
 
