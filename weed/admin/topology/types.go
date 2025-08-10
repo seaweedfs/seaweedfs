@@ -3,18 +3,11 @@ package topology
 import "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 
 // TaskType represents different types of maintenance operations
+// Task types are now dynamically registered - use the worker/types package for task type operations
 type TaskType string
 
 // TaskStatus represents the current status of a task
 type TaskStatus string
-
-// Common task type constants
-const (
-	TaskTypeVacuum        TaskType = "vacuum"
-	TaskTypeBalance       TaskType = "balance"
-	TaskTypeErasureCoding TaskType = "erasure_coding"
-	TaskTypeReplication   TaskType = "replication"
-)
 
 // Common task status constants
 const (

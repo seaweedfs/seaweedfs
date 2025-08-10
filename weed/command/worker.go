@@ -107,6 +107,9 @@ func runWorker(cmd *Command, args []string) bool {
 	// Create gRPC dial option using TLS configuration
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 
+	// Initialize dynamic task type functions now that all tasks are registered
+	tasks.InitializeDynamicTaskTypes()
+
 	// Create worker configuration
 	config := &types.WorkerConfig{
 		AdminServer:         *workerAdminServer,

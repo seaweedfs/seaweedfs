@@ -42,7 +42,7 @@ type ErasureCodingTask struct {
 // NewErasureCodingTask creates a new unified EC task instance
 func NewErasureCodingTask(id string, server string, volumeID uint32, collection string) *ErasureCodingTask {
 	return &ErasureCodingTask{
-		BaseTask:     base.NewBaseTask(id, types.TaskTypeErasureCoding),
+		BaseTask:     base.NewBaseTask(id, types.TaskType("erasure_coding")),
 		server:       server,
 		volumeID:     volumeID,
 		collection:   collection,

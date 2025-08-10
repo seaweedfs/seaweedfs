@@ -17,7 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -230,27 +230,15 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Create a new config instance based on task type and apply schema defaults
-	var config TaskConfig
-	switch taskType {
-	case types.TaskTypeErasureCoding:
-		config = &erasure_coding.Config{}
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported task type: " + taskTypeName})
-		return
-	}
-
-	// Apply schema defaults first using type-safe method
-	if err := schema.ApplyDefaultsToConfig(config); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply defaults: " + err.Error()})
-		return
-	}
-
-	// First, get the current configuration to preserve existing values
+	// Get the config instance from the UI provider - this is a dynamic approach
+	// that doesn't require hardcoding task types
 	currentUIRegistry := tasks.GetGlobalUIRegistry()
 	currentTypesRegistry := tasks.GetGlobalTypesRegistry()
 
+	var config types.TaskConfig
 	var currentProvider types.TaskUIProvider
+
+	// Find the UI provider for this task type
 	for workerTaskType := range currentTypesRegistry.GetAllDetectors() {
 		if string(workerTaskType) == string(taskType) {
 			currentProvider = currentUIRegistry.GetProvider(workerTaskType)
@@ -258,16 +246,26 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		}
 	}
 
-	if currentProvider != nil {
-		// Copy current config values to the new config
-		currentConfig := currentProvider.GetCurrentConfig()
-		if currentConfigProtobuf, ok := currentConfig.(TaskConfig); ok {
-			// Apply current values using protobuf directly - no map conversion needed!
-			currentPolicy := currentConfigProtobuf.ToTaskPolicy()
-			if err := config.FromTaskPolicy(currentPolicy); err != nil {
-				glog.Warningf("Failed to load current config for %s: %v", taskTypeName, err)
-			}
-		}
+	if currentProvider == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported task type: " + taskTypeName})
+		return
+	}
+
+	// Get a config instance from the UI provider
+	config = currentProvider.GetCurrentConfig()
+	if config == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get config for task type: " + taskTypeName})
+		return
+	}
+
+	// Apply schema defaults - config instances should already have defaults applied during creation
+	glog.V(2).Infof("Using config defaults for task type: %s", taskTypeName)
+
+	// Copy current config values (currentProvider is already set above)
+	// Apply current values using protobuf directly - no map conversion needed!
+	currentPolicy := config.ToTaskPolicy()
+	if err := config.FromTaskPolicy(currentPolicy); err != nil {
+		glog.Warningf("Failed to load current config for %s: %v", taskTypeName, err)
 	}
 
 	// Parse form data using schema-based approach (this will override with new values)
@@ -277,14 +275,8 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Debug logging - show parsed config values
-	switch taskType {
-	case types.TaskTypeErasureCoding:
-		if ecConfig, ok := config.(*erasure_coding.Config); ok {
-			glog.V(1).Infof("Parsed EC config - FullnessRatio: %f, QuietForSeconds: %d, MinSizeMB: %d, CollectionFilter: '%s'",
-				ecConfig.FullnessRatio, ecConfig.QuietForSeconds, ecConfig.MinSizeMB, ecConfig.CollectionFilter)
-		}
-	}
+	// Debug logging - config parsed for task type
+	glog.V(1).Infof("Parsed configuration for task type: %s", taskTypeName)
 
 	// Validate the configuration
 	if validationErrors := schema.ValidateConfig(config); len(validationErrors) > 0 {
@@ -553,7 +545,7 @@ func (h *MaintenanceHandlers) updateMaintenanceConfig(config *maintenance.Mainte
 }
 
 // saveTaskConfigToProtobuf saves task configuration to protobuf file
-func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, config TaskConfig) error {
+func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, config types.TaskConfig) error {
 	configPersistence := h.adminServer.GetConfigPersistence()
 	if configPersistence == nil {
 		return fmt.Errorf("config persistence not available")
@@ -562,11 +554,6 @@ func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, 
 	// Use the new ToTaskPolicy method - much simpler and more maintainable!
 	taskPolicy := config.ToTaskPolicy()
 
-	// Save using task-specific methods
-	switch taskType {
-	case types.TaskTypeErasureCoding:
-		return configPersistence.SaveErasureCodingTaskPolicy(taskPolicy)
-	default:
-		return fmt.Errorf("unsupported task type for protobuf persistence: %s", taskType)
-	}
+	// Save using generic method - no more hardcoded task types!
+	return configPersistence.SaveTaskPolicyGeneric(string(taskType), taskPolicy)
 }

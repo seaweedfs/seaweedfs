@@ -7,30 +7,21 @@ import (
 
 // CalculateTaskStorageImpact calculates storage impact for different task types
 func CalculateTaskStorageImpact(taskType TaskType, volumeSize int64) (sourceChange, targetChange StorageSlotChange) {
-	switch taskType {
-	case TaskTypeErasureCoding:
+	switch string(taskType) {
+	case "erasure_coding":
 		// EC task: distributes shards to MULTIPLE targets, source reserves with zero impact
 		// Source reserves capacity but with zero StorageSlotChange (no actual capacity consumption during planning)
-		// WARNING: EC has multiple targets! Use AddPendingTask with multiple destinations for proper multi-target handling
+		// WARNING: EC has multiple targets! Use AddPendingTask with multiple destinations for proper multi-destination calculation
 		// This simplified function returns zero impact; real EC requires specialized multi-destination calculation
 		return StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}
 
-	case TaskTypeBalance:
-		// Balance task: moves volume from source to target
-		// Source loses 1 volume, target gains 1 volume
-		return StorageSlotChange{VolumeSlots: -1, ShardSlots: 0}, StorageSlotChange{VolumeSlots: 1, ShardSlots: 0}
-
-	case TaskTypeVacuum:
-		// Vacuum task: frees space by removing deleted entries, no slot change
-		return StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}
-
-	case TaskTypeReplication:
+	case "replication":
 		// Replication task: creates new replica on target
 		return StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, StorageSlotChange{VolumeSlots: 1, ShardSlots: 0}
 
 	default:
 		// Unknown task type, assume minimal impact
-		glog.Warningf("unhandled task type %s in CalculateTaskStorageImpact, assuming default impact", taskType)
+		glog.V(2).Infof("Task type %s not specifically handled in CalculateTaskStorageImpact, using default impact", taskType)
 		return StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, StorageSlotChange{VolumeSlots: 1, ShardSlots: 0}
 	}
 }

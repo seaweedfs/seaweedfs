@@ -19,7 +19,7 @@ func init() {
 	RegisterErasureCodingTask()
 
 	// Register config updater
-	tasks.AutoRegisterConfigUpdater(types.TaskTypeErasureCoding, UpdateConfigFromPersistence)
+	tasks.AutoRegisterConfigUpdater(types.TaskType("erasure_coding"), UpdateConfigFromPersistence)
 }
 
 // RegisterErasureCodingTask registers the erasure coding task with the new architecture
@@ -29,7 +29,7 @@ func RegisterErasureCodingTask() {
 
 	// Create complete task definition
 	taskDef := &base.TaskDefinition{
-		Type:         types.TaskTypeErasureCoding,
+		Type:         types.TaskType("erasure_coding"),
 		Name:         "erasure_coding",
 		DisplayName:  "Erasure Coding",
 		Description:  "Applies erasure coding to volumes for data protection",

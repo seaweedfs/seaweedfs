@@ -84,11 +84,10 @@ func (at *ActiveTopology) isDiskAvailable(disk *activeDisk, taskType TaskType) b
 
 // areTaskTypesConflicting checks if two task types conflict
 func (at *ActiveTopology) areTaskTypesConflicting(existing, new TaskType) bool {
-	// Examples of conflicting task types
+	// Define conflicting task types dynamically
+	// For now, assume no task types conflict (can be made configurable later)
 	conflictMap := map[TaskType][]TaskType{
-		TaskTypeVacuum:        {TaskTypeBalance, TaskTypeErasureCoding},
-		TaskTypeBalance:       {TaskTypeVacuum, TaskTypeErasureCoding},
-		TaskTypeErasureCoding: {TaskTypeVacuum, TaskTypeBalance},
+		// No conflicts defined currently - this can be made configurable per task
 	}
 
 	if conflicts, exists := conflictMap[existing]; exists {

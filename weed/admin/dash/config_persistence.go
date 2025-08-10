@@ -455,6 +455,44 @@ func (cp *ConfigPersistence) IsConfigured() bool {
 	return cp.dataDir != ""
 }
 
+// SaveTaskPolicyGeneric saves a task policy for any task type dynamically
+func (cp *ConfigPersistence) SaveTaskPolicyGeneric(taskType string, policy *worker_pb.TaskPolicy) error {
+	filename := fmt.Sprintf("task_%s.pb", taskType)
+	return cp.saveTaskConfig(filename, policy)
+}
+
+// LoadTaskPolicyGeneric loads a task policy for any task type dynamically
+func (cp *ConfigPersistence) LoadTaskPolicyGeneric(taskType string) (*worker_pb.TaskPolicy, error) {
+	filename := fmt.Sprintf("task_%s.pb", taskType)
+
+	if cp.dataDir == "" {
+		return nil, fmt.Errorf("no data directory configured")
+	}
+
+	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
+	configPath := filepath.Join(confDir, filename)
+
+	// Check if file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("no configuration found for task type: %s", taskType)
+	}
+
+	// Read file
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read task config file: %w", err)
+	}
+
+	// Unmarshal as TaskPolicy
+	var policy worker_pb.TaskPolicy
+	if err := proto.Unmarshal(configData, &policy); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal task configuration: %w", err)
+	}
+
+	glog.V(1).Infof("Loaded task policy for %s from %s", taskType, configPath)
+	return &policy, nil
+}
+
 // GetConfigInfo returns information about the configuration storage
 func (cp *ConfigPersistence) GetConfigInfo() map[string]interface{} {
 	info := map[string]interface{}{
