@@ -70,21 +70,63 @@ func (shard *EcVolumeShard) FileName() (fileName string) {
 	return EcShardFileName(shard.Collection, shard.dir, int(shard.VolumeId))
 }
 
+func (shard *EcVolumeShard) FileNameWithGeneration(generation uint32) (fileName string) {
+	return EcShardFileNameWithGeneration(shard.Collection, shard.dir, int(shard.VolumeId), generation)
+}
+
 func EcShardFileName(collection string, dir string, id int) (fileName string) {
+	return EcShardFileNameWithGeneration(collection, dir, id, 0)
+}
+
+// EcShardFileNameWithGeneration generates filename for EC volume files with generation support
+//
+// Generation File Layout Design:
+//
+//   - Generation 0 (default): Uses existing filename format for backward compatibility
+//     Example: "data_123" -> data_123.vif, data_123.ecx, data_123.ec00, etc.
+//
+//   - Generation > 0: Adds "_g{N}" suffix to base filename
+//     Example: "data_123_g1" -> data_123_g1.vif, data_123_g1.ecx, data_123_g1.ec00, etc.
+//
+// This approach provides:
+// - Backward compatibility: Existing volumes continue to work without changes
+// - Atomic operations: All files for a generation share the same base name
+// - Easy cleanup: Delete files matching pattern "volume_*_g{N}.*"
+// - Performance: All files remain in the same directory for fast access
+func EcShardFileNameWithGeneration(collection string, dir string, id int, generation uint32) (fileName string) {
 	idString := strconv.Itoa(id)
+	var baseFileName string
+
 	if collection == "" {
-		fileName = path.Join(dir, idString)
+		baseFileName = idString
 	} else {
-		fileName = path.Join(dir, collection+"_"+idString)
+		baseFileName = collection + "_" + idString
 	}
+
+	// Add generation suffix for non-zero generations (backward compatibility)
+	if generation > 0 {
+		baseFileName = baseFileName + "_g" + strconv.FormatUint(uint64(generation), 10)
+	}
+
+	fileName = path.Join(dir, baseFileName)
 	return
 }
 
 func EcShardBaseFileName(collection string, id int) (baseFileName string) {
+	return EcShardBaseFileNameWithGeneration(collection, id, 0)
+}
+
+func EcShardBaseFileNameWithGeneration(collection string, id int, generation uint32) (baseFileName string) {
 	baseFileName = strconv.Itoa(id)
 	if collection != "" {
 		baseFileName = collection + "_" + baseFileName
 	}
+
+	// Add generation suffix for non-zero generations (backward compatibility)
+	if generation > 0 {
+		baseFileName = baseFileName + "_g" + strconv.FormatUint(uint64(generation), 10)
+	}
+
 	return
 }
 

@@ -155,20 +155,32 @@ func (ev *EcVolume) Destroy() {
 }
 
 func (ev *EcVolume) FileName(ext string) string {
+	return ev.FileNameWithGeneration(ext, 0)
+}
+
+func (ev *EcVolume) FileNameWithGeneration(ext string, generation uint32) string {
 	switch ext {
 	case ".ecx", ".ecj":
-		return ev.IndexBaseFileName() + ext
+		return ev.IndexBaseFileNameWithGeneration(generation) + ext
 	}
 	// .vif
-	return ev.DataBaseFileName() + ext
+	return ev.DataBaseFileNameWithGeneration(generation) + ext
 }
 
 func (ev *EcVolume) DataBaseFileName() string {
 	return EcShardFileName(ev.Collection, ev.dir, int(ev.VolumeId))
 }
 
+func (ev *EcVolume) DataBaseFileNameWithGeneration(generation uint32) string {
+	return EcShardFileNameWithGeneration(ev.Collection, ev.dir, int(ev.VolumeId), generation)
+}
+
 func (ev *EcVolume) IndexBaseFileName() string {
 	return EcShardFileName(ev.Collection, ev.dirIdx, int(ev.VolumeId))
+}
+
+func (ev *EcVolume) IndexBaseFileNameWithGeneration(generation uint32) string {
+	return EcShardFileNameWithGeneration(ev.Collection, ev.dirIdx, int(ev.VolumeId), generation)
 }
 
 func (ev *EcVolume) ShardSize() uint64 {
