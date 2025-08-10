@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
@@ -99,8 +100,8 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
         <div class="alert alert-info mb-4" role="alert">
             <i class="fas fa-info-circle me-2"></i>
             <strong>EC Storage Note:</strong> 
-            EC volumes use erasure coding (10+4) which stores data across 14 shards with redundancy. 
-            Physical storage is approximately 1.4x the original logical data size due to 4 parity shards.
+            EC volumes use erasure coding ({ fmt.Sprintf("%d+%d", erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount) }) which stores data across { fmt.Sprintf("%d", erasure_coding.TotalShardsCount) } shards with redundancy. 
+            Physical storage is approximately { fmt.Sprintf("%.1fx", float64(erasure_coding.TotalShardsCount)/float64(erasure_coding.DataShardsCount)) } the original logical data size due to { fmt.Sprintf("%d", erasure_coding.ParityShardsCount) } parity shards.
         </div>
 
         <!-- Volumes Table -->
@@ -688,7 +689,7 @@ func formatIndividualShardSizes(shardSizes map[int]int64) string {
 			}
 			
 			var idRanges []string
-			if len(shardIds) <= 4 {
+			if len(shardIds) <= erasure_coding.ParityShardsCount {
 				// Show individual IDs if few shards
 				for _, id := range shardIds {
 					idRanges = append(idRanges, fmt.Sprintf("%d", id))
@@ -719,11 +720,11 @@ templ displayEcVolumeStatus(volume dash.EcVolumeWithShards) {
     if volume.IsComplete {
         <span class="badge bg-success"><i class="fas fa-check me-1"></i>Complete</span>
     } else {
-        if len(volume.MissingShards) > 10 {
+        if len(volume.MissingShards) > erasure_coding.DataShardsCount {
             <span class="badge bg-danger"><i class="fas fa-skull me-1"></i>Critical ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
-        } else if len(volume.MissingShards) > 6 {
+        } else if len(volume.MissingShards) > (erasure_coding.DataShardsCount/2) {
             <span class="badge bg-warning"><i class="fas fa-exclamation-triangle me-1"></i>Degraded ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
-        } else if len(volume.MissingShards) > 2 {
+        } else if len(volume.MissingShards) > (erasure_coding.ParityShardsCount/2) {
             <span class="badge bg-warning"><i class="fas fa-info-circle me-1"></i>Incomplete ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
         } else {
             <span class="badge bg-info"><i class="fas fa-info-circle me-1"></i>Minor Issues ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>

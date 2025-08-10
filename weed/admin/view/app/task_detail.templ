@@ -4,6 +4,7 @@ import (
     "fmt"
     "sort"
     "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+    "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 // sortedKeys returns the sorted keys for a string map
@@ -338,10 +339,10 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                                     if j > 0 {
                                                         <span>, </span>
                                                     }
-                                                    if shardId < 10 {
+                                                    if shardId < erasure_coding.DataShardsCount {
                                                         <span class="badge badge-sm bg-primary ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Data shard %d", shardId)}>{fmt.Sprintf("%d", shardId)}</span>
                                                     } else {
-                                                        <span class="badge badge-sm bg-warning text-dark ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Parity shard %d", shardId)}>{fmt.Sprintf("P%d", shardId-10)}</span>
+                                                        <span class="badge badge-sm bg-warning text-dark ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Parity shard %d", shardId)}>{fmt.Sprintf("P%d", shardId-erasure_coding.DataShardsCount)}</span>
                                                     }
                                                 }
                                             </small>
@@ -406,10 +407,10 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                                                     if j > 0 {
                                                         <span>, </span>
                                                     }
-                                                    if shardId < 10 {
+                                                    if shardId < erasure_coding.DataShardsCount {
                                                         <span class="badge badge-sm bg-primary ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Data shard %d", shardId)}>{fmt.Sprintf("%d", shardId)}</span>
                                                     } else {
-                                                        <span class="badge badge-sm bg-warning text-dark ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Parity shard %d", shardId)}>{fmt.Sprintf("P%d", shardId-10)}</span>
+                                                        <span class="badge badge-sm bg-warning text-dark ms-1" style="font-size: 0.65rem;" title={fmt.Sprintf("Parity shard %d", shardId)}>{fmt.Sprintf("P%d", shardId-erasure_coding.DataShardsCount)}</span>
                                                     }
                                                 }
                                             </small>
