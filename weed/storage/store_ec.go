@@ -62,6 +62,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				DiskType:    string(location.DiskType),
 				ExpireAtSec: ecVolume.ExpireAtSec,
 				DiskId:      uint32(diskId),
+				Generation:  generation, // include generation in mount message
 			}
 			return nil
 		} else if err == os.ErrNotExist {
@@ -74,7 +75,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 	return fmt.Errorf("MountEcShards %d.%d not found on disk", vid, shardId)
 }
 
-func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId) error {
+func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId, generation uint32) error {
 
 	diskId, ecShard, found := s.findEcShard(vid, shardId)
 	if !found {
@@ -88,6 +89,7 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 		EcIndexBits: uint32(shardBits.AddShardId(shardId)),
 		DiskType:    string(ecShard.DiskType),
 		DiskId:      diskId,
+		Generation:  generation, // include generation in unmount message
 	}
 
 	location := s.Locations[diskId]
