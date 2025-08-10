@@ -178,7 +178,7 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 	return metrics, nil
 }
 
-// enrichVolumeMetrics adds additional information like replica counts
+// enrichVolumeMetrics adds additional information like replica counts and EC volume identification
 func (ms *MaintenanceScanner) enrichVolumeMetrics(metrics []*VolumeHealthMetrics) {
 	// Group volumes by ID to count replicas
 	volumeGroups := make(map[uint32][]*VolumeHealthMetrics)
@@ -195,8 +195,51 @@ func (ms *MaintenanceScanner) enrichVolumeMetrics(metrics []*VolumeHealthMetrics
 		glog.V(3).Infof("Volume %d has %d replicas", volumeID, replicaCount)
 	}
 
-	// TODO: Identify EC volumes by checking volume structure
-	// This would require querying volume servers for EC shard information
+	// Identify EC volumes by checking EC shard information from topology
+	ecVolumeSet := ms.getECVolumeSet()
+	for _, metric := range metrics {
+		if ecVolumeSet[metric.VolumeID] {
+			metric.IsECVolume = true
+			glog.V(2).Infof("Volume %d identified as EC volume", metric.VolumeID)
+		}
+	}
+}
+
+// getECVolumeSet retrieves the set of volume IDs that exist as EC volumes in the cluster
+func (ms *MaintenanceScanner) getECVolumeSet() map[uint32]bool {
+	ecVolumeSet := make(map[uint32]bool)
+
+	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							// Check EC shards on this disk
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								ecVolumeSet[ecShardInfo.Id] = true
+								glog.V(3).Infof("Found EC volume %d on %s", ecShardInfo.Id, node.Id)
+							}
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		glog.Errorf("Failed to get EC volume information from master: %v", err)
+		return ecVolumeSet // Return empty set on error
+	}
+
+	glog.V(2).Infof("Found %d EC volumes in cluster topology", len(ecVolumeSet))
+	return ecVolumeSet
 }
 
 // convertToTaskMetrics converts existing volume metrics to task system format

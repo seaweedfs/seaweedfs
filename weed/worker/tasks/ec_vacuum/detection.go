@@ -34,9 +34,9 @@ func Detection(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.ClusterInfo, 
 		return results, nil
 	}
 
-	// Collect EC volume information from topology
-	ecVolumeInfo := collectEcVolumeInfo(info.ActiveTopology)
-	glog.V(2).Infof("EC vacuum detection: found %d EC volumes in topology", len(ecVolumeInfo))
+	// Collect EC volume information from metrics
+	ecVolumeInfo := collectEcVolumeInfo(metrics)
+	glog.V(2).Infof("EC vacuum detection: found %d EC volumes in metrics", len(ecVolumeInfo))
 
 	for volumeID, ecInfo := range ecVolumeInfo {
 		// Apply filters
@@ -104,15 +104,43 @@ type DeletionInfo struct {
 	DeletionRatio  float64
 }
 
-// collectEcVolumeInfo extracts EC volume information from active topology
-func collectEcVolumeInfo(activeTopology interface{}) map[uint32]*EcVolumeInfo {
+// collectEcVolumeInfo extracts EC volume information from volume health metrics
+func collectEcVolumeInfo(metrics []*wtypes.VolumeHealthMetrics) map[uint32]*EcVolumeInfo {
 	ecVolumes := make(map[uint32]*EcVolumeInfo)
 
-	// Simplified implementation for demonstration
-	// In production, this would query the topology for actual EC volume information
-	// For now, return empty map since we don't have direct access to topology data
-	glog.V(3).Infof("EC vacuum detection: topology analysis not implemented, returning empty volume list")
+	for _, metric := range metrics {
+		// Only process EC volumes
+		if !metric.IsECVolume {
+			continue
+		}
 
+		// Calculate deletion ratio from health metrics
+		deletionRatio := 0.0
+		if metric.Size > 0 {
+			deletionRatio = float64(metric.DeletedBytes) / float64(metric.Size)
+		}
+
+		// Create EC volume info from metrics
+		ecVolumes[metric.VolumeID] = &EcVolumeInfo{
+			VolumeID:    metric.VolumeID,
+			Collection:  metric.Collection,
+			Size:        metric.Size,
+			CreatedAt:   time.Now().Add(-metric.Age),
+			Age:         metric.Age,
+			PrimaryNode: metric.Server,
+			ShardNodes:  make(map[pb.ServerAddress]erasure_coding.ShardBits), // Will be populated if needed
+			DeletionInfo: DeletionInfo{
+				TotalEntries:   int64(metric.Size / 1024), // Rough estimate
+				DeletedEntries: int64(metric.DeletedBytes / 1024),
+				DeletionRatio:  deletionRatio,
+			},
+		}
+
+		glog.V(2).Infof("EC vacuum detection: found EC volume %d, size=%dMB, deleted=%dMB, ratio=%.1f%%",
+			metric.VolumeID, metric.Size/(1024*1024), metric.DeletedBytes/(1024*1024), deletionRatio*100)
+	}
+
+	glog.V(1).Infof("EC vacuum detection: found %d EC volumes from %d metrics", len(ecVolumes), len(metrics))
 	return ecVolumes
 }
 
