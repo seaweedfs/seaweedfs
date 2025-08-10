@@ -369,6 +369,13 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 	if !found {
 		return fmt.Errorf("VolumeEcShardRead not found ec volume id %d", req.VolumeId)
 	}
+
+	// Validate generation matches the request
+	requestedGeneration := req.Generation
+	if ecVolume.Generation != requestedGeneration {
+		return fmt.Errorf("VolumeEcShardRead volume %d generation mismatch: requested %d, found %d",
+			req.VolumeId, requestedGeneration, ecVolume.Generation)
+	}
 	ecShard, found := ecVolume.FindEcVolumeShard(erasure_coding.ShardId(req.ShardId))
 	if !found {
 		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
